@@ -166,6 +166,27 @@ describe('ForecastClient', () => {
     expect(screen.getByText(/Register a project/i)).toBeInTheDocument();
   });
 
+  it('still shows committed money when no pursuit is live', async () => {
+    // `project_count` counts LIVE pursuits, and a lost project keeps its purchase order in
+    // Committed because an order does not un-happen. Gating the page on the count alone put
+    // "Nothing to forecast yet" above a real RM 15,000 figure.
+    renderPage(
+      dashboard({
+        forecast: {
+          pipeline: '0.00',
+          weighted: '0.00',
+          committed: '15000.00',
+          project_count: 0,
+          by_year: [],
+          undated: { pipeline: '0.00', weighted: '0.00', committed: '15000.00' },
+        },
+      }),
+    );
+
+    expect(await screen.findByText('RM 15,000.00')).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing to forecast yet/i)).toBeNull();
+  });
+
   it('surfaces sponsorship spend against POs won', async () => {
     renderPage(dashboard());
 

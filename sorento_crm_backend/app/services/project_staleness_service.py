@@ -19,13 +19,17 @@ having a plan IS the work, and nagging somebody who has a site visit booked for 
 how a tool teaches people to ignore it.
 
 **One threshold, three rungs (AC-H6).** The rung's ``stale_after_days`` is the nudge point;
-twice it warns the owner and copies management; three times marks the project Unattended and
-opens it to takeover REQUESTS. Multiples rather than three separately configured numbers
-because an admin who tunes one number should get a coherent ladder, not an ordering bug.
+twice it warns the owner and copies management; three times marks the project Unattended.
+Multiples rather than three separately configured numbers because an admin who tunes one
+number should get a coherent ladder, not an ordering bug.
 
-**Nothing here ever reassigns anything.** Level 3 changes what colleagues are ALLOWED to ask
-for. A manager still decides, explicitly, with a reason, and the history keeps the original
-registrant. An ownership change nobody chose is how a pipeline tool loses the sales team.
+**Nothing here ever reassigns anything, and no rung changes anybody's permissions.** Level 3
+changes what everyone can SEE: the badge is the signal a manager acts on. Asking to take a
+project over (AC-C7's join request / dispute) is open at every rung -- it doubles as the
+recourse for a registration this project blocked, and a blocked registrant cannot wait for
+somebody else's project to go stale. A manager still decides, explicitly, with a reason, and
+the history keeps the original registrant. An ownership change nobody chose is how a pipeline
+tool loses the sales team.
 """
 from __future__ import annotations
 
@@ -33,8 +37,10 @@ import logging
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.models.base import set_company_scope
 from app.models.projects import OUTCOME_OPEN, Project
 from app.models.status import Status
 
@@ -157,8 +163,34 @@ def evaluate(
     }
 
 
+def stale_dedup_key(project: Project, *, level: int) -> str:
+    """One alert per project per rung per EPISODE of neglect.
+
+    The key used to be `<project>:stale:<level>`, which reads as "do not send the same thing
+    twice" but actually means "send the level-1 nudge at most once in this project's lifetime".
+    A project that is chased back to life and then goes quiet again three months later is a NEW
+    problem, and its nudge was being swallowed as a duplicate of the one from last quarter.
+
+    The episode is the moment the project went quiet (`stale_since`, which the sweep stamps as
+    the project steps onto the ladder), falling back to the activity anchor so the key is stable
+    before that stamp exists. Repeated sweeps inside one episode therefore still dedupe, which
+    is the thing the key was protecting against in the first place.
+    """
+    episode = (
+        project.stale_since or project.last_meaningful_activity_at or project.created_at
+    )
+    stamp = episode.date().isoformat() if episode else "unknown"
+    return f"{project.id}:stale:{level}:{stamp}"
+
+
 def is_unattended(project: Project) -> bool:
-    """AC-H6. The badge, and the gate on who may ask to take the project over."""
+    """AC-H6. The badge: this project is visibly neglected, and a manager should look at it.
+
+    NOT a permission gate. Asking to take a project over (AC-C7's join request / dispute) is
+    open at every rung, because it is also the recourse for a registration this project
+    blocked -- and a blocked registrant cannot wait for somebody else's project to go stale.
+    What level 3 changes is what everyone can SEE.
+    """
     return int(project.stale_level or 0) >= LEVEL_UNATTENDED
 
 
@@ -166,7 +198,8 @@ def is_unattended(project: Project) -> bool:
 
 
 def sweep(db: Session, *, notify: bool = True) -> Dict[str, int]:
-    """Walk every open project once and move each one up or off the ladder (AC-H5).
+    """Walk every open project (plus anything still carrying a rung) and move each one up or
+    off the ladder (AC-H5).
 
     Runs on the EXISTING scheduled-task heartbeat (`project_staleness_sweep`), so there is
     no new scheduler. Notifies only on a level CHANGE: a daily sweep that re-sends at the
@@ -174,8 +207,30 @@ def sweep(db: Session, *, notify: bool = True) -> Dict[str, int]:
     """
     summary = {"scanned": 0, "raised": 0, "cleared": 0, "unchanged": 0, "notified": 0}
 
+    # Widen the company scope to ALL companies before reading anything.
+    #
+    # This is not optional bookkeeping: company scoping is fail-closed, and the scheduler
+    # hands us a bare `SessionLocal()` whose scope is UNSET, which resolves to `false()`.
+    # Without this line the sweep selects zero projects, stamps nothing, notifies nobody and
+    # logs a perfectly healthy `scanned: 0` for ever. Every other background job in the
+    # codebase does the same thing (`export_tasks`, `import_tasks`).
+    #
+    # All companies is the correct scope for a company-agnostic nightly job: the ladder is
+    # per project, and a project belongs to exactly one company already.
+    set_company_scope(db, None)
+
+    # Open projects, PLUS any project still carrying a rung. The second half is not
+    # bookkeeping: nothing else clears the ladder except a human posting an activity, so a
+    # project that reached Unattended and was then won or lost kept `stale_level = 3` for ever
+    # -- the list badge accused the team of neglecting the deal they had just won, and the
+    # Unattended rung is the signal a manager acts on.
+    #
+    # `evaluate` already answers "not on the ladder" for a decided project, so these rows fall
+    # out through the normal cleared path with no special case.
     projects: List[Project] = (
-        db.query(Project).filter(Project.outcome == OUTCOME_OPEN).all()
+        db.query(Project)
+        .filter(or_(Project.outcome == OUTCOME_OPEN, Project.stale_level > 0))
+        .all()
     )
     if not projects:
         return summary
@@ -270,8 +325,8 @@ def _message(project: Project, level: int, result: Dict[str, Any]) -> Dict[str, 
     return {
         "title": f"{project.project_code} is unattended",
         "body": (
-            f"{project.title}: {why}. Colleagues can now ask to take it over. "
-            "Nothing has been reassigned -- a manager decides."
+            f"{project.title}: {why}. It is now flagged to everyone as unattended, and a "
+            "colleague can ask to take it over. Nothing has been reassigned -- a manager decides."
         ),
     }
 
@@ -311,7 +366,7 @@ def _notify(db: Session, *, project: Project, level: int, result: Dict[str, Any]
                 source_entity_id=str(project.id),
                 # One notification per project per rung, so a re-run after a crash mid-sweep
                 # cannot double-send.
-                dedup_key=f"{project.id}:stale:{level}",
+                dedup_key=stale_dedup_key(project, level=level),
                 event_type="project_stale",
                 send_in_app=True,
                 send_email=level >= LEVEL_WARN,

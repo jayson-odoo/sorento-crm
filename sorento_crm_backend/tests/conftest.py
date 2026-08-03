@@ -123,6 +123,45 @@ def _restore_column_types():
             pass
     yield
 
+
+# Module-level function symbols that tests stub. Same family as the column-type
+# backstop above: a bare ``svc_module.resolve_references = lambda ...`` in a fixture is
+# never undone, so it stayed installed for every test that ran later in the session.
+# Four fixtures did exactly that, and the visible damage was the reverse of a stub's
+# intent -- a WORKING resolution path failed with "lambda() got an unexpected keyword
+# argument", in a file that stubs nothing, only in a full-suite run.
+_STUBBABLE_SYMBOLS: tuple[tuple[str, str], ...] = (
+    ("app.services.ai_assistant_service", "resolve_references"),
+)
+
+
+@pytest.fixture(autouse=True)
+def _restore_stubbed_module_symbols():
+    """Restore module-level symbols a test rebound without undoing it.
+
+    Every current site uses ``monkeypatch``, which restores itself; this is the backstop
+    for the next one, because the failure it causes lands in somebody else's file and
+    reads as a production bug rather than as a leaked stub.
+
+    Reads ``sys.modules`` and never IMPORTS. Importing the module here instead cost 149
+    errors across the suite: the assistant service pulls a large chain in with it, and doing
+    that from a fixture loaded it far earlier than the suite otherwise would, in tests that
+    never touch it. A module that was never imported cannot be holding a leaked stub, so
+    there is nothing to restore anyway.
+    """
+    import sys
+
+    originals = [
+        (module, attr, getattr(module, attr))
+        for module_path, attr in _STUBBABLE_SYMBOLS
+        if (module := sys.modules.get(module_path)) is not None
+        and hasattr(module, attr)
+    ]
+    yield
+    for module, attr, original in originals:
+        if getattr(module, attr, None) is not original:
+            setattr(module, attr, original)
+
 # ---------------------------------------------------------------------------
 # Company-scope test default (multi-company isolation).
 #

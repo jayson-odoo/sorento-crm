@@ -3361,6 +3361,68 @@ def _probe_project_party(db: Session, tokens: list[str]) -> dict[str, list[Resol
     return result
 
 
+def _probe_user(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """Resolve a colleague by full name or work email.
+
+    This exists because several tools filter on a USER uuid -- `owner_user_ids` on the project
+    list is the first, and "what is Ali working on" is the most natural way anyone asks for it.
+    Without a probe the model has no path from the name it was given to the uuid the filter
+    wants, so the filter is advertised in the tool description and unreachable in practice.
+
+    Deliberately EXACT (whitespace and case insensitive) and active-only:
+
+    * exact, because a fuzzy staff-name match is how one salesperson's numbers get reported as
+      another's, and there is no code on a user row to disambiguate with afterwards;
+    * active-only, because answering "Ali has 12 live projects" about somebody who left the
+      company is worse than answering "I could not find Ali".
+
+    Names are not unique, so several matches for one token is a normal outcome; the caller
+    decides (the dispatcher passes every uuid, which reads as "either of the two Alis").
+    """
+    from app.models.user import User, UserStatus
+
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    # A 1-2 character token is never a person; it is an initial or a unit, and matching it
+    # would put a user candidate on half the tokens in a sentence.
+    norm_to_token = {
+        _strip_all_ws(t.lower()): t for t in tokens if len(_strip_all_ws(t)) >= 3
+    }
+    if not norm_to_token:
+        return result
+    keys = list(norm_to_token.keys())
+
+    rows = (
+        db.query(User.id, User.name, User.email)
+        .filter(
+            # Plain equality, never `upper(status)`: the live column is a Postgres ENUM while
+            # the model declares String, so a function call on it fails on the real database
+            # and passes nowhere else.
+            User.status == UserStatus.ACTIVE.value,
+            or_(
+                _ws_insensitive_lower(User.name).in_(keys),
+                _ws_insensitive_lower(User.email).in_(keys),
+            ),
+        )
+        .all()
+    )
+    for user_id, name, email in rows:
+        norm_name = _strip_all_ws(str(name or "").lower())
+        norm_email = _strip_all_ws(str(email or "").lower())
+        token = norm_to_token.get(norm_name) or norm_to_token.get(norm_email)
+        if not token:
+            continue
+        result[token].append(
+            ResolvedEntity(
+                entity_type="user",
+                canonical_code=name or email,
+                uuid=str(user_id) if user_id else None,
+                match_field="name" if norm_to_token.get(norm_name) == token else "email",
+                display={"name": name, "email": email},
+            )
+        )
+    return result
+
+
 _TIER1_PROBES: tuple[tuple[Callable[[Session, list[str]], dict[str, list[ResolvedEntity]]], frozenset[str]], ...] = (
     (_probe_product, frozenset({"product"})),
     (_probe_customer_order, frozenset({"customer_order"})),
@@ -3377,6 +3439,7 @@ _TIER1_PROBES: tuple[tuple[Callable[[Session, list[str]], dict[str, list[Resolve
     (_probe_attachment_type, frozenset({"attachment_type"})),
     (_probe_project, frozenset({"project"})),
     (_probe_project_party, frozenset({"project_party"})),
+    (_probe_user, frozenset({"user"})),
 )
 
 

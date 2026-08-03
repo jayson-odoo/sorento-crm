@@ -17,6 +17,7 @@ down must never turn a successful save into a 500. Failures warn and return Fals
 from __future__ import annotations
 
 import logging
+from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -76,13 +77,30 @@ def _send(
     dedup_key: str,
     send_email: bool = True,
 ) -> int:
-    """Fan out to a de-duplicated recipient set. Returns how many were notified."""
+    """Fan out to a de-duplicated recipient set. Returns how many were notified.
+
+    Best-effort per RECIPIENT, not per alert. One try around the whole loop meant the first
+    user whose delivery raised -- a stale address, a preference row that fails to load --
+    swallowed every remaining manager, and a below-floor price gets approved because two of
+    three managers never heard about it. The outer try still covers building the service
+    itself, which either works for everybody or for nobody.
+    """
     try:
         from app.services.notification_service import NotificationService
 
         service = NotificationService(db)
-        sent = 0
-        for user_id in {u for u in user_ids if u}:
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "project notification not sent: type=%s project=%s (%s)",
+            notif_type,
+            project_id,
+            exc,
+        )
+        return 0
+
+    sent = 0
+    for user_id in {u for u in user_ids if u}:
+        try:
             service.create_with_channel_preferences(
                 user_id=str(user_id),
                 type=notif_type,
@@ -97,15 +115,39 @@ def _send(
                 send_email=send_email,
             )
             sent += 1
-        return sent
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "project notification not sent: type=%s project=%s (%s)",
-            notif_type,
-            project_id,
-            exc,
-        )
-        return 0
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "project notification not sent to one recipient: type=%s project=%s user=%s (%s)",
+                notif_type,
+                project_id,
+                user_id,
+                exc,
+            )
+            # A statement that failed inside the notification leaves the transaction aborted,
+            # so the next recipient would fail for a reason that has nothing to do with them.
+            if not db.is_active:
+                db.rollback()
+    return sent
+
+
+def floor_breach_dedup_key(event: Dict[str, Any]) -> str:
+    """Idempotency key for a below-floor alert: the LINE plus the price that breached.
+
+    Not the line alone, which is what shipped. `create_with_channel_preferences` dedups on
+    (user, entity, key, event_type) for ever, so keying on the line meant the FIRST breach
+    silenced every later one: a line re-priced above its floor and later dropped below it
+    again -- a new decision somebody has to approve -- was invisible.
+
+    Including the price keeps the property that actually matters (saving the same breach twice
+    does not re-alert) while letting a genuinely different give-away through.
+    """
+    price = event.get("unit_price")
+    # Normalised so Decimal("80") and Decimal("80.00") are one key, not two.
+    try:
+        price_key = format(Decimal(str(price)), "f")
+    except (InvalidOperation, TypeError, ValueError):
+        price_key = str(price)
+    return f"{event.get('line_id')}:floor_breach:{price_key}"
 
 
 def notify_floor_breach(
@@ -147,9 +189,7 @@ def notify_floor_breach(
             "actor_user_id": actor_user_id,
         },
         project_id=str(project.id),
-        # Per LINE, not per save: the second breach on the same line after a re-price is the
-        # same conversation, and the price itself is on the record either way.
-        dedup_key=f"{event.get('line_id')}:floor_breach",
+        dedup_key=floor_breach_dedup_key(event),
     )
 
 

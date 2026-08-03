@@ -4,7 +4,9 @@
 (numbering / delivery lag / loss reasons made configurable; sponsorship flag pinned to
 `respond_contacts`; task management added and decided - see §7).
 Built: **S0, S1, S2, S2b, S2c, S3, S4, S5a, S5b, S6a, S6b** — every planned slice (see §4
-for what each landed and what it discovered). Remaining known gaps are listed in the UAC
+for what each landed and what it discovered), plus a **hardening pass** over S5/S6 on
+`chore/project-sales-hardening` (§5h: nineteen findings, each pinned by a test that fails on
+the code as it shipped). Remaining known gaps are listed in the UAC
 header and in §6: the Excel import (AC-C9/C9a), brand + architect intelligence (AC-I4 half),
 the AC-N5a task-link picker, AC-G2's board-default-by-role, and the ~28 historical sponsorship
 rows to be linked by hand (AC-F6).
@@ -594,6 +596,54 @@ developer name.
 | F46 | Wrapping `SearchableSelect` in `FormControl` threw `React.Children.only expected to receive a single React element child` and took the whole card down -- the field never rendered at all. `FormControl` is a Radix `Slot`; the component renders a trigger plus its popover. | Render `SearchableSelect` directly under `FormItem`, with `FormMessage` after it. The other complaint-form usages nest it inside another component, which is why the pattern looked safe. |
 | F47 | The linked project showed nothing on the complaint detail page after the change was deployed, because :8010 runs WITHOUT `--reload` and was still serving the pre-change serializer. | Restarted. Third time this exact thing has cost a verification round in this module (S4, S5b, here) -- it is in the module memory now, but the honest fix is `--reload` locally. |
 
+## 5h. Hardening pass (self-review, 2026-07-28)
+
+Not a slice: a review of everything S5 and S6 shipped, on its own branch
+(`chore/project-sales-hardening`), reading the code against how the rest of the system behaves
+rather than against the ACs it was written from. Every finding below is pinned by a test that
+fails on the code as it shipped.
+
+**One theme explains most of it: the feature tests only ever ran request-shaped sessions.**
+`conftest` defaults a session's company scope to Sorento, so the daily sweep's *unscoped*
+session and a second company's user reaching a project by id were never exercised at all. The
+guard tests live in `tests/test_project_hardening.py`, `tests/test_project_activity_access.py`
+and `sorento_crm_mcp/tests/test_projects_sanitizer.py`.
+
+| # | Finding | Resolution |
+|---|---------|------------|
+| F48 | The nightly staleness sweep runs from the scheduler on a bare `SessionLocal()`, whose company scope is UNSET. Scoping is fail-closed, so UNSET resolves to `false()`: the sweep selected zero projects, stamped nothing, notified nobody and logged a healthy-looking `scanned: 0` for ever. | `sweep()` calls `set_company_scope(db, None)` before reading anything, the way every other background job does (`export_tasks`, `import_tasks`). Guarded by a test that sets the scope to UNSET first, which is the one thing the harness never does. |
+| F49 | Committed summed `po_amount` alone, so a PO entered line by line with no header figure -- which is what the PO lines editor produces -- was valued at exactly zero. Committed is the one number on the page that claims to be banked money. | `_committed_by_project` applies the module's single definition of a PO's value (`po_total`: the lines when there are any, else the header) in two bulk queries, so a hundred POs stay two round trips and the report can never disagree with the PO detail page. |
+| F50 | A project whose remaining scopes were lost has outcome `lost`, and the forecast dropped the whole project -- taking its already-banked PO out of Committed with it. The number reporting what was ORDERED went down when something else was lost. | Lost projects that carry a PO are folded back in for Committed only. Pipeline and Weighted still ignore them (no open quotation, and the estimate is suppressed once anything was priced), and `project_count` stays live-only so "how many are we chasing" is not answered with the ones we lost. |
+| F51 | The project activities adapter shipped with `can_view=None`. That gate is opt-IN, so any holder of `projects.projects.view` could read and post on ANY project id, including another company's -- `activity_events` is not company-scoped and nothing in the path ever loaded the project. A post also resets the staleness clock, so a foreign post could clear another company's Unattended badge. | `project_activity_service.can_view` resolves the project through the request's SCOPED session, so a project outside the caller's companies simply does not exist to them. Guarded with a real second company, not a hypothetical one. |
+| F52 | The MCP project payloads carried nine internal UUIDs (owner, developer, status, company, ...) into the model's context, against the no-UUIDs rule and the promotions-list precedent. | `_slim_project_row` drops them in the MCP server. `id` deliberately stays: `crm_project_detail` and `crm_project_quotations_list` take it. |
+| F53 | The below-floor alert deduplicated on the line id alone, and dedup is permanent -- so the FIRST breach on a line silenced every later one. A line re-priced above its floor and later dropped below it again is a new decision somebody has to approve, and it was invisible. | `floor_breach_dedup_key` keys on (line, price) with a normalised Decimal, so the same breach saved twice still dedupes while a different give-away alerts. |
+| F54 | `crm_projects_list` advertises `owner_user_ids` as "my pipeline", and nothing in the system could produce that UUID from a name: the entity resolver had no `user` probe, and the (correct) payload slimming means rows carry `owner_name` only. "What is Ali working on" was unanswerable in both directions. | `_probe_user`: exact (whitespace and case insensitive) match on full name or work email, ACTIVE users only, plus `owner_user_ids` / `owner_user_id` in the dispatcher's coercion map. Exact and active-only on purpose: a fuzzy staff match reports one salesperson's numbers as another's, and answering about somebody who left is worse than not finding them. |
+| F55 | The dispatcher's fallback resolver passed the arg value to `resolve_references` as a free-text QUERY, so `extract_candidate_tokens` (code-like tokens only) reduced a bare person or company name to nothing. Every name-shaped value returned `[]`: only values already resolved earlier in the turn ever coerced. System-wide, not project-only. | The value is passed as a TOKEN LIST -- it IS the token, there is nothing to extract -- filtered to the param's entity type, with the embedding fallback off so a plausible-but-wrong neighbour cannot silently answer about the wrong record. |
+| F56 | The staleness alert deduplicated on `<project>:stale:<level>`, which means the level-1 nudge could fire at most ONCE in a project's lifetime. A project chased back to life and neglected again a quarter later was swallowed as a duplicate. | `stale_dedup_key` carries the episode (the moment the project went quiet), so repeated sweeps inside one episode still dedupe -- the property the key was actually protecting -- while a second period of neglect alerts. |
+| F57 | The sweep selected open projects only, and nothing else clears the ladder except a human posting an activity. A project that reached Unattended and was then WON kept `stale_level = 3` for ever: the badge accused the team of neglecting the deal they had just won, and level 3 is the gate that lets colleagues ask to take a project over. | The sweep also selects anything still carrying a rung. `evaluate` already answers "not on the ladder" for a decided project, so those rows fall out through the normal cleared path with no special case. |
+| F58 | `_lost_projects_with_committed_money` excluded the live set with `~Project.id.in_(live_ids) if live_ids else True`, handing a bare Python `True` to `filter()` for any company with no live project -- and the exclusion was redundant, since the live set excludes lost projects by definition. | Clause removed. Guarded by a forecast over a company whose only project is lost with a PO, which is a real early-company state. |
+| F59 | `delivery_year` loaded the project's sales profile itself, inside the per-project loop, so the report cost one extra SELECT per project on a page a sales manager refreshes all day. | The profile is bulk-loaded once and injected, the same way `lag_months` already was. Pinned as a ratio (doubling the projects must not change the query count), not an absolute count, so a legitimate new query does not fail the test. |
+| F60 | `project_notify_service._send` wrapped the WHOLE recipient loop in one try/except, so the first manager whose delivery raised swallowed every remaining manager. Best-effort is meant to be per recipient, not per alert -- a price gets approved below floor because two of three managers never heard about it. | Per-recipient try, with a rollback when a failed statement leaves the transaction aborted so recipient two is not punished for recipient one. The outer try still covers building the service, which works for everybody or nobody. |
+| F61 | The Forecast page gated its entire body on `forecast.project_count > 0`. Once F50 made that count live-only, a company with a banked PO and no live pursuit rendered "Nothing to forecast yet" above a real committed figure. | The empty state now tests for money as well as pursuits (`hasMoney`, which reads the decimal STRING as a number -- `"0.00"` is truthy as a string). |
+| F62 | Test hygiene, found by being bitten: four fixtures rebound `svc_module.resolve_references` with a bare assignment and never undid it, so the stub stayed installed for every test that ran later in the session. The visible damage was the reverse of a stub's intent -- a WORKING resolution path failed with "lambda() got an unexpected keyword argument", in a file that stubs nothing, only in a full-suite run. Separately, `test_ai_prompt_registry` asserted a hardcoded `11` prompt keys, so every module that adds a node (SCM added two) fails four tests that say nothing about seeding. | All four sites go through `monkeypatch`, plus a `conftest` backstop that restores the symbol after each test (same family as the existing column-type backstop). The prompt-key counts are derived from `PROMPT_KEYS`. |
+| F63 | The payload slimming stopped at the two project tools; `crm_project_quotations_list` still carried `project_id` (which the caller passed in to get the list), `current_version_id` (nothing consumes it) and `issued_by` beside the `issued_by_name` the agent should quote. | One shared `_slim_rows(data, drop_keys)` now serves both, so the project and quotation paths cannot drift. The quotation `id` stays: it is the only handle on "the bathroom package quotation" on the next turn. |
+| F64 | `can_view` compared the raw path value to a uuid column, so a malformed id raised INSIDE Postgres. The generic gate catches it and answers a correct 404 -- while leaving the transaction ABORTED, so the next statement in that request fails for an unrelated reason. | The id shape is validated before the query, and a failed lookup rolls back an inactive session. Guarded by asserting the session still works after a junk id, which is the half the 404 was hiding. |
+| F65 | The Unattended message told the owner "Colleagues can now ask to take it over", and three docstrings called level 3 the gate on takeover requests. There is no such gate: `create_takeover_request` has no stale-level check, because the same endpoint is AC-C7's recourse for a registration this project BLOCKED -- and a blocked registrant cannot wait for somebody else's project to go stale. The system was announcing a permission change that never happened. | Wording corrected on both surfaces (notification body and the FE badge sentence) to say what actually changes: the neglect becomes visible to everyone, and a colleague can ask to take it over -- which was always true. The gate was NOT added: gating it would break AC-C7. AC-H6's "opens the project to takeover requests" is therefore met by the badge, recorded here rather than silently reinterpreted. |
+| F66 | S6b resolved the complaint's `project_code` inside `_serialize_complaint`, which the complaints LIST calls once per row -- one extra SELECT per linked complaint. That serializer's whole `*_override` convention exists because a 50-row page used to fire per-row view-token, user and SLA queries, so the fix re-introduced the exact pattern the file warns about. | `_batch_project_display` resolves the page's linked projects in one query and rides in as `project_display_override`; the single-row detail path keeps its own lookup. Pinned as a ratio (more linked rows must not mean more queries), and both perf guards were verified to FAIL with the batching removed rather than trusted because they were green. |
+
+**Verification.** Two SOLO full-suite runs, one per branch, nothing else touching the database:
+baseline **114 failed / 3539 passed / 0 errors**, this branch **110 failed / 3568 passed / 0
+errors**. The only difference in the failure sets, in either direction, is the four
+`test_ai_prompt_registry` tests F62 fixes. Zero new failures. Plus 203 MCP tests, 135
+project-sales / complaint vitest tests, and a clean `tsc` over the touched areas.
+
+An earlier comparison read 857 failed / 426 errors and was thrown away: `conftest`'s
+session-start sweep does `DROP SCHEMA ... CASCADE` on EVERY `zzt_%` schema, so starting a
+second pytest session (even a single-file check) deletes the scratch schema the first one is
+still using -- hence `UndefinedTable` on `zzt_blank_<hex>.conversation_sla_tracking` in
+hundreds of unrelated tests. Zero `errors` is the clean-run tell; any error count at all means
+the environment was contended and the number is worthless.
+
 ## 6a. Grill findings and resolutions (round 1, 2026-07-25)
 
 Twenty-two findings from grilling this plan against the code it ports. Resolutions:
@@ -638,6 +688,21 @@ Twenty-two findings from grilling this plan against the code it ports. Resolutio
   Accepted; watch for user confusion in UAT.
 - **MOCHA company** owns no products, customers or brands. Company-scoped projects are
   future-proofing; SRT is the only live user in phase 1.
+- **A deepening breach never re-alerts.** The floor event fires on the TRANSITION into breach
+  only (`is_below_floor and not was_below`), so a line moved from 5% below its floor to 60%
+  below is silent - deliberately, to avoid an alert storm on the negotiation people are
+  concentrating on. Noticed while fixing F53 and left as shipped, because "how much deeper
+  counts as a new decision" is a client question, not a code one. If they want it, the trigger
+  is a percentage-worsening threshold, and the dedup key already carries the price so the
+  alerting side needs no further change.
+- **`ai_assistant_configs` is a singleton by convention only** (noticed during the 2026-07-28
+  hardening pass, deliberately NOT fixed there). Every reader -- including this module's MCP
+  bootstrap -- does `db.query(AIAssistantConfig).first()` with no ORDER BY, so a second row
+  would split the assistant's configuration non-deterministically between readers: the same
+  class of bug as the `system_settings` duplicate that made settings saves silently disappear
+  (migration 253). One row exists today and nothing enforces it. The fix is a unique index on a
+  SHARED table, which belongs on a branch that owns that table rather than on a module hardening
+  branch, where an extra migration would fork the alembic head.
 
 ## 7. Task management — added scope, decided
 

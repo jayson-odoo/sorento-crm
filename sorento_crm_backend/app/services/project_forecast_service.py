@@ -32,6 +32,7 @@ from app.models.projects import (
     OUTCOME_WON,
     Project,
     ProjectPurchaseOrder,
+    ProjectPurchaseOrderLine,
     ProjectQuotation,
     ProjectQuotationVersion,
     ProjectSalesProfile,
@@ -62,19 +63,28 @@ def delivery_lag_months(db: Session) -> int:
 
 
 def delivery_year(
-    db: Session, *, project: Project, lag_months: Optional[int] = None
+    db: Session,
+    *,
+    project: Project,
+    lag_months: Optional[int] = None,
+    profile: Optional[ProjectSalesProfile] = None,
 ) -> Optional[int]:
     """AC-I3. An explicit window WINS wherever set.
 
     Returns None when there is neither a window nor a launch date. Not "this year": bucketing
     an unknown into the current year is how a forecast quietly claims revenue it has no basis
     for at all.
+
+    ``profile`` is injectable for the same reason ``lag_months`` is: called from the forecast
+    loop, loading it here costs one SELECT per project on a page a sales manager refreshes all
+    day. Everything else in this service is already resolved in bulk.
     """
-    profile = (
-        db.query(ProjectSalesProfile)
-        .filter(ProjectSalesProfile.project_id == project.id)
-        .first()
-    )
+    if profile is None:
+        profile = (
+            db.query(ProjectSalesProfile)
+            .filter(ProjectSalesProfile.project_id == project.id)
+            .first()
+        )
     if profile is None:
         return None
     if profile.expected_delivery_from:
@@ -153,18 +163,45 @@ def _quoted_project_ids(db: Session, project_ids: List[str]) -> set:
 
 
 def _committed_by_project(db: Session, project_ids: List[str]) -> Dict[str, Decimal]:
+    """Banked money per project, using the module's ONE definition of a PO's value.
+
+    `po_total` (project_po_service) is that definition: the LINES when the PO has any, else
+    the header amount. Summing `po_amount` alone -- which this did -- silently valued every
+    line-by-line PO at zero, and the PO lines editor is exactly how a detailed PO gets
+    entered. Committed is the one figure in the report that claims to be banked; understating
+    it is worse than omitting it, because somebody acts on it.
+
+    Done in SQL rather than by calling `po_total` per row so a hundred POs stay two queries:
+    a lines sum grouped by PO, then a per-project fold that applies the same precedence.
+    """
     if not project_ids:
         return {}
-    rows = (
+
+    line_totals = dict(
         db.query(
-            ProjectPurchaseOrder.project_id,
-            func.coalesce(func.sum(ProjectPurchaseOrder.po_amount), 0),
+            ProjectPurchaseOrderLine.po_id,
+            func.coalesce(func.sum(ProjectPurchaseOrderLine.line_total), 0),
         )
+        .join(ProjectPurchaseOrder, ProjectPurchaseOrder.id == ProjectPurchaseOrderLine.po_id)
         .filter(ProjectPurchaseOrder.project_id.in_(project_ids))
-        .group_by(ProjectPurchaseOrder.project_id)
+        .group_by(ProjectPurchaseOrderLine.po_id)
         .all()
     )
-    return {row[0]: _money(row[1]) for row in rows}
+
+    out: Dict[str, Decimal] = {}
+    for po_id, project_id, po_amount in (
+        db.query(
+            ProjectPurchaseOrder.id,
+            ProjectPurchaseOrder.project_id,
+            ProjectPurchaseOrder.po_amount,
+        )
+        .filter(ProjectPurchaseOrder.project_id.in_(project_ids))
+        .all()
+    ):
+        lines = _money(line_totals.get(po_id, 0))
+        value = lines if lines != 0 else _money(po_amount)
+        out[project_id] = out.get(project_id, Decimal("0.00")) + value
+    return out
 
 
 def _probabilities(db: Session) -> Dict[str, Decimal]:
@@ -187,10 +224,13 @@ def _probabilities(db: Session) -> Dict[str, Decimal]:
 
 
 def _live_projects(db: Session, company_id: str) -> List[Project]:
-    """Everything not commercially closed.
+    """Projects that can still contribute SPECULATIVE money.
 
-    A lost or dormant project contributes nothing to any of the three numbers, and leaving it
-    in would make the pipeline grow every time something is lost.
+    A lost project contributes nothing to Pipeline or Weighted -- there is nothing left to
+    win, and leaving it in would make the pipeline grow every time something is lost.
+
+    It does NOT follow that a lost project contributes nothing to COMMITTED: see
+    `_projects_for_committed`.
     """
     return (
         db.query(Project)
@@ -202,9 +242,41 @@ def _live_projects(db: Session, company_id: str) -> List[Project]:
     )
 
 
+def _lost_projects_with_committed_money(db: Session, company_id: str) -> List[Project]:
+    """Lost projects that nevertheless have a purchase order on record.
+
+    A PO is money a contractor already committed to. If the remaining scopes are then lost the
+    project's derived outcome becomes `lost` -- and dropping the whole project took its banked
+    PO out of Committed with it, so the one number that reports what was ORDERED went down
+    when a different scope was lost. Orders do not un-happen.
+
+    Narrow on purpose: only lost projects that actually carry a PO come back, and they come
+    back for Committed only. Their Pipeline and Weighted stay zero because `_open_quotation_
+    totals` finds no open quotation and the estimate is suppressed once anything was priced.
+
+    No "not already in the live set" clause: the live set excludes lost projects by definition,
+    so it could never overlap, and expressing the redundancy meant handing a bare Python
+    ``True`` to `filter()` whenever a company had no live project at all.
+    """
+    if not company_id:
+        return []
+    return (
+        db.query(Project)
+        .filter(
+            Project.company_id == company_id,
+            Project.outcome == OUTCOME_LOST,
+            Project.id.in_(db.query(ProjectPurchaseOrder.project_id).distinct()),
+        )
+        .all()
+    )
+
+
 def forecast(db: Session, *, company_id: str) -> Dict[str, Any]:
     """The three numbers plus their year buckets (AC-I1, AC-I2, AC-I2a)."""
-    projects = _live_projects(db, company_id)
+    live = _live_projects(db, company_id)
+    # Lost projects with a PO are included so Committed stays honest; they carry no open
+    # quotation, so they add nothing to Pipeline or Weighted (asserted by a test).
+    projects = live + _lost_projects_with_committed_money(db, company_id)
     ids = [p.id for p in projects]
 
     open_totals = _open_quotation_totals(db, ids)
@@ -213,16 +285,20 @@ def forecast(db: Session, *, company_id: str) -> Dict[str, Any]:
     probabilities = _probabilities(db)
     lag = delivery_lag_months(db)
 
-    estimates: Dict[str, Decimal] = {}
+    # One load of the whole profile, not just the estimate: the delivery year comes off the
+    # same row, and fetching it inside the loop below cost a SELECT per project.
+    profiles: Dict[str, ProjectSalesProfile] = {}
     if ids:
-        estimates = {
-            row[0]: _money(row[1])
-            for row in db.query(
-                ProjectSalesProfile.project_id, ProjectSalesProfile.estimated_sales_value
-            )
+        profiles = {
+            str(row.project_id): row
+            for row in db.query(ProjectSalesProfile)
             .filter(ProjectSalesProfile.project_id.in_(ids))
             .all()
         }
+    estimates: Dict[str, Decimal] = {
+        project_id: _money(profile.estimated_sales_value)
+        for project_id, profile in profiles.items()
+    }
 
     totals = {"pipeline": Decimal("0.00"), "weighted": Decimal("0.00"), "committed": Decimal("0.00")}
     buckets: Dict[int, Dict[str, Decimal]] = {}
@@ -243,7 +319,14 @@ def forecast(db: Session, *, company_id: str) -> Dict[str, Any]:
         totals["weighted"] += weighted
         totals["committed"] += banked
 
-        year = delivery_year(db, project=project, lag_months=lag)
+        profile = profiles.get(str(project.id))
+        # No profile is no delivery year -- asking `delivery_year` would only re-query for the
+        # row we already know is absent.
+        year = (
+            delivery_year(db, project=project, lag_months=lag, profile=profile)
+            if profile is not None
+            else None
+        )
         target = undated if year is None else buckets.setdefault(
             year,
             {"pipeline": Decimal("0.00"), "weighted": Decimal("0.00"), "committed": Decimal("0.00")},
@@ -256,7 +339,10 @@ def forecast(db: Session, *, company_id: str) -> Dict[str, Any]:
         "pipeline": totals["pipeline"].quantize(_CENTS),
         "weighted": totals["weighted"].quantize(_CENTS),
         "committed": totals["committed"].quantize(_CENTS),
-        "project_count": len(projects),
+        # LIVE pursuits only. The lost-with-a-PO rows are folded in above so Committed stays
+        # honest, but counting them here would answer "how many projects are we chasing" with
+        # a number that includes the ones we lost.
+        "project_count": len(live),
         "by_year": [
             {"year": year, **{k: v.quantize(_CENTS) for k, v in values.items()}}
             for year, values in sorted(buckets.items())
@@ -338,16 +424,20 @@ def by_salesperson(db: Session, *, company_id: str) -> List[Dict[str, Any]]:
     committed = _committed_by_project(db, ids)
     probabilities = _probabilities(db)
 
-    estimates: Dict[str, Decimal] = {}
+    # One load of the whole profile, not just the estimate: the delivery year comes off the
+    # same row, and fetching it inside the loop below cost a SELECT per project.
+    profiles: Dict[str, ProjectSalesProfile] = {}
     if ids:
-        estimates = {
-            row[0]: _money(row[1])
-            for row in db.query(
-                ProjectSalesProfile.project_id, ProjectSalesProfile.estimated_sales_value
-            )
+        profiles = {
+            str(row.project_id): row
+            for row in db.query(ProjectSalesProfile)
             .filter(ProjectSalesProfile.project_id.in_(ids))
             .all()
         }
+    estimates: Dict[str, Decimal] = {
+        project_id: _money(profile.estimated_sales_value)
+        for project_id, profile in profiles.items()
+    }
 
     per_owner: Dict[str, Dict[str, Any]] = {}
     for project in projects:

@@ -22,6 +22,7 @@ mean nothing at all. That is why the whitelist is a closed tuple here rather tha
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -61,6 +62,40 @@ def _advance_clock(db: Session, project: Project) -> None:
     project.stale_level = 0
     project.stale_since = None
     project.stale_reason = None
+
+
+def can_view(db: Session, project_id: str, current_user: dict) -> bool:
+    """Visibility gate for the shared activities panel (AC-A3, AC-J2).
+
+    Supplied because the generic gate is opt-IN: an adapter that leaves `can_view` as None is
+    treated as "no opinion" and every holder of `projects.projects.view` can read and post on
+    ANY project id. `activity_events` is not company-scoped, so without this a user in one
+    company could read another company's internal notes by pasting a project id -- and a post
+    would reset that project's staleness clock, clearing an Unattended badge they cannot see.
+
+    The check is deliberately just "does this project resolve for you": the query runs on the
+    request session, so the fail-closed company filter answers the cross-company half, and
+    everything else about project visibility is already "anyone with `.view` in this company"
+    (AC-J2). Edit rights are a separate question the write routes answer.
+    """
+    if not project_id:
+        return False
+    try:
+        uuid.UUID(str(project_id))
+    except (AttributeError, TypeError, ValueError):
+        # A malformed id never reaches Postgres. Comparing one to a uuid column raises, and the
+        # raise ABORTS the transaction -- the generic gate turns that into a correct 404 while
+        # leaving the session poisoned for whatever the request does next. An id that is not an
+        # id is simply not visible.
+        return False
+    try:
+        return (
+            db.query(Project.id).filter(Project.id == str(project_id)).first() is not None
+        )
+    except Exception:  # noqa: BLE001 -- a failed lookup is a "no", not a 500
+        if not db.is_active:
+            db.rollback()
+        return False
 
 
 def record_project_event(

@@ -173,6 +173,9 @@ def _register_activities_adapters() -> None:
                 # being able to change its numbers. Silencing observers loses the information
                 # the pursuit record exists to hold.
                 get_respond_contacts=project_activity_service.respond_contacts_for,
+                # Without a can_view the generic gate is a no-op and any project id is
+                # readable by any holder of the view permission, across companies.
+                can_view=project_activity_service.can_view,
                 on_post=lambda db, project_id, actor_id, body_html: (
                     project_activity_service.note_user_activity(
                         db, project_id=project_id, actor_id=actor_id

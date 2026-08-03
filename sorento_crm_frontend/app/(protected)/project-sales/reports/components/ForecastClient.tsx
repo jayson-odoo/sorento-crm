@@ -18,6 +18,13 @@ import { formatMyr } from '../../[projectId]/components/QuotationsPanel';
  * no total anywhere on this page, and that is deliberate: a single figure mixing a banked PO
  * with a 10%-probability rumour is exactly the number this module exists to stop producing.
  */
+/** Money arrives as a decimal STRING, so `Number` first: "0.00" is falsy as a number and
+ *  truthy as a string, which is the wrong answer in the one place it is used. */
+function hasMoney(value: string | null | undefined): boolean {
+  const amount = Number(value ?? 0);
+  return Number.isFinite(amount) && amount !== 0;
+}
+
 export function ForecastClient() {
   const dashboard = useProjectDashboard();
 
@@ -45,7 +52,13 @@ export function ForecastClient() {
 
   const { forecast, conversion, loss_reasons, by_salesperson, sponsorship, delivery_lag_months } =
     dashboard.data;
-  const hasAnything = forecast.project_count > 0;
+  // `project_count` counts LIVE pursuits only, so on its own it is not a safe test for "is
+  // there anything on this page". A company can have money on record and no live project at
+  // all: a lost project keeps its purchase order in Committed, because an order does not
+  // un-happen. Gating the page on the count alone printed "Nothing to forecast yet" above a
+  // real committed figure.
+  const hasAnything =
+    forecast.project_count > 0 || hasMoney(forecast.committed) || hasMoney(forecast.pipeline);
 
   return (
     <div className="space-y-5">
