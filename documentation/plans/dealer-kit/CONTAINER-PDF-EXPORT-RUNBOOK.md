@@ -82,9 +82,37 @@ Nothing else changes. `worker.py` already listens on `catalogue_render`
 alongside `imports` and `respond_io`, and the queue is separate on purpose so a
 slow Chromium render cannot block an Excel import.
 
+## The image does not exist on main yet
+
+**Compose builds `context: ./sorento_crm_backend` of the CHECKOUT, and the
+Playwright steps live only on `feat/dealer-kit-hardening`.** Verified on
+2026-08-03 by building `worker` from the main checkout and looking inside:
+
+```
+$ docker run --rm --entrypoint sh jayson1004/sorento-crm:backend-1.0.1 -c \
+    'python -c "import playwright"'
+ModuleNotFoundError: No module named 'playwright'
+```
+
+`grep -n playwright sorento_crm_backend/Dockerfile` returns nothing on main and
+four lines on this branch. So `docker compose up --build worker` against main
+produces a worker that cannot render at all, and the failure looks like a
+render timeout rather than a missing dependency.
+
+That means the container export cannot be verified from the deployed compose
+until this branch merges. Until then, build the worker image from the branch
+checkout explicitly:
+
+```bash
+docker build -t sorento-crm:dealer-kit-worker-test \
+  .claude/worktrees/dealer-kit/sorento_crm_backend
+```
+
+and point the compose `worker` service at that tag for the test.
+
 ## What is already handled in the image
 
-Confirmed by reading `sorento_crm_backend/Dockerfile`, not by running it:
+Read off this branch's `sorento_crm_backend/Dockerfile`:
 
 - `playwright install-deps chromium` runs as root (system libraries).
 - `USER appuser` comes BEFORE `playwright install chromium`, so the browser
