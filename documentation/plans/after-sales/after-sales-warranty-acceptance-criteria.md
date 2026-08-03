@@ -530,6 +530,71 @@ tests rather than arriving as a side effect of S4.
 - **AC-M39** `[BE]` Given pin and address disagree, Then **both are kept and neither is reconciled** - the pin is what the technician navigates to, the address is what appears on documents.
 - **AC-M40** `[T]` Given the Google Maps key on a public page, Then it is **HTTP-referrer restricted** - a public portal key is scrapable and billable.
 
+### S2a corrections - after the red suite (2026-08-03)
+
+77 red, 9 guards green. Three findings block the slice as specified.
+
+- **AC-M22a** `[BE][MIG]` **The five columns of AC-M22 cannot express "unvalidated", which defeats the
+  slice's own stated risk mitigation.** The plan says a hard timeout "degrades to unvalidated rather than
+  blocking", but with only `ai_score` / `ai_suggestion` / `override_reason` / `latitude` / `longitude`,
+  `ai_score IS NULL` has to mean three different things at once: the type does not validate, the model
+  timed out, and the row predates the slice. Any UI reading NULL as failure **refuses a good photo because
+  the network was slow** - exactly the outcome the mitigation exists to prevent. So the link also carries
+  `ai_validation_state` (`scored` / `unvalidated`; NULL = no claim made) and `ai_validation_reason`
+  (`timeout` / `error` / `no_guidance` / `no_provider` / `unsupported_media`). **`unvalidated` is a
+  DISTINCT state from a low score, never a NULL and never a zero.** Same ruling and same reason as
+  AC-D17's `unknown` verdict: an implicit encoding gets read as a refusal by every caller. Two columns
+  rather than one flag, because the first answers "may I trust `ai_score`" and the second is the only
+  thing separating "my timeout is too short" from "my provider key is wrong".
+- **AC-M22b** `[BE]` **The score scale is integer 0-100 on BOTH `ai_score` and `min_score`**, with declared
+  bounds. Neither AC states a scale, so the two are not comparable as written. `min_score` is admin data
+  entry in the same dialog as `max_file_size_mb`: an admin who types `70` meaning 70% into a 0-1 column
+  sets a threshold nothing can ever clear, silently and permanently. A model reply on a 0.0-1.0 scale
+  degrades to `unvalidated` and is **never rounded** (0.82 rounds to 1 and refuses a good photo); an
+  out-of-range reply degrades rather than clamping (clamping 1000 to 100 passes a photo on a reply nobody
+  can explain).
+- **AC-M25a** `[BE]` **The prompt key is `attachment_validator`, NOT `validator`.** `PROMPT_KEYS` already
+  contains `validator` - the assistant's dormant M3a answer-confidence gate. Reusing that name would put a
+  photo-scoring instruction in front of the assistant's answer gate the moment M3a activates, sharing one
+  version chain and one production label. A guard asserts the existing key still means the answer gate.
+- **AC-M24a** `[BE]` **"Use anyway requires a reason" is enforced in the SERVICE**, not the route. Three
+  callers exist (portal, CRM panel, technician app) and ADR-0013 rule 7 applies: a guard on the action
+  routes is not a guard. An override is also refused on a link that did NOT fail - there is nothing to
+  override, and a reason recorded against a passing upload pollutes the one metric AC-M24 exists to
+  produce.
+- **AC-M23a** `[BE]` **`validate_on_upload = true` with blank `validation_guidance` is refused at the
+  write AND degrades at runtime** to `unvalidated` / `no_guidance` with no model call. Scoring against an
+  empty guidance is scoring against nothing, and the number comes back looking authoritative either way.
+  Both halves, because a migration, a raw INSERT and another worktree are all paths into this table that
+  the write guard does not cover.
+- **AC-M23b** `[BE]` **A missing AI provider must not break uploading.** `ai_extract._resolve_provider`
+  raises `AppException(400)` when no API key is configured; copied into an upload path that turns **every
+  photo upload into a 400 on a fresh install, on a local dev machine, and on any tenant that never bought
+  an AI subscription**. Degrades to `unvalidated` / `no_provider`.
+- **AC-M20a** `[BE]` **`min_score = 0` passes everything; `min_score = NULL` is advisory** (scored,
+  suggestion shown, nothing ever fails); out of 0..100 is refused at the write. Same table as F2c's
+  `max_count_per_entity = 0`, which silently means "never attachable" - an admin typing 0 to mean "off"
+  must not brick the type. The threshold is **inclusive**: an admin setting 60 means sixty is good enough.
+- **AC-M23c** `[BE]` **The validator receives BYTES, never an id or a URL**, and the file is stored and the
+  link written regardless of the score. Uploads span `s3` and `r2` and R2 keys are not always public, so a
+  URL-based validator behaves differently per provider and breaks mid-migration. A validator that discards
+  the bytes it judged makes Retake free but the failure unobservable, and a timeout would lose a photo
+  already taken.
+- **`latitude` / `longitude` stay on the LINK row as AC-M22 says**, with a guard that `attachments` does
+  not ALSO gain them. The argument that a geotag is an immutable property of the FILE is a good one and is
+  recorded, but two homes for one fact is strictly worse than one arguable home. Type is `Numeric(10,7)`,
+  asserted equal to `complaints.latitude` (AC-B21): they sit on one screen, and a capture pin rounded
+  coarser than the Site pin makes "was this photo taken at the site" unanswerable at the precision it is
+  asked. A half coordinate, an impossible coordinate and exactly `(0, 0)` are all dropped rather than
+  raising (AC-M27 says never blocking); `(0, 0)` is the classic no-fix sentinel and Sorento operates in
+  Malaysia.
+- **Correction to the brief I gave:** `app/services/attachment_service.py` does not exist. `check_quota`
+  is `app/services/entity_attachment_service.py`, `sanitize_storage_filename` is
+  `app/services/storage_router.py`.
+- **Flagged, not built: nothing meters the cost.** Every opted-in upload is now an LLM call and nothing
+  counts it. `ai_extract` logs to `AIAssistantUsageLog` with `feature=ai_extract`; the validator has no
+  equivalent. **Worth a decision before S3 puts this on a public page**, where the callers are unauthenticated.
+
 ## Group L - Consumer profile and the purchase ledger
 
 **Grilled and resolved 2026-07-31** (forks 1, 2, 3, 4, 7 in `OPEN-consumer-ledger-grill.md`).
