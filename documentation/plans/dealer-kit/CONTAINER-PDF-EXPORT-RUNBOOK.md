@@ -1,9 +1,22 @@
 # Running a catalogue PDF export in a container
 
-**Status:** the compose change below is DERIVED FROM THE CODE and has NOT been
-executed. Docker was not running on 2026-08-03 and the root compose predates the
-Dealer Kit entirely, so "nobody has run an export in a container yet" is still
-true. This is the runbook for closing that, not a record of having closed it.
+**Status: still not executed, but the diagnosis is now VERIFIED rather than
+derived.** Docker was started on 2026-08-03 and `docker compose --profile blue
+config` was resolved. It confirms every claim below against the resolver rather
+than against a reading of the YAML:
+
+| Service | `sorento_network` alias | `DEALER_KIT_PRINT_BASE_URL` |
+|---|---|---|
+| `backend_blue` | `backend` | unset |
+| `mcp_blue` | `mcp` | unset |
+| `frontend_blue` | **none** | unset |
+| `worker` | none (does not need one) | **unset** |
+
+So the two changes below are exactly the two that are missing, and nothing else
+is.
+
+**Why it still was not run** is a different blocker from the original one, and
+a more interesting one. See "What stops `up` on this machine".
 
 Compose is deliberately not in the repo (`docker-compose.yml` at the
 `sorento_crm/` root is gitignored, and CI ships only the deploy script), so the
@@ -83,10 +96,45 @@ Confirmed by reading `sorento_crm_backend/Dockerfile`, not by running it:
   never in RQ's forked work-horse. That was for a macOS segfault, and it also
   keeps Chromium's memory out of the worker in Linux.
 
+## What stops `up` on this machine
+
+Two things, and neither is about the Dealer Kit.
+
+**1. Every infrastructure port is already taken by the local dev stack.**
+Checked on 2026-08-03 with `lsof -sTCP:LISTEN`:
+
+| Compose service | Host bind | Already held by |
+|---|---|---|
+| `db` | `5432` | local Postgres (the prod-copy dev DB) |
+| `redis` | `6379` | local Redis |
+| `frontend_blue` | `127.0.0.1:3000` | a local `node` process |
+
+`docker compose up` fails on the bind. It does NOT clobber them, but it does
+not start either. Run it with a `docker-compose.override.yml` that remaps those
+three host ports, or stop the local services first - **your call which**, since
+stopping them takes the dev stack down with them.
+
+**2. The worker container runs the scheduler with live credentials.**
+`ENABLE_SCHEDULER: "true"` is set on `worker` (correctly - it is the single
+instance that owns cron ticks). Its `env_file` is the real
+`sorento_crm_backend/.env`, which carries a production `N8N_WEBHOOK_URL` and a
+production `RESPOND_API_KEY`. The database it talks to is the CONTAINERISED one
+(`pgbouncer` / `db`, not `localhost`), but the `sorento_crm_postgres_data`
+volume already exists on this machine and its contents were not inspected.
+
+If that volume holds real rows, bringing the worker up fires SLA escalations and
+Respond.io sends against production endpoints. **Before running this, either
+set `ENABLE_SCHEDULER: "false"` on the worker for the duration of the test (the
+export queue drains without the scheduler - it is RQ, not cron), or point
+`env_file` at a scratch env with the outbound credentials blanked.**
+
+That was the reason this was not executed unattended on 2026-08-03, and it is a
+better reason than "Docker was off".
+
 ## Verifying
 
 ```bash
-# 1. Start Docker Desktop first - this is the step that blocked 2026-08-03.
+# 1. Deal with both blockers above first. Docker itself is no longer the issue.
 docker compose up -d --build worker frontend_blue backend_blue redis db
 
 # 2. Confirm the browser is where the worker will look for it.
