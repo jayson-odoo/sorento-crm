@@ -684,7 +684,30 @@ live backend therefore resolves what the consumer TYPES rather than pretending t
 photo, which still gives a real dealer match against the real customer table. Wiring
 ai-extract into `LodgeBackend.extract` is a contained follow-up: one method, one shape map.
 
-Still open in Phase 2: that extract mapping, Consumer 360, and a playwright spec.
+- Consumer 360 (commit b59249ce2, 14 pytest + 6 vitest). Three endpoints under a new
+  `consumer-management` router, a searchable list and a detail page, reachable from a new
+  sidebar group. Adds `consumers.profiles.view`, kept SEPARATE from the value grant.
+
+Still open in Phase 2: the ai-extract mapping and a playwright spec.
+
+**Two environment findings from verifying Consumer 360 in a browser, both of which apply
+to production and neither of which is code:**
+
+1. **The `consumers` and `warranty` modules were never installed on the tenant.** Every
+   engine S1 and S2 built has been sitting behind a module guard that was off, and the
+   sidebar group correctly refused to render because of it. Installed on the local dev
+   tenant via `install_modules(db, DEFAULT_TENANT_ID, ["consumers", "warranty"], None)`;
+   **production needs the same install** before any of this is reachable there.
+2. **`consumers.profiles.view` did not exist** - the registry carried only the value
+   permission. Added to `permission_registry.py` and synced locally; production needs
+   `sync_permissions` and then a grant to whichever roles should open the ledger. Nobody
+   holds it by default, and superadmin bypasses it, which is why the endpoint tests seed a
+   plain CS role rather than asserting against a superadmin (an assertion that would pass
+   whether or not the permission worked).
+
+Also worth knowing: a consumer row written by a script with no company scope gets
+`company_id = NULL` and is then invisible to the API, which filters by company. The
+auto-stamp fires on ORM flush inside a scoped request, not in a bare script.
 
 **Unrelated flaky test found while verifying, NOT caused by this slice and not fixed here.**
 `test_complaint_analytics::test_group_by_product_ranked_desc` passes or fails run to run on
