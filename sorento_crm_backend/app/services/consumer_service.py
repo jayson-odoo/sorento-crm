@@ -102,11 +102,16 @@ logger = logging.getLogger(__name__)
 CONSENT_PURPOSE_WARRANTY_SERVICE = "warranty_service"
 CONSENT_PURPOSES = frozenset({CONSENT_PURPOSE_WARRANTY_SERVICE})
 
-# PDPA 2010 s.7(2): the collection notice must exist in Bahasa Malaysia AND
-# English. This records WHICH wording a person saw. The Malay text is not drafted
-# and needs somebody who writes it properly, so the version is recorded and the
-# notice itself is still outstanding.
-CONSENT_NOTICE_VERSION = "2026-08-BM-EN-DRAFT"
+# PDPA 2010 s.7(2): the collection notice must exist in Bahasa Malaysia AND English,
+# and `consent_notice_version` records WHICH wording a person saw. The wording now
+# lives in `consent_notices` (migration 322) rather than in a constant here - a
+# literal recorded a version of nothing, which made the one question a consent record
+# exists to answer unanswerable.
+#
+# A profile created by a STAFF-SIDE path is stamped with NOTHING, because nobody was
+# shown anything. Claiming otherwise would assert that a person read a notice that was
+# never on their screen, which is the specific lie this column exists to prevent. The
+# portal stamps it through `record_consent` at the moment it displays the notice.
 
 # Where a registration came from. `auto_on_complaint` is the AC-D8 path and is the
 # reason this vocabulary exists at all: only a DELIBERATE act by the consumer earns
@@ -312,8 +317,10 @@ def ensure_profile(
         phone_e164=e164,
         full_name=incoming_name,
         consent_purpose=CONSENT_PURPOSE_WARRANTY_SERVICE,
-        consent_notice_version=CONSENT_NOTICE_VERSION,
-        consent_recorded_at=_utcnow(),
+        # Deliberately unstamped: see the note beside CONSENT_PURPOSES. This path runs
+        # from staff and n8n contact, where no notice is ever displayed.
+        consent_notice_version=None,
+        consent_recorded_at=None,
         is_provisional=bool(provisional),
         confirmed_at=None if provisional else _utcnow(),
     )
@@ -807,3 +814,34 @@ def serialize_purchase(purchase: ConsumerPurchase, *, can_view_value: bool) -> D
         payload["total_value"] = purchase.total_value
         payload["currency"] = purchase.currency
     return payload
+
+
+def record_consent(db, profile, *, notice_key: str = "consumer_intake"):
+    """Stamp the notice a person was actually shown onto their profile.
+
+    Called by the portal at the moment of submission, never by a staff-side path: the
+    stamp asserts "this human read these words", and the only place that is true is a
+    screen that rendered them.
+
+    Raises when no notice is published, because collecting personal data with nothing
+    lawful on screen is the failure PDPA s.7 describes, and failing closed here is
+    cheaper than discovering it in an audit.
+    """
+    from app.services.consent_notice_service import current_notice, stamp_for
+    from app.services.error_handler import AppException
+
+    notice = current_notice(db, notice_key)
+    if notice is None:
+        raise AppException(
+            status_code=409,
+            message=(
+                "No published consent notice exists, so personal data must not be "
+                "collected. Publish the collection notice first."
+            ),
+            code="consent_notice_missing",
+        )
+    profile.consent_purpose = CONSENT_PURPOSE_WARRANTY_SERVICE
+    profile.consent_notice_version = stamp_for(notice)
+    profile.consent_recorded_at = _utcnow()
+    db.flush()
+    return profile

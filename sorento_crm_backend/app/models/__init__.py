@@ -18,6 +18,7 @@ from app.models.workflow_forms import (
     WorkflowSubmissionTransitionLog,
 )
 from app.models.complaints import Complaint, ComplaintAttachment, ComplaintManualAttachment, ComplaintFulfilmentOrder
+from app.models.consent_notice import ConsentNotice
 from app.models.consumers import (
     ConsumerProfile,
     ConsumerProfileReview,

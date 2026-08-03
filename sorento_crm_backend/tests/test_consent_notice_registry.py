@@ -340,3 +340,70 @@ def test_every_profile_stamp_in_the_database_resolves(db):
     ]
     unresolved = [s for s in stamps if by_stamp(db, s) is None]
     assert not unresolved, f"Profile stamps resolving to no notice: {unresolved}"
+
+
+def test_a_staff_created_profile_claims_no_notice(db):
+    """The honest half of the fix, and it is not cosmetic.
+
+    `ensure_profile` runs from staff screens and n8n contact events, where
+    nobody is ever shown a notice. Stamping a version there asserts that a person read
+    words that were never on their screen - which is precisely the lie this column exists
+    to prevent, and it is worse than a blank because it looks like evidence.
+    """
+    from app.models.access import RespondContact
+    from app.services import consumer_service
+
+    reg = _registry()
+    _fn(reg, "seed_consent_notices", "(db)")(db)
+
+    contact = RespondContact(id="zzt-consent-contact", phone_number="+60123456789", name="ZZT")
+    db.add(contact)
+    db.flush()
+
+    profile = consumer_service.ensure_profile(
+        db, phone="+60123456789", full_name="ZZT Consumer", respond_contact_id=contact.id
+    )
+    assert profile.consent_purpose == PURPOSE, "The lawful basis is still recorded."
+    assert profile.consent_notice_version is None, (
+        "Nobody showed this person a notice, so nothing may claim they saw one."
+    )
+    assert profile.consent_recorded_at is None
+
+
+def test_the_portal_path_stamps_the_published_notice(db):
+    """And the other half: when a notice IS displayed, the stamp resolves to it."""
+    from app.models.access import RespondContact
+    from app.services import consumer_service
+
+    reg = _registry()
+    _fn(reg, "seed_consent_notices", "(db)")(db)
+
+    contact = RespondContact(id="zzt-consent-contact-2", phone_number="+60129876543", name="ZZT2")
+    db.add(contact)
+    db.flush()
+    profile = consumer_service.ensure_profile(
+        db, phone="+60129876543", full_name="ZZT Consumer 2", respond_contact_id=contact.id
+    )
+
+    consumer_service.record_consent(db, profile)
+    assert profile.consent_recorded_at is not None
+    found = _fn(reg, "notice_for_stamp", "(db, stamp)")(db, profile.consent_notice_version)
+    assert found is not None and found.is_published
+
+
+def test_recording_consent_with_no_published_notice_fails_closed(db):
+    """Collecting personal data with nothing lawful on screen is the failure s.7
+    describes. Failing closed here is cheaper than finding it in an audit.
+    """
+    from app.models.access import RespondContact
+    from app.services import consumer_service
+
+    contact = RespondContact(id="zzt-consent-contact-3", phone_number="+60127654321", name="ZZT3")
+    db.add(contact)
+    db.flush()
+    profile = consumer_service.ensure_profile(
+        db, phone="+60127654321", full_name="ZZT Consumer 3", respond_contact_id=contact.id
+    )
+    with pytest.raises(Exception) as exc:
+        consumer_service.record_consent(db, profile)
+    assert "consent" in str(exc.value).lower()
