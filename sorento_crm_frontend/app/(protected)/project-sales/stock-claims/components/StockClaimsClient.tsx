@@ -190,7 +190,7 @@ export function StockClaimsClient() {
         id: 'sales_order_ref',
         header: ({ column }) => <DataGridColumnHeader title="Sales order" column={column} />,
         cell: ({ row }) => {
-          const text = row.original.sales_order_ref || 'Not linked';
+          const text = row.original.sales_order_ref || '-';
           return (
             <span className="block truncate" title={text}>
               {text}

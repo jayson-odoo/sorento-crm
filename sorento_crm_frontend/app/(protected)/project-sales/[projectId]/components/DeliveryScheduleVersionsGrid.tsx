@@ -67,7 +67,7 @@ export function DeliveryScheduleVersionsGrid({
         header: ({ column }) => <DataGridColumnHeader title="Issued by" column={column} />,
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.issuer_party_label ?? ''}>
-            {row.original.issuer_party_label ?? 'Not recorded'}
+            {row.original.issuer_party_label ?? '-'}
           </span>
         ),
         size: 200,

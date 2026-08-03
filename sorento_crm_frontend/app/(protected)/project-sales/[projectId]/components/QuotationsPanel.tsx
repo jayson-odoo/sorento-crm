@@ -11,6 +11,7 @@ import {
   useQuotationMutations,
   useQuotations,
 } from '../../_shared/hooks/useProjects';
+import { OutcomePill } from '../../_shared/components/OutcomePill';
 import type { Project, ProjectQuotation } from '../../_shared/types/project.types';
 import { QuotationDialog } from './QuotationDialog';
 import { QuotationOutcomeDialog } from './QuotationOutcomeDialog';
@@ -127,12 +128,7 @@ export function QuotationsPanel({ project }: { project: Project }) {
                         <span className="truncate text-sm font-medium" title={quotation.scope_label}>
                           {quotation.scope_label}
                         </span>
-                        <Badge
-                          variant={quotation.outcome === 'open' ? 'outline' : 'secondary'}
-                          className="capitalize"
-                        >
-                          {quotation.outcome}
-                        </Badge>
+                        <OutcomePill outcome={quotation.outcome} />
                         {quotation.below_floor_count > 0 && (
                           <Badge variant="destructive" className="text-[11px]">
                             {`${quotation.below_floor_count} below floor`}

@@ -116,7 +116,7 @@ export function LeadsGrid({
         meta: { headerTitle: 'Developer', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.developer_name ?? ''}>
-            {row.original.developer_name ?? <Muted>Not recorded</Muted>}
+            {row.original.developer_name ?? <Muted>-</Muted>}
           </span>
         ),
       },
@@ -129,7 +129,7 @@ export function LeadsGrid({
         meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.location ?? ''}>
-            {row.original.location ?? <Muted>Not recorded</Muted>}
+            {row.original.location ?? <Muted>-</Muted>}
           </span>
         ),
       },
@@ -145,7 +145,7 @@ export function LeadsGrid({
           const who = informantSummary(row.original);
           return (
             <span className="block truncate" title={who ?? undefined}>
-              {who ?? <Muted>Not recorded</Muted>}
+              {who ?? <Muted>-</Muted>}
             </span>
           );
         },

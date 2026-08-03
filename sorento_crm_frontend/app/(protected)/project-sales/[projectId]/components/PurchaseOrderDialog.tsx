@@ -174,7 +174,7 @@ export function PurchaseOrderDialog({
                   label: party.name,
                   description: party.party_type.replace(/_/g, ' '),
                 }))}
-                placeholder="Not recorded"
+                placeholder="-"
                 emptyMessage="No parties on file"
               />
             </div>

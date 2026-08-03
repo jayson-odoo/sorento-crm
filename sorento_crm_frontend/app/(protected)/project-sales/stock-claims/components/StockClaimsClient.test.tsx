@@ -279,7 +279,7 @@ describe('StockClaimsClient', () => {
     expect(screen.getByText('Waiting')).toBeInTheDocument();
   });
 
-  it('names what is not recorded instead of leaving a blank cell', async () => {
+  it('shows a dash for an unknown value rather than a blank cell', async () => {
     listAllocationClaims.mockResolvedValue(
       envelope([
         claim({
@@ -295,7 +295,7 @@ describe('StockClaimsClient', () => {
 
     expect(await screen.findByText('Not resolved')).toBeInTheDocument();
     expect(screen.getByText('No location')).toBeInTheDocument();
-    expect(screen.getByText('Not linked')).toBeInTheDocument();
+    expect(screen.getByText('-')).toBeInTheDocument();
     expect(screen.getByText('No date')).toBeInTheDocument();
   });
 

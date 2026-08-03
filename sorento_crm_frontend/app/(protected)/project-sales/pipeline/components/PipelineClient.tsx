@@ -244,9 +244,11 @@ export function PipelineClient() {
               variant={view === 'board' ? 'primary' : 'ghost'}
               onClick={() => switchView('board')}
               aria-pressed={view === 'board'}
+              aria-label="Board view"
+              title="Board view"
+              mode="icon"
             >
               <KanbanSquare className="size-4" aria-hidden />
-              Board
             </Button>
             <Button
               type="button"
@@ -254,9 +256,11 @@ export function PipelineClient() {
               variant={view === 'grid' ? 'primary' : 'ghost'}
               onClick={() => switchView('grid')}
               aria-pressed={view === 'grid'}
+              aria-label="Grid view"
+              title="Grid view"
+              mode="icon"
             >
               <Table2 className="size-4" aria-hidden />
-              Grid
             </Button>
           </div>
           <Button type="button" onClick={() => setRegisterOpen(true)}>

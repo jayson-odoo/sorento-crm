@@ -1,16 +1,7 @@
 'use client';
 
-import * as React from 'react';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import type {
   Status,
   StatusGraph,
@@ -24,7 +15,32 @@ export type StatusMove = {
   label: string;
   /** The rung it lands on, e.g. "PO Received". */
   toLabel: string;
+  /** Terminal rungs (Lost, Dormant) are exits, never the happy path. */
+  toIsTerminal: boolean;
 };
+
+/**
+ * The forward move, and everything else.
+ *
+ * The happy path is the FIRST non-terminal move in the admin's own sort order. That is the
+ * step the person came to take, so it is the one button in the header; exits and side moves
+ * go behind the gear, where a deliberate action belongs.
+ *
+ * A funnel whose only remaining moves are terminal (nothing forward left) still gets a
+ * primary button, because "there is a next step but we are hiding it" would be worse than
+ * naming the exit.
+ */
+export function splitStatusMoves(moves: StatusMove[]): {
+  primary: StatusMove | null;
+  secondary: StatusMove[];
+} {
+  if (moves.length === 0) return { primary: null, secondary: [] };
+  const forward = moves.find((move) => !move.toIsTerminal) ?? moves[0];
+  return {
+    primary: forward,
+    secondary: moves.filter((move) => move.transitionId !== forward.transitionId),
+  };
+}
 
 /**
  * The moves a person may fire from where this project stands.
@@ -68,15 +84,18 @@ export function availableStatusMoves(
       toStatusId: target.id,
       label: transition.label,
       toLabel: target.label,
+      toIsTerminal: Boolean(target.is_terminal),
     }));
 }
 
 /**
- * The project's one primary action: its next step.
+ * The project's one primary action: its next step, named.
  *
- * One move available names it outright. Several, and the header still shows ONE button,
- * which opens a short list to pick from -- a header with four competing buttons is the
- * same problem as a free dropdown, spelled differently.
+ * It used to open a dialog listing every legal move - "Register with developer", "PO
+ * received", "Mark lost", "Mark dormant" - which makes the commonest action a decision
+ * between four, and puts marking a pursuit LOST one careless click from advancing it. The
+ * header now fires the forward move directly. Exits live behind the gear (see
+ * `splitStatusMoves`), so choosing one is deliberate.
  */
 export function ProjectStatusAction({
   moves,
@@ -87,57 +106,13 @@ export function ProjectStatusAction({
   onMove: (toStatusId: string) => void;
   isPending?: boolean;
 }) {
-  const [choosing, setChoosing] = React.useState(false);
-
-  if (moves.length === 0) return null;
-  const only = moves.length === 1 ? moves[0] : null;
+  const { primary } = splitStatusMoves(moves);
+  if (!primary) return null;
 
   return (
-    <>
-      <Button
-        type="button"
-        disabled={isPending}
-        onClick={() => (only ? onMove(only.toStatusId) : setChoosing(true))}
-      >
-        {isPending && <Loader2 className="size-4 animate-spin" aria-hidden />}
-        {only ? only.label : 'Move stage'}
-      </Button>
-
-      {choosing && (
-        <Dialog open onOpenChange={(next) => !next && setChoosing(false)}>
-          <DialogContent className="max-h-[92vh] w-full max-w-sm overflow-hidden">
-            <DialogHeader>
-              <DialogTitle>Move stage</DialogTitle>
-            </DialogHeader>
-            <DialogBody className="max-h-[60vh] space-y-2 overflow-y-auto">
-              {moves.map((move) => (
-                <Button
-                  key={move.transitionId}
-                  type="button"
-                  variant="outline"
-                  className="h-auto w-full justify-start whitespace-normal py-2 text-start"
-                  onClick={() => {
-                    setChoosing(false);
-                    onMove(move.toStatusId);
-                  }}
-                >
-                  <span className="min-w-0 break-words">
-                    <span className="block text-sm font-medium">{move.label}</span>
-                    <span className="block text-xs text-muted-foreground">
-                      {`Moves to ${move.toLabel}`}
-                    </span>
-                  </span>
-                </Button>
-              ))}
-            </DialogBody>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setChoosing(false)}>
-                Cancel
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
-    </>
+    <Button type="button" disabled={isPending} onClick={() => onMove(primary.toStatusId)}>
+      {isPending && <Loader2 className="size-4 animate-spin" aria-hidden />}
+      {primary.label}
+    </Button>
   );
 }

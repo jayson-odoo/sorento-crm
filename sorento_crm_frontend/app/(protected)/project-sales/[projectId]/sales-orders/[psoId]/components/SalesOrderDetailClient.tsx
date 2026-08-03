@@ -242,7 +242,7 @@ export function SalesOrderDetailClient({
           <CardTitle className="text-sm">This sales order</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Field label="Billed to" value={so.customer_name || 'Not set'} />
+          <Field label="Billed to" value={so.customer_name || '-'} />
           <Field label="Lines" value={so.line_count.toLocaleString()} />
           <Field label="Value" value={formatMoney(so.total_amount)} />
           <Field

@@ -189,13 +189,10 @@ describe('PartyDetailClient', () => {
     expect(screen.getByRole('heading', { name: 'Commercial' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Notes' })).toBeInTheDocument();
 
-    expect(
-      screen.getByText(/two firms with the same trading name look like one/i),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Nobody can chase a specification without it/i),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/never places the order/i)).toBeInTheDocument();
+    // An unknown FIELD is a dash, not a sentence explaining why it matters. The
+    // section-level empty states below still speak, because "no projects yet" needs a
+    // next step; a blank cell does not.
+    expect(screen.getAllByText('-').length).toBeGreaterThan(0);
     expect(screen.getByText(/None yet\. Register a project/i)).toBeInTheDocument();
     expect(screen.getByText(/Nothing written down/i)).toBeInTheDocument();
   });

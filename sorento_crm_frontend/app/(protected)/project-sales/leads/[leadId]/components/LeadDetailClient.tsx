@@ -691,7 +691,7 @@ function AccountPanel({
 function Fact({
   label,
   value,
-  emptyText = 'Not recorded',
+  emptyText = '-',
 }: {
   label: string;
   value?: string | null;

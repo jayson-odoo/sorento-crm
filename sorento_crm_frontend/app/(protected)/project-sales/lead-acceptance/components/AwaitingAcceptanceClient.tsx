@@ -145,7 +145,7 @@ export function AwaitingAcceptanceClient() {
         id: 'informant',
         header: ({ column }) => <DataGridColumnHeader title="Told us" column={column} />,
         cell: ({ row }) => {
-          const who = informantSummary(row.original) ?? 'Not recorded';
+          const who = informantSummary(row.original) ?? '-';
           return (
             <span className="block truncate" title={who}>
               {who}
@@ -159,7 +159,7 @@ export function AwaitingAcceptanceClient() {
         accessorKey: 'developer_name',
         header: ({ column }) => <DataGridColumnHeader title="Developer" column={column} />,
         cell: ({ row }) => {
-          const developer = row.original.developer_name ?? 'Not recorded';
+          const developer = row.original.developer_name ?? '-';
           return (
             <span className="block truncate" title={developer}>
               {developer}
@@ -175,7 +175,7 @@ export function AwaitingAcceptanceClient() {
         cell: ({ row }) => {
           const value = row.original.estimated_value
             ? formatMyr(row.original.estimated_value)
-            : 'Not recorded';
+            : '-';
           return (
             <span className="block truncate" title={value}>
               {value}

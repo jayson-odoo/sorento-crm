@@ -165,7 +165,7 @@ export function AllocationPanel({
         id: 'stock_location',
         header: ({ column }) => <DataGridColumnHeader title="Stock location" column={column} />,
         cell: ({ row }) => {
-          const text = row.original.stock_location || 'No source yet';
+          const text = row.original.stock_location || '-';
           return (
             <span
               className={`block truncate ${

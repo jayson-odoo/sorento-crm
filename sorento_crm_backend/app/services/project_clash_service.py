@@ -45,6 +45,10 @@ from app.models.projects import BLOCKING_OUTCOMES, Project, ProjectParty
 DEFAULT_SURFACE_THRESHOLD = 0.55
 DEFAULT_BLOCK_THRESHOLD = 0.70
 
+# Below this many characters a containment match means nothing: "kl" sits inside half the
+# item master, and blocking on the second keystroke would fight the person typing.
+MIN_CONTAINMENT_CHARS = 6
+
 # ``pg_trgm`` is installed into ``public`` (verified: ``pg_extension`` join
 # ``pg_namespace``), and ``similarity()`` is schema-qualified rather than resolved
 # through ``search_path``.
@@ -181,6 +185,29 @@ def _score_expression(key: str):
     )
 
 
+def titles_overlap(stored_key: str, typed_key: str) -> bool:
+    """One normalised title contains the other, whole.
+
+    Trigram similarity misses this, and the miss is visible: typing "kepong metropo"
+    against a stored "kepong metropolitan serviced apartments" scores 0.667, under the 0.70
+    block bar, so a name that IS an existing project reads as a mere suggestion.
+
+    Dropping the bar to 0.60 to catch it is the wrong fix. "kepong metropolitan times
+    square" scores 0.606 and is a genuinely separate development, so a lower bar would
+    block a registration that must be allowed. Containment separates the two cleanly:
+    "kepong metropo" is inside the stored title, "…times square" is not inside it and does
+    not contain it.
+
+    Checked in both directions, because whoever registered first decided which of the two
+    titles is the longer one, and the verdict must not depend on typing order.
+    """
+    stored = (stored_key or "").strip()
+    typed = (typed_key or "").strip()
+    if len(typed) < MIN_CONTAINMENT_CHARS or len(stored) < MIN_CONTAINMENT_CHARS:
+        return False
+    return typed in stored or stored in typed
+
+
 def find_clashes(
     db: Session,
     *,
@@ -248,7 +275,12 @@ def find_clashes(
                 # A different developer's project is never the same development,
                 # however alike the titles read.
                 row.Project.developer_party_id == developer_party_id
-                and float(row.score) >= block
+                and (
+                    float(row.score) >= block
+                    # A name that literally contains, or is contained by, an existing one
+                    # is the same development whatever the trigram score says.
+                    or titles_overlap(row.Project.normalised_title, key)
+                )
                 and row.Project.outcome in BLOCKING_OUTCOMES
                 and not are_sibling_developments(row.Project.normalised_title, key)
             ),

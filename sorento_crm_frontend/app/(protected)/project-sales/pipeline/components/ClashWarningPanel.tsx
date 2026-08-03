@@ -2,6 +2,7 @@
 
 import { AlertTriangle, Info, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { describeLastActivity } from '../../_shared/lib/lastActivity';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { ClashCandidate } from '../../_shared/types/project.types';
@@ -82,14 +83,8 @@ export function ClashWarningPanel({
             <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
             <div className="min-w-0">
               <h4 className="text-sm font-semibold text-foreground">
-                Similar projects - check this is not the same one
+                Similar projects
               </h4>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                These do not block your registration. Separate phases, other
-                developers, and unrelated sites with similar names are all normal -
-                the developer is what decides whether it is really the same
-                development.
-              </p>
             </div>
           </header>
           <ul className="mt-3 space-y-2">
@@ -148,7 +143,7 @@ function IncumbentRow({
                   : null
               }
             />
-            <Fact label="Last activity" value={formatRelative(candidate.last_activity_at)} />
+            <Fact label="Last activity" value={describeLastActivity(candidate.last_activity_at)} />
           </dl>
           {candidate.brands.length > 0 && (
             <div className="flex flex-wrap gap-1 pt-0.5">
@@ -206,18 +201,3 @@ function formatMyr(value: string): string {
   return `RM ${amount.toLocaleString('en-MY', { maximumFractionDigits: 0 })}`;
 }
 
-/**
- * "3 days ago" rather than a date, because the question the reader is asking is
- * "is this still being worked?", not "what was the date".
- */
-function formatRelative(iso?: string | null): string | null {
-  if (!iso) return null;
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return null;
-  const days = Math.floor((Date.now() - then) / 86_400_000);
-  if (days <= 0) return 'today';
-  if (days === 1) return 'yesterday';
-  if (days < 30) return `${days} days ago`;
-  const months = Math.floor(days / 30);
-  return months === 1 ? '1 month ago' : `${months} months ago`;
-}

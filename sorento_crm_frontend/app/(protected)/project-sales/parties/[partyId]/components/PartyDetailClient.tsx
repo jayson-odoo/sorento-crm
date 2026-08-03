@@ -130,7 +130,6 @@ export function PartyDetailClient({ partyId }: { partyId: string }) {
             <Field
               label="Registration no."
               value={party.registration_no}
-              empty="Not recorded. Without it, two firms with the same trading name look like one."
             />
             <Field
               label="Status"
@@ -152,10 +151,9 @@ export function PartyDetailClient({ partyId }: { partyId: string }) {
             <Field
               label="Phone"
               value={party.phone}
-              empty="Not recorded. Nobody can chase a specification without it."
             />
-            <Field label="Email" value={party.email} empty="Not recorded." />
-            <Field label="Address" value={party.address} empty="Not recorded." />
+            <Field label="Email" value={party.email} />
+            <Field label="Address" value={party.address} />
           </CardContent>
         </Card>
 
@@ -235,7 +233,7 @@ function Field({
       {value ? (
         <p className="break-words text-sm font-medium">{value}</p>
       ) : (
-        <p className="text-sm text-muted-foreground">{empty ?? 'Not recorded.'}</p>
+        <p className="text-sm text-muted-foreground">{empty ?? '-'}</p>
       )}
       {value && hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>

@@ -62,7 +62,7 @@ function ComparisonCell({
         className={`truncate tabular-nums ${tone === 'theirs' ? 'text-amber-700 dark:text-amber-400' : 'font-medium'}`}
         title={text ?? undefined}
       >
-        {text ?? <span className="text-muted-foreground">Not set</span>}
+        {text ?? <span className="text-muted-foreground">-</span>}
       </p>
     </div>
   );

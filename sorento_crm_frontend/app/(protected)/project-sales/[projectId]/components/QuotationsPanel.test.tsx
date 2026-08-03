@@ -130,7 +130,7 @@ describe('QuotationsPanel', () => {
     expect(await screen.findByText('House Units')).toBeInTheDocument();
     expect(screen.getByText('v3 of 3')).toBeInTheDocument();
     expect(screen.getByText('RM 48,250.50')).toBeInTheDocument();
-    expect(screen.getByText('open')).toBeInTheDocument();
+    expect(screen.getByText('Open')).toBeInTheDocument();
   });
 
   it('surfaces both alerts per scope and totals them across scopes', async () => {
@@ -173,7 +173,7 @@ describe('QuotationsPanel', () => {
 
     renderPanel();
 
-    expect(await screen.findByText('lost')).toBeInTheDocument();
+    expect(await screen.findByText('Lost')).toBeInTheDocument();
     expect(screen.getByText(/Lost: Price too high/)).toBeInTheDocument();
   });
 

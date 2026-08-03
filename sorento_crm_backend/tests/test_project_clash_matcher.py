@@ -519,3 +519,42 @@ def test_widening_never_downgrades_a_real_block():
         assert set(by_id) == {mine.id, theirs.id}
         assert by_id[mine.id].blocks is True
         assert by_id[theirs.id].blocks is False
+
+
+# --------------------------------------------------------------------------- #
+# Containment: a name that IS an existing name, however far the typing got     #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_partly_typed_name_inside_an_existing_one_overlaps():
+    """Reported from the browser: "Kepong Metropo" scores 0.667 against "Kepong
+    Metropolitan Serviced Apartments", under the 0.70 block bar, so it surfaced as a mere
+    suggestion when it is in fact the same development."""
+    from app.services.project_clash_service import titles_overlap
+
+    assert titles_overlap("kepong metropolitan serviced apartments", "kepong metropo")
+
+
+def test_a_longer_separate_development_does_not_overlap():
+    """The reason the fix is containment and NOT a lower threshold. This scores 0.606, so
+    dropping the bar to catch 0.667 would block a registration that has to be allowed."""
+    from app.services.project_clash_service import titles_overlap
+
+    assert not titles_overlap(
+        "kepong metropolitan serviced apartments", "kepong metropolitan times square"
+    )
+
+
+def test_containment_is_symmetric():
+    """Whoever registered first decided which title is the longer one."""
+    from app.services.project_clash_service import titles_overlap
+
+    assert titles_overlap("kepong metropo", "kepong metropolitan serviced apartments")
+
+
+def test_a_couple_of_characters_never_overlap():
+    """Blocking on the second keystroke would fight the person typing."""
+    from app.services.project_clash_service import titles_overlap
+
+    assert not titles_overlap("kepong metropolitan serviced apartments", "kep")
+    assert not titles_overlap("kepong metropolitan serviced apartments", "")

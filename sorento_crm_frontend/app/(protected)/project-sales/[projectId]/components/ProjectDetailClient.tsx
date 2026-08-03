@@ -20,7 +20,12 @@ import {
 import EntityActivitiesLayout from '@/components/common/ActivitiesNotesPanel/EntityActivitiesLayout';
 import { STALE_TONE_CLASS, describeStaleness } from '../../_shared/lib/staleness';
 import { CriticalPanel } from './CriticalPanel';
-import { ProjectStatusAction, availableStatusMoves } from './ProjectStatusAction';
+import {
+  ProjectStatusAction,
+  availableStatusMoves,
+  splitStatusMoves,
+} from './ProjectStatusAction';
+import { OutcomePill } from '../../_shared/components/OutcomePill';
 import { ProjectStatusPill } from './ProjectStatusPill';
 import { ProjectActivityPanel } from './ProjectActivityPanel';
 import { ProjectAccessPanel } from './ProjectAccessPanel';
@@ -112,6 +117,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const moves = project.can_edit
     ? availableStatusMoves(graph.data, project.status_id)
     : [];
+  const { secondary: secondaryMoves } = splitStatusMoves(moves);
 
   return (
     // The shared drawer (AC-H1): posting, @-mentions and internal notes come from the same
@@ -132,9 +138,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
               statusKey={project.status_key}
               label={project.status_label}
             />
-            <Badge variant={project.outcome === 'open' ? 'outline' : 'secondary'} className="capitalize">
-              {project.outcome}
-            </Badge>
+            <OutcomePill outcome={project.outcome} />
             {project.is_critical && (
               <Badge variant="destructive" className="gap-1">
                 <Flame className="size-3" aria-hidden />
@@ -175,6 +179,19 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
           />
           {project.can_edit && (
             <DetailActionsMenu ariaLabel="Project actions">
+              {/* Exits and side moves. Deliberately not in the header: marking a pursuit
+                  lost should never sit one careless click from advancing it. */}
+              {secondaryMoves.map((option) => (
+                <DropdownMenuItem
+                  key={option.transitionId}
+                  disabled={move.isPending}
+                  onSelect={() =>
+                    move.mutate({ projectId: project.id, toStatusId: option.toStatusId })
+                  }
+                >
+                  {option.label}
+                </DropdownMenuItem>
+              ))}
               <DropdownMenuItem
                 variant="destructive"
                 onSelect={() => setConfirmDelete(true)}
@@ -256,7 +273,12 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                     label="Expected delivery"
                     value={
                       project.expected_delivery_from || project.expected_delivery_to
-                        ? `${formatDate(project.expected_delivery_from) ?? '?'} to ${formatDate(project.expected_delivery_to) ?? '?'}`
+                        ? [
+                            formatDate(project.expected_delivery_from),
+                            formatDate(project.expected_delivery_to),
+                          ]
+                            .filter(Boolean)
+                            .join(' - ')
                         : null
                     }
                   />
@@ -265,33 +287,26 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                     label="Brands"
                     value={project.brands.length ? project.brands.join(', ') : null}
                   />
+                  <div className="min-w-0">
+                    <dt className="text-xs text-muted-foreground">Source</dt>
+                    <dd className="break-words text-sm">
+                      {project.lead_id ? (
+                        <Link
+                          href={`/project-sales/leads/${project.lead_id}`}
+                          className="text-primary hover:underline"
+                        >
+                          {`Lead ${project.lead_code}`}
+                        </Link>
+                      ) : (
+                        'Registered directly'
+                      )}
+                    </dd>
+                  </div>
                 </dl>
 
-                {/* AC-O10. "Registered directly" is a real answer, not a missing one:
-                    a tender notice claimed the same hour never had a lead. */}
-                <div className="mt-4 border-t border-border pt-3">
-                  <p className="text-xs text-muted-foreground">Came from</p>
-                  {project.lead_id ? (
-                    <p className="text-sm">
-                      <Link
-                        href={`/project-sales/leads/${project.lead_id}`}
-                        className="text-primary hover:underline"
-                      >
-                        Lead {project.lead_code}
-                      </Link>
-                      {project.lead_source
-                        ? ` · ${project.lead_source.replace(/_/g, ' ')}`
-                        : ''}
-                      {project.lead_created_at
-                        ? ` · recorded ${formatDate(project.lead_created_at)}`
-                        : ''}
-                    </p>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      Registered directly, with no prior lead.
-                    </p>
-                  )}
-                </div>
+                {/* AC-O10. "Registered directly" is a real answer, not a missing one: a
+                    tender notice claimed the same hour never had a lead. Said as one more
+                    fact in the same grid rather than a titled paragraph of its own. */}
               </CardContent>
             </Card>
 
@@ -342,7 +357,7 @@ function Fact({ label, value }: { label: string; value?: string | null }) {
     <div className="min-w-0">
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="break-words text-sm">
-        {value ?? <span className="text-muted-foreground">Not recorded</span>}
+        {value ?? <span className="text-muted-foreground">-</span>}
       </dd>
     </div>
   );

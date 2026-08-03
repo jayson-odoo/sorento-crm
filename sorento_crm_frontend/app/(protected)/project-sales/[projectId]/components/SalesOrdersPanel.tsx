@@ -178,7 +178,7 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
         accessorKey: 'po_number',
         header: ({ column }) => <DataGridColumnHeader title="Customer PO" column={column} />,
         cell: ({ row }) => {
-          const value = row.original.po_number || 'Not recorded';
+          const value = row.original.po_number || '-';
           return (
             <span className="block truncate" title={value}>
               {value}
@@ -193,7 +193,7 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
         accessorKey: 'customer_name',
         header: ({ column }) => <DataGridColumnHeader title="Billed to" column={column} />,
         cell: ({ row }) => {
-          const value = row.original.customer_name || 'Not set';
+          const value = row.original.customer_name || '-';
           return (
             <span className="block truncate" title={value}>
               {value}

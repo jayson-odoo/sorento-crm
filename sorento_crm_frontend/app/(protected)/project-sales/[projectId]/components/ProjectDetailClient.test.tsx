@@ -206,7 +206,8 @@ describe('the project header', () => {
       'button',
     );
     expect(actions).toHaveLength(2);
-    expect(actions[0]).toHaveTextContent('Move stage');
+    // The forward move is NAMED, never a generic "Move stage" that opens a menu.
+    expect(actions[0]).toHaveTextContent('Tendering');
     expect(actions[1]).toHaveAttribute('aria-label', 'Project actions');
   });
 
@@ -225,21 +226,50 @@ describe('the project header', () => {
     });
   });
 
-  it('asks which move when several are allowed, then fires the chosen one', async () => {
+  it('fires the forward move directly, with no menu to choose from', () => {
+    // Several edges are legal, but the header does not ask. Choosing between four is what
+    // made the commonest action a decision, and put "Mark lost" beside advancing.
     renderDetail();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Move stage' }));
-
-    const dialog = await screen.findByRole('dialog');
-    // Every allowed edge is offered, in graph order, and nothing else.
-    expect(within(dialog).getByText('Tendering')).toBeInTheDocument();
-    expect(within(dialog).getByText('Re-specify')).toBeInTheDocument();
-
-    fireEvent.click(within(dialog).getByText('PO received'));
+    fireEvent.click(screen.getByRole('button', { name: 'Tendering' }));
 
     expect(changeStatus).toHaveBeenCalledWith({
       projectId: 'p1',
-      toStatusId: 's-po',
+      toStatusId: 's-tendering',
+    });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('puts an exit behind the gear rather than in the header', async () => {
+    graphFixture = graph({
+      statuses: [
+        status('s-quoted', 'quoted', 'Quoted', 0),
+        status('s-po', 'po_received', 'PO Received', 1),
+        status('s-lost', 'lost', 'Lost', 2, { is_terminal: true }),
+      ],
+      transitions: [
+        transition('t-2', 's-quoted', 's-po', 'PO received', 1),
+        transition('t-4', 's-quoted', 's-lost', 'Mark lost', 2),
+      ],
+    });
+
+    renderDetail();
+
+    const header = within(screen.getByTestId('project-header-actions'));
+    expect(header.getByRole('button', { name: 'PO received' })).toBeInTheDocument();
+    expect(header.queryByRole('button', { name: 'Mark lost' })).toBeNull();
+
+    // Radix opens its menus on pointerdown, which fireEvent.click does not send.
+    fireEvent.pointerDown(header.getByRole('button', { name: 'Project actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    const lost = await screen.findByRole('menuitem', { name: 'Mark lost' });
+    fireEvent.click(lost);
+
+    expect(changeStatus).toHaveBeenCalledWith({
+      projectId: 'p1',
+      toStatusId: 's-lost',
     });
   });
 

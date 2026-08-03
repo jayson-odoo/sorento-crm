@@ -315,7 +315,7 @@ function StakeholderFormDialog({
                   onChange={setInfluence}
                   clearable
                   options={INFLUENCE_OPTIONS}
-                  placeholder="Not set"
+                  placeholder="-"
                 />
               </div>
 

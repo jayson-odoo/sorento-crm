@@ -170,7 +170,7 @@ export function PartiesClient() {
               {contact}
             </span>
           ) : (
-            <Muted>Not recorded</Muted>
+            <Muted>-</Muted>
           );
         },
       },

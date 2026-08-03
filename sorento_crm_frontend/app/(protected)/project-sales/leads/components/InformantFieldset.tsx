@@ -76,7 +76,7 @@ export function InformantFieldset({
               value: option.value,
               label: option.label,
             }))}
-            placeholder="Not recorded"
+            placeholder="-"
           />
         </div>
         <div className="space-y-1.5">

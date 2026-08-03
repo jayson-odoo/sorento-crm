@@ -247,9 +247,11 @@ describe('AllocationPanel', () => {
 
     expect(await screen.findByText('SRT382-6')).toBeInTheDocument();
     expect(screen.getByText('CB6633')).toBeInTheDocument();
-    // The sourced line reads its confirmed location; the unsourced one says so plainly.
+    // The sourced line reads its confirmed location; the unsourced one shows a dash.
+    // The STATE keeps its real label - "No source yet" is an answer, not a blank.
     expect(screen.getByText('BRW')).toBeInTheDocument();
-    expect(screen.getAllByText('No source yet')).toHaveLength(2);
+    expect(screen.getAllByText('-')).toHaveLength(1);
+    expect(screen.getByText('No source yet')).toBeInTheDocument();
     expect(screen.getByText('Sourced')).toBeInTheDocument();
   });
 
@@ -277,8 +279,8 @@ describe('AllocationPanel', () => {
 
     expect(await screen.findByText('Waiting on a claim')).toBeInTheDocument();
     // Nothing moves while a claim is open, so the line holds no location: the only
-    // "No source yet" on screen is the location cell, not the state badge.
-    expect(screen.getAllByText('No source yet')).toHaveLength(1);
+    // "-" on screen is the location cell, not the state badge.
+    expect(screen.getAllByText('-')).toHaveLength(1);
     expect(screen.queryByText('WH-KL')).not.toBeInTheDocument();
   });
 

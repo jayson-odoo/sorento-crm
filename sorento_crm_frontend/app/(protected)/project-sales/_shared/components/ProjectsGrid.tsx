@@ -16,6 +16,7 @@ import { describeLastActivity } from '../lib/lastActivity';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
+import { OutcomePill } from './OutcomePill';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import {
   DataGridListToolbar,
@@ -113,7 +114,7 @@ export function ProjectsGrid({
         meta: { headerTitle: 'Developer' },
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.developer_name ?? ''}>
-            {row.original.developer_name ?? <Muted>Not set</Muted>}
+            {row.original.developer_name ?? <Muted>-</Muted>}
           </span>
         ),
       },
@@ -136,16 +137,10 @@ export function ProjectsGrid({
       {
         accessorKey: 'outcome',
         header: ({ column }) => <DataGridColumnHeader title="Outcome" column={column} />,
+        cell: ({ row }) => <OutcomePill outcome={row.original.outcome} />,
         size: 110,
+        minSize: 90,
         meta: { headerTitle: 'Outcome' },
-        cell: ({ row }) => (
-          <Badge
-            variant={row.original.outcome === 'open' ? 'outline' : 'secondary'}
-            className="capitalize"
-          >
-            {row.original.outcome}
-          </Badge>
-        ),
       },
       {
         id: 'estimated_sales_value',
@@ -160,7 +155,7 @@ export function ProjectsGrid({
               {formatMyr(row.original.estimated_sales_value)}
             </span>
           ) : (
-            <Muted>Not set</Muted>
+            <Muted>-</Muted>
           ),
       },
       {

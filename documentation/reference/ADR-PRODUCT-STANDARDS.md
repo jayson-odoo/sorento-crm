@@ -59,6 +59,61 @@ typing in the popover's search box → pick one (or many).
 
 ---
 
+## 1c. Form Controls — a date RANGE is ONE control
+
+**Doctrine:** any "X from / X to" pair MUST render a single range control,
+`@/components/ui/date-range-picker` (`DateRangePicker`). Two date inputs side by side are
+**banned** for a value that is one range.
+
+- **Why.** Two fields make the user hold the relationship in their head: nothing stops "to"
+  landing before "from", the two labels have to be read separately to learn they describe one
+  fact, and at phone width they wrap apart so the pair stops looking like a pair. A range
+  picker enforces the order by construction — an end cannot be picked before a start.
+- **Label the range, not the ends.** "Expected delivery", never "Expected delivery from" plus
+  "Expected delivery to".
+- **Both ends stay optional** where the domain allows a half-known range (a developer often
+  gives the start of a delivery window months before the end). The control renders `01/05/2027 - ?`
+  rather than hiding the half it has.
+- **Wire format is unchanged:** two `YYYY-MM-DD` fields on the API. `onChange` emits both ends
+  together because they are one fact; `parseIsoDate` / `toIsoDate` are exported for callers.
+- Filtering a list BY a date range is the same rule.
+
+---
+
+## 1d. Lists — the row is the way in, and status is a pill
+
+**Doctrine, applies to every list in the product:**
+
+- **No "Open" / "View" action column.** Clicking the ROW opens the record (`onRowClick` on the
+  shared `DataGrid`). A column whose only job is to repeat what the row already does spends a
+  column on nothing.
+- **A status-like value renders as a status pill** (`@/lib/status-pill`), never as an `outline`
+  badge. An outlined box containing a verb-shaped word ("Open") reads as a BUTTON — and once one
+  cell looks clickable, the reader stops trusting which parts of the row are actions. Map new
+  vocabularies onto the shared palette's existing keys rather than inventing colours; an unknown
+  key silently falls back to grey, which is how the miss hides.
+- **Timestamps are ABSOLUTE, never relative.** "yesterday" and "3 days ago" cannot be compared
+  between two rows, cannot be quoted to anybody, and change meaning depending on when the page
+  was loaded — a list left open overnight goes on claiming "today" about yesterday. Use
+  `describeLastActivity`.
+
+---
+
+## 1e. Empty values and helper text
+
+- **An unknown value is `-`.** Not "Not recorded", not "Not set", not "None". A card of mostly
+  empty fields reads as prose when each blank is a sentence; `-` keeps it a table of facts.
+  (A genuine ANSWER that happens to be negative — "Registered directly", "No open requests" —
+  is not an empty value and stays in words.)
+- **Do not explain the feature inside the form.** Helper text under a field is for a CONSTRAINT
+  the user cannot infer ("Codes must be unique per company"), never for teaching what the field
+  is for or what the system will do with it. Explanations belong in the user guide. This is the
+  existing cursor rule ("no feature explanations inside the UI itself") applied to field hints.
+- **Do not title a fact.** One more `Fact` in the same grid beats a bordered sub-section with its
+  own heading and a sentence.
+
+---
+
 ## 2. Delete and Archive Semantics
 
 ### Delete Policy

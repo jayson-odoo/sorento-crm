@@ -329,7 +329,7 @@ export function SalesOrderLinesTable({
         id: 'stock_location',
         header: ({ column }) => <DataGridColumnHeader title="Stock location" column={column} />,
         cell: ({ row }) => {
-          const text = row.original.line.stock_location || 'Not allocated';
+          const text = row.original.line.stock_location || '-';
           return (
             <span className="block truncate text-muted-foreground" title={text}>
               {text}

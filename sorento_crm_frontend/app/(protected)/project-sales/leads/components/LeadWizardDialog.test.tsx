@@ -169,7 +169,7 @@ describe('LeadWizardDialog', () => {
     });
     next();
 
-    fireEvent.change(await screen.findByLabelText('Not recorded'), {
+    fireEvent.change(await screen.findByLabelText('-'), {
       target: { value: 'bci' },
     });
     fireEvent.change(screen.getByLabelText('Their reference'), {
@@ -257,7 +257,7 @@ describe('LeadWizardDialog', () => {
       target: { value: 'Tower behind the showroom' },
     });
     next();
-    fireEvent.change(await screen.findByLabelText('Not recorded'), {
+    fireEvent.change(await screen.findByLabelText('-'), {
       target: { value: 'referral' },
     });
     next();

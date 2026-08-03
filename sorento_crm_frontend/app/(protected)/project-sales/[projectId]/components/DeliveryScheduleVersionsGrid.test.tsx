@@ -153,14 +153,14 @@ describe('DeliveryScheduleVersionsGrid', () => {
     ).toBeInTheDocument();
   });
 
-  it('names what is not recorded instead of leaving a blank cell', async () => {
+  it('shows a dash for an unknown value rather than a blank cell', async () => {
     listDeliveryScheduleVersions.mockResolvedValue([
       summary({ revision_label: null, issuer_party_label: null, schedule_date: null }),
     ]);
     renderGrid();
 
     expect(await screen.findByText('No revision label')).toBeInTheDocument();
-    expect(screen.getByText('Not recorded')).toBeInTheDocument();
+    expect(screen.getByText('-')).toBeInTheDocument();
     expect(screen.getByText('Not dated')).toBeInTheDocument();
     expect(screen.getByText('Not yet')).toBeInTheDocument();
   });

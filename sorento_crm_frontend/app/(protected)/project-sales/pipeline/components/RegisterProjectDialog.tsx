@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -139,7 +140,7 @@ export function RegisterProjectDialog({
           <DialogHeader>
             <DialogTitle>Register a project</DialogTitle>
             <DialogDescription>
-              Claim the development first. Details can follow once you have them.
+              Claim the development first.
             </DialogDescription>
           </DialogHeader>
 
@@ -196,10 +197,6 @@ export function RegisterProjectDialog({
                     autoComplete="off"
                     required
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Use the name the developer uses. Phases and blocks are separate
-                    projects.
-                  </p>
                 </div>
 
                 <ClashWarningPanel
@@ -227,9 +224,6 @@ export function RegisterProjectDialog({
                       placeholder="Select a template"
                       emptyMessage="No templates for this type"
                     />
-                    <p className="text-xs text-muted-foreground">
-                      The template decides which stakeholder roles this project offers.
-                    </p>
                   </div>
                 )}
               </fieldset>
@@ -246,7 +240,7 @@ export function RegisterProjectDialog({
                       id="project-registered-company"
                       value={registeredCompany}
                       onChange={(event) => setRegisteredCompany(event.target.value)}
-                      placeholder="Often unknown at registration"
+                      placeholder="Optional"
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -315,26 +309,20 @@ export function RegisterProjectDialog({
                       </p>
                     </div>
                   ) : (
-                    <>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="project-delivery-from">Expected delivery from</Label>
-                        <Input
-                          id="project-delivery-from"
-                          type="date"
-                          value={deliveryFrom}
-                          onChange={(event) => setDeliveryFrom(event.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="project-delivery-to">Expected delivery to</Label>
-                        <Input
-                          id="project-delivery-to"
-                          type="date"
-                          value={deliveryTo}
-                          onChange={(event) => setDeliveryTo(event.target.value)}
-                        />
-                      </div>
-                    </>
+                    // One range, one control: two date fields let "to" land before
+                    // "from" and stop reading as a single fact once they wrap apart.
+                    <div className="space-y-1.5">
+                      <Label htmlFor="project-delivery-range">Expected delivery</Label>
+                      <DateRangePicker
+                        id="project-delivery-range"
+                        from={deliveryFrom || null}
+                        to={deliveryTo || null}
+                        onChange={({ from, to }) => {
+                          setDeliveryFrom(from ?? '');
+                          setDeliveryTo(to ?? '');
+                        }}
+                      />
+                    </div>
                   )}
                 </div>
               </fieldset>
