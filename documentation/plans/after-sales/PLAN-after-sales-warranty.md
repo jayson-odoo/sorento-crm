@@ -783,8 +783,9 @@ So: **its own slice, immediately after S4, before S6 / S11 / S12 / S9.** It need
 
 ### What it changes
 
-**Schema.** Three fields on the case, and the same three on `service_jobs` (moved here out of S6):
-`waiting_on_party`, `waiting_on_reason_id` (FK to configurable master data), `waiting_since` (AC-M1). **One
+**Schema.** Three fields - `waiting_on_party`, `waiting_on_reason_id` (FK to configurable master data),
+`waiting_since` (AC-M1) - on the **SLA tracker**, not on the case table, and mirrored onto the event log
+for point-in-time capture. See "Ruling 1" below for why, and for what that leaves S6 to do. **One
 shared reason vocabulary** serves both the pending reason and the overdue reason: "pending plumber" is the
 same fact whether or not the clock has expired, and two lists would drift. The vocabulary is a
 `lookup_sets` / `lookup_options` / `lookup_bindings` triple, the same shape the seven existing bindings use
@@ -813,25 +814,73 @@ existing `MyPendingSLAWidget` plus the in-form SLA banner, which already colour 
 `waiting_on = customer`. "We called three times, no answer" is the defensible version of blaming the
 customer for a delay, and it is the rule for setting the field, not a property of the call log.
 
-### Three things this slice must decide, flagged not guessed
+### Three things this slice must decide - RULED 2026-08-03, before the gate
 
-1. **AC-M4's "before further action" is not specified.** Candidates: any status transition on the case, any
-   resolve or escalate on the SLA tracker, or any save at all. These are very different guards with very
-   different friction. Note it would be the **third** write guard on the same actions, beside the status
-   engine's `assert_transition_allowed` and `handling_lock_service.assert_can_act_on_form`, so where it
-   sits in that stack matters.
-2. **AC-M1 puts the field on the case; AC-M7 needs it per breach.** A case runs several form-SLA stage
-   trackers concurrently (Acknowledge, Assess, Schedule, Resolve, Fulfil, each its own
-   `conversation_sla_tracking` row keyed by `(source_entity_type, team_set_code)`). One case-level column
-   paints the same waiting label onto every open stage, and a mutable column cannot answer "what were we
-   waiting on **when this breached**". Attribution reporting therefore needs a **point-in-time record** -
-   the natural home is a `conversation_sla_event_log` row on every waiting change, which is the same trail
-   Extend already writes to. Whether the column also lives per-tracker is the open decision.
-3. **The party vocabulary in AC-M1 does not contain `dealer`, but AC-M18 requires
-   `waiting_on = dealer`.** AC-M1 lists `cs | maintenance | plumber | customer | supplier | warehouse`.
-   This is an inconsistency inside Group M itself, not between Group M and the plan. Recommendation: make
-   the **party** configurable master data too, exactly like the reason, rather than shipping a code enum
-   that is already one value short on day one. Flagged for the UAC owner.
+The third was already answered by the UAC ("Rulings, binding on the slices that inherit them"): the
+**party is configurable master data**, seeded with AC-M1's list plus `dealer`. Nothing left to decide, and
+the seed is `sla_waiting_party` = `cs`, `maintenance`, `plumber`, `customer`, `supplier`, `warehouse`,
+`dealer`. The other two are ruled here.
+
+#### Ruling 1 - waiting lives on the TRACKER, and only on the tracker
+
+AC-M1 says "a case". Taken literally that is a column on six tables: `complaints`, `workflow_submissions`,
+`stock_inquiries`, `purchase_requests`, `sponsorship_forms`, `tickets` - every member of `FORM_SLA_TYPES` -
+and `service_jobs` after S6. Six copies of one dimension, each with its own write path, is how a dimension
+stops meaning the same thing in two places.
+
+**Group M itself speaks per-stage twice.** R12 sets `waiting_on = customer` "on the Schedule stage", and
+AC-M36d repeats "on the Schedule stage". A case running Acknowledge, Assess, Schedule and Resolve
+concurrently is not waiting on one party; the Schedule stage waits on the customer while Assess waits on
+maintenance, and a case-level column has to pick one and lie about the rest.
+
+**AC-M7 needs the breach unit, and the tracker IS the breach unit.** "Of 40 breaches, 26 were waiting on an
+external party" counts trackers, not cases. So:
+
+- `conversation_sla_tracking` carries `waiting_on_party`, `waiting_on_reason_id`, `waiting_since`. It
+  answers **what now**, per stage.
+- `conversation_sla_event_log` carries the same `waiting_on_party` / `waiting_on_reason_id`, stamped on
+  **every** event row from the tracker's live value at that instant. It answers **what then**. Reporting
+  reads the captured value, never the live column, per the UAC ruling - otherwise every historical breach
+  silently re-attributes itself the next time somebody edits the case.
+- The **case-level** answer AC-M1 asks for is **derived** from the case's open trackers, not stored. One
+  open tracker gives one answer; several give several, which is the truth.
+- **S6 adds the three columns to `service_jobs` only if a Service Job does not get its own tracker.** If it
+  does, it inherits this and adds nothing. The plan text above ("the same three on `service_jobs`") is
+  superseded by that condition.
+
+#### Ruling 2 - AC-M4 guards three actions, all of them human
+
+"Before further action" is: **resolve, manual escalate, extend** on a tracker that is already past its
+deadline. Named as a set in the service (`form_sla_service` / `sla_service`), never on the routes, per
+ADR-0013 rule 7.
+
+What is deliberately **not** guarded, and why:
+
+- **Anything a machine does.** The auto-escalation cron and any auto-resolve carry `trigger = 'auto'` and
+  have no answer to give. Guarding them would either stall every overdue tracker forever or force the
+  system to invent an attribution, which is worse than no attribution.
+- **Status transitions on the case.** Already double-guarded by `assert_transition_allowed` and
+  `handling_lock_service.assert_can_act_on_form`. A third guard there buys no attribution that the SLA
+  actions do not already capture, and it would block a CS agent from recording progress.
+- **Any save at all.** Editing a phone number on an overdue case is not the moment to demand attribution.
+- **Claiming a handling lock.** Picking up somebody else's escalated work is the behaviour we want; taxing
+  it with a dropdown discourages exactly the right action.
+
+**Evidence, per ADR-0013 rule 7 ("aggregate what has actually happened before guarding a live path"),
+measured on the production copy 2026-08-03:**
+
+| what | count |
+|---|---|
+| form-SLA trackers resolved, all types | 178 |
+| resolved **while already overdue** - what the guard newly rejects | **35 (20%)** |
+| open and overdue right now - staff meet the guard on their next action | 307 |
+| escalation event logs written **after** the deadline | **0** |
+| of 671 escalation events, `trigger = 'manual'` | 74 |
+
+So the guard costs one dropdown on about one resolve in five, and historically rejects **zero**
+escalations: every escalation in the database fired at or before the deadline, which is what escalation is
+for. The 307 open overdue trackers are the reason the field is mandatory rather than encouraged - they are
+the population AC-M7 exists to explain, and today every one of them reads as internal inaction.
 
 ### Extend is already built (correcting `PLAN-sla-extend-deadline.md`)
 
@@ -979,10 +1028,16 @@ A CI guard asserts `service_jobs` declares no FK to `complaints` and the module 
 
 ### New tables from the 2026-08-01 requirements grill
 
-**Waiting attribution moved out of this slice to S4a** (added 2026-08-02). The `service_jobs` columns
-`waiting_on_party` / `waiting_on_reason_id` / `waiting_since` and the shared reason vocabulary are now
-S4a's, so the case and the job get one design rather than two. S6 keeps only its **consumption** of them,
-described under "R12" below.
+**Waiting attribution moved out of this slice to S4a** (added 2026-08-02). The
+`waiting_on_party` / `waiting_on_reason_id` / `waiting_since` fields and the shared reason vocabulary are
+now S4a's, so the case and the job get one design rather than two. S6 keeps only its **consumption** of
+them, described under "R12" below.
+
+**Amended 2026-08-03 by S4a's Ruling 1:** those three fields live on the **SLA tracker**, not on the case
+table, so `service_jobs` declares them only if a Service Job turns out NOT to run its own
+`conversation_sla_tracking` row. Decide that when S6 designs the job's clocks - the note under "Clocks stay
+off the SLA engine" below says they do not, which means S6 **does** add the three columns to
+`service_jobs`, reading the same two lookup sets S4a seeds. Do not seed a second vocabulary.
 
 ```sql
 CREATE TABLE external_providers (                 -- generic, NOT plumber-specific, NOT suppliers

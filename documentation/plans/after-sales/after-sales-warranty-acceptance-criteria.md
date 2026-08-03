@@ -459,6 +459,12 @@ answer them rather than the plan. Rulings, binding on the slices that inherit th
   write guard on the same actions beside `assert_transition_allowed` and `handling_lock_service`. Not
   ruled here: whoever builds S4a must name the exact action set, and per ADR-0013 rule 7 it belongs in
   the service, not on the routes.
+  **Ruled 2026-08-03 by S4a**, with the live-data aggregate ADR-0013 rule 7 asks for: the action set is
+  **resolve, manual escalate and extend** on an already-overdue tracker, in the service. Machine-triggered
+  events (`trigger = 'auto'`), case status transitions, ordinary saves and handling-lock claims are
+  deliberately outside it. S4a also ruled that waiting lives on the **tracker**, not the case table, and
+  that the case-level answer is derived from the case's open trackers. Both rulings, and the numbers behind
+  the guard, are in `PLAN-after-sales-warranty.md` under "Three things this slice must decide".
 
 **Flagged, NOT ruled, because it changes live behaviour for four existing form types:** AC-M33 turns a
 `raise` into a fallback inside CORE form-SLA code (`_start_for_config`), which PR, SF, stock inquiry and
