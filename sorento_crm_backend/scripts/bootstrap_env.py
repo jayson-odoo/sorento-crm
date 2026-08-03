@@ -115,6 +115,38 @@ def create_views() -> None:
     log.info("scm views created (%d)", len(ordered))
 
 
+def seed_scm_module_data() -> None:
+    """Replay migration 311's DATA seeds, which create_all cannot produce.
+
+    `create_all` builds tables from the ORM and knows nothing about rows, so reference data
+    seeded inside a migration body does not exist on a freshly built database. Two of
+    311's seeds are load-bearing rather than cosmetic:
+
+    * `import_field_alias` - with no aliases the import channel resolves no column headers,
+      so every uploaded file reports every column as unmapped.
+    * `scm.priority_policy` - with no active policy nothing can be ranked for fulfilment.
+
+    Calls the migration's own seeding functions rather than restating the data, so the two
+    paths cannot drift. Both are idempotent.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    from app.database import engine
+
+    versions = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+    spec = importlib.util.spec_from_file_location(
+        "_scm_seed_311", versions / "311_scm_purchasing_base.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    with engine.begin() as conn:
+        aliases = module.seed_import_field_aliases(conn)
+        policies = module.seed_priority_policy(conn)
+    log.info("scm module data seeded -> aliases=%d priority_policy=%d", aliases, policies)
+
+
 def _seed_default_company() -> None:
     """Idempotently insert the fixed Sorento company row (mirrors migration 302).
 
@@ -216,6 +248,7 @@ def main() -> int:
     create_views()
     if not args.skip_seed:
         seed_reference_data()
+        seed_scm_module_data()
     stamp_head()
     log.info("bootstrap complete")
     return 0

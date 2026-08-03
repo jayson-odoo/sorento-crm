@@ -24,6 +24,7 @@ from sqlalchemy import (
     Date,
     Index,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -474,9 +475,13 @@ class PriorityPolicy(Base):
     __tablename__ = "priority_policy"
     __table_args__ = {"schema": "scm"}
 
-    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    # server_default too: the row is seeded by raw SQL (migration 311 and bootstrap_env),
+    # which a Python-side default never reaches.
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str,
+                server_default=text("gen_random_uuid()"))
     name = Column(String(120), nullable=False)
-    is_active = Column(Boolean, default=True, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False,
+                       server_default=text("true"))
     # e.g. {"po_document_sequence": 1.0, "need_by_date": 0.0, "demand_class": 0.0}
     # Seeded to reproduce today's manual answer so week-one output is checkable by hand.
     factors = Column(JSONB, nullable=False, default=dict)

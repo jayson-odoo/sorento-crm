@@ -15,7 +15,7 @@ not to one of its operating companies.
 """
 import uuid
 
-from sqlalchemy import Column, DateTime, Index, String, UniqueConstraint
+from sqlalchemy import Column, DateTime, Index, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -25,7 +25,16 @@ from app.database import Base
 class ImportFieldAlias(Base):
     __tablename__ = "import_field_alias"
 
-    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    # `server_default` as well as `default`: migration 311 creates this column with
+    # gen_random_uuid(), and the seeder inserts by raw SQL. A Python-side default alone
+    # covers ORM inserts only, so a create_all schema would reject the seed while a migrated
+    # one accepts it.
+    id = Column(
+        UUID(as_uuid=False),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+        server_default=text("gen_random_uuid()"),
+    )
     # Which kind of document this alias applies to, e.g. outstanding_so, packing_list.
     doc_type = Column(String(64), nullable=False)
     # The canonical field name the importer asks for, e.g. item_code, required_date.

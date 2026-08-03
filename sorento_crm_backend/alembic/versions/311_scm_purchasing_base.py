@@ -93,6 +93,73 @@ LEFT JOIN scm.committed_v cm
 
 _REDEFINED_VIEWS = (_COMMITTED_V, _NET_POSITION_V)
 
+
+# --- data seeds, callable from outside a migration run ------------------------------
+# Both of these are reference data the module cannot function without: with no aliases the
+# importer resolves no column headers, and with no priority policy nothing can be ranked.
+# `scripts/bootstrap_env` builds a database with create_all + stamp and never executes a
+# migration body, so a seed that lives only inside `upgrade()` silently does not exist on
+# CI or on any freshly built environment. Exposed as functions taking a bind so the
+# migration and the bootstrapper run the SAME code rather than two copies that drift.
+# Both are idempotent, so calling them on an already-seeded database is a no-op.
+
+def seed_import_field_aliases(bind) -> int:
+    """Header aliases for the import channel. Returns rows inserted."""
+    # Guarded inside rather than at the call site, so the bootstrapper cannot skip a check
+    # the migration performs. Name resolution happens at call time, so `_has_table` being
+    # defined further down the module is fine.
+    if not _has_table(bind, "import_field_alias"):
+        return 0
+    inserted = 0
+    for doc_type, field, alias, locale in _ALIASES:
+        res = bind.execute(
+            sa.text(
+                """
+                INSERT INTO import_field_alias (doc_type, field, alias, locale)
+                VALUES (:d, :f, :a, :l)
+                ON CONFLICT (doc_type, field, alias) DO NOTHING
+                """
+            ),
+            {"d": doc_type, "f": field, "a": alias, "l": locale},
+        )
+        inserted += res.rowcount or 0
+    return inserted
+
+
+def seed_priority_policy(bind) -> int:
+    """The day-one fulfilment ranking rule. Returns rows inserted (0 or 1)."""
+    import json
+
+    if not _has_table(bind, "priority_policy", schema="scm"):
+        return 0
+    exists = bind.execute(
+        sa.text("SELECT 1 FROM scm.priority_policy WHERE is_active LIMIT 1")
+    ).scalar()
+    if exists:
+        return 0
+    bind.execute(
+        sa.text(
+            """
+            INSERT INTO scm.priority_policy
+                (name, is_active, factors, demand_class_weights, notes)
+            VALUES (:n, true, CAST(:f AS jsonb), CAST(:d AS jsonb), :o)
+            """
+        ),
+        {
+            "n": "Today's rule (PO document sequence)",
+            "f": json.dumps(_PRIORITY_FACTORS),
+            "d": json.dumps({"project": 1.0, "retail": 0.4}),
+            "o": (
+                "Seeded to reproduce the manual answer so week-one output is "
+                "checkable against what Ms Tee would have done by hand. The fairer "
+                "need-by-within-demand-class weighting ships in the same release "
+                "but is not active until someone switches it after reviewing the "
+                "rank-delta preview."
+            ),
+        },
+    )
+    return 1
+
 # Seeded so day-one ranking reproduces today's manual answer (PO document sequence
 # dominant). The fairer need-by-within-class weighting ships in the same release but off,
 # so Ms Tee can check the system against her own working before changing the rule.
@@ -304,17 +371,7 @@ def upgrade() -> None:
             ["doc_type", "field"],
         )
 
-    for doc_type, field, alias, locale in _ALIASES:
-        bind.execute(
-            sa.text(
-                """
-                INSERT INTO import_field_alias (doc_type, field, alias, locale)
-                VALUES (:d, :f, :a, :l)
-                ON CONFLICT (doc_type, field, alias) DO NOTHING
-                """
-            ),
-            {"d": doc_type, "f": field, "a": alias, "l": locale},
-        )
+    seed_import_field_aliases(bind)
 
     # --- 5. fulfilment priority policy (scm schema: advice dies with the module) -----
     if _has_table(bind, "reorder_policy", schema="scm") and not _has_table(
@@ -373,34 +430,7 @@ def upgrade() -> None:
             schema="scm",
         )
 
-    if _has_table(bind, "priority_policy", schema="scm"):
-        import json
-
-        exists = bind.execute(
-            sa.text("SELECT 1 FROM scm.priority_policy WHERE is_active LIMIT 1")
-        ).scalar()
-        if not exists:
-            bind.execute(
-                sa.text(
-                    """
-                    INSERT INTO scm.priority_policy
-                        (name, is_active, factors, demand_class_weights, notes)
-                    VALUES (:n, true, CAST(:f AS jsonb), CAST(:d AS jsonb), :o)
-                    """
-                ),
-                {
-                    "n": "Today's rule (PO document sequence)",
-                    "f": json.dumps(_PRIORITY_FACTORS),
-                    "d": json.dumps({"project": 1.0, "retail": 0.4}),
-                    "o": (
-                        "Seeded to reproduce the manual answer so week-one output is "
-                        "checkable against what Ms Tee would have done by hand. The fairer "
-                        "need-by-within-demand-class weighting ships in the same release "
-                        "but is not active until someone switches it after reviewing the "
-                        "rank-delta preview."
-                    ),
-                },
-            )
+    seed_priority_policy(bind)
 
     # --- 8. one definition of committed demand -------------------------------------
     # `scm.committed_v` (migration 274) counted every outstanding line on an open sales
