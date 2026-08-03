@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { FileArchive, Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -19,6 +19,7 @@ import { Progress } from '@/components/ui/progress';
 import { useBulkImportAttachment, useAttachmentTypesList, useDirectoryTree } from '../hooks/useAttachments';
 import { getJobStatus } from '../services/attachmentService';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
+import { FileDropzone } from '@/components/common/FileDropzone';
 import type { JobStatusResponse } from '../services/attachmentService';
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
 import type { AttachmentDirectoryTreeNode } from '../services/directoryService';
@@ -56,7 +57,6 @@ export default function AttachmentBulkImportDialog({
   const defaultAccessLevels = accessTypeOptions.length > 0 ? accessTypeOptions.map((o) => o.code) : ['dealer', 'end_user'];
   const [accessLevels, setAccessLevels] = useState<string[]>([]);
   const [validationError, setValidationError] = useState('');
-  const [dragActive, setDragActive] = useState(false);
   const [phase, setPhase] = useState<'form' | 'processing' | 'done'>('form');
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<JobStatusResponse | null>(null);
@@ -125,42 +125,11 @@ export default function AttachmentBulkImportDialog({
 
   const flatDirs = flattenTree(directoryTree);
 
-  const setFileFromFile = useCallback((file: File | null) => {
-    if (!file) {
-      setZipFile(null);
-      return;
-    }
-    if (!file.name.toLowerCase().endsWith('.zip')) {
-      setValidationError('Please select a ZIP file');
-      setZipFile(null);
-    } else {
-      setValidationError('');
-      setZipFile(file);
-    }
+  const handleFilesChange = useCallback((files: File[]) => {
+    const file = files[0] ?? null;
+    if (file) setValidationError('');
+    setZipFile(file);
   }, []);
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    setFileFromFile(file ?? null);
-    e.target.value = '';
-  };
-
-  const handleDrag = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(e.type === 'dragenter' || e.type === 'dragover');
-  }, []);
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setDragActive(false);
-      const file = e.dataTransfer.files?.[0];
-      setFileFromFile(file ?? null);
-    },
-    [setFileFromFile]
-  );
 
   const handleSubmit = async () => {
     if (!selectedTypeId) {
@@ -263,35 +232,15 @@ export default function AttachmentBulkImportDialog({
             <Label>
               ZIP file <span className="text-destructive">*</span>
             </Label>
-            <div
-              onDragEnter={handleDrag}
-              onDragLeave={handleDrag}
-              onDragOver={handleDrag}
-              onDrop={handleDrop}
-              className={`border-2 border-dashed rounded-lg p-4 text-center transition-colors ${
-                dragActive ? 'border-primary bg-primary/5' : 'border-border'
-              }`}
-            >
-              <input
-                type="file"
-                accept=".zip"
-                onChange={handleFileChange}
-                className="hidden"
-                id="bulk-import-zip"
-              />
-              <label htmlFor="bulk-import-zip" className="cursor-pointer block">
-                <FileArchive className="size-8 mx-auto mb-2 text-muted-foreground" />
-                {zipFile ? (
-                  <p className="text-sm font-medium truncate">{zipFile.name}</p>
-                ) : (
-                  <>
-                    <p className="text-sm text-muted-foreground">
-                      Drag and drop a ZIP file here, or click to select
-                    </p>
-                  </>
-                )}
-              </label>
-            </div>
+            <FileDropzone
+              accept=".zip"
+              files={zipFile ? [zipFile] : []}
+              onFilesChange={handleFilesChange}
+              onReject={() => setValidationError('Please select a ZIP file')}
+              title="Drag and drop a ZIP file here, or click to select"
+              hint="ZIP archive"
+              aria-label="ZIP file"
+            />
           </div>
 
           {validationError && (

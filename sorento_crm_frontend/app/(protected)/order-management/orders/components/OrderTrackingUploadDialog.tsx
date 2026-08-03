@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Upload, X, FileSpreadsheet, TestTube } from 'lucide-react';
+import { Upload, TestTube } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -16,8 +16,7 @@ import { parseExcelSheets } from '@/lib/excel-utils';
 import { useExcelAccept } from '@/hooks/use-excel-accept';
 import { toast } from 'sonner';
 import { Progress } from '@/components/ui/progress';
-import { Label } from '@/components/ui/label';
-import { cn } from '@/lib/utils';
+import { FileDropzone } from '@/components/common/FileDropzone';
 import type { ValidateImportResult } from '../services/orderService';
 
 type ImportResult = {
@@ -51,18 +50,7 @@ export function OrderTrackingUploadDialog({
   const [isTesting, setIsTesting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [sheetSummary, setSheetSummary] = useState<{ masterRows: number; trackingRows: number } | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
   const [testResult, setTestResult] = useState<ValidateImportResult | null>(null);
-
-  const validExtensions = accept.split(',').map((ext) => ext.trim().replace(/^\./, ''));
-  const validateFileType = (f: File): boolean => {
-    const fileExtension = f.name.split('.').pop()?.toLowerCase();
-    if (!fileExtension || !validExtensions.includes(fileExtension)) {
-      toast.error(`Invalid file type. Please use: ${accept}`);
-      return false;
-    }
-    return true;
-  };
 
   const processFile = async (selectedFile: File) => {
     try {
@@ -86,37 +74,21 @@ export function OrderTrackingUploadDialog({
     }
   };
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (!selectedFile) return;
-    if (!validateFileType(selectedFile)) return;
-    await processFile(selectedFile);
-    e.target.value = '';
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!isUploading) setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-    if (isUploading) return;
-    const droppedFiles = e.dataTransfer?.files;
-    if (!droppedFiles?.length) return;
-    const droppedFile = droppedFiles[0];
-    if (!validateFileType(droppedFile)) return;
-    processFile(droppedFile);
+  const handleRemoveFile = () => {
+    setFile(null);
+    setSheetSummary(null);
     setTestResult(null);
+  };
+
+  // The file is only held once its sheets check out, so a rejected workbook
+  // leaves the zone empty rather than parking an unusable file in it.
+  const handleFilesChange = (files: File[]) => {
+    const selected = files[0];
+    if (!selected) {
+      handleRemoveFile();
+      return;
+    }
+    void processFile(selected);
   };
 
   const handleUpload = async () => {
@@ -150,12 +122,6 @@ export function OrderTrackingUploadDialog({
     }
   };
 
-  const handleRemoveFile = () => {
-    setFile(null);
-    setSheetSummary(null);
-    setTestResult(null);
-  };
-
   const handleTest = async () => {
     if (!file || !onTest) return;
     setIsTesting(true);
@@ -187,69 +153,25 @@ export function OrderTrackingUploadDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          {!file ? (
-            <div
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              className={cn(
-                'border-2 border-dashed rounded-lg p-8 text-center transition-colors',
-                isDragging
-                  ? 'border-primary bg-primary/5'
-                  : 'border-muted-foreground/25'
-              )}
-            >
-              <FileSpreadsheet className="size-12 mx-auto mb-4 text-muted-foreground" />
-              <p className="text-sm font-medium text-foreground mb-2">
-                {isDragging ? 'Drop your file here' : 'or drag and drop'}
-              </p>
-              <Label htmlFor="order-tracking-upload" className="cursor-pointer">
-                <Button variant="outline" asChild>
-                  <span>
-                    <Upload className="size-4 mr-2" />
-                    Choose File
-                  </span>
-                </Button>
-              </Label>
-              <input
-                id="order-tracking-upload"
-                type="file"
-                accept={accept}
-                onChange={handleFileSelect}
-                className="hidden"
-              />
-              <p className="text-sm text-muted-foreground mt-2">
-                Accepted formats: {accept}
-              </p>
-            </div>
-          ) : (
+          <FileDropzone
+            accept={accept}
+            disabled={isUploading}
+            files={file ? [file] : []}
+            onFilesChange={handleFilesChange}
+            onReject={() => toast.error(`Invalid file type. Please use: ${accept}`)}
+            title="Drop the Excel file here, or click to browse"
+            hint={`Accepted formats: ${accept}`}
+            aria-label="Delivery order tracking workbook"
+          />
+          {(sheetSummary || testResult) && (
             <div className="border rounded-lg p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <FileSpreadsheet className="size-5 text-muted-foreground" />
-                  <div>
-                    <p className="text-sm font-medium">{file.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {(file.size / 1024).toFixed(2)} KB
-                    </p>
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleRemoveFile}
-                  disabled={isUploading}
-                >
-                  <X className="size-4" />
-                </Button>
-              </div>
               {sheetSummary && (
                 <div className="text-xs text-muted-foreground">
                   Master rows: {sheetSummary.masterRows} • Overall Tracking rows: {sheetSummary.trackingRows}
                 </div>
               )}
               {testResult !== null && (
-                <div className="mt-3 rounded-md border bg-muted/30 p-3 text-sm">
+                <div className="rounded-md border bg-muted/30 p-3 text-sm">
                   <p className="font-medium">
                     {testResult.valid
                       ? (testResult.warnings?.length ?? 0) > 0
