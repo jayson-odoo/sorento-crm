@@ -28,6 +28,22 @@ RESPONSE_ATTACHMENT_TYPE_CODE = "response_attachment"
 _UNRESOLVED = object()
 
 
+def _as_float(value: Any) -> Optional[float]:
+    """A capture coordinate as a plain number for the API shape.
+
+    The column is Numeric, so SQLAlchemy hands back a Decimal, which every JSON
+    encoder in this stack renders as a string. A map pin arriving at the FE as
+    ``"3.1390123"`` is a pin the FE has to remember to parse, and one caller
+    eventually will not.
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 class EntityAttachmentService:
     """Generic attachment link operations (create/link/list/unlink) across entity types."""
 
@@ -343,6 +359,22 @@ class EntityAttachmentService:
                 "staff" if kind == "user" else "contact" if kind == "contact" else "unknown"
             ),
             "can_unlink": kind != "user",
+            # The AI upload verdict (AC-M22/AC-M24). This is the ONE shape every
+            # attachment list renders from - the CRM panels and the public /view
+            # pages both read it - so a score that never reaches here is a score no
+            # screen can show, and "used anyway, because ..." is exactly what a
+            # reviewer needs on a listing rather than by opening a row.
+            #
+            # ai_validation_state is what distinguishes "scored badly" from "nobody
+            # could look at it": a NULL ai_score means BOTH, and a UI reading it as
+            # failure puts Retake in front of a good photo.
+            "ai_validation_state": getattr(link, "ai_validation_state", None),
+            "ai_validation_reason": getattr(link, "ai_validation_reason", None),
+            "ai_score": getattr(link, "ai_score", None),
+            "ai_suggestion": getattr(link, "ai_suggestion", None),
+            "override_reason": getattr(link, "override_reason", None),
+            "latitude": _as_float(getattr(link, "latitude", None)),
+            "longitude": _as_float(getattr(link, "longitude", None)),
         }
 
     def _resolve_uploader_name(self, att: Any) -> str:

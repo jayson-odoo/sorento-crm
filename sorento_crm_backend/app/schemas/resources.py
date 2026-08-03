@@ -52,6 +52,17 @@ class AttachmentTypeBase(BaseModel):
     # the portal upload quota check; admin-editable (was DB-only until 2026-07-28).
     max_count_per_entity: Optional[int] = None
     supports_field_linkage: bool = False
+    # --- AI upload validation policy (AC-M20). On the create, the update AND the
+    # read: this repo has twice shipped a manual builder that silently dropped a new
+    # column, and the symptom is always the same - the admin saves a value they can
+    # never see again, and the control renders its default forever.
+    #
+    # No Field(ge=..., le=...) on min_score on purpose. The bound is enforced in
+    # AttachmentTypeService, because a seed, a bulk edit and a future import all land
+    # there while only the dialog lands here (ADR-0013 rule 7).
+    validation_guidance: Optional[str] = None
+    min_score: Optional[int] = None
+    validate_on_upload: bool = False
 
 
 class AttachmentTypeCreate(AttachmentTypeBase):
@@ -65,6 +76,9 @@ class AttachmentTypeUpdate(BaseModel):
     max_file_size_mb: Optional[int] = None
     max_count_per_entity: Optional[int] = None
     supports_field_linkage: Optional[bool] = None
+    validation_guidance: Optional[str] = None
+    min_score: Optional[int] = None
+    validate_on_upload: Optional[bool] = None
 
 
 class AttachmentTypeResponse(AttachmentTypeBase):

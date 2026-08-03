@@ -52,12 +52,12 @@ def seeded(db: Session) -> Session:
 # --------------------------------------------------------------------------- #
 
 
-def test_seed_creates_ten_keys_each_v1_with_production_label(seeded: Session):
+def test_seed_creates_every_key_each_v1_with_production_label(seeded: Session):
     names = {r.name for r in seeded.query(AIPromptVersion).all()}
     assert names == set(PROMPT_KEYS.keys())
     # M0 added `semantic_parser` (reformulator/router kept as dormant rows);
     # the ideation pipeline added `ideate_extractor` (D-CONFIRM brain extractor).
-    assert len(names) == len(PROMPT_KEYS) == 11
+    assert len(names) == len(PROMPT_KEYS)
     for name in PROMPT_KEYS:
         versions = [r.version for r in seeded.query(AIPromptVersion).filter_by(name=name).all()]
         assert versions == [1]
@@ -69,8 +69,8 @@ def test_seed_creates_ten_keys_each_v1_with_production_label(seeded: Session):
 def test_seed_is_idempotent(seeded: Session):
     seed_prompt_registry(seeded.get_bind())
     seed_prompt_registry(seeded.get_bind())
-    assert seeded.query(AIPromptVersion).count() == 11
-    assert seeded.query(AIPromptLabel).count() == 11
+    assert seeded.query(AIPromptVersion).count() == len(PROMPT_KEYS)
+    assert seeded.query(AIPromptLabel).count() == len(PROMPT_KEYS)
 
 
 def test_seed_preserves_existing_custom_system_prompt_as_v2(db: Session):
@@ -227,7 +227,7 @@ def test_set_label_reports_production_and_staging(seeded: Session):
 
 def test_list_keys_shape(seeded: Session):
     rows = AIPromptService(seeded).list_keys()
-    assert len(rows) == 11
+    assert len(rows) == len(PROMPT_KEYS)
     by_name = {r["name"]: r for r in rows}
     assert by_name["agent_system"]["active"] is True
     assert by_name["agent_system"]["production_version"] == 1
@@ -395,7 +395,7 @@ def test_route_list_prompts_happy(api):
     res = client.get("/api/v1/system/ai-assistant/prompts")
     assert res.status_code == 200, res.text
     body = res.json()
-    assert len(body) == 11
+    assert len(body) == len(PROMPT_KEYS)
     assert {r["name"] for r in body} == set(PROMPT_KEYS.keys())
 
 

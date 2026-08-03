@@ -38,6 +38,7 @@ Run: venv/bin/python -m pytest tests/test_attachment_validator_guards.py -q -p n
 """
 from __future__ import annotations
 
+import ast
 import importlib
 import importlib.util
 import pathlib
@@ -146,18 +147,38 @@ def test_the_validator_never_holds_its_own_prompt_text_ac_m25():
     that actually runs after somebody edits it locally to debug something, and the
     registry version then drifts silently while the FE prompt editor shows text nobody
     is using."""
-    code = _strip_comments_and_docstrings(_validator_source())
-    if not code.strip():
+    source = _validator_source()
+    if not source.strip():
         return
     module = _maybe(VALIDATOR_MODULE)
     if module is None:
         return
-    # A prompt is long. Nothing legitimate in this module is a 200-character literal.
+
+    # Parse, do not regex. The regex form of this guard matched the SPAN BETWEEN two
+    # unrelated quote characters, so any stretch of ordinary quote-free code longer
+    # than 200 characters read as a prompt: the first "literal" it reported was
+    # `VALIDATION_TIMEOUT_SECONDS = 12.0 ... COORDINATE_SCALE = 7`. Passing it would
+    # have required sprinkling a quote every 200 characters of source, so the guard
+    # could only ever have been satisfied by making the code worse.
+    #
+    # Docstrings are excluded because explaining what the validator does is exactly
+    # what a docstring is for. What this guard forbids is an inline PROMPT.
+    tree = ast.parse(source)
+    docstrings = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            body = getattr(node, "body", None)
+            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+                if isinstance(body[0].value.value, str):
+                    docstrings.add(id(body[0].value))
+
     long_literals = [
-        literal
-        for literal in re.findall(r'"([^"\\]{200,})"|\'([^\'\\]{200,})\'', code)
-        for literal in literal
-        if literal
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and len(node.value) >= 200
+        and id(node) not in docstrings
     ]
     assert not long_literals, (
         "The validator holds a long string literal that looks like a prompt. AC-M25 "

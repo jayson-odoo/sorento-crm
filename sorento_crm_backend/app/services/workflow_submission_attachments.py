@@ -59,6 +59,11 @@ from sqlalchemy.orm import Session
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.resources import Attachment, AttachmentType
 from app.models.workflow_forms import WorkflowSubmission, WorkflowSubmissionLine
+from app.services.attachment_validation_service import (
+    apply_outcome,
+    normalize_coordinates,
+    validate_upload,
+)
 from app.services.entity_attachment_service import EntityAttachmentService
 from app.services.error_handler import AppException, handle_not_found
 from app.services.workflow_submission_line_status_graph import (
@@ -239,6 +244,8 @@ class WorkflowSubmissionAttachmentService:
         uploaded_by: Optional[str] = None,
         uploaded_by_contact_id: Optional[str] = None,
         notify: bool = True,
+        latitude: Any = None,
+        longitude: Any = None,
     ) -> Dict[str, Any]:
         """Store one file and link it to the submission or to one of its lines.
 
@@ -250,12 +257,30 @@ class WorkflowSubmissionAttachmentService:
 
         1. resolve the target and REFUSE a line that belongs to another submission,
         2. check the cap for THAT row, before anything is stored,
-        3. store the bytes under a key carrying the new attachment's own id,
-        4. only then write the row, so a storage failure leaves nothing behind,
-        5. commit, and only then tell anybody.
+        3. judge the bytes, if this type asked to be judged,
+        4. store the bytes under a key carrying the new attachment's own id,
+        5. only then write the row, so a storage failure leaves nothing behind,
+        6. commit, and only then tell anybody.
 
         ``notify=False`` exists for a bulk/import caller that wants one message rather
         than one per file. It is not a way to skip the guard above it.
+
+        Step 3 is the S2a wiring, and it is here rather than per domain because this
+        one path already routes BOTH submission and line attachments through the one
+        link table, so wiring it once reaches every consuming slice without any of
+        them growing its own scorer (AC-M21).
+
+        The score NEVER decides whether the file is kept. A validator that discards
+        the bytes it judged makes Retake free but the failure unobservable, and it
+        means a timeout loses a photo somebody already took, in the rain, once
+        (AC-M23c). The verdict rides back in the response instead: the FE cannot work
+        out whether 35 is a pass, because it does not know the type's threshold, and
+        the comparison has already been made here.
+
+        ``latitude`` / ``longitude`` arrive WITH the upload because that is the only
+        moment the device knows where it is - a later PATCH records where the person
+        happened to be when they got round to it. A denied, absent or impossible fix
+        is dropped and the upload proceeds (AC-M27: never blocking).
         """
         submission, line, entity_type, entity_id = self._target(submission_id, line_id)
 
@@ -267,6 +292,18 @@ class WorkflowSubmissionAttachmentService:
         # orphan object per refused attempt, which nothing in the product can then see
         # or delete.
         self.links.check_quota(attachment_type, entity_type, entity_id, size, extension)
+
+        # Before anything is written, so a validator that has to roll a failed prompt
+        # lookup back cannot take a half-built attachment row with it. It never
+        # raises, whatever the model does.
+        outcome = validate_upload(
+            self.db,
+            attachment_type=attachment_type,
+            data=payload,
+            filename=filename,
+            content_type=content_type,
+        )
+        capture_latitude, capture_longitude = normalize_coordinates(latitude, longitude)
 
         # Generated here, not read back from the row, so the key can carry it while the
         # row is still unwritten. That is what lets the quota check precede the upload
@@ -337,6 +374,11 @@ class WorkflowSubmissionAttachmentService:
             attachment_id=attachment_id,
             created_by=user_id,
         )
+        # A `skipped` outcome writes NOTHING here, so a type that never opted in is
+        # indistinguishable from every row written before this slice landed.
+        apply_outcome(link, outcome)
+        link.latitude = capture_latitude
+        link.longitude = capture_longitude
         self.db.commit()
         self.db.refresh(link)
         self.db.refresh(attachment)
@@ -351,6 +393,15 @@ class WorkflowSubmissionAttachmentService:
             "size": size,
             "url": self.links._resolve_attachment_url(str(attachment.file_path)),
             "content_type": attachment.mime_type,
+            # `validation_passed` is three-valued and the FE must treat it that way:
+            # False is "judged and short of the bar" (show the suggestion and a
+            # prominent Retake), None is "no claim made" and must never render as a
+            # failure. `ai_validation_state` says which kind of None it is.
+            "ai_validation_state": link.ai_validation_state,
+            "ai_validation_reason": link.ai_validation_reason,
+            "ai_score": link.ai_score,
+            "ai_suggestion": link.ai_suggestion,
+            "validation_passed": outcome.passed,
         }
 
     def _notify(

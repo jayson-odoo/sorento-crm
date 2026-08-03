@@ -46,6 +46,26 @@ class AttachmentType(Base):
     # may download without further gating. crm_resource_attachments_list is pinned
     # to these via `direct_access_only`.
     is_direct_access = Column(Boolean, default=False, nullable=False, server_default="false")
+    # --- AI upload validation policy (AC-M20). This table IS the per-type upload
+    # policy table (allowed_extensions / max_file_size_mb / max_count_per_entity),
+    # so validation policy joins it rather than founding a second policy row an
+    # admin would have to keep in step through a second dialog.
+    #
+    # validation_guidance: prose the admin writes, scored against by the model. Text
+    # because one guidance string routinely carries three separate checks, and a
+    # VARCHAR makes the requirement lose an argument with the schema. NULL = never
+    # configured, which is a different thing from configured-as-empty.
+    validation_guidance = Column(Text, nullable=True)
+    # min_score: integer 0-100, the SAME scale as entity_attachment_links.ai_score
+    # (AC-M22b). NULL = advisory (score and suggestion shown, nothing ever fails);
+    # 0 = a gate every score clears, because `score >= 0` is always true. Neither
+    # may ever read as "no photo passes" - the same footgun max_count_per_entity = 0
+    # already carries on this table. Out of 0..100 is refused at the write.
+    min_score = Column(Integer, nullable=True)
+    # NOT NULL with a server default, because every type that predates this slice
+    # must keep uploading exactly as it does today: no model call, no latency, no
+    # new failure mode. A NULL here would be a third state on a two-state switch.
+    validate_on_upload = Column(Boolean, default=False, nullable=False, server_default="false")
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     attachments = relationship("Attachment", back_populates="attachment_type")

@@ -353,6 +353,46 @@ def _validator_fallback() -> str:
     )
 
 
+def _attachment_validator_fallback() -> str:
+    """System prompt for the core attachment validator (S2a, AC-M25).
+
+    NOT the ``validator`` key above - that one is the assistant's dormant M3a
+    answer-confidence gate, and sharing a name would share a version chain and a
+    production label between two completely unrelated nodes.
+
+    ``{{validation_guidance}}`` is the attachment TYPE's own guidance string. It is
+    the ONLY thing that differs between two types, which is what makes "a new photo
+    type is admin data entry, not a deployment" true (AC-M25): everything else in
+    this body is identical for every type forever.
+    """
+    return (
+        "ATTACHMENT VALIDATOR\n"
+        "You judge ONE uploaded file against ONE requirement, and you return a number "
+        "and a short piece of advice. You are not a chat assistant, you never refuse, "
+        "and you never ask a question.\n\n"
+        "THE REQUIREMENT (written by the administrator of this record type):\n"
+        "{{validation_guidance}}\n\n"
+        "HOW TO SCORE\n"
+        "- score is an INTEGER from 0 to 100. 100 means the file fully satisfies the "
+        "requirement above; 0 means it does not address it at all.\n"
+        "- Judge ONLY against the requirement. Do not invent extra criteria, and do not "
+        "mark a file down for anything the requirement did not ask for.\n"
+        "- Judge what is VISIBLE. Never guess at what might be outside the frame, and "
+        "never speculate about who the file belongs to.\n"
+        "- Photographic quality (focus, framing, lighting, whether the subject is fully "
+        "in shot) counts only where the requirement depends on it.\n\n"
+        "SUGGESTION\n"
+        "- One short, concrete, actionable sentence telling the uploader what to change, "
+        "written to the person holding the phone: 'Step back so the whole unit is in "
+        "frame.' Never a rebuke and never a restatement of the score.\n"
+        "- Empty string when the file already satisfies the requirement.\n\n"
+        "OUTPUT\n"
+        'Return ONE JSON object and nothing else: {"score": <integer 0-100>, '
+        '"suggestion": "<one sentence or empty>"}. No prose, no code fence, no '
+        "explanation outside the JSON.\n"
+    )
+
+
 def _clarifier_fallback() -> str:
     return (
         "CLARIFIER (dormant — activates in M3a)\n"
@@ -498,6 +538,18 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         activates_in=None,
         variables=[],
         fallback=_semantic_compressor_fallback,
+    ),
+    # --- Core attachment validator (S2a). Lives in `resources`, called by every
+    #     module that uploads through an attachment type with validate_on_upload.
+    #     Its own key, NOT `validator` below: that one is the assistant's answer
+    #     gate, and one shared version chain would republish both at once. ---
+    "attachment_validator": PromptKeySpec(
+        name="attachment_validator",
+        role="Attachment validator — score an uploaded file against its type's guidance",
+        active=True,
+        activates_in=None,
+        variables=["validation_guidance"],
+        fallback=_attachment_validator_fallback,
     ),
     # --- Registered but dormant (seed + editable, no call site yet) ---
     "validator": PromptKeySpec(

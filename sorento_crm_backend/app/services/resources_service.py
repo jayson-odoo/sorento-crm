@@ -424,14 +424,55 @@ class AttachmentTypeService:
             return None
         return self.db.query(AttachmentType).filter(AttachmentType.code == code.strip()).first()
     
+    def _assert_validation_policy(
+        self,
+        *,
+        min_score: Optional[int],
+        validate_on_upload: Optional[bool],
+        validation_guidance: Optional[str],
+    ) -> None:
+        """Refuse a validation policy that would brick the type (AC-M20a, AC-M23a).
+
+        In the SERVICE, not on the route: the admin dialog, a seed, a bulk edit and a
+        future import all pass through here while only one of them passes through a
+        route (ADR-0013 rule 7).
+
+        `min_score = 150` is a plausible slip on a 0-100 field and it bricks the type
+        permanently - every file fails, the uploader is told to retake, the retake
+        fails too, and nothing in the UI says why. Refused where it is typed rather
+        than discovered in the field. 0 and NULL are both legal and both permissive:
+        0 is a gate every score clears, NULL is advisory.
+
+        `validate_on_upload` with blank guidance is a type that promises validation
+        with nothing to validate against, and whatever a model returns for an empty
+        instruction looks authoritative because it is a number. The runtime degrades
+        to `unvalidated` for such a row as well - a migration and a raw INSERT are
+        both paths into this table that this guard does not cover.
+        """
+        from app.services.attachment_validation_service import SCORE_MAX, SCORE_MIN
+
+        if min_score is not None and not (SCORE_MIN <= int(min_score) <= SCORE_MAX):
+            raise handle_validation_error(
+                f"min_score must be between {SCORE_MIN} and {SCORE_MAX}."
+            )
+        if validate_on_upload and not (validation_guidance or "").strip():
+            raise handle_validation_error(
+                "Validation guidance is required when a type validates on upload."
+            )
+
     def create_type(self, type_data: AttachmentTypeCreate):
         """Create a new attachment type."""
+        self._assert_validation_policy(
+            min_score=type_data.min_score,
+            validate_on_upload=type_data.validate_on_upload,
+            validation_guidance=type_data.validation_guidance,
+        )
         existing = self.db.query(AttachmentType).filter(
             AttachmentType.type_name == type_data.type_name
         ).first()
         if existing:
             raise handle_conflict("Attachment type name already exists.")
-        
+
         attachment_type = AttachmentType(**type_data.model_dump())
         self.db.add(attachment_type)
         self.db.commit()
@@ -443,7 +484,24 @@ class AttachmentTypeService:
         attachment_type = self.get_type(type_id)
         
         update_data = type_data.model_dump(exclude_unset=True)
-        
+
+        # Against the MERGED row, not against the patch: a PATCH that only sets
+        # validate_on_upload=true has to be judged against the guidance already on
+        # the row, and one that only blanks the guidance has to be judged against the
+        # switch already on the row. Either half alone reads as harmless.
+        def _merged(field: str):
+            return (
+                update_data[field]
+                if field in update_data
+                else getattr(attachment_type, field, None)
+            )
+
+        self._assert_validation_policy(
+            min_score=_merged("min_score"),
+            validate_on_upload=_merged("validate_on_upload"),
+            validation_guidance=_merged("validation_guidance"),
+        )
+
         # Check for name uniqueness if type_name is being updated
         if "type_name" in update_data and update_data["type_name"] != attachment_type.type_name:
             existing = self.db.query(AttachmentType).filter(

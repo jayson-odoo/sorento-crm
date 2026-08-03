@@ -1496,13 +1496,22 @@ def test_null_island_is_treated_as_a_failed_fix(db):
 
 
 def test_a_real_fix_is_kept_at_the_column_precision(db):
-    """Kuala Lumpur, to the seven decimals AC-B21 chose for the Site pin."""
+    """Kuala Lumpur, to the seven decimals AC-B21 chose for the Site pin.
+
+    The longitude expectation was ``101.6869`` as first written, which no scale can
+    satisfy alongside the latitude: ``101.6868999`` already carries exactly seven
+    decimals, so at the pinned scale it is unchanged, and reaching ``101.6869`` needs
+    quantizing at four to six places, which would truncate the latitude to
+    ``3.139012``. Scale 7 is the one this file pins elsewhere against
+    ``complaints.latitude`` (AC-B21), so the longitude is corrected here rather than
+    the scale being loosened to fit a miscounted decimal.
+    """
     latitude, longitude = _fn("normalize_coordinates", "(latitude, longitude)")(
         3.1390123456, 101.6868999
     )
     assert latitude is not None and longitude is not None
     assert Decimal(str(latitude)) == Decimal("3.1390123")
-    assert Decimal(str(longitude)) == Decimal("101.6869")
+    assert Decimal(str(longitude)) == Decimal("101.6868999")
 
 
 # ============================================================================
