@@ -1,7 +1,25 @@
 # PLAN - Lead to Sales Order (module `projects`, phase 2)
 
-**Status:** DRAFT, pre-code. Grilled with the client 2026-08-01 (24 decisions, D1-D24), then
-the PLAN itself grilled against the source documents (9 findings, G1-G9, all resolved).
+**Status:** P1-P8 and P11 BUILT and client-reviewed (2026-08-02/03). P8a, P9, P10, P12 and
+P13 remain, and are the set named in CONTRACT section 7 as out of scope for that build.
+Grilled with the client 2026-08-01 (24 decisions, D1-D24), then the PLAN itself grilled
+against the source documents (9 findings, G1-G9, all resolved).
+
+**Built:** P1 lead informant + handshake, P2 company profile, P3 quotation publish, P4 PO
+intake, P5 handwriting cards, P6 schedule intake, P7 SO draft + gate, P8 publish + import
+file, P11 amendments/OCN/delta. Proven against the client's own 10 page PO: 51 lines,
+1,810,640.62 to the cent, and the handwritten cancellation reconciling to the quotation
+total.
+
+**Not built, in dependency order:** P8a divergence reconciliation, P9 allocation, P10 order
+inquiry + SCM handoff (the gap between an SO existing and SCM being told what to buy), P12
+pre-order and sponsorship paths, P13 ESB outbound swap + real AR ingest (blocked on the ESB
+team, not on us).
+
+**Known gaps inside what is built:** the multi-code line split (a description naming A, B
+and C becoming three lines) is unbuilt because zero of the client's 51 lines exhibit it,
+so there is nothing to verify against. The reconciliation fix actions are unit-tested but
+not yet exercised against a live unconfirmed schedule.
 **Acceptance criteria:** `UAC-project-lead-to-so.md` (binding). The Journey there governs.
 **Slug:** project-lead-to-so
 **Classification:** extends the existing MODULE `projects`; `public` schema, normal FKs,

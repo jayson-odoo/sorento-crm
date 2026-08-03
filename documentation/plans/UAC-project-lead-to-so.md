@@ -1,6 +1,8 @@
 # UAC - Lead to Sales Order (module `projects`, phase 2)
 
-**Status:** DRAFT, pre-code. Grilled 2026-08-01 against the client's own artefacts.
+**Status:** Groups A-G and M ACCEPTED against the client's own artefacts (2026-08-02/03).
+Groups H, I, J, K and N remain unbuilt, matching the slices deferred in PLAN section 4.
+Grilled 2026-08-01 against the client's own artefacts.
 **Slug:** project-lead-to-so
 **Owner:** jayson
 **Depends on:** the built `projects` module (S0-S6b), `sales_orders` / `sales_order_lines`

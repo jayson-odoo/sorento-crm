@@ -146,6 +146,7 @@ project, the upload becomes a NEW VERSION of that PO rather than a second PO.
   "extraction_error": null,
   "extraction_model": "gemini-2.5-flash",
   "page_count": 10, "pages_extracted": 10, "failed_pages": [],
+  "extraction_elapsed_ms": 163420,
   "purchase_order": {
     "approved_by_name": null, "approved_at": null,
     "countersigned_by_name": null, "countersigned_at": null
@@ -306,6 +307,7 @@ so a list renders without a UUID on it.
   "extraction_error": null,
   "page_count": 3,
   "pages_extracted": 3,
+  "extraction_elapsed_ms": 41200,
   "purchase_order_id": "…", "po_number": "HQ/26/01/121",
   "uploaded_by_name": "…", "confirmed_by_name": null, "created_at": "…",
   "document_url": "…",
@@ -535,3 +537,41 @@ Publish applies the delta to the SO lines, stamps the OCN approved, and moves th
 Allocation (P9), the order inquiry Excel and SCM handoff (P10), pre-order and sponsorship
 paths (P12), the ESB swap and real AR ingest (P13), and divergence reconciliation (P8a).
 The publish path stops at the import file. Nothing above depends on them.
+
+---
+
+## 8. Amendments after the first client review
+
+Recorded here because the contract is what the next person reads, not the transcript.
+
+**A9. `extraction_elapsed_ms` on both version responses.** How long the model actually
+took, in milliseconds; null on documents read before it was recorded. The client asked to
+be told the processing time once a read finishes ("you need to display the processed time
+after done to let the user know how long you took"). Column added to
+`project_po_versions` and `delivery_schedule_versions` by migration
+`320_extraction_elapsed_ms`. The frontend renders it through
+`_shared/lib/readingTime.ts` ("Read in 2m 15s") and never beside a running spinner, where
+a duration would read as a total it is not yet.
+
+**A10. Document reads are logged as AI usage.** Every extraction writes an
+`ai_assistant_usage_logs` row with `feature="ai_document_extract"`, `form_key` set to the
+prompt key, `tool_calls_count` set to the page count (one model call per page) and
+`response_time_ms` set to the elapsed time. `ai_document_extract` is a THIRD feature
+value beside `ai_assistant` and `ai_extract`, and had to be added to the usage screen's
+filter and label map or the rows appeared only under "All" and were mislabelled as chat.
+The row carries no principal: extraction runs on the worker with no request behind it and
+neither version table records who uploaded the document, so there is nothing truthful to
+attribute it to. Giving it one needs an uploader column, which is a separate change.
+
+**A11. A wrapped description is folded, not counted.** A description that spills past the
+bottom of a page finishes above the next numbered item on the following page. That tail
+is rejoined to the line it belongs to. A payload is a continuation when it has
+description text, no printed item number and no qty, unit price or amount; the stock code
+cell is explicitly not part of the test, because the model reads ink bleeding through from
+the row above into it. With no line above it, a fragment is still kept, so nothing is ever
+dropped silently.
+
+**A12. One file-drop surface.** Every upload in the product renders
+`components/common/FileDropzone.tsx` ("i want to standardize our file dropping UI in the
+whole system"). It replaces the picking surface only; preflight, validation, progress and
+routing stay in each call site.
