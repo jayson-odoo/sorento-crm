@@ -627,6 +627,23 @@ than bolted into a spike.
 
 ### The slice proper
 
+**Phase 1 (frontend prototype on mocks) is BUILT, 2026-08-03.** Route `/portal/lodge`, with
+`?scenario=resolved|candidate|unmatched|dealer_track` walking the four extraction outcomes -
+three of which are normal traffic, not error paths. Contract shapes live in
+`portal/components/lodge/lodgeMocks.ts` and are what Phase 2 must satisfy. Walked at 375px,
+zero console errors.
+
+Two findings from walking it, both recorded because they change the slice rather than the code:
+
+1. **The tiled chooser has no pictures and the fallback proves the cost.** Four tiles render
+   "K" and two render "W" (K Kitchen Mixer Tap, K Kitchen & Bathroom Cold Tap, K Kitchen &
+   Bathroom Mixer Tap, K Kitchen Sink). An initial differentiates nothing, and the wrong tap
+   is the wrong Warranty Product Kind, which is the wrong warranty verdict. **Sorento's call:
+   31 real icons, or accept text-only tiles.**
+2. **"Did we get this right?" over an empty sentence reads as a broken screen**, and roughly a
+   quarter of receipts print no usable shop name. The confirm step now says what actually
+   happened and carries on.
+
 **Extraction pre-fills an editable form, not a read-only confirmation.** Every extracted value - name, phone, site address, shop name, purchase date, value, quantity, Kind - renders as a normal input the consumer can correct. Both versions are stored (AI original + human correction), which means **production becomes its own measurement harness**: correction rate per field is extraction accuracy, continuously, without instrumenting anything else. Correcting the shop name re-runs the dealer match. This materially reduces the blast radius of concern 1 - a bad extraction costs the consumer one edit rather than costing CS a cleanup - but it does not eliminate it, because a wrong purchase date the consumer does not notice still mis-computes warranty. The S3-pre spike still runs.
 
 A **Consumer 360 page** ships with this slice: profile, every purchase (dealer, dealer document number, product, quantity, value, date), every Complaint, every stored document. This is the screen that makes the commercial purpose real rather than aspirational. **Phase 1 is frontend-first against mocks** - build the whole flow with stubbed hooks, tune every state, verify in a browser via sidebar clicks, and only then wire the backend.
