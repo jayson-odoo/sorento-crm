@@ -26,7 +26,7 @@
  * are the deliverable of this phase.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Camera,
@@ -132,10 +132,10 @@ export function LodgeFlow({
     };
   }, [backend]);
 
-  const runExtract = useCallback(async () => {
+  const runExtract = useCallback(async (files: File[] = []) => {
     setBusy(true);
     try {
-      const data = await backend.extract(scenario);
+      const data = await backend.extract(scenario, files);
       setExtract(data);
       // Pre-fill from extraction - but NEVER pre-fill a dealer we are not sure of. A
       // `candidate` is a suggestion for CS, not an answer to show the consumer as fact.
@@ -252,7 +252,7 @@ export function LodgeFlow({
       </header>
 
       {step === 'upload' ? (
-        <StepUpload busy={busy} onContinue={runExtract} />
+        <StepUpload busy={busy} live={live} onContinue={runExtract} />
       ) : null}
 
       {step === 'confirm' && extract ? (
@@ -307,28 +307,54 @@ export function LodgeFlow({
 
 /* ------------------------------------------------------------------ step 1 */
 
-function StepUpload({ busy, onContinue }: { busy: boolean; onContinue: () => void }) {
+function StepUpload({
+  busy,
+  live,
+  onContinue,
+}: {
+  busy: boolean;
+  /** On the mock route there is no file picker to open, so a tap just counts a photo. */
+  live: boolean;
+  onContinue: (files: File[]) => void;
+}) {
+  const [files, setFiles] = useState<File[]>([]);
   const [count, setCount] = useState(0);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const ready = live ? files.length : count;
+
   return (
     <section className="flex flex-col gap-4">
       <p className="text-sm text-muted-foreground">
         Take a photo of your receipt and of the problem. We will read the rest ourselves.
       </p>
+      {/* `capture="environment"` opens the rear camera straight away on a phone, which is
+          where every one of these arrives from. `accept` keeps the gallery to images and
+          PDFs so a consumer cannot pick something the extractor will silently drop. */}
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        accept="image/*,application/pdf"
+        capture="environment"
+        className="hidden"
+        onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+      />
       <button
         type="button"
-        onClick={() => setCount((c) => c + 1)}
+        onClick={() => (live ? inputRef.current?.click() : setCount((c) => c + 1))}
         className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed px-4 py-10 text-center transition-colors hover:bg-muted/50"
       >
         <Camera className="size-8 text-muted-foreground" />
         <span className="text-sm font-medium">Add a photo</span>
         <span className="text-xs text-muted-foreground">Receipt, invoice, or the fault itself</span>
       </button>
-      {count > 0 ? (
+      {ready > 0 ? (
         <p className="text-sm text-muted-foreground">
-          {count} photo{count === 1 ? '' : 's'} ready.
+          {ready} photo{ready === 1 ? '' : 's'} ready.
         </p>
       ) : null}
-      <Button onClick={onContinue} disabled={busy || count === 0} className="h-11">
+      <Button onClick={() => onContinue(files)} disabled={busy || ready === 0} className="h-11">
         {busy ? (
           <>
             <Loader2 className="mr-2 size-4 animate-spin" />

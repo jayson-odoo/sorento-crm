@@ -696,6 +696,17 @@ export const AI_EXTRACT_FORM_KEYS: Record<PortalSubmissionKind, string> = {
   sponsorship_form: 'portal.sponsorship_form',
 };
 
+/**
+ * The consumer track's own form key, deliberately NOT `portal.complaint`.
+ *
+ * `portal.complaint` reads a Sorento delivery order: it asks for a DO number and for the
+ * BUYER being billed. A consumer's attachment is the DEALER's own invoice, where the
+ * company on the letterhead is the SELLER and the document number matches nothing in
+ * `orders` - six for six in the S3-pre spike (AC-C12). Not a `PortalSubmissionKind`,
+ * because a consumer lodgement is not one of the four portal form types.
+ */
+export const CONSUMER_LODGE_FORM_KEY = 'portal.consumer_lodge';
+
 export async function aiExtractFromFiles(
   formKey: string,
   files: File[],

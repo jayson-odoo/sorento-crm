@@ -82,7 +82,15 @@ TEXT_MAX_CHARS = 200_000
 # line per affected product (code + quantity), so they receive a `products`
 # array too. stock_inquiry / master.* still keep product codes inline.
 FORMS_WITH_LINE_ITEMS: frozenset[str] = frozenset(
-    {"portal.purchase_request", "portal.sponsorship_form", "portal.complaint"}
+    {
+        "portal.purchase_request",
+        "portal.sponsorship_form",
+        "portal.complaint",
+        # A consumer's receipt lists what they bought, and the whole point of reading it
+        # is to learn which products the ledger now knows they own. Without the products
+        # array the extract returns a shop and a date attached to nothing.
+        "portal.consumer_lodge",
+    }
 )
 
 

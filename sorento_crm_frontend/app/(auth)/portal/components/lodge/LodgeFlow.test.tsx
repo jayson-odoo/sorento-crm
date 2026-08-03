@@ -70,9 +70,20 @@ function backend(overrides: Partial<LodgeBackend> = {}): LodgeBackend {
   };
 }
 
-/** Photo, then continue - the flow will not leave step 1 without one. */
-async function reachConfirm() {
-  fireEvent.click(screen.getByRole('button', { name: /add a photo/i }));
+/**
+ * Photo, then continue - the flow will not leave step 1 without one.
+ *
+ * On the LIVE route the photo has to be a real File, because the files ARE what gets sent
+ * to extraction. On the mock route there is nothing to send, so a tap just counts one.
+ */
+async function reachConfirm({ live = false }: { live?: boolean } = {}) {
+  if (live) {
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['receipt'], 'receipt.jpg', { type: 'image/jpeg' });
+    fireEvent.change(input, { target: { files: [file] } });
+  } else {
+    fireEvent.click(screen.getByRole('button', { name: /add a photo/i }));
+  }
   fireEvent.click(screen.getByRole('button', { name: /continue/i }));
   await waitFor(() => expect(screen.getByText(/did we get this right/i)).toBeInTheDocument());
 }
@@ -122,7 +133,7 @@ describe('LodgeFlow', () => {
   it('re-runs the dealer match when the shop name is corrected', async () => {
     recheckDealer.mockResolvedValue({ state: 'resolved', customerName: 'SANIMART SDN BHD' });
     render(<LodgeFlow live backend={backend()} />);
-    await reachConfirm();
+    await reachConfirm({ live: true });
 
     const input = screen.getByPlaceholderText(/shop name on your receipt/i);
     fireEvent.change(input, { target: { value: 'SANIMART SDN BHD' } });
@@ -140,7 +151,7 @@ describe('LodgeFlow', () => {
   it('does not echo a dealer name when the match was not exact', async () => {
     recheckDealer.mockResolvedValue(null);
     render(<LodgeFlow live backend={backend()} />);
-    await reachConfirm();
+    await reachConfirm({ live: true });
 
     const input = screen.getByPlaceholderText(/shop name on your receipt/i);
     fireEvent.change(input, { target: { value: 'SENG HUAT SDN BHD' } });

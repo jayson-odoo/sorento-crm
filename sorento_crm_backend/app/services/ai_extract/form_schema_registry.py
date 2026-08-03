@@ -338,6 +338,94 @@ _PORTAL_SPONSORSHIP_FORM: list[ExtractFieldSpec] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# S3 - a CONSUMER's receipt. Deliberately NOT `portal.complaint`.
+#
+# `portal.complaint` is the dealer/CS track: it reads a Sorento delivery order and asks
+# for the DO number and the BUYER being billed. A consumer's attachment is the DEALER's
+# OWN invoice, and the S3-pre spike measured what that means:
+#
+#   - Every dealer document number tested against `orders` was a NO MATCH (AC-C12).
+#     `KCS-2112-0054`, `CS002629`, `NV20-2-008850`, `IV01029`, `DO10-2-123494`, `CS40964` -
+#     six for six. Asking for a DO number here would produce a field that matches nothing
+#     and then invites somebody to join on it.
+#   - The company at the top is the SHOP THE CONSUMER WALKED INTO. It is not a buyer being
+#     billed and it is not Sorento; a receipt printed on the dealer's letterhead names the
+#     dealer as the SELLER, which is the opposite of `portal.complaint`'s customer_name.
+#   - 87% print a readable shop name and 97% a purchase date, so those two are worth
+#     asking for. 24% print no usable shop name at all, which is why nothing here is
+#     required and every field is editable afterwards (AC-C10a, AC-C14).
+# ---------------------------------------------------------------------------
+_PORTAL_CONSUMER_LODGE: list[ExtractFieldSpec] = [
+    ExtractFieldSpec(
+        name="shop_name",
+        label="Shop name",
+        kind="text",
+        note=(
+            "The SHOP or company that SOLD the item, as printed at the top of the "
+            "receipt or invoice - the dealer's own letterhead. This is the SELLER, not "
+            "a buyer being billed. Never return 'Sorento' unless Sorento itself issued "
+            "the document. Return the company name only, including any Sdn Bhd suffix "
+            "and any branch in brackets exactly as printed."
+        ),
+        examples=["TOTAL HOME DIY SDN BHD", "DiLOOMA SDN. BHD. (JLN IPOH BRANCH)"],
+    ),
+    ExtractFieldSpec(
+        name="dealer_document_number",
+        label="Receipt or invoice number",
+        kind="text",
+        note=(
+            "The DEALER's own document number, verbatim. It is NOT a Sorento order "
+            "number and must never be matched against one. Do not normalise it, do not "
+            "strip prefixes, and if only a till reference is printed return that."
+        ),
+        examples=["KCS-2112-0054", "CS002629", "NV20-2-008850", "IV01029"],
+    ),
+    ExtractFieldSpec(
+        name="purchase_date",
+        label="Purchase date",
+        kind="date",
+        note=(
+            "ISO date YYYY-MM-DD, the date on the RECEIPT. Malaysian receipts print "
+            "DD/MM/YYYY, so 16/10/2025 is 2025-10-16 and never 2025-04-10. Return "
+            "nothing at all if no date is legible: an invented date silently becomes "
+            "every warranty verdict computed from it."
+        ),
+        examples=["2025-10-16"],
+    ),
+    ExtractFieldSpec(
+        name="total_value",
+        label="Receipt total",
+        kind="number",
+        note=(
+            "The grand total printed on the receipt, digits only. Leave it out when the "
+            "document shows no total - never spread or infer one from the line items."
+        ),
+    ),
+    ExtractFieldSpec(
+        name="site_address",
+        label="Installation address",
+        kind="textarea",
+        note=(
+            "Where the item is INSTALLED, if the document happens to show a delivery "
+            "address. This is never the shop's own address."
+        ),
+    ),
+    ExtractFieldSpec(
+        name="sorento_order_number",
+        label="Sorento order number, if quoted",
+        kind="do_number",
+        note=(
+            "ONLY when the document is Sorento's own (the dealer track, AC-C13), where "
+            "the order resolves the dealer, the products and the date directly. On a "
+            "dealer's own receipt there is no such number - leave it out rather than "
+            "offering the dealer's document number in its place."
+        ),
+        examples=["202604-0348"],
+    ),
+]
+
+
 def _build_master_schema_from_field_linkage(entity_type: str) -> list[ExtractFieldSpec]:
     """Translate :mod:`app.services.field_linkage.registry` FieldSpecs into
     AI-extract ``ExtractFieldSpec`` so the per-attachment extract endpoint
@@ -360,6 +448,7 @@ def _build_master_schema_from_field_linkage(entity_type: str) -> list[ExtractFie
 
 FORM_SCHEMAS: dict[str, list[ExtractFieldSpec]] = {
     "portal.complaint": _PORTAL_COMPLAINT,
+    "portal.consumer_lodge": _PORTAL_CONSUMER_LODGE,
     "portal.stock_inquiry": _PORTAL_STOCK_INQUIRY,
     "portal.purchase_request": _PORTAL_PURCHASE_REQUEST,
     "portal.sponsorship_form": _PORTAL_SPONSORSHIP_FORM,

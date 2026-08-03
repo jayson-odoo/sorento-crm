@@ -688,7 +688,21 @@ ai-extract into `LodgeBackend.extract` is a contained follow-up: one method, one
   `consumer-management` router, a searchable list and a detail page, reachable from a new
   sidebar group. Adds `consumers.profiles.view`, kept SEPARATE from the value grant.
 
-Still open in Phase 2: the ai-extract mapping and a playwright spec.
+- Receipt extraction wired, on its own form key. `portal.consumer_lodge` (11 pytest + 11
+  vitest) rather than reusing `portal.complaint`, which reads the WRONG document: that form
+  asks for a Sorento DO number and for the buyer being billed, while a consumer's
+  attachment is the dealer's own invoice where the letterhead company is the SELLER and the
+  document number matched nothing in `orders` six times out of six (AC-C12). The map from
+  extract response to form state never decides anything - it reads a shop NAME and a model
+  CODE, and the server decides whether either is a dealer or a product. A failed or empty
+  extraction lands on the same editable form rather than raising, because 24% of receipts
+  print nothing usable and that is the ordinary case, not an error path.
+- `e2e/consumer-lodge.spec.ts` (5 passing, 1 skipped without `PORTAL_E2E_TOKEN` /
+  `PORTAL_E2E_SLUG`). Walks resolved / unmatched / candidate, the full journey to a
+  reference number, and asserts zero horizontal overflow at 375px. The live half proves the
+  FE -> BE -> DB round trip and checks the network calls.
+
+**Phase 2 is complete.** Phase 3 (code review) is the remaining gate before a PR.
 
 **Two environment findings from verifying Consumer 360 in a browser, both of which apply
 to production and neither of which is code:**
