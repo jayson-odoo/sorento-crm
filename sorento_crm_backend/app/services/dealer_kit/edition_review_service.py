@@ -133,7 +133,10 @@ def _cutoff(db: Session, edition: Edition) -> tuple[Optional[datetime], Optional
 def review(db: Session, edition: Edition) -> EditionReview:
     version = _latest_version(db, edition.page_id)
     if version is None:
-        return EditionReview()
+        # Still names what it is comparing against, exactly as the
+        # no-collections branch does. Both mean "nothing has changed"; only one
+        # of them saying "since Autumn 2026" reads as two different answers.
+        return EditionReview(previous_edition_name=_cutoff(db, edition)[1])
 
     collection_ids = _collection_ids(version.doc)
     if not collection_ids:
