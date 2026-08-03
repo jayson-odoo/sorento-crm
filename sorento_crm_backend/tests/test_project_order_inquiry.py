@@ -115,6 +115,7 @@ def _sales_order(
     *,
     ref: str | None = None,
     is_pre_order: bool = False,
+    is_sponsorship: bool = False,
     status: str = SO_STATUS_DRAFT,
     doc_no: str | None = None,
 ) -> ProjectSalesOrder:
@@ -127,6 +128,7 @@ def _sales_order(
         autocount_doc_no=doc_no,
         status=status,
         is_pre_order=is_pre_order,
+        is_sponsorship=is_sponsorship,
         grouping_origin="area",
     )
     db.add(order)
@@ -928,3 +930,70 @@ def test_committed_demand_is_untouched_by_deriving_an_inquiry(seeded):
     db.refresh(line)
 
     assert (line.qty, line.delivery_date, line.product_id) == before
+
+
+# -------------------------------------------------------------------- AC-K4
+#
+# Pinned ahead of AC-K1, which does not build sponsorship drafts yet. The derivation reads
+# no flag, so sponsorship works for FREE today -- which is exactly why it needs a test. A
+# later change to the netting or the verb table could stop sponsorship stock from ever
+# reaching purchasing and nothing would fail.
+
+
+def test_a_sponsorship_sales_order_derives_rows_exactly_as_a_commercial_one(seeded):
+    """AC-K4. Free stock still has to be bought, so purchasing still has to be told."""
+    db, company_id, owner = seeded
+    project = _project(db, company_id, owner)
+    order = _sales_order(db, project, is_sponsorship=True)
+    grating = _product(db, "CB6633")
+    _line(db, order, grating, "600", date(2027, 1, 7))
+
+    result = ProjectSODraftService(db).publish(order, actor_user_id=owner)
+
+    rows = _rows(db, result["order_inquiry_id"])
+    assert [(row.item_code, row.qty, row.verb) for row in rows] == [
+        ("CB6633", Decimal("600.0000"), IV_ORDER)
+    ]
+    assert {row.state for row in rows} == {INQUIRY_RAISED}
+
+
+def test_a_price_zero_sponsorship_line_still_raises_an_instruction(seeded):
+    """The instruction is about QUANTITY, never about money (AC-K1 prices at zero).
+
+    A row suppressed because it was worth nothing is stock that never gets ordered.
+    """
+    db, company_id, owner = seeded
+    project = _project(db, company_id, owner)
+    order = _sales_order(db, project, is_sponsorship=True)
+    product = _product(db, "SRT382-6")
+    line = _line(db, order, product, "135", date(2027, 3, 1))
+    line.unit_price = Decimal("0")
+    line.amount = Decimal("0")
+    db.flush()
+
+    result = ProjectSODraftService(db).publish(order, actor_user_id=owner)
+
+    rows = _rows(db, result["order_inquiry_id"])
+    assert [(row.item_code, row.qty) for row in rows] == [("SRT382-6", Decimal("135.0000"))]
+
+
+def test_a_sponsorship_order_is_not_treated_as_a_covering_pool(seeded):
+    """A pre-order is stock we hold and can point at; a sponsorship is stock going OUT.
+
+    Netting off against it would tell purchasing that a giveaway already covers a paying
+    customer's delivery, which is the one thing the pool must never do.
+    """
+    db, company_id, owner = seeded
+    project = _project(db, company_id, owner)
+    product = _product(db, "CB6633")
+
+    sponsorship = _sales_order(db, project, is_sponsorship=True)
+    _line(db, sponsorship, product, "5000", date(2027, 1, 1))
+
+    commercial = _sales_order(db, project)
+    _line(db, commercial, product, "600", date(2027, 6, 1))
+
+    result = ProjectSODraftService(db).publish(commercial, actor_user_id=owner)
+
+    rows = _rows(db, result["order_inquiry_id"])
+    assert [(row.qty, row.verb) for row in rows] == [(Decimal("600.0000"), IV_ORDER)]
