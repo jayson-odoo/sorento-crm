@@ -27,6 +27,7 @@ prices; a consumer sees consumer prices. **One document, resolved per reader.**
 | **S2 collections + bundles** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
 | **S3 PDF export** | n/a (no new UI surface) | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
 | **S7 flyer seeding** | **PASSED** 2026-08-02 | **PASSED** 2026-08-03 | not run | **BUILT, UNREVIEWED** |
+| **S2.5 Edition approval** | **SKIPPED** (see below) | **PASSED** 2026-08-03 | not run | **BUILT, UNREVIEWED** |
 
 ---
 
@@ -766,8 +767,76 @@ brochure picker while it was still disabled by `pagesLoading`. **A spec that ski
 that passes**, and nothing in the run output distinguished them.
 
 **Still not done:** Phase 3 review has not been run on S7 at all. The container PDF export has
-still never been executed. S2.5, the Edition approval workflow, is now unblocked by the status
-engine landing in main and remains unbuilt.
+still never been executed. (S2.5, the Edition approval workflow, was unblocked by the status
+engine landing in main and has since been built - see the next section.)
+
+---
+
+## S2.5 - Edition approval, the first entity on the status engine (2026-08-03)
+
+**What it does.** An Edition is one revision cycle over a catalogue: start it,
+send it for approval, an Approver approves or sends it back with a reason, and
+somebody with the publish right decides when readers see it. Five states, six
+manual edges, seeded by migration 318.
+
+**Phase 1 was SKIPPED, and that is a process violation worth naming.** The
+screens and the backend were built together rather than prototyping the UI
+against mocks first. Justification, such as it is: the shape was already
+settled by `PLAN-edition-approval.md` and the status graph, and the UI is two
+screens with no novel interaction. It is still not what the three-phase loop
+says, and it is recorded here rather than quietly omitted.
+
+**The Edition is the first thing in this repo to ride the core status engine
+rather than a status column.** Every transition goes through
+`status_service.assert_transition_allowed`; there is no `if` deciding what is
+legal. Adding a state later is a seeding change, not a hunt through the service
+for the branch that also needs updating.
+
+**Three permissions, deliberately not one.** `page.edit` starts and submits,
+`edition.approve` decides, `page.publish` moves the label. A Designer gets a
+403 on approve INCLUDING on their own Edition, which is the entire point of the
+workflow. Approving publishes NOTHING: it records that a human read the
+catalogue and WHICH version they read.
+
+**The one-open-per-page rule is a partial unique index, not a service read.**
+An "is one already open" check races itself between two requests and the loser
+writes the second open Edition anyway. The write is attempted and the database's
+answer is translated into a 409 with a next step. That also required
+denormalising `status_key` onto the row, because the index reads the key.
+
+**Status entity registration moved out of the router package.** It was a side
+effect of importing the routes, so a worker or a script would have seen an
+unregistered entity. It now hooks into `_register_core()`, warn-not-raise.
+
+**Verified:** 67 pytest across four edition suites, 28 vitest across the two
+screens, and the whole cycle walked in a browser on 2026-08-03 - sidebar to
+Editions, catalogue gear to a scoped queue, start, send, reject with a reason,
+reopen, resend, approve, publish, back to the queue reading Done. No console
+errors, no horizontal overflow at 375px.
+
+**Gate adds:** exactly ONE primary action per state, chosen by status, with
+Reject as its outline-destructive counterpart and everything else under the
+gear · an action that cannot apply is HIDDEN, never disabled · a rejection with
+no reason is refused on both sides · the reason survives reopen and is cleared
+on the next submission · `done` is terminal.
+
+**Two defects the browser found after the code looked finished.** A catalogue
+created a minute ago has no saved version, and nothing stopped an Edition on it
+being sent, approved, and only THEN refused at publish - by which point an
+Approver had spent their attention on it and `approved_version_id` had been
+stamped NULL, claiming somebody read a document that did not exist. Worse, the
+editor's Save button is disabled on an untouched page, so the remedy looked
+unavailable. The refusal moved to submit, where the Designer is still holding
+it. Separately, the queue's empty state read "Start one from a catalogue page"
+while the button that does exactly that sat directly above it.
+
+**Neither was reachable from the test suites as written**, which is the lesson:
+both screens were green, and the walkthrough was what found them.
+
+**Still not done:** Phase 3 review has not been run on S2.5 or on S7. There is
+no e2e spec for the approval cycle - `DataGridTable` does not mount its row
+body under jsdom, so rows, status pills and the empty message are asserted
+nowhere. The price-only revision rule (AC-L4 to AC-L6) is deferred by decision.
 
 ---
 
