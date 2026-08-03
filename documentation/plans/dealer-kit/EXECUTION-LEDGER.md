@@ -26,6 +26,7 @@ prices; a consumer sees consumer prices. **One document, resolved per reader.**
 | **S1 builder core** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
 | **S2 collections + bundles** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
 | **S3 PDF export** | n/a (no new UI surface) | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
+| **S7 flyer seeding** | **PASSED** 2026-08-02 | **PASSED** 2026-08-03 | not run | **BUILT, UNREVIEWED** |
 
 ---
 
@@ -704,6 +705,69 @@ id, not a colour · a category filter composes with the search term.
 
 **Still not built:** ordering from a design (blocked on the Quote decision), photo-real
 materials, first-person camera, free-drag rotation handles - none load-bearing to the feel.
+
+---
+
+## S7 - Seeding a catalogue from the printed flyer (2026-08-01 to 2026-08-03)
+
+**Recorded 2026-08-03, after the fact.** The per-slice outcome notes were written into
+`PLAN-flyer-seeding.md` as each slice landed and never into this ledger, so the gate record
+stopped at S6 while three days of work went in. The detail lives in that plan; this is the
+ledger's summary of it. The lesson is the entry itself: an outcome note in a plan is not a gate
+record, and the next slice writes both.
+
+**What it does.** Reads the 36 page A3 flyer, matches its 998 printed codes against the product
+master, reports what it got wrong, and seeds a DRAFT brochure - sections per flyer page,
+collections per printed row, artwork as section backgrounds. Turns a 36 page rebuild nobody
+starts on a Tuesday into an afternoon of corrections.
+
+**S7.0 - the brochure image flag.** `product_attachments.is_primary` was false on every row, so
+tiles showed whichever photo was linked first - including `98. BLANK PAGE_PG93.jpg`. Two
+surfaces, one flag, enforced in the service AND by a partial unique index. Inference from
+filenames was rejected: it would identify the right image for 509 of 535 and a generator or a
+tile fed the wrong picture is a confident, expensive error.
+
+**S7.1 to S7.4 - extract, match, review, seed.** Extraction is pure and runs inside the request
+(a second for 36 pages, so no queue, no polling screen, no failure path). The reading is
+PERSISTED and the match report is DERIVED on every read - a stored report is only true for the
+master it was computed against and goes stale in the direction that costs money. The seed is a
+draft BY CONSTRUCTION: no draft flag was added, because a version with no label pointing at it
+is already unreachable by every reader, and a flag would be a second way to say the same thing
+that disagrees the first time one is forgotten.
+
+**S7.5 / S7.6 - artwork and dimensions.** Flyer banners become section backgrounds, CMYK
+converted to RGB, cropped to the page box, and garbage-collected when the last thing naming them
+dies. Printed sizes reach the product master only on an explicit click by someone holding the
+master-data permission - reading a flyer still writes nothing.
+
+**The fidelity gate.** `score_seed` scores the seeded document against the reading it came from:
+**1.000** on the committed three page fixture and **1.000** on the whole 36 page flyer (1,252
+cards, 347 printed rows, 341 collections), including a run with 40 codes deliberately withheld
+from the master - 44 unplaceable card occurrences, all reconciled against the seed's `skipped`
+list, 0 lost, 0 invented.
+
+**Verified:** 91 pytest across the three flyer suites · 188 vitest · 3 Playwright against a real
+stack on the committed fixture · the review and picker screens exercised in a browser including
+at 375px.
+
+**Gate adds:** a misread heading is carried through verbatim and SHOWN, never repaired · an
+unmatched code is named as a product the brochure will not contain, before the seed rather than
+after · a re-seed writes a new version and brand new collections, proved by mutation rather than
+by assertion alone · another company's reading is 404 and never 403 · the seed drops nothing
+silently · sizes are written only for ticked rows and never over an entered value without
+confirmation.
+
+**Three e2e defects found and fixed on 2026-08-03, all of which had been in the branch since
+their own slice landed.** The dimensions assertion still expected the pre-S7.6 copy, so the main
+spec had been failing since S7.6 - and the re-seed spec, which skips when it fails, had been
+unreachable since then too. The 375px spec used a bare `getByRole('dialog')`, which also matches
+the navigation drawer Radix leaves mounted at `data-state="closed"`. The re-seed spec tapped the
+brochure picker while it was still disabled by `pagesLoading`. **A spec that skips is not a spec
+that passes**, and nothing in the run output distinguished them.
+
+**Still not done:** Phase 3 review has not been run on S7 at all. The container PDF export has
+still never been executed. S2.5, the Edition approval workflow, is now unblocked by the status
+engine landing in main and remains unbuilt.
 
 ---
 
