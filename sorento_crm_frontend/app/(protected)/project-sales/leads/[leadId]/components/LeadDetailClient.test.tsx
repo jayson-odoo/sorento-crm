@@ -57,8 +57,17 @@ const routerReplace = vi.fn((url: string) => {
   searchListeners.forEach((listener) => listener());
 });
 
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  // Without this the grid never leaves its skeleton: the real hook fetches saved column
+  // order and `isLoading` gates the body rows, and nothing answers that call under jsdom.
+  useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
+}));
+
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: routerPush, replace: routerReplace }),
+  // The shared DataGrid falls back to the pathname when no listingKey is given, so every
+  // tab that now renders a grid needs this present on the mock.
+  usePathname: () => '/project-sales/leads/lead-1',
   useSearchParams: () =>
     new URLSearchParams(
       React.useSyncExternalStore(subscribeSearch, readSearch, readSearch),
@@ -165,6 +174,10 @@ function lead(overrides: Partial<LeadWithAcceptance> = {}): ProjectLead {
     developer_name: 'Setia Land',
     location: 'Setia Alam',
     outcome: 'open',
+    // The header pill shows the RUNG now, not the derived outcome, so the fixture carries one.
+    status_id: 's-new',
+    status_key: 'new',
+    status_label: 'New',
     project_count: 0,
     possible_duplicates: [],
     can_edit: true,
@@ -194,6 +207,14 @@ function renderDetail() {
 }
 
 /** Tabs are plain buttons, exactly as on the project detail page. */
+/** Secondary actions live behind the gear now. Radix opens on pointerdown, not click. */
+function openGearMenu() {
+  fireEvent.pointerDown(screen.getByRole('button', { name: 'Lead actions' }), {
+    button: 0,
+    ctrlKey: false,
+  });
+}
+
 async function openTab(name: string) {
   fireEvent.click(await screen.findByRole('button', { name }));
 }
@@ -234,7 +255,10 @@ describe('LeadDetailClient page states', () => {
 
     expect(await screen.findByText('LEAD-000001')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Tower behind the showroom' })).toBeInTheDocument();
-    expect(screen.getByText('open')).toBeInTheDocument();
+    // ONE pill, for the RUNG. The derived outcome used to render beside it, which read
+    // "Open New" on a fresh lead and "Qualified Qualified" on a qualified one.
+    expect(screen.getByText('New')).toBeInTheDocument();
+    expect(screen.queryByText('open')).not.toBeInTheDocument();
     expect((await screen.findAllByText('Awaiting acceptance by Ali')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('Waiting 2 days').length).toBeGreaterThan(0);
   });
@@ -333,12 +357,14 @@ describe('LeadDetailClient tabs', () => {
 });
 
 describe('LeadDetailClient Overview tab', () => {
-  it('shows what was heard, and says so when nobody wrote a note', async () => {
+  it('shows what was heard, and stays silent about a note nobody wrote', async () => {
     renderDetail();
 
     expect(await screen.findByText('Setia Land')).toBeInTheDocument();
     expect(screen.getByText('Setia Alam')).toBeInTheDocument();
-    expect(screen.getByText(/No notes yet/)).toBeInTheDocument();
+    // No coaching paragraph where the note would be: an unwritten note is an absence, and
+    // the tab is not the place to teach what notes are for (ADR 1e).
+    expect(screen.queryByText(/No notes yet/)).not.toBeInTheDocument();
   });
 
   it('shows the note and the rough value when there are some', async () => {
@@ -366,11 +392,19 @@ describe('LeadDetailClient Who told us tab', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('says the buyer is not known yet rather than leaving the row blank', async () => {
+  it('answers an unknown buyer with a dash, not a sentence', async () => {
     renderDetail();
     await openTab('Who told us');
 
-    expect(await screen.findByText('Not known yet')).toBeInTheDocument();
+    // "Buyer" and "Who told us" are both TAB labels too, so the term has to be matched
+    // inside the card itself.
+    await screen.findByText('Their reference');
+    const card = document
+      .querySelector('[data-slot="card-title"]')!
+      .closest('[data-slot="card"]')!;
+    expect(within(card as HTMLElement).getByText('Buyer')).toBeInTheDocument();
+    expect(screen.queryByText('Not known yet')).not.toBeInTheDocument();
+    expect(within(card as HTMLElement).getAllByText('-').length).toBeGreaterThan(0);
   });
 
   it('asks for a source when the lead carries none', async () => {
@@ -386,7 +420,11 @@ describe('LeadDetailClient Who told us tab', () => {
     renderDetail();
     await openTab('Who told us');
 
-    expect(await screen.findByText(/Nobody is recorded as the source/)).toBeInTheDocument();
+    // Dashes across the whole card ARE the answer; the paragraph that used to explain
+    // why naming a source matters is gone.
+    expect(await screen.findByText('Source')).toBeInTheDocument();
+    expect(screen.queryByText(/Nobody is recorded as the source/)).not.toBeInTheDocument();
+    expect(screen.getAllByText('-').length).toBeGreaterThan(2);
   });
 
   it('never sends an owner through the edit form, because that would skip the handshake', async () => {
@@ -407,6 +445,8 @@ describe('LeadDetailClient Who told us tab', () => {
     await openTab('Who told us');
 
     fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    // The dialog's own placeholder, which the SearchableSelect mock turns into the
+    // accessible name. Unrelated to the detail card, where an unknown buyer now reads "-".
     fireEvent.change(await screen.findByLabelText('Not known yet'), {
       target: { value: 'c1' },
     });
@@ -433,7 +473,8 @@ describe('LeadDetailClient Handover tab', () => {
     await openTab('Handover');
 
     expect(await screen.findByText('Ali')).toBeInTheDocument();
-    expect(screen.getByText('Not accepted yet')).toBeInTheDocument();
+    expect(screen.getByText('Accepted')).toBeInTheDocument();
+    expect(screen.queryByText('Not accepted yet')).not.toBeInTheDocument();
   });
 
   it('records the decline reason on the lead once declined', async () => {
@@ -461,7 +502,9 @@ describe('LeadDetailClient Handover tab', () => {
     renderDetail();
     await openTab('Handover');
 
-    expect(await screen.findByText(/Nobody holds this lead/)).toBeInTheDocument();
+    // "Assigned to -" says it. What matters is that the way OUT is still offered.
+    expect(screen.queryByText(/Nobody holds this lead/)).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Assign it/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Assign it/ }));
     expect(await screen.findByLabelText('Search people')).toBeInTheDocument();
   });
@@ -494,7 +537,8 @@ describe('LeadDetailClient Buyer tab', () => {
     renderDetail();
     await openTab('Buyer');
 
-    expect(await screen.findByText('Account service is down')).toBeInTheDocument();
+    // Both account lists report it: they are two independent grids off one query.
+    expect((await screen.findAllByText('Account service is down')).length).toBe(2);
   });
 
   it('lists the rest of the account once it loads', async () => {
@@ -524,15 +568,19 @@ describe('LeadDetailClient Buyer tab', () => {
     expect(screen.queryByText(/LEAD-000001 ·/)).not.toBeInTheDocument();
   });
 
-  it('says the account is otherwise empty rather than hiding the section', async () => {
+  it('renders both account lists when empty, without a sentence in either', async () => {
     getLead.mockResolvedValue(lead({ customer_id: 'c1', customer_name: 'Sunway' }));
     renderDetail();
     await openTab('Buyer');
 
-    expect(await screen.findByText('This is their only lead so far.')).toBeInTheDocument();
+    // Both lists still render (CRUD standard), each stating its own emptiness as a heading
+    // rather than as prose.
+    expect(await screen.findByText('No other leads on this buyer')).toBeInTheDocument();
+    expect(screen.getByText('No projects on this buyer')).toBeInTheDocument();
+    expect(screen.queryByText('This is their only lead so far.')).not.toBeInTheDocument();
     expect(
-      screen.getByText('Nothing registered against this account yet.'),
-    ).toBeInTheDocument();
+      screen.queryByText('Nothing registered against this account yet.'),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -541,7 +589,9 @@ describe('LeadDetailClient Projects tab', () => {
     renderDetail();
     await openTab('Projects');
 
-    expect(await screen.findByText(/Nothing registered from this lead yet/)).toBeInTheDocument();
+    expect(await screen.findByText('Nothing registered from this lead yet')).toBeInTheDocument();
+    // The paragraph about what qualifying does is gone.
+    expect(screen.queryByText(/runs the duplicate check/)).not.toBeInTheDocument();
   });
 
   it('lists the projects the lead produced', async () => {
@@ -633,7 +683,8 @@ describe('LeadDetailClient Activity tab', () => {
 
     expect(await screen.findByText('Disqualified')).toBeInTheDocument();
     expect(screen.getByText('no budget')).toBeInTheDocument();
-    expect(screen.getByText('Time not recorded')).toBeInTheDocument();
+    // The grid answers a missing stamp with "-", like every other unknown value.
+    expect(screen.getAllByText('-').length).toBeGreaterThan(0);
   });
 
   it('says nothing has happened yet instead of showing an empty box', async () => {
@@ -667,14 +718,19 @@ describe('LeadDetailClient header actions', () => {
     await screen.findByText('What we heard');
     expect(screen.queryByRole('button', { name: /Accept/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Decline$/ })).not.toBeInTheDocument();
-    // Marketing can still hand it to somebody else.
-    expect(screen.getByRole('button', { name: /Reassign/ })).toBeInTheDocument();
+    // Marketing can still hand it to somebody else - behind the gear, since accepting is
+    // not their move and the header carries exactly one action.
+    openGearMenu();
+    expect(await screen.findByRole('menuitem', { name: /Reassign/ })).toBeInTheDocument();
   });
 
   it('refuses to decline without a reason, and sends the reason when there is one', async () => {
     renderDetail();
 
-    fireEvent.click(await screen.findByRole('button', { name: /^Decline$/ }));
+    await screen.findByText('What we heard');
+    // Accept is the primary action on an unanswered lead; Decline sits with the rest.
+    openGearMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Decline$/ }));
 
     const dialog = within(await screen.findByRole('dialog'));
     expect(dialog.getByRole('button', { name: 'Decline' })).toBeDisabled();
@@ -688,11 +744,13 @@ describe('LeadDetailClient header actions', () => {
     await waitFor(() => expect(declineLead).toHaveBeenCalledWith('l1', 'Outside my area'));
   });
 
-  it('assigns to somebody else from the header', async () => {
+  it('assigns to somebody else from the gear menu', async () => {
     sessionUserId = 'u-marketing';
     renderDetail();
 
-    fireEvent.click(await screen.findByRole('button', { name: /Reassign/ }));
+    await screen.findByText('What we heard');
+    openGearMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Reassign/ }));
 
     const picker = await screen.findByLabelText('Search people');
     await waitFor(() =>
@@ -722,7 +780,8 @@ describe('LeadDetailClient header actions', () => {
     );
     renderDetail();
 
-    // Not "Reassign": nobody holds it.
+    // Not "Reassign": nobody holds it. And it is the PRIMARY action, because an unheld
+    // lead needs an owner before anything else can happen to it.
     expect(await screen.findByRole('button', { name: /^Assign$/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Reassign/ })).not.toBeInTheDocument();
   });

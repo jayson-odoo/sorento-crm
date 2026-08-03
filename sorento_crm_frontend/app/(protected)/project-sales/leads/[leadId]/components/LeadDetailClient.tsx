@@ -2,15 +2,20 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import type { ColumnDef } from '@tanstack/react-table';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { RotateCcw, Ban, Check, Loader2, Pencil, Trash2, UserPlus, Users } from 'lucide-react';
+import { RotateCcw, Check, Loader2, Pencil, Trash2, UserPlus, Users } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { PanelDataGrid } from '../../../_shared/components/PanelDataGrid';
+import { ProjectStatusPill } from '../../../[projectId]/components/ProjectStatusPill';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useStatusGraph } from '@/app/(protected)/system-management/status-graphs/hooks/useStatusGraphs';
 import {
@@ -20,9 +25,12 @@ import {
 } from '../../../_shared/hooks/useProjects';
 import { useLeadAcceptanceMutations } from '../../../_shared/hooks/useLeadAcceptance';
 import type { LeadWithAcceptance } from '../../../_shared/types/leadAcceptance.types';
+import type { Project, ProjectLead } from '../../../_shared/types/project.types';
 import { AssignLeadDialog } from '../../components/AssignLeadDialog';
 import { DeclineLeadDialog } from '../../components/DeclineLeadDialog';
 import { LeadAcceptanceBadge } from '../../components/LeadAcceptanceBadge';
+import { LeadStatusPill } from '../../components/LeadStatusPill';
+import { availableStatusMoves } from '../../../[projectId]/components/ProjectStatusAction';
 import { canAssignLead, informantSourceLabel } from '../../components/acceptance';
 import { DisqualifyLeadDialog } from './DisqualifyLeadDialog';
 import { EditLeadInformantDialog } from './EditLeadInformantDialog';
@@ -54,6 +62,15 @@ const TABS = [
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
+
+/** One offer in the header: the primary button, or a row in the gear menu. */
+type HeaderAction = {
+  key: string;
+  label: string;
+  icon?: React.ReactNode;
+  pending?: boolean;
+  run: () => void;
+};
 
 export function LeadDetailClient({ leadId }: { leadId: string }) {
   const router = useRouter();
@@ -110,11 +127,6 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
     );
   }
 
-  // Terminal rungs are excluded on purpose: they belong to the two actions.
-  const statuses = (graph.data?.statuses ?? [])
-    .filter((status) => status.is_active && !status.is_terminal)
-    .sort((a, b) => a.sort_order - b.sort_order);
-
   const isOpen = lead.outcome === 'open';
 
   // Phase 1's ProjectLead predates the informant and the handshake, so the P1 fields are
@@ -129,6 +141,75 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
   // who is allowed to hand a lead on.
   const canAssign = canAssignLead(view);
 
+  // Terminal rungs are excluded on purpose: Qualified and Disqualified each do work the
+  // rung alone cannot (one runs the clash check and registers a project, the other records
+  // a reportable reason), so they belong to their dialogs and the server refuses a bare
+  // move onto either.
+  const stageMoves = lead.can_edit
+    ? availableStatusMoves(graph.data, lead.status_id).filter((m) => !m.toIsTerminal)
+    : [];
+
+  /**
+   * The ONE action, chosen by where the lead actually is.
+   *
+   * Order is the order the work happens in: a lead nobody has answered needs answering
+   * before it can be qualified, and an unheld one needs an owner before anything else.
+   * Everything not chosen here is still reachable, behind the gear.
+   */
+  const primaryAction: HeaderAction | null = (() => {
+    if (lead.can_edit && isOpen && awaitingAcceptance && isAssignee) {
+      return {
+        key: 'accept',
+        label: 'Accept',
+        icon: <Check className="size-4" aria-hidden />,
+        pending: accept.isPending,
+        run: () => accept.mutate(lead.id),
+      };
+    }
+    if (canAssign && !view.owner_user_id) {
+      return {
+        key: 'assign',
+        label: 'Assign',
+        icon: <UserPlus className="size-4" aria-hidden />,
+        run: () => setAssigning(true),
+      };
+    }
+    if (lead.can_edit && lead.outcome === 'disqualified') {
+      return {
+        key: 'reopen',
+        label: 'Reopen',
+        icon: <RotateCcw className="size-4" aria-hidden />,
+        pending: reopen.isPending,
+        run: () => reopen.mutate(lead.id),
+      };
+    }
+    if (lead.can_edit && isOpen) {
+      return { key: 'qualify', label: 'Qualify', run: () => setQualifying(true) };
+    }
+    return null;
+  })();
+
+  const secondaryActions: HeaderAction[] = [
+    ...stageMoves.map((option) => ({
+      key: option.transitionId,
+      label: option.label,
+      pending: move.isPending,
+      run: () => move.mutate({ id: lead.id, toStatusId: option.toStatusId }),
+    })),
+    ...(lead.can_edit && isOpen && awaitingAcceptance && isAssignee
+      ? [{ key: 'decline', label: 'Decline', run: () => setDeclining(true) }]
+      : []),
+    ...(canAssign && view.owner_user_id
+      ? [{ key: 'reassign', label: 'Reassign', run: () => setAssigning(true) }]
+      : []),
+    ...(lead.can_edit && isOpen && primaryAction?.key !== 'qualify'
+      ? [{ key: 'qualify', label: 'Qualify', run: () => setQualifying(true) }]
+      : []),
+    ...(lead.can_edit && isOpen
+      ? [{ key: 'disqualify', label: 'Disqualify', run: () => setDisqualifying(true) }]
+      : []),
+  ];
+
   return (
     <div className="space-y-5">
       {/* flex-col until sm: a long title and the action buttons cannot share a row at
@@ -137,18 +218,14 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
         <div className="min-w-0 break-words">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm text-muted-foreground">{lead.lead_code}</span>
-            <Badge variant={isOpen ? 'outline' : 'secondary'} className="capitalize">
-              {lead.outcome}
-            </Badge>
-            {lead.status_label && (
-              <Badge variant="secondary">{lead.status_label}</Badge>
-            )}
-            {!lead.can_edit && <Badge variant="outline">Read only</Badge>}
+            {/* ONE pill. The outcome used to sit beside the rung, and since the outcome is
+                DERIVED from the rung it read "Qualified Qualified". */}
+            <LeadStatusPill statusKey={lead.status_key} label={lead.status_label} />
+            {!lead.can_edit && <Badge variant="secondary">Read only</Badge>}
           </div>
           <h1 className="mt-1 text-xl font-semibold">{lead.title}</h1>
           <p className="text-sm text-muted-foreground">
-            {[lead.developer_name, lead.location].filter(Boolean).join(' · ') ||
-              'Nothing else recorded yet'}
+            {[lead.developer_name, lead.location].filter(Boolean).join(' · ') || '-'}
           </p>
           <LeadAcceptanceBadge
             lead={view}
@@ -156,86 +233,45 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {lead.can_edit && isOpen && awaitingAcceptance && isAssignee && (
-            <>
-              <Button
-                type="button"
-                disabled={accept.isPending}
-                onClick={() => accept.mutate(lead.id)}
-              >
-                <Check className="size-4" aria-hidden />
-                Accept
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setDeclining(true)}
-              >
-                Decline
-              </Button>
-            </>
-          )}
-          {canAssign && (
-            <Button type="button" variant="outline" onClick={() => setAssigning(true)}>
-              <UserPlus className="size-4" aria-hidden />
-              {view.owner_user_id ? 'Reassign' : 'Assign'}
-            </Button>
-          )}
-          {isOpen && (
-            <div className="w-full sm:w-48">
-              <SearchableSelect
-                value={lead.status_id ?? ''}
-                onChange={(next) => {
-                  if (!next || next === lead.status_id) return;
-                  move.mutate({ id: lead.id, toStatusId: next });
-                }}
-                disabled={!lead.can_edit || move.isPending}
-                options={statuses.map((status) => ({
-                  value: status.id,
-                  label: status.label,
-                }))}
-                placeholder="No stage set"
-                aria-label="Lead stage"
-              />
-            </div>
-          )}
-          {lead.can_edit && isOpen && (
-            <>
-              <Button type="button" onClick={() => setQualifying(true)}>
-                Qualify
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setDisqualifying(true)}
-              >
-                <Ban className="size-4" aria-hidden />
-                Disqualify
-              </Button>
-            </>
-          )}
-          {lead.can_edit && lead.outcome === 'disqualified' && (
+        {/* ONE named action, and everything else behind the gear. Seven buttons across two
+            rows - Accept, Decline, Reassign, a stage dropdown, Qualify, Disqualify, Delete -
+            gave the commonest step no more weight than deleting the record, and the client's
+            words were "I don't really know what each button do". */}
+        <div
+          data-testid="lead-header-actions"
+          className="flex flex-wrap items-center gap-2"
+        >
+          {primaryAction && (
             <Button
               type="button"
-              variant="outline"
-              disabled={reopen.isPending}
-              onClick={() => reopen.mutate(lead.id)}
+              disabled={primaryAction.pending}
+              onClick={primaryAction.run}
             >
-              <RotateCcw className="size-4" aria-hidden />
-              Reopen
+              {primaryAction.icon}
+              {primaryAction.label}
             </Button>
           )}
-          {lead.can_edit && (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setConfirmDelete(true)}
-              aria-label="Delete lead"
-            >
-              <Trash2 className="size-4 text-destructive" aria-hidden />
-              Delete
-            </Button>
+          {(secondaryActions.length > 0 || lead.can_edit) && (
+            <DetailActionsMenu ariaLabel="Lead actions">
+              {secondaryActions.map((action) => (
+                <DropdownMenuItem
+                  key={action.key}
+                  disabled={action.pending}
+                  onSelect={action.run}
+                >
+                  {action.label}
+                </DropdownMenuItem>
+              ))}
+              {lead.can_edit && (
+                <DropdownMenuItem
+                  variant="destructive"
+                  onSelect={() => setConfirmDelete(true)}
+                >
+                  <Trash2 className="size-4" aria-hidden />
+                  Delete lead
+                </DropdownMenuItem>
+              )}
+            </DetailActionsMenu>
           )}
         </div>
       </header>
@@ -403,14 +439,9 @@ function HeardCard({ lead }: { lead: LeadWithAcceptance }) {
             }
           />
         </dl>
-        {lead.notes ? (
+        {lead.notes && (
           <p className="mt-4 break-words rounded-md bg-muted/60 px-3 py-2 text-sm">
             {lead.notes}
-          </p>
-        ) : (
-          <p className="mt-4 text-sm text-muted-foreground">
-            No notes yet. Whatever was actually said belongs here, since the fields above
-            only hold what fits in them.
           </p>
         )}
       </CardContent>
@@ -431,12 +462,6 @@ function InformantCard({
   canEdit: boolean;
   onEdit: () => void;
 }) {
-  const nothingRecorded =
-    !lead.informant_source &&
-    !lead.informant_ref &&
-    !lead.informant_party_label &&
-    !lead.informant_contact_name;
-
   return (
     <Card>
       <CardHeader className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -452,24 +477,10 @@ function InformantCard({
         <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
           <Fact label="Source" value={informantSourceLabel(lead.informant_source)} />
           <Fact label="Their reference" value={lead.informant_ref} />
-          <Fact
-            label="Firm"
-            value={lead.informant_party_label}
-            emptyText="No firm on record"
-          />
+          <Fact label="Firm" value={lead.informant_party_label} />
           <Fact label="Contact name" value={lead.informant_contact_name} />
-          <Fact
-            label="Buyer"
-            value={lead.customer_name}
-            emptyText="Not known yet"
-          />
+          <Fact label="Buyer" value={lead.customer_name} />
         </dl>
-        {nothingRecorded && (
-          <p className="text-sm text-muted-foreground">
-            Nobody is recorded as the source. Naming them is what lets the next person
-            chase the same tender back to a human.
-          </p>
-        )}
       </CardContent>
     </Card>
   );
@@ -495,7 +506,7 @@ function AcceptanceCard({
       <CardContent className="space-y-3">
         <LeadAcceptanceBadge lead={lead} className="flex flex-wrap items-center gap-1.5" />
         <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-          <Fact label="Assigned to" value={lead.owner_name} emptyText="Nobody yet" />
+          <Fact label="Assigned to" value={lead.owner_name} />
           <Fact
             label="Assigned"
             value={
@@ -507,7 +518,6 @@ function AcceptanceCard({
             value={
               lead.accepted_at ? formatDateTimeInMalaysia(lead.accepted_at) : null
             }
-            emptyText="Not accepted yet"
           />
           <Fact
             label="Declined"
@@ -517,20 +527,14 @@ function AcceptanceCard({
           />
           <Fact label="Declined because" value={lead.declined_reason} />
         </dl>
-        {/* Unheld is the state this whole handshake exists to make visible, so the tab
-            offers the move out of it rather than leaving the reader to find the header. */}
-        {unheld && (
-          <div className="space-y-2 border-t border-border pt-3">
-            <p className="text-sm text-muted-foreground">
-              Nobody holds this lead. It stays nobody&apos;s job until a salesperson
-              accepts it.
-            </p>
-            {canAssign && (
-              <Button type="button" variant="outline" size="sm" onClick={onAssign}>
-                <UserPlus className="size-4" aria-hidden />
-                Assign it
-              </Button>
-            )}
+        {/* The way out of the unheld state. "Assigned to -" above already says nobody
+            holds it, so the sentence that used to explain that is gone. */}
+        {unheld && canAssign && (
+          <div className="border-t border-border pt-3">
+            <Button type="button" variant="outline" size="sm" onClick={onAssign}>
+              <UserPlus className="size-4" aria-hidden />
+              Assign it
+            </Button>
           </div>
         )}
       </CardContent>
@@ -539,59 +543,88 @@ function AcceptanceCard({
 }
 
 /**
- * What this lead became. Always rendered, per the CRUD standard: an empty section with
- * a next step beats a section that vanishes and makes the feature look absent.
+ * What this lead became, as a list.
+ *
+ * Was a `ul` of links with a Badge on the right, plus a paragraph explaining what qualifying
+ * does. Both are gone: the rows are the system list, and the row itself opens the project.
  */
 function QualifiedProjects({ lead }: { lead: LeadWithAcceptance }) {
+  const router = useRouter();
   const portfolio = useCustomerPortfolio(lead.customer_id ?? undefined);
-  const projects = (portfolio.data?.projects ?? []).filter(
-    (project) => project.lead_id === lead.id,
+  const projects = React.useMemo(
+    () => (portfolio.data?.projects ?? []).filter((project) => project.lead_id === lead.id),
+    [portfolio.data, lead.id],
+  );
+
+  const columns = React.useMemo<ColumnDef<Project>[]>(
+    () => [
+      {
+        id: 'project_code',
+        accessorFn: (row) => row.project_code,
+        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate text-sm" title={row.original.project_code}>
+            {row.original.project_code}
+          </span>
+        ),
+        size: 140,
+        meta: { headerTitle: 'Project' },
+      },
+      {
+        id: 'title',
+        accessorFn: (row) => row.title,
+        header: ({ column }) => <DataGridColumnHeader title="Title" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate text-sm" title={row.original.title}>
+            {row.original.title}
+          </span>
+        ),
+        size: 320,
+        meta: { headerTitle: 'Title' },
+      },
+      {
+        id: 'status',
+        accessorFn: (row) => row.status_label ?? row.outcome,
+        header: ({ column }) => <DataGridColumnHeader title="Stage" column={column} />,
+        cell: ({ row }) => (
+          <ProjectStatusPill
+            statusKey={row.original.status_key}
+            label={row.original.status_label}
+          />
+        ),
+        size: 150,
+        meta: { headerTitle: 'Stage' },
+      },
+    ],
+    [],
   );
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm">Projects from this lead</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {portfolio.isError ? (
-          <p className="text-sm text-destructive">
-            {portfolio.error instanceof Error
-              ? portfolio.error.message
-              : 'The projects on this account could not be loaded.'}
-          </p>
-        ) : portfolio.isLoading ? (
-          <Skeleton className="h-12 w-full" />
-        ) : projects.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            {lead.project_count > 0
-              ? `${lead.project_count} project${lead.project_count === 1 ? '' : 's'} came from this lead. Open them from the pipeline.`
-              : 'Nothing registered from this lead yet. Qualifying it runs the duplicate check and claims the development. One lead can yield several projects, so a masterplan can be split phase by phase.'}
-          </p>
-        ) : (
-          <ul className="divide-y divide-border">
-            {projects.map((project) => (
-              <li key={project.id} className="flex items-center justify-between gap-2 py-2">
-                <Link
-                  href={`/project-sales/${project.id}`}
-                  className="min-w-0 truncate text-sm text-primary hover:underline"
-                  title={project.title}
-                >
-                  {project.project_code} · {project.title}
-                </Link>
-                <Badge variant="secondary" className="shrink-0 text-[11px]">
-                  {project.status_label ?? project.outcome}
-                </Badge>
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
+    <PanelDataGrid
+      title="Projects from this lead"
+      columns={columns}
+      rows={projects}
+      getRowId={(row) => row.id}
+      listingKey="projects.leads.view::lead-projects"
+      isLoading={portfolio.isLoading}
+      error={portfolio.isError ? portfolio.error : undefined}
+      emptyTitle={
+        lead.project_count > 0
+          ? `${lead.project_count} project${lead.project_count === 1 ? '' : 's'} came from this lead`
+          : 'Nothing registered from this lead yet'
+      }
+      onRowClick={(row) => router.push(`/project-sales/${row.id}`)}
+    />
   );
 }
 
-/** The account view (AC-O9), from the lead's side. */
+/**
+ * The account view (AC-O9), from the lead's side.
+ *
+ * Two system lists, not two bulleted `ul`s with a sentence under each. The card subtitle
+ * ("Everything this buyer has been part of, and what it turned into") and both empty
+ * sentences are gone: the list headings already say what each list is.
+ */
 function AccountPanel({
   lead,
   canEdit,
@@ -601,107 +634,149 @@ function AccountPanel({
   canEdit: boolean;
   onSetBuyer: () => void;
 }) {
+  const router = useRouter();
   const portfolio = useCustomerPortfolio(lead.customer_id ?? undefined);
-  const otherLeads = (portfolio.data?.leads ?? []).filter((row) => row.id !== lead.id);
+  const otherLeads = React.useMemo(
+    () => (portfolio.data?.leads ?? []).filter((row) => row.id !== lead.id),
+    [portfolio.data, lead.id],
+  );
   const projects = portfolio.data?.projects ?? [];
 
+  const leadColumns = React.useMemo<ColumnDef<ProjectLead>[]>(
+    () => [
+      {
+        id: 'lead_code',
+        accessorFn: (row) => row.lead_code,
+        header: ({ column }) => <DataGridColumnHeader title="Lead" column={column} />,
+        cell: ({ row }) => <span className="truncate text-sm">{row.original.lead_code}</span>,
+        size: 140,
+        meta: { headerTitle: 'Lead' },
+      },
+      {
+        id: 'title',
+        accessorFn: (row) => row.title,
+        header: ({ column }) => <DataGridColumnHeader title="Title" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate text-sm" title={row.original.title}>
+            {row.original.title}
+          </span>
+        ),
+        size: 320,
+        meta: { headerTitle: 'Title' },
+      },
+      {
+        id: 'status',
+        accessorFn: (row) => row.status_label ?? row.outcome,
+        header: ({ column }) => <DataGridColumnHeader title="Stage" column={column} />,
+        cell: ({ row }) => (
+          <LeadStatusPill statusKey={row.original.status_key} label={row.original.status_label} />
+        ),
+        size: 150,
+        meta: { headerTitle: 'Stage' },
+      },
+    ],
+    [],
+  );
+
+  const projectColumns = React.useMemo<ColumnDef<Project>[]>(
+    () => [
+      {
+        id: 'project_code',
+        accessorFn: (row) => row.project_code,
+        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate text-sm">{row.original.project_code}</span>
+        ),
+        size: 140,
+        meta: { headerTitle: 'Project' },
+      },
+      {
+        id: 'title',
+        accessorFn: (row) => row.title,
+        header: ({ column }) => <DataGridColumnHeader title="Title" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate text-sm" title={row.original.title}>
+            {row.original.title}
+          </span>
+        ),
+        size: 320,
+        meta: { headerTitle: 'Title' },
+      },
+      {
+        id: 'status',
+        accessorFn: (row) => row.status_label ?? row.outcome,
+        header: ({ column }) => <DataGridColumnHeader title="Stage" column={column} />,
+        cell: ({ row }) => (
+          <ProjectStatusPill
+            statusKey={row.original.status_key}
+            label={row.original.status_label}
+          />
+        ),
+        size: 150,
+        meta: { headerTitle: 'Stage' },
+      },
+    ],
+    [],
+  );
+
+  if (!lead.customer_id) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">No buyer yet</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {canEdit ? (
+            <Button type="button" variant="outline" size="sm" onClick={onSetBuyer}>
+              Set the buyer
+            </Button>
+          ) : (
+            <p className="text-sm text-muted-foreground">-</p>
+          )}
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm">
-          {lead.customer_name ?? 'No buyer yet'}
-        </CardTitle>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          Everything this buyer has been part of, and what it turned into.
-        </p>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {!lead.customer_id ? (
-          <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">
-              A buyer is named once a contractor is awarded.
-            </p>
-            {canEdit && (
-              <Button type="button" variant="outline" size="sm" onClick={onSetBuyer}>
-                Set the buyer
-              </Button>
-            )}
-          </div>
-        ) : portfolio.isError ? (
-          <p className="text-sm text-destructive">
-            {portfolio.error instanceof Error
-              ? portfolio.error.message
-              : 'This account could not be loaded.'}
-          </p>
-        ) : portfolio.isLoading ? (
-          <Skeleton className="h-24 w-full" />
-        ) : (
-          <>
-            <div>
-              <p className="text-xs font-medium">Other leads</p>
-              {otherLeads.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  This is their only lead so far.
-                </p>
-              ) : (
-                <ul className="mt-1 space-y-1">
-                  {otherLeads.slice(0, 6).map((row) => (
-                    <li key={row.id} className="truncate text-xs">
-                      <Link
-                        href={`/project-sales/leads/${row.id}`}
-                        className="text-primary hover:underline"
-                        title={row.title}
-                      >
-                        {row.lead_code} · {row.title}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium">Projects</p>
-              {projects.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  Nothing registered against this account yet.
-                </p>
-              ) : (
-                <ul className="mt-1 space-y-1">
-                  {projects.slice(0, 6).map((project) => (
-                    <li key={project.id} className="truncate text-xs">
-                      <Link
-                        href={`/project-sales/${project.id}`}
-                        className="text-primary hover:underline"
-                        title={project.title}
-                      >
-                        {project.project_code} · {project.title}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </>
-        )}
-      </CardContent>
-    </Card>
+    <div className="space-y-4">
+      <PanelDataGrid
+        title={`${lead.customer_name ?? 'This buyer'} - other leads`}
+        columns={leadColumns}
+        rows={otherLeads}
+        getRowId={(row) => row.id}
+        listingKey="projects.leads.view::buyer-other-leads"
+        isLoading={portfolio.isLoading}
+        error={portfolio.isError ? portfolio.error : undefined}
+        emptyTitle="No other leads on this buyer"
+        onRowClick={(row) => router.push(`/project-sales/leads/${row.id}`)}
+      />
+      <PanelDataGrid
+        title={`${lead.customer_name ?? 'This buyer'} - projects`}
+        columns={projectColumns}
+        rows={projects}
+        getRowId={(row) => row.id}
+        listingKey="projects.leads.view::buyer-projects"
+        isLoading={portfolio.isLoading}
+        error={portfolio.isError ? portfolio.error : undefined}
+        emptyTitle="No projects on this buyer"
+        onRowClick={(row) => router.push(`/project-sales/${row.id}`)}
+      />
+    </div>
   );
 }
 
-function Fact({
-  label,
-  value,
-  emptyText = '-',
-}: {
-  label: string;
-  value?: string | null;
-  emptyText?: string;
-}) {
+/**
+ * No `emptyText` prop, deliberately. Every caller that had one was using it to write a
+ * sentence into a table of facts ("No firm on record", "Not accepted yet"), which is the
+ * thing ADR 1e bans: an unknown value is `-`.
+ */
+function Fact({ label, value }: { label: string; value?: string | null }) {
   return (
     <div className="min-w-0">
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="break-words text-sm">
-        {value ?? <span className="text-muted-foreground">{emptyText}</span>}
+        {value ?? <span className="text-muted-foreground">-</span>}
       </dd>
     </div>
   );

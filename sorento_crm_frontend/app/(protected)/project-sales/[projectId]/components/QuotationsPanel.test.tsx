@@ -30,6 +30,18 @@ const listQuotations = vi.fn();
 const listQuotationVersions = vi.fn();
 const listQuotationLines = vi.fn();
 
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => '/project-sales/p1',
+  useSearchParams: () => new URLSearchParams(),
+}));
+
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  // Without this the grid never leaves its skeleton: the real hook fetches saved column
+  // order and `isLoading` gates the body rows, and nothing answers that call under jsdom.
+  useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
+}));
+
 vi.mock('../../_shared/services/projectService', async (importOriginal) => {
   const actual = await importOriginal<
     typeof import('../../_shared/services/projectService')
@@ -127,7 +139,9 @@ describe('QuotationsPanel', () => {
 
     renderPanel();
 
-    expect(await screen.findByText('House Units')).toBeInTheDocument();
+    // The name appears twice once a scope is open: in its row, and as the heading of the
+    // version editor that opens beneath the list.
+    expect((await screen.findAllByText('House Units')).length).toBeGreaterThan(0);
     expect(screen.getByText('v3 of 3')).toBeInTheDocument();
     expect(screen.getByText('RM 48,250.50')).toBeInTheDocument();
     expect(screen.getByText('Open')).toBeInTheDocument();
@@ -174,7 +188,8 @@ describe('QuotationsPanel', () => {
     renderPanel();
 
     expect(await screen.findByText('Lost')).toBeInTheDocument();
-    expect(screen.getByText(/Lost: Price too high/)).toBeInTheDocument();
+    // Its own column, so the reason no longer needs the "Lost:" prefix to be readable.
+    expect(screen.getByText('Price too high')).toBeInTheDocument();
   });
 
   it('warns that deleting a scope takes every version with it', async () => {
@@ -195,7 +210,7 @@ describe('QuotationsPanel', () => {
 
     renderPanel({ can_edit: false });
 
-    expect(await screen.findByText('House Units')).toBeInTheDocument();
+    expect((await screen.findAllByText('House Units')).length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: /Add a scope/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /Record outcome/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /Delete House Units/i })).toBeNull();
@@ -206,7 +221,7 @@ describe('QuotationsPanel', () => {
 
     renderPanel();
 
-    await screen.findByText('House Units');
+    await screen.findAllByText('House Units');
     // The version editor mounting is what proves it: it only queries when a scope is open.
     await waitFor(() => expect(listQuotationVersions).toHaveBeenCalledWith('q1'));
   });

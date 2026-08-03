@@ -2,12 +2,15 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import type { ColumnDef } from '@tanstack/react-table';
 import { ExternalLink, HandCoins } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import {
   useProjectSponsorships,
   useSponsorshipRollup,
@@ -28,136 +31,175 @@ import { formatMyr } from './QuotationsPanel';
  * asks next is always "and how much of that was this year".
  */
 export function SponsorshipsPanel({ project }: { project: Project }) {
+  const router = useRouter();
   const sponsorships = useProjectSponsorships(project.id);
   const rollup = useSponsorshipRollup(project.id);
 
   const rows = React.useMemo(() => sponsorships.data ?? [], [sponsorships.data]);
+  type Row = (typeof rows)[number];
+
+  const columns = React.useMemo<ColumnDef<Row>[]>(
+    () => [
+      {
+        id: 'request_number',
+        accessorFn: (row) => row.request_number ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Form" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate text-sm font-medium">
+            {row.original.request_number ?? '-'}
+          </span>
+        ),
+        size: 150,
+        meta: { headerTitle: 'Form' },
+      },
+      {
+        id: 'status',
+        accessorFn: (row) => row.status ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        cell: ({ row }) =>
+          row.original.status ? (
+            <span className={`${STATUS_PILL_BASE} ${statusPillClass(row.original.status)}`}>
+              {row.original.status.replace(/_/g, ' ')}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 150,
+        meta: { headerTitle: 'Status' },
+      },
+      {
+        id: 'approval_status',
+        accessorFn: (row) => row.approval_status ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Approval" column={column} />,
+        cell: ({ row }) =>
+          row.original.approval_status ? (
+            <span
+              className={`${STATUS_PILL_BASE} ${statusPillClass(row.original.approval_status)}`}
+            >
+              {row.original.approval_status}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 130,
+        meta: { headerTitle: 'Approval' },
+      },
+      {
+        id: 'total',
+        accessorFn: (row) => Number(row.total_project_value ?? 0),
+        header: ({ column }) => <DataGridColumnHeader title="Value" column={column} />,
+        cell: ({ row }) =>
+          row.original.total_project_value ? (
+            <span className="truncate text-sm font-medium">
+              {formatMyr(row.original.total_project_value)}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 140,
+        meta: { headerTitle: 'Value' },
+      },
+      {
+        id: 'request_date',
+        accessorFn: (row) => row.request_date ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Requested" column={column} />,
+        cell: ({ row }) =>
+          row.original.request_date ? (
+            <span className="truncate text-sm">
+              {formatDateInMalaysia(row.original.request_date)}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 130,
+        meta: { headerTitle: 'Requested' },
+      },
+      {
+        id: 'subject',
+        accessorFn: (row) => row.sponsor_subject ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="What for" column={column} />,
+        cell: ({ row }) => {
+          const subject =
+            row.original.sponsor_subject === 'others' && row.original.sponsor_subject_other
+              ? row.original.sponsor_subject_other
+              : row.original.sponsor_subject?.replace(/_/g, ' ');
+          const text = [subject, row.original.purpose].filter(Boolean).join(' - ');
+          return text ? (
+            <span className="truncate text-sm capitalize" title={text}>
+              {text}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          );
+        },
+        size: 260,
+        meta: { headerTitle: 'What for' },
+      },
+      {
+        id: 'customer_name',
+        accessorFn: (row) => row.customer_name ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
+        cell: ({ row }) =>
+          row.original.customer_name ? (
+            <span className="truncate text-sm" title={row.original.customer_name}>
+              {row.original.customer_name}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 200,
+        meta: { headerTitle: 'Customer' },
+      },
+    ],
+    [],
+  );
 
   return (
-    <Card>
-      <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        {/* The one fact worth keeping is why this tab has no Add button, and it is only
-            needed once, so it sits behind the icon rather than under the heading. */}
-        <div className="flex min-w-0 items-center gap-1">
-          <CardTitle className="text-sm">Sponsorships</CardTitle>
+    <PanelDataGrid
+      title="Sponsorships"
+      // The rollup is the answer to "what have we already spent chasing this", so it stays
+      // in the header. Why there is no Add button is asked once and lives behind the icon.
+      toolbar={
+        <>
+          {rollup.data && rollup.data.form_count > 0 && (
+            <Badge variant="secondary" appearance="light" className="gap-1">
+              <HandCoins className="size-3" aria-hidden />
+              {`${formatMyr(rollup.data.total)} across ${rollup.data.form_count} form${rollup.data.form_count === 1 ? '' : 's'}`}
+            </Badge>
+          )}
+          {(rollup.data?.by_year ?? []).map((year) => (
+            <span
+              key={year.year}
+              className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground"
+            >
+              <span className="font-medium text-foreground">{year.year}</span>{' '}
+              {formatMyr(year.total)}
+            </span>
+          ))}
           <InfoHint label="About sponsorships">
             Sponsorship spend is recorded on the sponsorship form itself, not here. This
             tab reads the forms that name this project.
           </InfoHint>
-        </div>
-        {rollup.data && rollup.data.form_count > 0 && (
-          <Badge variant="outline" className="gap-1 self-start">
-            <HandCoins className="size-3" aria-hidden />
-            {`${formatMyr(rollup.data.total)} across ${rollup.data.form_count} form${rollup.data.form_count === 1 ? '' : 's'}`}
-          </Badge>
-        )}
-      </CardHeader>
-
-      <CardContent className="space-y-3">
-        {rollup.data && rollup.data.by_year.length > 0 && (
-          <div className="flex flex-wrap gap-2 text-xs">
-            {rollup.data.by_year.map((year) => (
-              <span
-                key={year.year}
-                className="rounded-md border border-border px-2 py-1 text-muted-foreground"
-              >
-                <span className="font-medium text-foreground">{year.year}</span>{' '}
-                {formatMyr(year.total)}
-              </span>
-            ))}
-          </div>
-        )}
-
-        {sponsorships.isLoading ? (
-          <div className="space-y-2">
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
-          </div>
-        ) : sponsorships.isError ? (
-          <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-8 text-center">
-            <h3 className="text-sm font-semibold text-destructive">
-              Sponsorships could not be loaded
-            </h3>
-            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-              {sponsorships.error instanceof Error
-                ? sponsorships.error.message
-                : 'Try again shortly.'}
-            </p>
-          </div>
-        ) : rows.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">
-            <h3 className="text-sm font-semibold">Nothing sponsored on this project</h3>
-            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-              A sponsorship form links itself to a project when the submitter picks one.
-              Older forms carry a typed project title instead and are linked by hand.
-            </p>
-            <Button asChild variant="outline" className="mt-4">
-              <Link href="/procurement-management/sponsorship-forms">
-                Open sponsorship forms
-                <ExternalLink className="size-4" aria-hidden />
-              </Link>
-            </Button>
-          </div>
-        ) : (
-          <ul className="space-y-2">
-            {rows.map((row) => (
-              <li
-                key={row.id}
-                className="flex flex-col gap-2 rounded-lg border border-border px-3 py-2.5 sm:flex-row sm:items-start"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-sm font-medium">
-                      {row.request_number ?? 'Unnumbered form'}
-                    </span>
-                    {row.status && (
-                      <Badge variant="outline" className="text-[11px] capitalize">
-                        {row.status.replace(/_/g, ' ')}
-                      </Badge>
-                    )}
-                    {row.approval_status && (
-                      <Badge
-                        variant={row.approval_status === 'rejected' ? 'destructive' : 'secondary'}
-                        className="text-[11px] capitalize"
-                      >
-                        {row.approval_status}
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
-                    {row.total_project_value && (
-                      <span className="font-medium text-foreground">
-                        {formatMyr(row.total_project_value)}
-                      </span>
-                    )}
-                    {row.request_date && <span>{formatDateInMalaysia(row.request_date)}</span>}
-                    {row.customer_name && <span>{row.customer_name}</span>}
-                    {row.sponsor_subject && (
-                      <span className="capitalize">
-                        {row.sponsor_subject === 'others' && row.sponsor_subject_other
-                          ? row.sponsor_subject_other
-                          : row.sponsor_subject.replace(/_/g, ' ')}
-                      </span>
-                    )}
-                  </div>
-                  {row.purpose && (
-                    <p className="mt-1 max-w-2xl text-xs text-muted-foreground">
-                      {row.purpose}
-                    </p>
-                  )}
-                </div>
-
-                <Button asChild variant="outline" size="sm" className="shrink-0">
-                  <Link href={`/procurement-management/sponsorship-forms/${row.id}`}>
-                    Open
-                    <ExternalLink className="size-3.5" aria-hidden />
-                  </Link>
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
+        </>
+      }
+      columns={columns}
+      rows={rows}
+      getRowId={(row) => row.id}
+      listingKey="projects.projects.view::project-sponsorships"
+      isLoading={sponsorships.isLoading}
+      error={sponsorships.isError ? sponsorships.error : undefined}
+      emptyTitle="Nothing sponsored on this project"
+      emptyAction={
+        <Button asChild variant="outline">
+          <Link href="/procurement-management/sponsorship-forms">
+            Open sponsorship forms
+            <ExternalLink className="size-4" aria-hidden />
+          </Link>
+        </Button>
+      }
+      onRowClick={(row) =>
+        router.push(`/procurement-management/sponsorship-forms/${row.id}`)
+      }
+    />
   );
 }

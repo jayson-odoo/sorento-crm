@@ -31,6 +31,18 @@ const listPurchaseOrders = vi.fn();
 const listPurchaseOrderLines = vi.fn();
 const listSamples = vi.fn();
 
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => '/project-sales/p1',
+  useSearchParams: () => new URLSearchParams(),
+}));
+
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  // Without this the grid never leaves its skeleton: the real hook fetches saved column
+  // order and `isLoading` gates the body rows, and nothing answers that call under jsdom.
+  useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
+}));
+
 vi.mock('../../_shared/services/projectService', async (importOriginal) => {
   const actual = await importOriginal<
     typeof import('../../_shared/services/projectService')
@@ -149,15 +161,20 @@ describe('PurchaseOrdersPanel', () => {
     expect(
       screen.queryByText(/checked against the version they were last shown/i),
     ).toBeNull();
-    expect(screen.getByText(/moves this project to PO Received/i)).toBeInTheDocument();
+    // The explainer under the heading is gone (ADR 1e); the two ways in remain.
+    expect(screen.getByRole('button', { name: /Upload the PO document/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Record it by hand/i })).toBeInTheDocument();
   });
 
-  it('says what recording the first PO will do', async () => {
+  it('offers both ways in when nothing is recorded, without explaining the funnel', async () => {
     renderPos();
 
     expect(await screen.findByText(/No PO received yet/i)).toBeInTheDocument();
-    expect(screen.getByText(/moves this project to PO Received/i)).toBeInTheDocument();
-    expect(screen.getByText(/archived but not deleted/i)).toBeInTheDocument();
+    // Two ways in stay; the paragraph about what recording a PO does to the funnel is
+    // gone (ADR 1e - a tab is not the place to teach the feature).
+    expect(screen.getByRole('button', { name: /Upload the PO document/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Record it by hand/i })).toBeInTheDocument();
+    expect(screen.queryByText(/moves this project to PO Received/i)).not.toBeInTheDocument();
   });
 
   it('separates the two mismatch kinds instead of one generic warning', async () => {
@@ -167,8 +184,9 @@ describe('PurchaseOrdersPanel', () => {
 
     renderPos();
 
-    expect(await screen.findByText('2 not quoted')).toBeInTheDocument();
-    expect(screen.getByText('1 price differs')).toBeInTheDocument();
+    // Both counts share the one "To check" cell, and both are still NAMED rather than
+    // collapsed into a single "3 problems": the two mean different work.
+    expect(await screen.findByText(/2 not quoted.*1 price differs/)).toBeInTheDocument();
   });
 
   it('shows erosion from v1 as a number, not as an alert', async () => {
@@ -225,7 +243,7 @@ describe('PurchaseOrdersPanel', () => {
 
     renderPos({ can_edit: false });
 
-    expect(await screen.findByText('PO-9001')).toBeInTheDocument();
+    expect((await screen.findAllByText('PO-9001')).length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: /Record a PO/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /Delete PO-9001/i })).toBeNull();
   });
@@ -236,7 +254,8 @@ describe('SamplesPanel', () => {
     renderSamples();
 
     expect(await screen.findByText(/No samples sent yet/i)).toBeInTheDocument();
-    expect(screen.getByText(/price a scope first/i)).toBeInTheDocument();
+    // The heading says it; the sentence explaining the dependency is gone.
+    expect(screen.getByText('No samples sent yet')).toBeInTheDocument();
   });
 
   it('states that a version was superseded rather than leaving a badge off', async () => {
@@ -244,7 +263,7 @@ describe('SamplesPanel', () => {
 
     renderSamples();
 
-    expect(await screen.findByText('Version superseded')).toBeInTheDocument();
+    expect(await screen.findByText('Superseded')).toBeInTheDocument();
     expect(screen.getByText('1 against a superseded version')).toBeInTheDocument();
   });
 
@@ -255,8 +274,11 @@ describe('SamplesPanel', () => {
 
     renderSamples();
 
-    expect(await screen.findByText(/Common Area v3/)).toBeInTheDocument();
-    expect(screen.getByText(/by Siti/)).toBeInTheDocument();
+    expect(await screen.findByText('Common Area')).toBeInTheDocument();
+    // Scope and version are separate columns now, so they are asserted separately.
+    expect(screen.getByText('v3')).toBeInTheDocument();
+    // Its own "By" column now, so the name stands alone without the "by" preposition.
+    expect(screen.getByText('Siti')).toBeInTheDocument();
   });
 
   it('says feedback is missing instead of rendering an empty gap', async () => {
@@ -264,6 +286,6 @@ describe('SamplesPanel', () => {
 
     renderSamples();
 
-    expect(await screen.findByText(/No feedback recorded yet/i)).toBeInTheDocument();
+    expect((await screen.findAllByText('-')).length).toBeGreaterThan(0);
   });
 });

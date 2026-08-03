@@ -1,11 +1,13 @@
 'use client';
 
 import * as React from 'react';
+import type { ColumnDef } from '@tanstack/react-table';
 import { AlertTriangle, FileStack, Plus, Trash2, TriangleAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import {
   useQuotationMutations,
@@ -46,162 +48,220 @@ export function QuotationsPanel({ project }: { project: Project }) {
   const totalBelowFloor = rows.reduce((sum, row) => sum + row.below_floor_count, 0);
   const totalNonStandard = rows.reduce((sum, row) => sum + row.non_standard_count, 0);
 
+  const columns = React.useMemo<ColumnDef<ProjectQuotation>[]>(
+    () => [
+      {
+        id: 'scope_label',
+        accessorFn: (row) => row.scope_label,
+        header: ({ column }) => <DataGridColumnHeader title="Scope" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate text-sm font-medium" title={row.original.scope_label}>
+            {row.original.scope_label}
+          </span>
+        ),
+        size: 200,
+        meta: { headerTitle: 'Scope' },
+      },
+      {
+        id: 'outcome',
+        accessorFn: (row) => row.outcome,
+        header: ({ column }) => <DataGridColumnHeader title="Outcome" column={column} />,
+        cell: ({ row }) => <OutcomePill outcome={row.original.outcome} />,
+        size: 120,
+        meta: { headerTitle: 'Outcome' },
+      },
+      {
+        id: 'version',
+        accessorFn: (row) => row.current_version_no ?? 1,
+        header: ({ column }) => <DataGridColumnHeader title="Version" column={column} />,
+        cell: ({ row }) => (
+          <span className="flex min-w-0 items-center gap-1 text-sm">
+            <FileStack className="size-3 shrink-0" aria-hidden />
+            {`v${row.original.current_version_no ?? 1} of ${row.original.version_count}`}
+          </span>
+        ),
+        size: 130,
+        meta: { headerTitle: 'Version' },
+      },
+      {
+        id: 'current_total',
+        accessorFn: (row) => Number(row.current_total ?? 0),
+        header: ({ column }) => <DataGridColumnHeader title="Total" column={column} />,
+        cell: ({ row }) =>
+          row.original.current_total ? (
+            <span className="truncate text-sm font-medium">
+              {formatMyr(row.original.current_total)}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 150,
+        meta: { headerTitle: 'Total' },
+      },
+      {
+        id: 'alerts',
+        accessorFn: (row) => row.below_floor_count + row.non_standard_count,
+        // Readable WITHOUT opening the scope: the guardrail is the whole point of the tab,
+        // so a panel that only showed these once expanded would hide what management asked
+        // for.
+        header: ({ column }) => <DataGridColumnHeader title="Alerts" column={column} />,
+        cell: ({ row }) => {
+          if (row.original.below_floor_count === 0 && row.original.non_standard_count === 0) {
+            return <span className="text-muted-foreground">-</span>;
+          }
+          return (
+            <div className="flex min-w-0 flex-wrap gap-1">
+              {row.original.below_floor_count > 0 && (
+                <Badge variant="destructive" appearance="light" className="text-[11px]">
+                  {`${row.original.below_floor_count} below floor`}
+                </Badge>
+              )}
+              {row.original.non_standard_count > 0 && (
+                <Badge variant="warning" appearance="light" className="text-[11px]">
+                  {`${row.original.non_standard_count} non-standard`}
+                </Badge>
+              )}
+            </div>
+          );
+        },
+        size: 210,
+        meta: { headerTitle: 'Alerts' },
+      },
+      {
+        id: 'series_name',
+        accessorFn: (row) => row.series_name ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Series" column={column} />,
+        cell: ({ row }) =>
+          row.original.series_name ? (
+            <span className="truncate text-sm" title={row.original.series_name}>
+              {row.original.series_name}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 150,
+        meta: { headerTitle: 'Series' },
+      },
+      {
+        id: 'loss_reason_label',
+        accessorFn: (row) => row.loss_reason_label ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Lost because" column={column} />,
+        cell: ({ row }) =>
+          row.original.loss_reason_label ? (
+            <span className="truncate text-sm" title={row.original.loss_reason_label}>
+              {row.original.loss_reason_label}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 170,
+        meta: { headerTitle: 'Lost because' },
+      },
+      ...(project.can_edit
+        ? [
+            {
+              id: 'actions',
+              header: () => <span className="sr-only">Actions</span>,
+              cell: ({ row }: { row: { original: ProjectQuotation } }) => (
+                <div
+                  className="flex flex-wrap items-center justify-end gap-1.5"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setDeciding(row.original)}
+                  >
+                    {row.original.outcome === 'open' ? 'Record outcome' : 'Change outcome'}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setEditing(row.original)}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    mode="icon"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setDeleting(row.original)}
+                    aria-label={`Delete ${row.original.scope_label}`}
+                  >
+                    <Trash2 className="size-3.5 text-destructive" />
+                  </Button>
+                </div>
+              ),
+              size: 250,
+              enableResizing: false,
+              meta: { headerTitle: 'Actions' },
+            } as ColumnDef<ProjectQuotation>,
+          ]
+        : []),
+    ],
+    [project.can_edit],
+  );
+
+  const open = rows.find((row) => row.id === openId) ?? null;
+
   return (
     <>
-      <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <CardTitle className="text-sm">Quotations</CardTitle>
-          </div>
-          {project.can_edit && (
-            <Button type="button" size="sm" onClick={() => setCreating(true)}>
+      <PanelDataGrid
+        title="Quotations"
+        toolbar={
+          <>
+            {totalBelowFloor > 0 && (
+              <Badge variant="destructive" appearance="light" className="gap-1">
+                <AlertTriangle className="size-3" aria-hidden />
+                {`${totalBelowFloor} below the price floor`}
+              </Badge>
+            )}
+            {totalNonStandard > 0 && (
+              <Badge variant="warning" appearance="light" className="gap-1">
+                <TriangleAlert className="size-3" aria-hidden />
+                {`${totalNonStandard} non-standard`}
+              </Badge>
+            )}
+            {project.can_edit && (
+              <Button type="button" size="sm" onClick={() => setCreating(true)}>
+                <Plus className="size-4" aria-hidden />
+                Add a scope
+              </Button>
+            )}
+          </>
+        }
+        columns={columns}
+        rows={rows}
+        getRowId={(row) => row.id}
+        listingKey="projects.projects.view::project-quotations"
+        isLoading={quotations.isLoading}
+        error={quotations.isError ? quotations.error : undefined}
+        emptyTitle="Nothing priced yet"
+        emptyAction={
+          project.can_edit ? (
+            <Button type="button" onClick={() => setCreating(true)}>
               <Plus className="size-4" aria-hidden />
-              Add a scope
+              Add the first scope
             </Button>
-          )}
-        </CardHeader>
+          ) : undefined
+        }
+        // The version editor is a full form: it opens below the list rather than inside a
+        // fixed-width cell.
+        onRowClick={(row) => setOpenId((previous) => (previous === row.id ? null : row.id))}
+      />
 
-        <CardContent className="space-y-3">
-          {rows.length > 0 && (totalBelowFloor > 0 || totalNonStandard > 0) && (
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              {totalBelowFloor > 0 && (
-                <Badge variant="destructive" className="gap-1">
-                  <AlertTriangle className="size-3" aria-hidden />
-                  {`${totalBelowFloor} below the price floor`}
-                </Badge>
-              )}
-              {totalNonStandard > 0 && (
-                <Badge variant="secondary" className="gap-1">
-                  <TriangleAlert className="size-3" aria-hidden />
-                  {`${totalNonStandard} non-standard`}
-                </Badge>
-              )}
-            </div>
-          )}
-
-          {quotations.isLoading ? (
-            <div className="space-y-2">
-              <Skeleton className="h-16 w-full" />
-              <Skeleton className="h-16 w-full" />
-            </div>
-          ) : quotations.isError ? (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-8 text-center">
-              <h3 className="text-sm font-semibold text-destructive">
-                Quotations could not be loaded
-              </h3>
-              <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                {quotations.error instanceof Error
-                  ? quotations.error.message
-                  : 'Try again shortly.'}
-              </p>
-            </div>
-          ) : rows.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">
-              <h3 className="text-sm font-semibold">Nothing priced yet</h3>
-              <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                Add a scope, e.g. House Units or Common Area. Version 1 opens with it,
-                and editing it saves in place until you revise.
-              </p>
-              {project.can_edit && (
-                <Button type="button" className="mt-4" onClick={() => setCreating(true)}>
-                  <Plus className="size-4" aria-hidden />
-                  Add the first scope
-                </Button>
-              )}
-            </div>
-          ) : (
-            <ul className="space-y-2">
-              {rows.map((quotation) => (
-                <li key={quotation.id} className="rounded-lg border border-border">
-                  <div className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-3">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setOpenId((previous) =>
-                          previous === quotation.id ? null : quotation.id,
-                        )
-                      }
-                      aria-expanded={openId === quotation.id}
-                      className="min-w-0 flex-1 text-left"
-                    >
-                      <span className="flex flex-wrap items-center gap-1.5">
-                        <span className="truncate text-sm font-medium" title={quotation.scope_label}>
-                          {quotation.scope_label}
-                        </span>
-                        <OutcomePill outcome={quotation.outcome} />
-                        {quotation.below_floor_count > 0 && (
-                          <Badge variant="destructive" className="text-[11px]">
-                            {`${quotation.below_floor_count} below floor`}
-                          </Badge>
-                        )}
-                        {quotation.non_standard_count > 0 && (
-                          <Badge variant="secondary" className="text-[11px]">
-                            {`${quotation.non_standard_count} non-standard`}
-                          </Badge>
-                        )}
-                      </span>
-                      <span className="mt-0.5 flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
-                        <span className="flex items-center gap-1">
-                          <FileStack className="size-3" aria-hidden />
-                          {`v${quotation.current_version_no ?? 1} of ${quotation.version_count}`}
-                        </span>
-                        <span>
-                          {quotation.current_total
-                            ? formatMyr(quotation.current_total)
-                            : 'Nothing priced'}
-                        </span>
-                        {quotation.series_name && <span>{quotation.series_name}</span>}
-                        {quotation.loss_reason_label && (
-                          <span>Lost: {quotation.loss_reason_label}</span>
-                        )}
-                      </span>
-                    </button>
-
-                    {project.can_edit && (
-                      <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setDeciding(quotation)}
-                        >
-                          {quotation.outcome === 'open' ? 'Record outcome' : 'Change outcome'}
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setEditing(quotation)}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          mode="icon"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeleting(quotation)}
-                          aria-label={`Delete ${quotation.scope_label}`}
-                        >
-                          <Trash2 className="size-3.5 text-destructive" />
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-
-                  {openId === quotation.id && (
-                    <div className="border-t border-border p-3">
-                      <QuotationVersionEditor
-                        project={project}
-                        quotation={quotation}
-                      />
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+      {open && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">{open.scope_label}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <QuotationVersionEditor project={project} quotation={open} />
+          </CardContent>
+        </Card>
+      )}
 
       {(creating || editing) && (
         <QuotationDialog

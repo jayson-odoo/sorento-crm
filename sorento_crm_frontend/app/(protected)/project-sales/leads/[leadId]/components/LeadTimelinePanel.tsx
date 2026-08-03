@@ -2,7 +2,8 @@
 
 import * as React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
+import { EventTimeline, type TimelineEvent } from '@/components/common/EventTimeline';
+import { parseDateTimeAsUTC } from '@/lib/helpers';
 import type { LeadWithAcceptance } from '../../../_shared/types/leadAcceptance.types';
 import { informantSummary } from '../../components/acceptance';
 
@@ -93,37 +94,35 @@ export function buildLeadTimeline(lead: LeadWithAcceptance): TimelineEntry[] {
 export function LeadTimelinePanel({ lead }: { lead: LeadWithAcceptance }) {
   const entries = React.useMemo(() => buildLeadTimeline(lead), [lead]);
 
+  // The same rail the project's Activity tab draws, so a lead and the project it becomes
+  // read as one continuous story rather than two different products.
+  const events = React.useMemo<TimelineEvent[]>(
+    () =>
+      entries.map((entry, index) => ({
+        id: entry.key,
+        title: entry.label,
+        at: entry.at,
+        detail: entry.detail,
+        tone:
+          entry.key === 'declined' || entry.key === 'disqualified'
+            ? 'alert'
+            : index === 0
+              ? 'current'
+              : 'default',
+      })),
+    [entries],
+  );
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-sm">Activity</CardTitle>
       </CardHeader>
       <CardContent>
-        {entries.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Nothing has happened to this lead yet. Assigning it to a salesperson is the
-            first move, and it appears here the moment they answer.
-          </p>
-        ) : (
-          <ul className="space-y-3">
-            {entries.map((entry) => (
-              <li
-                key={entry.key}
-                className="flex flex-col gap-0.5 border-b border-border/60 pb-2 last:border-0 last:pb-0"
-              >
-                <span className="break-words text-sm">{entry.label}</span>
-                {entry.detail && (
-                  <span className="break-words text-xs text-muted-foreground">
-                    {entry.detail}
-                  </span>
-                )}
-                <span className="text-xs text-muted-foreground">
-                  {entry.at ? formatDateTimeInMalaysia(entry.at) : 'Time not recorded'}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <EventTimeline
+          events={events}
+          emptyTitle="Nothing has happened to this lead yet"
+        />
       </CardContent>
     </Card>
   );

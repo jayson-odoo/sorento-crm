@@ -1,12 +1,14 @@
 'use client';
 
 import * as React from 'react';
+import type { ColumnDef } from '@tanstack/react-table';
 import Link from 'next/link';
 import { CalendarClock, CheckCircle2, TriangleAlert, Upload } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { usePurchaseOrders } from '../../_shared/hooks/useProjects';
 import { useDeliverySchedules } from '../../_shared/hooks/useDeliverySchedules';
@@ -54,163 +56,209 @@ export function DeliverySchedulesPanel({ project }: { project: Project }) {
   );
   const awaitingConfirm = rows.filter((row) => !row.confirmed_at).length;
 
+  type Row = (typeof rows)[number];
+
+  const columns = React.useMemo<ColumnDef<Row>[]>(
+    () => [
+      {
+        id: 'po_number',
+        accessorFn: (row) => row.po_number ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Against PO" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate text-sm font-medium" title={row.original.po_number ?? ''}>
+            {row.original.po_number ?? '-'}
+          </span>
+        ),
+        size: 160,
+        meta: { headerTitle: 'Against PO' },
+      },
+      {
+        id: 'reconciliation',
+        accessorFn: (row) => row.reconciled_columns - row.total_columns,
+        header: ({ column }) => <DataGridColumnHeader title="Reconciled" column={column} />,
+        cell: ({ row }) => (
+          <ReconciliationBadge
+            reconciled={row.original.reconciled_columns}
+            total={row.original.total_columns}
+          />
+        ),
+        size: 210,
+        meta: { headerTitle: 'Reconciled' },
+      },
+      {
+        id: 'confirmed',
+        accessorFn: (row) => (row.confirmed_at ? 1 : 0),
+        header: ({ column }) => <DataGridColumnHeader title="Confirmed" column={column} />,
+        cell: ({ row }) =>
+          row.original.confirmed_at ? (
+            <Badge variant="success" appearance="light" className="gap-1 text-[11px]">
+              <CheckCircle2 className="size-3" aria-hidden />
+              Confirmed
+            </Badge>
+          ) : (
+            <Badge variant="secondary" appearance="light" className="text-[11px]">
+              Not confirmed
+            </Badge>
+          ),
+        size: 140,
+        meta: { headerTitle: 'Confirmed' },
+      },
+      {
+        id: 'version',
+        accessorFn: (row) => row.latest_version_no ?? 1,
+        header: ({ column }) => <DataGridColumnHeader title="Version" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate text-sm">
+            {`v${row.original.latest_version_no ?? 1} of ${row.original.version_count}`}
+          </span>
+        ),
+        size: 120,
+        meta: { headerTitle: 'Version' },
+      },
+      {
+        id: 'revision',
+        accessorFn: (row) => row.latest_revision_label ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Revision" column={column} />,
+        cell: ({ row }) =>
+          row.original.latest_revision_label ? (
+            <span className="truncate text-sm" title={row.original.latest_revision_label}>
+              {row.original.latest_revision_label}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 160,
+        meta: { headerTitle: 'Revision' },
+      },
+      {
+        id: 'issuer',
+        accessorFn: (row) => row.issuer_party_label ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Issued by" column={column} />,
+        cell: ({ row }) =>
+          row.original.issuer_party_label ? (
+            <span className="truncate text-sm" title={row.original.issuer_party_label}>
+              {row.original.issuer_party_label}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 180,
+        meta: { headerTitle: 'Issued by' },
+      },
+      {
+        id: 'schedule_date',
+        accessorFn: (row) => row.schedule_date ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Dated" column={column} />,
+        cell: ({ row }) =>
+          row.original.schedule_date ? (
+            <span className="truncate text-sm">
+              {formatDateInMalaysia(row.original.schedule_date)}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 120,
+        meta: { headerTitle: 'Dated' },
+      },
+      {
+        id: 'actions',
+        header: () => <span className="sr-only">Actions</span>,
+        cell: ({ row }) =>
+          row.original.latest_version_id ? (
+            <div
+              className="flex justify-end"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <Button asChild size="sm" variant="outline">
+                <Link
+                  href={`/project-sales/${project.id}/delivery-schedules/${row.original.latest_version_id}`}
+                >
+                  {row.original.confirmed_at ? 'Open' : 'Review'}
+                </Link>
+              </Button>
+            </div>
+          ) : null,
+        size: 110,
+        enableResizing: false,
+        meta: { headerTitle: 'Actions' },
+      },
+    ],
+    [project.id],
+  );
+
+  const open = rows.find((row) => row.id === openId) ?? null;
+
   return (
     <>
-      <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <CardTitle className="text-sm">Delivery schedules</CardTitle>
-          </div>
-          {project.can_edit && (
-            <Button
-              type="button"
-              size="sm"
-              disabled={!hasPurchaseOrder}
-              onClick={() => setUploading(true)}
-            >
-              <Upload className="size-4" aria-hidden />
-              Upload a schedule
-            </Button>
-          )}
-        </CardHeader>
-
-        <CardContent className="space-y-3">
-          {rows.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <Badge variant="outline" className="gap-1">
+      <PanelDataGrid
+        title="Delivery schedules"
+        toolbar={
+          <>
+            {rows.length > 0 && (
+              <Badge variant="secondary" appearance="light" className="gap-1">
                 <CalendarClock className="size-3" aria-hidden />
                 {`${rows.length} schedule${rows.length === 1 ? '' : 's'}`}
               </Badge>
-              {unreconciled > 0 && (
-                <Badge variant="warning" appearance="light" className="gap-1">
-                  <TriangleAlert className="size-3" aria-hidden />
-                  {`${unreconciled} column${unreconciled === 1 ? '' : 's'} to reconcile`}
-                </Badge>
-              )}
-              {awaitingConfirm > 0 && (
-                <Badge variant="secondary">
-                  {`${awaitingConfirm} not confirmed yet`}
-                </Badge>
-              )}
-            </div>
-          )}
+            )}
+            {unreconciled > 0 && (
+              <Badge variant="warning" appearance="light" className="gap-1">
+                <TriangleAlert className="size-3" aria-hidden />
+                {`${unreconciled} column${unreconciled === 1 ? '' : 's'} to reconcile`}
+              </Badge>
+            )}
+            {awaitingConfirm > 0 && (
+              <Badge variant="secondary" appearance="light">
+                {`${awaitingConfirm} not confirmed yet`}
+              </Badge>
+            )}
+            {project.can_edit && (
+              <Button
+                type="button"
+                size="sm"
+                disabled={!hasPurchaseOrder}
+                title={
+                  hasPurchaseOrder
+                    ? undefined
+                    : 'A schedule is checked against a PO, so record the PO first'
+                }
+                onClick={() => setUploading(true)}
+              >
+                <Upload className="size-4" aria-hidden />
+                Upload a schedule
+              </Button>
+            )}
+          </>
+        }
+        columns={columns}
+        rows={rows}
+        getRowId={(row) => row.id}
+        listingKey="projects.projects.view::project-delivery-schedules"
+        isLoading={view.isLoading}
+        error={view.isError ? view.error : undefined}
+        emptyTitle="No delivery schedule yet"
+        emptyAction={
+          project.can_edit && hasPurchaseOrder ? (
+            <Button type="button" onClick={() => setUploading(true)}>
+              <Upload className="size-4" aria-hidden />
+              Upload the first schedule
+            </Button>
+          ) : undefined
+        }
+        onRowClick={(row) => setOpenId((previous) => (previous === row.id ? null : row.id))}
+      />
 
-          {view.isLoading ? (
-            <div className="space-y-2">
-              <Skeleton className="h-20 w-full" />
-              <Skeleton className="h-20 w-full" />
-            </div>
-          ) : view.isError ? (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-8 text-center">
-              <h3 className="text-sm font-semibold text-destructive">
-                Delivery schedules could not be loaded
-              </h3>
-              <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                {view.error instanceof Error ? view.error.message : 'Try again shortly.'}
-              </p>
-            </div>
-          ) : rows.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">
-              <h3 className="text-sm font-semibold">No delivery schedule yet</h3>
-              <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                {hasPurchaseOrder
-                  ? 'Upload the schedule the customer sent. Choose the PO it belongs to and it is checked against that PO, column by column.'
-                  : 'A schedule is checked against a PO, so record the PO on the POs tab first.'}
-              </p>
-              {project.can_edit && hasPurchaseOrder && (
-                <Button type="button" className="mt-4" onClick={() => setUploading(true)}>
-                  <Upload className="size-4" aria-hidden />
-                  Upload the first schedule
-                </Button>
-              )}
-            </div>
-          ) : (
-            <ul className="space-y-2">
-              {rows.map((schedule) => (
-                <li key={schedule.id} className="rounded-lg border border-border">
-                  <div className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-start sm:gap-3">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setOpenId((previous) =>
-                          previous === schedule.id ? null : schedule.id,
-                        )
-                      }
-                      aria-expanded={openId === schedule.id}
-                      className="min-w-0 flex-1 text-left"
-                    >
-                      <span className="flex flex-wrap items-center gap-1.5">
-                        <span
-                          className="truncate text-sm font-medium"
-                          title={schedule.po_number ?? 'PO not named yet'}
-                        >
-                          {schedule.po_number ?? 'PO not named yet'}
-                        </span>
-                        <ReconciliationBadge
-                          reconciled={schedule.reconciled_columns}
-                          total={schedule.total_columns}
-                        />
-                        {schedule.confirmed_at ? (
-                          <Badge variant="success" appearance="light" className="gap-1 text-[11px]">
-                            <CheckCircle2 className="size-3" aria-hidden />
-                            Confirmed
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-[11px]">
-                            Not confirmed
-                          </Badge>
-                        )}
-                      </span>
-                      <span className="mt-0.5 flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
-                        <span>
-                          {`v${schedule.latest_version_no ?? 1} of ${schedule.version_count}`}
-                        </span>
-                        {schedule.latest_revision_label && (
-                          <span
-                            className="truncate"
-                            title={schedule.latest_revision_label}
-                          >
-                            {schedule.latest_revision_label}
-                          </span>
-                        )}
-                        {schedule.issuer_party_label && (
-                          <span className="truncate" title={schedule.issuer_party_label}>
-                            Issued by {schedule.issuer_party_label}
-                          </span>
-                        )}
-                        {schedule.schedule_date && (
-                          <span>{formatDateInMalaysia(schedule.schedule_date)}</span>
-                        )}
-                      </span>
-                    </button>
-
-                    {schedule.latest_version_id && (
-                      <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-                        <Button asChild size="sm" variant="outline">
-                          <Link
-                            href={`/project-sales/${project.id}/delivery-schedules/${schedule.latest_version_id}`}
-                          >
-                            {schedule.confirmed_at ? 'Open' : 'Review'}
-                          </Link>
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-
-                  {openId === schedule.id && (
-                    <div className="border-t border-border p-3">
-                      <DeliveryScheduleVersionsGrid
-                        projectId={project.id}
-                        schedule={schedule}
-                      />
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+      {open && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">
+              {open.po_number ?? 'Schedule versions'}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <DeliveryScheduleVersionsGrid projectId={project.id} schedule={open} />
+          </CardContent>
+        </Card>
+      )}
 
       {uploading && (
         <DeliveryScheduleUploadDialog

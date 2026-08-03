@@ -47,7 +47,12 @@ def test_seeding_produces_a_valid_usable_funnel():
         assert len([s for s in statuses if s.is_initial]) == 1
         status_service.validate_graph(db, "project")
 
-        assert status_service.initial_status(db, "project").key == "identified"
+        # REGISTERED, not Identified. A project row cannot exist without a registration
+        # (registering is the write that creates it, and the clash check runs there), so
+        # landing new projects on Identified described a state they were never in. The
+        # pre-registration state has its own record: a lead. Identified stays in the graph as
+        # a rung to move a mistaken registration BACK to.
+        assert status_service.initial_status(db, "project").key == "registered"
 
 
 def test_every_live_rung_can_be_lost():

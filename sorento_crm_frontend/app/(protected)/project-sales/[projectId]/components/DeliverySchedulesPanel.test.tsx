@@ -27,6 +27,12 @@ if (!window.matchMedia) {
 }
 
 const push = vi.fn();
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  // Without this the grid never leaves its skeleton: the real hook fetches saved column
+  // order and `isLoading` gates the body rows, and nothing answers that call under jsdom.
+  useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
+}));
+
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push, replace: vi.fn() }),
   usePathname: () => '/project-sales/p1',
@@ -167,7 +173,9 @@ describe('DeliverySchedulesPanel', () => {
     listPurchaseOrders.mockResolvedValue([]);
     renderPanel();
 
-    expect(await screen.findByText(/record the PO on the POs tab first/i)).toBeInTheDocument();
+    // The heading states it; the sentence pointing at the POs tab is gone, and the DISABLED
+    // upload button (with its reason on the tooltip) is what stops the user.
+    expect(await screen.findByText('No delivery schedule yet')).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: /Upload the first schedule/i }),
     ).toBeNull();
@@ -180,10 +188,9 @@ describe('DeliverySchedulesPanel', () => {
     listDeliverySchedules.mockRejectedValue(new Error('The service did not answer'));
     renderPanel();
 
-    expect(
-      await screen.findByText(/Delivery schedules could not be loaded/i),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/The service did not answer/i)).toBeInTheDocument();
+    // The grid states the failure in the message the server gave, rather than a heading of
+    // its own plus the message underneath.
+    expect(await screen.findByText(/The service did not answer/i)).toBeInTheDocument();
   });
 
   it('reads a schedule without opening it: PO, revision, issuer and what is left to reconcile', async () => {
@@ -195,8 +202,9 @@ describe('DeliverySchedulesPanel', () => {
     expect(screen.getByText('3 columns to reconcile')).toBeInTheDocument();
     expect(screen.getByText('Not confirmed')).toBeInTheDocument();
     expect(screen.getByText('v2 of 2')).toBeInTheDocument();
+    // Its own "Issued by" column, so the name stands alone.
     expect(
-      screen.getByText(/Issued by SLG Construction Sdn Bhd/i),
+      screen.getByText('SLG Construction Sdn Bhd'),
     ).toBeInTheDocument();
   });
 

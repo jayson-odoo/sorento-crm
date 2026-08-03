@@ -1,13 +1,14 @@
 'use client';
 
 import * as React from 'react';
-import { History, Package, Pencil, Plus, Trash2 } from 'lucide-react';
+import type { ColumnDef } from '@tanstack/react-table';
+import { History, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { useSampleMutations, useSamples } from '../../_shared/hooks/useProjects';
 import type { Project, ProjectSample } from '../../_shared/types/project.types';
 import { SampleDialog } from './SampleDialog';
@@ -30,136 +31,176 @@ export function SamplesPanel({ project }: { project: Project }) {
   const rows = React.useMemo(() => samples.data ?? [], [samples.data]);
   const supersededCount = rows.filter((row) => !row.is_version_current).length;
 
+  const columns = React.useMemo<ColumnDef<ProjectSample>[]>(
+    () => [
+      {
+        id: 'scope',
+        accessorFn: (row) => row.scope_label ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Scope" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate text-sm font-medium" title={row.original.scope_label ?? ''}>
+            {row.original.scope_label ?? '-'}
+          </span>
+        ),
+        size: 200,
+        meta: { headerTitle: 'Scope' },
+      },
+      {
+        id: 'version',
+        accessorFn: (row) => row.version_no ?? 0,
+        // Stated on every row, never implied by a missing badge: a sample approved against
+        // v1 while the customer holds v3 is the most expensive thing to find out late.
+        header: ({ column }) => <DataGridColumnHeader title="Priced from" column={column} />,
+        cell: ({ row }) => (
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="text-sm">
+              {row.original.version_no ? `v${row.original.version_no}` : '-'}
+            </span>
+            <Badge
+              variant={row.original.is_version_current ? 'secondary' : 'warning'}
+              appearance="light"
+              className="shrink-0 text-[11px]"
+            >
+              {row.original.is_version_current ? 'Current' : 'Superseded'}
+            </Badge>
+          </div>
+        ),
+        size: 170,
+        meta: { headerTitle: 'Priced from' },
+      },
+      {
+        id: 'submitted_on',
+        accessorFn: (row) => row.submitted_on ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Sent" column={column} />,
+        cell: ({ row }) =>
+          row.original.submitted_on ? (
+            <span className="truncate text-sm">
+              {formatDateInMalaysia(row.original.submitted_on)}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 130,
+        meta: { headerTitle: 'Sent' },
+      },
+      {
+        id: 'submitted_by_name',
+        accessorFn: (row) => row.submitted_by_name ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="By" column={column} />,
+        cell: ({ row }) =>
+          row.original.submitted_by_name ? (
+            <span className="truncate text-sm">{row.original.submitted_by_name}</span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 160,
+        meta: { headerTitle: 'By' },
+      },
+      {
+        id: 'developer_feedback',
+        accessorFn: (row) => row.developer_feedback ?? '',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Developer said" column={column} />
+        ),
+        cell: ({ row }) =>
+          row.original.developer_feedback ? (
+            <span className="truncate text-sm" title={row.original.developer_feedback}>
+              {row.original.developer_feedback}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 260,
+        meta: { headerTitle: 'Developer said' },
+      },
+      {
+        id: 'salesperson_notes',
+        accessorFn: (row) => row.salesperson_notes ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Our notes" column={column} />,
+        cell: ({ row }) =>
+          row.original.salesperson_notes ? (
+            <span className="truncate text-sm" title={row.original.salesperson_notes}>
+              {row.original.salesperson_notes}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 220,
+        meta: { headerTitle: 'Our notes' },
+      },
+      ...(project.can_edit
+        ? [
+            {
+              id: 'actions',
+              header: () => <span className="sr-only">Actions</span>,
+              cell: ({ row }: { row: { original: ProjectSample } }) => (
+                <div className="flex justify-end gap-1">
+                  <Button
+                    mode="icon"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setEditing(row.original)}
+                    aria-label={`Edit the ${row.original.scope_label ?? 'sample'} submission`}
+                  >
+                    <Pencil className="size-3.5" />
+                  </Button>
+                  <Button
+                    mode="icon"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setDeleting(row.original)}
+                    aria-label={`Delete the ${row.original.scope_label ?? 'sample'} submission`}
+                  >
+                    <Trash2 className="size-3.5 text-destructive" />
+                  </Button>
+                </div>
+              ),
+              size: 90,
+              enableResizing: false,
+              meta: { headerTitle: 'Actions' },
+            } as ColumnDef<ProjectSample>,
+          ]
+        : []),
+    ],
+    [project.can_edit],
+  );
+
   return (
     <>
-      <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <CardTitle className="text-sm">Sample submissions</CardTitle>
-          </div>
-          {project.can_edit && (
-            <Button type="button" size="sm" onClick={() => setCreating(true)}>
-              <Plus className="size-4" aria-hidden />
-              Record a sample
-            </Button>
-          )}
-        </CardHeader>
-
-        <CardContent className="space-y-3">
-          {supersededCount > 0 && (
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <Badge variant="secondary" className="gap-1">
+      <PanelDataGrid
+        title="Sample submissions"
+        toolbar={
+          <>
+            {supersededCount > 0 && (
+              <Badge variant="warning" appearance="light" className="gap-1">
                 <History className="size-3" aria-hidden />
                 {`${supersededCount} against a superseded version`}
               </Badge>
-            </div>
-          )}
-
-          {samples.isLoading ? (
-            <div className="space-y-2">
-              <Skeleton className="h-16 w-full" />
-              <Skeleton className="h-16 w-full" />
-            </div>
-          ) : samples.isError ? (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-8 text-center">
-              <h3 className="text-sm font-semibold text-destructive">
-                Samples could not be loaded
-              </h3>
-              <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                {samples.error instanceof Error ? samples.error.message : 'Try again shortly.'}
-              </p>
-            </div>
-          ) : rows.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">
-              <h3 className="text-sm font-semibold">No samples sent yet</h3>
-              <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                A sample has to name the quotation version it was priced from, so price a
-                scope first if nothing is quoted.
-              </p>
-              {project.can_edit && (
-                <Button type="button" className="mt-4" onClick={() => setCreating(true)}>
-                  <Plus className="size-4" aria-hidden />
-                  Record the first sample
-                </Button>
-              )}
-            </div>
-          ) : (
-            <ul className="space-y-2">
-              {rows.map((sample) => (
-                <li
-                  key={sample.id}
-                  className="flex flex-col gap-2 rounded-lg border border-border px-3 py-2.5 sm:flex-row sm:items-start"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="flex items-center gap-1 text-sm font-medium">
-                        <Package className="size-3.5 text-muted-foreground" aria-hidden />
-                        {sample.scope_label ?? 'Unnamed scope'}
-                        {sample.version_no ? ` v${sample.version_no}` : ''}
-                      </span>
-                      {sample.is_version_current ? (
-                        <Badge variant="outline" className="text-[11px]">
-                          Current version
-                        </Badge>
-                      ) : (
-                        <Badge variant="secondary" className="text-[11px]">
-                          Version superseded
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
-                      <span>
-                        {sample.submitted_on
-                          ? `Sent ${formatDateInMalaysia(sample.submitted_on)}`
-                          : 'No date recorded'}
-                      </span>
-                      {sample.submitted_by_name && <span>by {sample.submitted_by_name}</span>}
-                    </div>
-                    {sample.developer_feedback ? (
-                      <p className="mt-1.5 text-xs">
-                        <span className="font-medium">Developer said:</span>{' '}
-                        {sample.developer_feedback}
-                      </p>
-                    ) : (
-                      <p className="mt-1.5 text-xs text-muted-foreground">
-                        No feedback recorded yet.
-                      </p>
-                    )}
-                    {sample.salesperson_notes && (
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {sample.salesperson_notes}
-                      </p>
-                    )}
-                  </div>
-
-                  {project.can_edit && (
-                    <div className="flex shrink-0 gap-1">
-                      <Button
-                        mode="icon"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setEditing(sample)}
-                        aria-label={`Edit the ${sample.scope_label ?? 'sample'} submission`}
-                      >
-                        <Pencil className="size-3.5" />
-                      </Button>
-                      <Button
-                        mode="icon"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setDeleting(sample)}
-                        aria-label={`Delete the ${sample.scope_label ?? 'sample'} submission`}
-                      >
-                        <Trash2 className="size-3.5 text-destructive" />
-                      </Button>
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+            )}
+            {project.can_edit && (
+              <Button type="button" size="sm" onClick={() => setCreating(true)}>
+                <Plus className="size-4" aria-hidden />
+                Record a sample
+              </Button>
+            )}
+          </>
+        }
+        columns={columns}
+        rows={rows}
+        getRowId={(row) => row.id}
+        listingKey="projects.projects.view::project-samples"
+        isLoading={samples.isLoading}
+        error={samples.isError ? samples.error : undefined}
+        emptyTitle="No samples sent yet"
+        emptyAction={
+          project.can_edit ? (
+            <Button type="button" onClick={() => setCreating(true)}>
+              <Plus className="size-4" aria-hidden />
+              Record the first sample
+            </Button>
+          ) : undefined
+        }
+      />
 
       {(creating || editing) && (
         <SampleDialog

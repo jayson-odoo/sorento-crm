@@ -1,8 +1,10 @@
 'use client';
 
 import * as React from 'react';
+import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { EventTimeline, type TimelineEvent } from '@/components/common/EventTimeline';
 import { listActivities } from '@/components/common/ActivitiesNotesPanel/activitiesPanelService';
 import type { ActivityEvent } from '@/components/common/ActivitiesNotesPanel/types';
 import type { Project } from '../../_shared/types/project.types';
@@ -63,13 +65,34 @@ export function ProjectActivityPanel({ project }: { project: Project }) {
     // entity's changing field.
   }, [project.id, project.updated_at, project.stale_level]);
 
+  // A history, not a list of records: one rail, newest first, grouped by day. See
+  // components/common/EventTimeline for why this is the one surface that is not a grid.
+  const timeline = React.useMemo<TimelineEvent[]>(
+    () =>
+      (events ?? []).map((event, index) => {
+        const described = describe(event);
+        return {
+          id: event.id,
+          title: described.text,
+          actor: event.actor?.name ?? null,
+          at: event.created_at ?? null,
+          tone: index === 0 ? 'current' : described.meaningful ? 'default' : 'muted',
+          tags: described.meaningful ? (
+            <Badge variant="secondary" appearance="light" className="text-[11px]">
+              counts as work
+            </Badge>
+          ) : null,
+        };
+      }),
+    [events],
+  );
+
   return (
     <Card>
-      {/* What the "counts as work" chip means is a question asked once, so it is behind
-          the icon. The chips themselves stay: they are about these events, not a lesson. */}
       <CardHeader>
         <div className="flex min-w-0 items-center gap-1">
           <CardTitle className="text-sm">Activity</CardTitle>
+          {/* Asked once, so it stays behind the icon rather than sitting in the tab. */}
           <InfoHint label="About the activity feed">
             Events marked <span className="font-medium">counts as work</span> reset the
             staleness clock. Ordinary edits and imports do not.
@@ -84,38 +107,8 @@ export function ProjectActivityPanel({ project }: { project: Project }) {
             <Skeleton className="h-5 w-3/4" />
             <Skeleton className="h-5 w-2/3" />
           </div>
-        ) : events.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Nothing recorded yet. Moving the stage, pricing a scope, submitting a sample or
-            recording a purchase order all appear here, as does anything you post from the
-            activity panel.
-          </p>
         ) : (
-          <ul className="space-y-3">
-            {events.map((event) => {
-              const described = describe(event);
-              return (
-                <li key={event.id} className="flex flex-col gap-0.5 border-b border-border/60 pb-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm">{described.text}</span>
-                    {described.meaningful && (
-                      <span className="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                        counts as work
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-xs text-muted-foreground">
-                    {[
-                      event.actor?.name ?? null,
-                      event.created_at ? new Date(event.created_at).toLocaleString() : null,
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
+          <EventTimeline events={timeline} emptyTitle="Nothing recorded yet" />
         )}
       </CardContent>
     </Card>

@@ -17,25 +17,36 @@ export type StatusMove = {
   toLabel: string;
   /** Terminal rungs (Lost, Dormant) are exits, never the happy path. */
   toIsTerminal: boolean;
+  /** Lands on a LATER rung than the one we are on. A correction is not the happy path. */
+  isForward: boolean;
 };
 
 /**
  * The forward move, and everything else.
  *
- * The happy path is the FIRST non-terminal move in the admin's own sort order. That is the
- * step the person came to take, so it is the one button in the header; exits and side moves
- * go behind the gear, where a deliberate action belongs.
+ * The happy path is the first move that ADVANCES the funnel: non-terminal, and landing on a
+ * rung later than the current one. It used to be merely the first non-terminal move in the
+ * admin's sort order, and every seeded edge carries `sort_order` 0, so the winner was
+ * whichever row Postgres happened to return first. On a Registered project that was "Back to
+ * identified" - the header offered undoing the registration as the obvious next step, with
+ * "Spec in" demoted into the gear menu.
  *
- * A funnel whose only remaining moves are terminal (nothing forward left) still gets a
- * primary button, because "there is a next step but we are hiding it" would be worse than
- * naming the exit.
+ * Ranking on the TARGET rung's position needs no new data and cannot be got wrong by an
+ * admin who leaves sort orders at zero. Backward moves are real and stay available, behind
+ * the gear with the exits, because a correction should be deliberate.
+ *
+ * A funnel whose only remaining moves are terminal or backward still gets a primary button:
+ * "there is a next step but we are hiding it" is worse than naming the exit.
  */
 export function splitStatusMoves(moves: StatusMove[]): {
   primary: StatusMove | null;
   secondary: StatusMove[];
 } {
   if (moves.length === 0) return { primary: null, secondary: [] };
-  const forward = moves.find((move) => !move.toIsTerminal) ?? moves[0];
+  const forward =
+    moves.find((move) => !move.toIsTerminal && move.isForward) ??
+    moves.find((move) => !move.toIsTerminal) ??
+    moves[0];
   return {
     primary: forward,
     secondary: moves.filter((move) => move.transitionId !== forward.transitionId),
@@ -85,6 +96,7 @@ export function availableStatusMoves(
       label: transition.label,
       toLabel: target.label,
       toIsTerminal: Boolean(target.is_terminal),
+      isForward: target.sort_order > current.sort_order,
     }));
 }
 

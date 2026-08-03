@@ -25,9 +25,9 @@ import {
   availableStatusMoves,
   splitStatusMoves,
 } from './ProjectStatusAction';
-import { OutcomePill } from '../../_shared/components/OutcomePill';
 import { ProjectStatusPill } from './ProjectStatusPill';
 import { ProjectActivityPanel } from './ProjectActivityPanel';
+import { ProjectDocumentsPanel } from './ProjectDocumentsPanel';
 import { ProjectAccessPanel } from './ProjectAccessPanel';
 import { DeliverySchedulesPanel } from './DeliverySchedulesPanel';
 import { PurchaseOrdersPanel } from './PurchaseOrdersPanel';
@@ -134,11 +134,13 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
             <span className="text-sm text-muted-foreground">
               {project.project_code}
             </span>
+            {/* ONE pill. The outcome is DERIVED from the rung (a project on Lost reads
+                outcome "lost"), so showing both put "Registered Open" and, on the lead,
+                "Qualified Qualified" side by side. See components/common/StatusPill. */}
             <ProjectStatusPill
               statusKey={project.status_key}
               label={project.status_label}
             />
-            <OutcomePill outcome={project.outcome} />
             {project.is_critical && (
               <Badge variant="destructive" className="gap-1">
                 <Flame className="size-3" aria-hidden />
@@ -343,12 +345,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
       {activeTab === 'schedules' && <DeliverySchedulesPanel project={project} />}
       {activeTab === 'sales-orders' && <SalesOrdersPanel project={project} />}
       {activeTab === 'activity' && <ProjectActivityPanel project={project} />}
-      {activeTab === 'documents' && (
-        <NotYetPanel
-          title="Documents"
-          body="Tender documents and drawings attach through the shared attachment directory, with Photo-typed attachments feeding the quotation line images."
-        />
-      )}
+      {activeTab === 'documents' && <ProjectDocumentsPanel project={project} />}
 
       <ConfirmDeleteDialog
         open={confirmDelete}
@@ -388,19 +385,6 @@ function Fact({ label, value }: { label: string; value?: string | null }) {
         {value ?? <span className="text-muted-foreground">-</span>}
       </dd>
     </div>
-  );
-}
-
-function NotYetPanel({ title, body }: { title: string; body: string }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm">{title}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className="max-w-2xl text-sm text-muted-foreground">{body}</p>
-      </CardContent>
-    </Card>
   );
 }
 

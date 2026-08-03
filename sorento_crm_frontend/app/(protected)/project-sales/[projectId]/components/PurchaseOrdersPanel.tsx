@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import type { ColumnDef } from '@tanstack/react-table';
 import {
   AlertTriangle,
   Pencil,
@@ -13,7 +14,8 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import {
@@ -69,196 +71,272 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
     if (!openId && rows.length > 0) setOpenId(rows[0].id);
   }, [openId, rows]);
 
+  const columns = React.useMemo<ColumnDef<ProjectPurchaseOrder>[]>(
+    () => [
+      {
+        id: 'po_number',
+        accessorFn: (row) => row.po_number,
+        header: ({ column }) => <DataGridColumnHeader title="PO number" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate text-sm font-medium" title={row.original.po_number}>
+            {row.original.po_number}
+          </span>
+        ),
+        size: 160,
+        meta: { headerTitle: 'PO number' },
+      },
+      {
+        id: 'po_source',
+        accessorFn: (row) => row.po_source,
+        header: ({ column }) => <DataGridColumnHeader title="Source" column={column} />,
+        cell: ({ row }) => (
+          <Badge variant="secondary" appearance="light" className="text-[11px]">
+            {SOURCE_LABELS[row.original.po_source] ?? row.original.po_source}
+          </Badge>
+        ),
+        size: 140,
+        meta: { headerTitle: 'Source' },
+      },
+      {
+        id: 'line_total',
+        accessorFn: (row) => Number(row.line_total || 0),
+        header: ({ column }) => <DataGridColumnHeader title="Value" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate text-sm font-medium">
+            {formatMyr(row.original.line_total)}
+          </span>
+        ),
+        size: 140,
+        meta: { headerTitle: 'Value' },
+      },
+      {
+        id: 'issuing_party_name',
+        accessorFn: (row) => row.issuing_party_name ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Issued by" column={column} />,
+        cell: ({ row }) =>
+          row.original.issuing_party_name ? (
+            <span className="truncate text-sm" title={row.original.issuing_party_name}>
+              {row.original.issuing_party_name}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 190,
+        meta: { headerTitle: 'Issued by' },
+      },
+      {
+        id: 'po_date',
+        accessorFn: (row) => row.po_date ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Dated" column={column} />,
+        cell: ({ row }) =>
+          row.original.po_date ? (
+            <span className="truncate text-sm">
+              {formatDateInMalaysia(row.original.po_date)}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 120,
+        meta: { headerTitle: 'Dated' },
+      },
+      {
+        id: 'scope',
+        accessorFn: (row) => row.scope_label ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Against" column={column} />,
+        cell: ({ row }) =>
+          row.original.scope_label ? (
+            <span className="truncate text-sm">
+              {row.original.scope_label}
+              {row.original.version_no ? ` v${row.original.version_no}` : ''}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 170,
+        meta: { headerTitle: 'Against' },
+      },
+      {
+        id: 'checks',
+        accessorFn: (row) => row.model_mismatch_count + row.price_mismatch_count,
+        header: ({ column }) => <DataGridColumnHeader title="To check" column={column} />,
+        cell: ({ row }) => {
+          const parts: string[] = [];
+          if (row.original.model_mismatch_count > 0) {
+            parts.push(`${row.original.model_mismatch_count} not quoted`);
+          }
+          if (row.original.price_mismatch_count > 0) {
+            parts.push(`${row.original.price_mismatch_count} price differs`);
+          }
+          if (parts.length === 0) return <span className="text-muted-foreground">-</span>;
+          return (
+            <Badge variant="destructive" appearance="light" className="truncate text-[11px]">
+              {parts.join(', ')}
+            </Badge>
+          );
+        },
+        size: 190,
+        meta: { headerTitle: 'To check' },
+      },
+      {
+        id: 'drift',
+        accessorFn: (row) => Number(row.drift_percent ?? 0),
+        header: ({ column }) => <DataGridColumnHeader title="Drift from v1" column={column} />,
+        cell: ({ row }) => {
+          const described = describeDrift(row.original);
+          return described ? (
+            <span className="flex min-w-0 items-center gap-1 text-sm" title={described}>
+              <TrendingDown className="size-3 shrink-0" aria-hidden />
+              <span className="truncate">{described}</span>
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          );
+        },
+        size: 180,
+        meta: { headerTitle: 'Drift from v1' },
+      },
+      ...(project.can_edit
+        ? [
+            {
+              id: 'actions',
+              header: () => <span className="sr-only">Actions</span>,
+              cell: ({ row }: { row: { original: ProjectPurchaseOrder } }) => (
+                <div
+                  className="flex justify-end gap-1"
+                  // The row selects the PO; these are separate intents and must not also
+                  // toggle the panel underneath.
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <Button
+                    mode="icon"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setUploadingFor({ po: row.original })}
+                    aria-label={`Upload a document for ${row.original.po_number}`}
+                  >
+                    <Upload className="size-3.5" />
+                  </Button>
+                  <Button
+                    mode="icon"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setEditing(row.original)}
+                    aria-label={`Edit ${row.original.po_number}`}
+                  >
+                    <Pencil className="size-3.5" />
+                  </Button>
+                  <Button
+                    mode="icon"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setDeleting(row.original)}
+                    aria-label={`Delete ${row.original.po_number}`}
+                  >
+                    <Trash2 className="size-3.5 text-destructive" />
+                  </Button>
+                </div>
+              ),
+              size: 120,
+              enableResizing: false,
+              meta: { headerTitle: 'Actions' },
+            } as ColumnDef<ProjectPurchaseOrder>,
+          ]
+        : []),
+    ],
+    [project.can_edit],
+  );
+
+  const open = rows.find((row) => row.id === openId) ?? null;
+
   return (
     <>
-      <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <CardTitle className="text-sm">Purchase orders</CardTitle>
-          </div>
-          {project.can_edit && (
-            <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" size="sm" onClick={() => setUploadingFor({ po: null })}>
-                <Upload className="size-4" aria-hidden />
-                Upload a PO document
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setCreating(true)}
-              >
-                <Plus className="size-4" aria-hidden />
-                Record a PO
-              </Button>
-            </div>
-          )}
-        </CardHeader>
-
-        <CardContent className="space-y-3">
-          {rows.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <Badge variant="outline" className="gap-1">
+      <PanelDataGrid
+        title="Purchase orders"
+        toolbar={
+          <>
+            {rows.length > 0 && (
+              <Badge variant="secondary" appearance="light" className="gap-1">
                 <ReceiptText className="size-3" aria-hidden />
                 {`${rows.length} PO${rows.length === 1 ? '' : 's'}, ${formatMyr(String(totalValue))}`}
               </Badge>
-              {flagged > 0 && (
-                <Badge variant="destructive" className="gap-1">
-                  <AlertTriangle className="size-3" aria-hidden />
-                  {`${flagged} with something to check`}
-                </Badge>
-              )}
+            )}
+            {flagged > 0 && (
+              <Badge variant="destructive" appearance="light" className="gap-1">
+                <AlertTriangle className="size-3" aria-hidden />
+                {`${flagged} with something to check`}
+              </Badge>
+            )}
+            {project.can_edit && (
+              <>
+                <Button type="button" size="sm" onClick={() => setUploadingFor({ po: null })}>
+                  <Upload className="size-4" aria-hidden />
+                  Upload a PO document
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setCreating(true)}
+                >
+                  <Plus className="size-4" aria-hidden />
+                  Record a PO
+                </Button>
+              </>
+            )}
+          </>
+        }
+        columns={columns}
+        rows={rows}
+        getRowId={(row) => row.id}
+        listingKey="projects.projects.view::project-purchase-orders"
+        isLoading={purchaseOrders.isLoading}
+        error={purchaseOrders.isError ? purchaseOrders.error : undefined}
+        emptyTitle="No PO received yet"
+        emptyAction={
+          project.can_edit ? (
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Button type="button" onClick={() => setUploadingFor({ po: null })}>
+                <Upload className="size-4" aria-hidden />
+                Upload the PO document
+              </Button>
+              <Button type="button" variant="outline" onClick={() => setCreating(true)}>
+                <Plus className="size-4" aria-hidden />
+                Record it by hand
+              </Button>
             </div>
-          )}
+          ) : undefined
+        }
+        // Selecting a row opens its lines below, rather than expanding inside the table:
+        // a versions strip and a line editor cannot live inside a fixed-width cell.
+        onRowClick={(row) => setOpenId((previous) => (previous === row.id ? null : row.id))}
+      />
 
-          {purchaseOrders.isLoading ? (
-            <div className="space-y-2">
-              <Skeleton className="h-16 w-full" />
-              <Skeleton className="h-16 w-full" />
-            </div>
-          ) : purchaseOrders.isError ? (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-8 text-center">
-              <h3 className="text-sm font-semibold text-destructive">
-                Purchase orders could not be loaded
-              </h3>
-              <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                {purchaseOrders.error instanceof Error
-                  ? purchaseOrders.error.message
-                  : 'Try again shortly.'}
-              </p>
-            </div>
-          ) : rows.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">
-              <h3 className="text-sm font-semibold">No PO received yet</h3>
-              <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                Recording the first PO moves this project to PO Received. Once a PO exists
-                the project can be archived but not deleted.
-              </p>
-              {project.can_edit && (
-                <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-                  <Button type="button" onClick={() => setUploadingFor({ po: null })}>
-                    <Upload className="size-4" aria-hidden />
-                    Upload the PO document
-                  </Button>
-                  <Button type="button" variant="outline" onClick={() => setCreating(true)}>
-                    <Plus className="size-4" aria-hidden />
-                    Record it by hand
-                  </Button>
-                </div>
-              )}
-            </div>
-          ) : (
-            <ul className="space-y-2">
-              {rows.map((po) => (
-                <li key={po.id} className="rounded-lg border border-border">
-                  <div className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-start sm:gap-3">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setOpenId((previous) => (previous === po.id ? null : po.id))
-                      }
-                      aria-expanded={openId === po.id}
-                      className="min-w-0 flex-1 text-left"
-                    >
-                      <span className="flex flex-wrap items-center gap-1.5">
-                        <span className="truncate text-sm font-medium" title={po.po_number}>
-                          {po.po_number}
-                        </span>
-                        <Badge variant="outline" className="text-[11px]">
-                          {SOURCE_LABELS[po.po_source] ?? po.po_source}
-                        </Badge>
-                        {po.model_mismatch_count > 0 && (
-                          <Badge variant="destructive" className="text-[11px]">
-                            {`${po.model_mismatch_count} not quoted`}
-                          </Badge>
-                        )}
-                        {po.price_mismatch_count > 0 && (
-                          <Badge variant="destructive" className="text-[11px]">
-                            {`${po.price_mismatch_count} price differs`}
-                          </Badge>
-                        )}
-                      </span>
-                      <span className="mt-0.5 flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
-                        <span className="font-medium text-foreground">
-                          {formatMyr(po.line_total)}
-                        </span>
-                        {po.issuing_party_name && <span>{po.issuing_party_name}</span>}
-                        {po.po_date && <span>{formatDateInMalaysia(po.po_date)}</span>}
-                        {po.scope_label && (
-                          <span>
-                            Against {po.scope_label}
-                            {po.version_no ? ` v${po.version_no}` : ''}
-                          </span>
-                        )}
-                        {po.drift_percent && Number(po.drift_percent) !== 0 && (
-                          <span className="flex items-center gap-1">
-                            <TrendingDown className="size-3" aria-hidden />
-                            {describeDrift(po)}
-                          </span>
-                        )}
-                      </span>
-                    </button>
-
-                    {project.can_edit && (
-                      <div className="flex shrink-0 gap-1">
-                        <Button
-                          mode="icon"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setUploadingFor({ po })}
-                          aria-label={`Upload a document for ${po.po_number}`}
-                        >
-                          <Upload className="size-3.5" />
-                        </Button>
-                        <Button
-                          mode="icon"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setEditing(po)}
-                          aria-label={`Edit ${po.po_number}`}
-                        >
-                          <Pencil className="size-3.5" />
-                        </Button>
-                        <Button
-                          mode="icon"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeleting(po)}
-                          aria-label={`Delete ${po.po_number}`}
-                        >
-                          <Trash2 className="size-3.5 text-destructive" />
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-
-                  {openId === po.id && project.can_edit && (
-                    <POToSalesOrderStep
-                      projectId={project.id}
-                      purchaseOrder={po}
-                      readiness={{
-                        poConfirmed: Boolean(po.po_confirmed),
-                        scheduleConfirmed: Boolean(po.schedule_confirmed),
-                      }}
-                    />
-                  )}
-                  {openId === po.id && (
-                    <div className="space-y-3 border-t border-border p-3">
-                      <POIntakeVersionsStrip
-                        projectId={project.id}
-                        poId={po.id}
-                        canEdit={Boolean(project.can_edit)}
-                        onUpload={() => setUploadingFor({ po })}
-                      />
-                      <PurchaseOrderLinesEditor project={project} po={po} />
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+      {open && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">{open.po_number}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {project.can_edit && (
+              <POToSalesOrderStep
+                projectId={project.id}
+                purchaseOrder={open}
+                readiness={{
+                  poConfirmed: Boolean(open.po_confirmed),
+                  scheduleConfirmed: Boolean(open.schedule_confirmed),
+                }}
+              />
+            )}
+            <POIntakeVersionsStrip
+              projectId={project.id}
+              poId={open.id}
+              canEdit={Boolean(project.can_edit)}
+              onUpload={() => setUploadingFor({ po: open })}
+            />
+            <PurchaseOrderLinesEditor project={project} po={open} />
+          </CardContent>
+        </Card>
+      )}
 
       {uploadingFor && (
         <POIntakeUploadDialog

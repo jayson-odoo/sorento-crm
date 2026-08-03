@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { Pencil, Plus, Star, Trash2 } from 'lucide-react';
+import type { ColumnDef } from '@tanstack/react-table';
+import { LayoutGrid, Pencil, Plus, Rows3, Star, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,8 +19,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
+import { ViewToggle } from '../../_shared/components/ViewToggle';
 import {
   useProjectParties,
   useProjectTemplates,
@@ -53,6 +57,9 @@ export function StakeholdersPanel({ project }: { project: Project }) {
   const [editing, setEditing] = React.useState<ProjectStakeholder | null>(null);
   const [creating, setCreating] = React.useState(false);
   const [deleting, setDeleting] = React.useState<ProjectStakeholder | null>(null);
+  // List by default. Cards are a view somebody chooses (ADR 1d): the client's words were
+  // "card can be a view, but the default view should be list".
+  const [view, setView] = React.useState<'list' | 'cards'>('list');
 
   const templates = useProjectTemplates(project.type_id ?? undefined);
   const template = templates.data?.find((candidate) => candidate.id === project.template_id);
@@ -60,124 +67,290 @@ export function StakeholdersPanel({ project }: { project: Project }) {
 
   const rows = stakeholders.data ?? [];
 
+  const columns = React.useMemo<ColumnDef<ProjectStakeholder>[]>(
+    () => [
+      {
+        id: 'person_name',
+        accessorFn: (row) => row.person_name,
+        header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
+        cell: ({ row }) => (
+          <div className="flex min-w-0 items-center gap-1.5">
+            {row.original.is_primary && (
+              <Star
+                className="size-3.5 shrink-0 fill-amber-400 text-amber-500"
+                aria-label="Primary contact"
+              />
+            )}
+            <span className="truncate text-sm font-medium" title={row.original.person_name}>
+              {row.original.person_name}
+            </span>
+          </div>
+        ),
+        size: 200,
+        meta: { headerTitle: 'Name' },
+      },
+      {
+        id: 'role_name',
+        accessorFn: (row) => row.role_name ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Role" column={column} />,
+        cell: ({ row }) =>
+          row.original.role_name ? (
+            <Badge variant="secondary" appearance="light" className="text-[11px]">
+              {row.original.role_name}
+            </Badge>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 160,
+        meta: { headerTitle: 'Role' },
+      },
+      {
+        id: 'influence',
+        accessorFn: (row) => row.influence ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Influence" column={column} />,
+        cell: ({ row }) =>
+          row.original.influence ? (
+            <span className="text-sm capitalize">{row.original.influence}</span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 110,
+        meta: { headerTitle: 'Influence' },
+      },
+      {
+        id: 'firm',
+        accessorFn: (row) => row.party_name ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Firm" column={column} />,
+        cell: ({ row }) =>
+          row.original.party_name ? (
+            <span className="truncate text-sm" title={row.original.party_name}>
+              {row.original.party_name}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 200,
+        meta: { headerTitle: 'Firm' },
+      },
+      {
+        id: 'job_title',
+        accessorFn: (row) => row.job_title ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Job title" column={column} />,
+        cell: ({ row }) =>
+          row.original.job_title ? (
+            <span className="truncate text-sm" title={row.original.job_title}>
+              {row.original.job_title}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 170,
+        meta: { headerTitle: 'Job title' },
+      },
+      {
+        id: 'reach',
+        accessorFn: (row) => [row.phone, row.email].filter(Boolean).join(' '),
+        header: ({ column }) => <DataGridColumnHeader title="Phone / email" column={column} />,
+        cell: ({ row }) => {
+          const reach = [row.original.phone, row.original.email].filter(Boolean).join(' · ');
+          return reach ? (
+            <span className="truncate text-sm" title={reach}>
+              {reach}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          );
+        },
+        size: 220,
+        meta: { headerTitle: 'Phone / email' },
+      },
+      ...(project.can_edit
+        ? [
+            {
+              id: 'actions',
+              header: () => <span className="sr-only">Actions</span>,
+              cell: ({ row }: { row: { original: ProjectStakeholder } }) => (
+                <div className="flex justify-end gap-1">
+                  <Button
+                    mode="icon"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setEditing(row.original)}
+                    aria-label={`Edit ${row.original.person_name}`}
+                  >
+                    <Pencil className="size-3.5" />
+                  </Button>
+                  <Button
+                    mode="icon"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setDeleting(row.original)}
+                    aria-label={`Remove ${row.original.person_name}`}
+                  >
+                    <Trash2 className="size-3.5 text-destructive" />
+                  </Button>
+                </div>
+              ),
+              size: 90,
+              enableResizing: false,
+              meta: { headerTitle: 'Actions' },
+            } as ColumnDef<ProjectStakeholder>,
+          ]
+        : []),
+    ],
+    [project.can_edit],
+  );
+
+  const toolbar = (
+    <>
+      <ViewToggle
+        ariaLabel="Stakeholder view"
+        value={view}
+        onChange={setView}
+        options={[
+          { value: 'list', icon: <Rows3 className="size-4" aria-hidden />, label: 'List view' },
+          {
+            value: 'cards',
+            icon: <LayoutGrid className="size-4" aria-hidden />,
+            label: 'Card view',
+          },
+        ]}
+      />
+      {project.can_edit && (
+        <Button type="button" size="sm" onClick={() => setCreating(true)}>
+          <Plus className="size-4" aria-hidden />
+          Add stakeholder
+        </Button>
+      )}
+    </>
+  );
+
   return (
     <>
-      <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
+      {view === 'list' ? (
+        <PanelDataGrid
+          title="Stakeholders"
+          toolbar={toolbar}
+          columns={columns}
+          rows={rows}
+          getRowId={(row) => row.id}
+          listingKey="projects.projects.view::project-stakeholders"
+          isLoading={stakeholders.isLoading}
+          error={stakeholders.isError ? stakeholders.error : undefined}
+          emptyTitle="No stakeholders recorded"
+          emptyAction={
+            project.can_edit ? (
+              <Button type="button" onClick={() => setCreating(true)}>
+                <Plus className="size-4" aria-hidden />
+                Add the decision maker
+              </Button>
+            ) : undefined
+          }
+        />
+      ) : (
+        <Card>
+          <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
             <CardTitle className="text-sm">Stakeholders</CardTitle>
-          </div>
-          {project.can_edit && (
-            <Button type="button" size="sm" onClick={() => setCreating(true)}>
-              <Plus className="size-4" aria-hidden />
-              Add stakeholder
-            </Button>
-          )}
-        </CardHeader>
-        <CardContent>
-          {stakeholders.isLoading ? (
-            <div className="space-y-2">
-              <Skeleton className="h-16 w-full" />
-              <Skeleton className="h-16 w-full" />
-            </div>
-          ) : rows.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">
-              <h3 className="text-sm font-semibold">No stakeholders recorded</h3>
-              <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                Add the decision maker first. Knowing who signs off, and who influences
-                them, is what turns a registered project into a winnable one.
-              </p>
-              {project.can_edit && (
-                <Button type="button" className="mt-4" onClick={() => setCreating(true)}>
-                  <Plus className="size-4" aria-hidden />
-                  Add the decision maker
-                </Button>
-              )}
-            </div>
-          ) : (
-            <ul className="grid gap-3 sm:grid-cols-2">
-              {rows.map((stakeholder) => (
-                <li
-                  key={stakeholder.id}
-                  className="rounded-lg border border-border p-3"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 space-y-1">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {stakeholder.is_primary && (
-                          <Star
-                            className="size-3.5 shrink-0 fill-amber-400 text-amber-500"
-                            aria-label="Primary contact"
-                          />
+            <div className="flex flex-wrap items-center gap-2">{toolbar}</div>
+          </CardHeader>
+          <CardContent>
+            {stakeholders.isLoading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-16 w-full" />
+                <Skeleton className="h-16 w-full" />
+              </div>
+            ) : rows.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">
+                <h3 className="text-sm font-semibold">No stakeholders recorded</h3>
+                {project.can_edit && (
+                  <Button type="button" className="mt-4" onClick={() => setCreating(true)}>
+                    <Plus className="size-4" aria-hidden />
+                    Add the decision maker
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <ul className="grid gap-3 sm:grid-cols-2">
+                {rows.map((stakeholder) => (
+                  <li key={stakeholder.id} className="rounded-lg border border-border p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {stakeholder.is_primary && (
+                            <Star
+                              className="size-3.5 shrink-0 fill-amber-400 text-amber-500"
+                              aria-label="Primary contact"
+                            />
+                          )}
+                          <p className="truncate font-medium" title={stakeholder.person_name}>
+                            {stakeholder.person_name}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {stakeholder.role_name && (
+                            <Badge variant="secondary" appearance="light" className="text-[11px]">
+                              {stakeholder.role_name}
+                            </Badge>
+                          )}
+                          {stakeholder.influence && (
+                            <Badge variant="secondary" appearance="light" className="text-[11px] capitalize">
+                              {stakeholder.influence} influence
+                            </Badge>
+                          )}
+                        </div>
+                        {(stakeholder.job_title || stakeholder.party_name) && (
+                          <p
+                            className="truncate text-xs text-muted-foreground"
+                            title={[stakeholder.job_title, stakeholder.party_name]
+                              .filter(Boolean)
+                              .join(', ')}
+                          >
+                            {[stakeholder.job_title, stakeholder.party_name]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </p>
                         )}
-                        <p className="truncate font-medium" title={stakeholder.person_name}>
-                          {stakeholder.person_name}
-                        </p>
+                        {(stakeholder.phone || stakeholder.email) && (
+                          <p className="truncate text-xs text-muted-foreground">
+                            {[stakeholder.phone, stakeholder.email].filter(Boolean).join(' · ')}
+                          </p>
+                        )}
+                        {stakeholder.notes && (
+                          <p className="break-words pt-0.5 text-xs text-muted-foreground">
+                            {stakeholder.notes}
+                          </p>
+                        )}
                       </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {stakeholder.role_name && (
-                          <Badge variant="secondary" className="text-[11px]">
-                            {stakeholder.role_name}
-                          </Badge>
-                        )}
-                        {stakeholder.influence && (
-                          <Badge variant="outline" className="text-[11px] capitalize">
-                            {stakeholder.influence} influence
-                          </Badge>
-                        )}
-                      </div>
-                      {(stakeholder.job_title || stakeholder.party_name) && (
-                        <p
-                          className="truncate text-xs text-muted-foreground"
-                          title={[stakeholder.job_title, stakeholder.party_name]
-                            .filter(Boolean)
-                            .join(', ')}
-                        >
-                          {[stakeholder.job_title, stakeholder.party_name]
-                            .filter(Boolean)
-                            .join(' · ')}
-                        </p>
-                      )}
-                      {(stakeholder.phone || stakeholder.email) && (
-                        <p className="truncate text-xs text-muted-foreground">
-                          {[stakeholder.phone, stakeholder.email].filter(Boolean).join(' · ')}
-                        </p>
-                      )}
-                      {stakeholder.notes && (
-                        <p className="break-words pt-0.5 text-xs text-muted-foreground">
-                          {stakeholder.notes}
-                        </p>
+                      {project.can_edit && (
+                        <div className="flex shrink-0 gap-1">
+                          <Button
+                            mode="icon"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setEditing(stakeholder)}
+                            aria-label={`Edit ${stakeholder.person_name}`}
+                          >
+                            <Pencil className="size-3.5" />
+                          </Button>
+                          <Button
+                            mode="icon"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setDeleting(stakeholder)}
+                            aria-label={`Remove ${stakeholder.person_name}`}
+                          >
+                            <Trash2 className="size-3.5 text-destructive" />
+                          </Button>
+                        </div>
                       )}
                     </div>
-                    {project.can_edit && (
-                      <div className="flex shrink-0 gap-1">
-                        <Button
-                          mode="icon"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setEditing(stakeholder)}
-                          aria-label={`Edit ${stakeholder.person_name}`}
-                        >
-                          <Pencil className="size-3.5" />
-                        </Button>
-                        <Button
-                          mode="icon"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeleting(stakeholder)}
-                          aria-label={`Remove ${stakeholder.person_name}`}
-                        >
-                          <Trash2 className="size-3.5 text-destructive" />
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {(creating || editing) && (
         <StakeholderFormDialog

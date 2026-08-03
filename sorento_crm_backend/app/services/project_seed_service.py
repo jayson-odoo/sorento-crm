@@ -37,10 +37,17 @@ PROJECT_LEAD_ENTITY = "project_lead"
 # not "Won": status says what happened, while the commercial outcome is derived, so a
 # project with a PO on one scope and a live quotation on another does not read as
 # finished (grill finding G1).
+#
+# REGISTERED is the starting rung, not Identified. A project row cannot exist without a
+# registration - registering is the write that creates it, and the clash check runs there -
+# so landing new projects on "Identified" described a state they were never in. The
+# pre-registration state has its own record: a LEAD. Identified survives as a rung an admin
+# can still move a project back to (a registration made in error, parked rather than
+# deleted), which is why it keeps its backward edge.
 DEFAULT_FUNNEL = (
     # (key, label, initial, terminal)
-    ("identified", "Identified", True, False),
-    ("registered", "Registered", False, False),
+    ("identified", "Identified", False, False),
+    ("registered", "Registered", True, False),
     ("specified", "Specified", False, False),
     ("quoted", "Quoted", False, False),
     ("tendering", "Tendering", False, False),
@@ -97,7 +104,9 @@ DEFAULT_STALE_AFTER_DAYS = {
 _LIVE = ("identified", "registered", "specified", "quoted", "tendering")
 DEFAULT_EDGES = (
     ("identified", "registered", "Register with developer"),
-    ("registered", "specified", "Specified in"),
+    # "Spec in" is the trade's own phrase: spec = specification. "Specified in" reads as
+    # a past participle and is not what anybody says out loud.
+    ("registered", "specified", "Spec in"),
     ("specified", "quoted", "Quotation sent"),
     ("quoted", "tendering", "Tendering"),
     ("tendering", "po_received", "PO received"),

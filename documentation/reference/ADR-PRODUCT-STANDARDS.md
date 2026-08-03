@@ -99,6 +99,30 @@ typing in the popover's search box → pick one (or many).
 
 ---
 
+## 1d-bis. A HISTORY is a timeline, not a grid
+
+**Doctrine:** activity feeds and audit trails render `@/components/common/EventTimeline`.
+Everything else that lists rows renders a `DataGrid`. This is the only exception to 1d, and
+the line between them is what to check first when adding a surface.
+
+- **Records** (quotations, POs, stakeholders, schedules, documents) are a GRID. The reader
+  scans one column, sorts it, compares two rows, clicks one to open it.
+- **Events** (activity, audit, status history) are a TIMELINE. The client's reference points
+  were Lazada / Shopee / Lalamove parcel tracking and Google Sheets version history: "a
+  timeline that explains what happens at what time". Nobody sorts parcel tracking by courier.
+  What a history is read for is the SEQUENCE and the gaps in it, and a rail with a dot per
+  event makes "then, three days later" visible at a glance. A table of timestamps hides it.
+- **Shape:** newest first; grouped under a date heading so the day is stated once instead of
+  per row; the time on the right of each step; the rail continuous between dots so it reads as
+  one thread; the newest event marked as the live step. An avatar may replace the dot for a
+  human post, which is what Sheets history does.
+- **Times are absolute here too** (1d). A feed left open overnight must not keep claiming
+  "3h ago", and two entries cannot be compared when both say "yesterday".
+- An undated event is still shown, dated honestly, never dropped: dropping it makes the record
+  read as though the thing never happened.
+
+---
+
 ## 1e. Empty values and helper text
 
 - **An unknown value is `-`.** Not "Not recorded", not "Not set", not "None". A card of mostly
