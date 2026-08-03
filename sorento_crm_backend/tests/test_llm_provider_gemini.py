@@ -10,6 +10,8 @@ substitute it and assert on the exact request body we send.
 """
 from __future__ import annotations
 
+import io
+
 import pytest
 
 from app.services import llm_provider as mod
@@ -207,3 +209,46 @@ def test_test_connection_reports_the_failure(monkeypatch) -> None:
     ok, message, _ = GeminiProvider("k").test_connection()
     assert ok is False
     assert "403" in message
+
+
+def _http_error(code: str, body: bytes):
+    """urllib is imported INSIDE the transport, so the patch goes on the real module."""
+    import urllib.error
+
+    def _raise(*_args, **_kwargs):
+        raise urllib.error.HTTPError("u", code, "err", {}, io.BytesIO(body))
+
+    return _raise
+
+
+def test_a_billing_cap_reads_as_an_operator_problem_not_a_bad_document(monkeypatch):
+    """A 429 used to reach the screen as a wall of provider JSON, which reads like the
+    file could not be understood. It is the billing cap, nobody's document is at fault,
+    and the person looking at it needs to know that nothing was lost."""
+    import urllib.request
+
+    monkeypatch.setattr(
+        urllib.request, "urlopen",
+        _http_error(429, b'{"error":{"message":"exceeded its monthly spending cap"}}'),
+    )
+
+    with pytest.raises(RuntimeError) as exc:
+        mod._gemini_post("https://example/models/x:generateContent", {}, api_key="k")
+
+    message = str(exc.value)
+    assert "billing cap" in message
+    assert "nothing is lost" in message
+    # The raw provider blob never reaches a person.
+    assert "RESOURCE_EXHAUSTED" not in message
+
+
+def test_a_rejected_key_says_so_plainly(monkeypatch):
+    import urllib.request
+
+    monkeypatch.setattr(
+        urllib.request, "urlopen",
+        _http_error(403, b'{"error":{"message":"API key not valid"}}'),
+    )
+
+    with pytest.raises(RuntimeError, match="rejected our key"):
+        mod._gemini_post("https://example/models/x:generateContent", {}, api_key="k")

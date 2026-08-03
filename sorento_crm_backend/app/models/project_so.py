@@ -93,6 +93,9 @@ class ProjectPOVersion(Base, CompanyScopedMixin):
     extraction_model = Column(String(80), nullable=True)
     extraction_tokens_in = Column(Integer, nullable=True)
     extraction_tokens_out = Column(Integer, nullable=True)
+    # How long the model actually took. Reading a ten page scan is minutes of waiting,
+    # and a person told "took 2m 14s" once stops wondering whether it hung.
+    extraction_elapsed_ms = Column(Integer, nullable=True)
     # qty * unit_price == amount, per line. Measured, not assumed.
     arithmetic_passed = Column(Integer, nullable=True)
     arithmetic_total = Column(Integer, nullable=True)
@@ -238,6 +241,7 @@ class DeliveryScheduleVersion(Base, CompanyScopedMixin):
     extraction_error = Column(Text, nullable=True)
     extracted_json = Column(JSONB, nullable=True)
     extraction_model = Column(String(80), nullable=True)
+    extraction_elapsed_ms = Column(Integer, nullable=True)
     # Per COLUMN, never per document (schedule spike, 2026-08-02): a wholesale reject
     # would reject nearly every real schedule.
     reconciled_columns = Column(Integer, nullable=True)

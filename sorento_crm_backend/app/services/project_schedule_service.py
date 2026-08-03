@@ -684,6 +684,7 @@ class ProjectScheduleService:
             result = getattr(self, "_last_extraction", None)
             if result is not None:
                 version.extraction_model = result.model
+                version.extraction_elapsed_ms = result.elapsed_ms or None
             if not pages:
                 raise AppException(
                     status_code=422,
@@ -1743,6 +1744,7 @@ class ProjectScheduleService:
             "extraction_state": version.extraction_state,
             "extraction_error": version.extraction_error,
             "extraction_model": version.extraction_model,
+            "extraction_elapsed_ms": version.extraction_elapsed_ms,
             "page_count": extracted.get("page_count"),
             "pages_extracted": len(extracted.get("pages") or []),
             "document_url": self.document_url(version),

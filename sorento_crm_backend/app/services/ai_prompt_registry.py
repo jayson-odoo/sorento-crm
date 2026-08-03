@@ -433,7 +433,8 @@ def _po_extractor_fallback() -> str:
         '  "lines": [\n'
         '    {"no": 1, "stock_code": "...", "description": "...", "qty": 927,\n'
         '     "uom": "SETS", "unit_price": 392.85, "amount": 364171.95,\n'
-        '     "struck_through": false}\n'
+        '     "struck_through": false,\n'
+        '     "struck_parts": ["SRTFH12", "S/STEEL"]}\n'
         "  ],\n"
         '  "annotations": [\n'
         '    {"text": "verbatim handwriting", "date": "26/1/26", "refers_to_items": [5,20,23],\n'
@@ -445,7 +446,33 @@ def _po_extractor_fallback() -> str:
         "- Transcribe the PRINTED table exactly. Do not correct, expand or normalise codes.\n"
         "- A stock code wrapped onto two lines is ONE code: join it, so a cell reading\n"
         '  "SRTWC86" then "08-RL" is "SRTWC8608-RL".\n'
-        "- Set struck_through=true for any line crossed out by hand.\n"
+        "- A ROW IS A ROW ONLY IF IT HAS AN ITEM NUMBER, A STOCK CODE OR MONEY ON IT.\n"
+        "  A long description wraps onto the rows beneath it and can even finish at the\n"
+        "  TOP OF THE NEXT PAGE, above the next numbered item. That continuation belongs\n"
+        "  to the description it came from and is NOT a separate item.\n"
+        '  * Wrapping WITHIN this page: put the whole thing in that item\'s "description".\n'
+        "  * Wrapping in from the PREVIOUS page, so this page opens with description text\n"
+        "    before its first numbered item: emit it as an entry carrying ONLY\n"
+        '    "description", with "no", "stock_code", "qty", "unit_price" and "amount" all\n'
+        "    null. That is the signal that it is a continuation, and it gets joined back\n"
+        "    to the item it belongs to. Do not invent an item number for it, and do not\n"
+        "    drop the text.\n"
+        "  Apart from that one continuation entry, the entries you return must be exactly\n"
+        "  the item numbers printed on this page.\n"
+        "- STRIKE-THROUGH IS THE MOST IMPORTANT THING ON THIS PAGE. Look for a pen line\n"
+        "  drawn horizontally THROUGH printed characters. It can cover a whole row, or\n"
+        "  only part of one, and both matter:\n"
+        "  * the WHOLE row crossed out means the line is cancelled -> struck_through=true.\n"
+        "  * only SOME words crossed out means those words are being replaced, usually by\n"
+        "    handwriting nearby -> struck_through=false, and list exactly the crossed-out\n"
+        '    fragments in "struck_parts". A row where only the stock code is crossed out\n'
+        "    is NOT a cancelled row.\n"
+        "- Transcribe struck-out text as it is printed, in the field it belongs to, and\n"
+        '  also name it in "struck_parts". Never silently drop it and never merge it with\n'
+        "  the replacement: the reviewer needs to see what was there and what replaced it.\n"
+        "- Handwriting can itself be crossed out, meaning the writer changed their mind.\n"
+        "  Exclude the crossed-out part from the note text and put it in struck_parts. If\n"
+        '  the paper reads "SS C-FH12" with SS crossed out, the note is "C-FH12".\n'
         '- Put EVERY handwritten note in "annotations", verbatim, including notes written\n'
         "  next to a line or in the margin. Do not merge two notes into one.\n"
         "- Numbers: no thousands separators, a dot decimal.\n"

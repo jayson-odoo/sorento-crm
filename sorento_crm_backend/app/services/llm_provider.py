@@ -589,6 +589,25 @@ def _gemini_post(url: str, payload: dict, *, api_key: str, timeout: int = 180) -
             return json.loads(response.read().decode())
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode()[:500]
+        # Two failures are the operator's to fix, not the document's, and both used to
+        # reach the screen as a wall of JSON that read like the file was unreadable.
+        # Say what is actually wrong and who can act on it.
+        if exc.code == 429:
+            reason = (
+                "the billing cap has been reached"
+                if "spending cap" in detail or "spend" in detail
+                else "the rate limit has been reached"
+            )
+            raise RuntimeError(
+                f"The document reader is unavailable because {reason}. The document is "
+                "stored and nothing is lost. Raise the cap in Google AI Studio, then "
+                "upload it again."
+            ) from None
+        if exc.code in (401, 403):
+            raise RuntimeError(
+                "The document reader rejected our key. The document is stored and "
+                "nothing is lost. Check GEMINI_API_KEY, then upload it again."
+            ) from None
         raise RuntimeError(f"HTTP {exc.code}: {detail}") from None
 
 

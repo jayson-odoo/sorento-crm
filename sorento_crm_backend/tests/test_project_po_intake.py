@@ -278,6 +278,111 @@ def test_line_numbering_follows_the_printed_item_numbers_across_pages(seeded):
     assert [line.line_no for line in service._lines(version.id)] == [1, 2, 3, 4]
 
 
+def test_a_wrapped_description_rejoins_the_line_above_instead_of_becoming_one(seeded):
+    """A long description that spills past the bottom of a page is one line, not two.
+
+    On the client's own scan, item 49's description runs off page 8 and finishes at the
+    top of page 9, above item 50. That fragment has no item number, no stock code and no
+    money on it: it is the tail of a sentence. Read as a row it inflates the line count
+    and puts an unpriced ghost line in front of a reviewer, so it is folded back into the
+    line it belongs to.
+    """
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "PO-WRAPPED"))
+
+    service.persist_pages(
+        version,
+        [
+            _page(
+                1,
+                lines=[
+                    {
+                        "no": 49,
+                        "stock_code": "CB6633",
+                        "description": "CB6633 Concealed Cistern with",
+                        "qty": 40,
+                        "unit_price": 148.00,
+                        "amount": 5920.00,
+                    }
+                ],
+            ),
+            _page(
+                2,
+                lines=[
+                    {"description": "dual flush plate, chrome"},
+                    {
+                        "no": 50,
+                        "stock_code": "SRTA8046",
+                        "description": "SRTA8046 Basin Mixer",
+                        "qty": 12,
+                        "unit_price": 79.00,
+                        "amount": 948.00,
+                    },
+                ],
+            ),
+        ],
+    )
+
+    lines = service._lines(version.id)
+    assert [line.line_no for line in lines] == [49, 50]
+    assert lines[0].description_raw == "CB6633 Concealed Cistern with dual flush plate, chrome"
+    # The fold must not disturb what the line is worth.
+    assert lines[0].amount == Decimal("5920.00")
+
+
+def test_ocr_spill_in_the_code_cell_does_not_make_a_fragment_a_line(seeded):
+    """The exact shape the client's scan produces at the page 8 to 9 boundary.
+
+    Item 49's description finishes as "GRATING" at the top of page 9, and the model
+    reads "??2-6" into the stock code column from ink showing through. Treating a filled
+    code cell as proof of a line let that through as a 52nd item with no quantity and no
+    money, which is a row a reviewer would have had to puzzle over and reject by hand.
+    """
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "PO-SPILL"))
+
+    service.persist_pages(
+        version,
+        [
+            _page(
+                1,
+                lines=[
+                    {
+                        "no": 49,
+                        "stock_code": "JPSRT",
+                        "description": "SORENTO SRT382-6 150X150MM S/S FLOOR",
+                        "qty": 927,
+                        "unit_price": 13.77,
+                        "amount": 12764.79,
+                    }
+                ],
+            ),
+            _page(2, lines=[{"stock_code": "??2-6", "description": "GRATING"}]),
+        ],
+    )
+
+    lines = service._lines(version.id)
+    assert [line.line_no for line in lines] == [49]
+    assert lines[0].description_raw == "SORENTO SRT382-6 150X150MM S/S FLOOR GRATING"
+    # The spill is dropped, not appended: the line already carries the printed code.
+    assert lines[0].stock_code_raw == "JPSRT"
+
+
+def test_a_fragment_with_nothing_above_it_is_still_kept_as_a_line(seeded):
+    """The fold only ever rejoins. With no line above it, a fragment is all we have of
+    whatever the model saw, and dropping it would lose a row silently."""
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    version = _version(db, _po(db, project, owner, "PO-ORPHAN"))
+
+    service.persist_pages(version, [_page(1, lines=[{"description": "continued text"}])])
+
+    lines = service._lines(version.id)
+    assert [line.description_raw for line in lines] == ["continued text"]
+
+
 # ------------------------------------------------- handwriting: proposed, not applied
 
 

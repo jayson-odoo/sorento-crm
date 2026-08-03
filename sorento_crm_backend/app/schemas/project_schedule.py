@@ -112,6 +112,13 @@ class DeliveryScheduleVersionResponse(BaseModel):
     )
     extraction_error: Optional[str] = None
     extraction_model: Optional[str] = None
+    extraction_elapsed_ms: Optional[int] = Field(
+        None,
+        description=(
+            "How long the model took, in milliseconds. Shown after a read so the wait "
+            "is legible. Null on documents read before this was recorded."
+        ),
+    )
     page_count: Optional[int] = Field(None, description="Pages in the document.")
     pages_extracted: int = Field(
         0, description="Pages that answered. Below page_count means the read was partial."

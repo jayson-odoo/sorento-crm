@@ -237,6 +237,31 @@ def _int_or_none(value: Any) -> Optional[int]:
     return int(match.group(0)) if match else None
 
 
+def _is_description_fragment(item: Dict[str, Any]) -> bool:
+    """Is this payload the tail of the row above rather than a row?
+
+    A real line always carries the customer's printed item number or money, and in
+    practice both. A fragment carries description text and no number of any kind, which
+    is what the tail of a wrapped description looks like once the page it lands on is
+    read on its own.
+
+    The stock code cell is deliberately NOT part of the test. On the client's own scan,
+    item 49 finishes on the next page as "GRATING" and the model put "??2-6" in the code
+    column, misreading the ink bleeding through from the row above. Requiring an empty
+    code cell let that through as a 52nd line. A code with no money and no item number
+    beside it is spill from the same wrap, so it is dropped: the line above already
+    carries the code the customer actually printed.
+    """
+    if not str(item.get("description") or "").strip():
+        return False
+    if _int_or_none(item.get("no")) is not None:
+        return False
+    return not any(
+        _to_decimal(item.get(key)) is not None
+        for key in ("qty", "unit_price", "amount")
+    )
+
+
 def arithmetic_ok(
     qty: Optional[Decimal], unit_price: Optional[Decimal], amount: Optional[Decimal]
 ) -> Optional[bool]:
@@ -838,6 +863,7 @@ class ProjectPOExtractionService:
             page_count=result.page_count,
             tokens_in=result.prompt_tokens,
             tokens_out=result.completion_tokens,
+            elapsed_ms=result.elapsed_ms,
         )
         self.db.commit()
         return summary
@@ -891,6 +917,7 @@ class ProjectPOExtractionService:
         page_count: Optional[int] = None,
         tokens_in: int = 0,
         tokens_out: int = 0,
+        elapsed_ms: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Turn per-page extractor output into lines, cards and four totals.
 
@@ -921,6 +948,9 @@ class ProjectPOExtractionService:
         # is selected, and a lookup that silently returns nothing leaves a screen that
         # still looks correct.
         line_pages: Dict[str, Optional[int]] = {}
+        # The most recent real line, so a wrapped description can find its way home even
+        # when the wrap happens across a page boundary.
+        last_line: Optional[ProjectPOLine] = None
 
         for page in pages:
             page_no = getattr(page, "page_no", None)
@@ -953,11 +983,25 @@ class ProjectPOExtractionService:
             for item in data.get("lines") or []:
                 if not isinstance(item, dict):
                     continue
+                # A description with no item number, no code and no money on it is the
+                # tail of the row above wrapping onto the next row or the next page, not
+                # a row of its own. Rejoining it here rather than trusting the model to
+                # never split keeps the line count equal to the printed item count.
+                if last_line is not None and _is_description_fragment(item):
+                    fragment = str(item.get("description") or "").strip()
+                    last_line.description_raw = (
+                        f"{last_line.description_raw} {fragment}".strip()
+                        if last_line.description_raw
+                        else fragment
+                    )
+                    self.db.flush()
+                    continue
                 line = self._line_from_payload(
                     version, item, used_line_nos=used_line_nos
                 )
                 if line is None:
                     continue
+                last_line = line
                 line_pages[str(line.line_no)] = page_no
                 if bool(item.get("struck_through")):
                     struck_line_nos.append(line.line_no)
@@ -1067,6 +1111,7 @@ class ProjectPOExtractionService:
         version.extraction_model = model
         version.extraction_tokens_in = tokens_in or None
         version.extraction_tokens_out = tokens_out or None
+        version.extraction_elapsed_ms = elapsed_ms or None
         if page_count:
             version.page_count = page_count
 
@@ -2188,6 +2233,7 @@ class ProjectPOExtractionService:
             "extraction_state": version.extraction_state,
             "extraction_error": version.extraction_error,
             "extraction_model": version.extraction_model,
+            "extraction_elapsed_ms": version.extraction_elapsed_ms,
             "page_count": version.page_count,
             "pages_extracted": pages_extracted,
             "failed_pages": failed_pages,

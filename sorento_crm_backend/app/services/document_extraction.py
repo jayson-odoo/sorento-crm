@@ -25,6 +25,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -51,6 +52,7 @@ class PageResult:
     raw_text: Optional[str] = None  # kept only when parsing failed, for diagnosis
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    elapsed_ms: int = 0
 
 
 @dataclass
@@ -60,6 +62,9 @@ class ExtractionResult:
     pages: list[PageResult] = field(default_factory=list)
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    # How long the model actually took. Reading ten scanned pages is minutes of
+    # waiting, and a person who is told "2m 14s" once stops wondering whether it hung.
+    elapsed_ms: int = 0
 
     @property
     def ok_pages(self) -> list[PageResult]:
@@ -141,6 +146,11 @@ def extract_document(
 
     ``on_page`` is called after each page so a caller can persist progress; a long scan
     should not look frozen for two minutes.
+
+    The usage row this writes carries no principal. Extraction runs on the worker with
+    no request behind it, and neither version row records who uploaded it, so there is
+    nothing truthful to attribute it to yet. Recording a guess would be worse than the
+    blank.
     """
     api_key = settings.gemini_api_key
     if not api_key:
@@ -154,7 +164,9 @@ def extract_document(
     images = render_pages(content, mime)
     result = ExtractionResult(model=f"{provider.name}/{chosen_model}", page_count=len(images))
 
+    started = time.perf_counter()
     for index, image_b64 in enumerate(images, start=1):
+        page_started = time.perf_counter()
         prompt, _version = render(
             db, prompt_key, page_no=index, page_count=len(images)
         )
@@ -176,6 +188,7 @@ def extract_document(
             page.error = str(exc)[:300]
             logger.warning("extraction failed on page %s: %s", index, page.error)
 
+        page.elapsed_ms = int((time.perf_counter() - page_started) * 1000)
         result.pages.append(page)
         result.prompt_tokens += page.prompt_tokens
         result.completion_tokens += page.completion_tokens
@@ -185,4 +198,37 @@ def extract_document(
             except Exception:  # noqa: BLE001 - progress reporting is best effort
                 logger.warning("on_page callback failed for page %s", index, exc_info=True)
 
+    result.elapsed_ms = int((time.perf_counter() - started) * 1000)
+    _log_usage(db, result, prompt_key=prompt_key, provider=provider.name)
     return result
+
+
+def _log_usage(db: Session, result: "ExtractionResult", *, prompt_key: str, provider: str) -> None:
+    """Record what this document cost, next to every other model call in the product.
+
+    Extraction is by far the most expensive thing the system asks a model to do, and it
+    was the only thing not showing up in the usage figures. Best effort on purpose: a
+    telemetry write must never be the reason a document that WAS read is reported as
+    failed.
+    """
+    try:
+        from app.models.ai_assistant import AIAssistantUsageLog
+
+        db.add(
+            AIAssistantUsageLog(
+                model=result.model,
+                provider=provider,
+                prompt_tokens=result.prompt_tokens,
+                completion_tokens=result.completion_tokens,
+                total_tokens=result.prompt_tokens + result.completion_tokens,
+                # One call per page, so the page count IS the number of model calls.
+                tool_calls_count=result.page_count,
+                response_time_ms=result.elapsed_ms,
+                was_answered=bool(result.ok_pages),
+                feature="ai_document_extract",
+                form_key=prompt_key,
+            )
+        )
+        db.flush()
+    except Exception:  # noqa: BLE001
+        logger.warning("could not record extraction usage", exc_info=True)

@@ -188,6 +188,13 @@ class POVersionDetailResponse(BaseModel):
     extraction_state: str
     extraction_error: Optional[str] = None
     extraction_model: Optional[str] = None
+    extraction_elapsed_ms: Optional[int] = Field(
+        None,
+        description=(
+            "How long the model took, in milliseconds. Shown after a read so the wait "
+            "is legible. Null on documents read before this was recorded."
+        ),
+    )
     page_count: Optional[int] = None
     pages_extracted: int = Field(
         0,
