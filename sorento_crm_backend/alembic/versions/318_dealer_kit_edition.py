@@ -144,6 +144,23 @@ def upgrade() -> None:
     )
 
     _seed_graph(bind)
+    _mark_system(bind)
+
+
+def _mark_system(bind) -> None:
+    """Backfill is_system on a graph seeded before that flag was set.
+
+    The seed is skip-if-present, so a re-run does NOT correct an existing row -
+    that is the "update where NULL cannot fix a prior wrong value" trap. This
+    sets it explicitly by entity_type instead.
+    """
+    bind.execute(
+        sa.text(
+            "UPDATE statuses SET is_system = true "
+            "WHERE entity_type = :et AND scope_id IS NULL AND is_system = false"
+        ),
+        {"et": ENTITY},
+    )
 
 
 def _seed_graph(bind) -> None:
@@ -170,11 +187,18 @@ def _seed_graph(bind) -> None:
         new_id = str(uuid.uuid4())
         bind.execute(
             sa.text(
+                # is_system, because `edition_service._status_by_key` reads all
+                # five of these BY KEY. update_status freezes the key only on
+                # system rows, so without it an admin renaming "draft" in the
+                # status UI bricks the workflow - and the 500 it produces says
+                # the graph "has not been seeded", sending whoever hits it to
+                # the migration rather than to the rename.
                 "INSERT INTO statuses "
                 "(id, entity_type, key, label, category, color_hex, sort_order, "
-                " is_initial, is_terminal, is_active, is_archived, is_default) "
+                " is_initial, is_terminal, is_active, is_archived, is_default, "
+                " is_system) "
                 "VALUES (:id, :et, :key, :label, :cat, :colour, :sort, "
-                " :initial, :terminal, true, false, :initial)"
+                " :initial, :terminal, true, false, :initial, true)"
             ),
             {
                 "id": new_id,

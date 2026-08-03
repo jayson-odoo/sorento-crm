@@ -99,6 +99,17 @@ class TestTheGraph:
             "done",
         ]
 
+    def test_every_seeded_status_is_a_system_row(self, db) -> None:
+        """`edition_service._status_by_key` reads all five BY KEY.
+
+        `update_status` freezes the key only on system rows, so without the flag
+        an admin renaming "draft" in the status UI bricks the workflow - and the
+        500 it produces says the graph "has not been seeded", which sends
+        whoever hits it to the migration instead of to the rename they just did.
+        This is the first seeded graph in the system, so it sets the convention.
+        """
+        assert [s.key for s in _graph(db).statuses if not s.is_system] == []
+
     def test_draft_is_the_only_way_in(self, db) -> None:
         """The engine asserts one initial per graph; this asserts WHICH one.
 

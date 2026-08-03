@@ -32,7 +32,7 @@
  *   }],
  *   total: number,              // products matching the filter
  *   remaining: number,          // of those, the ones still without an image
- *   shown: number,              // items on this page
+ *   shown: number,              // size of the pageable set (NOT this page)
  *   choosable: number           // of those, the ones with a photo to pick from
  * }
  *
@@ -154,6 +154,9 @@ export async function listBrochureImages(
     items,
     total: body.total ?? items.length,
     remaining: body.remaining ?? items.filter((row) => !row.chosenAttachmentId).length,
+    // Falls back to what we can see. `shown` is the size of the whole
+    // pageable set, so items.length is only right on a single page - which
+    // is the correct guess when the server did not send one at all.
     shown: body.shown ?? items.length,
     // Falls back to what THIS page can prove rather than to 0. A backend that
     // does not send the field would otherwise put every screen into the "no

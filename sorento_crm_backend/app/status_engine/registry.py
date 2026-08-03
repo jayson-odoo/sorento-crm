@@ -172,8 +172,17 @@ def _register_core() -> None:
         try:
             importlib.import_module(module)
         except Exception:  # pragma: no cover - defensive
-            logging.getLogger(__name__).warning(
-                "Status entity bootstrap %s failed to import", module, exc_info=True
+            # error, not warning. The consequence is spelled out above: an
+            # unregistered entity reports ZERO records in a status, which is the
+            # answer that makes the status deletable out from under live rows,
+            # and /migrate-records answers {"migrated": 0} while records exist.
+            # A warning is the wrong volume for a lie to an admin.
+            logging.getLogger(__name__).error(
+                "Status entity bootstrap %s failed to import; its entity is now "
+                "UNREGISTERED for this process and its status graph will report "
+                "no records using any status",
+                module,
+                exc_info=True,
             )
 
 

@@ -1,8 +1,25 @@
 # PLAN - The Edition revision workflow (S2.5)
 
-**Status:** written 2026-08-03, NOT yet grilled and NOT started. Unblocked today
-by the status engine reaching `main`. Needs the user's grill before code, per
-`feedback_grill_plan_before_implementing`.
+**Status:** BUILT 2026-08-03 (S2.5.1 to S2.5.5), reviewed the same day, NOT yet
+merged. See `EXECUTION-LEDGER.md` for the gate record, including the Phase 1
+prototype that was skipped and the four defects review found after the code
+looked finished.
+
+**Three things below no longer describe what shipped, and are left in place
+rather than quietly edited, because the divergence is the record:**
+
+1. Journey step 2 says a draft "no reader can see" because a version with no
+   label is unreachable. True of the version; NOT true of the label. The page
+   editor's Publish button moves the published label at any version, so until
+   `page_service._assert_no_open_edition_bypass` landed, a Designer could
+   publish an unapproved version in one click. The guarantee is now that guard
+   plus `edition_service.publish`, not the absence of a label.
+2. Journey step 6 says a price correction keeps the Edition `approved` (AC-L5)
+   and any other edit drops it back. Shipped blunter: EVERY save drops it back,
+   because the document stores no prices and an Edition cannot detect a price
+   change by diffing its own versions. AC-L4 to AC-L6 remain deferred.
+3. Journey step 5 says the Designer "learns of" an approval or rejection. No
+   notification is sent anywhere in this slice; they find out by looking.
 **Companion UAC:** `dealer-kit-builder-acceptance-criteria.md`, **Group L**
 (AC-L1 to AC-L9), plus AC-A9 for the permission. Already written during the S1
 grill, so this plan builds against existing ACs rather than inventing new ones.
