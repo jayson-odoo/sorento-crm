@@ -1,6 +1,11 @@
 # PLAN - After-Sales, Warranty & Service Scheduling
 
-**Status:** **In build, S0.** Plan written 2026-07-26 from a completed grill (19 decisions). S0 rewritten
+**Status:** **In build. S0, S1, S2, S2a, S2b, S4 and S4a implemented; forms-platform F0 to F2c implemented
+alongside them.** Migrations 310 to 321. Next slice: **S3** (consumer portal intake), which still needs the
+S3-pre extraction spike and the Malay PDPA wording. Everything below the "In build, S0" history is the
+original plan text, amended in place.
+
+Plan written 2026-07-26 from a completed grill (19 decisions). S0 rewritten
 2026-08-01 after discovering the status engine already existed (ADR-0012): engine adopted, sibling alembic
 heads merged, complaint registration in progress. Forms-platform F0 is in build in parallel (343 tests
 authored test-first, implementation under way).
@@ -668,6 +673,12 @@ No SKU, product code or UUID ever shown to a Consumer; no dealer picker (**AC-C1
 
 Satisfies **AC-H1 to AC-H14**, **AC-M33, AC-M34, AC-M35**.
 
+**Status: implemented 2026-08-03.** Migration `320_notification_spine_calls`; gate
+`tests/test_after_sales_notification_spine.py` + `test_after_sales_notify_guards.py` (75 green). The DDL
+below is superseded on two points the tests forced: `respond_contact_id` is TEXT (a uuid FK onto
+`respond_contacts.id` cannot be created), and the old unique constraint is **dropped**, not amended, because
+NULL-distinctness silently stops it deduplicating contact rows.
+
 ```sql
 ALTER TABLE notifications ALTER COLUMN user_id DROP NOT NULL;
 ALTER TABLE notifications ADD COLUMN respond_contact_id uuid REFERENCES respond_contacts(id);
@@ -754,6 +765,13 @@ whether or not the webhook does.
 ## S4a - Waiting attribution (NEW, added 2026-08-02 for Group M)
 
 Satisfies **AC-M1 to AC-M7**, **AC-M36d**.
+
+**Status: implemented 2026-08-03.** Migration `321_sla_waiting_attribution`; gate
+`tests/test_sla_waiting_attribution.py` (39 green) plus 5 vitest specs on the banner. Two corrections the
+build forced, both recorded in the commits: AC-M1's `waiting_on_reason_id` **cannot be an id** (a bound
+column must hold the option VALUE or `lookup_validator` rejects every write), and the AC-M4 guard is scoped
+to entity types **registered on the status engine** - the first version blocked conversation-SLA extends and
+broke 16 existing tests, which is exactly the live-integration damage AC-M33 warned about one slice earlier.
 
 ### Why this is its own slice
 
