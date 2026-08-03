@@ -111,7 +111,9 @@ class TestStarting:
 
 class TestTheHappyPath:
     def test_submitting_stamps_who_and_when(self, db) -> None:
-        edition = _started(db, _page(db))
+        page = _page(db)
+        _version(db, page, 1)
+        edition = _started(db, page)
 
         edition_service.submit(db, edition.id, user_id=USER)
 
@@ -171,6 +173,7 @@ class TestTheHappyPath:
 class TestRejection:
     def test_rejecting_keeps_the_reason_the_designer_will_read(self, db) -> None:
         page = _page(db)
+        _version(db, page, 1)
         edition = _started(db, page)
         edition_service.submit(db, edition.id, user_id=USER)
 
@@ -188,6 +191,7 @@ class TestRejection:
         """The last place that can refuse one. A rejection with no reason is a
         rejection nobody can act on."""
         page = _page(db)
+        _version(db, page, 1)
         edition = _started(db, page)
         edition_service.submit(db, edition.id, user_id=USER)
 
@@ -213,6 +217,7 @@ class TestRejection:
         """A Designer editing rejected work should still see what they were
         told. The reason is cleared on the next SUBMISSION, not on pickup."""
         page = _page(db)
+        _version(db, page, 1)
         edition = _started(db, page)
         edition_service.submit(db, edition.id, user_id=USER)
         edition_service.reject(db, edition.id, reason="Prices wrong", user_id=APPROVER)
@@ -226,6 +231,7 @@ class TestRejection:
         """Otherwise last round's reason sits beside a fresh submission and
         reads as a fresh rejection."""
         page = _page(db)
+        _version(db, page, 1)
         edition = _started(db, page)
         edition_service.submit(db, edition.id, user_id=USER)
         edition_service.reject(db, edition.id, reason="Prices wrong", user_id=APPROVER)
@@ -304,8 +310,14 @@ class TestFinishingFreesThePage:
         assert second.previous_edition_id == first.id
 
     def test_publishing_with_nothing_saved_is_refused_in_words(self, db) -> None:
+        """Reached here by deleting the version AFTER approval, because submit
+        now refuses first. The guard stays as the last line of defence: it is
+        what stops the published label being moved to nothing."""
         page = _page(db)
+        version = _version(db, page, 1)
         edition = _through_to_approved(db, page)
+        db.delete(version)
+        db.flush()
 
         with pytest.raises(AppException) as caught:
             edition_service.publish(db, edition.id, user_id=APPROVER)
@@ -313,3 +325,69 @@ class TestFinishingFreesThePage:
         assert caught.value.status_code == 422
         assert "no saved version" in caught.value.detail["message"]
         assert edition.status_key == "approved"
+
+
+class TestACatalogueWithNothingSavedNeverReachesAnApprover:
+    """The walkthrough that found this: a brand new page, an Edition started on
+    it, sent for approval, approved, and only THEN refused at publish because
+    the page had never been saved.
+
+    Three things were wrong with failing that late. The Approver had already
+    spent their attention on it. ``approved_version_id`` was stamped NULL, so
+    the record claimed somebody had read a document that did not exist. And the
+    person who could fix it was not the person holding the error - worse, the
+    editor's Save button is disabled on an untouched page, so the obvious
+    remedy looked unavailable.
+
+    The refusal belongs at submit, where the Designer is still holding it.
+    """
+
+    def test_sending_a_catalogue_with_nothing_saved_is_refused(self, db) -> None:
+        edition = _started(db, _page(db))
+
+        with pytest.raises(AppException) as caught:
+            edition_service.submit(db, edition.id, user_id=USER)
+
+        assert caught.value.status_code == 422
+        assert edition.status_key == "draft"
+
+    def test_the_refusal_says_what_to_do_about_it(self, db) -> None:
+        edition = _started(db, _page(db))
+
+        with pytest.raises(AppException) as caught:
+            edition_service.submit(db, edition.id, user_id=USER)
+
+        message = caught.value.detail["message"]
+        assert "no saved version" in message
+        assert "save" in message.lower()
+
+    def test_it_records_nothing_on_the_way_out(self, db) -> None:
+        edition = _started(db, _page(db))
+
+        with pytest.raises(AppException):
+            edition_service.submit(db, edition.id, user_id=USER)
+
+        assert edition.submitted_at is None
+        assert edition.submitted_by is None
+
+    def test_saving_the_page_is_all_it_takes(self, db) -> None:
+        page = _page(db)
+        edition = _started(db, page)
+        _version(db, page, 1)
+
+        edition_service.submit(db, edition.id, user_id=USER)
+
+        assert edition.status_key == "pending_approval"
+
+    def test_an_approved_edition_always_names_the_version_that_was_read(
+        self, db
+    ) -> None:
+        # The integrity half of the same defect: with the submit guard in
+        # place there is no route to an approved Edition whose
+        # approved_version_id is NULL.
+        page = _page(db)
+        version = _version(db, page, 1)
+
+        edition = _through_to_approved(db, page)
+
+        assert edition.approved_version_id == version.id

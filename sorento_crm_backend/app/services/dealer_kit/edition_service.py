@@ -165,8 +165,25 @@ def _move(
 
 
 def submit(db: Session, edition_id: str, *, user_id: Optional[str] = None) -> Edition:
-    """Designer: this is ready for somebody to look at."""
+    """Designer: this is ready for somebody to look at.
+
+    Refused when the catalogue has never been saved, and refused HERE rather
+    than at publish. A brand new page has no version, so without this an
+    Edition could be sent, approved, and only then rejected by the publish
+    guard - by which point an Approver had already spent their attention on it
+    and ``approved_version_id`` had been stamped NULL, claiming somebody read a
+    document that did not exist. The person who can fix it is the Designer, so
+    the Designer is who the refusal has to reach.
+    """
     edition = get_edition(db, edition_id)
+    if _latest_version(db, edition.page_id) is None:
+        raise AppException(
+            status_code=422,
+            message=(
+                "This catalogue has no saved version to send for approval. "
+                "Open the page and save it first."
+            ),
+        )
 
     def _stamp() -> None:
         edition.submitted_by = user_id

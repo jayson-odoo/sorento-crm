@@ -168,10 +168,21 @@ export function EditionsList() {
       emptyMessage={
         <div className="py-8 text-center" data-testid="dk-ed-list-empty">
           <p className="text-sm font-medium text-foreground">
-            {search ? 'No edition matches that search' : 'No editions yet'}
+            {search
+              ? 'No edition matches that search'
+              : pageId
+                ? 'No editions for this catalogue yet'
+                : 'No editions yet'}
           </p>
+          {/* Sending somebody to "a catalogue page" while the button that does
+              it is on this screen is the kind of copy people follow, leave, and
+              never come back to. Scoped view points at the button. */}
           <p className="mt-1 text-sm text-muted-foreground">
-            {search ? 'Try part of the catalogue name.' : 'Start one from a catalogue page.'}
+            {search
+              ? 'Try part of the catalogue name.'
+              : pageId
+                ? 'Start one with the button above.'
+                : 'Open a catalogue and start one from its actions menu.'}
           </p>
         </div>
       }
