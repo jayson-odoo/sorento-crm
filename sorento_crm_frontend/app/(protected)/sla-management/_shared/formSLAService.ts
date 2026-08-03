@@ -50,7 +50,8 @@ export type FormSLASourceType =
   | 'purchase_request'
   | 'sponsorship_form'
   | 'complaint'
-  | 'ticket';
+  | 'ticket'
+  | 'workflow_submission';
 
 export async function getFormSLATrackers(
   sourceEntityType: FormSLASourceType,
@@ -355,6 +356,13 @@ export const FORM_SLA_EVENT_OPTIONS: Record<FormSLASourceType, readonly string[]
     'responded',
     'resolved',
   ],
+  // Mirrors the events the live workflow_submission stage row already declares.
+  workflow_submission: [
+    'submission_created',
+    'submitted',
+    'approved',
+    'rejected',
+  ],
 };
 
 export const FORM_SLA_TYPE_LABELS: Record<FormSLASourceType, string> = {
@@ -363,4 +371,5 @@ export const FORM_SLA_TYPE_LABELS: Record<FormSLASourceType, string> = {
   sponsorship_form: 'Sponsorship Form',
   complaint: 'Complaint',
   ticket: 'Ticket',
+  workflow_submission: 'Workflow Submission',
 };
