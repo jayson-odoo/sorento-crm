@@ -648,6 +648,36 @@ Two findings from walking it, both recorded because they change the slice rather
 
 A **Consumer 360 page** ships with this slice: profile, every purchase (dealer, dealer document number, product, quantity, value, date), every Complaint, every stored document. This is the screen that makes the commercial purpose real rather than aspirational. **Phase 1 is frontend-first against mocks** - build the whole flow with stubbed hooks, tune every state, verify in a browser via sidebar clicks, and only then wire the backend.
 
+**Phase 2 (backend) is PART-BUILT, 2026-08-03.** Two pieces landed, both test-first:
+
+- `dealer_resolution_service` (commit a1f68f6a1, 16 tests). Returns a **state**, never a score:
+  the spike's distribution is bimodal (26 receipts at exactly 1.00, nothing between 0.70 and
+  0.99), so there is no gradient to threshold, and a float invites every caller to invent a
+  cutoff that eventually pre-fills one of the three real-but-WRONG dealers. Replayed against
+  the spike corpus: 26/38 resolved (68%), 4 candidates, 8 unmatched, **zero wrong**.
+  Sorento's decision, taken 2026-08-03: text-only tiles are accepted, so item 1 above is
+  closed and the initial-letter circle is gone from the prototype.
+- `consumer_lodge_service` (commit 1866fa41e, 12 tests) plus **migration 323**. One
+  transaction: profile, consent, purchase, complaint, lines, verdict. The ALTER below was
+  already half-present (`consumer_purchase_line_id` and `defect_type_id` landed with S1/S2),
+  so 323 adds only the remaining four and is idempotent per column. `defect_type_id` points
+  at `lookup_options`, not `lookup_values` as written below.
+
+Still open in Phase 2: the extract endpoint, the public portal route, the resolution ladder
+(AC-C16 to C18) beyond exact-unique-code, Consumer 360, wiring the FE off `lodgeMocks.ts`,
+and vitest + playwright coverage.
+
+**Unrelated flaky test found while verifying, NOT caused by this slice and not fixed here.**
+`test_complaint_analytics::test_group_by_product_ranked_desc` passes or fails run to run on
+the same commit (measured: pass, fail, pass, fail). `complaint_analytics` sorts groups by
+count and truncates at `limit` (50) while its underlying `q.all()` carries **no ORDER BY**,
+and the shared dev database has now crossed the cliff: 54 distinct product codes on
+`complaint_product_lines`, 32 of them tied at count 1. The test seeds `WIDGET-B` with a
+single complaint, so whether it survives the cut depends on physical row order. The
+production-facing half of this matters more than the test: "which product has the most
+complaints" silently drops groups past 50 with no indication it truncated. Verified innocent
+by running the same selection at HEAD.
+
 ### The flow (Journey actor 1)
 
 ```
