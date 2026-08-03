@@ -237,12 +237,24 @@ def referenced_asset_ids(db: Session, asset_ids: Iterable[str]) -> set[str]:
     a document and a banner out of a reading. Two definitions of "a background
     binding" would disagree the first time the document shape moved.
 
-    Deliberately NOT filtered to one company: this is the guard that decides
-    whether something is safe to destroy, so it fails closed. An asset is
-    company-scoped and a cross-company reference should be impossible, but
-    "should be impossible" is not a reason to delete artwork somebody is looking
-    at.
+    Both reads run under an ALL-COMPANIES scope, and that is load-bearing
+    rather than tidy. This is the guard that decides whether something is safe
+    to destroy, so it has to fail closed - but the company filter makes it fail
+    OPEN. ``do_orm_execute`` injects a company predicate into every SELECT on a
+    ``CompanyScopedMixin`` model, and ``FlyerReadingRecord`` is one, so under an
+    UNSET or empty scope the predicate is ``false()``: the guard sees no
+    references, concludes the asset is unreferenced, and the caller deletes
+    artwork somebody is looking at. "No rows visible" and "nothing references
+    it" are the same answer to this function and opposite answers to the
+    caller.
+
+    That is reachable: ``worker.py`` registers the scope listeners, so anything
+    running off a queue or a script starts UNSET. ``PageVersion`` is not scoped
+    and was never affected, which is why the published-brochure half of this
+    guard held while the reading half quietly did not.
     """
+    from app.models.base import company_scope
+
     ids = {value for value in asset_ids if value}
     if not ids:
         return set()
@@ -255,37 +267,40 @@ def referenced_asset_ids(db: Session, asset_ids: Iterable[str]) -> set[str]:
 
     referenced: set[str] = set()
 
-    docs = (
-        db.query(PageVersion.doc)
-        .filter(
-            or_(
-                *[
-                    PageVersion.doc.contains(
-                        {"sections": [{"style": {"backgroundAssetId": value}}]}
-                    )
-                    for value in ids
-                ]
+    # None = every company. See the docstring: scoping this read is what turns
+    # a fail-closed guard into a fail-open one.
+    with company_scope(db, None):
+        docs = (
+            db.query(PageVersion.doc)
+            .filter(
+                or_(
+                    *[
+                        PageVersion.doc.contains(
+                            {"sections": [{"style": {"backgroundAssetId": value}}]}
+                        )
+                        for value in ids
+                    ]
+                )
             )
+            .all()
         )
-        .all()
-    )
-    for (doc,) in docs:
-        referenced |= background_asset_ids(doc) & ids
+        for (doc,) in docs:
+            referenced |= background_asset_ids(doc) & ids
 
-    readings = (
-        db.query(FlyerReadingRecord.reading_json)
-        .filter(
-            or_(
-                *[
-                    FlyerReadingRecord.reading_json.contains(
-                        {"pages": [{"banner_asset_id": value}]}
-                    )
-                    for value in ids
-                ]
+        readings = (
+            db.query(FlyerReadingRecord.reading_json)
+            .filter(
+                or_(
+                    *[
+                        FlyerReadingRecord.reading_json.contains(
+                            {"pages": [{"banner_asset_id": value}]}
+                        )
+                        for value in ids
+                    ]
+                )
             )
+            .all()
         )
-        .all()
-    )
     for (payload,) in readings:
         referenced |= flyer_reading_service.banner_asset_ids(payload) & ids
 

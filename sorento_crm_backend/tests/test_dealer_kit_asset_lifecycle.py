@@ -637,3 +637,61 @@ def test_the_sweep_only_ever_touches_the_readings_own_banners(api) -> None:
 
     assert _asset_ids(db) == kept
     assert len(_objects(storage)) == PAGES_WITH_A_BANNER * OBJECTS_PER_BANNER
+
+
+class TestTheGuardCannotBeBlindedByScope:
+    """``referenced_asset_ids`` decides whether artwork is safe to destroy.
+
+    The company filter turns that guard inside out. ``do_orm_execute`` injects
+    a company predicate into every SELECT on a ``CompanyScopedMixin`` model and
+    ``FlyerReadingRecord`` is one, so under an UNSET scope the predicate is
+    ``false()``: the guard sees no references, reports the asset unreferenced,
+    and the caller deletes a banner a reading is still showing.
+
+    Reachable rather than theoretical - ``worker.py`` registers the scope
+    listeners, so anything running off a queue or a script starts UNSET.
+    """
+
+    def test_a_reading_still_protects_its_banner_under_an_unset_scope(self) -> None:
+        import uuid as _uuid
+
+        from app.models.base import UNSET, set_company_scope
+        from app.models.dealer_kit import FlyerReadingRecord
+        from app.services.dealer_kit import asset_service
+
+        with blank_session() as db:
+            asset_id = str(_uuid.uuid4())
+            db.add(
+                FlyerReadingRecord(
+                    id=str(_uuid.uuid4()),
+                    filename=unique_code("zzt") + ".pdf",
+                    byte_size=1,
+                    sha256=unique_code("sha"),
+                    reading_json={
+                        "version": 1,
+                        "pages": [{"number": 1, "banner_asset_id": asset_id}],
+                    },
+                )
+            )
+            db.flush()
+
+            # What a worker or a script gets: no scope at all.
+            set_company_scope(db, UNSET)
+
+            assert asset_service.referenced_asset_ids(db, [asset_id]) == {asset_id}
+
+    def test_the_scope_it_was_called_with_is_restored(self) -> None:
+        """The all-companies read is a WINDOW, not a handover. A caller mid-way
+        through a scoped delete must not find its scope widened underneath it."""
+        import uuid as _uuid
+
+        from app.models.base import get_company_scope, set_company_scope
+        from app.services.dealer_kit import asset_service
+
+        with blank_session() as db:
+            scope = frozenset({"00000000-0000-0000-0000-000000000001"})
+            set_company_scope(db, scope)
+
+            asset_service.referenced_asset_ids(db, [str(_uuid.uuid4())])
+
+            assert get_company_scope(db) == scope
