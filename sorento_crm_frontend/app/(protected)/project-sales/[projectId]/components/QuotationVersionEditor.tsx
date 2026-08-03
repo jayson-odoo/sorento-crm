@@ -1,12 +1,14 @@
 'use client';
 
 import * as React from 'react';
-import { AlertTriangle, Lock, Pencil, Plus, Trash2, TriangleAlert } from 'lucide-react';
+import { AlertTriangle, Lock, TriangleAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+// The shared products `/select` mapper. Its name says "variant" because that screen
+// needed it first; the endpoint and the shape are the generic ones.
+import { getProductsForVariantSelect } from '@/app/(protected)/master-data-management/products/services/productService';
 import {
   useQuotationLineMutations,
   useQuotationLines,
@@ -16,10 +18,16 @@ import type {
   Project,
   ProjectQuotation,
   QuotationLine,
+  UnitType,
 } from '../../_shared/types/project.types';
-import { QuotationLineDialog } from './QuotationLineDialog';
+import {
+  InlineLineTable,
+  type InlineDraft,
+  type InlineLineColumn,
+} from '../../_shared/components/InlineLineTable';
 import { ReviseQuotationDialog } from './ReviseQuotationDialog';
 import { formatMyr } from './QuotationsPanel';
+import { isDecimalString, multiplyMoney } from './POIntakeMoney';
 
 const FLOOR_LEVEL_LABELS: Record<string, string> = {
   product: 'this product',
@@ -27,6 +35,13 @@ const FLOOR_LEVEL_LABELS: Record<string, string> = {
   category_ancestor: 'a parent category',
   system: 'the company default',
 };
+
+const UNIT_TYPE_OPTIONS: { value: UnitType; label: string; description: string }[] = [
+  { value: 'house_unit', label: 'Per house unit', description: 'Multiplied by the unit count' },
+  { value: 'bathroom', label: 'Per bathroom', description: 'Multiplied by bathrooms per unit' },
+  { value: 'facility', label: 'Per facility', description: 'Gym, pool, surau' },
+  { value: 'common_area', label: 'Common area', description: 'Priced once for the whole site' },
+];
 
 /**
  * The versions of one scope, and the lines of whichever version is being looked at.
@@ -46,9 +61,6 @@ export function QuotationVersionEditor({
   const versions = useQuotationVersions(quotation.id);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [revising, setRevising] = React.useState(false);
-  const [addingLine, setAddingLine] = React.useState(false);
-  const [editingLine, setEditingLine] = React.useState<QuotationLine | null>(null);
-  const [deletingLine, setDeletingLine] = React.useState<QuotationLine | null>(null);
 
   const rows = React.useMemo(
     () => [...(versions.data ?? [])].sort((a, b) => b.version_no - a.version_no),
@@ -70,10 +82,133 @@ export function QuotationVersionEditor({
       ? 0
       : Math.max(...sortedLines.map((line) => line.sort_order)) + 10;
 
+  const fetchProducts = React.useCallback(async (query: string) => {
+    const products = await getProductsForVariantSelect(query || undefined);
+    return products.map((product) => ({
+      value: product.id,
+      label: product.product_code,
+      description: product.product_name,
+    }));
+  }, []);
+
+  const columns = React.useMemo<InlineLineColumn<QuotationLine>[]>(
+    () => [
+      {
+        key: 'product_id',
+        header: 'Product',
+        width: 200,
+        kind: 'searchable-select',
+        placeholder: 'Off-catalog line',
+        fetchOptions: fetchProducts,
+        // Async mode fetches a page at a time, so the line's own product has to be handed
+        // in or a saved row would read as empty until somebody searched for it.
+        resolveSelected: (line) =>
+          line?.product_id
+            ? {
+                value: line.product_id,
+                label: line.product_code ?? 'Selected product',
+                description: line.description ?? undefined,
+              }
+            : undefined,
+        annotate: (line) => (line ? <LineFlags line={line} /> : null),
+      },
+      {
+        key: 'description',
+        header: 'Description',
+        width: 240,
+        kind: 'text',
+        placeholder: "The product's own description",
+      },
+      {
+        key: 'quantity',
+        header: 'Qty',
+        width: 96,
+        kind: 'number',
+        align: 'end',
+        validate: (value) =>
+          value.trim() === '' || isDecimalString(value) ? null : 'Must be a number',
+        formatReadOnly: (value) => trimAmount(value),
+      },
+      {
+        key: 'uom',
+        header: 'UOM',
+        width: 88,
+        kind: 'text',
+        placeholder: 'PCS',
+      },
+      {
+        key: 'unit_price',
+        header: 'Unit price',
+        width: 128,
+        kind: 'number',
+        align: 'end',
+        placeholder: '0.00',
+        validate: (value) =>
+          value.trim() === '' || isDecimalString(value) ? null : 'Must be a number',
+        formatReadOnly: (value) => formatMyr(value),
+        annotate: (line) =>
+          line?.list_price ? (
+            <span className="mt-0.5 block text-end text-xs text-muted-foreground">
+              {`List ${formatMyr(line.list_price)}`}
+            </span>
+          ) : null,
+      },
+      {
+        key: 'unit_type',
+        header: 'Counts per',
+        width: 168,
+        kind: 'select',
+        placeholder: 'Not counted per unit',
+        options: UNIT_TYPE_OPTIONS,
+        resolveSelected: (_line, draft) =>
+          UNIT_TYPE_OPTIONS.find((option) => option.value === draft.unit_type),
+      },
+      {
+        key: 'line_total',
+        header: 'Total',
+        width: 128,
+        kind: 'derived',
+        align: 'end',
+        // Recomputed from the draft rather than read off the row, so the number moves
+        // while a quantity is being typed instead of after the save lands.
+        derive: (draft) => formatMyr(multiplyMoney(draft.quantity, draft.unit_price) ?? '0'),
+      },
+    ],
+    [fetchProducts],
+  );
+
+  const toDraft = React.useCallback(
+    (line: QuotationLine): InlineDraft => ({
+      product_id: line.product_id ?? '',
+      description: line.description ?? '',
+      quantity: line.quantity ?? '1',
+      uom: line.uom ?? '',
+      unit_price: line.unit_price ?? '',
+      unit_type: line.unit_type ?? '',
+      notes: line.notes ?? '',
+    }),
+    [],
+  );
+
+  const emptyDraft = React.useCallback(
+    (): InlineDraft => ({
+      product_id: '',
+      description: '',
+      quantity: '1',
+      uom: '',
+      unit_price: '',
+      unit_type: '',
+      notes: '',
+    }),
+    [],
+  );
+
   if (versions.isLoading) return <Skeleton className="h-24 w-full" />;
 
+  // `min-w-0` so a wide line table scrolls in its own gutter instead of stretching the
+  // panel it sits in, which at 375px would take the whole page sideways with it.
   return (
-    <div className="space-y-3">
+    <div className="min-w-0 space-y-3">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-1.5">
           {rows.map((version) => (
@@ -124,158 +259,59 @@ export function QuotationVersionEditor({
         </div>
       )}
 
+      {/* Why this version is read only, in one line. The reasoning behind freezing a
+          version was a paragraph and is now simply the consequence. */}
       {selected && !selected.is_current && (
         <p className="text-xs text-muted-foreground">
-          This version is history. Editing it would change a quotation the customer
-          already holds, so make changes on{' '}
-          {current ? `v${current.version_no}` : 'the current version'} instead.
+          {`Frozen. Make changes on ${current ? `v${current.version_no}` : 'the current version'}.`}
         </p>
       )}
 
-      {lines.isLoading ? (
-        <Skeleton className="h-20 w-full" />
-      ) : sortedLines.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border px-6 py-8 text-center">
-          <h4 className="text-sm font-semibold">No lines yet</h4>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            {editable
-              ? 'Add what is being quoted. Picking a product freezes its code, description and list price onto the line.'
-              : 'This version was frozen without any lines.'}
-          </p>
-          {editable && (
-            <Button
-              type="button"
-              size="sm"
-              className="mt-3"
-              onClick={() => setAddingLine(true)}
-            >
-              <Plus className="size-4" aria-hidden />
-              Add the first line
-            </Button>
-          )}
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-xs text-muted-foreground">
-                <th className="py-1.5 pe-3 text-start font-medium">Item</th>
-                <th className="py-1.5 pe-3 text-end font-medium">Qty</th>
-                <th className="py-1.5 pe-3 text-end font-medium">Unit price</th>
-                <th className="py-1.5 pe-3 text-end font-medium">Total</th>
-                {editable && <th className="py-1.5 w-20" />}
-              </tr>
-            </thead>
-            <tbody>
-              {sortedLines.map((line) => (
-                <tr key={line.id} className="border-b border-border/60 align-top">
-                  <td className="py-2 pe-3">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {line.product_code ? (
-                        <span className="font-medium">{line.product_code}</span>
-                      ) : (
-                        <Badge variant="outline" className="text-[11px]">
-                          Off-catalog
-                        </Badge>
-                      )}
-                      {line.is_below_floor && (
-                        <Badge
-                          variant="destructive"
-                          className="gap-1 text-[11px]"
-                          title={describeFloor(line)}
-                        >
-                          <AlertTriangle className="size-3" aria-hidden />
-                          Below floor
-                        </Badge>
-                      )}
-                      {line.is_non_standard && (
-                        <Badge
-                          variant="secondary"
-                          className="gap-1 text-[11px]"
-                          title="Outside the series this scope is quoted from"
-                        >
-                          <TriangleAlert className="size-3" aria-hidden />
-                          Non-standard
-                        </Badge>
-                      )}
-                    </div>
-                    <div
-                      className="mt-0.5 max-w-md truncate text-xs text-muted-foreground"
-                      title={line.description ?? undefined}
-                    >
-                      {line.description ?? 'No description'}
-                    </div>
-                    {line.is_below_floor && (
-                      <div className="mt-0.5 text-xs text-destructive">
-                        {describeFloor(line)}
-                      </div>
-                    )}
-                  </td>
-                  <td className="py-2 pe-3 text-end whitespace-nowrap">
-                    {trimAmount(line.quantity)}
-                    {line.uom ? ` ${line.uom}` : ''}
-                  </td>
-                  <td className="py-2 pe-3 text-end whitespace-nowrap">
-                    {formatMyr(line.unit_price)}
-                    {line.list_price && (
-                      <span className="block text-xs text-muted-foreground">
-                        {`List ${formatMyr(line.list_price)}`}
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-2 pe-3 text-end font-medium whitespace-nowrap">
-                    {formatMyr(line.line_total)}
-                  </td>
-                  {editable && (
-                    <td className="py-2">
-                      <div className="flex items-center justify-end gap-0.5">
-                        <Button
-                          mode="icon"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setEditingLine(line)}
-                          aria-label={`Edit ${line.product_code ?? 'line'}`}
-                        >
-                          <Pencil className="size-3.5" />
-                        </Button>
-                        <Button
-                          mode="icon"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeletingLine(line)}
-                          aria-label={`Remove ${line.product_code ?? 'line'}`}
-                        >
-                          <Trash2 className="size-3.5 text-destructive" />
-                        </Button>
-                      </div>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {editable && sortedLines.length > 0 && (
-        <Button type="button" size="sm" variant="outline" onClick={() => setAddingLine(true)}>
-          <Plus className="size-4" aria-hidden />
-          Add line
-        </Button>
-      )}
-
-      {(addingLine || editingLine) && selected && (
-        <QuotationLineDialog
-          projectId={project.id}
-          versionId={selected.id}
-          line={editingLine}
-          nextSortOrder={nextSortOrder}
-          onDone={() => {
-            setAddingLine(false);
-            setEditingLine(null);
-          }}
-        />
-      )}
+      <InlineLineTable<QuotationLine>
+        rows={sortedLines}
+        getRowId={(line) => line.id}
+        columns={columns}
+        toDraft={toDraft}
+        emptyDraft={emptyDraft}
+        readOnly={!editable}
+        isLoading={lines.isLoading}
+        addLabel="Add a line"
+        emptyHint={
+          editable
+            ? 'Nothing quoted yet. Add a line and pick a product to freeze its code, description and list price onto it.'
+            : 'This version was frozen without any lines.'
+        }
+        describeRow={(line, index) =>
+          line?.product_code ?? line?.description ?? `line ${index + 1}`
+        }
+        rowDetail={{
+          key: 'notes',
+          label: 'Notes',
+          placeholder: 'Why this price, what was agreed, what it replaces',
+        }}
+        // Off-catalog lines carry the description the customer reads, so it is the one
+        // thing that cannot be left out.
+        validateRow={(draft): Record<string, string> =>
+          !draft.product_id && !draft.description.trim()
+            ? { description: 'Needed on an off-catalog line' }
+            : {}
+        }
+        onCreate={async (draft) => {
+          await lineMutations.create.mutateAsync({
+            ...toBody(draft),
+            sort_order: nextSortOrder,
+          });
+        }}
+        onUpdate={async (line, draft) => {
+          await lineMutations.update.mutateAsync({ id: line.id, body: toBody(draft) });
+        }}
+        onDelete={async (line) => {
+          await lineMutations.remove.mutateAsync(line.id);
+        }}
+        deleteDescription={(line) =>
+          `Remove "${line.product_code ?? line.description}" from v${selected?.version_no}? This action cannot be undone.`
+        }
+      />
 
       {revising && current && (
         <ReviseQuotationDialog
@@ -291,24 +327,64 @@ export function QuotationVersionEditor({
         />
       )}
 
-      <ConfirmDeleteDialog
-        open={Boolean(deletingLine)}
-        onOpenChange={(next) => !next && setDeletingLine(null)}
-        title="Confirm delete"
-        description={
-          deletingLine
-            ? `Remove "${deletingLine.product_code ?? deletingLine.description}" from v${selected?.version_no}? This action cannot be undone.`
-            : ''
-        }
-        onDelete={async () => {
-          if (!deletingLine) return;
-          await lineMutations.remove.mutateAsync(deletingLine.id);
-        }}
-        onSuccess={() => setDeletingLine(null)}
-        successMessage="Line removed"
-      />
     </div>
   );
+}
+
+/**
+ * What the server decided about the line, on the line.
+ *
+ * The floor is deliberately NOT evaluated in the browser: resolving it means walking the
+ * category ancestry, and a second implementation here would eventually disagree with the
+ * server's. The price is sent, and the answer that comes back is what is shown.
+ */
+function LineFlags({ line }: { line: QuotationLine }) {
+  const anything = !line.product_id || line.is_below_floor || line.is_non_standard;
+  if (!anything) return null;
+
+  return (
+    <div className="mt-1 space-y-0.5">
+      <div className="flex flex-wrap items-center gap-1">
+        {!line.product_id && (
+          <Badge variant="outline" className="text-[11px]">
+            Off-catalog
+          </Badge>
+        )}
+        {line.is_below_floor && (
+          <Badge variant="destructive" className="gap-1 text-[11px]" title={describeFloor(line)}>
+            <AlertTriangle className="size-3" aria-hidden />
+            Below floor
+          </Badge>
+        )}
+        {line.is_non_standard && (
+          <Badge
+            variant="secondary"
+            className="gap-1 text-[11px]"
+            title="Outside the series this scope is quoted from"
+          >
+            <TriangleAlert className="size-3" aria-hidden />
+            Non-standard
+          </Badge>
+        )}
+      </div>
+      {line.is_below_floor && (
+        <p className="text-xs text-destructive">{describeFloor(line)}</p>
+      )}
+    </div>
+  );
+}
+
+/** Draft to the body the per-line endpoint already takes. Unchanged from the dialog. */
+function toBody(draft: InlineDraft) {
+  return {
+    product_id: draft.product_id || null,
+    description_snapshot: draft.description.trim() || null,
+    unit_price: draft.unit_price.trim() || '0',
+    quantity: draft.quantity.trim() || '1',
+    uom: draft.uom.trim() || null,
+    unit_type: (draft.unit_type || null) as UnitType | null,
+    notes: draft.notes.trim() || null,
+  };
 }
 
 /** Says which rule bit, so the salesperson knows whose policy to argue with. */

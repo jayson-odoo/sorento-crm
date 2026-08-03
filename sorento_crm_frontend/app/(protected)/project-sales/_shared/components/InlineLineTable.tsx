@@ -1,0 +1,839 @@
+'use client';
+
+import * as React from 'react';
+import { Check, Plus, StickyNote, Trash2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
+import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import {
+  SearchableSelect,
+  type SearchableSelectOption,
+} from '@/components/common/SearchableSelect';
+
+/**
+ * Every field of a line, as strings.
+ *
+ * Strings all the way through on purpose: money and quantity are strings from the API to
+ * the API, and turning one into a number on its way to a cell is how `392.85` comes back
+ * as `392.85000000000002`. Fields with no column of their own (notes) ride along in here
+ * untouched, so a save never drops what the table does not draw.
+ */
+export type InlineDraft = Record<string, string>;
+
+export type InlineCellKind = 'text' | 'number' | 'select' | 'searchable-select' | 'derived';
+
+export interface InlineLineColumn<TRow> {
+  /** Also the draft field name, and half of a cell's focus coordinate. */
+  key: string;
+  header: string;
+  /** Pixels. The table scrolls sideways rather than squeezing a cell below this. */
+  width: number;
+  kind: InlineCellKind;
+  align?: 'start' | 'end';
+  placeholder?: string;
+  /** `select`: the whole option set, filtered in the popover. */
+  options?: SearchableSelectOption[];
+  /** `searchable-select`: debounced server search. */
+  fetchOptions?: (query: string) => Promise<SearchableSelectOption[]>;
+  /**
+   * `searchable-select`: the option currently held. Async mode fetches one page at a
+   * time, so without this the trigger reads empty on a saved row until somebody searches
+   * for the thing that is already selected.
+   */
+  resolveSelected?: (row: TRow | null, draft: InlineDraft) => SearchableSelectOption | undefined;
+  /** `derived`: recomputed from the live draft on every keystroke, never stored. */
+  derive?: (draft: InlineDraft) => string;
+  /** Per-cell shape check. A message marks the cell; it does not raise a toast. */
+  validate?: (value: string) => string | null;
+  /** Read-only annotation under the editor: list price, quoted price, badges. */
+  annotate?: (row: TRow | null, draft: InlineDraft) => React.ReactNode;
+  /**
+   * How the raw value reads when the table cannot be edited. An input must hold the
+   * string the API wants (`900.00`), but a frozen version should still say `RM 900.00`.
+   */
+  formatReadOnly?: (value: string, row: TRow | null) => string;
+}
+
+/** A field that deserves keeping but not a column of its own. */
+export interface InlineRowDetail {
+  key: string;
+  label: string;
+  placeholder?: string;
+  rows?: number;
+}
+
+export interface InlineLineTableProps<TRow> {
+  rows: TRow[];
+  getRowId: (row: TRow) => string;
+  columns: InlineLineColumn<TRow>[];
+  /** A saved row as an editable draft. Must include every field `onUpdate` will send. */
+  toDraft: (row: TRow) => InlineDraft;
+  /** A brand-new row's starting draft. Also the "untouched" comparison. */
+  emptyDraft: () => InlineDraft;
+  /**
+   * The three writes. The table hands over a draft and nothing else: shaping the payload
+   * stays at the call site, so the request that leaves the browser is the same one the
+   * dialog used to send.
+   */
+  onCreate: (draft: InlineDraft) => Promise<void>;
+  onUpdate: (row: TRow, draft: InlineDraft) => Promise<void>;
+  onDelete: (row: TRow) => Promise<void>;
+  /** Cross-field rules. Keys are column keys, so a message lands on the cell at fault. */
+  validateRow?: (draft: InlineDraft) => Record<string, string>;
+  rowDetail?: InlineRowDetail;
+  /** Names a row for labels and for the delete confirmation, e.g. "line 2" or a code. */
+  describeRow: (row: TRow | null, index: number) => string;
+  readOnly?: boolean;
+  isLoading?: boolean;
+  addLabel?: string;
+  /** Shown in place of rows when there are none. The header and the add row stay put. */
+  emptyHint?: string;
+  deleteDescription?: (row: TRow, index: number) => string;
+}
+
+interface RowState {
+  draft: InlineDraft;
+  /** What the server last accepted. Escape and the dirty check both read this. */
+  committed: InlineDraft;
+}
+
+interface PendingDelete<TRow> {
+  rowKey: string;
+  /** Null for a row that was added but never saved: there is nothing to ask the server. */
+  row: TRow | null;
+  index: number;
+}
+
+const NEW_ROW_PREFIX = 'new:';
+
+function sameDraft(a: InlineDraft, b: InlineDraft): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) {
+    if ((a[key] ?? '') !== (b[key] ?? '')) return false;
+  }
+  return true;
+}
+
+/**
+ * Lines as a spreadsheet, not as a form behind a button.
+ *
+ * The behaviour being copied is Odoo's, and it is a behaviour rather than a layout: "Add a
+ * line" puts an empty row at the bottom and the caret in its first cell, every cell is
+ * edited where it sits, Tab walks across and rolls onto the next row, Enter drops down a
+ * row, Escape puts one cell back. Adding four lines costs four rows of typing instead of
+ * four rounds of open-fill-submit-reopen.
+ *
+ * WHY NOT THE SHARED `DataGrid`: three of its guarantees are the opposite of what an
+ * editor wants. It holds skeleton rows until the column-preferences query settles, which
+ * for a sub-table inside a detail page means the lines flash before they arrive; its cell
+ * contract is `truncate` + `title`, which is right for reading a listing and wrong for a
+ * cell that has to give its whole width to an input; and with no rows it replaces the
+ * header with an empty message, while the ask here is that the header and the add row
+ * survive an empty table. It also has nowhere to put an UNSAVED draft row, which is the
+ * whole trick. So the table below is written out, without `table-fixed`, sized by explicit
+ * per-column widths inside an `overflow-x-auto` box so a wide line table scrolls in its
+ * own gutter and the page never moves sideways at 375px.
+ *
+ * WHEN A ROW SAVES: when focus leaves it, for a row that is dirty and valid. That is the
+ * Odoo rule and it needs no button. There is a button anyway, one tick per dirty row,
+ * because a phone has no Tab key and tapping between cells of the same row would otherwise
+ * never save anything.
+ *
+ * Saving goes through whatever the call site passes as `onCreate` / `onUpdate`, one row at
+ * a time, which is what the per-line endpoints already do.
+ */
+export function InlineLineTable<TRow>({
+  rows,
+  getRowId,
+  columns,
+  toDraft,
+  emptyDraft,
+  onCreate,
+  onUpdate,
+  onDelete,
+  validateRow,
+  rowDetail,
+  describeRow,
+  readOnly = false,
+  isLoading = false,
+  addLabel = 'Add a line',
+  emptyHint,
+  deleteDescription,
+}: InlineLineTableProps<TRow>) {
+  const [states, setStates] = React.useState<Record<string, RowState>>({});
+  const [newRowKeys, setNewRowKeys] = React.useState<string[]>([]);
+  const [errors, setErrors] = React.useState<Record<string, Record<string, string>>>({});
+  const [saving, setSaving] = React.useState<string[]>([]);
+  const [pendingDelete, setPendingDelete] = React.useState<PendingDelete<TRow> | null>(null);
+
+  const nextNewId = React.useRef(0);
+  const activeRowKey = React.useRef<string | null>(null);
+  const cellHosts = React.useRef(new Map<string, HTMLElement | null>());
+  // Read by handlers that fire before React has re-rendered with the newest state.
+  const statesRef = React.useRef(states);
+  statesRef.current = states;
+  /**
+   * The double-save guard, in a ref rather than in `saving` state.
+   *
+   * Several paths commit the same row: focus leaving it, the tick beside it, "Add a line"
+   * flushing it before appending, a notes popover closing. Two of them can land before a
+   * re-render, and a state-based check would still read "idle" and CREATE the row twice.
+   */
+  const inFlight = React.useRef(new Set<string>());
+
+  const editableColumns = React.useMemo(
+    () => columns.filter((column) => column.kind !== 'derived'),
+    [columns],
+  );
+  const rowKeys = React.useMemo(
+    () => [...rows.map(getRowId), ...newRowKeys],
+    [getRowId, newRowKeys, rows],
+  );
+  const rowByKey = React.useMemo(() => {
+    const map = new Map<string, TRow>();
+    rows.forEach((row) => map.set(getRowId(row), row));
+    return map;
+  }, [getRowId, rows]);
+
+  /**
+   * Re-seed a saved row from the server, unless the person is mid-edit on it. Without the
+   * dirty check a refetch triggered by a neighbouring row would wipe what they are typing.
+   */
+  React.useEffect(() => {
+    setStates((previous) => {
+      const next: Record<string, RowState> = {};
+      let changed = false;
+      rows.forEach((row) => {
+        const key = getRowId(row);
+        const server = toDraft(row);
+        const held = previous[key];
+        if (held && !sameDraft(held.draft, held.committed)) {
+          next[key] = held;
+          return;
+        }
+        if (held && sameDraft(held.committed, server)) {
+          next[key] = held;
+          return;
+        }
+        next[key] = { draft: server, committed: server };
+        changed = true;
+      });
+      Object.keys(previous).forEach((key) => {
+        if (key.startsWith(NEW_ROW_PREFIX)) next[key] = previous[key];
+      });
+      if (!changed && Object.keys(next).length === Object.keys(previous).length) {
+        return previous;
+      }
+      return next;
+    });
+  }, [getRowId, rows, toDraft]);
+
+  const cellId = (rowKey: string, columnKey: string) => `${rowKey}::${columnKey}`;
+
+  const focusCell = React.useCallback((rowKey: string, columnKey: string) => {
+    const host = cellHosts.current.get(cellId(rowKey, columnKey));
+    if (!host) return false;
+    const target = host.querySelector<HTMLElement>(
+      'input:not([type="hidden"]), textarea, button',
+    );
+    if (!target) return false;
+    target.focus();
+    if (target instanceof HTMLInputElement) target.select();
+    return true;
+  }, []);
+
+  const setDraftValue = React.useCallback(
+    (rowKey: string, columnKey: string, value: string) => {
+      setStates((previous) => {
+        const held = previous[rowKey];
+        if (!held) return previous;
+        return {
+          ...previous,
+          [rowKey]: { ...held, draft: { ...held.draft, [columnKey]: value } },
+        };
+      });
+    },
+    [],
+  );
+
+  const dropRow = React.useCallback((rowKey: string) => {
+    if (activeRowKey.current === rowKey) activeRowKey.current = null;
+    setNewRowKeys((keys) => keys.filter((key) => key !== rowKey));
+    setStates((previous) => {
+      const next = { ...previous };
+      delete next[rowKey];
+      return next;
+    });
+    setErrors((previous) => {
+      const next = { ...previous };
+      delete next[rowKey];
+      return next;
+    });
+  }, []);
+
+  /** Everything wrong with a row, cell by cell. Empty object means it can be saved. */
+  const collectErrors = React.useCallback(
+    (draft: InlineDraft): Record<string, string> => {
+      const found: Record<string, string> = { ...(validateRow?.(draft) ?? {}) };
+      columns.forEach((column) => {
+        if (!column.validate) return;
+        const message = column.validate(draft[column.key] ?? '');
+        if (message) found[column.key] = message;
+      });
+      return found;
+    },
+    [columns, validateRow],
+  );
+
+  const commitRow = React.useCallback(
+    async (rowKey: string) => {
+      const held = statesRef.current[rowKey];
+      if (!held) return;
+      if (inFlight.current.has(rowKey)) return;
+
+      const isNew = rowKey.startsWith(NEW_ROW_PREFIX);
+      const row = rowByKey.get(rowKey) ?? null;
+
+      // An added row nobody has typed into yet is simply not ready. It is left exactly
+      // where it is: not saved, and NOT marked red for cells the user has not reached.
+      //
+      // It used to be discarded here, on the theory that an untouched row was a
+      // mis-click. That theory cost the client a row every time: clicking the product
+      // dropdown blurs the row before the popover exists, the row read as untouched and
+      // abandoned, and it vanished under the cursor mid-click. A row that disappears
+      // while you are using it is far worse than one that waits. Removing a row is the
+      // Remove button's job, and it asks first.
+      if (isNew && sameDraft(held.draft, emptyDraft())) return;
+
+      if (!isNew && sameDraft(held.draft, held.committed)) {
+        setErrors((previous) => ({ ...previous, [rowKey]: {} }));
+        return;
+      }
+
+      const found = collectErrors(held.draft);
+      setErrors((previous) => ({ ...previous, [rowKey]: found }));
+      if (Object.keys(found).length > 0) return;
+
+      inFlight.current.add(rowKey);
+      setSaving((previous) => [...previous, rowKey]);
+      try {
+        if (isNew) {
+          await onCreate(held.draft);
+          dropRow(rowKey);
+        } else if (row) {
+          await onUpdate(row, held.draft);
+          setStates((previous) => {
+            const current = previous[rowKey];
+            if (!current) return previous;
+            // What was SENT becomes committed, not whatever the draft holds now: somebody
+            // who kept typing during the request still has unsaved work, and marking it
+            // saved would lose it at the next refetch.
+            return { ...previous, [rowKey]: { ...current, committed: held.draft } };
+          });
+        }
+      } catch {
+        // The mutation hooks already say what went wrong. Leaving the row dirty is the
+        // point: what the person typed is still on screen and still saveable.
+      } finally {
+        inFlight.current.delete(rowKey);
+        setSaving((previous) => previous.filter((key) => key !== rowKey));
+      }
+    },
+    [collectErrors, dropRow, emptyDraft, onCreate, onUpdate, rowByKey],
+  );
+
+  const addRow = React.useCallback(() => {
+    const pending = activeRowKey.current;
+    if (pending) void commitRow(pending);
+
+    nextNewId.current += 1;
+    const key = `${NEW_ROW_PREFIX}${nextNewId.current}`;
+    const draft = emptyDraft();
+    setStates((previous) => ({ ...previous, [key]: { draft, committed: draft } }));
+    setNewRowKeys((keys) => [...keys, key]);
+
+    // The caret belongs in the new row, not on the button that made it.
+    const first = editableColumns[0];
+    if (first) {
+      window.setTimeout(() => {
+        activeRowKey.current = key;
+        focusCell(key, first.key);
+      }, 0);
+    }
+  }, [commitRow, editableColumns, emptyDraft, focusCell]);
+
+  /**
+   * A row saves when focus lands on a DIFFERENT row, or leaves the table for good.
+   *
+   * Rows rather than cells, because a line is one write: committing per cell would fire
+   * five requests for one line and, on a new row, five creates. And a popover counts as
+   * still being on the row: the product picker and the notes box render in a portal, so a
+   * focus move into one would otherwise read as leaving.
+   */
+  const handleFocusIn = (event: React.FocusEvent<HTMLDivElement>) => {
+    const rowKey =
+      (event.target as HTMLElement).closest<HTMLElement>('[data-row-key]')?.dataset.rowKey ??
+      null;
+    if (rowKey === activeRowKey.current) return;
+    const leaving = activeRowKey.current;
+    activeRowKey.current = rowKey;
+    if (leaving) void commitRow(leaving);
+  };
+
+  /** Is this where focus landed still part of the table, or of something it opened? */
+  const stillInside = (node: Element | null, container: HTMLElement) => {
+    if (!node) return false;
+    if (container.contains(node)) return true;
+    return Boolean(node.closest('[data-radix-popper-content-wrapper], [role="dialog"]'));
+  };
+
+  const handleFocusOut = (event: React.FocusEvent<HTMLDivElement>) => {
+    const container = event.currentTarget;
+    const next = event.relatedTarget as HTMLElement | null;
+    if (next) {
+      if (stillInside(next, container)) return;
+      leaveRow();
+      return;
+    }
+    // No relatedTarget at all, which is what opening a Radix popover looks like: the
+    // trigger blurs before the popover exists, so there is nothing to point at yet.
+    // Reading that as "the caret left the table" discarded a freshly added row the
+    // moment its product dropdown was clicked. Ask again once the browser has settled
+    // on a focus owner, and only leave if it really is outside.
+    window.setTimeout(() => {
+      if (stillInside(document.activeElement, container)) return;
+      leaveRow();
+    }, 0);
+  };
+
+  const leaveRow = () => {
+    const leaving = activeRowKey.current;
+    activeRowKey.current = null;
+    if (leaving) void commitRow(leaving);
+  };
+
+  const moveFocus = (rowKey: string, columnIndex: number, delta: number) => {
+    const rowIndex = rowKeys.indexOf(rowKey);
+    if (rowIndex < 0) return false;
+    let nextColumn = columnIndex + delta;
+    let nextRow = rowIndex;
+    if (nextColumn >= editableColumns.length) {
+      nextColumn = 0;
+      nextRow += 1;
+    } else if (nextColumn < 0) {
+      nextColumn = editableColumns.length - 1;
+      nextRow -= 1;
+    }
+    if (nextRow < 0 || nextRow >= rowKeys.length) return false;
+    return focusCell(rowKeys[nextRow], editableColumns[nextColumn].key);
+  };
+
+  const handleCellKeyDown = (
+    event: React.KeyboardEvent<HTMLDivElement>,
+    rowKey: string,
+    column: InlineLineColumn<TRow>,
+    columnIndex: number,
+  ) => {
+    const isPicker = column.kind === 'select' || column.kind === 'searchable-select';
+
+    if (event.key === 'Tab') {
+      if (moveFocus(rowKey, columnIndex, event.shiftKey ? -1 : 1)) event.preventDefault();
+      return;
+    }
+    // Enter on a picker trigger belongs to the picker: it is how the popover opens.
+    if (event.key === 'Enter' && !isPicker) {
+      event.preventDefault();
+      const rowIndex = rowKeys.indexOf(rowKey);
+      const below = rowKeys[rowIndex + 1];
+      if (below) {
+        focusCell(below, column.key);
+      } else {
+        (event.target as HTMLElement).blur();
+      }
+      return;
+    }
+    if (event.key === 'Escape' && !isPicker) {
+      const held = statesRef.current[rowKey];
+      if (!held) return;
+      event.preventDefault();
+      setDraftValue(rowKey, column.key, held.committed[column.key] ?? '');
+    }
+  };
+
+  const requestDelete = (rowKey: string, row: TRow | null, index: number) => {
+    const held = statesRef.current[rowKey];
+    // An untouched added row destroys nothing, so it goes without a question. A row that
+    // was typed into gets the same confirmation a saved line gets.
+    if (!row && held && sameDraft(held.draft, emptyDraft())) {
+      dropRow(rowKey);
+      return;
+    }
+    setPendingDelete({ rowKey, row, index });
+  };
+
+  const totalWidth =
+    columns.reduce((sum, column) => sum + column.width, 0) + (readOnly ? 0 : 132);
+
+  if (isLoading) return <Skeleton className="h-24 w-full" />;
+
+  return (
+    <div className="min-w-0 space-y-2">
+      <div
+        className="min-w-0 overflow-x-auto rounded-lg border border-border"
+        onFocus={handleFocusIn}
+        onBlur={handleFocusOut}
+      >
+        <table className="w-full text-sm" style={{ minWidth: totalWidth }}>
+          <thead>
+            <tr className="border-b border-border bg-muted/40 text-xs text-muted-foreground">
+              {columns.map((column) => (
+                <th
+                  key={column.key}
+                  scope="col"
+                  style={{ width: column.width, minWidth: column.width }}
+                  className={`px-2 py-2 font-medium ${
+                    column.align === 'end' ? 'text-end' : 'text-start'
+                  }`}
+                >
+                  {column.header}
+                </th>
+              ))}
+              {!readOnly && (
+                <th scope="col" style={{ width: 132, minWidth: 132 }} className="px-2 py-2">
+                  <span className="sr-only">Row actions</span>
+                </th>
+              )}
+            </tr>
+          </thead>
+
+          <tbody>
+            {rowKeys.length === 0 && (
+              <tr>
+                <td
+                  colSpan={columns.length + (readOnly ? 0 : 1)}
+                  className="px-3 py-6 text-center text-sm text-muted-foreground"
+                >
+                  {emptyHint ?? 'No lines yet.'}
+                </td>
+              </tr>
+            )}
+
+            {rowKeys.map((rowKey, rowIndex) => {
+              const row = rowByKey.get(rowKey) ?? null;
+              const held = states[rowKey];
+              if (!held) return null;
+              // Once a row has been challenged, its marks track what is typed, so fixing
+              // the cell clears the mark instead of leaving it red until the next save.
+              const challenged = Object.keys(errors[rowKey] ?? {}).length > 0;
+              const rowErrors = challenged ? collectErrors(held.draft) : {};
+              const dirty = rowKey.startsWith(NEW_ROW_PREFIX)
+                ? true
+                : !sameDraft(held.draft, held.committed);
+              const label = describeRow(row, rowIndex);
+              let editableIndex = -1;
+
+              return (
+                <tr
+                  key={rowKey}
+                  data-row-key={rowKey}
+                  className="border-b border-border/60 align-top last:border-b-0"
+                >
+                  {columns.map((column) => {
+                    if (column.kind !== 'derived') editableIndex += 1;
+                    const columnIndex = editableIndex;
+                    const value = held.draft[column.key] ?? '';
+                    const message = rowErrors[column.key];
+                    const describedBy = message
+                      ? `${cellId(rowKey, column.key)}-error`
+                      : undefined;
+
+                    return (
+                      <td
+                        key={column.key}
+                        style={{ width: column.width, minWidth: column.width }}
+                        className={`px-2 py-1.5 ${column.align === 'end' ? 'text-end' : ''}`}
+                      >
+                        <div
+                          ref={(element) => {
+                            cellHosts.current.set(cellId(rowKey, column.key), element);
+                          }}
+                          className="min-w-0"
+                          onKeyDown={
+                            column.kind === 'derived' || readOnly
+                              ? undefined
+                              : (event) =>
+                                  handleCellKeyDown(event, rowKey, column, columnIndex)
+                          }
+                        >
+                          <InlineCell
+                            column={column}
+                            row={row}
+                            draft={held.draft}
+                            cellId={cellId(rowKey, column.key)}
+                            value={value}
+                            invalid={Boolean(message)}
+                            describedBy={describedBy}
+                            label={`${column.header} on ${label}`}
+                            readOnly={readOnly}
+                            onChange={(next) => setDraftValue(rowKey, column.key, next)}
+                          />
+                          {column.annotate?.(row, held.draft)}
+                          {message && (
+                            <p
+                              id={describedBy}
+                              className="mt-1 text-xs text-destructive"
+                            >
+                              {message}
+                            </p>
+                          )}
+                        </div>
+                      </td>
+                    );
+                  })}
+
+                  {!readOnly && (
+                    <td className="px-2 py-1.5">
+                      <div className="flex items-center justify-end gap-0.5">
+                        {rowDetail && (
+                          <RowDetailPopover
+                            detail={rowDetail}
+                            label={label}
+                            value={held.draft[rowDetail.key] ?? ''}
+                            onChange={(next) =>
+                              setDraftValue(rowKey, rowDetail.key, next)
+                            }
+                            onClosed={() => void commitRow(rowKey)}
+                          />
+                        )}
+                        {dirty && (
+                          <Button
+                            type="button"
+                            mode="icon"
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Save ${label}`}
+                            disabled={saving.includes(rowKey)}
+                            onClick={() => void commitRow(rowKey)}
+                          >
+                            <Check className="size-3.5 text-primary" />
+                          </Button>
+                        )}
+                        <Button
+                          type="button"
+                          mode="icon"
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Remove ${label}`}
+                          onClick={() => requestDelete(rowKey, row, rowIndex)}
+                        >
+                          <Trash2 className="size-3.5 text-destructive" />
+                        </Button>
+                      </div>
+                      {dirty && (
+                        <p className="mt-0.5 text-end text-[11px] text-muted-foreground">
+                          Unsaved
+                        </p>
+                      )}
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+
+          {!readOnly && (
+            <tfoot>
+              <tr className="border-t border-border">
+                <td colSpan={columns.length + 1} className="px-2 py-1.5">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-primary hover:text-primary"
+                    onClick={addRow}
+                  >
+                    <Plus className="size-4" aria-hidden />
+                    {addLabel}
+                  </Button>
+                </td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+
+      <ConfirmDeleteDialog
+        open={Boolean(pendingDelete)}
+        onOpenChange={(next) => !next && setPendingDelete(null)}
+        title="Confirm delete"
+        description={
+          !pendingDelete
+            ? ''
+            : pendingDelete.row
+              ? (deleteDescription?.(pendingDelete.row, pendingDelete.index) ??
+                `Remove ${describeRow(pendingDelete.row, pendingDelete.index)}? This action cannot be undone.`)
+              : 'Discard this line? It was never saved, and this action cannot be undone.'
+        }
+        onDelete={async () => {
+          if (!pendingDelete) return;
+          if (pendingDelete.row) await onDelete(pendingDelete.row);
+          else dropRow(pendingDelete.rowKey);
+        }}
+        onSuccess={() => setPendingDelete(null)}
+        successMessage="Line removed"
+      />
+    </div>
+  );
+}
+
+function InlineCell<TRow>({
+  column,
+  row,
+  draft,
+  cellId,
+  value,
+  invalid,
+  describedBy,
+  label,
+  readOnly,
+  onChange,
+}: {
+  column: InlineLineColumn<TRow>;
+  row: TRow | null;
+  draft: InlineDraft;
+  cellId: string;
+  value: string;
+  invalid: boolean;
+  describedBy?: string;
+  label: string;
+  readOnly: boolean;
+  onChange: (value: string) => void;
+}) {
+  const alignment = column.align === 'end' ? 'text-end tabular-nums' : '';
+
+  if (column.kind === 'derived') {
+    return (
+      <span className={`block text-sm font-medium ${alignment}`}>
+        {column.derive?.(draft) ?? ''}
+      </span>
+    );
+  }
+
+  if (readOnly) {
+    const shown =
+      column.kind === 'select' || column.kind === 'searchable-select'
+        ? (column.resolveSelected?.(row, draft)?.label ?? (value ? value : '-'))
+        : value
+          ? (column.formatReadOnly?.(value, row) ?? value)
+          : '-';
+    return (
+      <span className={`block truncate text-sm ${alignment}`} title={shown}>
+        {shown}
+      </span>
+    );
+  }
+
+  if (column.kind === 'select' || column.kind === 'searchable-select') {
+    const selectId = `${cellId.replace(/\W+/g, '-')}-picker`;
+    return (
+      <>
+        {/* SearchableSelect forwards `id`, not arbitrary aria props, so the accessible
+            name has to come from a real label. */}
+        <label className="sr-only" htmlFor={selectId}>
+          {label}
+        </label>
+        <SearchableSelect
+          id={selectId}
+          size="sm"
+          clearable
+          value={value}
+          onChange={onChange}
+          options={column.kind === 'select' ? column.options : undefined}
+          fetchOptions={
+            column.kind === 'searchable-select' ? column.fetchOptions : undefined
+          }
+          selectedOption={column.resolveSelected?.(row, draft)}
+          placeholder={column.placeholder ?? 'Select'}
+          emptyMessage="No matches"
+        />
+      </>
+    );
+  }
+
+  return (
+    <Input
+      value={value}
+      aria-label={label}
+      aria-invalid={invalid || undefined}
+      aria-describedby={describedBy}
+      title={value}
+      placeholder={column.placeholder}
+      // Money and quantity stay text: a number input hands back a re-serialised float,
+      // and the contract on both endpoints is a decimal STRING.
+      inputMode={column.kind === 'number' ? 'decimal' : undefined}
+      className={`h-8 ${alignment} ${
+        invalid ? 'border-destructive focus-visible:ring-destructive/30' : ''
+      }`}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  );
+}
+
+/**
+ * The fields with no column: a paragraph does not belong in a cell six characters wide,
+ * and dropping it would lose what somebody wrote about why a price was agreed.
+ */
+function RowDetailPopover({
+  detail,
+  label,
+  value,
+  onChange,
+  onClosed,
+}: {
+  detail: InlineRowDetail;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  onClosed: () => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const filled = value.trim().length > 0;
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) onClosed();
+      }}
+    >
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          mode="icon"
+          variant="ghost"
+          size="sm"
+          aria-label={`${detail.label} on ${label}`}
+        >
+          <StickyNote
+            className={`size-3.5 ${filled ? 'text-primary' : 'text-muted-foreground'}`}
+          />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-72 space-y-1.5">
+        <p className="text-xs font-medium">{detail.label}</p>
+        <Textarea
+          autoFocus
+          aria-label={`${detail.label} on ${label}`}
+          rows={detail.rows ?? 3}
+          value={value}
+          placeholder={detail.placeholder}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}

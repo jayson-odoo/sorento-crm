@@ -1,11 +1,11 @@
 'use client';
 
 import * as React from 'react';
-import { AlertTriangle, Pencil, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+// The shared products `/select` mapper. Its name says "variant" because that screen
+// needed it first; the endpoint and the shape are the generic ones.
+import { getProductsForVariantSelect } from '@/app/(protected)/master-data-management/products/services/productService';
 import {
   usePurchaseOrderLineMutations,
   usePurchaseOrderLines,
@@ -15,11 +15,17 @@ import type {
   ProjectPurchaseOrder,
   PurchaseOrderLine,
 } from '../../_shared/types/project.types';
+import {
+  InlineLineTable,
+  type InlineDraft,
+  type InlineLineColumn,
+} from '../../_shared/components/InlineLineTable';
 import { formatMyr } from './QuotationsPanel';
-import { PurchaseOrderLineDialog } from './PurchaseOrderLineDialog';
+import { isDecimalString, multiplyMoney } from './POIntakeMoney';
 
 /**
- * The lines of one PO, with what each one was quoted at beside what was ordered.
+ * The lines of one PO, entered like a spreadsheet, with what each one was quoted at
+ * beside what was ordered.
  *
  * Showing both numbers on the same row is the point: "price differs" on its own sends
  * the user hunting through the quotation, and the difference is usually the thing they
@@ -33,11 +39,7 @@ export function PurchaseOrderLinesEditor({
   po: ProjectPurchaseOrder;
 }) {
   const lines = usePurchaseOrderLines(po.id);
-  const { remove } = usePurchaseOrderLineMutations(project.id, po.id);
-
-  const [adding, setAdding] = React.useState(false);
-  const [editing, setEditing] = React.useState<PurchaseOrderLine | null>(null);
-  const [deleting, setDeleting] = React.useState<PurchaseOrderLine | null>(null);
+  const { create, update, remove } = usePurchaseOrderLineMutations(project.id, po.id);
 
   const rows = React.useMemo(
     () => [...(lines.data ?? [])].sort((a, b) => a.sort_order - b.sort_order),
@@ -47,167 +49,216 @@ export function PurchaseOrderLinesEditor({
     rows.length === 0 ? 0 : Math.max(...rows.map((line) => line.sort_order)) + 10;
   const editable = project.can_edit;
 
-  if (lines.isLoading) return <Skeleton className="h-20 w-full" />;
+  const fetchProducts = React.useCallback(async (query: string) => {
+    const products = await getProductsForVariantSelect(query || undefined);
+    return products.map((product) => ({
+      value: product.id,
+      label: product.product_code,
+      description: product.product_name,
+    }));
+  }, []);
+
+  const columns = React.useMemo<InlineLineColumn<PurchaseOrderLine>[]>(
+    () => [
+      {
+        key: 'product_id',
+        header: 'Our product',
+        width: 190,
+        kind: 'searchable-select',
+        // Optional on purpose: contractors order using their own codes, and forcing a
+        // match at entry time would mean either a wrong match or an unrecordable PO. An
+        // unmatched line is recorded and flagged instead (AC-F9).
+        placeholder: 'Not matched',
+        fetchOptions: fetchProducts,
+        resolveSelected: (line) =>
+          line?.product_id
+            ? { value: line.product_id, label: line.product_code ?? 'Selected product' }
+            : undefined,
+        annotate: (line) => (line ? <LineFlags line={line} /> : null),
+      },
+      {
+        key: 'product_code',
+        header: 'Code on the PO',
+        width: 150,
+        kind: 'text',
+        placeholder: 'What their document calls it',
+      },
+      {
+        key: 'description',
+        header: 'Description',
+        width: 230,
+        kind: 'text',
+        placeholder: 'As written on the PO',
+      },
+      {
+        key: 'quantity',
+        header: 'Qty',
+        width: 96,
+        kind: 'number',
+        align: 'end',
+        validate: (value) =>
+          value.trim() === '' || isDecimalString(value) ? null : 'Must be a number',
+        formatReadOnly: (value) => trimAmount(value),
+      },
+      {
+        key: 'uom',
+        header: 'UOM',
+        width: 88,
+        kind: 'text',
+        placeholder: 'PCS',
+      },
+      {
+        key: 'unit_price',
+        header: 'Ordered at',
+        width: 128,
+        kind: 'number',
+        align: 'end',
+        placeholder: '0.00',
+        validate: (value) =>
+          value.trim() === '' || isDecimalString(value) ? null : 'Must be a number',
+        formatReadOnly: (value) => formatMyr(value),
+        annotate: (line) =>
+          line?.quoted_unit_price ? (
+            <span
+              className={
+                line.price_mismatch
+                  ? 'mt-0.5 block text-end text-xs text-destructive'
+                  : 'mt-0.5 block text-end text-xs text-muted-foreground'
+              }
+            >
+              {`Quoted ${formatMyr(line.quoted_unit_price)}`}
+            </span>
+          ) : null,
+      },
+      {
+        key: 'line_total',
+        header: 'Total',
+        width: 128,
+        kind: 'derived',
+        align: 'end',
+        derive: (draft) => formatMyr(multiplyMoney(draft.quantity, draft.unit_price) ?? '0'),
+      },
+    ],
+    [fetchProducts],
+  );
+
+  const toDraft = React.useCallback(
+    (line: PurchaseOrderLine): InlineDraft => ({
+      product_id: line.product_id ?? '',
+      product_code: line.product_code ?? '',
+      description: line.description ?? '',
+      quantity: line.quantity ?? '1',
+      uom: line.uom ?? '',
+      unit_price: line.unit_price ?? '',
+      notes: line.notes ?? '',
+    }),
+    [],
+  );
+
+  const emptyDraft = React.useCallback(
+    (): InlineDraft => ({
+      product_id: '',
+      product_code: '',
+      description: '',
+      quantity: '1',
+      uom: '',
+      unit_price: '',
+      notes: '',
+    }),
+    [],
+  );
 
   return (
-    <div className="space-y-3">
+    <div className="min-w-0 space-y-3">
+      {/* A real risk signal, not a lesson: without a bound version nothing on these lines
+          is checked, and a clean-looking table would say the opposite. One line, no
+          paragraph. */}
       {!po.quotation_version_id && (
-        <p className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-          This PO is not tied to a quotation version, so nothing here is compared against
-          a quoted price. Bind it to a version to get the checks.
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <AlertTriangle className="size-3.5 shrink-0 text-amber-600" aria-hidden />
+          Not tied to a quotation version, so no price is checked.
         </p>
       )}
 
-      {rows.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border px-6 py-8 text-center">
-          <h4 className="text-sm font-semibold">No lines entered</h4>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            {editable
-              ? 'Enter what the PO ordered and each line is checked against the quoted version.'
-              : 'This PO was recorded as a single amount with no line detail.'}
-          </p>
-          {editable && (
-            <Button type="button" size="sm" className="mt-3" onClick={() => setAdding(true)}>
-              <Plus className="size-4" aria-hidden />
-              Add the first line
-            </Button>
-          )}
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-xs text-muted-foreground">
-                <th className="py-1.5 pe-3 text-start font-medium">Item</th>
-                <th className="py-1.5 pe-3 text-end font-medium">Qty</th>
-                <th className="py-1.5 pe-3 text-end font-medium">Ordered at</th>
-                <th className="py-1.5 pe-3 text-end font-medium">Total</th>
-                {editable && <th className="py-1.5 w-20" />}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((line) => (
-                <tr key={line.id} className="border-b border-border/60 align-top">
-                  <td className="py-2 pe-3">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="font-medium">
-                        {line.product_code ?? 'Unnamed item'}
-                      </span>
-                      {line.model_mismatch && (
-                        <Badge
-                          variant="destructive"
-                          className="gap-1 text-[11px]"
-                          title="This item does not appear on the quoted version"
-                        >
-                          <AlertTriangle className="size-3" aria-hidden />
-                          Not quoted
-                        </Badge>
-                      )}
-                      {line.price_mismatch && (
-                        <Badge variant="destructive" className="text-[11px]">
-                          Price differs
-                        </Badge>
-                      )}
-                    </div>
-                    {line.description && (
-                      <div
-                        className="mt-0.5 max-w-md truncate text-xs text-muted-foreground"
-                        title={line.description}
-                      >
-                        {line.description}
-                      </div>
-                    )}
-                  </td>
-                  <td className="py-2 pe-3 text-end whitespace-nowrap">
-                    {trimAmount(line.quantity)}
-                    {line.uom ? ` ${line.uom}` : ''}
-                  </td>
-                  <td className="py-2 pe-3 text-end whitespace-nowrap">
-                    {formatMyr(line.unit_price)}
-                    {line.quoted_unit_price && (
-                      <span
-                        className={
-                          line.price_mismatch
-                            ? 'block text-xs text-destructive'
-                            : 'block text-xs text-muted-foreground'
-                        }
-                      >
-                        {`Quoted ${formatMyr(line.quoted_unit_price)}`}
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-2 pe-3 text-end font-medium whitespace-nowrap">
-                    {formatMyr(line.line_total)}
-                  </td>
-                  {editable && (
-                    <td className="py-2">
-                      <div className="flex items-center justify-end gap-0.5">
-                        <Button
-                          mode="icon"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setEditing(line)}
-                          aria-label={`Edit ${line.product_code ?? 'line'}`}
-                        >
-                          <Pencil className="size-3.5" />
-                        </Button>
-                        <Button
-                          mode="icon"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeleting(line)}
-                          aria-label={`Remove ${line.product_code ?? 'line'}`}
-                        >
-                          <Trash2 className="size-3.5 text-destructive" />
-                        </Button>
-                      </div>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {editable && rows.length > 0 && (
-        <Button type="button" size="sm" variant="outline" onClick={() => setAdding(true)}>
-          <Plus className="size-4" aria-hidden />
-          Add line
-        </Button>
-      )}
-
-      {(adding || editing) && (
-        <PurchaseOrderLineDialog
-          projectId={project.id}
-          po={po}
-          line={editing}
-          nextSortOrder={nextSortOrder}
-          onDone={() => {
-            setAdding(false);
-            setEditing(null);
-          }}
-        />
-      )}
-
-      <ConfirmDeleteDialog
-        open={Boolean(deleting)}
-        onOpenChange={(next) => !next && setDeleting(null)}
-        title="Confirm delete"
-        description={
-          deleting
-            ? `Remove "${deleting.product_code ?? deleting.description ?? 'this line'}" from ${po.po_number}? This action cannot be undone.`
-            : ''
+      <InlineLineTable<PurchaseOrderLine>
+        rows={rows}
+        getRowId={(line) => line.id}
+        columns={columns}
+        toDraft={toDraft}
+        emptyDraft={emptyDraft}
+        readOnly={!editable}
+        isLoading={lines.isLoading}
+        addLabel="Add a line"
+        emptyHint={
+          editable
+            ? 'No lines entered. Add one and it is checked against the quoted version.'
+            : 'This PO was recorded as a single amount with no line detail.'
         }
-        onDelete={async () => {
-          if (!deleting) return;
-          await remove.mutateAsync(deleting.id);
+        describeRow={(line, index) =>
+          line?.product_code ?? line?.description ?? `line ${index + 1}`
+        }
+        rowDetail={{
+          key: 'notes',
+          label: 'Notes',
+          placeholder: 'Why the price or the model differs, if it does',
         }}
-        onSuccess={() => setDeleting(null)}
-        successMessage="Line removed"
+        validateRow={(draft): Record<string, string> =>
+          !draft.product_id && !draft.product_code.trim()
+            ? { product_code: 'Needed when no product is matched' }
+            : {}
+        }
+        onCreate={async (draft) => {
+          await create.mutateAsync({ ...toBody(draft), sort_order: nextSortOrder });
+        }}
+        onUpdate={async (line, draft) => {
+          await update.mutateAsync({ id: line.id, body: toBody(draft) });
+        }}
+        onDelete={async (line) => {
+          await remove.mutateAsync(line.id);
+        }}
+        deleteDescription={(line) =>
+          `Remove "${line.product_code ?? line.description ?? 'this line'}" from ${po.po_number}? This action cannot be undone.`
+        }
       />
     </div>
   );
+}
+
+/** What the check against the quoted version found, on the line it found it on. */
+function LineFlags({ line }: { line: PurchaseOrderLine }) {
+  if (!line.model_mismatch && !line.price_mismatch) return null;
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1">
+      {line.model_mismatch && (
+        <Badge
+          variant="destructive"
+          className="gap-1 text-[11px]"
+          title="This item does not appear on the quoted version"
+        >
+          <AlertTriangle className="size-3" aria-hidden />
+          Not quoted
+        </Badge>
+      )}
+      {line.price_mismatch && (
+        <Badge variant="destructive" className="text-[11px]">
+          Price differs
+        </Badge>
+      )}
+    </div>
+  );
+}
+
+/** Draft to the body the per-line endpoint already takes. Unchanged from the dialog. */
+function toBody(draft: InlineDraft) {
+  return {
+    product_id: draft.product_id || null,
+    product_code: draft.product_code.trim() || null,
+    description: draft.description.trim() || null,
+    unit_price: draft.unit_price.trim() || '0',
+    quantity: draft.quantity.trim() || '1',
+    uom: draft.uom.trim() || null,
+    notes: draft.notes.trim() || null,
+  };
 }
 
 function trimAmount(value: string): string {
