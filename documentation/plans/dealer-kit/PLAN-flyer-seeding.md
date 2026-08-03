@@ -18,6 +18,13 @@ to the real API, green on 80 vitest cases and 3 playwright specs
 (`e2e/dealer-kit-flyer-seeding.spec.ts`). The E2E half of AC-E5 - the seed produces a
 version no reader can reach - is covered there; the dealer-vs-consumer half is already
 pinned by `e2e/dealer-kit-offer-pricing.spec.ts`. See the S7.4 FE outcome note at the foot.
+LINK B of the fidelity gate is DONE: `score_seed` in
+`app/services/dealer_kit/flyer_fidelity.py` scores the seeded document against the reading
+it was built from, green on 23 tests (`tests/test_dealer_kit_flyer_seed_fidelity.py`)
+covering AC-Z3 to AC-Z7. Link B is **1.000** on the committed three page fixture and
+**1.000** on the whole 36 page flyer (1,252 cards, 347 printed rows, 341 collections),
+including a run with 40 codes deliberately withheld from the master: 44 unplaceable card
+occurrences, all reconciled against the seed result's `skipped` list, 0 lost, 0 invented.
 **Companion UAC:** `flyer-seeding-acceptance-criteria.md`
 **Input artefact:** `_SORENTO A3 FLYER 2025-2026_compressed.pdf` (36 pages, A3 portrait, vector).
 **Depends on:** S1 builder core, S2 collections.
