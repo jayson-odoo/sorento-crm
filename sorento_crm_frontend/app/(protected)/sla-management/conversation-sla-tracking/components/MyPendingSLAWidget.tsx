@@ -127,6 +127,20 @@ function dueLabel(due: string | null): { text: string; overdue: boolean } {
   return { text: formatDateTimeInMalaysia(due), overdue };
 }
 
+/**
+ * AC-M3: "waiting on maintenance since 3 Aug", never "stuck at CS".
+ *
+ * The label comes from the backend, which resolves it from the lookup option, so an
+ * admin renaming a party does not need a frontend release. Returns null when nothing is
+ * waiting - the row then reads exactly as it did before this slice.
+ */
+function waitingLabel(item: MyPendingSLAItem): string | null {
+  const party = item.waiting_on_party_label ?? item.waiting_on_party;
+  if (!party) return null;
+  if (!item.waiting_since) return `Waiting on ${party}`;
+  return `Waiting on ${party} since ${formatDateTimeInMalaysia(item.waiting_since)}`;
+}
+
 /** Free-text haystack for the search box: entity number (reference) for form rows,
  * contact name (reference) for conversation rows, plus type + assignee/team. */
 function matchesQuery(item: AnyTask, typeLabel: string, q: string): boolean {
@@ -440,6 +454,7 @@ export default function MyPendingSLAWidget() {
     const subline = isTeam
       ? `${teamItem.assignee_name ?? '—'} · ${teamItem.team_label ?? '—'} · Tier ${item.current_tier}`
       : `Tier ${item.current_tier} · ${form ? mineItem.next_action ?? 'Action required' : 'Reply'}`;
+    const waiting = waitingLabel(mineItem);
     const atMaxTier = item.current_tier >= MAX_TIER;
     const highlighted = !!highlightId && item.id === highlightId;
 
@@ -478,6 +493,20 @@ export default function MyPendingSLAWidget() {
               <p className="truncate text-xs text-muted-foreground" title={subline}>
                 {subline}
               </p>
+              {waiting ? (
+                /* AC-M3 / AC-M5: the row says who it is waiting on, in words. The
+                   deadline badge already carries breach risk as colour, and colour is
+                   never the only signal, so this is text - and it replaces "stuck at
+                   CS" as the reason the row is not moving. */
+                <p className="truncate text-xs text-amber-700 dark:text-amber-500" title={waiting}>
+                  {waiting}
+                </p>
+              ) : null}
+              {mineItem.assignment_unresolved ? (
+                <p className="truncate text-xs text-amber-700 dark:text-amber-500">
+                  Nobody was assignable - routed to the fallback owner
+                </p>
+              ) : null}
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
               <span

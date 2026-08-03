@@ -89,6 +89,16 @@ export interface ConversationSLATracking {
   team_set_code?: string | null;
   /** External message id (e.g. from n8n); cleared when the conversation is resolved */
   message_id?: number | null;
+  /** S4a waiting attribution (AC-M1). The party is the lookup option's VALUE; the label
+   *  is resolved server-side so renaming an option needs no release here. Null = we are
+   *  the ones holding it up, which is what every delay used to read as. */
+  waiting_on_party?: string | null;
+  waiting_on_party_label?: string | null;
+  waiting_on_reason?: string | null;
+  waiting_on_reason_label?: string | null;
+  waiting_since?: string | null;
+  /** AC-M33: nobody resolved at any tier, so this landed on the agent's backstop. */
+  assignment_unresolved?: boolean;
 }
 
 export interface ConversationSLATrackingDetail extends ConversationSLATracking {

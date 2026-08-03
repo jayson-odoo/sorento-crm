@@ -256,6 +256,11 @@ def _party_option(db: Session, party: str) -> Optional[LookupOption]:
     return None
 
 
+def party_labels(db: Session) -> Dict[str, str]:
+    """Every party's display label, keyed by value. One query per page, not per row."""
+    return {str(o.value): str(o.label) for o in _party_options(db)}
+
+
 def is_external_party(db: Session, party: Optional[str]) -> bool:
     """Whether this party is somebody other than us (AC-M7).
 

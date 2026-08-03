@@ -885,6 +885,10 @@ export default function StockInquiryDetail({
 
       <SlaActiveTrackerControls
         activeTracker={activeTracker}
+        onWaitingChanged={() => {
+          void queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', 'stock_inquiry', inquiryId] });
+          handlingLock.refresh?.();
+        }}
         label={`Stock Inquiry${inquiry.inquiry_number ? ` · ${inquiry.inquiry_number}` : ''}`}
         onExtended={() =>
           void queryClient.invalidateQueries({

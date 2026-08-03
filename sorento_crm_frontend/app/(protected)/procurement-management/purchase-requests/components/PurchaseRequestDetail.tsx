@@ -865,6 +865,10 @@ export default function PurchaseRequestDetail({
 
       <SlaActiveTrackerControls
         activeTracker={activeTracker}
+        onWaitingChanged={() => {
+          void queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', requestTypeForNav, requestId] });
+          handlingLock.refresh?.();
+        }}
         label={`${typeLabel}${request.request_number ? ` · ${request.request_number}` : ''}`}
         onExtended={() =>
           void queryClient.invalidateQueries({

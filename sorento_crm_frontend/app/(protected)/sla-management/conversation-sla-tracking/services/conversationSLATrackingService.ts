@@ -147,6 +147,55 @@ export interface MyPendingSLAItem {
   policy_name: string | null;
   /** Pending takeover on this row, if any (inline "being taken over" indicator). */
   takeover?: TakeoverInfo | null;
+  /** Who this stage is waiting on, as the lookup option's value (AC-M1). Null = us. */
+  waiting_on_party?: string | null;
+  /** The party's display label, resolved server-side so renaming an option needs no
+   *  frontend release. Falls back to the raw value rather than to nothing. */
+  waiting_on_party_label?: string | null;
+  /** When the current wait started. Rendered as "waiting on maintenance since 3 Aug"
+   *  (AC-M3) — text beside the breach-risk colour, because colour is never the only
+   *  signal (AC-M5). */
+  waiting_since?: string | null;
+  /** True when this row landed on the agent's configured assignment backstop because
+   *  nobody resolved at any tier (AC-M33). Same question as waiting: why is it stuck. */
+  assignment_unresolved?: boolean;
+}
+
+export interface SlaWaitingOption {
+  value: string;
+  label: string;
+}
+
+/**
+ * Name who an SLA stage is waiting on. Moves no clock (AC-M2) — a genuine deadline
+ * move is Extend, and only Extend (AC-M6).
+ */
+export async function setSlaWaiting(
+  trackingId: string,
+  payload: { party: string; reason?: string | null },
+): Promise<void> {
+  const response = await apiFetch(
+    `/api/sla-management/conversation-sla-tracking/${trackingId}/waiting`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ party: payload.party, reason: payload.reason ?? null }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to set the waiting party.'));
+  }
+}
+
+/** Stop waiting. Writes its own event log row, so the wait has a measurable end. */
+export async function clearSlaWaiting(trackingId: string): Promise<void> {
+  const response = await apiFetch(
+    `/api/sla-management/conversation-sla-tracking/${trackingId}/waiting`,
+    { method: 'DELETE' },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to clear the waiting party.'));
+  }
 }
 
 export async function getMyPendingSLA(limit = 1000): Promise<MyPendingSLAItem[]> {

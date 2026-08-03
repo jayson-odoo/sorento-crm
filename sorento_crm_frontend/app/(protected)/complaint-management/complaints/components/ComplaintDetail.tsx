@@ -970,6 +970,10 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
 
       <SlaActiveTrackerControls
         activeTracker={activeTracker}
+        onWaitingChanged={() => {
+          void queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', 'complaint', complaintId] });
+          handlingLock.refresh?.();
+        }}
         label={`Complaint${complaint.complaint_number ? ` · ${complaint.complaint_number}` : ''}`}
         onExtended={() =>
           void queryClient.invalidateQueries({

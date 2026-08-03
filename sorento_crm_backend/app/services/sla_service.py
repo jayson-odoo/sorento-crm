@@ -1035,6 +1035,15 @@ class ConversationSLATrackingService:
             except Exception:  # noqa: BLE001
                 self.db.rollback()
 
+        # One lookup for the whole page rather than a label query per row.
+        try:
+            from app.services.sla_waiting_service import party_labels
+
+            waiting_labels = party_labels(self.db)
+        except Exception as exc:  # pragma: no cover - a missing label is not an outage
+            logger.warning("Waiting party labels unavailable: %s", exc)
+            waiting_labels = {}
+
         return [
             {
                 "id": str(r.id),
@@ -1070,6 +1079,20 @@ class ConversationSLATrackingService:
                 # SLA-config-driven next action for form rows (e.g. "Send for
                 # approval", "Approve", "Mark resolved"); None for conversation rows.
                 "next_action": action_by_row.get(str(r.id)),
+                # S4a AC-M3 / AC-M5: the row reads "waiting on maintenance since 3 Aug"
+                # and not "stuck at CS". Sent as text alongside the breach-risk colour,
+                # never as colour alone. The label is resolved here so every surface
+                # renders the same words and renaming an option needs no FE release.
+                "waiting_on_party": getattr(r, "waiting_on_party", None),
+                "waiting_on_party_label": waiting_labels.get(
+                    str(getattr(r, "waiting_on_party", "") or "")
+                ),
+                "waiting_since": (
+                    r.waiting_since.isoformat() if getattr(r, "waiting_since", None) else None
+                ),
+                # S4's AC-M33 flag: this landed on the agent's backstop because nobody
+                # resolved at any tier. Same question as waiting - why is it not moving.
+                "assignment_unresolved": bool(getattr(r, "assignment_unresolved", False)),
             }
             for r in rows
         ]
