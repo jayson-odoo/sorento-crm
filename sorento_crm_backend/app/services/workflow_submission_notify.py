@@ -10,14 +10,20 @@ approved or rejected and the only person told was nobody: the one origin with a 
 person waiting for the answer was the one origin that got no message, and it failed
 silently in both directions (AC-F2c-8).
 
-**A contact is addressed by NOT writing a ``notifications`` row.** ``user_id`` is NOT
-NULL, so there is no "no user" notification; and it carries NO foreign key, so a
-``respond_contacts.id`` inserts cleanly, type-checks at every layer and produces a row
-addressed to a principal who will never log in, that no query will ever surface. The
-contact path therefore resolves ``respondent_contact_id`` to the contact's
-``respond_io_id`` and sends (AC-F2c-12). ``PortalToken.contact_id`` and the internal
-``respond_contacts.id`` are both text, so piping one into the send identifier would not
-raise either: Respond.io would simply be handed an id it does not know.
+**A contact IS a notification recipient, since S4.** This module used to write no
+``notifications`` row at all, because ``user_id`` was NOT NULL and carried no foreign
+key: a ``respond_contacts.id`` would have inserted cleanly, type-checked at every layer
+and produced a row addressed to a principal who can never log in. S4 (AC-H1/AC-H2) made
+the recipient two-valued and that reason is gone, so this module now RECORDS on the one
+spine and keeps only the send - two mechanisms for "tell a contact" is the drift this
+build keeps finding. The contact path still resolves ``respondent_contact_id`` to the
+contact's ``respond_io_id`` before sending (AC-F2c-12). ``PortalToken.contact_id`` and
+the internal ``respond_contacts.id`` are both text, so piping one into the send
+identifier would not raise either: Respond.io would simply be handed an id it does not
+know.
+
+Rows written here BEFORE S4 keep ``correlation_id`` NULL permanently, which is why the
+outbox query is a LEFT JOIN (AC-H8a) and not merely a preference.
 
 **Every send writes an outbox row, on success AND on failure.** Local development runs
 with deliberately wrong credentials, so the FAILURE path is the one a developer actually
@@ -113,13 +119,111 @@ def notify_submission_contact(
         return None
 
     text = "\n\n".join(part for part in (str(title or "").strip(), str(body or "").strip()) if part)
+    notification = _record_notification(
+        db,
+        submission,
+        contact_id=contact_id,
+        title=title,
+        body=body,
+        event_type=event_type,
+    )
     return _send_and_log(
         db,
         submission=submission,
         identifier=identifier,
         text=text,
         event_type=event_type,
+        notification=notification,
     )
+
+
+def _record_notification(
+    db: Session,
+    submission: WorkflowSubmission,
+    *,
+    contact_id: str,
+    title: str,
+    body: str,
+    event_type: Optional[str],
+):
+    """Put this message on the ONE notification spine (AC-H2), then send it here.
+
+    F2c deliberately wrote NO notification row: ``notifications.user_id`` was NOT NULL
+    with no foreign key, so a ``respond_contacts.id`` would have inserted cleanly and
+    addressed a principal who can never log in. S4 removed that reason, and two
+    mechanisms for "tell a contact" is the drift this build keeps finding - so the
+    spine wins and this module becomes a CALLER of it. ``correlation_id`` on the
+    outbox row is what ties the wire record back to the event (AC-H8).
+
+    The send stays HERE and stays synchronous (``enqueue_delivery=False``): the
+    message is the answer to something a person is waiting on, and handing it to the
+    worker would make the outbox row depend on a live worker to exist at all - the
+    exact observability this module was written to provide. The delivery row is
+    settled below by whoever actually sent it.
+
+    Best-effort, like everything else here: a notification that cannot be recorded
+    must not stop the message being sent. The rows F2c wrote BEFORE S4 keep
+    ``correlation_id`` NULL forever, which is a second independent reason the outbox
+    query is a LEFT JOIN.
+    """
+    from app.services.notification_service import NotificationService
+
+    try:
+        return NotificationService(db).create_with_channel_preferences(
+            respond_contact_id=str(contact_id),
+            type="workflow_forms.submission",
+            title=str(title or "").strip() or "Update",
+            body=str(body or "").strip() or None,
+            source_entity_type=WORKFLOW_SUBMISSION_ENTITY_TYPE,
+            source_entity_id=str(getattr(submission, "id", "") or ""),
+            event_type=event_type,
+            enqueue_delivery=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - a post-commit side effect never raises
+        _rollback(db)
+        logger.warning(
+            "Could not record the contact notification for submission %s: %s",
+            getattr(submission, "id", None),
+            exc,
+        )
+        return None
+
+
+def _settle_delivery(db: Session, notification, *, sent: bool, error: Optional[str]) -> None:
+    """Mark the notification's whatsapp delivery with what this send actually did.
+
+    Nothing enqueued it, so nothing else will ever update it; a permanently 'pending'
+    row would read as "still trying" for a send that finished minutes ago.
+    """
+    if notification is None:
+        return
+    from app.models.notification import NotificationDelivery
+
+    try:
+        rows = (
+            db.query(NotificationDelivery)
+            .filter(
+                NotificationDelivery.notification_id == str(notification.id),
+                NotificationDelivery.channel == "whatsapp",
+            )
+            .all()
+        )
+        if not rows:
+            return
+        from datetime import datetime
+
+        for row in rows:
+            row.status = "sent" if sent else "failed"
+            row.sent_at = datetime.utcnow() if sent else None
+            row.error_message = (str(error)[:500] if error else None)
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        _rollback(db)
+        logger.warning(
+            "Could not settle the whatsapp delivery for notification %s: %s",
+            getattr(notification, "id", None),
+            exc,
+        )
 
 
 def _send_and_log(
@@ -129,6 +233,7 @@ def _send_and_log(
     identifier: str,
     text: str,
     event_type: Optional[str] = None,
+    notification=None,
 ) -> Optional[IntegrationLog]:
     """One window-aware send plus its outbox row. Mirrors ``respond_io_tasks._send_and_log``.
 
@@ -144,6 +249,7 @@ def _send_and_log(
     endpoint = f"https://api.respond.io/v2/contact/id:{identifier}/message"
     request_payload: dict = {"message": {"type": "text", "text": text}}
     log_service = IntegrationLogService(db)
+    correlation_id = str(getattr(notification, "id", "") or "") or None
 
     context_vars: dict = {"message": text}
     if str(event_type or "").strip():
@@ -161,6 +267,7 @@ def _send_and_log(
         )
         request_payload = result.get("request_payload") or request_payload
         response = result.get("response")
+        _settle_delivery(db, notification, sent=True, error=None)
         return log_service.create_integration_log(
             IntegrationLogCreate(
                 integration_channel="respond_io",
@@ -171,6 +278,7 @@ def _send_and_log(
                 endpoint=endpoint,
                 http_method="POST",
                 status="success",
+                correlation_id=correlation_id,
                 response_payload=str(response)[:50000] if response else None,
             ),
             request_payload_dict=request_payload,
@@ -184,6 +292,7 @@ def _send_and_log(
         # than the default text one.
         request_payload = getattr(exc, "request_payload", request_payload)
         status_code, response_body = _response_of(exc)
+        _settle_delivery(db, notification, sent=False, error=str(exc))
         try:
             return log_service.create_integration_log(
                 IntegrationLogCreate(
@@ -196,6 +305,7 @@ def _send_and_log(
                     http_method="POST",
                     status="failed",
                     status_code=status_code,
+                    correlation_id=correlation_id,
                     response_payload=response_body,
                     error_message=str(exc) or exc.__class__.__name__,
                 ),

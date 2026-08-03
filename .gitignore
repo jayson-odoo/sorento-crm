@@ -36,3 +36,7 @@ docker-compose.yml
 # Private keys (security audit 2026-06-29 — never commit)
 *.pem
 private_key.pem
+
+# Scratch: lavish artifacts and Playwright snapshot dumps
+.lavish/
+zzt_snap*.yml

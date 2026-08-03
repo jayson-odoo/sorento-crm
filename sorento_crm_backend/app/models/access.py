@@ -278,6 +278,28 @@ class AccessAgent(Base):
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     assign_to_new_internal_contacts = Column(Boolean, default=False, nullable=False)
+    # AC-M33a: the assignment backstop, at AGENT level because
+    # `resolve_team_with_tier_fallback(agent, ...)` is already where team resolution
+    # happens. NULL is load-bearing (AC-M33b): an agent with no fallback keeps
+    # today's raise, so purchase requests, sponsorship forms, stock inquiries and
+    # complaints are bit-for-bit unchanged until somebody configures one.
+    #
+    # DEFERRABLE INITIALLY DEFERRED: the FK is what stops the backstop naming a user
+    # who never existed, but a configured backstop DOES decay (deactivated, hard
+    # deleted through a path that does not go via the ORM), and `_start_for_config`
+    # is written to treat an unresolvable fallback as "fall through to the original
+    # error" rather than to crash one line later. Checking at commit rather than at
+    # statement time is what lets that state exist long enough to be handled.
+    assignment_fallback_user_id = Column(
+        String,
+        ForeignKey(
+            "users.id",
+            ondelete="SET NULL",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        nullable=True,
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     synced_to_excel = Column(Boolean, default=False, nullable=False)

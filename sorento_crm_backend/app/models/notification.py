@@ -1,5 +1,5 @@
 """Notification models for in-app, email, and push delivery."""
-from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey, UniqueConstraint, Index, text
+from sqlalchemy import Column, String, Boolean, CheckConstraint, DateTime, Text, ForeignKey, Index, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 from app.database import Base
@@ -7,11 +7,32 @@ import uuid
 
 
 class Notification(Base):
-    """User notification record (in-app)."""
+    """One notification, addressed to EITHER a staff user OR a Respond.io contact.
+
+    S4 (AC-H1/AC-H2) made the recipient two-valued. Before it, ``user_id`` was NOT
+    NULL, so "tell the contact" had to be implemented outside this table entirely —
+    `workflow_submission_notify` sent and wrote an outbox row with no notification
+    behind it. One spine records both kinds now, and the outbox correlates back to
+    it.
+
+    Exactly one recipient, enforced by ``notifications_recipient_present``: neither
+    set is a row no delivery loop can ever address, and both set is a row that fans
+    out to two different people depending on which query reads it first.
+    """
     __tablename__ = "notifications"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(String, nullable=False, index=True)
+    user_id = Column(String, nullable=True, index=True)
+    # TEXT, not uuid: ``respond_contacts.id`` is a TEXT column and Postgres refuses a
+    # uuid foreign key onto a text primary key (AC-H1a — the fourth column in this
+    # build to hit that trap). CASCADE rather than SET NULL because nulling it would
+    # violate the recipient CHECK: a contact's notifications go with the contact.
+    respond_contact_id = Column(
+        Text,
+        ForeignKey("respond_contacts.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     type = Column(String(80), nullable=False, index=True)  # e.g. import_job_finished, import_job_failed
     title = Column(String(512), nullable=False)
     body = Column(Text, nullable=True)
@@ -34,9 +55,29 @@ class Notification(Base):
 
     __table_args__ = (
         Index("ix_notifications_user_id_created_at", "user_id", "created_at"),
-        UniqueConstraint(
+        # Exactly one recipient. XOR rather than OR: both columns set is two
+        # recipients in one delivery fan-out, and the worker and the outbox renderer
+        # would each pick a different one.
+        CheckConstraint(
+            "(user_id IS NOT NULL) <> (respond_contact_id IS NOT NULL)",
+            name="notifications_recipient_present",
+        ),
+        # TWO partial unique indexes, replacing the single whole-table
+        # ``uq_notification_user_dedup_event`` (AC-H1b). Postgres treats NULLs as
+        # distinct in a unique constraint, so the moment ``user_id`` became nullable
+        # that constraint stopped deduplicating every contact row — silently. The
+        # symptom is a customer receiving the same WhatsApp twice, never an error.
+        Index(
+            "uq_notifications_user_dedup",
             "user_id", "source_entity_type", "dedup_key", "event_type",
-            name="uq_notification_user_dedup_event",
+            unique=True,
+            postgresql_where=text("user_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_notifications_contact_dedup",
+            "respond_contact_id", "source_entity_type", "dedup_key", "event_type",
+            unique=True,
+            postgresql_where=text("respond_contact_id IS NOT NULL"),
         ),
     )
 

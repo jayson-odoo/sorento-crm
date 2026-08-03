@@ -222,7 +222,8 @@ class NotificationService:
 
     def create_with_channel_preferences(
         self,
-        user_id: str,
+        user_id: Optional[str] = None,
+        *,
         type: str,
         title: str,
         body: Optional[str] = None,
@@ -237,6 +238,8 @@ class NotificationService:
         send_whatsapp: bool = False,
         whatsapp_pref_attr: str = "notify_whatsapp",
         email_pref_attr: Optional[str] = None,
+        respond_contact_id: Optional[str] = None,
+        enqueue_delivery: bool = True,
     ) -> Optional[Notification]:
         """
         Create notification and only create deliveries for selected channels.
@@ -246,7 +249,43 @@ class NotificationService:
         TCK-29). A whatsapp delivery is created ONLY when the recipient also has
         notify_whatsapp on AND a resolvable RespondContact — otherwise it is skipped
         silently so other channels still fire.
+
+        **Two kinds of recipient, one function** (AC-H2). Pass ``user_id`` for staff or
+        ``respond_contact_id`` for a customer, never both and never neither: a second
+        ``create_for_contact()`` is how the dedupe rules drift apart, and a row
+        addressed to two people fans out to whichever one the reader happens to pick.
+
+        A CONTACT gets ``whatsapp`` + ``in_app``, always (AC-H3), where ``in_app`` IS
+        the portal record they read through the portal link. The per-user preference
+        attributes are ignored outright rather than defaulted: they read a ``users``
+        row that does not exist for a contact, so the lookup resolves to None and
+        turns WhatsApp OFF — the exact opposite of what AC-H3 asks for (AC-H3a).
+
+        ``enqueue_delivery=False`` records the notification and its delivery rows but
+        does not hand them to the worker; the caller is sending synchronously and will
+        settle the delivery rows itself (``workflow_submission_notify``).
         """
+        if bool(user_id) == bool(respond_contact_id):
+            raise ValueError(
+                "Exactly one of user_id / respond_contact_id must be set: a "
+                "notification addressed to nobody is undeliverable, and one addressed "
+                "to both fans out to two different people."
+            )
+
+        if respond_contact_id:
+            return self._create_for_contact(
+                respond_contact_id=respond_contact_id,
+                type=type,
+                title=title,
+                body=body,
+                data=data,
+                source_entity_type=source_entity_type,
+                source_entity_id=source_entity_id,
+                dedup_key=dedup_key,
+                event_type=event_type,
+                enqueue_delivery=enqueue_delivery,
+            )
+
         # Gate WhatsApp on the recipient's opt-in + reachability.
         if send_whatsapp:
             from app.models.user import User as _User
@@ -349,19 +388,126 @@ class NotificationService:
             )
         self.db.commit()
         self.db.refresh(notification)
-        if send_email or send_web_push or send_whatsapp:
-            try:
-                from app.services.queue_service import enqueue_job
-                from app.tasks import notification_tasks
-
-                enqueue_job(
-                    notification_tasks.send_notification_deliveries,
-                    str(notification.id),
-                    queue_name="notifications",
-                )
-            except Exception as e:
-                logger.warning("Failed to enqueue notification deliveries: %s", e)
+        if enqueue_delivery and (send_email or send_web_push or send_whatsapp):
+            self._enqueue_deliveries(notification)
         return notification
+
+    def _create_for_contact(
+        self,
+        *,
+        respond_contact_id: str,
+        type: str,
+        title: str,
+        body: Optional[str] = None,
+        data: Optional[dict] = None,
+        source_entity_type: Optional[str] = None,
+        source_entity_id: Optional[str] = None,
+        dedup_key: Optional[str] = None,
+        event_type: Optional[str] = None,
+        enqueue_delivery: bool = True,
+    ) -> Optional[Notification]:
+        """The contact half of the spine (AC-H3). WhatsApp plus the portal, always.
+
+        No email and no web push: both address a staff surface a contact cannot reach.
+        No preference lookup either — see the caller's docstring for why reading one
+        silently disables the only channel that matters.
+
+        WhatsApp is created only when the contact actually has an address. A contact
+        synced without a ``respond_io_id`` still gets the ``in_app`` row, because that
+        IS what they see when they next open their portal link; a pending whatsapp
+        delivery for an unaddressable contact would sit failed forever and pollute the
+        outbox with a send that was never possible.
+        """
+        from app.models.access import RespondContact
+
+        contact = (
+            self.db.query(RespondContact)
+            .filter(RespondContact.id == str(respond_contact_id))
+            .first()
+        )
+        if contact is None:
+            raise ValueError(
+                f"No respond_contacts row {respond_contact_id}; a notification "
+                "addressed to an unknown contact reaches nobody."
+            )
+        send_whatsapp = bool(str(getattr(contact, "respond_io_id", "") or "").strip())
+
+        entity_id, dedup = _split_entity_and_dedup(source_entity_id, dedup_key)
+        if source_entity_type and dedup and event_type:
+            existing = (
+                self.db.query(Notification)
+                .filter(
+                    Notification.respond_contact_id == str(respond_contact_id),
+                    Notification.source_entity_type == source_entity_type,
+                    Notification.dedup_key == dedup,
+                    Notification.event_type == event_type,
+                )
+                .first()
+            )
+            if existing:
+                # The partial unique index is the backstop; resolving here is what
+                # stops a post-commit side effect handing its caller an
+                # IntegrityError for a message that was already delivered.
+                return existing
+
+        notification = Notification(
+            user_id=None,
+            respond_contact_id=str(respond_contact_id),
+            type=type,
+            title=title,
+            body=body,
+            data=data or {},
+            source_entity_type=source_entity_type,
+            source_entity_id=entity_id,
+            dedup_key=dedup,
+            event_type=event_type,
+        )
+        self.db.add(notification)
+        self.db.flush()
+        self.db.add(
+            NotificationDelivery(
+                notification_id=notification.id,
+                channel="in_app",
+                status="sent",
+                sent_at=datetime.utcnow(),
+            )
+        )
+        if send_whatsapp:
+            self.db.add(
+                NotificationDelivery(
+                    notification_id=notification.id,
+                    channel="whatsapp",
+                    status="pending",
+                )
+            )
+        self.db.commit()
+        self.db.refresh(notification)
+        if enqueue_delivery and send_whatsapp:
+            # The respond_io queue, NOT notifications. `notifications` is drained on a
+            # daemon thread inside the API process so a logged-in user does not wait a
+            # scheduler heartbeat for their bell; a customer's WhatsApp message has no
+            # such interactive requirement, and the RQ worker is already the documented
+            # owner of every Respond.io send. Keeping it there also keeps an outbound
+            # customer message off a thread that shares uvicorn's connection pool.
+            self._enqueue_deliveries(notification, queue_name="respond_io")
+        return notification
+
+    def _enqueue_deliveries(
+        self, notification: Notification, queue_name: str = "notifications"
+    ) -> None:
+        """Hand the pending deliveries to the worker. Never raises: the thing the
+        notification is about has already committed."""
+        try:
+            from app.services.queue_service import enqueue_job
+            from app.tasks import notification_tasks
+
+            enqueue_job(
+                notification_tasks.send_notification_deliveries,
+                str(notification.id),
+                queue_name=queue_name,
+            )
+        except Exception as e:
+            logger.warning("Failed to enqueue notification deliveries: %s", e)
 
     def list(
         self,

@@ -772,6 +772,49 @@ class FormSLAOrchestrator:
             uid = None
         return str(uid) if uid else None
 
+    def _resolve_assignment_fallback(self, agent: AccessAgent) -> Optional[dict]:
+        """The agent's configured assignment backstop, as an assignee dict (AC-M33a).
+
+        None means "there is no usable backstop", and the caller then raises the
+        ORIGINAL error. That is deliberate: a fallback decays - the configured user
+        gets deactivated, or deleted - and by the time this is reached
+        `resolve_team_with_tier_fallback` has already exhausted every tier, so there
+        genuinely is nobody. The original message names the real misconfiguration
+        (no team / no members), which is what an operator can act on; moving the crash
+        one line down to an AttributeError on a None names nothing.
+
+        An INACTIVE user is not a recipient. Assigning to one is silent loss: the
+        clock runs against somebody who cannot log in to stop it.
+        """
+        from app.models.user import User
+
+        fallback_id = str(getattr(agent, "assignment_fallback_user_id", "") or "").strip()
+        if not fallback_id:
+            return None
+        user = self.db.query(User).filter(User.id == fallback_id).first()
+        if user is None:
+            logger.warning(
+                "Assignment fallback user %s for agent '%s' does not exist; "
+                "falling through to the original routing error.",
+                fallback_id,
+                getattr(agent, "code", None),
+            )
+            return None
+        if str(getattr(user, "status", "") or "").upper() != "ACTIVE":
+            logger.warning(
+                "Assignment fallback user %s for agent '%s' is not active; "
+                "falling through to the original routing error.",
+                fallback_id,
+                getattr(agent, "code", None),
+            )
+            return None
+        return {
+            "id": user.id,
+            "email": user.email,
+            "name": user.name or user.email,
+            "respond_user_id": user.respond_user_id,
+        }
+
     def _start_for_config(
         self,
         config: FormSLAConfig,
@@ -829,53 +872,78 @@ class FormSLAOrchestrator:
         resolved = agent_svc.resolve_team_with_tier_fallback(
             str(agent.id), start_tier, team_set_code=config.team_set_code
         )
+        # AC-M33: nobody assignable is a ROUTING OUTCOME, not an exception - the case
+        # must still exist. Both raise sites below route through the agent's
+        # configured fallback (AC-M33c): "no team at or above the tier" AND "the team
+        # I found has nobody in it", the second being the likelier misconfiguration of
+        # the two. `resolve_team_with_tier_fallback` has already walked every tier by
+        # the time either one is reached, so the backstop is a last resort.
+        #
+        # AC-M33b: where NO fallback is configured, today's raise is preserved
+        # bit-for-bit. `_start_for_config` is shared by purchase requests, sponsorship
+        # forms, stock inquiries and complaints; the mechanism ships uniformly (no
+        # branch on form type, which is how this kind of guard rots) and the four live
+        # flows are unchanged until somebody configures one. The switch is data.
+        fallback_assignee: Optional[dict] = None
         if not resolved:
-            raise handle_validation_error(
-                f"Agent '{config.agent_code}' has no team at tier {start_tier} or above"
-                + (
-                    f" in set '{config.team_set_code}'"
-                    if config.team_set_code
-                    else ""
+            fallback_assignee = self._resolve_assignment_fallback(agent)
+            if not fallback_assignee:
+                raise handle_validation_error(
+                    f"Agent '{config.agent_code}' has no team at tier {start_tier} or above"
+                    + (
+                        f" in set '{config.team_set_code}'"
+                        if config.team_set_code
+                        else ""
+                    )
+                    + ". Configure a tier team before activating this SLA config."
                 )
-                + ". Configure a tier team before activating this SLA config."
-            )
-        team_id, start_tier = resolved
-        # Pin-point override: a salesman (respond_contact) can be pinned to a
-        # specific CS PIC per procurement use_case. A valid pin assigns that user
-        # directly; any miss falls back to round-robin. The round-robin cursor is
-        # NOT advanced on an override. Complaint never reads the pin table.
-        # See docs/plans/PLAN-procurement-cs-handoff-and-pinpoint-routing.md.
-        if override_assignee is not None:
-            assignee = override_assignee  # default-approver wins over round-robin
+            assignee = fallback_assignee
         else:
-            # Pin lookup keys on the REQUESTOR (who the form is for), not the
-            # submitter, so a salesman submitting on someone else's behalf still
-            # reaches that person's pinned CS. Falls back to the submitter when
-            # there is no requestor FK (legacy rows, complaint, internal-created).
-            # A requestor with no pin round-robins, never retries the submitter's
-            # pin (that was the bug). See PLAN-requested-by-contact-routing.md D2/E2.
-            routing_contact_id = (
-                self._routing_contact_id(config.source_entity_type, source_entity_id)
-                or contact_id
-            )
-            assignee = self._resolve_pinned_assignee(
-                config.source_entity_type, routing_contact_id, team_id, source_entity_id
-            )
+            team_id, start_tier = resolved
+            # Pin-point override: a salesman (respond_contact) can be pinned to a
+            # specific CS PIC per procurement use_case. A valid pin assigns that user
+            # directly; any miss falls back to round-robin. The round-robin cursor is
+            # NOT advanced on an override. Complaint never reads the pin table.
+            # See docs/plans/PLAN-procurement-cs-handoff-and-pinpoint-routing.md.
+            if override_assignee is not None:
+                assignee = override_assignee  # default-approver wins over round-robin
+            else:
+                # Pin lookup keys on the REQUESTOR (who the form is for), not the
+                # submitter, so a salesman submitting on someone else's behalf still
+                # reaches that person's pinned CS. Falls back to the submitter when
+                # there is no requestor FK (legacy rows, complaint, internal-created).
+                # A requestor with no pin round-robins, never retries the submitter's
+                # pin (that was the bug). See PLAN-requested-by-contact-routing.md D2/E2.
+                routing_contact_id = (
+                    self._routing_contact_id(config.source_entity_type, source_entity_id)
+                    or contact_id
+                )
+                assignee = self._resolve_pinned_assignee(
+                    config.source_entity_type, routing_contact_id, team_id, source_entity_id
+                )
+                if not assignee:
+                    assignee = agent_svc.get_next_assignee(str(agent.id), team_id)
             if not assignee:
-                assignee = agent_svc.get_next_assignee(str(agent.id), team_id)
-        if not assignee:
-            raise handle_validation_error(
-                f"No members in tier {start_tier} team for agent '{config.agent_code}'."
-            )
+                fallback_assignee = self._resolve_assignment_fallback(agent)
+                if not fallback_assignee:
+                    raise handle_validation_error(
+                        f"No members in tier {start_tier} team for agent '{config.agent_code}'."
+                    )
+                assignee = fallback_assignee
 
         # Coverage redirect: if the resolved assignee is on leave (covered), route
         # the task to their coverer instead. RR cursor already advanced to the
         # covered user above (fairness, decision 4) - we only swap the result.
-        from app.services.coverage_subscription_service import (
-            resolve_assignee_with_coverage,
-        )
+        # Never applied to the backstop: the fallback is a NAMED person somebody
+        # configured for exactly this failure, and redirecting it would leave nobody
+        # able to say who is supposed to be holding the unroutable case.
+        covered_for_id = None
+        if fallback_assignee is None:
+            from app.services.coverage_subscription_service import (
+                resolve_assignee_with_coverage,
+            )
 
-        assignee, covered_for_id = resolve_assignee_with_coverage(self.db, assignee)
+            assignee, covered_for_id = resolve_assignee_with_coverage(self.db, assignee)
 
         tier_row = (
             self.db.query(SLAPolicyTier)
@@ -916,6 +984,10 @@ class FormSLAOrchestrator:
             source_entity_id=str(source_entity_id),
             agent_id=str(agent.id),
             team_set_code=config.team_set_code,
+            # Flagged, never silently unassigned (AC-M33). The pending-task row reads
+            # it; without it the case looks correctly assigned and nobody ever fixes
+            # the team configuration that failed.
+            assignment_unresolved=fallback_assignee is not None,
         )
         self.db.add(tracker)
         self.db.commit()

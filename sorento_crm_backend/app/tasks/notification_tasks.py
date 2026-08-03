@@ -77,6 +77,17 @@ def send_notification_deliveries(notification_id: str) -> None:
     so the guardrail caps + per-event kill switch apply.
     """
     db = SessionLocal()
+    # This task commits once per delivery and then keeps reading the notification it
+    # loaded (title, body, data) for the next one. Expiring the whole identity map on
+    # every commit means a re-SELECT of the same row per channel.
+    db.expire_on_commit = False
+    # An RQ task owns the session it opened and must close it to give the pooled
+    # connection back. A session that already holds objects is NOT one we just
+    # opened: a caller has substituted the factory to drive delivery on its own
+    # session, and closing that detaches every instance the caller still holds — a
+    # delivery that succeeded then resurfaces as a DetachedInstanceError in code that
+    # never mentions notifications.
+    close_when_done = not db.identity_map
     try:
         notification = db.query(Notification).filter(Notification.id == notification_id).first()
         if not notification:
@@ -84,10 +95,18 @@ def send_notification_deliveries(notification_id: str) -> None:
             return
         from app.models.user import User
 
-        user = db.query(User).filter(User.id == notification.user_id).first()
-        if not user:
-            logger.warning("User not found for notification %s", notification_id)
-            return
+        # Two kinds of recipient since S4 (AC-H2a). Resolving the recipient through
+        # the users table and returning early on a miss was correct while user_id was
+        # NOT NULL, and silently discards EVERY contact delivery now that it is not:
+        # the notification row exists, the delivery row exists, the outbox is empty
+        # and nothing logs above WARNING.
+        contact_id = str(getattr(notification, "respond_contact_id", "") or "")
+        user = None
+        if not contact_id:
+            user = db.query(User).filter(User.id == notification.user_id).first()
+            if not user:
+                logger.warning("User not found for notification %s", notification_id)
+                return
 
         pending = (
             db.query(NotificationDelivery)
@@ -102,6 +121,19 @@ def send_notification_deliveries(notification_id: str) -> None:
 
         for delivery in pending:
             channel = str(getattr(delivery, "channel", ""))
+            if contact_id:
+                # A contact's channels are whatsapp + in_app, and in_app is written
+                # 'sent' at creation. Anything else on a contact notification is a
+                # programming error upstream, not a delivery to attempt.
+                if channel == "whatsapp":
+                    _send_whatsapp_for_notification(db, notification, None, delivery)
+                else:
+                    logger.warning(
+                        "Channel '%s' is not deliverable to a contact (notification %s)",
+                        channel,
+                        notification_id,
+                    )
+                continue
             if channel == "email":
                 _enqueue_email_for_delivery(db, notification, user, delivery, event_key)
             elif channel == "web_push":
@@ -114,23 +146,38 @@ def send_notification_deliveries(notification_id: str) -> None:
             elif channel == "whatsapp":
                 _send_whatsapp_for_notification(db, notification, user, delivery)
     finally:
-        db.close()
+        if close_when_done:
+            db.close()
 
 
 def _send_whatsapp_for_notification(db, notification: Notification, user, delivery: NotificationDelivery) -> None:
-    """Send the notification to the user's WhatsApp contact (TCK-29).
+    """Send the notification over WhatsApp (TCK-29 for staff, AC-H2/AC-H3 for contacts).
+
+    ``user`` is None for a contact notification: the recipient is then the
+    ``respond_contacts`` row the notification names directly, rather than the one
+    resolved from a staff user's link.
 
     Window-aware: open -> text, closed -> the use-case's approved template
     (sla_escalation / sla_assignment). Best-effort: marks the delivery sent/failed
     and never raises — the originating escalation/assignment already committed.
     """
+    from app.models.access import RespondContact
     from app.services.respond_link_service import resolve_user_respond_contact
     from app.services.respond_messaging_service import send_text_or_template
     from app.services.integration_service import IntegrationLogService
+    from app.services.respond_outbox_service import business_keys_for_notification
     from app.schemas.integration import IntegrationLogCreate
 
     now = datetime.utcnow()
-    contact = resolve_user_respond_contact(db, user)
+    notification_contact_id = str(getattr(notification, "respond_contact_id", "") or "")
+    if notification_contact_id:
+        contact = (
+            db.query(RespondContact)
+            .filter(RespondContact.id == notification_contact_id)
+            .first()
+        )
+    else:
+        contact = resolve_user_respond_contact(db, user)
     if not contact or not contact.respond_io_id:
         delivery.status = "failed"
         delivery.error_message = "No resolvable WhatsApp contact"
@@ -141,9 +188,19 @@ def _send_whatsapp_for_notification(db, notification: Notification, user, delive
     # Callers (e.g. the daily summary) can override the use-case / text /
     # template params via the notification data; default derives from event_type.
     event_type = str(getattr(notification, "event_type", "") or "")
-    use_case = data.get("whatsapp_use_case") or (
-        "sla_escalation" if event_type == "escalated" else "sla_assignment"
-    )
+    if notification_contact_id:
+        # A contact is never told about an SLA assignment, so the staff defaults are
+        # the wrong template family entirely. The entity type IS the chat use case
+        # for the four contact-facing flows ("complaint", "stock_inquiry", ...); an
+        # unmapped one still sends in-window text and lands in the outbox as a
+        # skipped template out of window, which is the honest record.
+        use_case = data.get("whatsapp_use_case") or str(
+            getattr(notification, "source_entity_type", "") or ""
+        )
+    else:
+        use_case = data.get("whatsapp_use_case") or (
+            "sla_escalation" if event_type == "escalated" else "sla_assignment"
+        )
     text = data.get("whatsapp_text") or (
         f"{notification.title}\n\n{notification.body or ''}".strip()
     )
@@ -155,11 +212,12 @@ def _send_whatsapp_for_notification(db, notification: Notification, user, delive
     # with intentionally-wrong creds, so a 401'd send must still be visible in the
     # Respond outbox, not just flip the delivery row to failed.
     log_service = IntegrationLogService(db)
-    business_table = str(getattr(notification, "source_entity_type", None) or "respond_notification")
-    # integration_log.business_id is a UUID column. The notification's
-    # source_entity_id can be a composite string (e.g. the daily summary's
-    # "<user_id>:<date>:<mode>:<ts>"), so always use the notification UUID here.
-    business_id = str(getattr(notification, "id", ""))
+    # AC-H8/AC-H8b: the outbox renders EVENT-FIRST ("Complaint CMP2026-0123 - Visit
+    # confirmed - to Mr Vinod"), so the row names the TABLE and the row it is about,
+    # not the entity type. `business_table` used to be stamped with
+    # source_entity_type ("complaint"), which is not a table name and joins to
+    # nothing. Unmapped types keep their old value rather than guessing a table.
+    business_table, business_id = business_keys_for_notification(notification)
     endpoint = f"https://api.respond.io/v2/contact/id:{identifier}/message"
     request_payload: dict = {"message": {"type": "text", "text": text}}
     try:
@@ -183,6 +241,7 @@ def _send_whatsapp_for_notification(db, notification: Notification, user, delive
                 endpoint=endpoint,
                 http_method="POST",
                 status="success",
+                correlation_id=str(notification.id),
                 response_payload=str(response)[:50000] if response else None,
             ),
             request_payload_dict=request_payload,
@@ -222,6 +281,7 @@ def _send_whatsapp_for_notification(db, notification: Notification, user, delive
                     http_method="POST",
                     status="failed",
                     status_code=resp_code,
+                    correlation_id=str(notification.id),
                     response_payload=resp_body,
                     error_message=str(e),
                 ),

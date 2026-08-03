@@ -164,18 +164,24 @@ def test_the_raise_keeps_its_exact_shape(db):
     assert "Configure a tier team before activating this SLA config." in message
 
 
-def test_the_agent_has_no_fallback_column_yet():
-    """The precondition for the tests above. S4 DELETES this one.
+def test_the_fallback_column_exists_and_is_unconfigured_by_default():
+    """Replaces ``test_the_agent_has_no_fallback_column_yet``, which S4 deletes.
 
-    Left in deliberately: while it passes, every "no fallback configured" test
-    above is exercising the unconfigured path for the right reason rather than by
-    accident.
+    That guard existed to prove the tests above were exercising the UNCONFIGURED
+    path for the right reason while the column did not exist. S4 added it, so its
+    own instruction applies: "Delete this guard and confirm the AC-M33b tests above
+    still pass with the column present and NULL - that, not this, is the lasting
+    safety property." They do, and this pins the precondition that makes them
+    meaningful: an agent created without a fallback has NULL, so the four live flows
+    reach the original raise.
     """
     columns = {c.key for c in AccessAgent.__table__.columns}
-    assert "assignment_fallback_user_id" not in columns, (
-        "S4 has added the fallback column. Delete this guard and confirm the "
-        "AC-M33b tests above still pass with the column present and NULL - that, "
-        "not this, is the lasting safety property."
+    assert "assignment_fallback_user_id" in columns
+    column = AccessAgent.__table__.columns["assignment_fallback_user_id"]
+    assert column.nullable
+    assert column.default is None and column.server_default is None, (
+        "A default on the backstop would silently switch all four shared flows off "
+        "today's raise, which is exactly what AC-M33b forbids."
     )
 
 

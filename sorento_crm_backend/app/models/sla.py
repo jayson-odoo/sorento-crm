@@ -105,6 +105,15 @@ class ConversationSLATracking(Base):
     # on every re-escalation. Never set for conversation-SLA (n8n) rows.
     handled_by_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     handled_at = Column(DateTime(timezone=False), nullable=True)
+    # AC-M33: this tracker was routed to the agent's configured assignment fallback
+    # because nobody resolved at any tier. On the TRACKER and not on the case: the
+    # pending-task row is a tracker, and a case-level column would paint one stage's
+    # routing failure onto every other stage of the same case. NOT NULL with a
+    # server default so every existing row stays readable after the migration —
+    # "maybe unresolved" has no meaning.
+    assignment_unresolved = Column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
 
     policy = relationship("SLAPolicy", back_populates="tracking")
     event_logs = relationship(

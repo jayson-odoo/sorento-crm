@@ -144,6 +144,15 @@ api_router.include_router(
     tags=["integrations"],
     dependencies=[Depends(require_module_enabled_with_api_key("base"))],
 )
+# The Respond outbox (AC-H8): every outbound Respond.io send, rendered event-first.
+# JWT or X-API-Key like the generic log list, and never anonymous - the rows carry
+# customer phone numbers and message bodies.
+api_router.include_router(
+    integrations.respond_outbox.router,
+    prefix="/integrations/respond-outbox",
+    tags=["integrations"],
+    dependencies=[Depends(require_module_enabled_with_api_key("base"))],
+)
 # Ideas iframe embed-session mint (SSO, §5.3) — JWT logged-in user only (the
 # endpoint's get_current_user dependency enforces auth); never X-API-Key/n8n.
 api_router.include_router(
