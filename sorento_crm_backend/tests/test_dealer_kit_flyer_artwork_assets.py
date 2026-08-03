@@ -424,6 +424,90 @@ class TestPublicPayload:
 
 
 # --------------------------------------------------------------------------- #
+# The designer gets the same URLs the reader does
+# --------------------------------------------------------------------------- #
+class TestEditorPayload:
+    """The builder needs the signed URLs too, and by the same contract.
+
+    A background is bound as an id, so the editor cannot resolve one on its own
+    without becoming a second signer with a second opinion about strictness. It
+    is handed the same ``{assetId: url}`` map the public page and the print
+    payload carry, from the same ``asset_service.background_urls`` call - which
+    is what lets the builder paint through the SAME renderer code as the
+    catalogue.
+
+    Without this the person reviewing a freshly seeded draft is the only one who
+    cannot see the artwork, and they are the one being asked to approve it.
+    """
+
+    def test_the_editor_payload_carries_a_signed_url_per_background(self, api) -> None:
+        db, _storage = api
+
+        with TestClient(app) as client:
+            reading_id = _upload(client, FIXTURE_PDF.read_bytes())
+            result = _seed(client, reading_id)
+
+            res = client.get(f"/api/v1/dealer-kit/pages/{result['pageId']}")
+
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert len(body["assets"]) == PAGES_WITH_A_BANNER
+        for url in body["assets"].values():
+            assert url.startswith("https://")
+
+        # The same ids the document binds, so the renderer can look them up.
+        doc = _latest_doc(db, result["pageId"])
+        bound = {
+            section["style"]["backgroundAssetId"]
+            for section in doc["sections"]
+            if section["style"].get("backgroundAssetId")
+        }
+        assert set(body["assets"]) == bound
+
+    def test_a_background_that_cannot_be_signed_is_absent_rather_than_broken(
+        self, api
+    ) -> None:
+        """Strict signing, exactly as on the public payload.
+
+        A URL the CDN answers 403 to is a broken image on the canvas, and the
+        section has a designed state for "no picture" and none at all for that.
+        """
+        _db, storage = api
+
+        with TestClient(app) as client:
+            reading_id = _upload(client, FIXTURE_PDF.read_bytes())
+            result = _seed(client, reading_id)
+
+            storage.signing_fails = True
+            res = client.get(f"/api/v1/dealer-kit/pages/{result['pageId']}")
+
+        assert res.status_code == 200, res.text
+        assert res.json()["assets"] == {}
+
+    def test_a_page_with_no_artwork_carries_an_empty_map(self, api) -> None:
+        """Absent artwork is an empty map, never a missing key.
+
+        The editor reads ``assets`` unconditionally; a key that only appears
+        when something is bound would be a null nobody remembered to guard.
+        """
+        with TestClient(app) as client:
+            res = client.post(
+                "/api/v1/dealer-kit/pages",
+                json={
+                    "name": unique_code("ZZT Plain"),
+                    "slug": unique_code("zzt-plain").lower(),
+                },
+            )
+            assert res.status_code == 201, res.text
+            page_id = res.json()["id"]
+
+            res = client.get(f"/api/v1/dealer-kit/pages/{page_id}")
+
+        assert res.status_code == 200, res.text
+        assert res.json()["assets"] == {}
+
+
+# --------------------------------------------------------------------------- #
 # The stored reading still round-trips
 # --------------------------------------------------------------------------- #
 def test_the_asset_ids_survive_a_round_trip_through_the_database(api) -> None:

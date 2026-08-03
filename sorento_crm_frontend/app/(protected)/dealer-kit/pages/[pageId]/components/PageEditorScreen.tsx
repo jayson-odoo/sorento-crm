@@ -224,6 +224,14 @@ export function PageEditorScreen({ pageId }: { pageId: string }) {
       <PageEditor
         pageId={pageId}
         doc={doc}
+        /*
+          Straight from the page payload, the same map the public catalogue and
+          the print route receive. Read off `page` rather than mirrored into
+          state: the working document changes as the designer edits, but the
+          signed URLs belong to the load, and copying them would be a second
+          copy to keep in step for no gain.
+        */
+        assets={page.assets}
         onDocChange={(updater, options) => {
           setDoc((previous) => (previous ? updater(previous) : previous));
           if (!options?.silent) setDirty(true);

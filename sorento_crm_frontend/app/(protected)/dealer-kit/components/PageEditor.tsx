@@ -5,6 +5,7 @@ import {
   FileText,
   Heading1,
   Image as ImageIcon,
+  ImageOff,
   LayoutGrid,
   Link2Off,
   Monitor,
@@ -17,6 +18,16 @@ import {
   Type,
 } from 'lucide-react';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -36,6 +47,7 @@ import {
   updateCollection,
 } from '../services/catalogueService';
 import { cn } from '@/lib/utils';
+import { hasArtwork } from '@/lib/dealer-kit/sectionSurface';
 import {
   BREAKPOINT_COLUMNS,
   createLayouts,
@@ -116,6 +128,18 @@ export interface PageEditorProps {
   pageId: string;
   doc: PageDoc;
   /**
+   * assetId -> signed URL for the section backgrounds this document binds,
+   * resolved by the server and sent WITH the page, exactly as the public
+   * catalogue and the print payload receive them.
+   *
+   * The editor does not fetch or sign these itself. The document binds an id,
+   * and a second signer would be a second opinion about which assets are
+   * unsignable - so a background could be present in the builder and missing on
+   * the published page, which is the disagreement this whole surface exists to
+   * prevent.
+   */
+  assets?: Record<string, string>;
+  /**
    * Updater, not a value. Layout measurement can settle several blocks in one
    * tick, and each of those must build on the previous result rather than on
    * whatever `doc` this render captured.
@@ -127,7 +151,7 @@ export interface PageEditorProps {
   onDocChange: (updater: (previous: PageDoc) => PageDoc, options?: { silent?: boolean }) => void;
 }
 
-export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
+export function PageEditor({ pageId, doc, assets, onDocChange }: PageEditorProps) {
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<CanvasMode>('desktop');
   const [focus, setFocus] = useState(false);
@@ -144,6 +168,8 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
   );
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Block | null>(null);
+  /** Confirming removal of the active section's artwork. See handleClearBackground. */
+  const [pendingBackgroundClear, setPendingBackgroundClear] = useState(false);
   /**
    * The picker's working copy, keyed by block id. It is NEVER written into the
    * saved document - the document carries a `collectionId` and nothing else, so
@@ -159,6 +185,10 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
 
   const breakpoint: Breakpoint = mode === 'paper' ? 'desktop' : mode;
   const isDerived = activeSection?.layouts[breakpoint]?.isDerived ?? false;
+  // Resolved, not merely bound: a background the server could not sign is not
+  // on the canvas, so offering to remove it would be offering to remove
+  // something the designer cannot see.
+  const sectionHasArtwork = hasArtwork(activeSection?.style, assets);
 
   const updateSection = useCallback(
     (
@@ -454,6 +484,48 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
     setActiveSectionId(id);
   }, [doc.sections.length, onDocChange]);
 
+  /**
+   * Remove the artwork behind this section.
+   *
+   * WHY CLEARING EXISTS AND CHOOSING DOES NOT.
+   *
+   * A seeded background is a HEURISTIC's answer. AC-F4 picks the largest image
+   * near the top of a flyer page, and it will sometimes pick a product shot, a
+   * logo strip, or the wrong half of a spread. A background that cannot be
+   * removed is therefore a trap: the reviewer can fix a misread heading in five
+   * seconds and can do nothing at all about a wrong picture except abandon the
+   * seeded draft. Clearing needs no library, no upload and no picker - it is one
+   * field going away - so refusing it would be refusing the cheapest possible
+   * escape from the one mistake this feature is known to make.
+   *
+   * CHOOSING a different background is deliberately NOT here. There is no asset
+   * picker anywhere in the Kit yet: the image BLOCK still shows "Pick one from
+   * the asset library" as a placeholder, because the library browser, its
+   * search and its upload path have not been built. Building the first one
+   * inside the section header would put it in the wrong place - the image block
+   * needs the same picker, and a picker that exists twice is the same drift this
+   * slice is closing. So: clearing lands now because it is complete on its own,
+   * and choosing lands with the asset library, beside the block that has been
+   * waiting for it.
+   *
+   * Not silent, because it is destructive in the way that matters: the flyer
+   * reading is not re-run on save, so the artwork does not come back by itself.
+   */
+  const handleClearBackground = useCallback(() => {
+    if (!activeSection) return;
+
+    updateSection(activeSection.id, (section) => {
+      // Both fields go, not just the id: a stray `backgroundFit` on a section
+      // with no artwork is a setting for a picture that is not there.
+      const style = { ...section.style };
+      delete style.backgroundAssetId;
+      delete style.backgroundFit;
+      return { ...section, style };
+    });
+
+    setPendingBackgroundClear(false);
+  }, [activeSection, updateSection]);
+
   const handleRederive = useCallback(() => {
     if (!activeSection || breakpoint === 'desktop') return;
 
@@ -556,6 +628,24 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {/*
+                Offered only when there IS artwork on screen, and only when the
+                canvas is showing it: an action against something the designer
+                cannot currently see is an action they cannot judge. `flex-wrap`
+                on the row is what keeps this usable at 375px, where it drops
+                onto its own line rather than crushing the breakpoint tabs.
+              */}
+              {mode !== 'paper' && sectionHasArtwork && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPendingBackgroundClear(true)}
+                >
+                  <ImageOff className="size-3.5" />
+                  Remove background
+                </Button>
+              )}
+
               {mode !== 'paper' && mode !== 'desktop' && !isDerived && (
                 <Button variant="outline" size="sm" onClick={handleRederive}>
                   <RotateCcw className="size-3.5" />
@@ -585,6 +675,7 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
               <PaperCanvas
                 sections={doc.sections}
                 profile={doc.printProfile ?? DEFAULT_PRINT_PROFILE}
+                assets={assets}
               />
             ) : !activeSection ? (
               <div className="rounded-lg border border-dashed border-border p-10 text-center">
@@ -631,6 +722,8 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
                   placements={activeSection.layouts[breakpoint].blocks}
                   breakpoint={breakpoint}
                   selectedBlockId={selectedBlockId}
+                  sectionStyle={activeSection.style}
+                  assets={assets}
                   locked={isDerived && breakpoint !== 'desktop'}
                   onSelectBlock={setSelectedBlockId}
                   onPlacementsChange={handlePlacementsChange}
@@ -667,6 +760,41 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
         />
         </CollapsiblePanel>
       </aside>
+
+      {/*
+        A confirm, never a bare click: removing the artwork detaches something
+        the seed found and nothing puts it back, and this repo requires a
+        dialog for any destructive or detaching action. AlertDialog rather than
+        ConfirmDeleteDialog because nothing is being deleted - the asset stays
+        in the library, this section simply stops using it - and the shared
+        dialog's button says "Delete" and toasts as though a server call
+        happened.
+      */}
+      <AlertDialog
+        open={pendingBackgroundClear}
+        onOpenChange={setPendingBackgroundClear}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove background</AlertDialogTitle>
+            <AlertDialogDescription>
+              Remove the artwork behind{' '}
+              <strong className="text-foreground">{activeSection?.name}</strong>? The
+              picture stays in the library, but this section will not use it again
+              unless you put it back. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleClearBackground}
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <ConfirmDeleteDialog
         open={Boolean(pendingDelete)}

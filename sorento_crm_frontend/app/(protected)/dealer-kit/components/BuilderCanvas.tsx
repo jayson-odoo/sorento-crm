@@ -14,8 +14,9 @@ import {
   type BlockPlacementMap,
   type Breakpoint,
 } from '@/lib/dealer-kit/deriveLayout';
-import type { Block } from '@/lib/dealer-kit/types';
+import type { Block, SectionStyle } from '@/lib/dealer-kit/types';
 import { ROW_GAP_PX, ROW_HEIGHT_PX, rowsForHeight } from '@/lib/dealer-kit/gridMetrics';
+import { hasArtwork, sectionSurface } from '@/lib/dealer-kit/sectionSurface';
 
 import { BlockChrome } from './BlockChrome';
 import type { ResolvedBinding } from './BlockPreview';
@@ -54,6 +55,24 @@ export interface BuilderCanvasProps {
   placements: BlockPlacementMap;
   breakpoint: Breakpoint;
   selectedBlockId: string | null;
+  /**
+   * The section's own surface, painted here through the SAME function the
+   * published catalogue and the PDF use.
+   *
+   * Without it a designer reviewing a seeded draft was the only person who
+   * could not see the flyer artwork behind the headings they were being asked
+   * to correct - and they were reviewing against a blank canvas that did not
+   * match what a customer would receive.
+   */
+  sectionStyle?: SectionStyle;
+  /**
+   * assetId -> signed URL, exactly as the reader's payload carries it.
+   *
+   * Resolved by the server, never here: the document binds an id, and an editor
+   * that signed its own URLs would be a second signer with a second opinion
+   * about what is unsignable.
+   */
+  assets?: Record<string, string>;
   /** Locked while a breakpoint is still following desktop, so an accidental drag cannot silently pin it. */
   locked?: boolean;
   onSelectBlock: (blockId: string) => void;
@@ -134,6 +153,8 @@ export function BuilderCanvas({
   placements,
   breakpoint,
   selectedBlockId,
+  sectionStyle,
+  assets,
   locked = false,
   onSelectBlock,
   onPlacementsChange,
@@ -213,9 +234,23 @@ export function BuilderCanvas({
     [locked, placements, onGrowBlock],
   );
 
+  const surface = sectionSurface(sectionStyle, assets);
+  // Resolved, not merely bound: an asset the server could not sign is absent
+  // from the map, and the section is then a plain one.
+  const overArtwork = hasArtwork(sectionStyle, assets);
+
   if (blocks.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed border-border p-10 text-center">
+      // Painted here too. An empty section is not a blank slate - it already
+      // carries a background a reader would see, and hiding it would mean the
+      // first block is placed against a surface nobody has been shown. No
+      // measuring ref: there is no grid to size yet, and the callback ref is
+      // deliberately attached at the moment the real canvas appears.
+      <div
+        data-testid="dk-builder-canvas"
+        className="rounded-lg border border-dashed border-border p-10 text-center"
+        style={surface}
+      >
         <p className="text-sm font-medium text-foreground">This section is empty</p>
         <p className="mt-1 text-sm text-muted-foreground">
           Add a block from the palette on the left to start laying it out.
@@ -228,10 +263,15 @@ export function BuilderCanvas({
     <div
       ref={attachCanvas}
       data-testid="dk-builder-canvas"
+      // No `bg-background` any more: the section's own surface decides, exactly
+      // as it does for a reader. A section whose background is "transparent"
+      // shows the card it sits in, which is what transparent means; a class
+      // underneath would have been a fourth opinion about the colour.
       className={cn(
-        'relative rounded-lg border border-border bg-background',
+        'relative rounded-lg border border-border',
         locked && 'pointer-events-none opacity-70',
       )}
+      style={surface}
     >
       {/* The column guides ARE the grid, not decoration - they are what makes
           "snapped to a cell" visible rather than something you have to infer. */}
@@ -301,6 +341,7 @@ export function BuilderCanvas({
                   rowSpan={placements[block.id]?.rowSpan}
                   resolved={resolveBlock?.(block)}
                   breakpoint={breakpoint}
+                  overArtwork={overArtwork}
                 />
               </div>
             ))}

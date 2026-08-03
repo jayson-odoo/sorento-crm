@@ -15,6 +15,10 @@
  * POST   /pages           {name, slug}   -> PageDetail  201             page.edit
  * GET    /pages/{id}                     -> PageDetail                  page.view
  *          doc = the `staging` version if one exists, else the newest.
+ *          assets = {assetId: signed URL} for the section backgrounds THAT doc
+ *          binds - the same map and the same strict signing the public
+ *          catalogue and the print payload use, so the builder canvas paints
+ *          what a reader will actually receive. Unsignable = absent.
  * DELETE /pages/{id}                     -> 204 (hard, cascades)        page.edit
  *
  * GET    /pages/{id}/versions            -> PageVersion[] newest first  page.view
@@ -85,6 +89,8 @@ interface PageVersionWire {
 interface PageDetailWire extends PageSummaryWire {
   doc: PageDoc;
   versions: PageVersionWire[];
+  /** assetId -> signed URL for the section backgrounds the document binds. */
+  assets?: Record<string, string>;
 }
 
 function toVersion(wire: PageVersionWire): PageVersion {
@@ -134,6 +140,10 @@ export async function getPage(pageId: string): Promise<Page> {
     ...toSummary(wire),
     doc: wire.doc,
     versions: (wire.versions ?? []).map(toVersion),
+    // Defaulted, never left undefined: the builder reads this map for every
+    // section it paints, and "no artwork anywhere" is an empty map rather than
+    // a missing key somebody has to remember to guard.
+    assets: wire.assets ?? {},
   };
 }
 
@@ -146,7 +156,10 @@ export async function createPage(name: string, slug: string): Promise<Page> {
   if (!response.ok) throw new Error(await extractApiError(response, 'Could not create the page'));
 
   const wire: PageDetailWire = await response.json();
-  return { ...toSummary(wire), doc: wire.doc, versions: [] };
+  // A page that has just been created binds no artwork, so the map is empty by
+  // construction. Stated rather than left off, because `Page.assets` is not
+  // optional and a caller reading it must never find `undefined`.
+  return { ...toSummary(wire), doc: wire.doc, versions: [], assets: wire.assets ?? {} };
 }
 
 export async function deletePage(pageId: string): Promise<void> {

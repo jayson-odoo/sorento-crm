@@ -6,6 +6,7 @@ import { AlertTriangle } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 import { paginate, usablePageHeightMm, usablePageWidthMm } from '@/lib/dealer-kit/paginate';
+import { sectionSurface } from '@/lib/dealer-kit/sectionSurface';
 import type { PrintProfile, Section } from '@/lib/dealer-kit/types';
 
 import { BlockPreview } from './BlockPreview';
@@ -47,9 +48,18 @@ function estimateSectionHeightMm(section: Section): number {
 export function PaperCanvas({
   sections,
   profile,
+  assets,
 }: {
   sections: Section[];
   profile: PrintProfile;
+  /**
+   * assetId -> signed URL, as the export payload carries it.
+   *
+   * Paper mode previews the PDF, and the PDF HAS backgrounds. A white sheet
+   * here would be a preview that disagrees with its own output, which is the
+   * same defect as the builder canvas painting nothing.
+   */
+  assets?: Record<string, string>;
 }) {
   const pages = useMemo(
     () =>
@@ -151,8 +161,21 @@ export function PaperCanvas({
                         height: `${placement.heightMm}mm`,
                       }}
                     >
+                      {/*
+                        The surface is its own layer, underneath the blocks and
+                        separate from the geometry above. Same function as the
+                        catalogue and the PDF, so the only inline style on it is
+                        the surface - which is what lets a test assert the two
+                        are IDENTICAL rather than merely similar.
+                      */}
                       <div
-                        className="grid h-full gap-2"
+                        className="absolute inset-0"
+                        data-dk-paper-section-id={section.id}
+                        style={sectionSurface(section.style, assets)}
+                        aria-hidden
+                      />
+                      <div
+                        className="relative grid h-full gap-2"
                         style={{ gridTemplateColumns: 'repeat(12, minmax(0, 1fr))' }}
                       >
                         {section.blocks.map((block) => {

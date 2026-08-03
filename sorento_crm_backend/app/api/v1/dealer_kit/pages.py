@@ -43,7 +43,7 @@ from app.schemas.dealer_kit import (
     PageVersionOut,
     VersionCreate,
 )
-from app.services.dealer_kit import export_service
+from app.services.dealer_kit import asset_service, export_service
 from app.services.dealer_kit import page_service as svc
 
 router = APIRouter()
@@ -154,6 +154,11 @@ def get_page(page_id: str, db: Session = Depends(get_db), _user: dict = Depends(
         promotion_label=svc.promotion_labels(db, [page.promotion_id]).get(page.promotion_id),
         doc=doc,
         versions=versions,
+        # The SAME call the public catalogue and the print payload make, on the
+        # doc the editor is about to open. Without it the person reviewing a
+        # freshly seeded draft was the only one who could not see the flyer
+        # artwork - and they are the one being asked to approve it.
+        assets=asset_service.background_urls(db, doc),
     )
 
 

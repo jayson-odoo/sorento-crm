@@ -7,6 +7,9 @@ import {
 } from '@/lib/dealer-kit/deriveLayout';
 import { cn } from '@/lib/utils';
 import { ROW_GAP_PX, ROW_HEIGHT_PX } from '@/lib/dealer-kit/gridMetrics';
+// The one implementation of "what a SectionStyle looks like", shared with the
+// builder canvas so the editor cannot drift from what it publishes.
+import { sectionSurface } from '@/lib/dealer-kit/sectionSurface';
 import type {
   Block,
   BlockLayout,
@@ -136,47 +139,6 @@ export interface RenderedCatalogueData {
   assets?: Record<string, string>;
 }
 
-/**
- * The surface a section is painted on, artwork included.
- *
- * The artwork is a BACKGROUND and the heading stays a text block on top of it.
- * Keeping the heading inside the bitmap, where the designer originally put it,
- * would look identical in a screenshot and would be a heading nobody can
- * correct, search for or translate - and the flyer extractor is known to misread
- * them (one page of the real flyer reads "Transforming Your" where the paper
- * says "BATHTUB COLLECTION").
- *
- * An asset with no entry in `assets` renders as no artwork at all. The server
- * signs strictly and omits anything it could not sign, because the section has a
- * designed state for "no picture" and none whatsoever for "a picture the CDN
- * answers 403 to".
- */
-function sectionSurface(
-  section: Section,
-  assets: Record<string, string> | undefined,
-): React.CSSProperties | undefined {
-  const base = section.style.background ? { background: section.style.background } : undefined;
-
-  const assetId = section.style.backgroundAssetId;
-  const url = assetId ? assets?.[assetId] : undefined;
-  if (!url) return base;
-
-  const cover = section.style.backgroundFit === 'cover';
-  return {
-    // The plain background stays underneath, and stays FIRST: `background` is a
-    // shorthand, so declaring it after the image would reset the image away.
-    ...base,
-    backgroundImage: `url(${JSON.stringify(url)})`,
-    // `100%` is the one-value form of "full width, height from the aspect
-    // ratio". Written as one value rather than `100% auto` because that is what
-    // every CSSOM round trip gives back anyway, and two spellings of one
-    // declaration is one more than a test can assert.
-    backgroundSize: cover ? 'cover' : '100%',
-    backgroundRepeat: 'no-repeat',
-    backgroundPosition: cover ? 'center center' : 'center top',
-  } as React.CSSProperties;
-}
-
 function bindingFor(block: Block, data: RenderedCatalogueData) {
   const props = block.props;
   if (props.kind !== 'collection' || !props.collectionId) return undefined;
@@ -236,7 +198,7 @@ function RenderedSection({
   return (
     <section
       className={cn('w-full', padding)}
-      style={sectionSurface(section, data.assets)}
+      style={sectionSurface(section.style, data.assets)}
       data-dk-section-id={section.id}
       aria-label={section.name}
     >

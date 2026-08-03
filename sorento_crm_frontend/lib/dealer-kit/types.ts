@@ -186,6 +186,16 @@ export interface PageSummary {
 export interface Page extends PageSummary {
   doc: PageDoc;
   versions: PageVersion[];
+  /**
+   * assetId -> signed URL for the section backgrounds this document binds.
+   *
+   * The same map the public catalogue and the print payload carry, and resolved
+   * by the same server-side call, so the builder paints what the reader gets.
+   * An asset that could not be signed is ABSENT rather than a URL the CDN
+   * answers 403 to: the section has a designed state for "no picture" and none
+   * for a broken one.
+   */
+  assets: Record<string, string>;
 }
 
 export type AssetKind = 'logo' | 'icon' | 'badge' | 'decorative';

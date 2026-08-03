@@ -92,6 +92,13 @@ class PageDetail(BaseModel):
     )
     doc: dict[str, Any]
     versions: list[PageVersionOut] = Field(default_factory=list)
+    # assetId -> signed URL for the section backgrounds ``doc`` binds, resolved
+    # exactly as the public payload resolves them. The builder cannot sign its
+    # own: the document holds ids, and a second signer would be a second opinion
+    # about which assets are unsignable - so a background could appear in the
+    # editor and be missing on the published page, which is the disagreement the
+    # shared renderer exists to prevent. Absent rather than broken, always.
+    assets: dict[str, str] = Field(default_factory=dict)
 
 
 class PagePromotionSet(BaseModel):

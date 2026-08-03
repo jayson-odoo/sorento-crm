@@ -37,6 +37,7 @@ export function BlockChrome({
   rowSpan,
   resolved,
   breakpoint,
+  overArtwork = false,
 }: {
   block: Block;
   isSelected: boolean;
@@ -47,6 +48,16 @@ export function BlockChrome({
   rowSpan?: number;
   resolved?: ResolvedBinding;
   breakpoint?: Breakpoint;
+  /**
+   * The section behind this block is painting artwork.
+   *
+   * A seeded flyer section is a banner with a full-width heading over it, so an
+   * opaque frame covers exactly the part of the picture the designer came to
+   * check. On the published page a heading has no card behind it at all, so the
+   * frame goes see-through and only the border and the hover chrome remain -
+   * which is edit-time affordance, not surface.
+   */
+  overArtwork?: boolean;
 }) {
   const headerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -77,7 +88,8 @@ export function BlockChrome({
   return (
     <div
       className={cn(
-        'group relative flex h-full w-full flex-col overflow-hidden rounded-md border bg-card transition-colors',
+        'group relative flex h-full w-full flex-col overflow-hidden rounded-md border transition-colors',
+        overArtwork ? 'bg-transparent' : 'bg-card',
         isSelected ? 'border-primary ring-1 ring-primary' : 'border-border hover:border-primary/50',
       )}
       onClick={onSelect}
