@@ -360,14 +360,15 @@ function StepKind({
                 active ? 'border-primary bg-primary/5 ring-2 ring-primary' : 'hover:bg-muted/50'
               }`}
             >
-              {/* No icon exists for any of the 31 kinds yet, so the tile falls back to an
-                  initial. That fallback is deliberately plain rather than pretty: it is the
-                  visible cost of the missing consumer_icon data, and hiding it would let the
-                  decision slide. */}
-              <span className="flex size-10 items-center justify-center rounded-full bg-muted text-base font-semibold">
-                {kind.label.charAt(0)}
-              </span>
-              <span className="text-xs leading-tight">{kind.label}</span>
+              {/* Text tiles, accepted deliberately: no `consumer_icon` exists for any of the
+                  31 kinds and Sorento is content to ship without artwork.
+
+                  The first draft filled the gap with the label's initial, which was actively
+                  worse than nothing - four tiles rendered "K" (Kitchen Mixer Tap, Kitchen &
+                  Bathroom Cold Tap, Kitchen & Bathroom Mixer Tap, Kitchen Sink) and two "W".
+                  An initial is noise wearing the shape of a signal. Without it the label gets
+                  the whole tile and the distinguishing words are what the eye lands on. */}
+              <span className="text-sm font-medium leading-snug">{kind.label}</span>
             </button>
           );
         })}
