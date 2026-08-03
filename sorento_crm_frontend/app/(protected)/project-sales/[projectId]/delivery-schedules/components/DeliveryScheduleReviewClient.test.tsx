@@ -61,6 +61,25 @@ vi.mock('@/app/(protected)/master-data-management/products/services/productServi
 
 import { DeliveryScheduleReviewClient } from './DeliveryScheduleReviewClient';
 
+/**
+ * The sentences `buildColumnStates` writes for this fixture, in full.
+ *
+ * Held here rather than inline because the same sentence has to be found in three places
+ * (the list, the phone cards, the confirm dialog) and because what is being pinned is that
+ * each one still ends in the thing to do next.
+ */
+const PO_MISMATCH_MESSAGE =
+  'The schedule asks for 8 and the PO orders 16, 8 short. ' +
+  'Correct a phase quantity, or amend the PO.';
+const REPORTED_MISMATCH_MESSAGE =
+  "The phases add up to 8 but the schedule's own TOTAL QTY row says 16. " +
+  'One of the two was misread, so check the cells against the paper.';
+const NOT_ON_PO_MESSAGE =
+  'The PO version does not order this item, but the schedule asks for 927. ' +
+  'Check the column is the right product, or amend the PO.';
+const NEEDS_PRODUCT_MESSAGE =
+  'BUI-HB-SRTWB7055 is not matched to a product. Pick the product this column means.';
+
 function version(overrides: Partial<DeliveryScheduleVersion> = {}): DeliveryScheduleVersion {
   return {
     id: 'v2',
@@ -294,14 +313,166 @@ describe('DeliveryScheduleReviewClient', () => {
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
-    expect(
-      screen.getByText('Our total is 8, the PO orders 16 (-8).'),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('BUI-HB-SRTWB7055 is not matched to a product.'),
-    ).toBeInTheDocument();
+    expect(screen.getByText(PO_MISMATCH_MESSAGE)).toBeInTheDocument();
+    expect(screen.getByText(NEEDS_PRODUCT_MESSAGE)).toBeInTheDocument();
     // In the grid too, not only in the message.
     expect(matrix().getAllByText('BUI-HB-SRTWB7055').length).toBeGreaterThan(0);
+  });
+
+  it('says what the section is for before it lists a single problem', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    expect(
+      screen.getByText(
+        'Every column has to agree with the PO before this schedule can be confirmed.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('lists the reconciliations full width, whole sentence, every blocker', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    const list = within(screen.getByTestId('reconciliation-list'));
+    // One row per column that does not reconcile, not a tile per column.
+    expect(list.getAllByRole('listitem')).toHaveLength(2);
+
+    // Both blockers on the flush valve, not only the first of them, and every sentence
+    // whole: cut to "The PO version does not order this item, but the sched..." the part
+    // that says what to do about it is the part that goes missing.
+    expect(list.getByText(PO_MISMATCH_MESSAGE)).toBeInTheDocument();
+    expect(list.getByText(REPORTED_MISMATCH_MESSAGE)).toBeInTheDocument();
+    expect(list.getByText(NOT_ON_PO_MESSAGE)).toBeInTheDocument();
+
+    // The SENTENCES are what must never be cut, and the assertion says so directly now
+    // that the rows also carry controls: a picker's own trigger label truncates, which is
+    // right for a control and would make a blanket sweep of the list fail for the wrong
+    // reason.
+    // Four sentences over the two rows: the flush valve disagrees with both the PO and its
+    // own TOTAL QTY, and the unmatched column is both unmatched and absent from the PO.
+    const details = screen.getAllByTestId('reconciliation-detail');
+    expect(details).toHaveLength(4);
+    details.forEach((node) => {
+      expect(String(node.className)).not.toContain('truncate');
+      Array.from(node.querySelectorAll('*')).forEach((child) =>
+        expect(String(child.className)).not.toContain('truncate'),
+      );
+    });
+  });
+
+  it('takes a reconciliation row to its column in the grid', async () => {
+    const scrollIntoView = vi.fn();
+    // jsdom implements none, and the component calls it optionally for that reason.
+    (Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView =
+      scrollIntoView;
+
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    fireEvent.click(
+      within(screen.getByTestId('reconciliation-list')).getByRole('button', {
+        name: 'Go to SRTFV1001 in the schedule',
+      }),
+    );
+
+    expect(scrollIntoView).toHaveBeenCalled();
+  });
+
+  it('lands a quantity fix IN the cell to be typed into, not merely near it', async () => {
+    (Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView = vi.fn();
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    fireEvent.click(
+      within(screen.getByTestId('reconciliation-list')).getAllByRole('button', {
+        name: 'Fix the quantities',
+      })[0],
+    );
+
+    // The flush valve takes nothing at Level 2 & 7 and 8 at Phase 3, and BOTH are typeable,
+    // so the first cell of the column is where the cursor belongs.
+    await waitFor(() =>
+      expect(matrix().getByLabelText('Level 2 & 7, SRTFV1001')).toHaveFocus(),
+    );
+  });
+
+  it('counts what is left to fix, and counts down as a column is corrected', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    expect(screen.getByTestId('reconciliation-remaining')).toHaveTextContent(
+      '2 columns still to fix.',
+    );
+
+    fireEvent.change(matrix().getByLabelText('Phase 3, SRTFV1001'), {
+      target: { value: '16' },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('reconciliation-remaining')).toHaveTextContent(
+        '1 column still to fix.',
+      ),
+    );
+  });
+
+  it('offers no fix in the list to a reviewer who cannot edit, only the jump', async () => {
+    getProject.mockResolvedValue({
+      id: 'p1',
+      project_code: 'PRJ-1',
+      title: 'Tuju',
+      can_edit: false,
+    });
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    const list = within(screen.getByTestId('reconciliation-list'));
+    expect(list.queryByLabelText(/Pick the product/)).toBeNull();
+    expect(list.queryByLabelText(/Pick a different product/)).toBeNull();
+    expect(list.queryByRole('button', { name: 'Fix the quantities' })).toBeNull();
+    expect(list.queryByRole('link', { name: /Open the PO/ })).toBeNull();
+    expect(
+      list.getByRole('button', { name: 'Go to SRTFV1001 in the schedule' }),
+    ).toBeInTheDocument();
+  });
+
+  it('reports rather than instructs when the schedule can no longer be changed', async () => {
+    // A confirmed schedule still lists what disagreed, and that is worth keeping. But
+    // "2 columns still to fix" on a screen that accepts no fix is asking for work it
+    // will refuse, which is the same confusion in a new place.
+    getProject.mockResolvedValue({
+      id: 'p1',
+      project_code: 'PRJ-1',
+      title: 'Tuju',
+      can_edit: false,
+    });
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    expect(screen.getByTestId('reconciliation-remaining')).toHaveTextContent(
+      '2 columns did not agree.',
+    );
+    expect(screen.getByTestId('reconciliation-remaining')).not.toHaveTextContent(
+      'to fix',
+    );
+    expect(screen.getByText(/confirmed, so nothing here can be changed/i)).toBeInTheDocument();
+  });
+
+  it('lets a column that resolved to the WRONG product be changed, in both views', async () => {
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    // SRTFV1001 is matched already and still does not reconcile, which used to mean the
+    // picker was withheld and the only way out was deleting something.
+    expect(
+      matrix().getByLabelText('Change the product for BUI-HB-SRTFV1001'),
+    ).toBeInTheDocument();
+
+    const phone = within(screen.getByTestId('schedule-columns-mobile'));
+    fireEvent.click(phone.getAllByRole('button', { expanded: false })[1]);
+    expect(
+      phone.getByLabelText('Change the product for BUI-HB-SRTFV1001'),
+    ).toBeInTheDocument();
   });
 
   it('renders a blank cell blank, because a blank is not a zero', async () => {
@@ -487,6 +658,6 @@ describe('DeliveryScheduleReviewClient', () => {
 
     fireEvent.click(phone.getAllByRole('button', { expanded: false })[1]);
     expect(phone.getByLabelText('Phase 3, SRTFV1001')).toHaveValue('8');
-    expect(phone.getByText('Our total is 8, the PO orders 16 (-8).')).toBeInTheDocument();
+    expect(phone.getByText(PO_MISMATCH_MESSAGE)).toBeInTheDocument();
   });
 });

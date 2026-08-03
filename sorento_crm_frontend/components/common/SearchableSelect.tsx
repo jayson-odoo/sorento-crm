@@ -54,6 +54,12 @@ export type SearchableSelectProps = {
    */
   onSearchChange?: (query: string) => void;
   /**
+   * Search text the popover opens with, for callers that already know what is being looked
+   * for. It is put IN the search box rather than applied invisibly, so the user can see what
+   * narrowed the list and widen it by editing or clearing the box. Restored on every open.
+   */
+  initialQuery?: string;
+  /**
    * Async mode: the currently-selected option, so the trigger label + checkmark survive
    * when `value` isn't in the fetched page. Callers already hold the selected entity.
    */
@@ -95,6 +101,7 @@ export function SearchableSelect({
   paginated = false,
   pageSize = 50,
   onSearchChange,
+  initialQuery = '',
   id,
   size,
   placeholder = 'Select...',
@@ -112,7 +119,7 @@ export function SearchableSelect({
   // Async state
   const [asyncOptions, setAsyncOptions] = React.useState<SearchableSelectOption[]>([]);
   const [loading, setLoading] = React.useState(false);
-  const [query, setQuery] = React.useState('');
+  const [query, setQuery] = React.useState(initialQuery);
   const lastQueryRef = React.useRef<string>('\u0000'); // sentinel: never equals a real query
 
   const [page, setPage] = React.useState(0);
@@ -159,19 +166,23 @@ export function SearchableSelect({
     }
   }, [fetchOptions, loadingMore, page, query, pageSize]);
 
-  // Eager first page on open; debounced fetch on query change (async mode only).
+  // Eager first page on open; debounced fetch on query change (async mode only). A seeded
+  // query is not a keystroke, it is what the caller already knew, so it fetches on open at
+  // once rather than after the typing debounce.
   React.useEffect(() => {
     if (!isAsync || !open) return;
-    const t = setTimeout(() => void runFetch(query), query === '' ? 0 : 300);
+    const seeded = query === '' || query === initialQuery;
+    const t = setTimeout(() => void runFetch(query), seeded ? 0 : 300);
     return () => clearTimeout(t);
-  }, [isAsync, open, query, runFetch]);
+  }, [isAsync, open, query, initialQuery, runFetch]);
 
-  // Reset transient async state when the popover closes.
+  // Reset transient async state when the popover closes. Back to the seed, not to blank:
+  // reopening asks the same question it asked the first time.
   React.useEffect(() => {
     if (open) return;
-    setQuery('');
+    setQuery(initialQuery);
     lastQueryRef.current = '\u0000';
-  }, [open]);
+  }, [open, initialQuery]);
 
   const baseOptions = React.useMemo(
     () => (isAsync ? asyncOptions : (options ?? [])),

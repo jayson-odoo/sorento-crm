@@ -103,8 +103,16 @@ describe('buildColumnStates', () => {
       'po_mismatch',
       'reported_mismatch',
     ]);
-    expect(column.blockers[0].detail).toContain('Our total is 8, the PO orders 16 (-8)');
-    expect(column.blockers[1].detail).toContain("TOTAL QTY says 16");
+    // The numbers, the size of the gap in words rather than as a sign to decode, and what
+    // to do about it.
+    expect(column.blockers[0].detail).toBe(
+      'The schedule asks for 8 and the PO orders 16, 8 short. ' +
+        'Correct a phase quantity, or amend the PO.',
+    );
+    expect(column.blockers[1].detail).toBe(
+      "The phases add up to 8 but the schedule's own TOTAL QTY row says 16. " +
+        'One of the two was misread, so check the cells against the paper.',
+    );
   });
 
   it('flips to reconciled on an edit, without waiting for the server', () => {
@@ -141,7 +149,15 @@ describe('buildColumnStates', () => {
       'needs_product',
       'not_on_po',
     ]);
-    expect(column.blockers[0].detail).toContain('BUI-HB-SRTWB7055');
+    // Both sentences end in the thing to do next, which is what a reviewer seeing this
+    // screen for the first time asked for out loud.
+    expect(column.blockers[0].detail).toBe(
+      'BUI-HB-SRTWB7055 is not matched to a product. Pick the product this column means.',
+    );
+    expect(column.blockers[1].detail).toBe(
+      'The PO version does not order this item, but the schedule asks for 927. ' +
+        'Check the column is the right product, or amend the PO.',
+    );
   });
 
   it('marks a column a remembered customer code resolved by itself', () => {

@@ -6,7 +6,7 @@
  * is a card carrying its three totals, and only the open one mounts quantity fields.
  */
 import React from 'react';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { buildColumnStates, groupPhasesByArea } from '../lib/scheduleTotals';
 import { DeliveryScheduleColumnCards } from './DeliveryScheduleColumnCards';
@@ -82,6 +82,7 @@ function controller(overrides: Partial<ScheduleGridController> = {}): ScheduleGr
     canEdit: true,
     learnedColumns: [],
     registerColumnRef: vi.fn(),
+    focusRequest: null,
     ...overrides,
   };
 }
@@ -128,12 +129,63 @@ describe('DeliveryScheduleColumnCards', () => {
     fireEvent.click(cards.getAllByRole('button', { expanded: false })[1]);
 
     expect(
-      cards.getByText('BUI-HB-SRTWB7055 is not matched to a product.'),
+      cards.getByText(
+        'BUI-HB-SRTWB7055 is not matched to a product. Pick the product this column means.',
+      ),
     ).toBeInTheDocument();
     expect(
       cards.getByLabelText('Pick the product for BUI-HB-SRTWB7055'),
     ).toBeInTheDocument();
     expect(cards.getByLabelText('Level 2 & 7, BUI-HB-SRTWB7055')).toBeDisabled();
+  });
+
+  it('lets a wrong-but-resolved column be changed, same as the matrix', () => {
+    render(<DeliveryScheduleColumnCards controller={controller()} />);
+    const cards = within(screen.getByTestId('schedule-columns-mobile'));
+
+    // SRTFV1001 is matched already and still does not reconcile. Withholding the picker
+    // here left a wrong match unfixable without deleting something.
+    fireEvent.click(cards.getAllByRole('button', { expanded: false })[0]);
+    expect(
+      cards.getByLabelText('Change the product for BUI-HB-SRTFV1001'),
+    ).toBeInTheDocument();
+  });
+
+  it('opens the asked-for card and puts the cursor in its first quantity', async () => {
+    // The component checks it is the view on screen before expanding anything, and jsdom
+    // lays nothing out, so this is what "the phone is the width being used" looks like.
+    const offsetParent = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'offsetParent',
+    );
+    Object.defineProperty(HTMLElement.prototype, 'offsetParent', {
+      configurable: true,
+      get() {
+        return document.body;
+      },
+    });
+
+    try {
+      const { rerender } = render(
+        <DeliveryScheduleColumnCards controller={controller()} />,
+      );
+      const cards = within(screen.getByTestId('schedule-columns-mobile'));
+      expect(cards.queryByLabelText('Phase 3, SRTFV1001')).toBeNull();
+
+      rerender(
+        <DeliveryScheduleColumnCards
+          controller={controller({ focusRequest: { key: 'p5', nonce: 1 } })}
+        />,
+      );
+
+      await waitFor(() =>
+        expect(cards.getByLabelText('Level 2 & 7, SRTFV1001')).toHaveFocus(),
+      );
+    } finally {
+      if (offsetParent) {
+        Object.defineProperty(HTMLElement.prototype, 'offsetParent', offsetParent);
+      }
+    }
   });
 
   it('offers no picker and no editing when the user cannot edit', () => {
@@ -142,6 +194,7 @@ describe('DeliveryScheduleColumnCards', () => {
 
     fireEvent.click(cards.getAllByRole('button', { expanded: false })[1]);
     expect(cards.queryByLabelText(/Pick the product/i)).toBeNull();
+    expect(cards.queryByLabelText(/Change the product/i)).toBeNull();
     expect(cards.getByLabelText('Level 2 & 7, BUI-HB-SRTWB7055')).toBeDisabled();
   });
 });

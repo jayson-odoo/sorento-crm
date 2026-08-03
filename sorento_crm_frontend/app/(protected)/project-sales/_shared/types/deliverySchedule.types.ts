@@ -110,6 +110,8 @@ export interface DeliveryScheduleVersion {
   extraction_error?: string | null;
   page_count?: number | null;
   pages_extracted?: number | null;
+  /** Additive: how long the model took. Null on documents read before it was recorded. */
+  extraction_elapsed_ms?: number | null;
 
   /** GUESS: the header must name the PO and the person without rendering a UUID. */
   purchase_order_id?: string | null;

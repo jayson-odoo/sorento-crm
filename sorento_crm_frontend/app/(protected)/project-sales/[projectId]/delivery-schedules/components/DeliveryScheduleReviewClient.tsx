@@ -21,6 +21,7 @@ import {
   useDeliveryScheduleVersionMutations,
 } from '../../../_shared/hooks/useDeliverySchedules';
 import { resolveExtractionPhase } from '../../../_shared/types/deliverySchedule.types';
+import { describeReadingTime } from '../../../_shared/lib/readingTime';
 import type { DeliveryScheduleConfirmBody } from '../../../_shared/types/deliverySchedule.types';
 import { ReconciliationBadge } from '../../components/DeliverySchedulesPanel';
 import {
@@ -39,7 +40,8 @@ import type { ColumnState } from '../lib/scheduleTotals';
 import { DeliveryScheduleColumnCards } from './DeliveryScheduleColumnCards';
 import { DeliveryScheduleConfirmDialog } from './DeliveryScheduleConfirmDialog';
 import { DeliveryScheduleMatrix } from './DeliveryScheduleMatrix';
-import type { ScheduleGridController } from './DeliveryScheduleMatrix';
+import type { ColumnFocusRequest, ScheduleGridController } from './DeliveryScheduleMatrix';
+import { DeliveryScheduleReconciliationList } from './DeliveryScheduleReconciliationList';
 
 /**
  * Reviewing one version of a delivery schedule.
@@ -61,6 +63,12 @@ export function DeliveryScheduleReviewClient({
   const live = useDeliveryScheduleVersion(versionId, { enabled: !demo });
   const view = demo ? demoScheduleVersionState(demo) : live;
   const version = view.data;
+  // Only once the read has finished. Beside a spinner a duration reads as the total,
+  // which it is not yet.
+  const readingTime =
+    version && version.extraction_state !== 'queued' && version.extraction_state !== 'running'
+      ? describeReadingTime(version.extraction_elapsed_ms)
+      : null;
 
   const { saveCells, resolveProduct, confirm } = useDeliveryScheduleVersionMutations(
     projectId,
@@ -70,7 +78,23 @@ export function DeliveryScheduleReviewClient({
   const [drafts, setDrafts] = React.useState<Map<string, string>>(new Map());
   const [learnedColumns, setLearnedColumns] = React.useState<number[]>([]);
   const [confirming, setConfirming] = React.useState(false);
-  const columnRefs = React.useRef<Map<string, HTMLElement>>(new Map());
+  /**
+   * The column a "Fix the quantities" press asked to be put INSIDE.
+   *
+   * Scrolling a column into view leaves the reviewer next to the thing they have to type in
+   * rather than in it, which on a 38-column matrix still means hunting for the cell. The
+   * nonce is what makes a second press of the same button fire again: the key alone would
+   * be an unchanged value and the views would ignore it.
+   */
+  const [focusRequest, setFocusRequest] = React.useState<ColumnFocusRequest>(null);
+  /**
+   * A column has TWO nodes, not one: the matrix and the phone cards are both mounted and a
+   * media query hides one of them. A single slot per column would hold whichever registered
+   * last, so a reconciliation row clicked on a desktop would scroll to a `display: none`
+   * card and appear to do nothing. Both are kept, and the one that is actually laid out is
+   * chosen at click time.
+   */
+  const columnRefs = React.useRef<Map<string, Set<HTMLElement>>>(new Map());
 
   const phase = version ? resolveExtractionPhase(version) : 'queued';
   const canEdit =
@@ -104,16 +128,41 @@ export function DeliveryScheduleReviewClient({
   const reconciledCount = columns.length - blocking.length;
 
   const registerColumnRef = React.useCallback((key: string, node: HTMLElement | null) => {
-    if (node) columnRefs.current.set(key, node);
-    else columnRefs.current.delete(key);
+    // A ref callback reports its unmount as a bare null and never says which node it was
+    // holding, so nothing is removed here; the detached ones are swept on the next jump.
+    if (!node) return;
+    const nodes = columnRefs.current.get(key);
+    if (nodes) nodes.add(node);
+    else columnRefs.current.set(key, new Set([node]));
   }, []);
 
   // jsdom implements no scrollIntoView, hence the optional call.
   const jumpToColumn = React.useCallback((key: string) => {
-    columnRefs.current
-      .get(key)
-      ?.scrollIntoView?.({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    const nodes = columnRefs.current.get(key);
+    if (!nodes) return;
+    for (const node of nodes) if (!node.isConnected) nodes.delete(node);
+    // `offsetParent` is null for anything a media query has hidden, which is exactly the
+    // shape of the grid this width is not using. jsdom lays nothing out, so it is null
+    // there for every node and the first one stands in.
+    const live = Array.from(nodes);
+    const target = live.find((node) => node.offsetParent !== null) ?? live[0];
+    target?.scrollIntoView?.({ behavior: 'smooth', inline: 'center', block: 'nearest' });
   }, []);
+
+  /**
+   * Both: bring the column on screen, then hand it the cursor.
+   *
+   * The two views answer the request themselves because only they know which of their own
+   * cells is the first editable one, and on a phone the card has to open before there is a
+   * field to focus at all.
+   */
+  const jumpAndFocusColumn = React.useCallback(
+    (key: string) => {
+      jumpToColumn(key);
+      setFocusRequest((previous) => ({ key, nonce: (previous?.nonce ?? 0) + 1 }));
+    },
+    [jumpToColumn],
+  );
 
   const valueFor = React.useCallback(
     (phaseId: string, columnKey: string) => {
@@ -212,7 +261,14 @@ export function DeliveryScheduleReviewClient({
     canEdit,
     learnedColumns,
     registerColumnRef,
+    focusRequest,
   };
+
+  // Only when this schedule was actually checked against a PO version; there is nothing to
+  // open otherwise, and a dead link is worse than no link.
+  const poHref = version?.po_version_id
+    ? `/project-sales/${projectId}/purchase-orders/${version.po_version_id}`
+    : null;
 
   if (view.isLoading) {
     return <ReviewSkeleton />;
@@ -260,6 +316,7 @@ export function DeliveryScheduleReviewClient({
             {version.po_version_no !== null && version.po_version_no !== undefined && (
               <span>{`Checked against PO version ${version.po_version_no}`}</span>
             )}
+            {readingTime && <span>{readingTime}</span>}
           </p>
         </div>
 
@@ -363,32 +420,45 @@ export function DeliveryScheduleReviewClient({
               <CardTitle className="text-sm">Reconciliation</CardTitle>
               <ReconciliationBadge reconciled={reconciledCount} total={columns.length} />
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-3">
+              {/* What the section is for, in one line. Without it the rows read as a list
+                  of complaints with no stated purpose, which is what "what do I need to do
+                  with them" was asking. */}
+              <p className="text-sm text-muted-foreground">
+                {canEdit
+                  ? 'Every column has to agree with the PO before this schedule can be confirmed.'
+                  : 'This schedule is confirmed, so nothing here can be changed. What follows is what did not agree with the PO at the time it was confirmed.'}
+              </p>
               {blocking.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  Every column agrees with the PO and with the schedule&apos;s own totals.
+                  Nothing to fix. Every one of them matches the PO and the schedule&apos;s
+                  own totals.
                 </p>
               ) : (
-                <ul className="flex flex-wrap gap-2">
-                  {blocking.map((column) => (
-                    <li key={column.key}>
-                      <button
-                        type="button"
-                        onClick={() => jumpToColumn(column.key)}
-                        className="rounded-md border border-destructive/40 bg-destructive/5 px-2.5 py-1.5 text-start text-xs hover:bg-destructive/10"
-                      >
-                        <span className="block max-w-[220px] truncate font-medium">
-                          {column.productCode ??
-                            column.customerCode ??
-                            'Unidentified column'}
-                        </span>
-                        <span className="block max-w-[260px] truncate text-muted-foreground">
-                          {column.blockers[0]?.detail}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  {/* How much is left, so a column fixed is a number going down rather than
+                      a row quietly leaving a list. */}
+                  {/* "Still to fix" is a to-do. On a confirmed schedule there is nothing
+                      to do, so the same number has to be reported as a finding instead, or
+                      the screen asks for work it will not accept. */}
+                  <p data-testid="reconciliation-remaining" className="text-sm font-medium">
+                    {canEdit
+                      ? blocking.length === 1
+                        ? '1 column still to fix.'
+                        : `${blocking.length} columns still to fix.`
+                      : blocking.length === 1
+                        ? '1 column did not agree.'
+                        : `${blocking.length} columns did not agree.`}
+                  </p>
+                  <DeliveryScheduleReconciliationList
+                    columns={blocking}
+                    canEdit={canEdit}
+                    poHref={poHref}
+                    onJump={jumpToColumn}
+                    onFixQuantities={jumpAndFocusColumn}
+                    onResolveProduct={onResolveProduct}
+                  />
+                </>
               )}
             </CardContent>
           </Card>

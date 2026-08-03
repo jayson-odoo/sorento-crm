@@ -9,6 +9,41 @@ import type { ColumnState } from '../lib/scheduleTotals';
 import { phaseRowLabel } from '../lib/scheduleTotals';
 import { DeliveryScheduleProductPicker } from './DeliveryScheduleProductPicker';
 
+/**
+ * A request to put the cursor in a column, with a nonce so pressing the same button twice
+ * is two requests rather than one unchanged value the views would ignore.
+ */
+export type ColumnFocusRequest = { key: string; nonce: number } | null;
+
+/**
+ * The first cell of this column that can actually be typed into.
+ *
+ * Queried out of the DOM rather than tracked in a ref map because the answer depends on
+ * document order, which is the one thing the DOM already knows. `data-column-key` carries a
+ * product UUID or a `#2` placeholder; both are safe inside a quoted attribute selector.
+ */
+export function firstEditableCell(
+  root: HTMLElement | null,
+  columnKey: string,
+): HTMLInputElement | null {
+  if (!root) return null;
+  const cells = root.querySelectorAll<HTMLInputElement>(
+    `input[data-column-key="${columnKey}"]`,
+  );
+  for (const cell of Array.from(cells)) if (!cell.disabled) return cell;
+  return null;
+}
+
+/**
+ * Whether this view is the one the breakpoint is actually showing.
+ *
+ * `offsetParent` is null for anything a media query has hidden, which is exactly the shape of
+ * the grid this width is not using. jsdom lays nothing out, so it is null there for both.
+ */
+export function isDisplayed(node: HTMLElement | null): boolean {
+  return Boolean(node && node.offsetParent !== null);
+}
+
 /** Everything the two views of the grid need. Built once in the review client. */
 export interface ScheduleGridController {
   columns: ColumnState[];
@@ -22,10 +57,44 @@ export interface ScheduleGridController {
   /** Column indexes whose product was just identified, so the map note is shown once. */
   learnedColumns: number[];
   registerColumnRef: (columnKey: string, node: HTMLElement | null) => void;
+  /**
+   * A column the reviewer asked to be put inside, from the reconciliation list.
+   *
+   * Both views watch it. The matrix answers unconditionally because a browser refuses focus
+   * to an element it is not rendering, so at phone width its attempt is a no-op; the phone
+   * cards check they are on screen first, because answering there means EXPANDING a card,
+   * which is a visible change and must not happen in a view nobody is looking at.
+   */
+  focusRequest: ColumnFocusRequest;
 }
 
 const PHASE_COL = 'w-[200px] min-w-[200px] max-w-[200px]';
 const DATA_COL = 'w-[172px] min-w-[172px] max-w-[172px]';
+
+/**
+ * Two paint layers, and every pinned cell names the one it is on.
+ *
+ * A cell pinned on BOTH axes (the "Phase" heading, each totals label) has to beat a cell
+ * pinned on one, because those are the only two that ever cover the same pixels, and with
+ * equal z-index the winner is whichever the DOM happened to put last rather than whichever
+ * a reader expects to see.
+ */
+const Z_PINNED = 'z-20';
+const Z_CORNER = 'z-30';
+
+/**
+ * A pinned cell has to be OPAQUE, and this is the whole of the "stray number in the header"
+ * report.
+ *
+ * `bg-destructive/10` is ninety percent transparent, so an unreconciled column's header and
+ * totals band were tinted glass: a quantity scrolling underneath showed straight through
+ * them and read as a number appearing in the header row. Nothing about the z-index was
+ * wrong, the header simply had almost no paint on it. `color-mix` gives the same tint as a
+ * solid colour, which is what a pinned cell needs. It is also the only way to tint these
+ * tokens: the theme resolves them to `oklch(...)`, so `hsl(var(--destructive) / 0.1)` would
+ * be dropped by the browser as invalid.
+ */
+const UNRECONCILED_BG = 'bg-[color-mix(in_oklab,var(--destructive)_12%,var(--muted))]';
 
 /**
  * The schedule as the customer drew it: phase rows down, product columns across, grouped by
@@ -47,10 +116,21 @@ export function DeliveryScheduleMatrix({
 }: {
   controller: ScheduleGridController;
 }) {
-  const { columns, phaseGroups } = controller;
+  const { columns, phaseGroups, focusRequest } = controller;
+  const rootRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!focusRequest) return;
+    const cell = firstEditableCell(rootRef.current, focusRequest.key);
+    if (!cell) return;
+    cell.focus();
+    // jsdom implements no scrollIntoView, hence the optional call.
+    cell.scrollIntoView?.({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+  }, [focusRequest]);
 
   return (
     <div
+      ref={rootRef}
       data-testid="schedule-matrix"
       className="relative max-h-[70vh] w-full overflow-auto overscroll-x-contain rounded-lg border border-border"
     >
@@ -61,7 +141,8 @@ export function DeliveryScheduleMatrix({
               scope="col"
               className={cn(
                 PHASE_COL,
-                'sticky left-0 top-0 z-30 border-b border-e border-border bg-muted px-2 py-2 text-start align-bottom font-medium',
+                Z_CORNER,
+                'sticky left-0 top-0 border-b border-e border-border bg-muted px-2 py-2 text-start align-bottom font-medium',
               )}
             >
               Phase
@@ -73,8 +154,9 @@ export function DeliveryScheduleMatrix({
                 ref={(node) => controller.registerColumnRef(column.key, node)}
                 className={cn(
                   DATA_COL,
-                  'sticky top-0 z-20 border-b border-e border-border px-2 py-2 text-start align-bottom font-medium',
-                  column.reconciled ? 'bg-muted' : 'bg-destructive/10',
+                  Z_PINNED,
+                  'sticky top-0 border-b border-e border-border px-2 py-2 text-start align-bottom font-medium',
+                  column.reconciled ? 'bg-muted' : UNRECONCILED_BG,
                 )}
               >
                 <ColumnHeading column={column} controller={controller} />
@@ -91,7 +173,8 @@ export function DeliveryScheduleMatrix({
                   scope="colgroup"
                   className={cn(
                     PHASE_COL,
-                    'sticky left-0 z-10 border-b border-e border-border bg-accent px-2 py-1.5 text-start text-[11px] font-semibold uppercase tracking-wide',
+                    Z_PINNED,
+                    'sticky left-0 border-b border-e border-border bg-accent px-2 py-1.5 text-start text-[11px] font-semibold uppercase tracking-wide',
                   )}
                 >
                   {group.area ?? 'Ungrouped'}
@@ -108,7 +191,8 @@ export function DeliveryScheduleMatrix({
                     scope="row"
                     className={cn(
                       PHASE_COL,
-                      'sticky left-0 z-10 border-b border-e border-border bg-background px-2 py-1.5 text-start font-normal',
+                      Z_PINNED,
+                      'sticky left-0 border-b border-e border-border bg-background px-2 py-1.5 text-start font-normal',
                     )}
                   >
                     <span
@@ -139,6 +223,7 @@ export function DeliveryScheduleMatrix({
                         <input
                           type="text"
                           inputMode="decimal"
+                          data-column-key={column.key}
                           // Quantities stay strings end to end (contract convention): the
                           // value is never parsed here, only echoed back to the API.
                           value={value}
@@ -238,12 +323,21 @@ function ColumnHeading({
         </Badge>
       )}
 
-      {!column.productId && controller.canEdit && (
+      {/**
+       * A column that HAS a product can still have the wrong one, and that is the usual
+       * reason a PO looks like it never ordered the item. Offering the picker only to the
+       * unidentified columns made a wrong match unfixable without deleting something. So:
+       * no product, a field to fill; wrong product, a quiet "Change the product" that does
+       * not spend a 172px header on a select box. A reconciled column is left alone.
+       */}
+      {controller.canEdit && !column.reconciled && (
         <div className="pt-0.5 font-normal">
           <DeliveryScheduleProductPicker
             idPrefix="schedule-matrix"
             columnIndex={column.index}
             customerCode={column.customerCode}
+            action={column.productId ? 'Change the product' : 'Pick the product'}
+            variant={column.productId ? 'compact' : 'field'}
             onPick={(productId) => controller.resolveProduct(column.index, productId)}
           />
         </div>
@@ -281,7 +375,8 @@ function TotalsRow({
         scope="row"
         className={cn(
           PHASE_COL,
-          'sticky bottom-0 left-0 z-30 border-t border-e border-border bg-muted px-2 py-1.5 text-start text-[11px] font-semibold',
+          Z_CORNER,
+          'sticky bottom-0 left-0 border-t border-e border-border bg-muted px-2 py-1.5 text-start text-[11px] font-semibold',
         )}
       >
         {label}
@@ -294,10 +389,14 @@ function TotalsRow({
             key={column.key}
             className={cn(
               DATA_COL,
-              'sticky bottom-0 z-10 border-t border-e border-border bg-muted px-2 py-1.5 text-end tabular-nums',
+              Z_PINNED,
+              'sticky bottom-0 border-t border-e border-border px-2 py-1.5 text-end tabular-nums',
+              // One background class, never two to be resolved later: which of two
+              // competing `bg-*` utilities wins is decided by stylesheet order, not by
+              // the order they are listed here.
+              column.reconciled ? 'bg-muted' : UNRECONCILED_BG,
               emphasise && 'font-semibold',
               wrong && 'text-destructive',
-              !column.reconciled && 'bg-destructive/10',
             )}
           >
             {value ?? (

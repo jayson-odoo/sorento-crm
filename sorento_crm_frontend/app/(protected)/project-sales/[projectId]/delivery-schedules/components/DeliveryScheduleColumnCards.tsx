@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { phaseRowLabel } from '../lib/scheduleTotals';
+import { firstEditableCell, isDisplayed } from './DeliveryScheduleMatrix';
 import type { ScheduleGridController } from './DeliveryScheduleMatrix';
 import { DeliveryScheduleProductPicker } from './DeliveryScheduleProductPicker';
 
@@ -25,15 +26,47 @@ export function DeliveryScheduleColumnCards({
   controller: ScheduleGridController;
 }) {
   const [openKey, setOpenKey] = React.useState<string | null>(null);
-  const { columns, phaseGroups } = controller;
+  const { columns, phaseGroups, focusRequest } = controller;
+  const rootRef = React.useRef<HTMLDivElement>(null);
+
+  /**
+   * "Fix the quantities" on a phone has to open the card first: a closed card mounts no
+   * fields at all, so there is nothing to focus until it is open. Two effects, because the
+   * field only exists in the commit AFTER the one that opened the card.
+   *
+   * Only when this view is the one on screen. Opening a card is a visible change, and at
+   * desktop width the matrix is answering the same request.
+   */
+  React.useEffect(() => {
+    if (focusRequest && isDisplayed(rootRef.current)) setOpenKey(focusRequest.key);
+  }, [focusRequest]);
+
+  // The nonce already answered, so opening the same card again by hand later does not
+  // silently grab the cursor a second time.
+  const answered = React.useRef(0);
+
+  React.useEffect(() => {
+    if (!focusRequest || openKey !== focusRequest.key) return;
+    if (answered.current === focusRequest.nonce) return;
+    answered.current = focusRequest.nonce;
+    const cell = firstEditableCell(rootRef.current, focusRequest.key);
+    if (!cell) return;
+    cell.focus();
+    // jsdom implements no scrollIntoView, hence the optional call.
+    cell.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+  }, [focusRequest, openKey]);
 
   return (
-    <div data-testid="schedule-columns-mobile" className="space-y-2">
+    <div ref={rootRef} data-testid="schedule-columns-mobile" className="space-y-2">
       {columns.map((column) => {
         const open = openKey === column.key;
         return (
           <div
             key={column.key}
+            // The same registration the matrix does, so the reconciliation list above
+            // reaches its column on a phone too. Without it the list is a dead click at
+            // 375px: the matrix that owns the refs is not rendered at that width.
+            ref={(node) => controller.registerColumnRef(column.key, node)}
             className={cn(
               'rounded-lg border',
               column.reconciled ? 'border-border' : 'border-destructive/40 bg-destructive/5',
@@ -109,11 +142,14 @@ export function DeliveryScheduleColumnCards({
                   </ul>
                 )}
 
-                {!column.productId && controller.canEdit && (
+                {/* Same rule as the matrix, so the two views cannot drift: a wrong-but-
+                    resolved column is correctable here too, without deleting anything. */}
+                {controller.canEdit && !column.reconciled && (
                   <DeliveryScheduleProductPicker
                     idPrefix="schedule-phone"
                     columnIndex={column.index}
                     customerCode={column.customerCode}
+                    action={column.productId ? 'Change the product' : 'Pick the product'}
                     onPick={(productId) =>
                       controller.resolveProduct(column.index, productId)
                     }
@@ -149,6 +185,7 @@ export function DeliveryScheduleColumnCards({
                           <input
                             type="text"
                             inputMode="decimal"
+                            data-column-key={column.key}
                             value={controller.valueFor(phase.id, column.key)}
                             disabled={!controller.canEdit || !column.productId}
                             aria-label={`${phaseRowLabel(phase)}, ${

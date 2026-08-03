@@ -144,6 +144,20 @@ export interface ColumnState {
   blockers: ColumnBlocker[];
 }
 
+/**
+ * The size of a disagreement in words: ", 18 short" or ", 18 over".
+ *
+ * "(-18)" is a sign a reader has to decode, and half of them decode it backwards. Empty
+ * when the difference cannot be computed, so the sentence around it still reads.
+ */
+function describeGap(delta: string | null): string {
+  if (delta === null) return '';
+  const short = delta.startsWith('-');
+  const size = short ? delta.slice(1) : delta;
+  if (size === '0') return '';
+  return `, ${size} ${short ? 'short' : 'over'}`;
+}
+
 interface CellLike {
   phase_id: string;
   product_id: string | null;
@@ -230,36 +244,45 @@ export function buildColumnStates(
     const reportedTotal = normaliseQty(product.reported_total);
     const poQty = normaliseQty(product.po_qty);
 
+    /**
+     * Every sentence names the fact AND the next action.
+     *
+     * "Our total is 240, the PO orders 258 (-18)." states what is and leaves the reviewer
+     * to work out what to do about it, which is the question they asked out loud the first
+     * time they saw this screen. The numbers are the same numbers; what follows them is
+     * what to click next.
+     */
     const blockers: ColumnBlocker[] = [];
     if (!product.product_id) {
       blockers.push({
         code: 'needs_product',
         detail: product.customer_code_raw
-          ? `${product.customer_code_raw} is not matched to a product.`
-          : 'This column is not matched to a product.',
+          ? `${product.customer_code_raw} is not matched to a product. Pick the product this column means.`
+          : 'This column is not matched to a product. Pick the product it means.',
       });
     }
     if (poQty === null) {
       blockers.push({
         code: 'not_on_po',
-        detail: `Our total is ${ourTotal}. The PO version does not order this item.`,
+        detail:
+          `The PO version does not order this item, but the schedule asks for ${ourTotal}. ` +
+          'Check the column is the right product, or amend the PO.',
       });
     } else if (!qtyEquals(ourTotal, poQty)) {
-      const delta = subtractQty(ourTotal, poQty);
+      const gap = describeGap(subtractQty(ourTotal, poQty));
       blockers.push({
         code: 'po_mismatch',
-        detail: `Our total is ${ourTotal}, the PO orders ${poQty}${
-          delta ? ` (${signedQty(delta)})` : ''
-        }.`,
+        detail:
+          `The schedule asks for ${ourTotal} and the PO orders ${poQty}${gap}. ` +
+          'Correct a phase quantity, or amend the PO.',
       });
     }
     if (reportedTotal !== null && !qtyEquals(ourTotal, reportedTotal)) {
-      const delta = subtractQty(ourTotal, reportedTotal);
       blockers.push({
         code: 'reported_mismatch',
-        detail: `Our total is ${ourTotal}, the schedule's TOTAL QTY says ${reportedTotal}${
-          delta ? ` (${signedQty(delta)})` : ''
-        }.`,
+        detail:
+          `The phases add up to ${ourTotal} but the schedule's own TOTAL QTY row says ` +
+          `${reportedTotal}. One of the two was misread, so check the cells against the paper.`,
       });
     }
 
