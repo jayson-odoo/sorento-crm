@@ -194,16 +194,50 @@ def list_brochure_images(
         .exists()
     )
 
-    # Both numbers the screen leads with, in one statement. FILTER is Postgres's
+    # Whether a product has ANY image somebody could pick, chosen or not. The
+    # conditions mirror the candidate query below exactly, minus `is_primary` -
+    # counting a PDF or a deleted file here would promise a choice the screen
+    # then fails to offer.
+    candidate_exists = (
+        db.query(ProductAttachment.id)
+        .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
+        .filter(
+            ProductAttachment.product_id == Product.id,
+            Attachment.mime_type.ilike("image/%"),
+            Attachment.is_deleted.is_(False),
+        )
+        .exists()
+    )
+
+    # Every number the screen leads with, in one statement. FILTER is Postgres's
     # conditional aggregate, and Postgres is the only substrate here.
-    total, remaining = products.with_entities(
+    #
+    # `choosable` answers a question the page cannot: "is there anything to do
+    # on this screen at all". A company with no product photos lands on a full
+    # page of products with nothing under any of them, which is indistinguishable
+    # from a page that failed to load until you have paged through 1,139 of them.
+    # Counted over the FILTER, not the visible set - counted over the latter, a
+    # fully answered catalogue would report 0 and claim it has no photos.
+    total, remaining, choosable = products.with_entities(
         func.count(Product.id),
         func.count(Product.id).filter(~chosen_exists),
+        func.count(Product.id).filter(candidate_exists),
     ).one()
 
     visible = products.filter(~chosen_exists) if only_unset else products
     window = (
-        visible.order_by(Product.product_code)
+        # Products somebody can actually act on first. Ordered by code alone,
+        # this screen opens on 25 products called "**NEW", "**REPAIR" and
+        # "11X11" - junk SKUs with no photograph, which sort to the top because
+        # they start with punctuation and digits - and the 533 that DO have a
+        # photo are somewhere in the remaining 456 pages. The first page a human
+        # meets has to be the one page they can work.
+        #
+        # Sorted down, never dropped: 465 of the flyer's codes have no photo and
+        # the answer there is a photo shoot, not a click. Hiding them would hide
+        # the work instead of naming it. Code order still decides within each
+        # group, so the list stays predictable.
+        visible.order_by(candidate_exists.desc(), Product.product_code)
         .offset((page - 1) * limit)
         .limit(limit)
         .all()
@@ -273,6 +307,7 @@ def list_brochure_images(
         "total": total,
         "remaining": remaining,
         "shown": shown,
+        "choosable": choosable,
     }
 
 

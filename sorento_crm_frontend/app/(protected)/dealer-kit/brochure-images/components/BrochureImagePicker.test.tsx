@@ -122,6 +122,7 @@ function page(items: BrochureImageRow[]): BrochureImagePage {
     total: items.length,
     remaining: items.filter((row) => !row.chosenAttachmentId).length,
     shown: items.length,
+    choosable: items.filter((row) => row.candidates.length > 0).length,
   };
 }
 
@@ -210,6 +211,7 @@ describe('BrochureImagePicker', () => {
       total: 998,
       remaining: 465,
       shown: 465,
+      choosable: 533,
     });
 
     renderPicker();
@@ -243,7 +245,11 @@ describe('BrochureImagePicker', () => {
   });
 
   it('keeps a product with no candidates in the list and says a photo is needed', async () => {
-    mockList.mockResolvedValue(page([NO_CANDIDATE_ROW]));
+    // Alongside a product that HAS one, which is the real shape of this
+    // catalogue: 465 of the flyer's codes have no photo and 533 do. A page whose
+    // only row has no candidate is a different situation entirely - there is
+    // nothing to choose between at all - and it has its own empty state below.
+    mockList.mockResolvedValue(page([NO_CANDIDATE_ROW, SINGLE_CANDIDATE_ROW]));
 
     renderPicker();
 
@@ -329,6 +335,7 @@ describe('BrochureImagePicker', () => {
       total: 998,
       remaining: 98,
       shown: 98,
+      choosable: 533,
     });
     mockSet.mockResolvedValue({ productId: 'p-2', chosenAttachmentId: 'att-30' });
 
@@ -358,6 +365,7 @@ describe('BrochureImagePicker', () => {
       total: 998,
       remaining: 98,
       shown: 98,
+      choosable: 533,
     });
     mockSet.mockRejectedValue(new Error('Attachment is not linked to this product'));
 
@@ -441,7 +449,7 @@ describe('BrochureImagePicker', () => {
       productCode: `SRT-${index}`,
       candidates: [candidate(100 + index, `SRT-${index}.jpg`)],
     }));
-    mockList.mockResolvedValue({ items: rows, total: 998, remaining: 98, shown: 98 });
+    mockList.mockResolvedValue({ items: rows, total: 998, remaining: 98, shown: 98, choosable: 533 });
 
     const { container } = renderPicker();
 
@@ -456,5 +464,108 @@ describe('BrochureImagePicker', () => {
 
     await waitFor(() => expect(mockList).toHaveBeenCalled());
     expect(mockList.mock.calls[0][0]).toMatchObject({ onlyUnset: true });
+  });
+});
+
+describe('BrochureImagePicker, a company with no product photos at all', () => {
+  /**
+   * The default landing state for such a company, and it used to read
+   * "11390 of 11390 still to choose" over a full page of products with nothing
+   * under any of them. Every word of that is true and the whole screen reads as
+   * broken, because "no photos anywhere" and "none on THIS page" are
+   * indistinguishable until you have paged through 1,139 of them.
+   *
+   * `choosable` is the filter-wide count that tells them apart, so these
+   * assertions are about which of the two answers the screen gives.
+   */
+  const NOTHING_ANYWHERE: BrochureImagePage = {
+    items: [NO_CANDIDATE_ROW],
+    total: 11390,
+    remaining: 11390,
+    shown: 11390,
+    choosable: 0,
+  };
+
+  it('says there is nothing to choose from, not that there is work to do', async () => {
+    mockList.mockResolvedValue(NOTHING_ANYWHERE);
+
+    const { container } = renderPicker();
+
+    await waitFor(() =>
+      expect(container.querySelector('[data-dk-bi-no-photos]')).not.toBeNull(),
+    );
+    expect(screen.getByText(/no product here has a photo to choose from yet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/11390 of 11390 still to choose/i)).toBeNull();
+  });
+
+  it('counts the products rather than promising choices that cannot be made', async () => {
+    mockList.mockResolvedValue(NOTHING_ANYWHERE);
+
+    renderPicker();
+
+    await screen.findByText(/none with a photo yet/i);
+    expect(screen.getByText('11390 products, none with a photo yet')).toBeInTheDocument();
+  });
+
+  it('sends them where photos are attached', async () => {
+    mockList.mockResolvedValue(NOTHING_ANYWHERE);
+
+    renderPicker();
+
+    const link = await screen.findByRole('link', { name: /go to files/i });
+    expect(link).toHaveAttribute('href', '/resource-management/attachment-directories');
+  });
+
+  it('does not also render rows, the page banner or a pager behind it', async () => {
+    // 456 pages of products with no photos is a lot of nothing to page through,
+    // and the page-scoped "1 product on this page has no photo" restates what
+    // the empty state just said about all 11,390 as if it were a local problem.
+    mockList.mockResolvedValue(NOTHING_ANYWHERE);
+
+    const { container } = renderPicker();
+
+    await waitFor(() =>
+      expect(container.querySelector('[data-dk-bi-no-photos]')).not.toBeNull(),
+    );
+    expect(container.querySelector('[data-dk-bi-row="SRT2210-2"]')).toBeNull();
+    expect(container.querySelector('[data-dk-bi-pager]')).toBeNull();
+    expect(screen.queryByText(/on this page has no photo/i)).toBeNull();
+  });
+
+  it('is NOT shown to a catalogue that merely has none on this page', async () => {
+    // The boundary the whole field exists for. Same visible rows, same zero
+    // candidates among them - but the filter holds 533 products with photos, so
+    // this is an ordinary page and the ordinary banner is the right answer.
+    mockList.mockResolvedValue({
+      items: [NO_CANDIDATE_ROW],
+      total: 998,
+      remaining: 465,
+      shown: 465,
+      choosable: 533,
+    });
+
+    const { container } = renderPicker();
+
+    await screen.findByText('SRT2210-2');
+    expect(container.querySelector('[data-dk-bi-no-photos]')).toBeNull();
+    expect(screen.getByText(/465 of 998 still to choose/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 product on this page has no photo/i)).toBeInTheDocument();
+  });
+
+  it('is NOT shown for a finished catalogue, which is a different empty state', async () => {
+    // Everything answered: no rows left under the filter, but the photos are
+    // all there. Reporting "no photos anywhere" would be exactly backwards.
+    mockList.mockResolvedValue({
+      items: [],
+      total: 998,
+      remaining: 0,
+      shown: 0,
+      choosable: 998,
+    });
+
+    const { container } = renderPicker();
+
+    await waitFor(() => expect(container.querySelector('[data-dk-bi-empty]')).not.toBeNull());
+    expect(container.querySelector('[data-dk-bi-no-photos]')).toBeNull();
   });
 });

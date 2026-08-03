@@ -408,6 +408,11 @@ class BrochureImageList(BaseModel):
     # leads with, so it is counted over the whole filter and not the page.
     remaining: int = 0
     shown: int = 0
+    # Products in this filter with at least one image somebody could pick,
+    # chosen or not. Zero means the screen has nothing to offer at all, which is
+    # a different answer from "you have finished" and needs a different empty
+    # state. Counted over the filter, never over the page.
+    choosable: int = 0
 
 
 class BrochureImageSet(BaseModel):

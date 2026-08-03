@@ -19,6 +19,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Button } from '@/components/ui/button';
@@ -89,6 +90,11 @@ export function BrochureImagePicker() {
 
   const total = query.data?.total ?? 0;
   const remaining = query.data?.remaining ?? 0;
+  // Nothing in this filter has a photo to pick from. Distinct from "you have
+  // finished": the work here is a photo shoot, not a click, and the screen used
+  // to say "11390 of 11390 still to choose" over a page of products with nothing
+  // under any of them - true, and indistinguishable from a failed load.
+  const nothingToChooseFrom = query.isSuccess && total > 0 && (query.data?.choosable ?? 0) === 0;
   const withoutCandidates = rows.filter((row) => row.candidates.length === 0).length;
   // `shown`, not `total`: `total` counts everything matching the filter, while
   // the "only products still without an image" switch means only `shown` of them
@@ -170,12 +176,21 @@ export function BrochureImagePicker() {
           </div>
 
           <div className="text-sm text-muted-foreground" data-dk-bi-remaining>
-            {remaining} of {total} still to choose
+            {/* "11390 of 11390 still to choose" is a promise of work that cannot
+                be done: there is nothing to choose BETWEEN. Says what is true
+                instead, and the empty state below says what to do about it. */}
+            {nothingToChooseFrom
+              ? `${total} products, none with a photo yet`
+              : `${remaining} of ${total} still to choose`}
           </div>
         </CardContent>
       </Card>
 
-      {withoutCandidates > 0 && (
+      {/* Suppressed when nothing anywhere has a photo: "25 products on this page
+          have no photo" is a page-scoped restatement of what the empty state
+          below already says about all 11,390, and reads as a small local
+          problem rather than the state of the catalogue. */}
+      {withoutCandidates > 0 && !nothingToChooseFrom && (
         <Alert variant="warning" appearance="light">
           <AlertIcon>
             <TriangleAlert />
@@ -228,7 +243,25 @@ export function BrochureImagePicker() {
         </Alert>
       )}
 
-      {query.isSuccess && rows.length === 0 && (
+      {nothingToChooseFrom && (
+        <Card data-dk-bi-no-photos>
+          <CardContent className="flex flex-col items-center gap-2 py-14 text-center">
+            <ImageOff className="size-8 text-muted-foreground" />
+            <div className="text-base font-medium">
+              No product here has a photo to choose from yet
+            </div>
+            <p className="max-w-md text-sm text-muted-foreground">
+              This screen picks which of a product&apos;s photos goes on a brochure tile, so it
+              needs photos attached first. Attach them to the products, then come back and choose.
+            </p>
+            <Button variant="outline" size="sm" className="mt-2" asChild>
+              <Link href="/resource-management/attachment-directories">Go to Files</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {query.isSuccess && !nothingToChooseFrom && rows.length === 0 && (
         <Card data-dk-bi-empty>
           <CardContent className="flex flex-col items-center gap-2 py-14 text-center">
             <Check className="size-8 text-muted-foreground" />
@@ -241,6 +274,7 @@ export function BrochureImagePicker() {
       )}
 
       {query.isSuccess &&
+        !nothingToChooseFrom &&
         rows.map((row) => (
           <Card key={row.productId} data-dk-bi-row={row.productCode}>
             <CardHeader className="flex-col items-start gap-1 py-4">
@@ -325,7 +359,9 @@ export function BrochureImagePicker() {
           </Card>
         ))}
 
-      {query.isSuccess && pageCount > 1 && (
+      {/* No pager behind the empty state: 456 pages of products with no photos
+          is a lot of nothing to page through. */}
+      {query.isSuccess && !nothingToChooseFrom && pageCount > 1 && (
         <div className="flex items-center justify-between" data-dk-bi-pager>
           <span className="text-sm text-muted-foreground">
             Page {page} of {pageCount}

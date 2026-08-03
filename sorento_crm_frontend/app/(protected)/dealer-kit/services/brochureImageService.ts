@@ -32,7 +32,8 @@
  *   }],
  *   total: number,              // products matching the filter
  *   remaining: number,          // of those, the ones still without an image
- *   shown: number               // items on this page
+ *   shown: number,              // items on this page
+ *   choosable: number           // of those, the ones with a photo to pick from
  * }
  *
  * PUT /api/v1/master-data/product-attachments/brochure-images/{productId}
@@ -101,6 +102,12 @@ export interface BrochureImagePage {
   total: number;
   remaining: number;
   shown: number;
+  /**
+   * Products in this filter with a photo somebody could pick. Zero means the
+   * screen has nothing to offer at all - a different answer from "you have
+   * finished", and the reason the picker has two empty states.
+   */
+  choosable: number;
 }
 
 export interface BrochureImageListParams {
@@ -148,6 +155,10 @@ export async function listBrochureImages(
     total: body.total ?? items.length,
     remaining: body.remaining ?? items.filter((row) => !row.chosenAttachmentId).length,
     shown: body.shown ?? items.length,
+    // Falls back to what THIS page can prove rather than to 0. A backend that
+    // does not send the field would otherwise put every screen into the "no
+    // photos anywhere" state, including catalogues full of them.
+    choosable: body.choosable ?? items.filter((row) => row.candidates.length > 0).length,
   };
 }
 

@@ -635,3 +635,166 @@ class TestPaging:
         assert len(result["items"]) == 3
         assert result["remaining"] == 6
         assert max(rows) <= 3, f"a statement returned {max(rows)} rows for a page of 3"
+
+
+class TestNothingToChooseFrom:
+    """A company with no product photos at all lands on this screen.
+
+    Its default state used to read "11390 of 11390 still to choose" over a full
+    page of products with no photos under any of them - which is true, and reads
+    exactly like a screen that failed to load. The list cannot tell the two
+    apart from the page alone: "no photos anywhere" and "none on THIS page" look
+    identical until you page through 1,139 of them.
+
+    So the filter-wide count comes from the server, the same way `remaining`
+    does, and for the same reason.
+    """
+
+    def test_a_filter_with_no_photos_anywhere_says_so(self, db) -> None:
+        first = _product(db)
+        second = _product(db)
+
+        result = list_brochure_images(
+            db, product_ids=[first.id, second.id], only_unset=False
+        )
+
+        assert result["total"] == 2
+        assert result["choosable"] == 0
+
+    def test_one_product_with_a_photo_is_not_nothing(self, db) -> None:
+        """The boundary that matters: 1 is a working screen, 0 is an empty one."""
+        bare = _product(db)
+        photographed = _product(db)
+        _attach(db, photographed, "a.jpg")
+
+        result = list_brochure_images(
+            db, product_ids=[bare.id, photographed.id], only_unset=False
+        )
+
+        assert result["choosable"] == 1
+
+    def test_it_counts_the_whole_filter_and_not_the_page(self, db) -> None:
+        """Otherwise page 2 of a photographed catalogue could claim it is empty."""
+        products = [_product(db) for _ in range(4)]
+        for product in products:
+            _attach(db, product, "a.jpg")
+
+        result = list_brochure_images(
+            db, product_ids=[p.id for p in products], only_unset=False, limit=1
+        )
+
+        assert len(result["items"]) == 1
+        assert result["choosable"] == 4
+
+    def test_a_photo_that_cannot_be_chosen_does_not_count(self, db) -> None:
+        """Mirrors the candidate query exactly - a PDF and a deleted file are
+        both listed nowhere, so counting them would promise a choice the screen
+        cannot offer."""
+        product = _product(db)
+        _attach(db, product, "spec.pdf", mime="application/pdf")
+        _attach(db, product, "gone.jpg", deleted=True)
+
+        result = list_brochure_images(db, product_ids=[product.id], only_unset=False)
+
+        row = next(item for item in result["items"] if item["productId"] == product.id)
+        assert row["candidates"] == []
+        assert result["choosable"] == 0
+
+    def test_hiding_the_answered_ones_does_not_hide_them_from_this_count(
+        self, db
+    ) -> None:
+        """`choosable` answers "is there anything on this screen at all", so it
+        is counted over the filter rather than over what the switch leaves
+        visible. Counted over the visible set, a fully answered catalogue would
+        report 0 and claim it has no photos."""
+        product = _product(db)
+        link = _attach(db, product, "a.jpg")
+        link.is_primary = True
+        db.flush()
+
+        result = list_brochure_images(db, product_ids=[product.id], only_unset=True)
+
+        assert result["items"] == []
+        assert result["remaining"] == 0
+        assert result["choosable"] == 1
+
+
+class TestActionableProductsComeFirst:
+    """The default screen must open on work somebody can actually do.
+
+    Ordered by code alone, Sorento's picker opens on 25 products called
+    "**NEW", "**REPAIR", "11X11" and so on - junk SKUs with no photograph
+    attached, which sort to the top because they start with punctuation and
+    digits. The 533 products that DO have a photo to choose between are
+    somewhere in the remaining 456 pages, and the screen a human meets is a wall
+    of "No photo is linked to this product yet".
+
+    So products with a candidate sort first. Nothing is hidden - the ones with
+    no photo are still listed, still counted, and still reachable by paging -
+    but the first page is the one page that can be worked.
+    """
+
+    def test_a_product_with_a_photo_outranks_one_without(self, db) -> None:
+        stem = unique_code("ORD")
+        # Deliberately spelled so code order alone would put the bare one first.
+        bare = _product(db, code=f"{stem}-AAA")
+        photographed = _product(db, code=f"{stem}-ZZZ")
+        _attach(db, photographed, "a.jpg")
+
+        result = list_brochure_images(
+            db, product_ids=[bare.id, photographed.id], only_unset=False
+        )
+
+        assert [item["productId"] for item in result["items"]] == [
+            photographed.id,
+            bare.id,
+        ]
+
+    def test_code_order_still_decides_within_each_group(self, db) -> None:
+        """Otherwise the list has no order a human can predict."""
+        stem = unique_code("ORD")
+        second = _product(db, code=f"{stem}-B")
+        first = _product(db, code=f"{stem}-A")
+        _attach(db, first, "a.jpg")
+        _attach(db, second, "b.jpg")
+
+        result = list_brochure_images(
+            db, product_ids=[second.id, first.id], only_unset=False
+        )
+
+        assert [item["productId"] for item in result["items"]] == [first.id, second.id]
+
+    def test_a_product_with_no_photo_is_still_listed(self, db) -> None:
+        """Sorted down the list, never dropped from it. 465 of the flyer's codes
+        are in that state and the answer there is a photo shoot, not a click -
+        hiding them would hide the work instead of naming it."""
+        stem = unique_code("ORD")
+        bare = _product(db, code=f"{stem}-AAA")
+        photographed = _product(db, code=f"{stem}-ZZZ")
+        _attach(db, photographed, "a.jpg")
+
+        result = list_brochure_images(
+            db, product_ids=[bare.id, photographed.id], only_unset=False
+        )
+
+        assert result["total"] == 2
+        assert bare.id in {item["productId"] for item in result["items"]}
+
+    def test_a_photo_that_cannot_be_chosen_does_not_promote_a_product(self, db) -> None:
+        """Mirrors the candidate query, like every other count here. A product
+        whose only file is a PDF shows an empty tile strip, so promoting it would
+        put an unworkable row at the top of the screen."""
+        stem = unique_code("ORD")
+        pdf_only = _product(db, code=f"{stem}-AAA")
+        _attach(db, pdf_only, "spec.pdf", mime="application/pdf")
+        photographed = _product(db, code=f"{stem}-ZZZ")
+        _attach(db, photographed, "a.jpg")
+
+        result = list_brochure_images(
+            db, product_ids=[pdf_only.id, photographed.id], only_unset=False
+        )
+
+        assert [item["productId"] for item in result["items"]] == [
+            photographed.id,
+            pdf_only.id,
+        ]
