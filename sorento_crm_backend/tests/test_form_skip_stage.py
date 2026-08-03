@@ -31,23 +31,32 @@ def _clean_state():
     """Scope every delete to this test's own marker rows - the dev DB holds real data."""
     with engine.connect() as conn:
         try:
-            conn.execute(
-                text("DELETE FROM form_sla_configs WHERE stage_code LIKE :p"),
-                {"p": f"{SKIP_MARKER}%"},
-            )
+            _sweep(conn)
             conn.commit()
         except Exception:
             conn.rollback()
     yield
     with engine.connect() as conn:
         try:
-            conn.execute(
-                text("DELETE FROM form_sla_configs WHERE stage_code LIKE :p"),
-                {"p": f"{SKIP_MARKER}%"},
-            )
+            _sweep(conn)
             conn.commit()
         except Exception:
             conn.rollback()
+
+
+def _sweep(conn) -> None:
+    """Remove this file's own rows, children first. Scoped to the marker: the dev DB
+    is a copy of production and an unscoped DELETE here would destroy real data."""
+    conn.execute(
+        text(
+            "DELETE FROM conversation_sla_tracking WHERE team_set_code LIKE :p "
+            "OR source_entity_id IN (SELECT id FROM complaints WHERE complaint_number LIKE :p)"
+        ),
+        {"p": f"{SKIP_MARKER}%"},
+    )
+    conn.execute(text("DELETE FROM complaints WHERE complaint_number LIKE :p"), {"p": f"{SKIP_MARKER}%"})
+    conn.execute(text("DELETE FROM form_sla_configs WHERE stage_code LIKE :p"), {"p": f"{SKIP_MARKER}%"})
+    conn.execute(text("DELETE FROM sla_policies WHERE code LIKE :p"), {"p": f"{SKIP_MARKER}%"})
 
 
 @pytest.fixture
@@ -60,14 +69,29 @@ def db() -> Iterator[Session]:
         s.close()
 
 
+def _policy_id(db: Session) -> str:
+    """Create this test's own SLA policy and return its id.
+
+    Never borrow an arbitrary existing row: CI runs against a freshly migrated
+    database with NO seed data, so `SELECT id FROM sla_policies LIMIT 1` is None
+    there and every dependent insert dies on the NOT NULL policy_id.
+    """
+    from app.models.sla import SLAPolicy
+
+    code = f"{SKIP_MARKER}-{uuid.uuid4().hex[:8]}"
+    policy = SLAPolicy(id=str(uuid.uuid4()), code=code, name="Skip test policy", is_active=True)
+    db.add(policy)
+    db.commit()
+    return str(policy.id)
+
+
 # --------------------------------------------------------------------------- #
 # A1 - config declares a skip
 # --------------------------------------------------------------------------- #
 
 def test_a1_config_carries_skip_columns(db: Session) -> None:
     """The three skip columns exist and round-trip."""
-    policy_id = db.execute(text("SELECT id FROM sla_policies LIMIT 1")).scalar()
-    assert policy_id, "seed data missing an sla_policies row"
+    policy_id = _policy_id(db)
     cfg = FormSLAConfig(
         id=str(uuid.uuid4()),
         source_entity_type="complaint",
@@ -91,7 +115,7 @@ def test_a1_config_carries_skip_columns(db: Session) -> None:
 
 def test_a1_skip_columns_default_null(db: Session) -> None:
     """A stage that declares no skip is unskippable and behaves exactly as today."""
-    policy_id = db.execute(text("SELECT id FROM sla_policies LIMIT 1")).scalar()
+    policy_id = _policy_id(db)
     cfg = FormSLAConfig(
         id=str(uuid.uuid4()),
         source_entity_type="complaint",
@@ -216,7 +240,7 @@ def test_a8_serializer_carries_skip_fields(db: Session) -> None:
     """
     from app.api.v1.sla.form_sla_tracking import _serialize
 
-    policy_id = db.execute(text("SELECT id FROM sla_policies LIMIT 1")).scalar()
+    policy_id = _policy_id(db)
     cfg = FormSLAConfig(
         id=str(uuid.uuid4()),
         source_entity_type="complaint",
@@ -259,7 +283,7 @@ def test_a8_serializer_carries_skip_fields(db: Session) -> None:
 def test_a8_unskippable_stage_reports_no_skip(db: Session) -> None:
     from app.api.v1.sla.form_sla_tracking import _serialize
 
-    policy_id = db.execute(text("SELECT id FROM sla_policies LIMIT 1")).scalar()
+    policy_id = _policy_id(db)
     cfg = FormSLAConfig(
         id=str(uuid.uuid4()),
         source_entity_type="complaint",
@@ -311,13 +335,24 @@ def test_a3_service_picks_the_same_stage_the_frontend_offered(db: Session) -> No
     from app.models.sla import ConversationSLATracking
     from app.services.form_skip_service import FormSkipService
 
-    policy_id = db.execute(
-        text(
-            "SELECT policy_id FROM form_sla_configs "
-            "WHERE source_entity_type='complaint' AND stage_code='main'"
+    policy_id = _policy_id(db)
+    team = f"{SKIP_MARKER}-multi"
+    db.add(
+        FormSLAConfig(
+            id=str(uuid.uuid4()),
+            source_entity_type="complaint",
+            stage_code=f"{SKIP_MARKER}-multi-stage",
+            policy_id=policy_id,
+            agent_code="complaint",
+            team_set_code=team,
+            start_event="submit",
+            resolve_event="approved,rejected,settled_on_site",
+            advance_on_event="approved",
+            skip_event="settled_on_site",
+            skip_terminal_status="settled_on_site",
+            skip_action_label="Settled on site",
         )
-    ).scalar()
-
+    )
     complaint = Complaint(
         id=str(uuid.uuid4()),
         complaint_number=f"{SKIP_MARKER}-{uuid.uuid4().hex[:6]}",
@@ -328,20 +363,21 @@ def test_a3_service_picks_the_same_stage_the_frontend_offered(db: Session) -> No
     db.commit()
 
     now = datetime.utcnow()
-    older = ConversationSLATracking(
-        id=str(uuid.uuid4()), policy_id=policy_id, current_tier=1,
-        due_at=now + timedelta(days=1), is_resolved=False,
-        initiated_at=now - timedelta(hours=5),
-        source_entity_type="complaint", source_entity_id=str(complaint.id),
-        team_set_code="complaint",
-    )
-    newer = ConversationSLATracking(
-        id=str(uuid.uuid4()), policy_id=policy_id, current_tier=1,
-        due_at=now + timedelta(days=1), is_resolved=False,
-        initiated_at=now - timedelta(hours=1),
-        source_entity_type="complaint", source_entity_id=str(complaint.id),
-        team_set_code="complaint",
-    )
+
+    def _tracker(hours_ago: int) -> ConversationSLATracking:
+        return ConversationSLATracking(
+            id=str(uuid.uuid4()),
+            policy_id=policy_id,
+            current_tier=1,
+            due_at=now + timedelta(days=1),
+            is_resolved=False,
+            initiated_at=now - timedelta(hours=hours_ago),
+            source_entity_type="complaint",
+            source_entity_id=str(complaint.id),
+            team_set_code=team,
+        )
+
+    older, newer = _tracker(5), _tracker(1)
     db.add_all([older, newer])
     db.commit()
 
@@ -360,10 +396,3 @@ def test_a3_service_picks_the_same_stage_the_frontend_offered(db: Session) -> No
 
     assert config is not None
     assert str(chosen.id) == str(offered.id) == str(newer.id)
-
-    db.execute(
-        text("DELETE FROM conversation_sla_tracking WHERE source_entity_id = :i"),
-        {"i": str(complaint.id)},
-    )
-    db.execute(text("DELETE FROM complaints WHERE id = :i"), {"i": str(complaint.id)})
-    db.commit()

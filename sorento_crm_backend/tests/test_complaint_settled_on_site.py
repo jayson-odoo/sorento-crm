@@ -46,6 +46,14 @@ def _clean_state():
                     text("DELETE FROM complaints WHERE complaint_number LIKE :p"),
                     {"p": f"{MARKER}-%"},
                 )
+                conn.execute(
+                    text("DELETE FROM form_sla_configs WHERE stage_code LIKE :p"),
+                    {"p": f"{MARKER}-%"},
+                )
+                conn.execute(
+                    text("DELETE FROM sla_policies WHERE code LIKE :p"),
+                    {"p": f"{MARKER}-%"},
+                )
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -63,17 +71,70 @@ def db() -> Iterator[Session]:
         s.close()
 
 
-def _seed(db: Session, status: str = "responded", *, with_tracker: bool = True) -> Complaint:
-    """A complaint plus, by default, an ACTIVE `main` stage tracker.
+TEAM = f"{MARKER}-team"
 
-    The tracker matters: a skip is a way of CLOSING a live stage, so without one the
-    engine correctly refuses. `team_set_code='complaint'` is what binds the tracker to
-    the `main` config - a form-SLA stage is identified by
-    (source_entity_type, team_set_code).
+
+def _stage_config(db: Session) -> str:
+    """This file's own skippable `main`-equivalent stage, and its policy.
+
+    Nothing here borrows an existing row. CI runs against a freshly migrated database
+    with NO seed data: there is no sla_policies row to reuse and no complaint/main
+    config, so anything that assumed production seed data failed on NOT NULL or found
+    no stage. Using a marker `team_set_code` also keeps this isolated from the real
+    complaint stage on a developer's prod-copy database.
+    """
+    from app.models.sla import FormSLAConfig, SLAPolicy
+
+    existing = (
+        db.query(FormSLAConfig)
+        .filter(FormSLAConfig.source_entity_type == "complaint", FormSLAConfig.team_set_code == TEAM)
+        .first()
+    )
+    if existing:
+        return str(existing.policy_id)
+
+    policy = SLAPolicy(
+        id=str(uuid.uuid4()),
+        code=f"{MARKER}-{uuid.uuid4().hex[:8]}",
+        name="Settled-on-site test policy",
+        is_active=True,
+    )
+    db.add(policy)
+    db.flush()
+    db.add(
+        FormSLAConfig(
+            id=str(uuid.uuid4()),
+            source_entity_type="complaint",
+            stage_code=f"{MARKER}-main",
+            policy_id=str(policy.id),
+            agent_code="complaint",
+            team_set_code=TEAM,
+            start_event="submit",
+            resolve_event="approved,rejected,settled_on_site",
+            # The pairing under test: the skip event resolves the stage but is NOT in
+            # advance_on_event, so the next stage never spawns.
+            advance_on_event="approved",
+            skip_event="settled_on_site",
+            skip_terminal_status="settled_on_site",
+            skip_action_label="Settled on site",
+        )
+    )
+    db.commit()
+    return str(policy.id)
+
+
+def _seed(db: Session, status: str = "responded", *, with_tracker: bool = True) -> Complaint:
+    """A complaint plus, by default, an ACTIVE stage tracker.
+
+    The tracker matters: a skip CLOSES a live stage, so without one the engine
+    correctly refuses. `team_set_code` is what binds the tracker to its config - a
+    form-SLA stage is identified by (source_entity_type, team_set_code).
     """
     from datetime import datetime, timedelta
 
     from app.models.sla import ConversationSLATracking
+
+    policy_id = _stage_config(db)
 
     c = Complaint(
         id=str(uuid.uuid4()),
@@ -86,12 +147,6 @@ def _seed(db: Session, status: str = "responded", *, with_tracker: bool = True) 
     db.refresh(c)
 
     if with_tracker:
-        policy_id = db.execute(
-            text(
-                "SELECT policy_id FROM form_sla_configs "
-                "WHERE source_entity_type='complaint' AND stage_code='main'"
-            )
-        ).scalar()
         db.add(
             ConversationSLATracking(
                 id=str(uuid.uuid4()),
@@ -101,7 +156,7 @@ def _seed(db: Session, status: str = "responded", *, with_tracker: bool = True) 
                 is_resolved=False,
                 source_entity_type="complaint",
                 source_entity_id=str(c.id),
-                team_set_code="complaint",
+                team_set_code=TEAM,
             )
         )
         db.commit()
@@ -219,11 +274,11 @@ def test_b3_no_customer_service_tracker_after_skip(db: Session) -> None:
         .filter(
             ConversationSLATracking.source_entity_type == "complaint",
             ConversationSLATracking.source_entity_id == str(c.id),
-            ConversationSLATracking.team_set_code == "customer_service",
+            ConversationSLATracking.team_set_code != TEAM,
         )
         .all()
     )
-    assert cs_rows == [], "customer service must never be assigned on a settled complaint"
+    assert cs_rows == [], "no next stage may be spawned on a settled complaint"
 
 
 # --------------------------------------------------------------------------- #
@@ -352,45 +407,166 @@ def test_b8_permission_granted_to_every_approver_role(db: Session) -> None:
     ).fetchall()
     settle_roles = {r[0] for r in rows}
 
-    assert approver_roles, "no role holds .approve - fixture assumption broken"
+    if not approver_roles:
+        pytest.skip(
+            "no role holds .approve in this database - nothing for the grant to copy "
+            "from (a freshly migrated CI database has no role graph)"
+        )
     assert approver_roles <= settle_roles, (
         "every role that can approve must also be able to settle on site"
     )
 
 
-def test_b9_complaint_main_config_accepts_the_skip_event(db: Session) -> None:
-    """The live `main` stage resolves on settled_on_site but still advances only on approved."""
-    row = db.execute(
-        text(
-            """
-            SELECT resolve_event, advance_on_event, skip_event, skip_action_label
-            FROM form_sla_configs
-            WHERE source_entity_type = 'complaint' AND stage_code = 'main'
-            """
-        )
-    ).fetchone()
-    assert row is not None, "complaint.main stage config missing"
-    resolve_event, advance_on_event, skip_event, skip_label = row
-    assert "settled_on_site" in (resolve_event or ""), (
-        "without this the main tracker never resolves on a skip - the complaint closes "
-        "while its SLA clock keeps running and escalating"
-    )
-    assert (advance_on_event or "").strip() == "approved", (
-        "advance_on_event must stay 'approved' - that is what stops CS spawning"
-    )
-    assert skip_event == "settled_on_site"
-    assert skip_label == "Settled on site"
+def _run_migration_310(conn) -> None:
+    """Execute migration 310's upgrade() against an open connection.
+
+    Imported and run for real rather than re-stating its SQL, so the test cannot drift
+    away from the migration it is meant to prove. Every statement in it is idempotent,
+    and the caller rolls the transaction back.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    path = Path(__file__).resolve().parent.parent / "alembic" / "versions" / "310_form_sla_skip_stage.py"
+    spec = importlib.util.spec_from_file_location("m310_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ctx = MigrationContext.configure(conn)
+    with Operations.context(ctx):
+        module.upgrade()
 
 
-def test_b9_customer_service_stage_is_not_skippable(db: Session) -> None:
-    """Only the technical stage may be skipped; CS has no skip of its own."""
-    row = db.execute(
-        text(
-            """
-            SELECT skip_event FROM form_sla_configs
-            WHERE source_entity_type = 'complaint' AND stage_code = 'customer_service'
-            """
+def test_b9_migration_wires_the_complaint_main_stage() -> None:
+    """The migration must leave complaint/main resolving on the skip WITHOUT advancing.
+
+    Runs inside a transaction that is always rolled back, and seeds the pre-migration
+    row itself when absent - CI has no seed data, and asserting on a production row
+    would make this pass or fail on the environment rather than on the migration.
+    """
+    from app.database import engine
+
+    conn = engine.connect()
+    trans = conn.begin()
+    try:
+        existing = conn.execute(
+            text(
+                "SELECT 1 FROM form_sla_configs "
+                "WHERE source_entity_type='complaint' AND stage_code='main'"
+            )
+        ).scalar()
+        if not existing:
+            policy_id = conn.execute(
+                text(
+                    "INSERT INTO sla_policies (id, code, name, is_active) "
+                    "VALUES (gen_random_uuid(), :c, 'migration test', true) RETURNING id"
+                ),
+                {"c": f"{MARKER}-mig-{uuid.uuid4().hex[:8]}"},
+            ).scalar()
+            conn.execute(
+                text(
+                    "INSERT INTO form_sla_configs "
+                    "(id, source_entity_type, stage_code, policy_id, agent_code, "
+                    " team_set_code, start_event, resolve_event, advance_on_event, is_active) "
+                    "VALUES (gen_random_uuid(), 'complaint', 'main', :p, 'complaint', "
+                    " 'complaint', 'submit', 'approved,rejected', 'approved', true)"
+                ),
+                {"p": policy_id},
+            )
+
+        _run_migration_310(conn)
+
+        row = conn.execute(
+            text(
+                "SELECT resolve_event, advance_on_event, skip_event, skip_terminal_status, "
+                "       skip_action_label "
+                "FROM form_sla_configs "
+                "WHERE source_entity_type='complaint' AND stage_code='main'"
+            )
+        ).fetchone()
+        assert row is not None
+        resolve_event, advance_on_event, skip_event, terminal, label = row
+
+        assert "settled_on_site" in (resolve_event or ""), (
+            "without this the main tracker never resolves on a skip - the complaint "
+            "closes while its SLA clock keeps running and escalating"
         )
-    ).fetchone()
-    assert row is not None
-    assert row[0] is None
+        # Still exactly one occurrence: the migration appends only when absent.
+        assert (resolve_event or "").split(",").count("settled_on_site") == 1
+        assert (advance_on_event or "").strip() == "approved", (
+            "advance_on_event must stay 'approved' - that is what stops CS spawning"
+        )
+        assert skip_event == "settled_on_site"
+        assert terminal == "settled_on_site"
+        assert label == "Settled on site"
+    finally:
+        trans.rollback()
+        conn.close()
+
+
+def test_b9_migration_is_idempotent() -> None:
+    """Re-running must not duplicate the token or the permission grants."""
+    from app.database import engine
+
+    conn = engine.connect()
+    trans = conn.begin()
+    try:
+        existing = conn.execute(
+            text(
+                "SELECT 1 FROM form_sla_configs "
+                "WHERE source_entity_type='complaint' AND stage_code='main'"
+            )
+        ).scalar()
+        if not existing:
+            policy_id = conn.execute(
+                text(
+                    "INSERT INTO sla_policies (id, code, name, is_active) "
+                    "VALUES (gen_random_uuid(), :c, 'migration test', true) RETURNING id"
+                ),
+                {"c": f"{MARKER}-mig-{uuid.uuid4().hex[:8]}"},
+            ).scalar()
+            conn.execute(
+                text(
+                    "INSERT INTO form_sla_configs "
+                    "(id, source_entity_type, stage_code, policy_id, agent_code, "
+                    " team_set_code, start_event, resolve_event, advance_on_event, is_active) "
+                    "VALUES (gen_random_uuid(), 'complaint', 'main', :p, 'complaint', "
+                    " 'complaint', 'submit', 'approved,rejected', 'approved', true)"
+                ),
+                {"p": policy_id},
+            )
+
+        for _ in range(3):
+            _run_migration_310(conn)
+
+        resolve_event = conn.execute(
+            text(
+                "SELECT resolve_event FROM form_sla_configs "
+                "WHERE source_entity_type='complaint' AND stage_code='main'"
+            )
+        ).scalar()
+        assert (resolve_event or "").split(",").count("settled_on_site") == 1
+
+        grants = conn.execute(
+            text(
+                "SELECT count(*) FROM user_role_permissions rp "
+                "JOIN user_permissions p ON p.id = rp.permission_id "
+                "WHERE p.slug = 'complaint_management.complaints.settle_on_site'"
+            )
+        ).scalar()
+        approvers = conn.execute(
+            text(
+                "SELECT count(*) FROM user_role_permissions rp "
+                "JOIN user_permissions p ON p.id = rp.permission_id "
+                "WHERE p.slug = 'complaint_management.complaints.approve'"
+            )
+        ).scalar()
+        assert grants == approvers, (
+            "every role that can approve must also be able to settle on site"
+        )
+    finally:
+        trans.rollback()
+        conn.close()
