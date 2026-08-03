@@ -18,7 +18,11 @@ import {
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { useQuery } from '@tanstack/react-query';
 import { useCreateWarehouse, useUpdateWarehouse, useWarehouse } from '../hooks/useWarehouses';
+import { getWarehouses } from '../services/warehouseService';
+import type { Warehouse } from '../types/warehouse.types';
 import { WarehouseSchema, type WarehouseSchemaType } from '../forms/warehouse-schema';
 
 interface WarehouseFormProps {
@@ -41,8 +45,27 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
       location: null,
       manager_id: null,
       is_active: true,
+      counts_as_available: true,
+      pool_warehouse_id: null,
     },
     mode: 'onSubmit',
+  });
+
+  // Candidate pools. Any location can be a pool, so this is the warehouse list itself,
+  // minus the one being edited: a location pooling to itself is the default and is
+  // expressed by leaving the field empty, never by selecting itself.
+  const { data: poolOptions } = useQuery({
+    queryKey: ['warehouses-select'],
+    queryFn: async () => {
+      const response = await getWarehouses({
+        pageIndex: 0,
+        pageSize: 1000,
+        sorting: [],
+        searchQuery: '',
+      });
+      return response.data || [];
+    },
+    staleTime: 1000 * 60 * 5,
   });
 
   // Load warehouse data when editing
@@ -54,6 +77,12 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
         location: warehouse.location || null,
         manager_id: warehouse.manager_id || null,
         is_active: warehouse.is_active,
+        counts_as_available: warehouse.counts_as_available ?? true,
+        // A location whose pool is itself is the "no pooling" default, so it reads as empty.
+        pool_warehouse_id:
+          warehouse.pool_warehouse_id && warehouse.pool_warehouse_id !== warehouse.id
+            ? warehouse.pool_warehouse_id
+            : null,
       });
     }
   }, [warehouse, isEditMode, form]);
@@ -164,6 +193,59 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
                         onCheckedChange={field.onChange}
                       />
                     </FormControl>
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="counts_as_available"
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                    <div className="space-y-0.5">
+                      <FormLabel className="text-base">Available for planning</FormLabel>
+                      <FormDescription>
+                        Turn this off for held, reserved, defective or clearance locations.
+                        Stock here is real but cannot cover demand, so the plan ignores it.
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="pool_warehouse_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Draws stock from</FormLabel>
+                    <FormControl>
+                      <SearchableSelect
+                        value={field.value ?? ''}
+                        onChange={(v) => field.onChange(v || null)}
+                        options={(poolOptions || [])
+                          .filter((w: Warehouse) => w.id !== warehouseId)
+                          .map((w: Warehouse) => ({
+                            value: w.id,
+                            label: w.warehouse_name
+                              ? `${w.warehouse_name} (${w.warehouse_code})`
+                              : w.warehouse_code,
+                          }))}
+                        placeholder="Leave empty if this location stands alone"
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      The shared pool this location draws on. A shortage here is covered from
+                      that pool before anything is bought. Leave empty unless this location
+                      genuinely shares stock with others on the same site.
+                    </FormDescription>
+                    <FormMessage />
                   </FormItem>
                 )}
               />

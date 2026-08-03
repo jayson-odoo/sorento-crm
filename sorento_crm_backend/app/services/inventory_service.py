@@ -116,6 +116,7 @@ class WarehouseService:
             setattr(warehouse, "zones_count", zc or 0)
             setattr(warehouse, "stock_count", sc or 0)
             warehouses.append(warehouse)
+        self._attach_pool_codes(warehouses)
 
         return {
             "data": warehouses,
@@ -123,6 +124,26 @@ class WarehouseService:
             "empty": total == 0,
         }
     
+    def _attach_pool_codes(self, warehouses: list) -> None:
+        """Resolve `pool_warehouse_id` to a readable code for display.
+
+        The UI must never render a bare UUID, and the pool is configuration a person picks
+        by name. Batched into one query rather than a lookup per row.
+        """
+        pool_ids = {str(w.pool_warehouse_id) for w in warehouses
+                    if getattr(w, "pool_warehouse_id", None)}
+        codes: dict[str, str] = {}
+        if pool_ids:
+            codes = {
+                str(wid): code
+                for wid, code in self.db.query(Warehouse.id, Warehouse.warehouse_code)
+                .filter(Warehouse.id.in_(list(pool_ids)))
+                .all()
+            }
+        for w in warehouses:
+            pid = getattr(w, "pool_warehouse_id", None)
+            setattr(w, "pool_warehouse_code", codes.get(str(pid)) if pid else None)
+
     def get_warehouse(self, warehouse_id: str):
         """Get a warehouse by UUID or warehouse_code/name."""
         resolved_ids = resolve_identifier(
@@ -136,6 +157,7 @@ class WarehouseService:
         warehouse = self.db.query(Warehouse).filter(Warehouse.id.in_(resolved_ids)).first()
         if not warehouse:
             raise handle_not_found("Warehouse", warehouse_id)
+        self._attach_pool_codes([warehouse])
         return warehouse
     
     def create_warehouse(self, warehouse_data: WarehouseCreate):

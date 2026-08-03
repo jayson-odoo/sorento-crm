@@ -259,6 +259,46 @@ export default function WarehouseDetailPage({
                 )}
               </CardContent>
             </Card>
+
+            {/* Rendered unconditionally, including the defaults: both fields change what
+                the reorder plan buys, so "this location stands alone and its stock counts"
+                is information, not an empty state to hide. */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Planning</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <p className="text-sm text-muted-foreground">Available for planning</p>
+                  <Badge
+                    variant={warehouse.counts_as_available === false ? 'secondary' : 'success'}
+                    appearance="ghost"
+                  >
+                    {warehouse.counts_as_available === false ? 'Excluded' : 'Counted'}
+                  </Badge>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {warehouse.counts_as_available === false
+                      ? 'Stock here is ignored when the plan decides what to buy.'
+                      : 'Stock here can cover demand.'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Draws stock from</p>
+                  <p className="font-medium">
+                    {warehouse.pool_warehouse_code &&
+                    warehouse.pool_warehouse_id !== warehouse.id
+                      ? warehouse.pool_warehouse_code
+                      : 'Stands alone'}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {warehouse.pool_warehouse_code &&
+                    warehouse.pool_warehouse_id !== warehouse.id
+                      ? 'A shortage here is covered from that pool before anything is bought.'
+                      : 'A shortage here is met by buying.'}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </Container>
