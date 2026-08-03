@@ -15,7 +15,7 @@ import {
   type Breakpoint,
 } from '@/lib/dealer-kit/deriveLayout';
 import type { Block, SectionStyle } from '@/lib/dealer-kit/types';
-import { ROW_GAP_PX, ROW_HEIGHT_PX, rowsForHeight } from '@/lib/dealer-kit/gridMetrics';
+import { ROW_HEIGHT_PX, rowsForHeight } from '@/lib/dealer-kit/gridMetrics';
 import { hasArtwork, sectionSurface } from '@/lib/dealer-kit/sectionSurface';
 
 import { BlockChrome } from './BlockChrome';
@@ -41,14 +41,13 @@ import 'react-resizable/css/styles.css';
  */
 
 /**
- * Row unit and gap come from ONE module shared with the published renderer.
+ * The row unit comes from ONE module shared with the published renderer.
  *
  * They lay the same blocks out with different engines, and while each kept its
  * own constant they disagreed: 24px here, 28px there, so a layout that looked
  * right in the builder overlapped once published.
  */
 const ROW_HEIGHT = ROW_HEIGHT_PX;
-const ROW_GAP = ROW_GAP_PX;
 
 export interface BuilderCanvasProps {
   blocks: Block[];

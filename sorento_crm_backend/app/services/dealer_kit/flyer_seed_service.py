@@ -204,16 +204,25 @@ def _target_page(
     overwriting it would silently re-paginate a brochure that is already
     published, since the profile lives on the page and is shared by every
     version of it.
+
+    **The promotion follows exactly the same rule, and for a worse reason.** It
+    also lives on the PAGE, and ``published_doc`` reads it from there - so
+    changing it changes what readers are charged RIGHT NOW, before anybody
+    publishes the new version. The review screen always sends its header
+    promotion, because that select is what drives the "not in this promotion"
+    report, so a reviewer comparing a reading against a different offer was
+    re-pricing the live catalogue just by clicking Seed. The panel promised the
+    opposite three lines from the button.
+
+    So: applied on creation, never on a re-seed. Changing a live brochure's
+    offer is the page's own PUT, which says so out loud. It is still VALIDATED
+    on a re-seed - ignored is not unchecked, and a typo should be reported
+    rather than quietly dropped.
     """
     if page_id:
         page = page_service.get_page(db, page_id)
         if promotion_id:
-            # Only when one is given. An omitted promotion on a re-seed means
-            # "leave it alone", never "unlink": silently dropping a live
-            # brochure's offer sends it back to list prices with nobody told,
-            # and clearing the link is the page's own PUT, which says so out
-            # loud.
-            page = page_service.set_promotion(db, page.id, promotion_id)
+            page_service.require_promotion(db, promotion_id)
         return page
 
     page = page_service.create_page(

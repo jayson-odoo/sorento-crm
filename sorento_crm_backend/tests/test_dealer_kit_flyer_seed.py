@@ -961,6 +961,55 @@ class TestPromotion:
 
         assert db.query(Page).filter(Page.id == first["pageId"]).one().promotion_id == promotion_id
 
+    def test_reseeding_with_one_does_not_reprice_the_live_brochure(self, api) -> None:
+        """The promotion lives on the PAGE, and `published_doc` reads it from
+        there - so changing it changes what readers see RIGHT NOW, before
+        anybody publishes the new version.
+
+        The review screen always sends its header promotion (that select drives
+        the "not in this promotion" report), so a reviewer comparing a reading
+        against a different offer used to re-price the live catalogue just by
+        clicking Seed. The panel promised the opposite three lines from the
+        button: "The live version N is untouched until somebody publishes the
+        new one."
+
+        Same rule as the print profile directly above it in `_target_page`:
+        applied on CREATION, never on a re-seed. Changing a live brochure's
+        offer is the page's own PUT, which says so out loud.
+        """
+        db, _as, _scope = api
+        products = _products(db, BATHTUB_ROW)
+        original = _promotion(db, products["SRTJC8037"])
+        other = _promotion(db, products["SRTJC8037"])
+
+        from app.models.dealer_kit import Page
+
+        with TestClient(app) as c:
+            reading_id = _upload(c)
+            first = _seed(c, reading_id, promotion_id=original).json()
+            _seed(c, reading_id, page_id=first["pageId"], promotion_id=other)
+
+        assert (
+            db.query(Page).filter(Page.id == first["pageId"]).one().promotion_id
+            == original
+        )
+
+    def test_an_unknown_promotion_is_still_refused_on_a_reseed(self, api) -> None:
+        """Ignored is not unvalidated. A bad id in the payload is still a 404,
+        so a typo is reported rather than quietly dropped."""
+        db, _as, _scope = api
+        products = _products(db, BATHTUB_ROW)
+        promotion_id = _promotion(db, products["SRTJC8037"])
+
+        with TestClient(app) as c:
+            reading_id = _upload(c)
+            first = _seed(c, reading_id, promotion_id=promotion_id).json()
+            res = _seed(
+                c, reading_id, page_id=first["pageId"], promotion_id=str(uuid.uuid4())
+            )
+
+        assert res.status_code == 404, res.text
+
     def test_an_unknown_promotion_is_refused_and_no_page_is_left_behind(
         self, api
     ) -> None:

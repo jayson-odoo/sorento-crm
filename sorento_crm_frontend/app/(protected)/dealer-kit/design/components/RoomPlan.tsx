@@ -20,7 +20,6 @@ import { floorColor, wallColor, type Finishes } from '@/lib/dealer-kit/finishes'
 import {
   openingEdgeGaps,
   placeOpeningOnNearestWall,
-  wallLengths,
   type Opening,
 } from '@/lib/dealer-kit/roomOpenings';
 

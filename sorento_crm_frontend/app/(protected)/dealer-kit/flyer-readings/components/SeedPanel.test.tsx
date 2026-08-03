@@ -193,7 +193,12 @@ describe('SeedPanel, seeding into an existing brochure', () => {
     );
   });
 
-  it('sends only the page as the target', async () => {
+  it('sends the page and NOT the promotion', async () => {
+    // The promotion lives on the PAGE and the published version reads it from
+    // there, so sending the review header's selection re-priced the LIVE
+    // brochure the instant the request landed - while the note directly above
+    // the button promised "the live version N is untouched". This test used to
+    // assert the payload that did it.
     seedFromFlyerReading.mockResolvedValue(RESULT);
     renderPanel({ promotionId: 'promo-1', promotionLabel: 'A3 Flyer 2026' });
 
@@ -207,10 +212,10 @@ describe('SeedPanel, seeding into an existing brochure', () => {
     await waitFor(() =>
       expect(seedFromFlyerReading).toHaveBeenCalledWith('r-1', {
         pageId: 'pg-1',
-        promotionId: 'promo-1',
         commitMessage: 'Seeded from flyer.pdf',
       }),
     );
+    expect(seedFromFlyerReading.mock.calls[0][1]).not.toHaveProperty('promotionId');
   });
 });
 

@@ -113,7 +113,12 @@ export function SeedPanel({
             promotionId,
             commitMessage: `Seeded from ${filename}`,
           }
-        : { pageId, promotionId, commitMessage: `Seeded from ${filename}` },
+        : // No promotionId on a re-seed. The promotion lives on the PAGE and
+          // the published version reads it from there, so sending the review
+          // header's selection would re-price the LIVE brochure the moment this
+          // request lands - which is the opposite of what the note below
+          // promises. Changing a brochure's offer is the page's own action.
+          { pageId, commitMessage: `Seeded from ${filename}` },
       { onSuccess: setResult },
     );
   };
@@ -195,8 +200,11 @@ export function SeedPanel({
                 }}
                 placeholder="a3-flyer-2026"
               />
+              {/* The company segment is what keeps two companies' identical
+                  slugs apart, so a hint without it is an address that 404s. */}
               <p className="text-xs text-muted-foreground">
-                Readers will find this brochure at /c/{effectiveSlug || '...'}
+                Readers will find this brochure at /c/&lt;company&gt;/
+                {effectiveSlug || '...'}
               </p>
             </div>
           </div>

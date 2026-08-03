@@ -309,8 +309,12 @@ test.describe('Dealer Kit flyer seeding', () => {
     // And the headings are guessed. The fixture's page 2 reads "Transforming
     // Your" where the paper says "BATHTUB COLLECTION", so the expectation is set
     // here rather than discovered in the builder.
+    // Assert the CLAIMS, not the sentence. This line used to read "product
+    // photos are blank" and went red the moment that block was reworded, and
+    // nobody saw it because the spec test.skip()s without E2E credentials - a
+    // spec that skips is not a spec that passes.
     await expect(page.getByTestId('dk-fr-known-gaps')).toContainText(/headings are guessed/i);
-    await expect(page.getByTestId('dk-fr-known-gaps')).toContainText(/product photos are blank/i);
+    await expect(page.getByTestId('dk-fr-known-gaps')).toContainText(/no photo/i);
 
     // The misread itself is on the screen, not only the warning that misreads
     // happen. This is the round trip the field was added for: the extractor

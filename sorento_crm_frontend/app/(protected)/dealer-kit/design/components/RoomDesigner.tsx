@@ -50,7 +50,6 @@ import {
   saveRoom,
   setSelectionLine,
   type Room,
-  type Selection,
   type SelectionLine,
 } from '../../services/selectionService';
 import {

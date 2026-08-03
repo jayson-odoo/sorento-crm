@@ -64,6 +64,11 @@ def _require_promotion(db: Session, promotion_id: str) -> None:
         raise AppException(status_code=404, message="Promotion not found")
 
 
+# Public name for the same check, because the flyer seeder needs to VALIDATE a
+# promotion it is deliberately not going to apply.
+require_promotion = _require_promotion
+
+
 def promotion_labels(db: Session, promotion_ids: Iterable[Optional[str]]) -> dict[str, Optional[str]]:
     """promotion_id -> its description, for a screen.
 
