@@ -5,10 +5,11 @@ Mounted at ``/api/v1/dealer-kit`` behind
 """
 from fastapi import APIRouter
 
-from app.api.v1.dealer_kit import catalogue, flyer_readings, pages, selections
+from app.api.v1.dealer_kit import catalogue, editions, flyer_readings, pages, selections
 
 router = APIRouter()
 router.include_router(pages.router)
 router.include_router(catalogue.router)
 router.include_router(selections.router)
 router.include_router(flyer_readings.router)
+router.include_router(editions.router)

@@ -743,3 +743,75 @@ class SelectionOut(BaseModel):
     room: Optional[dict] = None
     # Derived from the outline, never stored (AC-R5).
     room_area_sqm: Optional[float] = Field(default=None, serialization_alias="roomAreaSqm")
+
+
+# ---------------------------------------------------------------------------
+# Editions (S2.5)
+# ---------------------------------------------------------------------------
+
+
+class EditionCreateIn(BaseModel):
+    """Start a revision cycle over a page.
+
+    ``previousEditionId`` is set when this Edition was duplicated from the last
+    one (AC-L9) and left null when somebody starts a fresh cycle. It is what
+    lets the next slice badge "new since the last Edition" without guessing.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    page_id: UUID = Field(validation_alias="pageId")
+    name: str = Field(min_length=1, max_length=200)
+    previous_edition_id: Optional[UUID] = Field(
+        default=None, validation_alias="previousEditionId"
+    )
+
+
+class EditionRejectIn(BaseModel):
+    """Why it is going back.
+
+    Required, with a real minimum length: the Designer reads this and "no" on
+    its own is a rejection nobody can act on. Re-checked in the service, which
+    is the last place that can refuse a whitespace-only reason.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class EditionOut(BaseModel):
+    """One Edition, as a screen reads it.
+
+    ``status`` is the KEY, not the status id: the id is a uuid and no uuid
+    reaches the UI. The label is sent beside it so a screen never has to keep
+    its own copy of the vocabulary.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    page_id: str = Field(serialization_alias="pageId")
+    page_name: Optional[str] = Field(default=None, serialization_alias="pageName")
+    name: str
+    status: str
+    status_label: str = Field(serialization_alias="statusLabel")
+    approved_version_id: Optional[str] = Field(
+        default=None, serialization_alias="approvedVersionId"
+    )
+    done_version_id: Optional[str] = Field(
+        default=None, serialization_alias="doneVersionId"
+    )
+    previous_edition_id: Optional[str] = Field(
+        default=None, serialization_alias="previousEditionId"
+    )
+    submitted_at: Optional[datetime] = Field(
+        default=None, serialization_alias="submittedAt"
+    )
+    approved_at: Optional[datetime] = Field(
+        default=None, serialization_alias="approvedAt"
+    )
+    rejection_reason: Optional[str] = Field(
+        default=None, serialization_alias="rejectionReason"
+    )
+    created_at: datetime = Field(serialization_alias="createdAt")
