@@ -530,6 +530,37 @@ tests rather than arriving as a side effect of S4.
 - **AC-M39** `[BE]` Given pin and address disagree, Then **both are kept and neither is reconciled** - the pin is what the technician navigates to, the address is what appears on documents.
 - **AC-M40** `[T]` Given the Google Maps key on a public page, Then it is **HTTP-referrer restricted** - a public portal key is scrapable and billable.
 
+### S4 rulings - decided 2026-08-03, before the slice starts
+
+The plan flags four things as "must be decided before build, not decided here". These are the decisions.
+
+- **AC-M33a** `[BE][MIG]` **The fallback is configured at the AGENT level, and the code path is uniform
+  across every form type.** Agent level because `resolve_team_with_tier_fallback(agent, ...)` is already
+  where team resolution happens, so the backstop belongs beside the resolution it backs up; a per-config
+  column is, as the plan says, the most rows to fill in and the most places to drift. Uniform because
+  branching on form type is how this kind of guard rots: PR, SF, stock inquiry and complaint would develop
+  two behaviours inside one function and nobody would remember which.
+- **AC-M33b** `[BE]` **Where NO fallback is configured, today's `raise` is preserved.** This is the
+  conservative half and it is deliberate. `_start_for_config` is shared by four live flows, and turning a
+  raise into a silent fallback for all of them is a production behaviour change that no after-sales AC
+  governs. So the mechanism ships uniformly, after-sales configures a fallback and gets AC-M33's
+  behaviour, and the existing four flows are **bit-for-bit unchanged until somebody configures one**. The
+  switch is then data, not a deploy.
+
+  **Flagged for Sorento, not decided by me:** the plan is right that the current raise is "loud in the
+  wrong place" - whether a case exists at all should not depend on team configuration, and a complaint
+  that cannot be assigned should still be a complaint. Flipping the unconfigured default from `raise` to
+  `create and flag` is the better end state and it is a live behaviour change for four flows, so it is
+  Sorento's call and it gets its own tests.
+- **AC-M35a** `[BE]` **An unattached call parks as `entity_type = 'respond_contact'`** and is re-keyed on
+  attachment. Confirms the ruling already recorded in the Group M block: `activity_events.entity_type` and
+  `entity_id` are both NOT NULL, so this is the only reading that honours AC-M34's "no new table" without
+  weakening a core column for every activity type to solve one case.
+- **AC-H8a** `[BE]` **The outbox query is a LEFT JOIN and a test must prove it.** AI replies and
+  n8n-initiated sends carry no notification row, so an inner join silently loses exactly the visibility
+  the outbox exists to provide. This is easy to write correctly and easy to regress later, which is why it
+  is pinned rather than assumed.
+
 ### S2a corrections - after the red suite (2026-08-03)
 
 77 red, 9 guards green. Three findings block the slice as specified.
