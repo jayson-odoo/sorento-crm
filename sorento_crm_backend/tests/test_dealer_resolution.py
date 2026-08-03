@@ -252,7 +252,7 @@ def test_the_raw_printed_text_always_survives(db):
 
 
 def test_resolution_is_deterministic(db):
-    """Two identical receipts must reach the same dealer. An ordering-dependent tie-break
+    """Two identical receipts must reach the same verdict. An ordering-dependent answer
     would make the sell-through ledger disagree with itself.
     """
     _customer(db, "ALPHA HARDWARE SDN BHD")
@@ -260,4 +260,33 @@ def test_resolution_is_deterministic(db):
     first = _resolve(db, "ALPHA HARDWARE SDN BHD")
     second = _resolve(db, "ALPHA HARDWARE SDN BHD")
     assert first.customer_id == second.customer_id
+    assert first.suggestion_customer_id == second.suggestion_customer_id
     assert first.state == second.state
+
+
+def test_two_dealers_that_normalise_identically_are_a_question_not_a_match(db):
+    """Determinism is not correctness, and this test used to assert the wrong thing.
+
+    Normalisation strips corporate suffixes and bracketed branches, so two genuinely
+    different `customers` rows can end up as the same string - and a duplicated customer
+    row does it trivially. The first version broke that tie alphabetically and returned
+    `resolved`, which binds the purchase to whichever display name sorts first and reports
+    it as fact. In the ledger that is a sale attributed to a dealer who may never have made
+    it, which is the precise failure the resolved/candidate split exists to prevent.
+    """
+    _customer(db, "ALPHA HARDWARE SDN BHD")
+    _customer(db, "ALPHA HARDWARE SDN BHD")
+    result = _resolve(db, "ALPHA HARDWARE SDN BHD")
+    assert result.state == STATE_CANDIDATE, (
+        "A tie at the resolve threshold was asserted as the dealer. Two rows matched "
+        "equally well, so the honest answer is that CS decides."
+    )
+    assert result.customer_id is None
+    # Still useful to CS: one of the tied rows is shown as the suggestion.
+    assert result.suggestion_customer_id is not None
+
+
+def test_a_single_dealer_still_resolves_when_a_duplicate_name_is_absent(db):
+    """The tie rule must not cost the ordinary case. One match is still a match."""
+    _customer(db, "ALPHA HARDWARE SDN BHD")
+    assert _resolve(db, "ALPHA HARDWARE SDN BHD").state == STATE_RESOLVED

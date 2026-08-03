@@ -691,19 +691,36 @@ async def get_waiting_attribution_summary(
     """
     from app.services.sla_waiting_service import attribution_summary
 
-    def _parse(value: Optional[str]) -> Optional[datetime]:
+    def _parse(value: Optional[str], *, is_end: bool = False) -> Optional[datetime]:
+        """Both bounds are documented INCLUSIVE, and the first version was neither.
+
+        Two bugs in one line. `.replace(tzinfo=None)` DISCARDED an offset instead of
+        converting it, so `until=2026-08-31T23:59:59+08:00` was compared against naive UTC
+        and swept in eight hours of the next day. And a date-only `until=2026-08-31` became
+        midnight, so the `event_at <= until` filter dropped the whole of 31 August - a month
+        report that silently ends a day early, which nobody notices because the number is
+        merely smaller rather than obviously wrong.
+        """
         if not value:
             return None
+        raw = str(value).strip()
         try:
-            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         except ValueError:
             raise HTTPException(status_code=422, detail=f"Invalid datetime '{value}'.")
+        if parsed.tzinfo is not None:
+            # CONVERT to UTC, then drop the marker: the columns hold naive UTC.
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        # A date with no time on the upper bound means "all of that day".
+        if is_end and len(raw) <= 10:
+            parsed = parsed.replace(hour=23, minute=59, second=59, microsecond=999999)
+        return parsed
 
     return attribution_summary(
         db,
         source_entity_type=source_entity_type,
         since=_parse(since),
-        until=_parse(until),
+        until=_parse(until, is_end=True),
     )
 
 

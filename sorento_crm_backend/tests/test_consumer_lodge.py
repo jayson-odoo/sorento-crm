@@ -176,12 +176,33 @@ def test_a_lodgement_leaves_behind_the_whole_purchase_record(db):
 def test_the_consumer_gets_a_number_and_a_verdict(db):
     """What they hold at the end. The verdict is the value exchanged for the data, and it
     is computed - never asked for.
+
+    Asserts a NON-EMPTY verdict on purpose. The first version accepted `is not None`, and
+    an empty list satisfied it while the assembly step was silently raising an
+    AttributeError on a column that does not exist (`expires_on` for `computed_expiry`),
+    swallowed by the best-effort catch. Every lodgement returned no verdict at all and the
+    test stayed green - the consumer gave their data and got nothing back for it.
     """
+    from scripts.seed_warranty_policy_v15 import seed as seed_warranty
+
+    # The verdict needs a policy and a Kind to be computed FROM. Seeded here rather than
+    # borrowed: a test that only passes against production's seed data tells us about the
+    # environment, not the code.
+    seed_warranty(db)
     _contact(db)
     _dealer(db)
     result = _lodge(db)
     assert result.complaint_number, "A consumer with no reference cannot follow anything up."
-    assert result.warranty is not None
+    assert result.warranty, (
+        "No verdict reached the consumer. The whole exchange is their data for this answer, "
+        "so an empty list is a broken journey, not an edge case."
+    )
+    first = result.warranty[0]
+    assert first["verdict"], "A verdict row with no verdict in it says nothing."
+    assert "is_lifetime" in first, (
+        "A lifetime term has no expiry date, so a null date must be distinguishable from "
+        "a missing one."
+    )
 
 
 # ===================================================== nothing blocks submission

@@ -61,7 +61,10 @@ class ResolveIn(BaseModel):
 
 
 class LodgeIn(ResolveIn):
-    phone: str
+    # OPTIONAL, and ignored whenever the token's contact carries a phone. It stays on the
+    # schema only for the contact-without-a-phone case; see `lodge` below for why it is
+    # not the identity.
+    phone: Optional[str] = None
     full_name: Optional[str] = None
     purchase_date: Optional[str] = None
     dealer_document_number: Optional[str] = None
@@ -162,12 +165,43 @@ async def lodge(
     and an unresolvable code all lodge (AC-C14). The only refusal comes from the service,
     and it is consent.
     """
+    from app.models.access import RespondContact
     from app.services.consumer_lodge_service import lodge_complaint
+    from app.services.error_handler import AppException
 
     body = payload.model_dump()
-    # The token already establishes who this is. Trusting the body over the token would
-    # let a valid token lodge against somebody else's contact.
     body["respond_contact_id"] = str(token.contact_id) if token.contact_id else None
+
+    # THE PHONE IS THE IDENTITY, so it comes from the token and never from the body.
+    #
+    # `ensure_profile` resolves (and creates) a ConsumerProfile by normalised phone. While
+    # the body supplied it, any valid portal token could lodge against a stranger simply by
+    # typing their number: it wrote consent, a name-conflict review row and a purchase onto
+    # that stranger's ledger, and returned their dealer and warranty verdicts in the
+    # response. Overriding only `respond_contact_id` was not enough - that field is not
+    # what the profile is keyed on.
+    contact = (
+        db.query(RespondContact).filter(RespondContact.id == token.contact_id).first()
+        if token.contact_id
+        else None
+    )
+    contact_phone = (getattr(contact, "phone_number", None) or "").strip()
+    if not contact_phone:
+        # Unreachable in practice - `respond_contacts.phone_number` is NOT NULL, which a
+        # test attempting to create the state confirmed by failing at the constraint. Kept
+        # as a fail-closed floor rather than deleted: falling back to the body here would
+        # be the same hole in a smaller shape, and the guard costs one comparison.
+        raise AppException(
+            status_code=400,
+            message=(
+                "This portal link is not linked to a phone number, so we cannot tell "
+                "whose report this is. Please contact us to continue."
+            ),
+            code="lodge_identity_unresolved",
+        )
+    body["phone"] = contact_phone
+    # The name is a label, not an identity, so a consumer may still correct their own.
+    body["full_name"] = body.get("full_name") or getattr(contact, "name", None)
 
     result = lodge_complaint(db, body)
     return {

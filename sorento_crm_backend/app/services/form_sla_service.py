@@ -586,6 +586,16 @@ class FormSLAOrchestrator:
         # must re-claim. Clear any lock held on the prior tier.
         tracker.handled_by_id = None
         tracker.handled_at = None
+        # AC-M33's flag is CLEARED here, and nothing else cleared it before.
+        #
+        # `assignment_unresolved` means "nobody was assignable, so this landed on the
+        # backstop". By this point `get_next_assignee` has returned a real member of a real
+        # team - the `no_assignee` raise above guarantees it - so the condition the flag
+        # describes is no longer true. Leaving it set made a tracker that started on the
+        # fallback and then escalated to a properly staffed tier keep reporting "nobody was
+        # assignable" forever, in the pending-task widget and in the API response: a flag
+        # that outlived the problem it exists to prompt somebody to fix.
+        tracker.assignment_unresolved = False
         self.db.flush()
 
         log_reason = reason

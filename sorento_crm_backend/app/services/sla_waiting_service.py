@@ -714,18 +714,42 @@ def attribution_summary(
     invites the reader to assume the other 14 were ours; some of them are simply
     unexplained, and folding those into "internal" is how the metric becomes a lie.
     """
-    query = db.query(ConversationSLAEventLog).filter(
-        ConversationSLAEventLog.event_type == "escalation"
-    )
-    if source_entity_type:
-        query = query.join(
+    from app.services.form_sla_service import FORM_SLA_TYPES
+
+    # ALWAYS joined and ALWAYS scoped to form SLA, even with no `source_entity_type`.
+    #
+    # Conversation SLA (n8n) shares this table and this event type, discriminated only by
+    # `source_entity_type`, and those trackers never carry a waiting party because nothing
+    # ever asks them to. Without this filter every one of them landed in `unattributed`,
+    # so the AC-M7 headline reported "N breaches nobody explained" using traffic that has
+    # no attribution concept at all - and the number grew with WhatsApp volume rather than
+    # with anything after-sales did. Same family as the standing rule that every
+    # contact-keyed conversation query must scope itself or it matches form rows.
+    query = (
+        db.query(ConversationSLAEventLog)
+        .join(
             ConversationSLATracking,
             ConversationSLATracking.id == ConversationSLAEventLog.sla_tracking_id,
-        ).filter(ConversationSLATracking.source_entity_type == str(source_entity_type))
+        )
+        .filter(ConversationSLAEventLog.event_type == "escalation")
+        .filter(ConversationSLATracking.source_entity_type.in_(tuple(FORM_SLA_TYPES)))
+    )
+    if source_entity_type:
+        query = query.filter(
+            ConversationSLATracking.source_entity_type == str(source_entity_type)
+        )
     if since:
         query = query.filter(ConversationSLAEventLog.event_at >= since)
     if until:
         query = query.filter(ConversationSLAEventLog.event_at <= until)
+
+    # One lookup read for the whole report. `is_external_party` re-queried the option set
+    # twice per row, so a year of escalations was 2N queries to answer five numbers.
+    external_parties = {
+        str(option.value)
+        for option in _party_options(db)
+        if bool((getattr(option, "attributes", None) or {}).get("is_external", False))
+    }
 
     by_party: Dict[str, int] = {}
     external = internal = unattributed = 0
@@ -735,7 +759,9 @@ def attribution_summary(
             unattributed += 1
             continue
         by_party[party] = by_party.get(party, 0) + 1
-        if is_external_party(db, party):
+        # Unknown party reads as INTERNAL: when we do not know whose delay it was, the
+        # conservative answer is that it was ours.
+        if party in external_parties:
             external += 1
         else:
             internal += 1

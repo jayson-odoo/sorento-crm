@@ -56,11 +56,6 @@ REPORTED_BY_CONSUMER = "end_user"
 # AC-C14 again, in the status graph: a lodgement arrives complete from the consumer's
 # point of view, so it enters as submitted rather than as a draft nobody will finish.
 LODGE_STATUS = "submitted"
-# `self`, not `auto_on_complaint`. The consumer typed this in themselves; the complaint is
-# only the occasion. `auto_on_complaint` means Sorento inferred a registration from a
-# complaint nobody registered, and mislabelling this one would overstate how much of the
-# ledger arrives without the consumer's participation.
-REGISTRATION_SOURCE_PORTAL = consumer_service.REGISTRATION_SOURCE_SELF
 
 
 def _utcnow() -> datetime:
@@ -212,7 +207,17 @@ def lodge_complaint(db: Session, payload: Dict[str, Any]) -> LodgeResult:
             dealer_document_number=payload.get("dealer_document_number"),
             consumer_profile_id=str(profile.id),
             proof_attachment_id=payload.get("proof_attachment_id"),
-            registration_source=REGISTRATION_SOURCE_PORTAL,
+            # Deliberately NO registration_source, which leaves `registered_at` NULL for
+            # `ensure_registration_on_complaint` to stamp as `auto_on_complaint`.
+            #
+            # The first version passed `self` on the reasoning that the consumer typed it
+            # in themselves. That confuses WHO entered the purchase with WHY, and the why
+            # is the whole rule: `BONUS_EARNING_REGISTRATION_SOURCES` excludes
+            # `auto_on_complaint` so that the registration a CLAIM creates lengthens
+            # nobody's cover (AC-L35). Stamping `self` here handed clause 26's bonus
+            # months to every consumer who lodged a complaint, which is the entire
+            # population the bonus was meant to distinguish between - a consumer who
+            # registered on purpose earned nothing extra.
             purchase_date_source=payload.get("purchase_date_source")
             or consumer_service.PURCHASE_DATE_SOURCE_STATED,
             lines=ledger_lines,
@@ -339,7 +344,17 @@ def _assess(db: Session, complaint_id: str) -> List[Dict[str, Any]]:
                         "claimed_text": line.claimed_text,
                         "part_name": row.part_name,
                         "verdict": row.computed_verdict,
-                        "expires_on": row.expires_on.isoformat() if row.expires_on else None,
+                        # `computed_expiry`, NOT `expires_on` - there is no such column.
+                        # The first version read the wrong name, the AttributeError was
+                        # swallowed by the best-effort catch below, and every lodgement
+                        # returned `warranty: []` with only a log line to show for it. The
+                        # consumer never got the answer they gave their data for.
+                        "expires_on": (
+                            row.computed_expiry.isoformat() if row.computed_expiry else None
+                        ),
+                        # A lifetime term has no expiry, so a null date here is not a
+                        # missing value and must not read as one.
+                        "is_lifetime": bool(row.is_lifetime),
                     }
                 )
     except Exception as exc:  # noqa: BLE001

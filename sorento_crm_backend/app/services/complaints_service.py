@@ -2075,6 +2075,23 @@ class ComplaintService:
                 f"expected one of {self._DECIDE_ALLOWED_FROM_STATUSES}."
             )
 
+        # S4a AC-M4, and this is the path that actually resolves a stage.
+        #
+        # The same guard lives in `_assert_status_transition_allowed`, but that runs only
+        # from `update_complaint` / `update_complaint_and_reply` - a raw PUT carrying a
+        # status. Approve and Reject come through HERE and emit the `resolve_event` further
+        # down, so without this call an overdue, unattributed stage closed cleanly every
+        # time CS clicked the button and AC-M4 bit only on the one path nobody uses. Placed
+        # before any write, so the 422 reaches the route with the complaint untouched.
+        from app.services.complaint_status_graph import (
+            COMPLAINT_ENTITY_TYPE as _COMPLAINT_ENTITY_TYPE,
+        )
+        from app.services.sla_waiting_service import assert_case_transition_attributed
+
+        assert_case_transition_attributed(
+            self.db, _COMPLAINT_ENTITY_TYPE, str(complaint_id), decision
+        )
+
         do_number = (getattr(complaint, "delivery_order_number", None) or "").strip()
         do_spec = f" for delivery order {do_number}" if do_number else ""
         link_part = self._complaint_status_link_part(complaint, complaint_id)

@@ -102,6 +102,9 @@ export function LodgeFlow({
   const [fault, setFault] = useState('');
   const [photos, setPhotos] = useState<ProofPhoto[]>([]);
   const [pin, setPin] = useState<PinState>('none');
+  // AC-M37: what a technician navigates to. Deliberately NOT reconciled against the typed
+  // address (AC-M39) - the pin is for navigation, the address for documents.
+  const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [address, setAddress] = useState('');
   const [result, setResult] = useState<LodgeResult | null>(null);
 
@@ -163,32 +166,74 @@ export function LodgeFlow({
     [live],
   );
 
+  /**
+   * Photo quality feedback. MOCK-ONLY, and gated on `live` for that reason.
+   *
+   * The mock returns a plausible AI verdict on every second shot so the retake affordance
+   * is always walkable in the prototype. Running it on the real route would show a consumer
+   * a fabricated judgement of a photo nothing actually looked at - worse than showing them
+   * nothing, because they would retake a perfectly good shot on our say-so. Real validation
+   * is S2a's `attachment_validation_service`, which this flow does not call yet.
+   */
   const addPhoto = useCallback(async () => {
     const index = photos.length;
     setPhotos((prev) => [
       ...prev,
-      { name: `photo-${index + 1}.jpg`, checking: true, check: null },
+      { name: `photo-${index + 1}.jpg`, checking: !live, check: null },
     ]);
+    if (live) return;
     const check = await mockCheckPhoto(index);
     setPhotos((prev) =>
       prev.map((p, i) => (i === index ? { ...p, checking: false, check } : p)),
     );
-  }, [photos.length]);
+  }, [live, photos.length]);
 
-  const retakePhoto = useCallback(async (index: number) => {
-    setPhotos((prev) => prev.map((p, i) => (i === index ? { ...p, checking: true, check: null } : p)));
-    // A retake is a fresh shot, so it is checked afresh. Passing it deterministically here
-    // keeps the prototype honest about the affordance without pretending the AI improved.
-    const check = await mockCheckPhoto(index + 1);
-    setPhotos((prev) => prev.map((p, i) => (i === index ? { ...p, checking: false, check } : p)));
-  }, []);
+  const retakePhoto = useCallback(
+    async (index: number) => {
+      setPhotos((prev) =>
+        prev.map((p, i) => (i === index ? { ...p, checking: !live, check: null } : p)),
+      );
+      if (live) return;
+      // A retake is a fresh shot, so it is checked afresh. Passing it deterministically
+      // keeps the prototype honest about the affordance without pretending the AI improved.
+      const check = await mockCheckPhoto(index + 1);
+      setPhotos((prev) => prev.map((p, i) => (i === index ? { ...p, checking: false, check } : p)));
+    },
+    [live],
+  );
 
+  /**
+   * The map pin. Real geolocation on the live route; a coin flip only in the prototype.
+   *
+   * Denial is a first-class outcome, not an error path - a consumer who refuses location
+   * permission must still be able to lodge (AC-M38) - so the prototype shows both by
+   * flipping. Doing that live would tell a consumer their location was captured when it
+   * was not, and send a technician nowhere.
+   */
   const askForLocation = useCallback(() => {
     setPin('locating');
-    // Denial is a first-class outcome, not an error path: a consumer who refuses location
-    // permission must still be able to lodge (AC-M38). The prototype shows both.
-    window.setTimeout(() => setPin(Math.random() > 0.5 ? 'set' : 'denied'), 900);
-  }, []);
+    if (!live) {
+      window.setTimeout(() => setPin(Math.random() > 0.5 ? 'set' : 'denied'), 900);
+      return;
+    }
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setPin('denied');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setCoords({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+        setPin('set');
+      },
+      // A refusal, a timeout and an unavailable sensor are all the same thing from here:
+      // no pin, carry on with the address.
+      () => setPin('denied'),
+      { enableHighAccuracy: true, timeout: 10_000 },
+    );
+  }, [live]);
 
   const submit = useCallback(async () => {
     setBusy(true);
@@ -204,16 +249,28 @@ export function LodgeFlow({
           shop_name: shopName || null,
           purchase_date: purchaseDate || null,
           site_address: address || null,
+          latitude: coords?.latitude ?? null,
+          longitude: coords?.longitude ?? null,
           defect_description: fault || null,
-          lines: [
-            {
-              claimed_text: extract?.lines[0]?.claimed_text ?? null,
-              model_code_raw: extract?.lines[0]?.model_code_raw ?? null,
-              kind_code: kindCode,
-              quantity: extract?.lines[0]?.quantity ?? 1,
-              fault_description: fault || null,
-            },
-          ],
+          // EVERY extracted line, not just the first. A receipt with a toilet and a tap
+          // on it is one purchase covering two products, and sending only `lines[0]`
+          // silently dropped the rest - the ledger then records half a sale, and the
+          // second product has no purchase date to compute its cover from.
+          //
+          // The chosen Kind applies to the first line only. The tiled chooser asks one
+          // question ("which item has the problem?"), and answering it on the consumer's
+          // behalf for every other product on the receipt would be a guess wearing a
+          // warranty term. CS resolves the rest from `claimed_text`.
+          lines: (extract?.lines?.length
+            ? extract.lines
+            : [{ claimed_text: null, model_code_raw: null, quantity: 1 }]
+          ).map((line, index) => ({
+            claimed_text: line.claimed_text ?? null,
+            model_code_raw: line.model_code_raw ?? null,
+            kind_code: index === 0 ? kindCode : null,
+            quantity: line.quantity ?? 1,
+            fault_description: index === 0 ? fault || null : null,
+          })),
         }),
       );
       setStep('done');
@@ -224,7 +281,7 @@ export function LodgeFlow({
     } finally {
       setBusy(false);
     }
-  }, [address, backend, extract, fault, fullName, kindCode, phone, purchaseDate, shopName]);
+  }, [address, backend, coords, extract, fault, fullName, kindCode, phone, purchaseDate, shopName]);
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-xl flex-col gap-4 px-4 py-6">

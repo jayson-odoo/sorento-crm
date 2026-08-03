@@ -12,10 +12,12 @@ unauthenticated lodge endpoint is an invitation to fill the complaint table with
 the consumer arrives from a WhatsApp link that already carries a token, so requiring one
 costs the journey nothing.
 
-**The token is the identity, not the body.** `respond_contact_id` is taken from the resolved
-token and the request body's copy is ignored. Trusting the body would let any valid token
-lodge a complaint against somebody else's contact - the classic confused-deputy shape, and
-the one thing a public write endpoint must not allow.
+**The token is the identity, not the body** - and the PHONE is what that means. Overriding
+`respond_contact_id` alone was not enough: `ensure_profile` keys the ConsumerProfile on the
+normalised phone, so while the body supplied it, any valid token could type a stranger's
+number and write consent, a review row and a purchase onto their ledger, then read their
+dealer and warranty verdicts back out of the response. Both the contact id and the phone now
+come from the resolved token. The body's phone is optional and ignored.
 
 **`resolve` must write nothing.** It is called every time the consumer edits the shop name,
 because the Phase 1 prototype pre-fills an editable form rather than a read-only
@@ -174,6 +176,33 @@ def test_the_token_supplies_the_contact_and_the_body_cannot_override_it(client, 
     )
 
 
+def test_a_phone_in_the_body_cannot_lodge_against_a_stranger(client, token, db):
+    """The confused deputy that the contact-id check above did NOT close.
+
+    `ensure_profile` keys the ConsumerProfile on the normalised PHONE, not on
+    `respond_contact_id`. While the body supplied the phone, any valid token could type
+    somebody else's number and write consent, a name-conflict review row and a purchase
+    onto that stranger's ledger - then read their dealer and warranty verdicts back out of
+    the response. Overriding only the contact id was not enough, because the contact id is
+    not what the profile is keyed on.
+    """
+    stranger = "+60195550001"
+    r = client.post(BASE, json=_payload(phone=stranger), headers=_headers(token))
+    assert r.status_code == 200, r.text
+
+    hijacked = (
+        db.query(ConsumerProfile).filter(ConsumerProfile.phone_e164 == stranger).first()
+    )
+    assert hijacked is None, (
+        "A profile was created or reused for a phone the caller merely typed. The token's "
+        "own contact is the only identity a portal lodgement may assert."
+    )
+
+    mine = db.query(ConsumerProfile).filter(ConsumerProfile.phone_e164 == PHONE).first()
+    assert mine is not None, "The lodgement must land on the TOKEN's consumer."
+    assert str(r.json()["complaint_id"])
+
+
 # ======================================================================== kinds
 
 
@@ -290,10 +319,19 @@ def test_a_lodgement_with_no_lines_at_all_still_succeeds(client, token):
     assert r.status_code == 200, r.text
 
 
-def test_a_lodgement_without_a_phone_is_refused(client, token):
-    """The phone is the profile's identity. Without one there is no ledger entry to
-    keep, which is the one thing this journey exists to produce.
+def test_a_lodgement_needs_no_phone_in_the_body_at_all(client, token, db):
+    """The inverse of the hijack test, and the reason the body's phone is now optional.
+
+    The token's contact supplies the identity, so a body that omits the phone entirely is
+    the CORRECT shape - the portal has no business asking a consumer for a number Sorento
+    already has (Phase 0: anything knowable is never asked for). This started life as
+    "without a phone the lodgement is refused", which was true only while the body was
+    trusted, and asserting it now would lock in the hole.
     """
     payload = _payload()
     payload.pop("phone")
-    assert client.post(BASE, json=payload, headers=_headers(token)).status_code == 422
+    r = client.post(BASE, json=payload, headers=_headers(token))
+    assert r.status_code == 200, r.text
+
+    profile = db.query(ConsumerProfile).filter(ConsumerProfile.phone_e164 == PHONE).first()
+    assert profile is not None, "The token's own phone must have supplied the identity."

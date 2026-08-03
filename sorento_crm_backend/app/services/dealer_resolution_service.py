@@ -24,7 +24,7 @@ import re
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-from sqlalchemy import text
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -114,16 +114,26 @@ def _candidates(db: Session) -> List[Tuple[str, str, str]]:
     Three columns, not one: a receipt prints the TRADING name while `customer_name` is
     often the registered entity. 3,284 customers is small enough to scan, and scanning
     keeps the normalisation in one language.
+
+    **Queried through the ORM, deliberately.** `Customer` carries `CompanyScopedMixin`, and
+    the company filter is applied by a `do_orm_execute` event - so it fires on this query
+    and would NOT have fired on the raw `text()` SELECT this started as. With raw SQL, a
+    consumer lodging under one company could resolve to another company's dealer, and that
+    dealer's name went back to the portal as a fact. Same family as the standing rule that
+    raw SQL bypasses the `company_id` stamp.
     """
-    rows = db.execute(
-        text(
-            """
-            SELECT id::text, customer_name, trading_name, registered_name
-            FROM customers
-            WHERE COALESCE(is_active, true) = true
-            """
+    from app.models.order import Customer
+
+    rows = (
+        db.query(
+            Customer.id,
+            Customer.customer_name,
+            Customer.trading_name,
+            Customer.registered_name,
         )
-    ).all()
+        .filter(func.coalesce(Customer.is_active, True).is_(True))
+        .all()
+    )
     out: List[Tuple[str, str, str]] = []
     for customer_id, *names in rows:
         for name in names:
@@ -167,6 +177,24 @@ def resolve_dealer(db: Session, printed_name: Optional[str]) -> DealerMatch:
         return DealerMatch(state=STATE_UNMATCHED, printed_name=raw)
 
     if best_score >= RESOLVE_AT:
+        # A tie AT the resolve threshold is not a match, it is a question.
+        #
+        # Normalisation strips corporate suffixes and bracketed branches, so two genuinely
+        # different `customers` rows can normalise to the same string. Alphabetical
+        # tie-breaking made that deterministic, which is not the same as correct: it bound
+        # the purchase to whichever display name sorted first and reported it as `resolved`.
+        # In the sell-through ledger that is a sale attributed to a dealer who may never
+        # have made it - the exact failure the resolved/candidate split exists to prevent.
+        # A duplicated customer row produces this too, and CS is the right place to settle it.
+        tied = {row[0] for row in candidates if _similarity(row[2], needle) >= RESOLVE_AT}
+        if len(tied) > 1:
+            return DealerMatch(
+                state=STATE_CANDIDATE,
+                printed_name=raw,
+                suggestion_customer_id=best[0],
+                suggestion_name=best[1],
+                score=best_score,
+            )
         return DealerMatch(
             state=STATE_RESOLVED,
             printed_name=raw,
