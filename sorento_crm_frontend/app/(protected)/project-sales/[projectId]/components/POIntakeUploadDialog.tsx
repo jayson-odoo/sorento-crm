@@ -2,7 +2,6 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { FileText, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,10 +14,10 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { FileDropzone } from '@/components/common/FileDropzone';
 import { usePOUpload } from '../../_shared/hooks/usePOIntake';
 
 const ACCEPT = '.pdf,.jpg,.jpeg,.png';
-const VALID = ['pdf', 'jpg', 'jpeg', 'png'];
 
 /**
  * Uploading the scan.
@@ -40,20 +39,8 @@ export function POIntakeUploadDialog({
 }) {
   const router = useRouter();
   const upload = usePOUpload(projectId);
-  const inputRef = React.useRef<HTMLInputElement>(null);
   const [file, setFile] = React.useState<File | null>(null);
   const [poNumber, setPoNumber] = React.useState('');
-  const [dragging, setDragging] = React.useState(false);
-
-  const accept = (candidate: File | undefined) => {
-    if (!candidate) return;
-    const extension = candidate.name.split('.').pop()?.toLowerCase();
-    if (!extension || !VALID.includes(extension)) {
-      toast.error(`Use a PDF or a photo (${ACCEPT})`);
-      return;
-    }
-    setFile(candidate);
-  };
 
   return (
     <Dialog open onOpenChange={(next) => !next && onDone()}>
@@ -90,75 +77,23 @@ export function POIntakeUploadDialog({
           }}
         >
           <DialogBody className="max-h-[65vh] space-y-4 overflow-y-auto">
-            <div
-              onDragOver={(event) => {
-                event.preventDefault();
-                setDragging(true);
-              }}
-              onDragLeave={(event) => {
-                event.preventDefault();
-                setDragging(false);
-              }}
-              onDrop={(event) => {
-                event.preventDefault();
-                setDragging(false);
-                accept(event.dataTransfer?.files?.[0]);
-              }}
-              className={`rounded-lg border border-dashed px-4 py-8 text-center transition-colors ${
-                dragging ? 'border-primary bg-primary/5' : 'border-border'
-              }`}
-            >
-              {file ? (
-                <div className="flex items-center justify-center gap-2">
-                  <FileText
-                    className="size-4 shrink-0 text-muted-foreground"
-                    aria-hidden
-                  />
-                  <span
-                    className="max-w-[16rem] truncate text-sm font-medium"
-                    title={file.name}
-                  >
-                    {file.name}
-                  </span>
-                  <Button
-                    type="button"
-                    mode="icon"
-                    variant="ghost"
-                    size="sm"
-                    aria-label="Remove the selected file"
-                    onClick={() => setFile(null)}
-                  >
-                    <X className="size-3.5" />
-                  </Button>
-                </div>
-              ) : (
-                <>
-                  <Upload className="mx-auto size-5 text-muted-foreground" aria-hidden />
-                  <p className="mt-2 text-sm font-medium">Drop the PO here</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">PDF or photo</p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="mt-3"
-                    onClick={() => inputRef.current?.click()}
-                  >
-                    Choose a file
-                  </Button>
-                </>
-              )}
-              <input
-                ref={inputRef}
-                type="file"
-                accept={ACCEPT}
-                className="hidden"
-                aria-label="PO document"
-                onChange={(event) => {
-                  accept(event.target.files?.[0]);
-                  event.target.value = '';
-                }}
-              />
-            </div>
+            <FileDropzone
+              id="po-upload-file"
+              accept={ACCEPT}
+              files={file ? [file] : []}
+              onFilesChange={(files) => setFile(files[0] ?? null)}
+              onReject={(rejected, reason) =>
+                toast.error(
+                  reason === 'type'
+                    ? `${rejected.name} is not a PDF or a photo.`
+                    : `${rejected.name} is larger than 25 MB.`,
+                )
+              }
+              maxSizeMb={25}
+              title="Drop the PO here"
+              hint="PDF or photo"
+              aria-label="PO document"
+            />
 
             {!purchaseOrderId && (
               <div className="space-y-1.5">

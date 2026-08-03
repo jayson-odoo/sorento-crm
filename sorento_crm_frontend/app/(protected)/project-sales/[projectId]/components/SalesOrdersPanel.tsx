@@ -249,10 +249,6 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0 break-words">
                 <p className="text-sm font-medium">Sales orders</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  Drafted from the purchase order and the delivery schedule it is committed
-                  against.
-                </p>
               </div>
               {project.can_edit && (
                 <div className="flex flex-wrap gap-2">

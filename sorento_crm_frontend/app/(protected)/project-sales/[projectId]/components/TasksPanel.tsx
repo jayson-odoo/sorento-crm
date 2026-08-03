@@ -96,10 +96,6 @@ export function TasksPanel({ project }: { project: Project }) {
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <CardTitle className="text-sm">Tasks</CardTitle>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Grouped by work-stream. This project&apos;s next action is the earliest
-              open task with a due date.
-            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div

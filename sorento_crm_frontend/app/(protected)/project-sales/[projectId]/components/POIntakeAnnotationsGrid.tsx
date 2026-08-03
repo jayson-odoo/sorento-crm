@@ -85,7 +85,7 @@ export function POIntakeAnnotationsGrid({
         // order worth reviewing them in, so no column here offers a sort.
         header: ({ column }) => <DataGridColumnHeader title="#" column={column} />,
         cell: ({ row }) => (
-          <span className="font-mono text-xs tabular-nums">{row.index + 1}</span>
+          <span className="text-sm tabular-nums">{row.index + 1}</span>
         ),
         size: 56,
         minSize: 48,
@@ -155,15 +155,27 @@ export function POIntakeAnnotationsGrid({
         // No placeholder when there is no crop: on a document with a dozen notes an
         // apology repeated a dozen times is noise, and the row already says what the
         // pencil says.
+        //
+        // The crop is the thing a reviewer points at when they ask "where is this on the
+        // paper", so the crop itself takes them there. The Page chip does the same job for
+        // a note whose crop could not be cut.
         cell: ({ row }) =>
           row.original.crop_url ? (
-            <img
-              src={row.original.crop_url}
-              alt={
-                row.original.raw_text ?? `Handwriting on page ${row.original.page_no}`
-              }
-              className="max-h-12 w-full rounded border border-border bg-white object-contain"
-            />
+            <button
+              type="button"
+              aria-label={`Show the handwriting on page ${row.original.page_no}`}
+              title={`Show page ${row.original.page_no} of the scan`}
+              onClick={() => onShowPage(row.original.page_no)}
+              className="block w-full cursor-zoom-in rounded border border-border bg-white p-0 hover:border-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+            >
+              <img
+                src={row.original.crop_url}
+                alt={
+                  row.original.raw_text ?? `Handwriting on page ${row.original.page_no}`
+                }
+                className="max-h-12 w-full rounded object-contain"
+              />
+            </button>
           ) : null,
         size: 150,
         minSize: 100,
@@ -192,12 +204,16 @@ export function POIntakeAnnotationsGrid({
       {
         accessorKey: 'page_no',
         header: ({ column }) => <DataGridColumnHeader title="Page" column={column} />,
+        // The page number IS the way to the paper, so it is shaped like the line chips
+        // beside it rather than like text: a reviewer who has learnt that "Line 7" is
+        // clickable should not have to discover that "Page 4" is too.
         cell: ({ row }) => (
           <Button
             type="button"
-            variant="link"
+            variant="outline"
             size="sm"
-            className="h-auto p-0 text-xs"
+            className="h-6 px-2 text-[11px]"
+            title={`Show page ${row.original.page_no} of the scan`}
             onClick={() => onShowPage(row.original.page_no)}
           >
             {`Page ${row.original.page_no}`}

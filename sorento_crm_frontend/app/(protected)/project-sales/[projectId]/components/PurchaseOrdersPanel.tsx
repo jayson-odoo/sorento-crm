@@ -75,10 +75,6 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <CardTitle className="text-sm">Purchase orders</CardTitle>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              What the customer actually ordered, checked against the version they were
-              last shown.
-            </p>
           </div>
           {project.can_edit && (
             <div className="flex flex-wrap items-center gap-2">

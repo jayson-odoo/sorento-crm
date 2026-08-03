@@ -83,7 +83,9 @@ describe('POIntakeUploadDialog', () => {
       target: { files: [new File(['x'], 'schedule.xlsx')] },
     });
 
-    expect(toastError).toHaveBeenCalledWith('Use a PDF or a photo (.pdf,.jpg,.jpeg,.png)');
+    // The wording moved with the shared dropzone; what is pinned is that the file is
+    // named in the refusal and that the dialog cannot be submitted with it.
+    expect(toastError).toHaveBeenCalledWith('schedule.xlsx is not a PDF or a photo.');
     expect(screen.getByRole('button', { name: 'Upload' })).toBeDisabled();
   });
 

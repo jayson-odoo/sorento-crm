@@ -51,10 +51,6 @@ export function QuotationsPanel({ project }: { project: Project }) {
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <CardTitle className="text-sm">Quotations</CardTitle>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              One per scope. Each is won or lost on its own, and this project&apos;s
-              outcome follows from all of them.
-            </p>
           </div>
           {project.can_edit && (
             <Button type="button" size="sm" onClick={() => setCreating(true)}>

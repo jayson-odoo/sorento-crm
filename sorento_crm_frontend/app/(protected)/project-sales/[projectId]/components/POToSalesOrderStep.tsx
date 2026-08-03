@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { ArrowRight, CalendarClock, CheckCircle2, FileCheck2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { ProjectPurchaseOrder } from '../../_shared/types/project.types';
+import { InfoHint } from './InfoHint';
 
 /**
  * What to do next with a purchase order that has arrived.
@@ -17,6 +18,10 @@ import type { ProjectPurchaseOrder } from '../../_shared/types/project.types';
  * It states its prerequisites rather than being a dead control. Building needs a
  * confirmed PO AND a confirmed delivery schedule, and a disabled button that does not
  * say why is the thing people file a bug about.
+ *
+ * The title is the next action and stays on the card. The reason behind it (`body`) was
+ * a paragraph on every expanded PO, which is a lesson repeated once per row; it now sits
+ * behind the info icon, where somebody who wants the why can still get it.
  */
 
 export type SalesOrderReadiness = {
@@ -88,11 +93,11 @@ export function POToSalesOrderStep({
       data-state={step.state}
       className="mt-4 flex flex-col gap-3 rounded-lg border bg-muted/40 p-4 sm:flex-row sm:items-center sm:justify-between"
     >
-      <div className="flex min-w-0 items-start gap-3">
-        <Icon className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden />
-        <div className="min-w-0">
-          <p className="font-medium break-words">{step.title}</p>
-          <p className="text-sm text-muted-foreground break-words">{step.body}</p>
+      <div className="flex min-w-0 items-center gap-3">
+        <Icon className="size-5 shrink-0 text-muted-foreground" aria-hidden />
+        <div className="flex min-w-0 items-center gap-1">
+          <p className="min-w-0 break-words font-medium">{step.title}</p>
+          <InfoHint label="Why this is the next step">{step.body}</InfoHint>
         </div>
       </div>
       <Button asChild size="sm" variant={step.state === 'ready' ? 'primary' : 'outline'}>

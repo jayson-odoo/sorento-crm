@@ -6,8 +6,25 @@
  * is never a dead control: when the next step is blocked, it says by what.
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
+
+// jsdom polyfills Radix's Popover (the info icon) needs.
+if (!window.matchMedia) {
+  (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+  });
+}
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
 
 import {
   POToSalesOrderStep,
@@ -55,11 +72,26 @@ describe('the next step after a PO', () => {
 
     const step = screen.getByTestId('po-next-step');
     expect(step).toHaveAttribute('data-state', 'need-schedule');
-    // The REASON is the useful half: quantities alone cannot be scheduled.
-    expect(screen.getByText(/when each phase needs it/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Add the delivery schedule to build the sales orders/i),
+    ).toBeInTheDocument();
     expect(screen.getByRole('link')).toHaveAttribute(
       'href',
       '/project-sales/p-1?tab=schedules&po=po-1',
+    );
+  });
+
+  it('keeps the reason off the page until it is asked for', async () => {
+    renderStep(true, false);
+
+    // The REASON is the useful half (quantities alone cannot be scheduled), but it is a
+    // lesson learned once, so it is not printed beside every PO.
+    expect(screen.queryByText(/when each phase needs it/i)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /Why this is the next step/i }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/when each phase needs it/i)).toBeInTheDocument(),
     );
   });
 

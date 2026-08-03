@@ -66,9 +66,6 @@ export function StakeholdersPanel({ project }: { project: Project }) {
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <CardTitle className="text-sm">Stakeholders</CardTitle>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              The people who decide, influence, and keep us informed on this project.
-            </p>
           </div>
           {project.can_edit && (
             <Button type="button" size="sm" onClick={() => setCreating(true)}>

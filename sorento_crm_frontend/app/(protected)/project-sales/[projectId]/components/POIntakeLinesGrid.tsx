@@ -185,7 +185,7 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
           cell: ({ row }) =>
             cellWrap(
               row.original,
-              <span className="flex items-center gap-1 font-mono text-xs tabular-nums">
+              <span className="flex items-center gap-1 text-sm tabular-nums">
                 {row.original.line_no}
                 {savingLineIds.includes(row.original.id) && (
                   <Loader2

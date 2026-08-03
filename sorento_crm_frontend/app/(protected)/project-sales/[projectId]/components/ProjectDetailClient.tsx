@@ -3,13 +3,14 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Clock, Flame, Loader2, Trash2 } from 'lucide-react';
+import { Clock, Flame, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { useStatusGraph } from '@/app/(protected)/system-management/status-graphs/hooks/useStatusGraphs';
 import {
   useChangeProjectStatus,
@@ -19,6 +20,8 @@ import {
 import EntityActivitiesLayout from '@/components/common/ActivitiesNotesPanel/EntityActivitiesLayout';
 import { STALE_TONE_CLASS, describeStaleness } from '../../_shared/lib/staleness';
 import { CriticalPanel } from './CriticalPanel';
+import { ProjectStatusAction, availableStatusMoves } from './ProjectStatusAction';
+import { ProjectStatusPill } from './ProjectStatusPill';
 import { ProjectActivityPanel } from './ProjectActivityPanel';
 import { ProjectAccessPanel } from './ProjectAccessPanel';
 import { DeliverySchedulesPanel } from './DeliverySchedulesPanel';
@@ -106,9 +109,9 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   }
 
   const stale = describeStaleness(project);
-  const statuses = (graph.data?.statuses ?? [])
-    .filter((status) => status.is_active)
-    .sort((a, b) => a.sort_order - b.sort_order);
+  const moves = project.can_edit
+    ? availableStatusMoves(graph.data, project.status_id)
+    : [];
 
   return (
     // The shared drawer (AC-H1): posting, @-mentions and internal notes come from the same
@@ -122,9 +125,13 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-xs text-muted-foreground">
+            <span className="text-sm text-muted-foreground">
               {project.project_code}
             </span>
+            <ProjectStatusPill
+              statusKey={project.status_key}
+              label={project.status_label}
+            />
             <Badge variant={project.outcome === 'open' ? 'outline' : 'secondary'} className="capitalize">
               {project.outcome}
             </Badge>
@@ -153,33 +160,29 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="w-full sm:w-56">
-            <SearchableSelect
-              value={project.status_id ?? ''}
-              onChange={(next) => {
-                if (!next || next === project.status_id) return;
-                move.mutate({ projectId: project.id, toStatusId: next });
-              }}
-              disabled={!project.can_edit || move.isPending}
-              options={statuses.map((status) => ({
-                value: status.id,
-                label: status.label,
-              }))}
-              placeholder="No stage set"
-              aria-label="Project stage"
-            />
-          </div>
+        {/* One primary action, and everything else behind the overflow. Delete used to
+            sit here in full, weighing the same as the step the person came to take. */}
+        <div
+          data-testid="project-header-actions"
+          className="flex flex-wrap items-center gap-2"
+        >
+          <ProjectStatusAction
+            moves={moves}
+            isPending={move.isPending}
+            onMove={(toStatusId) =>
+              move.mutate({ projectId: project.id, toStatusId })
+            }
+          />
           {project.can_edit && (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setConfirmDelete(true)}
-              aria-label="Delete project"
-            >
-              <Trash2 className="size-4 text-destructive" aria-hidden />
-              Delete
-            </Button>
+            <DetailActionsMenu ariaLabel="Project actions">
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => setConfirmDelete(true)}
+              >
+                <Trash2 className="size-4" aria-hidden />
+                Delete project
+              </DropdownMenuItem>
+            </DetailActionsMenu>
           )}
         </div>
       </header>
@@ -329,13 +332,6 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         onSuccess={() => router.push('/project-sales/pipeline')}
         successMessage="Project deleted"
       />
-
-      {move.isPending && (
-        <p className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Loader2 className="size-3 animate-spin" aria-hidden />
-          Moving stage…
-        </p>
-      )}
     </div>
     </EntityActivitiesLayout>
   );

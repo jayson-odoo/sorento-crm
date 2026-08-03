@@ -11,6 +11,7 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useProject } from '../../_shared/hooks/useProjects';
 import { usePOIntakeController } from '../../_shared/hooks/usePOIntake';
 import type { POVersion, POVersionLine } from '../../_shared/types/poIntake.types';
+import { describeReadingTime } from '../../_shared/lib/readingTime';
 import { POIntakeAnnotationsGrid } from './POIntakeAnnotationsGrid';
 import { POIntakeDocumentViewer } from './POIntakeDocumentViewer';
 import {
@@ -63,11 +64,26 @@ export function POIntakeConfirmClient({
 
   const gridRef = React.useRef<POIntakeLinesGridHandle>(null);
   const notesRef = React.useRef<HTMLDivElement>(null);
+  const viewerRef = React.useRef<HTMLDivElement>(null);
   const [page, setPage] = React.useState(1);
   const [focusedLineId, setFocusedLineId] = React.useState<string | null>(null);
   const [uploading, setUploading] = React.useState(false);
 
   const version = intake.version;
+
+  /**
+   * Takes the reader to the page a note was written on, rather than only loading it.
+   *
+   * Setting the page is the whole job on a wide screen, where the scan is pinned beside the
+   * notes and the change is visible without moving. On a phone the scan is a screen and a
+   * half ABOVE the note that was just clicked, so the page would change where nobody could
+   * see it. `block: 'nearest'` is what keeps the desktop case still: an element already in
+   * view is not scrolled at all. jsdom implements no scrollIntoView, hence the optional call.
+   */
+  const showPage = React.useCallback((pageNo: number) => {
+    setPage(pageNo);
+    viewerRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+  }, []);
 
   const focusLine = React.useCallback((line: POVersionLine) => {
     setFocusedLineId(line.id);
@@ -158,6 +174,7 @@ export function POIntakeConfirmClient({
               version.header.admin_ref,
               version.page_count ? `${version.page_count} pages` : null,
               `${version.lines.length} lines`,
+              describeReadingTime(version.extraction_elapsed_ms),
             ]
               .filter(Boolean)
               .join(' · ')}
@@ -253,7 +270,7 @@ export function POIntakeConfirmClient({
           <POIntakeTotalsBanner version={version} onJumpToProblem={jumpToProblem} />
 
           <div className="flex min-w-0 flex-col gap-4 lg:flex-row">
-            <div className="min-w-0 lg:w-[38%]">
+            <div ref={viewerRef} className="min-w-0 lg:w-[38%]">
               <POIntakeDocumentViewer
                 documentUrl={version.document_url}
                 // The version id, so a re-signed URL for the same scan is not treated as
@@ -322,7 +339,7 @@ export function POIntakeConfirmClient({
                       lines={version.lines}
                       readOnly={readOnly}
                       savingAnnotationIds={intake.savingAnnotationIds}
-                      onShowPage={setPage}
+                      onShowPage={showPage}
                       onFocusLineNo={focusLineNo}
                       onAccept={intake.acceptAnnotation}
                       onEdit={intake.editAnnotation}

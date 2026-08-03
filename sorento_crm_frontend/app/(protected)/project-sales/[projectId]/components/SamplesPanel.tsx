@@ -36,10 +36,6 @@ export function SamplesPanel({ project }: { project: Project }) {
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <CardTitle className="text-sm">Sample submissions</CardTitle>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Each one records the quotation version it went out against, so approval is
-              always traceable to a price.
-            </p>
           </div>
           {project.can_edit && (
             <Button type="button" size="sm" onClick={() => setCreating(true)}>

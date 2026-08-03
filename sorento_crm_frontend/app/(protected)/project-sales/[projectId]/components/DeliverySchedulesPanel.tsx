@@ -60,9 +60,6 @@ export function DeliverySchedulesPanel({ project }: { project: Project }) {
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <CardTitle className="text-sm">Delivery schedules</CardTitle>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              What the customer asked for, when, checked column by column against the PO.
-            </p>
           </div>
           {project.can_edit && (
             <Button

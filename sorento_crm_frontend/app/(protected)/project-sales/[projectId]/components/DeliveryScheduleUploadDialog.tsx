@@ -15,6 +15,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { FileDropzone } from '@/components/common/FileDropzone';
+import { toast } from 'sonner';
 import { listParties } from '../../_shared/services/projectService';
 import { usePurchaseOrders } from '../../_shared/hooks/useProjects';
 import { useDeliveryScheduleMutations } from '../../_shared/hooks/useDeliverySchedules';
@@ -176,17 +178,23 @@ export function DeliveryScheduleUploadDialog({
               <Label htmlFor="schedule-file">
                 File <span className="text-destructive">*</span>
               </Label>
-              <Input
+              <FileDropzone
                 id="schedule-file"
-                type="file"
                 accept={ACCEPTED}
-                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                files={file ? [file] : []}
+                onFilesChange={(files) => setFile(files[0] ?? null)}
+                onReject={(rejected, reason) =>
+                  toast.error(
+                    reason === 'type'
+                      ? `${rejected.name} is not a PDF or a photo.`
+                      : `${rejected.name} is larger than 25 MB.`,
+                  )
+                }
+                maxSizeMb={25}
+                title="Drop the delivery schedule here"
+                hint="PDF or photo"
+                aria-label="Delivery schedule document"
               />
-              {file && (
-                <p className="truncate text-xs text-muted-foreground" title={file.name}>
-                  {file.name}
-                </p>
-              )}
             </div>
           </DialogBody>
 

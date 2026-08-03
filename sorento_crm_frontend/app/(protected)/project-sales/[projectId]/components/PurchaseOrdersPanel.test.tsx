@@ -138,6 +138,20 @@ beforeEach(() => {
 });
 
 describe('PurchaseOrdersPanel', () => {
+  it('keeps the heading and the empty state, without the lesson under the heading', async () => {
+    renderPos();
+
+    // The client on the panel subtitles: "if we have to explain for the user to know how
+    // to use, then we fail in user experience". The heading and the empty state stay -- an
+    // empty section still has to say what would be here and offer the next step.
+    expect(await screen.findByText(/No PO received yet/i)).toBeInTheDocument();
+    expect(screen.getByText('Purchase orders')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/checked against the version they were last shown/i),
+    ).toBeNull();
+    expect(screen.getByText(/moves this project to PO Received/i)).toBeInTheDocument();
+  });
+
   it('says what recording the first PO will do', async () => {
     renderPos();
 
@@ -177,7 +191,10 @@ describe('PurchaseOrdersPanel', () => {
 
     renderPos();
 
-    expect(await screen.findByText('RM 820.00')).toBeInTheDocument();
+    // The ordered price is now an editable cell, so it reads as a value rather than as text.
+    expect(
+      await screen.findByRole('textbox', { name: 'Ordered at on SRT-WC-01' }),
+    ).toHaveValue('820.00');
     expect(screen.getByText('Quoted RM 900.00')).toBeInTheDocument();
     expect(screen.getByText('Price differs')).toBeInTheDocument();
   });

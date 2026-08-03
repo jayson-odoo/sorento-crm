@@ -6,6 +6,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { listActivities } from '@/components/common/ActivitiesNotesPanel/activitiesPanelService';
 import type { ActivityEvent } from '@/components/common/ActivitiesNotesPanel/types';
 import type { Project } from '../../_shared/types/project.types';
+import { InfoHint } from './InfoHint';
 
 /**
  * The project's activity feed (AC-H1).
@@ -64,12 +65,16 @@ export function ProjectActivityPanel({ project }: { project: Project }) {
 
   return (
     <Card>
-      <CardHeader className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-        <CardTitle className="text-sm">Activity</CardTitle>
-        <p className="text-xs text-muted-foreground">
-          Events marked <span className="font-medium">counts as work</span> reset the staleness
-          clock. Ordinary edits and imports deliberately do not.
-        </p>
+      {/* What the "counts as work" chip means is a question asked once, so it is behind
+          the icon. The chips themselves stay: they are about these events, not a lesson. */}
+      <CardHeader>
+        <div className="flex min-w-0 items-center gap-1">
+          <CardTitle className="text-sm">Activity</CardTitle>
+          <InfoHint label="About the activity feed">
+            Events marked <span className="font-medium">counts as work</span> reset the
+            staleness clock. Ordinary edits and imports do not.
+          </InfoHint>
+        </div>
       </CardHeader>
       <CardContent>
         {error ? (

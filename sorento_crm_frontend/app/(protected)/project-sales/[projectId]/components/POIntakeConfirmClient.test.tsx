@@ -290,6 +290,38 @@ describe('POIntakeConfirmClient', () => {
     expect(screen.getByTitle('Purchase order page 1')).toBeInTheDocument();
   });
 
+  it('moves the scan to the page a note was written on', async () => {
+    getPOVersion.mockResolvedValue(version({ annotations: [annotation()] }));
+
+    renderConfirm();
+
+    // The viewer is on page 1 until a note asks for its own page.
+    expect(await screen.findByTitle('Purchase order page 1')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Page 4' }));
+
+    expect(screen.getByTitle('Purchase order page 4')).toBeInTheDocument();
+    expect(screen.getByText('Page 4 of 10')).toBeInTheDocument();
+  });
+
+  /**
+   * The read takes minutes and the person waiting deserves to be told how long it took, but
+   * the version response carries no elapsed time yet (nothing on `GET /api/v1/project-sales`
+   * returns it). Until it does, the screen says nothing rather than inventing a number, and
+   * the spinner is never accompanied by a duration.
+   */
+  it('never shows a duration beside the spinner while the document is still being read', async () => {
+    getPOVersion.mockResolvedValue(
+      version({ extraction_state: 'running', lines: [], annotations: [] }),
+    );
+
+    renderConfirm();
+
+    expect(await screen.findByText('Reading the document')).toBeInTheDocument();
+    expect(screen.getByText('Being read')).toBeInTheDocument();
+    expect(screen.queryByText(/read in/i)).toBeNull();
+  });
+
   it('counts the exceptions once, on the lines card, and still reaches them', async () => {
     getPOVersion.mockResolvedValue(
       version({

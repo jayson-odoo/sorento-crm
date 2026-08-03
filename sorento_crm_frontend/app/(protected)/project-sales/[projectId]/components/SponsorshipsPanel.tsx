@@ -13,6 +13,7 @@ import {
   useSponsorshipRollup,
 } from '../../_shared/hooks/useProjects';
 import type { Project } from '../../_shared/types/project.types';
+import { InfoHint } from './InfoHint';
 import { formatMyr } from './QuotationsPanel';
 
 /**
@@ -35,12 +36,14 @@ export function SponsorshipsPanel({ project }: { project: Project }) {
   return (
     <Card>
       <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
+        {/* The one fact worth keeping is why this tab has no Add button, and it is only
+            needed once, so it sits behind the icon rather than under the heading. */}
+        <div className="flex min-w-0 items-center gap-1">
           <CardTitle className="text-sm">Sponsorships</CardTitle>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Sponsorship forms that name this project. Recorded on the form itself, which
-            lives in Project Sales Admin.
-          </p>
+          <InfoHint label="About sponsorships">
+            Sponsorship spend is recorded on the sponsorship form itself, not here. This
+            tab reads the forms that name this project.
+          </InfoHint>
         </div>
         {rollup.data && rollup.data.form_count > 0 && (
           <Badge variant="outline" className="gap-1 self-start">

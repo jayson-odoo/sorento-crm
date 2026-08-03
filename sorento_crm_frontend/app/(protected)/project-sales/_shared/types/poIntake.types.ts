@@ -117,6 +117,8 @@ export interface POVersion {
   confirmed_by_name?: string | null;
   /** Additive: pages that produced content, when the backend counts them. */
   pages_extracted?: number | null;
+  /** Additive: how long the model took. Null on documents read before it was recorded. */
+  extraction_elapsed_ms?: number | null;
   /** Additive: pages extraction could not read. */
   failed_pages?: number[] | null;
   /** Additive: the PO row's approval stamps, nested. */

@@ -9,6 +9,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useUpdateProject } from '../../_shared/hooks/useProjects';
 import type { Project } from '../../_shared/types/project.types';
+import { InfoHint } from './InfoHint';
 
 /**
  * The PDF's "Final Negotiation", as a flag rather than a funnel stage (AC-G7).
@@ -34,13 +35,19 @@ export function CriticalPanel({ project }: { project: Project }) {
   return (
     <Card>
       <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <Flame
-            className={project.is_critical ? 'size-4 text-destructive' : 'size-4 text-muted-foreground'}
-            aria-hidden
-          />
-          Critical / final negotiation
-        </CardTitle>
+        <div className="flex min-w-0 items-center gap-1">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Flame
+              className={project.is_critical ? 'size-4 text-destructive' : 'size-4 text-muted-foreground'}
+              aria-hidden
+            />
+            Critical / final negotiation
+          </CardTitle>
+          <InfoHint label="About the critical flag">
+            A flag, not a stage, so raising it never drags the card backwards. Turning it
+            off clears the clock, and a second escalation is timed afresh.
+          </InfoHint>
+        </div>
         <div className="flex items-center gap-2">
           <Switch
             id="project-critical"
@@ -54,17 +61,14 @@ export function CriticalPanel({ project }: { project: Project }) {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {project.is_critical ? (
+        {/* Kept because it reports THIS project: when it was raised, and how long it has
+            been in negotiation. The rule behind the flag moved to the icon above. */}
+        {project.is_critical && (
           <p className="text-xs text-muted-foreground">
             Raised {formatDate(project.critical_at) ?? 'recently'}
-            {project.critical_at ? ` · ${daysSince(project.critical_at)} days in negotiation` : ''}.
-            Turning this off clears the clock, so a second escalation is timed afresh.
-          </p>
-        ) : (
-          <p className="text-xs text-muted-foreground">
-            Raise this when the project reaches final negotiation and needs management
-            backing. It does not change the stage, so a re-quote will not drag the card
-            backwards.
+            {project.critical_at
+              ? ` · ${daysSince(project.critical_at)} days in negotiation`
+              : ''}
           </p>
         )}
 

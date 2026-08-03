@@ -318,6 +318,26 @@ describe('POIntakeAnnotationsGrid', () => {
     expect(onFocusLineNo).toHaveBeenCalledWith(7);
   });
 
+  it('sends the reader to the paper from the handwriting itself, not only from the page', () => {
+    renderGrid([annotation()]);
+
+    // The crop is what a reviewer points at when they ask where this is on the document,
+    // so the crop is what takes them there.
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Show the handwriting on page 4' }),
+    );
+    expect(onShowPage).toHaveBeenCalledWith(4);
+
+    // The page reference reads as the affordance it is, beside the line chips.
+    const page = screen.getByRole('button', { name: 'Page 4' });
+    expect(page).toHaveAttribute('title', 'Show page 4 of the scan');
+    fireEvent.click(page);
+    expect(onShowPage).toHaveBeenCalledTimes(2);
+    expect(onShowPage).toHaveBeenLastCalledWith(4);
+    // Reaching the page never quietly moves the line in focus.
+    expect(onFocusLineNo).not.toHaveBeenCalled();
+  });
+
   it('names each action after the note it acts on, so a dozen rows are not a dozen Accepts', () => {
     renderGrid([annotation(), annotation({ id: 'a2' })]);
 

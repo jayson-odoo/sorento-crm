@@ -72,9 +72,10 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
 
           {!project.can_edit && (
             <div className="space-y-2 rounded-md border border-border bg-muted/40 p-2.5">
+              {/* The fact is about this record and stays; the instruction that followed it
+                  only named the two buttons sitting underneath. */}
               <p className="text-xs text-muted-foreground">
-                This project belongs to {project.owner_name ?? 'another salesperson'}. Ask to
-                join it, or raise a dispute if you believe it should be yours.
+                This project belongs to {project.owner_name ?? 'another salesperson'}.
               </p>
               <div className="flex flex-wrap gap-2">
                 <Button type="button" size="sm" variant="outline" onClick={() => setRequesting('join')}>
