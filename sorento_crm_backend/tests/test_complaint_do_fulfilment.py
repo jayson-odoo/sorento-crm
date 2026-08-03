@@ -28,7 +28,8 @@ import pytest
 from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 
-from app.database import SessionLocal, engine
+from app.database import engine
+from tests._pg_fixture import pg_session
 from app.models.complaints import Complaint, ComplaintFulfilmentOrder
 from app.models.order import Order
 from app.services.complaint_fulfilment_service import ComplaintFulfilmentService
@@ -64,12 +65,8 @@ def _clean_state():
 
 @pytest.fixture
 def db() -> Iterator[Session]:
-    s = SessionLocal()
-    try:
+    with pg_session() as s:
         yield s
-    finally:
-        s.rollback()
-        s.close()
 
 
 # --------------------------------------------------------------------------- #
