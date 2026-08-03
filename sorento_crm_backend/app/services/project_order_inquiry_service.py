@@ -1,0 +1,1019 @@
+"""Order inquiry derivation, the SCM handoff and the Excel (P10, AC-I1 to AC-I7).
+
+The netting and the verb rule are the pure engine next door
+(``project_order_inquiry_engine.py``). This file is everything around them: where the
+covering pools come from, where the stock location comes from, how the rows are written
+once and only once, how purchasing is handed them, and how they leave the system as the
+spreadsheet the client already reads.
+
+Four things worth knowing before changing anything here.
+
+**The inquiry is never a second source of demand** (AC-I6). Committed quantity lives on
+`sales_order_lines` and the SCM reorder engine reads that, exactly as it does today.
+These rows say what to DO about that quantity. The only thing they are read back for is
+the coverage LEDGER below, which is a record of what a pool has already been promised
+to, not a record of what anybody has ordered.
+
+**The covering pool is consumed across publishes, not just within one.** Publishing a
+second sales order against a project whose pre-order is already spoken for must not net
+against the same 5,950 twice, so the pool is reduced by every row that already claims
+it. ``covered_by`` is the key for that: the engine writes a stable label, not free text.
+
+**The stock location is never invented** (AC-H5). It is the warehouse on a CONFIRMED
+allocation from slice P9. No confirmation yet means the column is empty, and the screen
+and the spreadsheet both say so rather than defaulting to the master location.
+
+**Purchasing is handed a task, not an email** (AC-I4). It is a `project_tasks` row on
+the delivery phase, linked to the inquiry, plus an in-app notification. The rows stay in
+`order_inquiry_rows` and the task points at them, so marking one actioned updates the
+one record rather than a copy pasted into a description.
+"""
+from __future__ import annotations
+
+import io
+import logging
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from sqlalchemy import func, or_
+from sqlalchemy.orm import Session
+
+from app.models.inventory import Warehouse
+from app.models.order import Customer
+from app.models.procurement import InboundShipment, SPOAllocation
+from app.models.product import Product
+from app.models.project_so import (
+    INQUIRY_ACTIONED,
+    INQUIRY_CANCELLED,
+    INQUIRY_RAISED,
+    IV_ADVANCE,
+    IV_ALREADY_INBOUND,
+    IV_CANCEL_BALANCE,
+    IV_CHANGE_SO,
+    IV_DELAY,
+    IV_ORDER,
+    IV_PRE_ORDERED,
+    IV_RESERVE_AND_ORDER,
+    SO_STATUS_AMENDED,
+    SO_STATUS_PUBLISHED,
+    OrderInquiry,
+    OrderInquiryRow,
+    ProjectSalesOrder,
+    ProjectSalesOrderLine,
+    SOAmendment,
+    SOLineAllocation,
+)
+from app.models.projects import (
+    TASK_LINK_ORDER_INQUIRY,
+    TASK_PHASE_DELIVERY,
+    Project,
+    ProjectParty,
+    ProjectPurchaseOrder,
+    ProjectTask,
+)
+from app.services.error_handler import AppException
+from app.services.project_order_inquiry_engine import (
+    CHANGE_DATE_EARLIER,
+    CHANGE_DATE_LATER,
+    CHANGE_NEW,
+    CHANGE_QTY_DECREASE,
+    CHANGE_QTY_INCREASE,
+    CHANGE_REPOINT,
+    POOL_INBOUND_SPO,
+    POOL_PRE_ORDER,
+    CoveringPool,
+    DemandRow,
+    net_demand,
+)
+
+logger = logging.getLogger(__name__)
+
+_ZERO = Decimal("0")
+
+INQUIRY_STATES = (INQUIRY_RAISED, INQUIRY_ACTIONED, INQUIRY_CANCELLED)
+
+# The verbs whose rows claim part of a covering pool, and so have to be counted before
+# the next publish nets against the same pool again.
+_COVERING_VERBS = (IV_PRE_ORDERED, IV_ALREADY_INBOUND)
+
+# How the client spells each verb in the order inquiry they send today. `ALREADY_INBOUND`
+# is deliberately absent: their file writes the SPO reference itself in that column
+# (`202511-S0022`), which is the thing purchasing looks up.
+REMARK_SPELLING = {
+    IV_ORDER: "ORDER",
+    IV_RESERVE_AND_ORDER: "RESERVE & ORDER",
+    IV_ADVANCE: "ADVANCE",
+    IV_DELAY: "DELAY",
+    IV_CHANGE_SO: "CHANGE SO NO",
+    IV_CANCEL_BALANCE: "CANCEL BALANCE",
+    IV_PRE_ORDERED: "PRE-ORDERED, DO NOT ORDER",
+    IV_ALREADY_INBOUND: "ALREADY INBOUND",
+}
+
+# The headings on `(04).03.2026 MARYAM TUJU RESIDENCE.xlsx`, committed to the golden set
+# as `e2e/fixtures/project-cs/expected-order-inquiry-2026-03-04.xlsx`. Read off the file
+# rather than retyped: this is the spreadsheet purchasing already works from, and a
+# renamed column is a column their own filters stop finding.
+EXPORT_TITLE = "ORDER INQUIRY"
+EXPORT_SHEET = "NEW"
+EXPORT_HEADINGS = (
+    "SO DATE",
+    "S/O NO",
+    "ITEM CODE",
+    "QTY",
+    "DELIVERY DATE",
+    "PROJECT/CUSTOMER",
+    "STOCK LOCATION",
+    "REMARK",
+)
+
+# How an amendment's own verb reads as a change to this line. The delta service spells
+# its verbs the way the client writes them; the inquiry stores the AC-I2 constants.
+_DELTA_VERB_CHANGE = {
+    "DELAY": CHANGE_DATE_LATER,
+    "ADVANCE": CHANGE_DATE_EARLIER,
+    "CANCEL BALANCE": CHANGE_QTY_DECREASE,
+    "CHANGE SO NO": CHANGE_REPOINT,
+    "ORDER": CHANGE_QTY_INCREASE,
+    "RESERVE & ORDER": CHANGE_QTY_INCREASE,
+}
+
+
+def _dec(value: Any, default: Decimal = _ZERO) -> Decimal:
+    if value is None:
+        return default
+    if isinstance(value, Decimal):
+        return value
+    try:
+        return Decimal(str(value))
+    except Exception:  # noqa: BLE001 - a malformed stored number is data, not a crash
+        return default
+
+
+def _qty_str(value: Decimal) -> str:
+    """`600`, not `600.0000`. ``normalize()`` alone turns 100 into `1E+2`."""
+    return format(_dec(value).normalize(), "f")
+
+
+def _as_date(value: Any) -> Optional[date]:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+class ProjectOrderInquiryService:
+    """Derives, serves, exports and closes off what purchasing is told to do."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    # ------------------------------------------------------------- derivation
+
+    def derive_for_sales_order(
+        self, order: ProjectSalesOrder, *, actor_user_id: Optional[str] = None
+    ) -> OrderInquiry:
+        """Every line of a freshly published sales order is new demand (AC-I1).
+
+        Idempotent: the second call returns the inquiry the first one wrote. Publishing
+        already refuses a second time, but derivation must not depend on that, because
+        a corrective publish path added later would otherwise double what purchasing is
+        told to buy.
+        """
+        existing = self._existing(order.id, None)
+        if existing is not None:
+            return existing
+
+        lines = self._lines_of(order.id)
+        demand = [
+            DemandRow(
+                line_id=line.id,
+                product_id=str(line.product_id) if line.product_id else "",
+                item_code=self._product_code(line.product_id),
+                qty=_dec(line.qty),
+                delivery_date=line.delivery_date,
+                stock_location=self._stock_location(line.id),
+                change=CHANGE_NEW,
+            )
+            for line in lines
+        ]
+        return self._write(order, None, demand, actor_user_id=actor_user_id)
+
+    def derive_for_amendment(
+        self, amendment: SOAmendment, *, actor_user_id: Optional[str] = None
+    ) -> OrderInquiry:
+        """An amendment says what CHANGED, in the same verbs purchasing already reads.
+
+        The delta is read AFTER it has been applied, so the line carries the new date and
+        the new quantity. What the row adds is the previous value, which is the half of
+        a DELAY that makes it actionable.
+        """
+        existing = self._existing(amendment.project_sales_order_id, amendment.id)
+        if existing is not None:
+            return existing
+
+        order = self._order_or_404(amendment.project_sales_order_id)
+        delta = amendment.delta_json or {}
+        demand: List[DemandRow] = []
+        for row in delta.get("rows") or []:
+            change = _DELTA_VERB_CHANGE.get(str(row.get("verb") or ""))
+            if change is None:
+                continue
+            line = self._line_or_none(row.get("so_line_id"))
+            qty = _dec(row.get("qty"))
+            if qty <= _ZERO:
+                continue
+            delivery_date = (
+                _as_date(row.get("to_value"))
+                if change in (CHANGE_DATE_LATER, CHANGE_DATE_EARLIER)
+                else (line.delivery_date if line else None)
+            )
+            demand.append(
+                DemandRow(
+                    line_id=line.id if line else str(row.get("so_line_id") or ""),
+                    product_id=str(row.get("product_id") or ""),
+                    item_code=row.get("product_code")
+                    or self._product_code(row.get("product_id")),
+                    qty=qty,
+                    delivery_date=delivery_date,
+                    stock_location=self._stock_location(line.id) if line else None,
+                    change=change,
+                    note=self._change_note(change, row),
+                )
+            )
+        return self._write(order, amendment, demand, actor_user_id=actor_user_id)
+
+    def _change_note(self, change: str, row: Dict[str, Any]) -> Optional[str]:
+        """The half of the instruction the verb does not carry."""
+        before = row.get("from_value")
+        after = row.get("to_value")
+        if change in (CHANGE_DATE_LATER, CHANGE_DATE_EARLIER):
+            moved = _as_date(before)
+            return f"Was {moved.isoformat()}" if moved else "No previous delivery date"
+        if change == CHANGE_REPOINT:
+            return f"Moved to {after}" if after else None
+        if change in (CHANGE_QTY_DECREASE, CHANGE_QTY_INCREASE):
+            if before is None or after is None:
+                return None
+            return f"Was {before}, now {after}"
+        return None
+
+    def _write(
+        self,
+        order: ProjectSalesOrder,
+        amendment: Optional[SOAmendment],
+        demand: Sequence[DemandRow],
+        *,
+        actor_user_id: Optional[str],
+    ) -> OrderInquiry:
+        plans = net_demand(demand, self._pools(order, demand))
+
+        inquiry = OrderInquiry(
+            company_id=order.company_id,
+            project_sales_order_id=order.id,
+            amendment_id=amendment.id if amendment else None,
+            state=INQUIRY_RAISED,
+            raised_by=actor_user_id,
+        )
+        self.db.add(inquiry)
+        self.db.flush()
+
+        for plan in plans:
+            self.db.add(
+                OrderInquiryRow(
+                    company_id=order.company_id,
+                    order_inquiry_id=inquiry.id,
+                    so_line_id=plan.line_id or None,
+                    item_code=plan.item_code or None,
+                    qty=plan.qty,
+                    delivery_date=plan.delivery_date,
+                    stock_location=plan.stock_location,
+                    verb=plan.verb,
+                    spo_ref=plan.spo_ref,
+                    covered_by=plan.covered_by,
+                    note=plan.note,
+                    state=INQUIRY_RAISED,
+                )
+            )
+        self.db.flush()
+        self._hand_to_purchasing(order, inquiry, len(plans))
+        return inquiry
+
+    def _existing(self, pso_id: str, amendment_id: Optional[str]) -> Optional[OrderInquiry]:
+        query = self.db.query(OrderInquiry).filter(
+            OrderInquiry.project_sales_order_id == pso_id
+        )
+        query = (
+            query.filter(OrderInquiry.amendment_id == amendment_id)
+            if amendment_id
+            else query.filter(OrderInquiry.amendment_id.is_(None))
+        )
+        return query.first()
+
+    # ----------------------------------------------------------- covering pools
+
+    def _pools(
+        self, order: ProjectSalesOrder, demand: Sequence[DemandRow]
+    ) -> List[CoveringPool]:
+        """What already exists, or is on the water, for the products being asked for.
+
+        Only the products in front of us, so a project with one product does not drag
+        every open shipment in the company into the calculation.
+        """
+        product_ids = {row.product_id for row in demand if row.product_id}
+        if not product_ids:
+            return []
+        pools = self._pre_order_pools(order, product_ids) + self._inbound_pools(product_ids)
+        claimed = self._claimed(pools)
+        out: List[CoveringPool] = []
+        for pool in pools:
+            balance = pool.qty - claimed.get((pool.label, pool.product_id), _ZERO)
+            if balance > _ZERO:
+                out.append(
+                    CoveringPool(
+                        kind=pool.kind,
+                        reference=pool.reference,
+                        product_id=pool.product_id,
+                        qty=balance,
+                        available_from=pool.available_from,
+                    )
+                )
+        return out
+
+    def _pre_order_pools(
+        self, order: ProjectSalesOrder, product_ids: set
+    ) -> List[CoveringPool]:
+        """Published pre-order sales orders on the SAME PROJECT.
+
+        The project is the anchor, not the customer (D18): a pre-order parked under
+        another debtor still belongs to this project, so the join goes through
+        `project_id` rather than through whoever the document is billed to. The order
+        being published is excluded, or a pre-order would net against itself.
+        """
+        rows = (
+            self.db.query(
+                ProjectSalesOrder.provisional_ref,
+                ProjectSalesOrder.autocount_doc_no,
+                ProjectSalesOrderLine.product_id,
+                func.sum(ProjectSalesOrderLine.qty),
+            )
+            .join(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.project_sales_order_id == ProjectSalesOrder.id,
+            )
+            .filter(
+                ProjectSalesOrder.project_id == order.project_id,
+                ProjectSalesOrder.id != order.id,
+                ProjectSalesOrder.is_pre_order.is_(True),
+                ProjectSalesOrder.status.in_([SO_STATUS_PUBLISHED, SO_STATUS_AMENDED]),
+                ProjectSalesOrderLine.product_id.in_(list(product_ids)),
+            )
+            .group_by(
+                ProjectSalesOrder.provisional_ref,
+                ProjectSalesOrder.autocount_doc_no,
+                ProjectSalesOrderLine.product_id,
+            )
+            .all()
+        )
+        return [
+            CoveringPool(
+                kind=POOL_PRE_ORDER,
+                reference=doc_no or ref,
+                product_id=str(product_id),
+                qty=_dec(qty),
+            )
+            for ref, doc_no, product_id, qty in rows
+            if _dec(qty) > _ZERO
+        ]
+
+    def _inbound_pools(self, product_ids: set) -> List[CoveringPool]:
+        """SPO allocations on shipments that have not landed: stock already on the water."""
+        rows = (
+            self.db.query(
+                SPOAllocation.spo_number,
+                SPOAllocation.product_id,
+                SPOAllocation.allocated_quantity,
+                SPOAllocation.quantity_received,
+                InboundShipment.estimated_arrival_date,
+            )
+            .join(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
+            .filter(
+                SPOAllocation.product_id.in_(list(product_ids)),
+                SPOAllocation.spo_number.isnot(None),
+                InboundShipment.actual_arrival_date.is_(None),
+                or_(
+                    SPOAllocation.receipt_status.is_(None),
+                    SPOAllocation.receipt_status != "received",
+                ),
+            )
+            .all()
+        )
+        pools: List[CoveringPool] = []
+        for spo_number, product_id, allocated, received, eta in rows:
+            balance = _dec(allocated) - _dec(received)
+            if balance <= _ZERO:
+                continue
+            pools.append(
+                CoveringPool(
+                    kind=POOL_INBOUND_SPO,
+                    reference=str(spo_number),
+                    product_id=str(product_id),
+                    qty=balance,
+                    available_from=eta,
+                )
+            )
+        return pools
+
+    def _claimed(self, pools: Sequence[CoveringPool]) -> Dict[Tuple[str, str], Decimal]:
+        """What earlier inquiries already promised out of these same pools.
+
+        Keyed on ``covered_by`` because the engine writes it as a stable label rather
+        than as prose. A cancelled row releases its claim: purchasing said the
+        instruction is dead, so the quantity behind it is available again.
+        """
+        labels = {pool.label for pool in pools}
+        if not labels:
+            return {}
+        rows = (
+            self.db.query(
+                OrderInquiryRow.covered_by,
+                OrderInquiryRow.so_line_id,
+                OrderInquiryRow.qty,
+            )
+            .filter(
+                OrderInquiryRow.covered_by.in_(list(labels)),
+                OrderInquiryRow.verb.in_(list(_COVERING_VERBS)),
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
+            .all()
+        )
+        if not rows:
+            return {}
+        line_ids = [row[1] for row in rows if row[1]]
+        products = dict(
+            self.db.query(ProjectSalesOrderLine.id, ProjectSalesOrderLine.product_id)
+            .filter(ProjectSalesOrderLine.id.in_(line_ids))
+            .all()
+        ) if line_ids else {}
+
+        claimed: Dict[Tuple[str, str], Decimal] = {}
+        for covered_by, line_id, qty in rows:
+            product_id = products.get(line_id)
+            if not product_id:
+                continue
+            key = (covered_by, str(product_id))
+            claimed[key] = claimed.get(key, _ZERO) + _dec(qty)
+        return claimed
+
+    # ------------------------------------------------------------ stock location
+
+    def _stock_location(self, so_line_id: str) -> Optional[str]:
+        """The warehouse on a CONFIRMED allocation (AC-H5), or nothing at all.
+
+        Never a default. An unconfirmed line leaves the column empty on the screen and
+        in the spreadsheet, which is the honest answer: nobody has said yet where this
+        is coming from. A split across two locations prints both, because collapsing it
+        to the larger one would tell purchasing something that is not true.
+        """
+        rows = (
+            self.db.query(Warehouse.warehouse_code, SOLineAllocation.qty)
+            .join(Warehouse, Warehouse.id == SOLineAllocation.warehouse_id)
+            .filter(
+                SOLineAllocation.so_line_id == so_line_id,
+                SOLineAllocation.confirmed_at.isnot(None),
+                SOLineAllocation.warehouse_id.isnot(None),
+            )
+            .all()
+        )
+        if not rows:
+            return None
+        ordered = sorted(rows, key=lambda row: (-_dec(row[1]), row[0] or ""))
+        seen: List[str] = []
+        for code, _qty in ordered:
+            if code and code not in seen:
+                seen.append(code)
+        if not seen:
+            return None
+        return " / ".join(seen)[:80]
+
+    # -------------------------------------------------------- the SCM handoff
+
+    def _hand_to_purchasing(
+        self, order: ProjectSalesOrder, inquiry: OrderInquiry, row_count: int
+    ) -> None:
+        """A task on the project's delivery phase, with the rows attached (AC-I4).
+
+        Best-effort on purpose. The sales order is already published and its rows are
+        already written when this runs, so a notification backend that is down must not
+        turn a successful publish into a 500 the retry cannot repair.
+        """
+        try:
+            project = (
+                self.db.query(Project).filter(Project.id == order.project_id).first()
+            )
+            if project is None:
+                return
+            reference = order.autocount_doc_no or order.provisional_ref
+            to_buy = self._buying_count(inquiry.id)
+            task = ProjectTask(
+                company_id=order.company_id,
+                project_id=project.id,
+                name=f"Order inquiry {reference}",
+                description=(
+                    f"{row_count} instruction{'' if row_count == 1 else 's'} from "
+                    f"{reference}, {to_buy} of which still need buying."
+                ),
+                task_phase=TASK_PHASE_DELIVERY,
+                category="Purchasing",
+                linked_entity_type=TASK_LINK_ORDER_INQUIRY,
+                linked_entity_id=inquiry.id,
+            )
+            self.db.add(task)
+            self.db.flush()
+            self._notify_purchasing(project, order, inquiry, row_count, to_buy)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "order inquiry %s raised, but the purchasing task was not created (%s)",
+                inquiry.id,
+                exc,
+            )
+
+    def _notify_purchasing(
+        self,
+        project: Project,
+        order: ProjectSalesOrder,
+        inquiry: OrderInquiry,
+        row_count: int,
+        to_buy: int,
+    ) -> None:
+        from app.services.notification_service import NotificationService
+
+        reference = order.autocount_doc_no or order.provisional_ref
+        service = NotificationService(self.db)
+        for user_id in self._purchasing_user_ids():
+            service.create_with_channel_preferences(
+                user_id=str(user_id),
+                type="project_order_inquiry_raised",
+                title=f"Order inquiry {reference}",
+                body=(
+                    f"{project.title}: {row_count} instruction"
+                    f"{'' if row_count == 1 else 's'}, {to_buy} still to buy."
+                ),
+                data={
+                    "project_id": str(project.id),
+                    "project_code": project.project_code,
+                    "order_inquiry_id": str(inquiry.id),
+                    "sales_order_ref": reference,
+                    "row_count": row_count,
+                    "to_buy": to_buy,
+                },
+                source_entity_type="order_inquiry",
+                source_entity_id=str(inquiry.id),
+                dedup_key=f"{inquiry.id}:order_inquiry_raised",
+                event_type="project_order_inquiry_raised",
+                send_in_app=True,
+                # Deliberately not email. AC-I4 is that this stops being an email: the
+                # task is the record, and a mailbox is the thing it replaces.
+                send_email=False,
+            )
+
+    def _purchasing_user_ids(self) -> List[str]:
+        """Everyone holding the `purchasing` role, which is what SCM is granted through."""
+        from app.models.user import User, UserRole, UserRoleAssignment, UserStatus
+
+        rows = (
+            self.db.query(UserRoleAssignment.user_id)
+            .join(UserRole, UserRole.id == UserRoleAssignment.role_id)
+            .join(User, User.id == UserRoleAssignment.user_id)
+            .filter(
+                UserRole.slug == "purchasing",
+                User.status == UserStatus.ACTIVE.value,
+                User.is_trashed.is_(False),
+            )
+            .distinct()
+            .all()
+        )
+        return [str(row[0]) for row in rows]
+
+    def _buying_count(self, inquiry_id: str) -> int:
+        return (
+            self.db.query(func.count(OrderInquiryRow.id))
+            .filter(
+                OrderInquiryRow.order_inquiry_id == inquiry_id,
+                OrderInquiryRow.verb.in_([IV_ORDER, IV_RESERVE_AND_ORDER]),
+            )
+            .scalar()
+            or 0
+        )
+
+    def task_for(self, inquiry_id: str) -> Optional[ProjectTask]:
+        return (
+            self.db.query(ProjectTask)
+            .filter(
+                ProjectTask.linked_entity_type == TASK_LINK_ORDER_INQUIRY,
+                ProjectTask.linked_entity_id == inquiry_id,
+            )
+            .first()
+        )
+
+    # -------------------------------------------------------------- reading
+
+    def list_rows(
+        self,
+        project_id: str,
+        *,
+        query: Optional[str] = None,
+        verb: Optional[Sequence[str]] = None,
+        state: Optional[Sequence[str]] = None,
+        pso_id: Optional[str] = None,
+        page: int = 1,
+        limit: int = 50,
+        sort: str = "delivery_date",
+        direction: str = "asc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Every instruction raised on one project, newest inquiry first by default."""
+        base = self._rows_query(project_id, query=query, verb=verb, state=state, pso_id=pso_id)
+        total = base.with_entities(func.count(OrderInquiryRow.id)).scalar() or 0
+
+        sortable = {
+            "delivery_date": OrderInquiryRow.delivery_date,
+            "item_code": OrderInquiryRow.item_code,
+            "qty": OrderInquiryRow.qty,
+            "verb": OrderInquiryRow.verb,
+            "state": OrderInquiryRow.state,
+            "created_at": OrderInquiryRow.created_at,
+        }
+        column = sortable.get(sort, OrderInquiryRow.delivery_date)
+        ordering = column.desc() if str(direction).lower() == "desc" else column.asc()
+        rows = (
+            base.order_by(ordering, OrderInquiryRow.item_code.asc())
+            .offset(max(page - 1, 0) * limit)
+            .limit(limit)
+            .all()
+        )
+        return self.serialize_rows(rows), int(total)
+
+    def all_rows(
+        self,
+        project_id: str,
+        *,
+        query: Optional[str] = None,
+        verb: Optional[Sequence[str]] = None,
+        state: Optional[Sequence[str]] = None,
+        pso_id: Optional[str] = None,
+    ) -> List[OrderInquiryRow]:
+        """The same set the list serves, unpaged, for the export."""
+        return (
+            self._rows_query(project_id, query=query, verb=verb, state=state, pso_id=pso_id)
+            .order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.item_code.asc())
+            .all()
+        )
+
+    def _rows_query(
+        self,
+        project_id: str,
+        *,
+        query: Optional[str],
+        verb: Optional[Sequence[str]],
+        state: Optional[Sequence[str]],
+        pso_id: Optional[str],
+    ):
+        base = (
+            self.db.query(OrderInquiryRow)
+            .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+            .join(
+                ProjectSalesOrder,
+                ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
+            )
+            .filter(ProjectSalesOrder.project_id == project_id)
+        )
+        if pso_id:
+            base = base.filter(OrderInquiry.project_sales_order_id == pso_id)
+        if query:
+            like = f"%{query.strip()}%"
+            base = base.filter(
+                or_(
+                    OrderInquiryRow.item_code.ilike(like),
+                    OrderInquiryRow.spo_ref.ilike(like),
+                    OrderInquiryRow.stock_location.ilike(like),
+                    ProjectSalesOrder.autocount_doc_no.ilike(like),
+                    ProjectSalesOrder.provisional_ref.ilike(like),
+                )
+            )
+        if verb:
+            base = base.filter(OrderInquiryRow.verb.in_(list(verb)))
+        if state:
+            base = base.filter(OrderInquiryRow.state.in_(list(state)))
+        return base
+
+    def summary(self, project_id: str) -> Dict[str, Any]:
+        """How much of this project's inquiry is still open, for the screen's header."""
+        rows = (
+            self._rows_query(project_id, query=None, verb=None, state=None, pso_id=None)
+            .with_entities(OrderInquiryRow.state, func.count(OrderInquiryRow.id))
+            .group_by(OrderInquiryRow.state)
+            .all()
+        )
+        counts = {state: 0 for state in INQUIRY_STATES}
+        for state, count in rows:
+            counts[state] = int(count)
+        counts["total"] = sum(counts[state] for state in INQUIRY_STATES)
+        return counts
+
+    def serialize_rows(self, rows: Sequence[OrderInquiryRow]) -> List[Dict[str, Any]]:
+        if not rows:
+            return []
+        context, names = self._context_for(rows)
+        out: List[Dict[str, Any]] = []
+        for row in rows:
+            meta = context.get(row.order_inquiry_id, {})
+            out.append(
+                {
+                    "id": row.id,
+                    "order_inquiry_id": row.order_inquiry_id,
+                    "so_line_id": row.so_line_id,
+                    "sales_order_ref": meta.get("sales_order_ref"),
+                    "project_sales_order_id": meta.get("project_sales_order_id"),
+                    "so_date": meta.get("so_date"),
+                    "project_customer": meta.get("project_customer"),
+                    "is_amendment": meta.get("is_amendment", False),
+                    "item_code": row.item_code,
+                    "qty": _qty_str(_dec(row.qty)),
+                    "delivery_date": row.delivery_date,
+                    "stock_location": row.stock_location,
+                    "verb": row.verb,
+                    "remark": self._remark(row),
+                    "spo_ref": row.spo_ref,
+                    "covered_by": row.covered_by,
+                    "note": row.note,
+                    "state": row.state,
+                    "actioned_at": row.actioned_at,
+                    "actioned_by_name": names.get(row.actioned_by),
+                    "created_at": row.created_at,
+                }
+            )
+        return out
+
+    def _context_for(
+        self, rows: Sequence[OrderInquiryRow]
+    ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, str]]:
+        """One query per fact the rows need, rather than one per row."""
+        inquiry_ids = {row.order_inquiry_id for row in rows}
+        joined = (
+            self.db.query(OrderInquiry, ProjectSalesOrder)
+            .join(
+                ProjectSalesOrder,
+                ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
+            )
+            .filter(OrderInquiry.id.in_(list(inquiry_ids)))
+            .all()
+        )
+        labels = self._project_customer_labels({so.id for _inq, so in joined})
+        context: Dict[str, Dict[str, Any]] = {}
+        for inquiry, order in joined:
+            context[inquiry.id] = {
+                "project_sales_order_id": order.id,
+                "sales_order_ref": order.autocount_doc_no or order.provisional_ref,
+                "so_date": (order.published_at or order.created_at),
+                "project_customer": labels.get(order.id),
+                "is_amendment": bool(inquiry.amendment_id),
+            }
+
+        from app.services.project_service import resolve_user_names
+
+        names = resolve_user_names(
+            self.db, [row.actioned_by for row in rows if row.actioned_by]
+        )
+        return context, names
+
+    def _project_customer_labels(self, pso_ids: set) -> Dict[str, str]:
+        """`BUIMACO / TUJU RESIDENCE`, the way purchasing reads the column.
+
+        The billed party first because that is who the document is against, then the
+        project, then the parking note when the order is a pre-order rather than a real
+        commercial commitment (D18).
+        """
+        if not pso_ids:
+            return {}
+        rows = (
+            self.db.query(
+                ProjectSalesOrder.id,
+                ProjectSalesOrder.is_pre_order,
+                Project.title,
+                Customer.customer_name,
+            )
+            .join(Project, Project.id == ProjectSalesOrder.project_id)
+            .outerjoin(
+                ProjectPurchaseOrder,
+                ProjectPurchaseOrder.id == ProjectSalesOrder.purchase_order_id,
+            )
+            .outerjoin(ProjectParty, ProjectParty.id == ProjectPurchaseOrder.issuing_party_id)
+            .outerjoin(Customer, Customer.id == ProjectParty.customer_id)
+            .filter(ProjectSalesOrder.id.in_(list(pso_ids)))
+            .all()
+        )
+        out: Dict[str, str] = {}
+        for pso_id, is_pre_order, title, customer_name in rows:
+            parts = [part for part in (customer_name, title) if part]
+            if is_pre_order:
+                parts.append("PRE-ORDER")
+            out[pso_id] = " / ".join(parts)
+        return out
+
+    def _remark(self, row: OrderInquiryRow) -> str:
+        """The REMARK column, spelled the way the client's own file spells it.
+
+        An inbound row prints its SPO reference rather than a verb, because the
+        reference is the thing purchasing looks up when they want to know when it lands.
+        """
+        if row.verb == IV_ALREADY_INBOUND and row.spo_ref:
+            return row.spo_ref
+        return REMARK_SPELLING.get(row.verb, row.verb)
+
+    def get_for_sales_order(self, pso_id: str) -> Optional[Dict[str, Any]]:
+        """The latest inquiry raised on one sales order, with its rows."""
+        inquiry = (
+            self.db.query(OrderInquiry)
+            .filter(OrderInquiry.project_sales_order_id == pso_id)
+            .order_by(OrderInquiry.raised_at.desc())
+            .first()
+        )
+        if inquiry is None:
+            return None
+        rows = (
+            self.db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.order_inquiry_id == inquiry.id)
+            .order_by(OrderInquiryRow.created_at.asc())
+            .all()
+        )
+        task = self.task_for(inquiry.id)
+        return {
+            "id": inquiry.id,
+            "project_sales_order_id": inquiry.project_sales_order_id,
+            "amendment_id": inquiry.amendment_id,
+            "state": inquiry.state,
+            "raised_at": inquiry.raised_at,
+            "task_id": task.id if task else None,
+            "task_name": task.name if task else None,
+            "rows": self.serialize_rows(rows),
+        }
+
+    # --------------------------------------------------------------- acting
+
+    def mark_rows(
+        self, row_ids: Sequence[str], *, state: str, actor_user_id: str
+    ) -> List[Dict[str, Any]]:
+        """Purchasing says what happened to a row (AC-I7)."""
+        if state not in (INQUIRY_ACTIONED, INQUIRY_CANCELLED, INQUIRY_RAISED):
+            raise AppException(
+                status_code=422,
+                message="An inquiry row is raised, actioned or cancelled.",
+                code="order_inquiry_state_invalid",
+            )
+        if not row_ids:
+            raise AppException(
+                status_code=422,
+                message="Name at least one row.",
+                code="order_inquiry_no_rows",
+            )
+        rows = (
+            self.db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.id.in_(list(row_ids)))
+            .all()
+        )
+        found = {row.id for row in rows}
+        missing = [row_id for row_id in row_ids if row_id not in found]
+        if missing:
+            raise AppException(
+                status_code=404,
+                message=f"{len(missing)} of those rows no longer exist.",
+                code="order_inquiry_row_not_found",
+            )
+        now = datetime.utcnow()
+        for row in rows:
+            row.state = state
+            # Back to raised is an undo, and an undo has to clear the claim it made or
+            # the row would still read as something somebody dealt with.
+            row.actioned_by = actor_user_id if state != INQUIRY_RAISED else None
+            row.actioned_at = now if state != INQUIRY_RAISED else None
+        self.db.flush()
+        self._refresh_inquiry_states({row.order_inquiry_id for row in rows})
+        return self.serialize_rows(rows)
+
+    def _refresh_inquiry_states(self, inquiry_ids: set) -> None:
+        """An inquiry is closed when nothing on it is still waiting."""
+        for inquiry_id in inquiry_ids:
+            inquiry = (
+                self.db.query(OrderInquiry).filter(OrderInquiry.id == inquiry_id).first()
+            )
+            if inquiry is None:
+                continue
+            states = {
+                state
+                for (state,) in self.db.query(OrderInquiryRow.state)
+                .filter(OrderInquiryRow.order_inquiry_id == inquiry_id)
+                .distinct()
+                .all()
+            }
+            if not states or INQUIRY_RAISED in states:
+                inquiry.state = INQUIRY_RAISED
+            elif states == {INQUIRY_CANCELLED}:
+                inquiry.state = INQUIRY_CANCELLED
+            else:
+                inquiry.state = INQUIRY_ACTIONED
+        self.db.flush()
+
+    # ---------------------------------------------------------------- export
+
+    def export_xlsx(
+        self,
+        project_id: str,
+        *,
+        query: Optional[str] = None,
+        verb: Optional[Sequence[str]] = None,
+        state: Optional[Sequence[str]] = None,
+        pso_id: Optional[str] = None,
+    ) -> Tuple[str, bytes]:
+        """The same rows, as the spreadsheet purchasing already reads (AC-I5).
+
+        Generated on demand rather than stored, for the same reason the AutoCount import
+        file is: a stored file goes stale the moment an amendment publishes, and a stale
+        instruction is exactly what this slice exists to stop being emailed around.
+        """
+        import openpyxl
+
+        rows = self.all_rows(project_id, query=query, verb=verb, state=state, pso_id=pso_id)
+        serialized = self.serialize_rows(rows)
+
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = EXPORT_SHEET
+        sheet.append([EXPORT_TITLE])
+        sheet.append(list(EXPORT_HEADINGS))
+        for row in serialized:
+            sheet.append(
+                [
+                    self._as_naive(row.get("so_date")),
+                    row.get("sales_order_ref") or "",
+                    row.get("item_code") or "",
+                    float(_dec(row.get("qty"))),
+                    row.get("delivery_date"),
+                    row.get("project_customer") or "",
+                    # Empty rather than a guess when no allocation is confirmed.
+                    row.get("stock_location") or "",
+                    row.get("remark") or "",
+                ]
+            )
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        project = self.db.query(Project).filter(Project.id == project_id).first()
+        stem = (project.project_code if project else "project") or "project"
+        filename = f"order-inquiry-{stem}-{date.today().isoformat()}.xlsx"
+        return filename, buffer.getvalue()
+
+    def _as_naive(self, value: Any) -> Any:
+        if isinstance(value, datetime):
+            return value.replace(tzinfo=None)
+        return value
+
+    # --------------------------------------------------------------- helpers
+
+    def _order_or_404(self, pso_id: str) -> ProjectSalesOrder:
+        order = (
+            self.db.query(ProjectSalesOrder).filter(ProjectSalesOrder.id == pso_id).first()
+        )
+        if order is None:
+            raise AppException(
+                status_code=404, message="Sales order not found.", code="so_not_found"
+            )
+        return order
+
+    def _lines_of(self, pso_id: str) -> List[ProjectSalesOrderLine]:
+        return (
+            self.db.query(ProjectSalesOrderLine)
+            .filter(ProjectSalesOrderLine.project_sales_order_id == pso_id)
+            .order_by(ProjectSalesOrderLine.line_no.asc())
+            .all()
+        )
+
+    def _line_or_none(self, line_id: Optional[str]) -> Optional[ProjectSalesOrderLine]:
+        if not line_id:
+            return None
+        return (
+            self.db.query(ProjectSalesOrderLine)
+            .filter(ProjectSalesOrderLine.id == line_id)
+            .first()
+        )
+
+    def _product_code(self, product_id: Optional[str]) -> str:
+        if not product_id:
+            return ""
+        row = self.db.query(Product.product_code).filter(Product.id == product_id).first()
+        return row[0] if row else ""

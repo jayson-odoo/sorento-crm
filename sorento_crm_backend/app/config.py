@@ -124,6 +124,14 @@ class Settings(BaseSettings):
     document_ai_render_dpi: int = 170                       # DOCUMENT_AI_RENDER_DPI
     document_ai_page_limit: int = 40                        # DOCUMENT_AI_PAGE_LIMIT
 
+    # Project sales allocation (P9). The master location a sales order line is
+    # sourced from first. Held as a warehouse CODE, not an id, because it is the
+    # AutoCount location code people say out loud, and because all four sites run
+    # a "-BB" bin (BRW-BB, DC1-BB, MWH-BB, WH3-BB) so the site prefix decides
+    # which one is the master. No matching warehouse row means no `brw` candidate,
+    # never a blank screen.
+    project_allocation_brw_warehouse_code: str = "BRW-BB"
+
     # AI assistant
     ai_assistant_enabled: bool = True
     ai_assistant_mcp_url: str = "http://localhost:8765/mcp"

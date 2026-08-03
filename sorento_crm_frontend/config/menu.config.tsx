@@ -635,6 +635,13 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'projects.projects.view',
       },
       {
+        // Cross-project by nature: a claim raised on one project's sales order is
+        // answered by another project's CS, so it cannot live under either project.
+        title: 'Stock Claims',
+        path: '/project-sales/stock-claims',
+        permission: 'projects.projects.view',
+      },
+      {
         title: 'Forecast & Reports',
         path: '/project-sales/reports',
         permission: 'projects.projects.view',
@@ -1541,6 +1548,13 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'My Tasks',
         path: '/project-sales/my-tasks',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Cross-project by nature: a claim raised on one project's sales order is
+        // answered by another project's CS, so it cannot live under either project.
+        title: 'Stock Claims',
+        path: '/project-sales/stock-claims',
         permission: 'projects.projects.view',
       },
       {

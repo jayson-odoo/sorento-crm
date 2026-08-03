@@ -440,10 +440,15 @@ TASK_PHASES = (TASK_PHASE_PURSUIT, TASK_PHASE_DELIVERY)
 TASK_LINK_QUOTATION_VERSION = "quotation_version"
 TASK_LINK_SAMPLE = "sample"
 TASK_LINK_PURCHASE_ORDER = "purchase_order"
+# P10 (AC-I4): purchasing is handed the order inquiry as a task with the rows attached,
+# and the attachment is this link. The rows stay in `order_inquiry_rows` rather than
+# being copied into a description, so marking one actioned updates the one record.
+TASK_LINK_ORDER_INQUIRY = "order_inquiry"
 TASK_LINK_TYPES = (
     TASK_LINK_QUOTATION_VERSION,
     TASK_LINK_SAMPLE,
     TASK_LINK_PURCHASE_ORDER,
+    TASK_LINK_ORDER_INQUIRY,
 )
 
 

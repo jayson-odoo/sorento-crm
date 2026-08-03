@@ -532,9 +532,221 @@ Publish applies the delta to the SO lines, stamps the OCN approved, and moves th
 
 ---
 
+## 6b. Allocation (P9)
+
+AC-H1 to AC-H5. Base `/api/v1/project-sales`.
+
+**Ranked candidates are computed live on every request and never stored.** A stored
+snapshot of another project's on-hand goes stale the moment they ship, and acting on a
+stale figure is the failure this slice exists to prevent. Only the DECISION persists, in
+`so_line_allocations`.
+
+BRW-BB is identified by warehouse CODE, from `settings.project_allocation_brw_warehouse_code`
+(default `BRW-BB`), resolved against `warehouses.warehouse_code` at request time. All four
+sites run a `-BB` bin, so the site prefix is what makes BRW-BB the master. No matching row
+means no `brw` candidate rather than a blank screen.
+
+### `GET /sales-orders/{pso_id}/allocations`
+
+`ListResponse` of one row PER LINE, sourced or not:
+
+```json
+{ "line_id": "…", "line_no": 1, "product_code": "SRTWC8613-RL", "description": "…",
+  "qty": "135", "uom": "SET", "delivery_date": "2026-07-01",
+  "state": "unallocated" | "pending_claim" | "refused" | "partial" | "confirmed",
+  "stock_location": "BRW-BB + MWH" | null,
+  "allocated_qty": "135", "outstanding_qty": "0",
+  "sources": [
+    { "id": "…", "source_type": "brw" | "own" | "other_project" | "order",
+      "warehouse_code": "BRW-BB", "source_project_code": null,
+      "source_project_cs_name": null, "qty": "135",
+      "confirmed": true, "confirmed_by_name": "Eling", "confirmed_at": "…",
+      "claim_id": null, "claim_state": null, "claim_reason": null }
+  ] }
+```
+
+`stock_location` counts CONFIRMED sources only, which is what makes it the stock location
+the order inquiry carries (AC-H5, feeding P10).
+
+### `GET /sales-order-lines/{line_id}/allocation-candidates`
+
+```json
+{ "line_id": "…", "line_no": 1, "qty": "135", "project_code": "PS26-0143",
+  "brw_warehouse_code": "BRW-BB",
+  "candidates": [
+    { "rank": 1, "source_type": "brw", "warehouse_code": "BRW-BB",
+      "on_hand": "80", "reserved": "0", "held_for_this_project": "0",
+      "held_for_other_projects": "0", "committed": "0", "available": "80",
+      "allocatable": "80", "claimable": "0", "requires_claim": false,
+      "is_project_location": false, "holders": [],
+      "open_claim_id": null, "open_claim_state": null },
+    { "rank": 2, "source_type": "other_project", "warehouse_code": "MWH",
+      "available": "0", "claimable": "135", "requires_claim": true,
+      "holders": [ { "project_code": "PS26-0201", "cs_name": "Farah", "qty": "200" } ] },
+    { "rank": 3, "source_type": "order", "warehouse_code": null, "allocatable": "55" }
+  ],
+  "plan": [ { "warehouse_id": "…", "warehouse_code": "BRW-BB", "qty": "80" } ],
+  "shortfall": "55", "covered": false }
+```
+
+Rank order: `brw`, then `own` (this project's own locations first, then any location whose
+stock nobody has spoken for), then `other_project`, then `order`. Ties inside a bucket go
+to the larger free balance, then to the warehouse code. `plan` is a greedy fill over FREE
+stock only and never includes an `other_project` holding.
+
+### `PUT /sales-order-lines/{line_id}/allocation`
+
+`{"sources": [{"source_type", "warehouse_id"?, "source_project_id"?, "qty"}]}`. Replaces the
+whole decision and stamps `confirmed_by` / `confirmed_at` (AC-H3). Refusals:
+
+- 422 when the sources exceed the line quantity, when a stock source names no location, or
+  when `order` names one.
+- 409 when a source exceeds what the location holds free, or when it names stock held for
+  another project with no ACCEPTED claim behind it.
+
+### `DELETE /sales-order-lines/{line_id}/allocation`
+
+204. Hard delete, and any still-open claim it raised is withdrawn with it.
+
+### `POST /sales-order-lines/{line_id}/allocation-claims`
+
+`{"warehouse_id", "to_project_id", "qty"}` -> 201 with the claim row. Writes the claim in
+`requested` PLUS an unconfirmed allocation, so the line shows what it is waiting on.
+Nothing moves on silence: the line reads `pending_claim`, gets no stock location, and the
+pending row grants no hold on a third project's screen. 409 when more is asked than that
+project holds, or when the same request is already open; 422 when a project claims from
+itself or asks for more than the line needs.
+
+### `GET /allocation-claims?direction=incoming|outgoing|all&state=…`
+
+The worklist. `incoming` = claims against projects this user may act for (owner,
+collaborator, or the manage grant).
+
+### `POST /allocation-claims/{claim_id}/accept` and `/refuse`
+
+Only the HOLDING project's CS may answer, checked in the service. Accept confirms the
+allocation it backed and stamps the line's stock location. Refuse requires
+`{"reason": "…"}` of at least three characters (422 otherwise) and leaves the allocation
+unconfirmed so the refusal and its reason stay on the line.
+
+---
+
+## 6c. Order inquiry and the SCM handoff (P10)
+
+AC-I1 to AC-I7. Base `/api/v1/project-sales`.
+
+**Rows are DERIVED, never authored.** Publishing a sales order or an amendment writes one
+`order_inquiries` row and its `order_inquiry_rows`, in the same transaction as the publish.
+There is no create endpoint and there should not be one: an instruction typed by hand is
+the email this slice exists to replace. Derivation is idempotent per (sales order) and per
+(amendment), enforced by two partial unique indexes (migration
+`322_order_inquiry_derivation`), so republishing cannot double what purchasing is told to
+buy.
+
+**Committed demand is untouched** (AC-I6). `sales_order_lines` remains the only source of
+demand and the SCM reorder engine is not changed. Inquiry rows are read back for exactly
+one thing: the coverage ledger, which stops a pre-order being promised to two publishes.
+
+`POST /sales-orders/{pso_id}/publish` and `POST /amendments/{amendment_id}/publish` both
+gain `"order_inquiry_id"` in their response.
+
+### Netting (AC-I3, AC-I3a)
+
+Before rows are written, NEW and INCREASED demand is netted against two covering pools:
+
+- **pre-order** - published `is_pre_order` sales orders on the SAME PROJECT (the project
+  is the anchor, not the customer), excluding the order being published.
+- **inbound SPO** - `spo_allocations` on shipments with no `actual_arrival_date`, at
+  `allocated_quantity - quantity_received`.
+
+The pool is consumed **FIFO by delivery date** (earliest dated demand first; undated
+demand last). Rows still PRINT in line order. A partly covered line splits into a covered
+row naming its pool in `covered_by` and an uncovered balance; a zero balance emits nothing.
+Amendment instructions (DELAY, ADVANCE, CANCEL BALANCE, CHANGE SO) never consume a pool.
+
+### Verbs (AC-I2)
+
+`(change, coverage) -> exactly one verb`:
+
+| change | coverage | verb |
+|---|---|---|
+| new / qty_increase | pre_order | `PRE_ORDERED_DO_NOT_ORDER` |
+| new / qty_increase | inbound | `ALREADY_INBOUND` (+ `spo_ref`) |
+| new / qty_increase | none, delivery within 60 days | `RESERVE_AND_ORDER` |
+| new / qty_increase | none, beyond 60 days or undated | `ORDER` |
+| date_later | any | `DELAY` |
+| date_earlier | any | `ADVANCE` |
+| qty_decrease | any | `CANCEL_BALANCE` |
+| repoint | any | `CHANGE_SO` |
+
+`ORDER` and `RESERVE_AND_ORDER` are unreachable for a covered quantity, which is AC-I3.
+
+### `GET /projects/{project_id}/order-inquiry-rows`
+
+`ListResponse`, filters `query`, `verb`, `state`, `sales_order_id`, sorted by
+`delivery_date` by default.
+
+```json
+{ "id": "…", "order_inquiry_id": "…", "sales_order_ref": "SO397450",
+  "so_date": "2026-04-02T…", "project_customer": "BUIMACO / TUJU RESIDENCE",
+  "is_amendment": false,
+  "item_code": "CB6633", "qty": "600", "delivery_date": "2027-01-07",
+  "stock_location": "BRW-BB" | null,
+  "verb": "ORDER", "remark": "ORDER", "spo_ref": null,
+  "covered_by": "Pre-order SO383057" | null, "note": "Was 2026-07-01" | null,
+  "state": "raised" | "actioned" | "cancelled",
+  "actioned_at": null, "actioned_by_name": null }
+```
+
+`stock_location` is the warehouse code on a CONFIRMED `so_line_allocations` row (AC-H5),
+joined with ` / ` when the line is split across two. **Null when nothing is confirmed**,
+and the screen and the spreadsheet both leave it blank rather than defaulting.
+
+`remark` is the verb in the client's own spelling (`RESERVE & ORDER`, `CHANGE SO NO`), or
+the SPO reference itself on an `ALREADY_INBOUND` row, matching their file.
+
+### `GET /projects/{project_id}/order-inquiry-summary`
+
+`{"total": 341, "raised": 300, "actioned": 40, "cancelled": 1}`.
+
+### `GET /sales-orders/{pso_id}/order-inquiry`
+
+The latest inquiry raised on one sales order, its rows, and `task_id` / `task_name` for the
+purchasing task. 404 with `order_inquiry_not_raised` before the order publishes.
+
+### `POST /order-inquiry-rows/mark`
+
+`{"row_ids": ["…"], "state": "actioned" | "cancelled" | "raised"}`. Requires
+`projects.order_inquiry.action`, which is PURCHASING's grant, not the project owner's:
+gating it on project edit would mean granting purchasing the right to edit every pursuit
+in the company. Stamps `actioned_by` / `actioned_at`; `raised` is the undo and clears both.
+The parent inquiry's state follows its rows (open while any row is still raised).
+
+### `GET /projects/{project_id}/order-inquiry-export`
+
+The same rows and the same filters, as `.xlsx`. Generated per request, exactly as the
+AutoCount import file is: a stored copy goes stale the moment an amendment publishes.
+Sheet `NEW`, title row `ORDER INQUIRY`, then the client's own headings, read off
+`e2e/fixtures/project-cs/expected-order-inquiry-2026-03-04.xlsx`:
+
+```
+SO DATE | S/O NO | ITEM CODE | QTY | DELIVERY DATE | PROJECT/CUSTOMER | STOCK LOCATION | REMARK
+```
+
+### The SCM handoff (AC-I4)
+
+Purchasing is handed a `project_tasks` row on the DELIVERY phase, category `Purchasing`,
+`linked_entity_type="order_inquiry"` pointing at the inquiry, plus an in-app notification
+to everyone holding the `purchasing` role (the role SCM's permissions are granted through).
+Deliberately **no email**: the task is the record, and a mailbox is the thing it replaces.
+Both are best-effort, because the sales order is already published when they run.
+
+---
+
 ## 7. What is deliberately not in this contract tonight
 
-Allocation (P9), the order inquiry Excel and SCM handoff (P10), pre-order and sponsorship
+Allocation (P9) has since landed and is section 6b above; the order inquiry and SCM
+handoff (P10) is section 6c. Still out: pre-order and sponsorship
 paths (P12), the ESB swap and real AR ingest (P13), and divergence reconciliation (P8a).
 The publish path stops at the import file. Nothing above depends on them.
 

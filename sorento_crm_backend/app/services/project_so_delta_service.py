@@ -661,12 +661,23 @@ class ProjectSODeltaService:
         order.status = SO_STATUS_AMENDED
         self._recompute(order)
         self.db.flush()
+
+        # P10 (AC-I1): the amendment is derived into purchasing's own verbs AFTER the
+        # delta has been applied, so each row carries the line as it now stands and says
+        # what it moved from. Idempotent per amendment.
+        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+        inquiry = ProjectOrderInquiryService(self.db).derive_for_amendment(
+            amendment, actor_user_id=actor_user_id
+        )
+
         return {
             "status": amendment.status,
             "sales_order_status": order.status,
             "provisional_ref": order.provisional_ref,
             "applied_rows": applied,
             "ocn_number": ocn.ocn_number,
+            "order_inquiry_id": inquiry.id,
         }
 
     def _apply_rows(

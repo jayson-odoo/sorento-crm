@@ -1739,9 +1739,21 @@ class ProjectSODraftService:
         order.published_by = actor_user_id
         order.published_at = datetime.utcnow()
         self.db.flush()
+
+        # P10 (AC-I1): publishing is the moment purchasing is told what to do about the
+        # quantity that has just been committed. Derived here rather than in the route
+        # so an amendment, a corrective publish or a future caller all raise it the same
+        # way. Idempotent on its own, so a second publish cannot double the rows.
+        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+        inquiry = ProjectOrderInquiryService(self.db).derive_for_sales_order(
+            order, actor_user_id=actor_user_id
+        )
+
         return {
             "status": order.status,
             "provisional_ref": order.provisional_ref,
+            "order_inquiry_id": inquiry.id,
             # Stage 1 (D3): an AutoCount import file carrying our own reference. The
             # returned document number is adopted later, and the ESB call replaces this
             # transport in stage 2 without changing a table or a status.

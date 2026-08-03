@@ -436,6 +436,15 @@ PERMISSION_REGISTRY.extend([
         "description": "Create, edit and delete project party organisations.",
     },
     {
+        "slug": "projects.order_inquiry.action",
+        "name": "Action Order Inquiry Rows",
+        "description": (
+            "Purchasing grant: mark an order inquiry row actioned or cancelled. Held by "
+            "purchasing rather than by the project's salesperson, because the row is "
+            "purchasing's work and they do not own the project it came from."
+        ),
+    },
+    {
         "slug": "projects.types.view",
         "name": "View Project Types and Templates",
         "description": "View configurable project types, templates and stakeholder roles.",

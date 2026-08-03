@@ -194,6 +194,9 @@ class PublishResponse(BaseModel):
     import_file_url: str
     total_amount: Optional[Decimal] = None
     line_count: int = 0
+    # P10: publishing raises the order inquiry in the same transaction, so the caller
+    # can go straight to what purchasing has just been told to do.
+    order_inquiry_id: Optional[str] = None
 
 
 # ------------------------------------------------------------------------ delta
@@ -311,3 +314,4 @@ class AmendmentPublishResponse(BaseModel):
     provisional_ref: str
     applied_rows: int
     ocn_number: Optional[str] = None
+    order_inquiry_id: Optional[str] = None

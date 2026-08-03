@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { Download, GitCompareArrows, Send, Shuffle } from 'lucide-react';
+import { ClipboardList, Download, GitCompareArrows, Send, Shuffle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -24,6 +24,7 @@ import {
   GROUPING_ORIGIN_LABEL,
   SalesOrderStatusPill,
 } from '../../../components/SalesOrderStatusPill';
+import { AllocationPanel } from './AllocationPanel';
 
 /**
  * One draft, reviewed rather than authored.
@@ -148,6 +149,14 @@ export function SalesOrderDetailClient({
               Publish
             </Button>
           )}
+          {isPublished && (
+            <Button asChild variant="outline" size="sm">
+              <Link href={`/project-sales/${projectId}/order-inquiries`}>
+                <ClipboardList className="size-4" aria-hidden />
+                Order inquiry
+              </Link>
+            </Button>
+          )}
           {so.import_file_url && (
             <Button asChild variant="outline" size="sm">
               <a href={so.import_file_url} download>
@@ -213,6 +222,8 @@ export function SalesOrderDetailClient({
         focusLineId={focusLineId}
         onClearFocus={() => setFocusLineId(null)}
       />
+
+      <AllocationPanel psoId={psoId} canEdit={canEdit} />
 
       {acknowledging && (
         <SalesOrderAcknowledgeDialog

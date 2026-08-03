@@ -35,6 +35,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
@@ -596,11 +597,38 @@ class OrderInquiry(Base, CompanyScopedMixin):
     raised_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     raised_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
-    __table_args__ = (Index("ix_order_inquiries_order", "project_sales_order_id"),)
+    __table_args__ = (
+        Index("ix_order_inquiries_order", "project_sales_order_id"),
+        # One inquiry per publish, enforced by the database rather than by remembering
+        # to check: republishing must not double what purchasing is told to buy.
+        # Postgres treats NULLs as distinct, so the sales-order case needs its own
+        # predicate rather than a plain unique on the pair.
+        Index(
+            "uq_order_inquiry_per_sales_order",
+            "project_sales_order_id",
+            unique=True,
+            postgresql_where=text("amendment_id IS NULL"),
+        ),
+        Index(
+            "uq_order_inquiry_per_amendment",
+            "amendment_id",
+            unique=True,
+            postgresql_where=text("amendment_id IS NOT NULL"),
+        ),
+    )
 
 
 class OrderInquiryRow(Base, CompanyScopedMixin):
-    """One instruction. ``covered_by`` is why an ORDER row was NOT emitted (AC-I3a, FIFO)."""
+    """One instruction.
+
+    ``covered_by`` is why an ORDER row was NOT emitted (AC-I3a, FIFO): the pre-order or
+    the inbound SPO that already covers this quantity.
+
+    ``note`` is the other half of an amendment instruction. A verb on its own is not
+    actionable: DELAY without the date it moved from, or CHANGE SO without the sales
+    order it moves to, sends purchasing back to a person to ask. Coverage and
+    explanation are separate fields because they answer separate questions.
+    """
 
     __tablename__ = "order_inquiry_rows"
 
@@ -619,10 +647,18 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     verb = Column(String(32), nullable=False)
     spo_ref = Column(String(80), nullable=True)
     covered_by = Column(Text, nullable=True)
+    note = Column(Text, nullable=True)
     state = Column(String(16), nullable=False, server_default=INQUIRY_RAISED)
+    # "Did purchasing act on this" (AC-I7) is only half answered by a state. A state
+    # with nobody's name and no time on it cannot say when, or who to ask.
+    actioned_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actioned_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
-    __table_args__ = (Index("ix_order_inquiry_rows_inquiry", "order_inquiry_id"),)
+    __table_args__ = (
+        Index("ix_order_inquiry_rows_inquiry", "order_inquiry_id"),
+        Index("ix_order_inquiry_rows_state", "state"),
+    )
 
 
 # ------------------------------------------------------------------------ allocation

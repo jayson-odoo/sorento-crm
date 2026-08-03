@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
@@ -9,7 +10,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { AlertTriangle, Hammer, TriangleAlert } from 'lucide-react';
+import { AlertTriangle, ClipboardList, Hammer, TriangleAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -250,14 +251,22 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
               <div className="min-w-0 break-words">
                 <p className="text-sm font-medium">Sales orders</p>
               </div>
-              {project.can_edit && (
-                <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2">
+                {/* Publishing raises the order inquiry, so the way to what purchasing
+                    was told sits beside the thing that told them. */}
+                <Button asChild variant="outline" size="sm">
+                  <Link href={`/project-sales/${project.id}/order-inquiries`}>
+                    <ClipboardList className="size-4" aria-hidden />
+                    Order inquiry
+                  </Link>
+                </Button>
+                {project.can_edit && (
                   <Button type="button" size="sm" onClick={() => setBuilding(true)}>
                     <Hammer className="size-4" aria-hidden />
                     Build drafts
                   </Button>
-                </div>
-              )}
+                )}
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 text-xs">
