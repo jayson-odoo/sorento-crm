@@ -429,6 +429,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/dealer-kit/flyer-readings',
       },
       {
+        title: 'Editions',
+        path: '/dealer-kit/editions',
+      },
+      {
         title: 'Bundles',
         path: '/dealer-kit/bundles',
       },

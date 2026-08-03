@@ -6,6 +6,7 @@ import Link from 'next/link';
 import {
   AlertCircle,
   Box,
+  ClipboardCheck,
   CloudUpload,
   ExternalLink,
   FileDown,
@@ -175,6 +176,16 @@ export function PageEditorScreen({ pageId }: { pageId: string }) {
               Publish
             </Button>
             <DetailActionsMenu ariaLabel="Catalogue actions">
+              {/* The only way into the approval workflow. It lives here rather
+                  than as a header button because most visits to this screen are
+                  ordinary editing, and starting a revision cycle is a decision
+                  somebody makes once per season. */}
+              <DropdownMenuItem asChild>
+                <Link href={`/dealer-kit/editions?pageId=${pageId}`}>
+                  <ClipboardCheck className="size-4" />
+                  Editions and approval
+                </Link>
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowHistory((open) => !open)}>
                 <History className="size-4" />
                 {showHistory ? 'Hide version history' : 'Version history'}

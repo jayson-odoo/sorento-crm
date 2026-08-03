@@ -23,18 +23,30 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 // inline inside a known container - which is exactly what these assertions are
 // about: whether an action sits in the header or behind the gear.
 vi.mock('@/components/common/DetailActionsMenu', () => ({
-  DetailActionsMenu: ({ children, ariaLabel }: any) => (
+  DetailActionsMenu: ({
+    children,
+    ariaLabel,
+  }: {
+    children: React.ReactNode;
+    ariaLabel?: string;
+  }) => (
     <div data-testid="gear-menu" aria-label={ariaLabel}>
       {children}
     </div>
   ),
 }));
 vi.mock('@/components/ui/dropdown-menu', () => ({
-  DropdownMenuItem: ({ children, asChild, ...rest }: any) => (
-    <div role="menuitem" {...rest}>
-      {children}
-    </div>
-  ),
+  DropdownMenuItem: (props: React.ComponentProps<'div'> & { asChild?: boolean }) => {
+    // `asChild` is a Radix concern and must not reach the DOM, so it is peeled
+    // off rather than spread.
+    const { children, asChild, ...rest } = props;
+    void asChild;
+    return (
+      <div role="menuitem" {...rest}>
+        {children}
+      </div>
+    );
+  },
 }));
 
 vi.mock('next/navigation', () => ({
