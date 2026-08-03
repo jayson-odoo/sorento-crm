@@ -704,7 +704,44 @@ ai-extract into `LodgeBackend.extract` is a contained follow-up: one method, one
   reference number, and asserts zero horizontal overflow at 375px. The live half proves the
   FE -> BE -> DB round trip and checks the network calls.
 
-**Phase 2 is complete.** Phase 3 (code review) is the remaining gate before a PR.
+**Phase 2 is complete. Phase 3 (code review) RUN 2026-08-03**, and seven findings in S3/S4a
+code are fixed in `abb7e9366` - each with the test that should have caught it:
+
+- **A portal token could lodge against a stranger.** `ensure_profile` keys the profile on the
+  normalised PHONE and the body supplied it, so overriding `respond_contact_id` closed
+  nothing: any valid token could type somebody else's number and write consent, a review row
+  and a purchase onto their ledger, then read their verdicts out of the response. The phone
+  now comes from the token's contact.
+- **The verdict never reached the consumer.** `_assess` read `row.expires_on`; the column is
+  `computed_expiry`, and the AttributeError was swallowed by the best-effort catch, so every
+  lodgement returned `warranty: []`. The test accepted `is not None`, which an empty list
+  satisfies.
+- **Every claimant earned the registration bonus.** The lodge stamped `self` on a purchase
+  created DURING the complaint; `BONUS_EARNING_REGISTRATION_SOURCES` excludes
+  `auto_on_complaint` precisely so a claim-created registration lengthens nobody's cover.
+- **Mocks ran on the live route** - a fabricated AI photo verdict and a `Math.random()` map
+  pin. Both gated on `live`; the pin now uses real geolocation.
+- **Multi-product receipts lost every line after the first.**
+- **Dealer resolution used raw SQL** (bypassing the ORM-only company filter) and broke ties
+  at the resolve threshold alphabetically while reporting `resolved`. Ties are now `candidate`.
+- **AC-M4 was unreachable from Approve/Reject** - the attribution guard ran only from
+  `update_complaint`, never `decide_complaint`.
+
+Plus two smaller ones: `attribution_summary` counted conversation-SLA escalations (no waiting
+party, so they inflated `unattributed` with WhatsApp volume) and `assignment_unresolved` had
+no clearer.
+
+**Findings NOT fixed, because they belong to the forms-platform slices rather than S3/S4a -
+one is a release blocker:** the Workflow Forms builder PATCHes `draft_schema` in the retired
+`header_fields` / `header_sections` shape, while every draft save now runs
+`_assert_document_shape` -> `FormDocument.model_validate`, which is `extra="forbid"` over
+`schemaVersion` + `pages` only. Verified end to end: the authoring UI 422s
+`form_document_malformed` on every save. Four related FE contract breaks
+(`current_state_code` and `workflow_submission_state_code` both dropped by migration 311,
+so State badges render empty and the state filter silently returns unfiltered results), plus
+line rows never reaching the `fixed`/`computed` server-side validator, and
+`_manual_header_move_offerable` testing the from-side so the documented manual-close escape
+hatch is never offered. These need the forms-platform owner.
 
 **Two environment findings from verifying Consumer 360 in a browser, both of which apply
 to production and neither of which is code:**
