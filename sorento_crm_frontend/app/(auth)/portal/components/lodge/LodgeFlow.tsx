@@ -26,7 +26,7 @@
  * are the deliverable of this phase.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Camera,
@@ -44,13 +44,13 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   MOCK_KINDS,
   mockCheckPhoto,
-  mockExtract,
-  mockSubmit,
   type ExtractResult,
   type LodgeResult,
   type MockScenario,
   type PhotoCheck,
+  type ProductKindTile,
 } from './lodgeMocks';
+import { mockLodgeBackend, recheckDealer, type LodgeBackend } from './lodgeBackend';
 
 type Step = 'upload' | 'confirm' | 'kind' | 'fault' | 'place' | 'done';
 
@@ -65,14 +65,39 @@ type PinState = 'none' | 'locating' | 'set' | 'denied';
 
 const STEP_ORDER: Step[] = ['upload', 'confirm', 'kind', 'fault', 'place', 'done'];
 
-export function LodgeFlow({ scenario = 'resolved' }: { scenario?: MockScenario }) {
+export function LodgeFlow({
+  scenario = 'resolved',
+  backend = mockLodgeBackend,
+  live = false,
+  contact,
+}: {
+  scenario?: MockScenario;
+  /** Who the token says this is. Supplied on the live route so neither the phone nor the
+   *  name is ever asked for. */
+  contact?: { phone: string | null; name: string | null };
+  /** Mock by default, so the `?scenario=` demo route keeps working with no token. */
+  backend?: LodgeBackend;
+  /** True on the token-scoped route. Enables the dealer re-check, which needs a real
+   *  customer table to match against. */
+  live?: boolean;
+}) {
   const [step, setStep] = useState<Step>('upload');
   const [busy, setBusy] = useState(false);
   const [extract, setExtract] = useState<ExtractResult | null>(null);
+  // Seeded from the mock list so the tiles are never empty while the real ones load. On
+  // the mock backend the fetch resolves to exactly this, so nothing flickers.
+  const [kinds, setKinds] = useState<ProductKindTile[]>(MOCK_KINDS);
+  const [dealerEcho, setDealerEcho] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Everything extracted is held as EDITABLE form state from the moment it arrives.
   const [shopName, setShopName] = useState('');
   const [purchaseDate, setPurchaseDate] = useState('');
+  // Known on the live route from the token's contact, so the consumer is not asked for
+  // either (Phase 0: anything knowable is never asked for). Held here because the mock
+  // route has no contact and the submit payload needs both.
+  const [phone, setPhone] = useState('');
+  const [fullName, setFullName] = useState('');
   const [kindCode, setKindCode] = useState<string | null>(null);
   const [fault, setFault] = useState('');
   const [photos, setPhotos] = useState<ProofPhoto[]>([]);
@@ -85,10 +110,32 @@ export function LodgeFlow({ scenario = 'resolved' }: { scenario?: MockScenario }
     [step],
   );
 
+  useEffect(() => {
+    if (contact?.phone) setPhone(contact.phone);
+    if (contact?.name) setFullName(contact.name);
+  }, [contact?.name, contact?.phone]);
+
+  useEffect(() => {
+    let cancelled = false;
+    backend
+      .kinds()
+      .then((rows) => {
+        // An empty list would leave the consumer with nothing to click, which is worse
+        // than the seeded fallback they already have.
+        if (!cancelled && rows.length) setKinds(rows);
+      })
+      .catch(() => {
+        /* The seeded tiles stand. A failed fetch must not empty the chooser. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [backend]);
+
   const runExtract = useCallback(async () => {
     setBusy(true);
     try {
-      const data = await mockExtract(scenario);
+      const data = await backend.extract(scenario);
       setExtract(data);
       // Pre-fill from extraction - but NEVER pre-fill a dealer we are not sure of. A
       // `candidate` is a suggestion for CS, not an answer to show the consumer as fact.
@@ -99,7 +146,22 @@ export function LodgeFlow({ scenario = 'resolved' }: { scenario?: MockScenario }
     } finally {
       setBusy(false);
     }
-  }, [scenario]);
+  }, [backend, scenario]);
+
+  /**
+   * Re-run the dealer match when the consumer finishes editing the shop name.
+   *
+   * The whole point of pre-filling an EDITABLE form is that a correction changes the
+   * answer. Without this, fixing a misread shop name changes what is on screen and
+   * nothing else, and the ledger still records the wrong dealer.
+   */
+  const recheckShopName = useCallback(
+    async (value: string) => {
+      const echo = await recheckDealer(live, value);
+      setDealerEcho(echo?.state === 'resolved' ? echo.customerName : null);
+    },
+    [live],
+  );
 
   const addPhoto = useCallback(async () => {
     const index = photos.length;
@@ -130,13 +192,39 @@ export function LodgeFlow({ scenario = 'resolved' }: { scenario?: MockScenario }
 
   const submit = useCallback(async () => {
     setBusy(true);
+    setSubmitError(null);
     try {
-      setResult(await mockSubmit());
+      setResult(
+        await backend.submit({
+          // The phone is the profile's identity. On the live route the token already
+          // establishes the contact, and the backend normalises whatever spelling
+          // arrives to E.164 before resolving the profile.
+          phone: phone,
+          full_name: fullName || null,
+          shop_name: shopName || null,
+          purchase_date: purchaseDate || null,
+          site_address: address || null,
+          defect_description: fault || null,
+          lines: [
+            {
+              claimed_text: extract?.lines[0]?.claimed_text ?? null,
+              model_code_raw: extract?.lines[0]?.model_code_raw ?? null,
+              kind_code: kindCode,
+              quantity: extract?.lines[0]?.quantity ?? 1,
+              fault_description: fault || null,
+            },
+          ],
+        }),
+      );
       setStep('done');
+    } catch (error) {
+      // Submission is the one place a consumer cannot simply be told "it worked". The
+      // only refusal the backend issues is consent, and it has to be visible.
+      setSubmitError(error instanceof Error ? error.message : 'Could not submit your report.');
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [address, backend, extract, fault, fullName, kindCode, phone, purchaseDate, shopName]);
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-xl flex-col gap-4 px-4 py-6">
@@ -173,13 +261,20 @@ export function LodgeFlow({ scenario = 'resolved' }: { scenario?: MockScenario }
           shopName={shopName}
           purchaseDate={purchaseDate}
           onShopName={setShopName}
+          onShopNameSettled={recheckShopName}
+          dealerEcho={dealerEcho}
           onPurchaseDate={setPurchaseDate}
           onContinue={() => setStep('kind')}
         />
       ) : null}
 
       {step === 'kind' ? (
-        <StepKind selected={kindCode} onSelect={setKindCode} onContinue={() => setStep('fault')} />
+        <StepKind
+          kinds={kinds}
+          selected={kindCode}
+          onSelect={setKindCode}
+          onContinue={() => setStep('fault')}
+        />
       ) : null}
 
       {step === 'fault' ? (
@@ -200,6 +295,7 @@ export function LodgeFlow({ scenario = 'resolved' }: { scenario?: MockScenario }
           onAddress={setAddress}
           onLocate={askForLocation}
           busy={busy}
+          error={submitError}
           onSubmit={submit}
         />
       ) : null}
@@ -256,6 +352,8 @@ function StepConfirm({
   shopName,
   purchaseDate,
   onShopName,
+  onShopNameSettled,
+  dealerEcho,
   onPurchaseDate,
   onContinue,
 }: {
@@ -263,6 +361,12 @@ function StepConfirm({
   shopName: string;
   purchaseDate: string;
   onShopName: (v: string) => void;
+  /** Fired on blur, not per keystroke: a match on every character would fire a request
+   *  per letter and flicker an answer that is wrong until the name is finished. */
+  onShopNameSettled: (v: string) => void;
+  /** The dealer's own name, only when the match was exact. A `candidate` is never shown
+   *  as a fact - three receipts in thirty-eight matched a real but WRONG shop. */
+  dealerEcho: string | null;
   onPurchaseDate: (v: string) => void;
   onContinue: () => void;
 }) {
@@ -304,10 +408,16 @@ function StepConfirm({
         <Input
           value={shopName}
           onChange={(e) => onShopName(e.target.value)}
+          onBlur={(e) => onShopNameSettled(e.target.value)}
           placeholder="Shop name on your receipt"
           className="h-11"
         />
-        {!shopName ? (
+        {dealerEcho ? (
+          <span className="text-xs text-muted-foreground">
+            <Check className="mr-1 inline size-3" />
+            We found them: {dealerEcho}
+          </span>
+        ) : !shopName ? (
           <span className="text-xs text-muted-foreground">
             We could not read a shop name. Type it if you know it - it is not compulsory.
           </span>
@@ -337,10 +447,12 @@ function StepConfirm({
 /* ------------------------------------------------------------------ step 3 */
 
 function StepKind({
+  kinds,
   selected,
   onSelect,
   onContinue,
 }: {
+  kinds: ProductKindTile[];
   selected: string | null;
   onSelect: (code: string) => void;
   onContinue: () => void;
@@ -349,7 +461,7 @@ function StepKind({
     <section className="flex flex-col gap-4">
       <p className="text-sm text-muted-foreground">Which item has the problem?</p>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {MOCK_KINDS.map((kind) => {
+        {kinds.map((kind) => {
           const active = selected === kind.code;
           return (
             <button
@@ -462,6 +574,7 @@ function StepPlace({
   onAddress,
   onLocate,
   busy,
+  error,
   onSubmit,
 }: {
   pin: PinState;
@@ -469,6 +582,9 @@ function StepPlace({
   onAddress: (v: string) => void;
   onLocate: () => void;
   busy: boolean;
+  /** The one refusal the backend issues is consent. It has to be visible: a consumer who
+   *  thinks the form silently failed submits again. */
+  error: string | null;
   onSubmit: () => void;
 }) {
   return (
@@ -514,6 +630,15 @@ function StepPlace({
           </Button>
         </div>
       </div>
+
+      {error ? (
+        <p
+          role="alert"
+          className="rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
+        >
+          {error}
+        </p>
+      ) : null}
 
       <Button onClick={onSubmit} disabled={busy} className="h-11">
         {busy ? (

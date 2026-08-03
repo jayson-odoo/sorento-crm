@@ -709,3 +709,183 @@ export async function aiExtractFromFiles(
   const res = await portalMultipartFetch('/api/v1/public/portal/ai-extract', form);
   return unwrap<AIExtractResult>(res, 'AI extract failed.');
 }
+
+// --------------------------------------------------------------------------- //
+// Consumer intake (S3). The lodge journey, off mocks.                          //
+// --------------------------------------------------------------------------- //
+
+/**
+ * `dealer.state` is the load-bearing field and it is a STATE, never a confidence
+ * float. The S3-pre spike measured a bimodal distribution - 26 of 38 receipts at
+ * exactly 1.00, nothing at all between 0.70 and 0.99 - so there is no gradient for a
+ * frontend to threshold, and three receipts in the middle band named a real but WRONG
+ * dealer. A float would invite this file to invent a cutoff and eventually pre-fill one
+ * of those.
+ *
+ * From the consumer's side `candidate` and `unmatched` look identical: they see only
+ * their own typed shop name. The difference is what CS receives.
+ */
+export type LodgeDealerState = 'resolved' | 'candidate' | 'unmatched';
+
+/** How a typed model code resolved. `ambiguous` is normal traffic, not an error:
+ *  `SRTWC8152` covers three real variants, so the Kind answers instead (AC-C17). */
+export type LodgeProductState = 'exact' | 'ambiguous' | 'candidates' | 'unmatched';
+
+export interface LodgeKindTile {
+  kind_code: string;
+  label: string;
+  /** Null for every Kind today. Sorento accepted text-only tiles; the field exists so
+   *  adding artwork later needs no contract change. */
+  icon: string | null;
+  sort_order: number;
+}
+
+export interface LodgeProductCandidate {
+  product_id: string;
+  product_code: string;
+  product_name: string;
+}
+
+export interface LodgeResolvedLine {
+  index: number;
+  claimed_text: string | null;
+  model_code_raw: string | null;
+  state: LodgeProductState;
+  /** Null whenever the code was ambiguous - the variant is CS's to choose. */
+  product_id: string | null;
+  product_code: string | null;
+  product_name: string | null;
+  candidates: LodgeProductCandidate[];
+  /** True when the tiled chooser has to answer for this line. */
+  needs_kind: boolean;
+  kind_code: string | null;
+}
+
+export interface LodgeResolveResult {
+  dealer: {
+    state: LodgeDealerState;
+    printed_name: string | null;
+    customer_id: string | null;
+    customer_name: string | null;
+    /** For CS only. Never rendered to a consumer. */
+    suggestion_name: string | null;
+  };
+  lines: LodgeResolvedLine[];
+}
+
+export interface LodgeLineInput {
+  claimed_text?: string | null;
+  model_code_raw?: string | null;
+  kind_code?: string | null;
+  quantity?: number | null;
+  fault_description?: string | null;
+}
+
+export interface LodgeSubmitInput extends Record<string, unknown> {
+  phone: string;
+  full_name?: string | null;
+  shop_name?: string | null;
+  purchase_date?: string | null;
+  dealer_document_number?: string | null;
+  site_address?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  defect_description?: string | null;
+  proof_attachment_id?: string | null;
+  lines: LodgeLineInput[];
+}
+
+export interface LodgeWarrantyVerdict {
+  complaint_product_line_id: string;
+  claimed_text: string | null;
+  part_name: string | null;
+  verdict: string | null;
+  expires_on: string | null;
+}
+
+export interface LodgeSubmitResult {
+  complaint_id: string;
+  complaint_number: string | null;
+  purchase_id: string | null;
+  dealer_state: LodgeDealerState;
+  dealer_name: string | null;
+  /** One entry per part per line. EMPTY is a normal answer: no purchase date means no
+   *  verdict, and saying so beats inventing one. */
+  warranty: LodgeWarrantyVerdict[];
+}
+
+export async function fetchLodgeKinds(): Promise<LodgeKindTile[]> {
+  const res = await portalFetch('/api/v1/public/portal/lodge/kinds');
+  const body = await unwrap<{ kinds: LodgeKindTile[] }>(res, 'Failed to load the product list.');
+  return body.kinds;
+}
+
+/**
+ * "Did I get this right?" - re-runnable and side-effect free.
+ *
+ * Called every time the consumer edits the shop name, because extraction pre-fills an
+ * EDITABLE form rather than a read-only confirmation. That is what turns a bad
+ * extraction into one edit by the consumer instead of a cleanup by CS.
+ */
+export async function resolveLodge(payload: {
+  shop_name?: string | null;
+  lines: LodgeLineInput[];
+}): Promise<LodgeResolveResult> {
+  const res = await portalFetch('/api/v1/public/portal/lodge/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return unwrap<LodgeResolveResult>(res, 'Could not check those details.');
+}
+
+/** Submit. Nothing blocks it but consent (AC-C14). */
+export async function submitLodge(payload: LodgeSubmitInput): Promise<LodgeSubmitResult> {
+  const res = await portalFetch('/api/v1/public/portal/lodge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return unwrap<LodgeSubmitResult>(res, 'Could not submit your report.');
+}
+
+/**
+ * One sentence a homeowner can act on, from a list of per-part verdicts.
+ *
+ * The engine answers per PART - a water closet has a ceramic body, a seat cover and a
+ * flush mechanism, each with its own term - and a consumer reading five rows learns
+ * less than one reading a sentence. The parts stay available for anyone who wants them;
+ * this is the headline, and it deliberately never says "not covered" when any part is,
+ * because the visit is what matters to them.
+ */
+export function summariseWarranty(verdicts: LodgeWarrantyVerdict[]): {
+  state: 'covered' | 'expired' | 'needs_review';
+  summary: string;
+} {
+  if (!verdicts.length) {
+    return {
+      state: 'needs_review',
+      summary: 'We could not work out your warranty automatically. Our team will check it for you.',
+    };
+  }
+  const values = verdicts.map((v) => (v.verdict || '').toLowerCase());
+  if (values.some((v) => v === 'covered')) {
+    const dated = verdicts.find((v) => (v.verdict || '').toLowerCase() === 'covered' && v.expires_on);
+    return {
+      state: 'covered',
+      summary: dated?.expires_on
+        ? `Covered by warranty until ${dated.expires_on}.`
+        : 'Covered by warranty.',
+    };
+  }
+  if (values.every((v) => v === 'expired')) {
+    return {
+      state: 'expired',
+      summary: 'Your warranty has expired, so this visit may be chargeable. Our team will confirm.',
+    };
+  }
+  return {
+    state: 'needs_review',
+    summary: 'Our team will confirm your warranty and come back to you.',
+  };
+}

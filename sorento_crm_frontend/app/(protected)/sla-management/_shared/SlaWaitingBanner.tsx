@@ -6,7 +6,6 @@ import { Clock, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { apiFetch } from '@/lib/api';
-import { extractApiError } from '@/lib/api-client';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { toast } from 'sonner';
 import {
@@ -75,11 +74,20 @@ export function SlaWaitingBanner({
         label: row.label || row.value,
       }));
     };
-    const [parties, reasons] = await Promise.all([
-      read('waiting_on_party'),
-      read('waiting_on_reason'),
-    ]);
-    setOptions({ parties, reasons });
+    try {
+      const [parties, reasons] = await Promise.all([
+        read('waiting_on_party'),
+        read('waiting_on_reason'),
+      ]);
+      setOptions({ parties, reasons });
+    } catch {
+      // A failed vocabulary read must not take the banner with it. The SENTENCE - "waiting
+      // on maintenance since 3 Aug" - is the part that matters and it is already rendered
+      // from props; only the edit dropdowns need these lists. Leaving this uncaught also
+      // produced an unhandled rejection in every component test that mounts the banner
+      // without stubbing the lookup call, which is three of them.
+      setOptions({ parties: [], reasons: [] });
+    }
   }, []);
 
   useEffect(() => {
