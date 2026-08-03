@@ -27,7 +27,7 @@ prices; a consumer sees consumer prices. **One document, resolved per reader.**
 | **S2 collections + bundles** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
 | **S3 PDF export** | n/a (no new UI surface) | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
 | **S7 flyer seeding** | **PASSED** 2026-08-02 | **PASSED** 2026-08-03 | not run | **BUILT, UNREVIEWED** |
-| **S2.5 Edition approval** | **SKIPPED** (see below) | **PASSED** 2026-08-03 | not run | **BUILT, UNREVIEWED** |
+| **S2.5 Edition approval** | **SKIPPED** (see below) | **PASSED** 2026-08-03 | author read-through 2026-08-03, `/code-review` not run | **BUILT, SELF-REVIEWED** |
 
 ---
 
@@ -833,10 +833,31 @@ while the button that does exactly that sat directly above it.
 **Neither was reachable from the test suites as written**, which is the lesson:
 both screens were green, and the walkthrough was what found them.
 
-**Still not done:** Phase 3 review has not been run on S2.5 or on S7. There is
-no e2e spec for the approval cycle - `DataGridTable` does not mount its row
-body under jsdom, so rows, status pills and the empty message are asserted
-nowhere. The price-only revision rule (AC-L4 to AC-L6) is deferred by decision.
+**A third, worse one came out of reading the diff back against the migration's
+own claims.** Migration 318 seeded an `approved -> pending_approval` edge and
+its docstring said "ANY edit to an approved Edition sends it back". Nothing
+performed that transition. So an Approver could sign off version 3, the
+Designer save version 4, and publish would ship version 4 - a document nobody
+read. The row recorded the contradiction (`approved_version_id` 3,
+`done_version_id` 4) and no code looked at it.
+
+Fixed in two halves that do different jobs. `send_back_on_edit` runs after
+`save_version` and returns an approved Edition to the queue, voiding the
+approval stamps; it is best-effort, because the save has already committed and
+raising there would 500 an operation that succeeded. Publish therefore carries
+the actual guarantee: it refuses a version that is not the approved one.
+
+**The lesson of that one is different from the browser's.** A comment asserting
+behaviour is not behaviour, and this file had already recorded the graph as
+built and verified. Reading a diff against what its own documentation claims is
+a distinct pass from running it, and it found the most serious defect in the
+slice.
+
+**Still not done:** Phase 3 was a read-through by the author, not `/code-review`.
+There is no e2e spec for the approval cycle - `DataGridTable` does not mount its
+row body under jsdom, so rows, status pills and the empty message are asserted
+nowhere. S7 has had no review pass at all. The price-only revision rule (AC-L4
+to AC-L6) is deferred by decision.
 
 ---
 
