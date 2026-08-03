@@ -68,6 +68,11 @@ PERMISSION_REGISTRY.append({
     "description": "Permission to reject a complaint after technical team response and notify the contact via Respond.io.",
 })
 PERMISSION_REGISTRY.append({
+    "slug": "complaint_management.complaints.settle_on_site",
+    "name": "Settle Complaints On Site",
+    "description": "Close a complaint as settled on site (status='settled_on_site') when the technician fixed the issue during the visit: resolves the technical stage WITHOUT spawning customer service, so no replacement is arranged. Separate from Approve so it can be granted/hidden independently.",
+})
+PERMISSION_REGISTRY.append({
     "slug": "complaint_management.complaints.resolve",
     "name": "Process Complaints (CS)",
     "description": "Permission for the customer-service team to mark an approved complaint as processed by CS (closes the customer-service SLA stage).",

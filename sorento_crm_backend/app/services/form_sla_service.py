@@ -35,6 +35,9 @@ FORM_SLA_TYPES = (
     "sponsorship_form",
     "complaint",
     "ticket",
+    # Has carried an active form_sla_configs row since 2026-08-01. Omitting it made
+    # GET /form-sla-config 500 on response validation for every caller.
+    "workflow_submission",
 )
 
 
