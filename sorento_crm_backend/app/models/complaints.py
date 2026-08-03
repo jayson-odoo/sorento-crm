@@ -145,6 +145,33 @@ class ComplaintProductLine(Base):
     defect_type_id = Column(
         UUID(as_uuid=False), ForeignKey("lookup_options.id", ondelete="SET NULL"), nullable=True
     )
+    # S3. `product_code` above is what CS types off a document they are reading; these
+    # three are what a CONSUMER produces on a phone, and they have to survive the gap
+    # between the two.
+    #
+    # `claimed_text` is verbatim and permanent - it is the only thing a CS agent can act
+    # on when resolution fails, and 24% of receipts give the extractor nothing to work
+    # with. `product_id` is the exact variant and is USUALLY NULL: `SRTWC8152` matches
+    # three real variants and resolves to none of them (AC-C17), which is why ADR-0010
+    # makes cover decidable from `kind_id` alone. A NOT NULL `product_id` would make the
+    # ordinary consumer line unwritable.
+    claimed_text = Column(Text, nullable=True)
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
+    )
+    # ON DELETE SET NULL, mirroring `consumer_purchase_lines.kind_id`: purging the
+    # warranty module must leave the complaint standing (AC-L2), not be refused by a
+    # constraint.
+    kind_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("warranty_product_kinds.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # Per LINE, not per complaint. `complaints.defect_description` describes the
+    # complaint; a consumer lodging a toilet and a tap in one visit has two faults, and
+    # folding them into one paragraph leaves the technician knowing both are broken but
+    # not which is which.
+    fault_description = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     complaint = relationship("Complaint", back_populates="product_lines")
