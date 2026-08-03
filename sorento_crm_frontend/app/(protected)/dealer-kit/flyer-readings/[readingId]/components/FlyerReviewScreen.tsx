@@ -137,6 +137,7 @@ export function FlyerReviewScreen({ readingId }: { readingId: string }) {
       </div>
 
       <MatchReportSections
+        readingId={data.id}
         report={data.report}
         codeCount={data.codeCount}
         promotionLabel={promotionLabel}

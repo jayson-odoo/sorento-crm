@@ -18,6 +18,11 @@
  * GET    /flyer-readings/{id}?promotionId=   -> FlyerReading
  * POST   /flyer-readings/{id}/seed  {pageId | name+slug, promotionId?,
  *          commitMessage?}                   -> 201 FlyerSeedResult
+ * POST   /flyer-readings/{id}/dimensions/apply {codes[], overwriteConflicts?}
+ *          -> 200 DimensionApplyResult
+ *          The ONE route here that writes outside the Kit. It needs
+ *          `dealer_kit.page.view` AND `master_data.products.edit`, both: see
+ *          `applyDimensions` below.
  * DELETE /flyer-readings/{id}                -> 204, hard
  *
  * ## What the report is, and what it is not
@@ -35,9 +40,11 @@
  * one would put a SKU nobody stocks in front of a customer. The suggestion is a
  * trigram nearest match and is never applied by anything here.
  *
- * **`dimensionCandidates` are reported and never written** (PLAN D9). Nothing
- * on this screen touches `products`; applying one is S7.6's job and needs the
- * master-data permission.
+ * **`dimensionCandidates` are reported, and applied only one explicit click at
+ * a time** (PLAN D9, S7.6). Reading a flyer still writes nothing to `products`
+ * (AC-D4); `applyDimensions` is a separate act, needs the master-data
+ * permission, names the codes it is applying, and refuses to overwrite a value
+ * the master already holds unless it is told to.
  *
  * ## What the API does NOT carry, and the screen therefore cannot show
  *
@@ -115,6 +122,52 @@ export interface FlyerReadingSummary {
 
 export interface FlyerReading extends FlyerReadingSummary {
   report: MatchReport;
+}
+
+/** Why a named code was not written. Each one sends a reviewer somewhere else. */
+export type DimensionRefusalReason =
+  | 'conflict_not_confirmed'
+  | 'already_matches'
+  | 'product_not_found'
+  | 'not_a_candidate';
+
+export interface DimensionApplyInput {
+  /** The codes to write. Never empty: there is no "apply everything you found". */
+  codes: string[];
+  /**
+   * Permission to replace a value somebody entered, for the named codes ONLY.
+   * The server refuses a conflicting row without it, which is also what catches
+   * a row somebody else filled in while this screen was open.
+   */
+  overwriteConflicts?: boolean;
+}
+
+export interface AppliedDimension {
+  code: string;
+  productCode: string;
+  productName: string;
+  pages: number[];
+  lengthMm: number;
+  widthMm: number;
+  heightMm: number;
+  /** What the master held before. The only place the replaced value survives. */
+  previousLengthMm: number | null;
+  previousWidthMm: number | null;
+  previousHeightMm: number | null;
+  wasConflict: boolean;
+}
+
+export interface RefusedDimension {
+  code: string;
+  reason: DimensionRefusalReason;
+  message: string;
+}
+
+export interface DimensionApplyResult {
+  applied: AppliedDimension[];
+  refused: RefusedDimension[];
+  appliedCount: number;
+  refusedCount: number;
 }
 
 export interface FlyerSeedInput {
@@ -226,6 +279,52 @@ export async function deleteFlyerReading(readingId: string): Promise<void> {
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Could not delete this flyer reading'));
   }
+}
+
+/**
+ * Write the flyer's printed sizes onto the products it names.
+ *
+ * The request carries CODES and never millimetres: the figures are read off the
+ * stored flyer on the server, so nothing on this path can put a number of its
+ * own into the product master.
+ *
+ * 200 with a body, not 207. A refusal is an answer rather than an error - the
+ * master already agreeing, or a conflict nobody confirmed - so the caller must
+ * read `refused`, and the counts are on the wire so a screen cannot report a
+ * different total from the one the server wrote.
+ */
+export async function applyDimensions(
+  readingId: string,
+  input: DimensionApplyInput,
+): Promise<DimensionApplyResult> {
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(readingId)}/dimensions/apply`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        codes: input.codes,
+        overwriteConflicts: Boolean(input.overwriteConflicts),
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Could not apply these sizes to the product master'),
+    );
+  }
+
+  const wire = (await response.json()) as Partial<DimensionApplyResult>;
+  const applied = wire.applied ?? [];
+  // Never defaulted away: an absent `refused` read as "nothing was refused" is
+  // exactly the silence this endpoint exists to break.
+  const refused = wire.refused ?? [];
+  return {
+    applied,
+    refused,
+    appliedCount: wire.appliedCount ?? applied.length,
+    refusedCount: wire.refusedCount ?? refused.length,
+  };
 }
 
 export async function seedFromFlyerReading(

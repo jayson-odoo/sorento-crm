@@ -504,6 +504,100 @@ class FlyerSeedOut(BaseModel):
     skipped: list[UnmatchedCodeOut] = Field(default_factory=list)
 
 
+# ---------------------------------------------------------------------------
+# Applying a flyer's printed sizes to the product master (S7.6)
+# ---------------------------------------------------------------------------
+
+
+class DimensionApplyIn(BaseModel):
+    """Which printed sizes to write, and nothing about what they are.
+
+    Codes only, deliberately. The millimetres are read off the stored flyer, so
+    a caller cannot put a figure of their own into the product master through
+    this route - it would otherwise be a "write anything to products" endpoint
+    reachable by anybody who can upload a PDF.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    codes: list[str] = Field(default_factory=list, max_length=2000)
+    # Permission to replace a value somebody entered deliberately, given for the
+    # NAMED codes only. Default false: a conflict is a decision, not a
+    # correction, and the dangerous case must never be the quiet one.
+    overwrite_conflicts: bool = Field(
+        default=False, validation_alias="overwriteConflicts"
+    )
+
+    @model_validator(mode="after")
+    def _something_was_named(self) -> "DimensionApplyIn":
+        from app.services.dealer_kit.dimension_apply_service import normalise_codes
+
+        if not normalise_codes(self.codes):
+            raise ValueError(
+                "Name the sizes to apply. This never applies everything it found."
+            )
+        return self
+
+
+class AppliedDimensionOut(BaseModel):
+    """One product whose size now says what the flyer says.
+
+    ``previous*`` is on the wire because it is the only place the replaced value
+    still exists in front of the person who replaced it.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    code: str
+    # Named, never identified: no uuid reaches a screen.
+    product_code: str = Field(serialization_alias="productCode")
+    product_name: str = Field(serialization_alias="productName")
+    pages: list[int] = Field(default_factory=list)
+    length_mm: float = Field(serialization_alias="lengthMm")
+    width_mm: float = Field(serialization_alias="widthMm")
+    height_mm: float = Field(serialization_alias="heightMm")
+    previous_length_mm: Optional[float] = Field(
+        default=None, serialization_alias="previousLengthMm"
+    )
+    previous_width_mm: Optional[float] = Field(
+        default=None, serialization_alias="previousWidthMm"
+    )
+    previous_height_mm: Optional[float] = Field(
+        default=None, serialization_alias="previousHeightMm"
+    )
+    # True when this replaced a value the master already held.
+    was_conflict: bool = Field(default=False, serialization_alias="wasConflict")
+
+
+class RefusedDimensionOut(BaseModel):
+    """One code that was asked for and not written, and why."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    code: str
+    # conflict_not_confirmed / already_matches / product_not_found /
+    # not_a_candidate. Separate reasons because each sends a reviewer somewhere
+    # different, and one "failed" sends most of them to the wrong place.
+    reason: str
+    message: str
+
+
+class DimensionApplyOut(BaseModel):
+    """What was written and what was not - every code asked for, exactly once.
+
+    The counts are on the wire rather than left to the screen so the two can
+    never disagree, and so a client that renders only the successes still
+    reports the failures.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    applied: list[AppliedDimensionOut] = Field(default_factory=list)
+    refused: list[RefusedDimensionOut] = Field(default_factory=list)
+    applied_count: int = Field(default=0, serialization_alias="appliedCount")
+    refused_count: int = Field(default=0, serialization_alias="refusedCount")
+
+
 class SelectionCreate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

@@ -41,6 +41,16 @@ vi.mock('../../../services/flyerReadingService', () => ({
   listFlyerReadings: vi.fn(),
   uploadFlyerReading: vi.fn(),
   deleteFlyerReading: vi.fn(),
+  applyDimensions: vi.fn(),
+}));
+
+// The sizes section asks whether this user may write the product master (S7.6),
+// which goes through NextAuth. Stubbed rather than wrapped in a SessionProvider:
+// what this file pins is the promotion wire, not RBAC.
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => true,
+  useHasAnyPermission: () => true,
+  usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
 }));
 
 vi.mock('../../../services/dealerKitService', () => ({ listPages }));

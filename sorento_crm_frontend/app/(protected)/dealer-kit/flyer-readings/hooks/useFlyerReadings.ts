@@ -4,10 +4,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import {
+  applyDimensions,
   getFlyerReading,
   listFlyerReadings,
   seedFromFlyerReading,
   uploadFlyerReading,
+  type DimensionApplyInput,
+  type DimensionApplyResult,
   type FlyerReading,
   type FlyerSeedInput,
   type FlyerSeedResult,
@@ -76,6 +79,35 @@ export function useUploadFlyerReading() {
       // The backend says "not a PDF" and "larger than the 50 MB limit" in
       // words, so the message is passed through rather than replaced.
       toast.error(error.message || 'Could not read that flyer');
+    },
+  });
+}
+
+/**
+ * Write printed sizes onto the product master.
+ *
+ * The READING is invalidated afterwards, unlike the seed, and that is the whole
+ * point: the report is derived from the master, so an applied row must come
+ * back as an agreement rather than sitting there as a candidate somebody
+ * applies again on their next visit. Every promotion's copy of the report is
+ * invalidated, not just the one on screen, because they all read the same
+ * products.
+ *
+ * No toast on success. The result is a list of what applied AND what did not,
+ * and a green "Done" beside three silent refusals is the failure this endpoint
+ * was shaped to prevent. Failures still toast, because a request that never
+ * landed has nothing to render.
+ */
+export function useApplyDimensions(readingId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation<DimensionApplyResult, Error, DimensionApplyInput>({
+    mutationFn: (input) => applyDimensions(readingId, input),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [FLYER_READINGS_QUERY_KEY, readingId] });
+    },
+    onError: (error) => {
+      toast.error(error.message || 'Could not apply these sizes to the product master');
     },
   });
 }

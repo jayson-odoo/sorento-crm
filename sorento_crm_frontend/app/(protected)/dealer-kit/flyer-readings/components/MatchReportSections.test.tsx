@@ -8,7 +8,9 @@
  *
  * - unmatched codes are named as products the brochure will NOT contain
  * - a suggestion is shown with its score and is never applied
- * - dimension candidates are labelled as a report, never as a change
+ * - dimension candidates are shown with both sizes side by side, and nothing is
+ *   written unless somebody ticks a row (the section's own behaviour is pinned
+ *   in `DimensionReviewSection.test.tsx`, S7.6)
  * - the section still renders when it is empty, and says so as a good result
  */
 import React from 'react';
@@ -26,6 +28,17 @@ vi.mock('next/navigation', () => ({
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+}));
+
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() } }));
+
+// The sizes section can write to the product master now (S7.6), so it asks
+// whether this user may. Granted here: what this file pins is the report, and a
+// hidden control would make the assertions below vacuous.
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => true,
+  useHasAnyPermission: () => true,
+  usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
 }));
 
 import type { MatchReport } from '../../services/flyerReadingService';
@@ -97,6 +110,7 @@ function renderReport(report: MatchReport, promotionLabel: string | null = null,
   return render(
     <QueryClientProvider client={client}>
       <MatchReportSections
+        readingId="r-1"
         report={report}
         codeCount={codeCount}
         promotionLabel={promotionLabel}
@@ -192,14 +206,16 @@ describe('MatchReportSections, the promotion gap', () => {
 });
 
 describe('MatchReportSections, sizes', () => {
-  it('reports conflicts first, and says nothing is written to the master', () => {
+  it('reports conflicts first, and says only ticked rows are written', () => {
     renderReport(FULL, 'A3 Flyer 2026');
 
     const section = document.querySelector('[data-dk-fr-section="dimensions"]');
     expect(section).toHaveTextContent('1 of 2 disagree with what the master holds');
-    // The rule this screen must not break: dimensions are reported, never
-    // applied. S7.6 owns applying them.
-    expect(section).toHaveTextContent(/nothing here is written to the product master/i);
+    // The promise this screen makes CHANGED with S7.6 and had to change here in
+    // the same breath: it used to say nothing is ever written, which stopped
+    // being true the moment the section grew an apply. What it may never say is
+    // that a row is written without being ticked.
+    expect(section).toHaveTextContent(/only the rows you tick are written/i);
   });
 
   it('shows both sizes side by side so a human can decide which is wrong', () => {
@@ -211,11 +227,12 @@ describe('MatchReportSections, sizes', () => {
     expect(within(grid).getByText('Disagrees with the master')).toBeInTheDocument();
   });
 
-  it('offers no control that would change the product master', () => {
+  it('cannot write anything until a row is ticked', () => {
     renderReport(FULL, 'A3 Flyer 2026');
 
-    const grid = screen.getByTestId('dk-fr-dimensions-grid');
-    expect(within(grid).queryByRole('button', { name: /apply|use printed|update/i })).toBeNull();
+    // The apply exists, and starts inert. Nothing is preselected, so landing on
+    // this screen and clicking the only button on it writes nothing.
+    expect(screen.getByTestId('dk-fr-dimensions-apply')).toBeDisabled();
   });
 
   it('renders the section when no card printed a size', () => {

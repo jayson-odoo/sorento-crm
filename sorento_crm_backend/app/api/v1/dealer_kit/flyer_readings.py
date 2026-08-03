@@ -30,7 +30,10 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.dealer_kit import (
+    AppliedDimensionOut,
     CodeSuggestionOut,
+    DimensionApplyIn,
+    DimensionApplyOut,
     DimensionCandidateOut,
     FlyerReadingOut,
     FlyerReadingSummary,
@@ -38,8 +41,10 @@ from app.schemas.dealer_kit import (
     FlyerSeedOut,
     MatchReportOut,
     MatchedCodeOut,
+    RefusedDimensionOut,
     UnmatchedCodeOut,
 )
+from app.services.dealer_kit import dimension_apply_service
 from app.services.dealer_kit import flyer_reading_service as svc
 from app.services.dealer_kit import flyer_seed_service as seed_service
 from app.services.dealer_kit import page_service
@@ -48,6 +53,11 @@ router = APIRouter()
 
 _VIEW = require_permission_with_api_key("dealer_kit.page.view")
 _EDIT = require_permission("dealer_kit.page.edit")
+
+# The two halves of applying a printed size, and they are deliberately different
+# permissions. See the route.
+_READ_THE_FLYER = require_permission("dealer_kit.page.view")
+_WRITE_THE_MASTER = require_permission("master_data.products.edit")
 
 # Read in pieces so the limit can be enforced while reading rather than after.
 _CHUNK_BYTES = 1024 * 1024
@@ -277,6 +287,94 @@ def seed_from_flyer_reading(
             )
             for entry in result.skipped
         ],
+    )
+
+
+@router.post(
+    "/flyer-readings/{reading_id}/dimensions/apply",
+    response_model=DimensionApplyOut,
+)
+def apply_flyer_dimensions(
+    reading_id: str,
+    payload: DimensionApplyIn,
+    db: Session = Depends(get_db),
+    _reader: dict = Depends(_READ_THE_FLYER),
+    user: dict = Depends(_WRITE_THE_MASTER),
+):
+    """Write the sizes this flyer prints onto the products it names (S7.6).
+
+    **Two permissions, and neither on its own.** Every other route in this file
+    runs on the dealer-kit page split, because everything they do stays inside
+    the Kit. This one leaves it: it writes ``products``, which order entry,
+    procurement, the catalogue and every quote read from. So the authority to
+    write is ``master_data.products.edit`` - the same slug that guards the
+    product screen and the import - and ``dealer_kit.page.view`` is only the
+    right to see the flyer being applied FROM.
+
+    Deliberately NOT ``page.edit``. Drafting a brochure is not authority over
+    the master, and a designer who may upload a flyer, seed a catalogue and
+    publish it still may not change what a product measures. Equally
+    deliberately not ``products.edit`` alone: a reading is company-scoped
+    working material, and somebody who cannot open it has no business reaching
+    into it. The two are ANDed by declaring both, in this order, so the 403 a
+    designer sees names the permission they are actually missing.
+
+    No API-key variant on either. This is a master-data write, and the shared
+    external key acting as a user is not the principal for one.
+
+    **The request names codes; it never carries millimetres.** The figures come
+    from the stored reading. See ``dimension_apply_service`` for why that is the
+    whole security model of this route, and for what a conflict costs.
+
+    200 rather than 207. Refusals are not errors - a row the master already
+    agrees with, or a conflict nobody confirmed, is an answer - so the status
+    says the request was understood and the BODY says what happened to each
+    code. A 4xx here would throw away the per-row detail that makes partial
+    success readable.
+    """
+    record = svc.get_reading(db, reading_id)
+    result = dimension_apply_service.apply_dimensions(
+        db,
+        record,
+        codes=payload.codes,
+        overwrite_conflicts=payload.overwrite_conflicts,
+        user_id=_user_id(user),
+    )
+    return DimensionApplyOut(
+        applied=[
+            AppliedDimensionOut(
+                code=entry.code,
+                product_code=entry.product_code,
+                product_name=entry.product_name,
+                pages=list(entry.pages),
+                length_mm=float(entry.length_mm),
+                width_mm=float(entry.width_mm),
+                height_mm=float(entry.height_mm),
+                previous_length_mm=(
+                    float(entry.previous_length_mm)
+                    if entry.previous_length_mm is not None
+                    else None
+                ),
+                previous_width_mm=(
+                    float(entry.previous_width_mm)
+                    if entry.previous_width_mm is not None
+                    else None
+                ),
+                previous_height_mm=(
+                    float(entry.previous_height_mm)
+                    if entry.previous_height_mm is not None
+                    else None
+                ),
+                was_conflict=entry.was_conflict,
+            )
+            for entry in result.applied
+        ],
+        refused=[
+            RefusedDimensionOut(code=entry.code, reason=entry.reason, message=entry.message)
+            for entry in result.refused
+        ],
+        applied_count=len(result.applied),
+        refused_count=len(result.refused),
     )
 
 

@@ -6,7 +6,10 @@ import {
   getPaginationRowModel,
   useReactTable,
   type ColumnDef,
+  type OnChangeFn,
   type PaginationState,
+  type Row,
+  type RowSelectionState,
 } from '@tanstack/react-table';
 
 import { Card, CardFooter, CardTable } from '@/components/ui/card';
@@ -23,6 +26,19 @@ export interface ReportGridProps<T extends object> {
   emptyMessage: ReactNode;
   pageSize?: number;
   'data-testid'?: string;
+  /**
+   * Selection, for the one report that acts on its rows (the sizes). Left out,
+   * a grid has no checkbox column at all: three of the four report tables have
+   * nothing to do with the rows they list, and a tick that does nothing reads
+   * as a broken control.
+   *
+   * The state is OWNED BY THE CALLER because the caller is what applies it, and
+   * has to clear it once the rows have been written.
+   */
+  rowSelection?: RowSelectionState;
+  onRowSelectionChange?: OnChangeFn<RowSelectionState>;
+  /** Which rows may be ticked at all, e.g. only sizes that need a decision. */
+  enableRowSelection?: boolean | ((row: Row<T>) => boolean);
 }
 
 /**
@@ -45,6 +61,9 @@ export function ReportGrid<T extends object>({
   emptyMessage,
   pageSize = 10,
   'data-testid': testId,
+  rowSelection,
+  onRowSelectionChange,
+  enableRowSelection,
 }: ReportGridProps<T>) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize });
 
@@ -52,8 +71,10 @@ export function ReportGrid<T extends object>({
     columns,
     data: rows,
     getRowId,
-    state: { pagination },
+    state: { pagination, ...(rowSelection ? { rowSelection } : {}) },
     onPaginationChange: setPagination,
+    ...(onRowSelectionChange ? { onRowSelectionChange } : {}),
+    ...(enableRowSelection !== undefined ? { enableRowSelection } : {}),
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     columnResizeMode: 'onChange',
