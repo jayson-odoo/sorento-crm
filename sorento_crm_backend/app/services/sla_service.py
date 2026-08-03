@@ -2523,6 +2523,14 @@ class ConversationSLATrackingService:
         tracking = self.get_tracking(tracking_id, load_event_logs=False)
         self._assert_can_extend(tracking, actor_user_id)
 
+        # AC-M4 / AC-M2: extend is the ONE door that legitimately moves a deadline
+        # (AC-M6), which makes it the one door an unattributed breach could walk out of.
+        # Pushing an overdue deadline without naming who we are waiting on is exactly
+        # the gamed metric AC-M2 refuses.
+        from app.services.sla_waiting_service import assert_attributed
+
+        assert_attributed(self.db, tracking, "extend")
+
         old_due = getattr(tracking, "due_at_resolution", None)
         new_due, added_days = self.compute_extension(
             tracking, days=days, target_date=target_date
@@ -4465,7 +4473,29 @@ class ConversationSLATrackingService:
                         log_dict["assigned_to_id"] = uid
                     if label:
                         log_dict["assigned_to"] = label
-        
+
+        # S4a AC-M7: point-in-time waiting capture, stamped HERE rather than by each
+        # caller. There are a dozen _write_event_log callers (escalate, resolve, extend,
+        # reassign, handling claim / release / takeover) and a stamp added per caller is
+        # a stamp somebody forgets. Reporting reads the captured value, never the live
+        # column, or every historical breach re-attributes itself the next time somebody
+        # edits the case.
+        #
+        # A caller that passes the fields explicitly wins: sla_waiting_service writes
+        # the waiting_cleared row with the values it just cleared, which are gone from
+        # the tracker by then.
+        if not any(
+            log_dict.get(field) is not None
+            for field in ("waiting_on_party", "waiting_on_reason", "waiting_since")
+        ):
+            waiting_source = self.db.query(ConversationSLATracking).filter(
+                ConversationSLATracking.id == log_dict["sla_tracking_id"]
+            ).first()
+            if waiting_source is not None:
+                log_dict["waiting_on_party"] = getattr(waiting_source, "waiting_on_party", None)
+                log_dict["waiting_on_reason"] = getattr(waiting_source, "waiting_on_reason", None)
+                log_dict["waiting_since"] = getattr(waiting_source, "waiting_since", None)
+
         log = ConversationSLAEventLog(**log_dict)
         self.db.add(log)
         self.db.commit()

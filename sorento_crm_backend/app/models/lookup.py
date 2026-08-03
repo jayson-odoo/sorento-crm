@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy import (
     Column, String, Boolean, Integer, Text, ForeignKey, DateTime, Index, UniqueConstraint, func, text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -40,6 +40,12 @@ class LookupOption(Base):
     sort_order = Column(Integer, nullable=False, default=0)
     is_active = Column(Boolean, default=True, nullable=False)
     description = Column(Text, nullable=True)
+    # Per-option metadata that is not a label. Generic on purpose: the first caller is
+    # the SLA waiting party, where "is this party us or a third party" has to be a
+    # property of the option (an admin adding a party would otherwise silently file it
+    # on one side of the AC-M7 breach headline), but a domain-specific is_external
+    # boolean has no business on a core table every dropdown shares.
+    attributes = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
 

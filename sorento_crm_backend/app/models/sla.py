@@ -1,5 +1,5 @@
 """SLA management models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, BigInteger, Numeric, Index, text
+from sqlalchemy import CheckConstraint, Column, String, Boolean, DateTime, ForeignKey, Text, Integer, BigInteger, Numeric, Index, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -114,6 +114,25 @@ class ConversationSLATracking(Base):
     assignment_unresolved = Column(
         Boolean, nullable=False, server_default=text("false"), default=False
     )
+    # S4a waiting attribution (AC-M1). On the TRACKER for the same reason as the flag
+    # above: a case runs several stages at once and is not waiting on one party -
+    # Schedule waits on the customer while Assess waits on maintenance. The
+    # case-level answer is DERIVED from the case's open trackers (Ruling 1 in
+    # PLAN-after-sales-warranty.md), never stored.
+    #
+    # Both store the lookup option's VALUE, not its id. AC-M1 names the field
+    # `waiting_on_reason_id` and an id was the first shape built, but every bound
+    # column in this system holds the value and `lookup_validator` enforces exactly
+    # that on flush: an id-holding bound column is rejected by the generic validator
+    # (`invalid_lookup_value`), gets no FE dropdown from the binding, and cannot be
+    # mapped by POST /lookup/resolve. The value IS the stable identity - `label` is the
+    # display text, and that is what admins reword - so history stays correct either
+    # way. AC-M7 also groups breaches by party, which a text column does without a join.
+    waiting_on_party = Column(String(150), nullable=True)
+    waiting_on_reason = Column(String(150), nullable=True)
+    # Set once per wait. Re-setting the SAME party (correcting the reason) must not
+    # restart it, or "waiting on maintenance since 3 Aug" becomes "since just now".
+    waiting_since = Column(DateTime(timezone=False), nullable=True)
 
     policy = relationship("SLAPolicy", back_populates="tracking")
     event_logs = relationship(
@@ -140,6 +159,23 @@ class ConversationSLATracking(Base):
             "source_entity_id",
         ),
         Index("ix_conversation_sla_tracking_handled_by_id", "handled_by_id"),
+        Index(
+            "ix_sla_tracking_waiting_party",
+            "waiting_on_party",
+            postgresql_where=text("waiting_on_party IS NOT NULL"),
+        ),
+        # AC-M3 renders "waiting on maintenance SINCE 3 Aug". A party with no
+        # waiting_since renders half a sentence and a waiting_since with no party is a
+        # wait on nobody, so both halves are enforced here rather than in the service -
+        # the service is not the only writer a backfill or a fix-up script ever has.
+        CheckConstraint(
+            "(waiting_on_party IS NULL) = (waiting_since IS NULL)",
+            name="ck_sla_tracking_waiting_party_pair",
+        ),
+        CheckConstraint(
+            "waiting_on_reason IS NULL OR waiting_on_party IS NOT NULL",
+            name="ck_sla_tracking_waiting_reason_needs_party",
+        ),
     )
 
 
@@ -231,6 +267,13 @@ class ConversationSLAEventLog(Base):
     trigger = Column(String(16), nullable=False, server_default="auto")
     # The human who triggered a manual escalation (NULL for auto). NOT the assignee.
     triggered_by_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # S4a point-in-time capture (AC-M7). Stamped by create_event_log from the
+    # tracker's LIVE values at the instant of the event, so reporting reads what we
+    # were waiting on WHEN it breached. Reading the tracker column instead would
+    # re-attribute every historical breach the next time somebody edits the case.
+    waiting_on_party = Column(String(150), nullable=True)
+    waiting_on_reason = Column(String(150), nullable=True)
+    waiting_since = Column(DateTime(timezone=False), nullable=True)
 
     tracking = relationship("ConversationSLATracking", back_populates="event_logs")
     assigned_user = relationship("User", foreign_keys=[assigned_to_id])
@@ -241,6 +284,11 @@ class ConversationSLAEventLog(Base):
         Index("ix_conversation_sla_event_log_event_type", "event_type"),
         Index("ix_conversation_sla_event_log_assigned_to_id", "assigned_to_id"),
         Index("ix_conversation_sla_event_log_from_assigned_to_id", "from_assigned_to_id"),
+        Index(
+            "ix_sla_event_log_waiting_party",
+            "waiting_on_party",
+            postgresql_where=text("waiting_on_party IS NOT NULL"),
+        ),
     )
 
 

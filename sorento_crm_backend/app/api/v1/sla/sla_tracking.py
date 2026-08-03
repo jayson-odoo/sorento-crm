@@ -267,10 +267,45 @@ def build_conversation_sla_tracking_response(
         else None,
         "team_set_code": getattr(tracking, "team_set_code", None),
         "message_id": getattr(tracking, "message_id", None),
+        # S4a AC-M3 / AC-M5, and S4's AC-M33 flag beside them. This builder is a manual
+        # dict, so a column the schema inherits still arrives as its default until it is
+        # listed HERE - the same trap get_user/get_me document. The pending-task row
+        # reads "waiting on maintenance since 3 Aug" from these three.
+        "waiting_on_party": getattr(tracking, "waiting_on_party", None),
+        "waiting_on_reason": getattr(tracking, "waiting_on_reason", None),
+        "waiting_since": getattr(tracking, "waiting_since", None),
+        "waiting_on_party_label": _waiting_label(
+            db, "sla_waiting_party", getattr(tracking, "waiting_on_party", None)
+        ),
+        "waiting_on_reason_label": _waiting_label(
+            db, "sla_waiting_reason", getattr(tracking, "waiting_on_reason", None)
+        ),
+        "assignment_unresolved": bool(getattr(tracking, "assignment_unresolved", False)),
         **timings,
     }
 
     return ConversationSLATrackingResponse.model_validate(response_dict)
+
+
+def _waiting_label(db: Session, set_key: str, value: Optional[str]) -> Optional[str]:
+    """The human label for a waiting party or reason.
+
+    Resolved server-side so every surface renders the same words, and because the
+    admin can rename an option without the FE shipping a new map. Falls back to the
+    raw value rather than to nothing: a label lookup that misses must not blank out a
+    wait the record genuinely carries.
+    """
+    if not value:
+        return None
+    from app.models.lookup import LookupOption, LookupSet
+
+    row = (
+        db.query(LookupOption)
+        .join(LookupSet, LookupSet.id == LookupOption.set_id)
+        .filter(LookupSet.set_key == set_key, LookupOption.value == str(value))
+        .first()
+    )
+    return str(row.label) if row is not None else str(value)
 
 
 @router.get("/dashboard")
@@ -583,6 +618,93 @@ def _notify_conversation_sla_escalation(db, tracking, assignee: dict, reason: st
         )
     except Exception as e:  # noqa: BLE001 — best-effort, escalation already committed
         log.warning("conversation SLA escalate notify failed for %s: %s", getattr(tracking, "id", "?"), e)
+
+
+class _WaitingRequest(BaseModel):
+    """AC-M1. The party is required, the reason is not.
+
+    Naming WHO is the mandatory half (AC-M4): a reason we have not added to the list yet
+    must not stop somebody from saying the case is sitting on a plumber.
+    """
+
+    party: str = Field(..., min_length=1)
+    reason: Optional[str] = None
+
+
+@router.put("/{tracking_id}/waiting", response_model=ConversationSLATrackingResponse)
+async def set_sla_waiting(
+    tracking_id: UUID,
+    payload: _WaitingRequest,
+    current_user: dict = Depends(get_current_user),
+    _perm: dict = Depends(require_permission("sla_management.conversation_sla_tracking.edit")),
+    db: Session = Depends(get_db),
+):
+    """Name who this SLA stage is waiting on (AC-M1). Moves no clock (AC-M2).
+
+    Not gated to the assignee, unlike extend: anybody working the case can record that
+    it is sitting on a third party, and the alternative is the person who knows keeping
+    it to themselves because the record is not theirs.
+    """
+    from app.services.sla_waiting_service import set_waiting
+
+    tracking = set_waiting(
+        db,
+        str(tracking_id),
+        party=payload.party,
+        reason=payload.reason,
+        actor_user_id=current_user["id"],
+    )
+    db.commit()
+    db.refresh(tracking)
+    return build_conversation_sla_tracking_response(db, tracking)
+
+
+@router.delete("/{tracking_id}/waiting", response_model=ConversationSLATrackingResponse)
+async def clear_sla_waiting(
+    tracking_id: UUID,
+    current_user: dict = Depends(get_current_user),
+    _perm: dict = Depends(require_permission("sla_management.conversation_sla_tracking.edit")),
+    db: Session = Depends(get_db),
+):
+    """Stop waiting. Writes its own event log row, so the wait has a measurable end."""
+    from app.services.sla_waiting_service import clear_waiting
+
+    tracking = clear_waiting(db, str(tracking_id), actor_user_id=current_user["id"])
+    db.commit()
+    db.refresh(tracking)
+    return build_conversation_sla_tracking_response(db, tracking)
+
+
+@router.get("/waiting/attribution-summary")
+async def get_waiting_attribution_summary(
+    source_entity_type: Optional[str] = Query(None),
+    since: Optional[str] = Query(None, description="ISO date/datetime, inclusive."),
+    until: Optional[str] = Query(None, description="ISO date/datetime, inclusive."),
+    _principal: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """AC-M7: breaches attributed, not hidden.
+
+    Three buckets, not two - external, internal, and the breaches nobody attributed.
+    Reads the value CAPTURED on each escalation event, never the tracker's live column,
+    so last month's report does not change shape when somebody edits a case today.
+    """
+    from app.services.sla_waiting_service import attribution_summary
+
+    def _parse(value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            raise HTTPException(status_code=422, detail=f"Invalid datetime '{value}'.")
+
+    return attribution_summary(
+        db,
+        source_entity_type=source_entity_type,
+        since=_parse(since),
+        until=_parse(until),
+    )
 
 
 class _ExtendPreviewRequest(BaseModel):

@@ -998,6 +998,20 @@ class WorkflowFormsService:
         )
 
         graph = resolve_graph(self.db, WORKFLOW_SUBMISSION_ENTITY_TYPE, scope_id)
+
+        # S4a AC-M4, same reasoning as the complaint path: the resolve rides
+        # emit_form_event, which swallows twice and after the commit, so the only place
+        # an unattributed overdue stage can be refused is here, before anything moves.
+        # Form-SLA resolve_event names status KEYS, so the id has to be resolved first.
+        from app.services.sla_waiting_service import assert_case_transition_attributed
+
+        _target_status = graph.by_id(to_status_id)
+        assert_case_transition_attributed(
+            self.db,
+            WORKFLOW_SUBMISSION_ENTITY_TYPE,
+            str(submission_id),
+            getattr(_target_status, "key", None),
+        )
         from_status = graph.by_id(from_status_id) if from_status_id else None
         to_status = graph.by_id(to_status_id)
         roles = user_role_ids(self.db, user_id)

@@ -463,8 +463,6 @@ class FormSLAOrchestrator:
         skipped_count = 0
         for tracker in candidates:
             try:
-                due = tracker.due_at
-                due_resolution = tracker.due_at_resolution
                 # Split-clock breach rule (mirrors conversation SLA list_due_escalations):
                 # the response clock STOPS on response, so once responded the response
                 # due_at must NOT gate escalation - only the resolution clock does. Without
@@ -474,12 +472,13 @@ class FormSLAOrchestrator:
                 # Each escalation resets both clocks, so this stays self-idempotent across
                 # ticks and progresses every tier (TCK-28 - removed the buggy escalated_at
                 # guard that froze rows at tier 2).
-                responded = bool(getattr(tracker, "is_responded", False))
-                overdue = (
-                    (not responded and due is not None and due < now)
-                    or (due_resolution is not None and due_resolution < now)
-                )
-                if not overdue:
+                # S4a: the rule above now lives in sla_waiting_service.is_overdue, which
+                # the AC-M4 guard also calls. Two copies would drift, and a guard that
+                # disagrees with this scan would reject actions the system considers
+                # perfectly on time.
+                from app.services.sla_waiting_service import is_overdue
+
+                if not is_overdue(tracker, now):
                     continue
                 # Build the WHO-missed-WHAT-by-WHEN reason from the tracker's current
                 # (about-to-fail) state BEFORE _escalate_tracker reassigns + resets clocks.
@@ -695,6 +694,14 @@ class FormSLAOrchestrator:
             raise FormEscalationBlocked("not_form", "This tracking row is not a form SLA stage.")
         if bool(tracker.is_resolved):
             raise FormEscalationBlocked("resolved", "SLA is already resolved; cannot escalate.")
+
+        # AC-M4: a human moving an already-breached stage on must first say who it is
+        # waiting on. Only the MANUAL path is guarded - scan_overdue_and_escalate goes
+        # through _escalate_tracker directly, because the cron has no answer to give and
+        # blocking it would stall every overdue tracker forever.
+        from app.services.sla_waiting_service import assert_attributed
+
+        assert_attributed(self.db, tracker, "escalate")
 
         reason_text = f"manual: {reason}" if reason else "manual escalation"
         self._escalate_tracker(

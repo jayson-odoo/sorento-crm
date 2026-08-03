@@ -497,6 +497,19 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
     source_entity_id: Optional[str] = None
     reference: Optional[str] = None  # entity number (complaint/inquiry/request/ticket)
     next_action: Optional[str] = None  # stage-derived next action label
+    # S4a waiting attribution (AC-M3, AC-M5). The label pair is resolved server-side so
+    # every surface renders the same words and an admin can rename an option without a
+    # frontend release. Colour is never the only signal, so the row shows the party as
+    # text beside its breach-risk styling.
+    waiting_on_party: Optional[str] = None
+    waiting_on_party_label: Optional[str] = None
+    waiting_on_reason: Optional[str] = None
+    waiting_on_reason_label: Optional[str] = None
+    waiting_since: Optional[datetime] = None
+    # S4's AC-M33 flag: nobody resolved at any tier, so this landed on the agent's
+    # configured backstop. Rendered beside the waiting label rather than in its own
+    # column, because both answer "why is this row not moving".
+    assignment_unresolved: Optional[bool] = False
 
     @model_serializer(mode='wrap', when_used='json')
     def serialize_model(self, serializer, info):

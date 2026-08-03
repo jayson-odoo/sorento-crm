@@ -1729,6 +1729,18 @@ class ComplaintService:
             return
         assert_transition_allowed_by_key(self.db, COMPLAINT_ENTITY_TYPE, current, target)
 
+        # S4a AC-M4: if this transition is what resolves an overdue SLA stage, the
+        # stage must first say who it was waiting on. It has to be enforced HERE and
+        # not in the SLA layer: the resolve itself runs through emit_form_event, which
+        # swallows exceptions per config and again at this call site, both AFTER the
+        # commit - a guard there would be logged and discarded while the complaint
+        # closed and its overdue stage stayed open forever.
+        from app.services.sla_waiting_service import assert_case_transition_attributed
+
+        assert_case_transition_attributed(
+            self.db, COMPLAINT_ENTITY_TYPE, str(getattr(complaint, "id", "") or ""), target
+        )
+
     def update_complaint(self, complaint_id: str, complaint_data: ComplaintUpdate):
         """Update a complaint."""
         complaint = self.get_complaint(complaint_id)

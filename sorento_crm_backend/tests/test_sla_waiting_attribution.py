@@ -46,13 +46,13 @@ or describes something that cannot be built where it says.
    single choke point is ``ConversationSLATrackingService.create_event_log``, so the
    capture is asserted there and inherited by everything above it.
 
-4. **The two vocabularies are stored differently, on purpose.** ``waiting_on_party``
-   stores the option VALUE as text; ``waiting_on_reason_id`` stores the option ID.
-   AC-M7 groups breaches by party, and grouping by a string needs no join, while the
-   party list is short and stable. Reasons are long-tail and get reworded by admins,
-   and a reworded reason must not silently rewrite history, which is what storing the
-   label would do. Both are ``lookup_options`` rows either way (AC-M1's "configurable
-   master data", and the UAC's ruling that the party is configurable too).
+4. **Both vocabularies store the option VALUE, and AC-M1's ``waiting_on_reason_id`` is
+   wrong.** The id-with-FK shape was built first and rejected by ``lookup_validator`` on
+   every write: a bound column must hold the option value, and unbinding it to keep the
+   FK would make it the only lookup column in the system with a bespoke validation path,
+   no dropdown and no ``POST /lookup/resolve``. The value IS the stable identity;
+   ``label`` is what admins reword. Both are ``lookup_options`` rows either way (AC-M1's
+   "configurable master data", and the UAC's ruling that the party is configurable too).
 
 5. **``waiting_since`` lies the moment an edit resets it.** "Waiting on maintenance
    since 3 Aug" is the whole point of AC-M3. Re-setting the SAME party (fixing the
@@ -84,6 +84,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import pathlib
 import uuid
 from datetime import date, datetime, timedelta
 
@@ -134,7 +135,7 @@ SEEDED_PARTIES = frozenset(
     {"cs", "maintenance", "plumber", "customer", "supplier", "warehouse", "dealer"}
 )
 
-WAITING_COLUMNS = ("waiting_on_party", "waiting_on_reason_id", "waiting_since")
+WAITING_COLUMNS = ("waiting_on_party", "waiting_on_reason", "waiting_since")
 
 # The event types a waiting change writes. Clearing is an event (see the header).
 WAITING_SET_EVENT = "waiting_set"
@@ -154,7 +155,32 @@ UNANSWERED_CALL_THRESHOLD = 3
 @pytest.fixture
 def db():
     with blank_session() as session:
+        # The blank schema is built from Base.metadata, so migrations never run against
+        # it. The vocabularies are seeded through the SAME app-side seeder the migration
+        # calls, which is what keeps the party list in one place instead of one copy in
+        # a migration and another in the service that validates against it. Mirrors the
+        # F1a line-disposition fixture.
+        from app.services.sla_waiting_service import seed_sla_waiting_lookups
+
+        seed_sla_waiting_lookups(session)
         yield session
+
+
+def test_the_migration_seeds_through_the_shared_seeder():
+    """The seed list must live in ONE place.
+
+    Asserted by reading the migration: a migration that writes its own INSERTs drifts
+    from the service that validates against the list the first time somebody adds an
+    option to one of them, and the drift is invisible until a set_waiting call rejects
+    a party the dropdown offered.
+    """
+    source = pathlib.Path("alembic/versions/321_sla_waiting_attribution.py")
+    assert source.exists(), "Migration 321 must exist."
+    text = source.read_text()
+    assert "seed_sla_waiting_lookups" in text, (
+        "Migration 321 must call the app-side seeder rather than restating the party "
+        "and reason lists in SQL."
+    )
 
 
 # ----------------------------------------------------------------------- helpers
@@ -381,6 +407,36 @@ def _reason(db, value: str = "pending_plumber") -> LookupOption:
     return option
 
 
+def _seed_complaint_graph(db):
+    """Register complaint on the status engine, which is what puts it in scope.
+
+    The guard applies ONLY to entity types with a seeded graph - that is what keeps
+    purchase requests, sponsorship forms, stock inquiries and tickets out of a
+    behaviour change no after-sales AC governs.
+    """
+    from app.services.complaint_status_graph import seed_complaint_status_graph
+
+    seed_complaint_status_graph(db)
+
+
+def _call(db, contact, outcome: str, *, hours_ago: int = 1):
+    """One logged call, stamped with when it HAPPENED.
+
+    ``occurred_at`` matters because ``created_at`` defaults to the transaction
+    timestamp: calls written together share it exactly, so insertion order would decide
+    whether an answered call resets the unanswered run. A real call has a time.
+    """
+    from app.services.call_activity_service import log_call
+
+    return log_call(
+        db,
+        contact_id=str(contact.id),
+        direction="outbound",
+        outcome=outcome,
+        occurred_at=_utc_now() - timedelta(hours=hours_ago),
+    )
+
+
 def _event_logs(db, tracker_id: str, event_type: str | None = None):
     q = db.query(ConversationSLAEventLog).filter(
         ConversationSLAEventLog.sla_tracking_id == str(tracker_id)
@@ -410,28 +466,31 @@ def test_the_tracker_carries_the_three_waiting_fields():
     assert columns["waiting_since"].nullable
 
 
-def test_the_party_is_text_and_the_reason_is_an_id():
-    """Point 4 of the header: they are stored differently on purpose.
+def test_both_vocabularies_are_stored_as_the_option_value():
+    """Corrected during implementation, and the correction is the finding.
 
-    AC-M7 groups breaches by party, and a text value groups without a join. A reason
-    gets reworded by an admin, and storing its label would silently rewrite history.
+    AC-M1 names the field ``waiting_on_reason_id`` and an id with a real FK onto
+    ``lookup_options`` was built first. It does not work. Every bound column in this
+    system holds the option VALUE and ``lookup_validator`` enforces exactly that on
+    flush, so the id-holding column was rejected by the generic validator with
+    ``invalid_lookup_value`` on every write - and unbinding it to keep the FK would have
+    made it the only lookup column in the system with a bespoke validation path, with no
+    dropdown from its binding and no POST /lookup/resolve.
+
+    Nothing is lost: the VALUE is the stable identity and ``label`` is the display text,
+    which is what admins actually reword. AC-M7's grouping by party also needs no join.
     """
-    columns = _columns(ConversationSLATracking)
-    party_type = columns["waiting_on_party"].type
-    assert isinstance(party_type, (sa.String, sa.Text)), (
-        "waiting_on_party stores the lookup option's VALUE as text so AC-M7 can "
-        f"GROUP BY it without a join. Found {party_type!r}."
-    )
-    reason_fks = list(columns["waiting_on_reason_id"].foreign_keys)
-    assert reason_fks, (
-        "waiting_on_reason_id is a FK to lookup_options (AC-M1) so rewording a "
-        "reason cannot rewrite the history that used it."
-    )
-    assert reason_fks[0].column.table.name == "lookup_options"
-    assert reason_fks[0].ondelete in {"SET NULL", "set null"}, (
-        "Deleting a reason option must not delete the tracker. History outlives "
-        "the vocabulary."
-    )
+    for model in (ConversationSLATracking, ConversationSLAEventLog):
+        columns = _columns(model)
+        for name in ("waiting_on_party", "waiting_on_reason"):
+            column_type = columns[name].type
+            assert isinstance(column_type, (sa.String, sa.Text)), (
+                f"{model.__tablename__}.{name} stores the lookup option's VALUE as "
+                f"text. Found {column_type!r}."
+            )
+        assert "waiting_on_reason_id" not in columns, (
+            "The id-shaped column is the shape the lookup validator rejects."
+        )
 
 
 def test_the_event_log_carries_the_same_three_fields():
@@ -494,7 +553,7 @@ def test_the_migration_seeds_both_vocabularies_and_binds_them(db):
         "Without a binding the FE has no dropdown and the field becomes free text, "
         "which is the thing AC-M1 is written to prevent."
     )
-    assert ("conversation_sla_tracking", "waiting_on_reason_id") in bound
+    assert ("conversation_sla_tracking", "waiting_on_reason") in bound
 
 
 # ======================================================= AC-M2 - the clock is not touched
@@ -508,7 +567,7 @@ def test_setting_waiting_does_not_move_a_single_clock(db):
     set_waiting = _fn(
         waiting,
         "set_waiting",
-        "(db, tracking_id, *, party, reason_id=None, actor_user_id=None)",
+        "(db, tracking_id, *, party, reason=None, actor_user_id=None)",
     )
     policy = _policy(db)
     tracker = _tracker(db, policy=policy)
@@ -519,7 +578,7 @@ def test_setting_waiting_does_not_move_a_single_clock(db):
         tracker.current_tier,
         tracker.extension_count,
     )
-    set_waiting(db, str(tracker.id), party="plumber", reason_id=str(_reason(db).id))
+    set_waiting(db, str(tracker.id), party="plumber", reason=_reason(db).value)
     db.refresh(tracker)
     after = (
         tracker.due_at,
@@ -569,7 +628,7 @@ def test_waiting_since_survives_an_edit_of_the_same_party(db):
     db.flush()
     aged = tracker.waiting_since
 
-    set_waiting(db, str(tracker.id), party="plumber", reason_id=str(_reason(db).id))
+    set_waiting(db, str(tracker.id), party="plumber", reason=_reason(db).value)
     db.refresh(tracker)
     assert tracker.waiting_since == aged, (
         "Same party, corrected reason: the wait did not restart. AC-M3's sentence "
@@ -639,11 +698,11 @@ def test_clearing_nulls_all_three_fields(db):
     clear_waiting = _fn(waiting, "clear_waiting", "(...)")
     policy = _policy(db)
     tracker = _tracker(db, policy=policy)
-    set_waiting(db, str(tracker.id), party="supplier", reason_id=str(_reason(db).id))
+    set_waiting(db, str(tracker.id), party="supplier", reason=_reason(db).value)
     clear_waiting(db, str(tracker.id))
     db.refresh(tracker)
     assert tracker.waiting_on_party is None
-    assert tracker.waiting_on_reason_id is None
+    assert tracker.waiting_on_reason is None
     assert tracker.waiting_since is None
 
 
@@ -658,7 +717,7 @@ def test_every_waiting_change_writes_its_own_event(db):
     policy = _policy(db)
     tracker = _tracker(db, policy=policy)
 
-    set_waiting(db, str(tracker.id), party="plumber", reason_id=str(_reason(db).id))
+    set_waiting(db, str(tracker.id), party="plumber", reason=_reason(db).value)
     set_rows = _event_logs(db, tracker.id, WAITING_SET_EVENT)
     assert len(set_rows) == 1, f"One '{WAITING_SET_EVENT}' row per set."
     assert set_rows[0].waiting_on_party == "plumber"
@@ -688,7 +747,7 @@ def test_create_event_log_stamps_the_waiting_state_of_the_moment(db):
     policy = _policy(db)
     tracker = _tracker(db, policy=policy)
     reason = _reason(db)
-    set_waiting(db, str(tracker.id), party="maintenance", reason_id=str(reason.id))
+    set_waiting(db, str(tracker.id), party="maintenance", reason=str(reason.value))
 
     ConversationSLATrackingService(db).create_event_log(
         ConversationSLAEventLogCreate(
@@ -703,7 +762,7 @@ def test_create_event_log_stamps_the_waiting_state_of_the_moment(db):
         "create_event_log stamps the tracker's live waiting values onto every row. "
         "A dozen callers each remembering to pass them is a dozen chances to forget."
     )
-    assert str(row.waiting_on_reason_id) == str(reason.id)
+    assert str(row.waiting_on_reason) == str(reason.value)
     assert row.waiting_since is not None
 
 
@@ -836,6 +895,7 @@ def test_manual_escalate_of_an_overdue_tracker_demands_attribution(db):
     """
     from app.services.form_sla_service import FormSLAOrchestrator
 
+    _seed_complaint_graph(db)
     policy = _policy(db)
     agent = _agent(db)
     config = _config(db, agent, policy)
@@ -899,6 +959,7 @@ def test_a_tracker_inside_its_deadline_is_never_asked(db):
     """
     from app.services.form_sla_service import FormSLAOrchestrator
 
+    _seed_complaint_graph(db)
     policy = _policy(db)
     agent = _agent(db)
     config = _config(db, agent, policy)
@@ -928,6 +989,7 @@ def test_the_automatic_escalation_scan_is_never_guarded(db):
     """
     from app.services.form_sla_service import FormSLAOrchestrator
 
+    _seed_complaint_graph(db)
     policy = _policy(db)
     agent = _agent(db)
     config = _config(db, agent, policy)
@@ -961,6 +1023,7 @@ def test_extend_of_an_overdue_tracker_demands_attribution(db):
     """
     from app.services.sla_service import ConversationSLATrackingService
 
+    _seed_complaint_graph(db)
     policy = _policy(db)
     actor = _user(db, "assignee")
     tracker = _tracker(db, policy=policy, assigned_to_id=actor.id, overdue=True)
@@ -989,6 +1052,7 @@ def test_the_status_transition_that_resolves_an_overdue_stage_is_guarded(db):
         "assert_case_transition_attributed",
         "(db, entity_type, entity_id, to_key)",
     )
+    _seed_complaint_graph(db)
     policy = _policy(db)
     agent = _agent(db)
     config = _config(db, agent, policy)
@@ -1020,6 +1084,7 @@ def test_a_transition_that_resolves_nothing_is_not_guarded(db):
     guard = _fn(waiting, "assert_case_transition_attributed", "(...)")
     from app.services.complaint_status_graph import COMPLAINT_ENTITY_TYPE
 
+    _seed_complaint_graph(db)
     policy = _policy(db)
     agent = _agent(db)
     config = _config(db, agent, policy)
@@ -1057,6 +1122,31 @@ def test_form_types_off_the_status_engine_are_untouched(db):
         overdue=True,
     )
     guard(db, "purchase_request", entity_id, config.resolve_event)
+
+
+def test_a_conversation_sla_row_is_never_guarded(db):
+    """Found by the regression the first build caused, and pinned here.
+
+    ``extend_tracking`` serves conversation SLA (n8n rows, ``source_entity_type IS
+    NULL``) and all six form types from ONE method. The first version of this guard
+    blocked an overdue extend on any of them, which broke 16 existing extend tests and
+    would have broken the n8n integration in production for an after-sales AC that
+    governs neither. In scope means registered on the status engine.
+    """
+    waiting = _waiting()
+    in_scope = _fn(waiting, "is_in_scope", "(db, source_entity_type)")
+    assert_attributed = _fn(waiting, "assert_attributed", "(db, tracker, action)")
+    _seed_complaint_graph(db)
+    policy = _policy(db)
+
+    assert in_scope(db, None) is False, "An n8n conversation thread is not a case."
+    assert in_scope(db, "purchase_request") is False, (
+        "Not on the status engine, so not governed by AC-M4."
+    )
+    assert in_scope(db, "complaint") is True
+
+    conversation = _tracker(db, policy=policy, source_entity_type=None, overdue=True)
+    assert_attributed(db, conversation, "extend")  # silent, as it must be
 
 
 def test_claiming_a_handling_lock_is_not_guarded(db):
@@ -1145,13 +1235,8 @@ def test_three_unanswered_calls_justify_waiting_on_the_customer(db):
     waiting = _waiting()
     evidence = _fn(waiting, "unanswered_call_evidence", "(db, respond_contact_id, since=None)")
     contact = _contact(db)
-    for _ in range(UNANSWERED_CALL_THRESHOLD):
-        log_call(
-            db,
-            contact_id=str(contact.id),
-            direction="outbound",
-            outcome="no_answer",
-        )
+    for offset in range(UNANSWERED_CALL_THRESHOLD):
+        _call(db, contact, "no_answer", hours_ago=6 - offset)
     result = evidence(db, str(contact.id))
     assert result["count"] >= UNANSWERED_CALL_THRESHOLD
     assert result["justifies_customer_waiting"] is True
@@ -1164,7 +1249,7 @@ def test_one_unanswered_call_justifies_nothing(db):
     waiting = _waiting()
     evidence = _fn(waiting, "unanswered_call_evidence", "(...)")
     contact = _contact(db)
-    log_call(db, contact_id=str(contact.id), direction="outbound", outcome="no_answer")
+    _call(db, contact, "no_answer", hours_ago=1)
     assert evidence(db, str(contact.id))["justifies_customer_waiting"] is False
 
 
@@ -1177,9 +1262,9 @@ def test_an_answered_call_resets_the_evidence(db):
     waiting = _waiting()
     evidence = _fn(waiting, "unanswered_call_evidence", "(...)")
     contact = _contact(db)
-    for _ in range(UNANSWERED_CALL_THRESHOLD):
-        log_call(db, contact_id=str(contact.id), direction="outbound", outcome="no_answer")
-    log_call(db, contact_id=str(contact.id), direction="outbound", outcome="answered")
+    for offset in range(UNANSWERED_CALL_THRESHOLD):
+        _call(db, contact, "no_answer", hours_ago=6 - offset)
+    _call(db, contact, "answered", hours_ago=1)
     result = evidence(db, str(contact.id))
     assert result["count"] == 0
     assert result["justifies_customer_waiting"] is False
@@ -1198,12 +1283,94 @@ def test_setting_waiting_on_the_customer_records_the_evidence(db):
     tracker = _tracker(db, policy=policy)
     tracker.respond_contact_id = contact.id
     db.flush()
-    for _ in range(UNANSWERED_CALL_THRESHOLD):
-        log_call(db, contact_id=str(contact.id), direction="outbound", outcome="no_answer")
+    for offset in range(UNANSWERED_CALL_THRESHOLD):
+        _call(db, contact, "no_answer", hours_ago=6 - offset)
 
     set_waiting(db, str(tracker.id), party="customer")
     row = _event_logs(db, tracker.id, WAITING_SET_EVENT)[-1]
     assert str(UNANSWERED_CALL_THRESHOLD) in (row.reason or ""), (
         "The count of unanswered calls lands in the event log reason, so the "
         "justification survives beside the claim it justifies."
+    )
+
+
+# ============================================================== the HTTP surface
+
+
+WAITING_ROUTE = "/api/v1/sla-management/conversation-sla-tracking/{id}/waiting"
+ATTRIBUTION_ROUTE = (
+    "/api/v1/sla-management/conversation-sla-tracking/waiting/attribution-summary"
+)
+
+
+def test_the_waiting_routes_require_a_principal():
+    """Auth denial on all three. A waiting record names a third party by role and
+    carries the reason a customer's case is stuck, which is not public.
+    """
+    from fastapi.testclient import TestClient
+
+    tracking_id = str(uuid.uuid4())
+    with TestClient(app) as client:
+        responses = {
+            "PUT": client.put(
+                WAITING_ROUTE.format(id=tracking_id), json={"party": "plumber"}
+            ),
+            "DELETE": client.delete(WAITING_ROUTE.format(id=tracking_id)),
+            "GET summary": client.get(ATTRIBUTION_ROUTE),
+        }
+    for name, response in responses.items():
+        assert response.status_code in (401, 403), (
+            f"{name} answered {response.status_code} unauthenticated."
+        )
+
+
+def test_the_attribution_summary_route_rejects_an_unparseable_date(db):
+    """A 500 on a typo'd query string is the difference between a dashboard that says
+    "check your filter" and one that says "something went wrong".
+    """
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from app.api.v1.sla.sla_tracking import get_waiting_attribution_summary
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            get_waiting_attribution_summary(
+                source_entity_type="complaint",
+                since="last Tuesday",
+                until=None,
+                _principal={"id": "test"},
+                db=db,
+            )
+        )
+    assert exc.value.status_code == 422
+
+
+def test_the_tracker_response_carries_the_waiting_fields(db):
+    """AC-M3 / AC-M5 need these on the wire, and this builder is a MANUAL dict.
+
+    A column the response schema inherits still arrives as its default until it is
+    listed in the builder - the same trap get_user and get_me document. The symptom is
+    a pending-task row that always reads "not waiting" however the record is set.
+    """
+    from app.api.v1.sla.sla_tracking import build_conversation_sla_tracking_response
+    from app.services.sla_waiting_service import set_waiting
+
+    policy = _policy(db)
+    tracker = _tracker(db, policy=policy)
+    set_waiting(db, str(tracker.id), party="maintenance", reason="pending_maintenance")
+    db.refresh(tracker)
+
+    response = build_conversation_sla_tracking_response(db, tracker, include_event_logs=False)
+    assert response.waiting_on_party == "maintenance"
+    assert response.waiting_on_party_label == "Maintenance", (
+        "The label is resolved server-side so every surface renders the same words "
+        "and renaming an option needs no frontend release."
+    )
+    assert response.waiting_on_reason == "pending_maintenance"
+    assert response.waiting_on_reason_label == "Pending maintenance team"
+    assert response.waiting_since is not None
+    assert response.assignment_unresolved is False, (
+        "S4's AC-M33 flag rides the same row and was never exposed either."
     )
