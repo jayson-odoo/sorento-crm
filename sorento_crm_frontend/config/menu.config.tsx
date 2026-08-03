@@ -418,6 +418,18 @@ export const MENU_SIDEBAR: MenuConfig = [
     ],
   },
   {
+    title: 'Consumer Management',
+    icon: Users,
+    moduleKey: 'consumers',
+    children: [
+      {
+        title: 'Consumers',
+        path: '/consumer-management/consumers',
+        permission: 'consumers.profiles.view',
+      },
+    ],
+  },
+  {
     title: 'Complaint Management',
     icon: AlertCircle,
     moduleKey: 'complaints',
@@ -1269,6 +1281,18 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Customers',
         path: '/order-management/customers',
+      },
+    ],
+  },
+  {
+    title: 'Consumer Management',
+    icon: Users,
+    moduleKey: 'consumers',
+    children: [
+      {
+        title: 'Consumers',
+        path: '/consumer-management/consumers',
+        permission: 'consumers.profiles.view',
       },
     ],
   },

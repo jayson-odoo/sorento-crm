@@ -243,9 +243,22 @@ def lodge_complaint(db: Session, payload: Dict[str, Any]) -> LodgeResult:
     db.add(complaint)
     db.flush()
 
-    purchase_line_by_kind = {}
+    # Queried, NOT read off a `purchase.lines` relationship - `ConsumerPurchase` has no
+    # such attribute, and `getattr(purchase, "lines", [])` silently produced an empty map
+    # here, so every complaint line was written with a NULL `consumer_purchase_line_id`
+    # and AC-L16's "the assessment reaches its purchase DATE through this line" resolved
+    # to nothing. Caught by the Consumer 360 tests, which are the first thing to actually
+    # read the link back.
+    purchase_line_by_kind: Dict[str, Any] = {}
     if purchase is not None:
-        for row in getattr(purchase, "lines", None) or []:
+        from app.models.consumers import ConsumerPurchaseLine
+
+        for row in (
+            db.query(ConsumerPurchaseLine)
+            .filter(ConsumerPurchaseLine.purchase_id == purchase.id)
+            .order_by(ConsumerPurchaseLine.sort_order)
+            .all()
+        ):
             purchase_line_by_kind.setdefault(row.kind_code, row)
 
     for line in resolved:

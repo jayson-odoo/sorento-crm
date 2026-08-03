@@ -378,14 +378,29 @@ PERMISSION_REGISTRY.append({
 # it here (sync_permissions creates permissions and grants none), so retail prices
 # do not appear on every CS screen where a dealer's own staff might be
 # shoulder-reading during a support call.
-PERMISSION_REGISTRY.append({
-    "slug": "consumers.purchase_value.view",
-    "name": "View Consumer Purchase Value",
-    "description": (
-        "See the value printed on a consumer's dealer receipt. Without this the "
-        "amount is omitted entirely rather than shown as empty."
-    ),
-})
+PERMISSION_REGISTRY.extend([
+    {
+        # Opening a consumer's record. SEPARATE from the value grant above, and that
+        # split is the point: a CS agent handling a warranty call needs the person,
+        # the purchase date and the products, and needs none of what the dealer
+        # charged. Folding the two together would put retail pricing on every support
+        # screen to make the ordinary job possible.
+        "slug": "consumers.profiles.view",
+        "name": "View Consumers",
+        "description": (
+            "Open the consumer ledger: profiles, their purchases and the complaints "
+            "attached to them. Purchase VALUE needs its own separate grant."
+        ),
+    },
+    {
+        "slug": "consumers.purchase_value.view",
+        "name": "View Consumer Purchase Value",
+        "description": (
+            "See the value printed on a consumer's dealer receipt. Without this the "
+            "amount is omitted entirely rather than shown as empty."
+        ),
+    },
+])
 
 
 # Status engine (ADR-0001) — CORE plumbing that other modules ride. Configuring a

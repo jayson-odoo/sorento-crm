@@ -249,6 +249,7 @@ export async function apiFetch(
           '/api/marketing/',
           '/api/forms-management/',
           '/api/complaint-management/',
+          '/api/consumer-management/',
           '/api/sla-management/',
           '/api/resource-management/',
           '/api/user-management/',
@@ -274,6 +275,8 @@ export async function apiFetch(
           url = `/api/v1/forms-management${input.replace('/api/forms-management', '')}`;
         } else if (input.startsWith('/api/complaint-management/')) {
           url = `/api/v1/complaint-management${input.replace('/api/complaint-management', '')}`;
+        } else if (input.startsWith('/api/consumer-management/')) {
+          url = `/api/v1/consumer-management${input.replace('/api/consumer-management', '')}`;
         } else if (input.startsWith('/api/sla-management/')) {
           // Route all SLA management (including tiers) to FastAPI backend
           url = `/api/v1/sla-management${input.replace('/api/sla-management', '')}`;

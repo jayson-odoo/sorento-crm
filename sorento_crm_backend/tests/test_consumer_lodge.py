@@ -275,6 +275,43 @@ def test_what_the_consumer_actually_said_is_kept(db):
     assert lines[0].fault_description == "Water keeps running after flushing."
 
 
+def test_the_complaint_line_points_at_the_purchase_line_that_supplies_its_date(db):
+    """AC-L16, and the bug this test was written to catch.
+
+    Cover is per product and per part, so a warranty assessment reaches its purchase DATE
+    through the complaint LINE, never through the complaint. The first implementation read
+    the purchase's lines off `purchase.lines` - an attribute `ConsumerPurchase` does not
+    have - so `getattr` returned an empty list, every link was written NULL, and every
+    verdict silently answered `unknown` with nothing saying why.
+
+    The failure mode is what makes it worth a test: nothing raised, nothing logged, and
+    the lodgement looked completely successful.
+    """
+    from app.models.complaints import ComplaintProductLine
+    from app.models.consumers import ConsumerPurchaseLine
+
+    _contact(db)
+    _dealer(db)
+    result = _lodge(db)
+
+    line = (
+        db.query(ComplaintProductLine)
+        .filter(ComplaintProductLine.complaint_id == result.complaint_id)
+        .first()
+    )
+    assert line.consumer_purchase_line_id is not None, (
+        "The complaint line has no purchase line, so the warranty engine has no date to "
+        "compute from and every verdict on it is unknown."
+    )
+    purchase_line = (
+        db.query(ConsumerPurchaseLine)
+        .filter(ConsumerPurchaseLine.id == line.consumer_purchase_line_id)
+        .first()
+    )
+    assert purchase_line is not None
+    assert str(purchase_line.purchase_id) == str(result.purchase_id)
+
+
 def test_an_ambiguous_base_code_resolves_the_kind_and_leaves_the_product_null(db):
     """AC-C17. `SRTWC8152` matches several variants, so the Kind is the honest answer and
     the variant is CS's to choose. Guessing one would put a warranty term on the wrong part.

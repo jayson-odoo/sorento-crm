@@ -11,6 +11,7 @@ from app.api.v1 import (
     marketing,
     forms,
     complaints,
+    consumers,
     sla,
     resources,
     user_management,
@@ -100,6 +101,15 @@ api_router.include_router(
     prefix="/complaints-management",
     tags=["complaints"],
     dependencies=[Depends(require_module_enabled_with_api_key("complaints"))],
+)
+# The consumer ledger's read surfaces (Consumer 360). S1 built the ledger, S2 the
+# engine and S3 the journey that fills them; until now none of it could be looked at,
+# and an asset nobody can see is indistinguishable from one never collected.
+api_router.include_router(
+    consumers.router,
+    prefix="/consumer-management",
+    tags=["consumers"],
+    dependencies=[Depends(require_module_enabled_with_api_key("consumers"))],
 )
 api_router.include_router(
     sla.router,
