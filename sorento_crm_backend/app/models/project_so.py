@@ -752,3 +752,108 @@ class AllocationClaim(Base, CompanyScopedMixin):
         Index("ix_allocation_claims_to_project", "to_project_id", "state"),
         Index("ix_allocation_claims_line", "so_line_id"),
     )
+
+
+# --------------------------------------------------------------------------- #
+# P8a: divergence between our record and AutoCount's copy of it (D25, Group N) #
+# --------------------------------------------------------------------------- #
+
+DIVERGENCE_OPEN = "open"
+DIVERGENCE_RESOLVED = "resolved"
+
+DIVERGENCE_SOURCE_UPLOAD = "upload"
+DIVERGENCE_SOURCE_ESB = "esb"
+
+RESOLUTION_ACCEPT_THEIRS = "accept_theirs"
+RESOLUTION_KEEP_OURS = "keep_ours"
+
+
+class ProjectSODivergence(Base, CompanyScopedMixin):
+    """One inbound comparison that found something (AC-N2).
+
+    Our values are NOT overwritten. Theirs are held beside them until a person answers
+    line by line, and while this row is `open` the sales order cannot be amended (AC-N5):
+    amending a record we already know is wrong is how two systems drift apart for good.
+
+    At most one open row per sales order, enforced by a partial unique index. A CS
+    uploading the same export twice gets one reconciliation, recomputed, not a stack.
+    """
+
+    __tablename__ = "project_so_divergences"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    project_sales_order_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_sales_orders.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    autocount_doc_no = Column(String(80), nullable=True)
+    ingest_source = Column(String(16), nullable=False, server_default=DIVERGENCE_SOURCE_UPLOAD)
+    status = Column(String(16), nullable=False, server_default=DIVERGENCE_OPEN)
+
+    compared_count = Column(Integer, nullable=False, server_default="0")
+    agreeing_count = Column(Integer, nullable=False, server_default="0")
+    differing_count = Column(Integer, nullable=False, server_default="0")
+
+    # Set the moment any row is answered KEEP OURS: AutoCount is holding a value we have
+    # decided is wrong, so a corrective document has to go back. Generated on request,
+    # never stored, exactly as the original import file is.
+    corrective_publish_required = Column(Boolean, nullable=False, server_default="false")
+    corrective_publish_taken_at = Column(DateTime(timezone=False), nullable=True)
+
+    detected_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    resolved_at = Column(DateTime(timezone=False), nullable=True)
+    resolved_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_project_so_divergences_order", "project_sales_order_id"),
+        Index("ix_project_so_divergences_status", "status", "detected_at"),
+    )
+
+
+class ProjectSODivergenceLine(Base, CompanyScopedMixin):
+    """One compared row: ours, theirs, and which fields disagree (AC-N3).
+
+    Rows that AGREE are stored too. The screen collapses them behind a count, and "47
+    lines agree" is only worth reading if the 47 were written down.
+
+    `ours_json` / `theirs_json` hold the compared values as strings at the scale the
+    columns store, so the reconciliation screen renders exactly what was compared rather
+    than re-deriving it from rows that may since have moved.
+    """
+
+    __tablename__ = "project_so_divergence_lines"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    divergence_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_so_divergences.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    scope = Column(String(8), nullable=False)  # header | line
+    presence = Column(String(16), nullable=False)  # both | ours_only | theirs_only
+    so_line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_sales_order_lines.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    line_no = Column(Integer, nullable=True)
+    product_code = Column(String(80), nullable=True)
+    ours_json = Column(JSONB, nullable=True)
+    theirs_json = Column(JSONB, nullable=True)
+    differing_fields = Column(JSONB, nullable=True)
+
+    resolution = Column(String(16), nullable=True)  # accept_theirs | keep_ours
+    reason = Column(Text, nullable=True)
+    resolved_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    resolved_at = Column(DateTime(timezone=False), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_project_so_divergence_lines_divergence", "divergence_id"),
+        Index("ix_project_so_divergence_lines_so_line", "so_line_id"),
+    )

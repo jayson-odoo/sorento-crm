@@ -3,6 +3,7 @@ from fastapi import APIRouter
 
 from app.api.v1.projects import (
     allocations,
+    divergences,
     forecast,
     leads,
     order_inquiries,
@@ -41,6 +42,10 @@ router.include_router(samples_pos.router, tags=["project-samples-pos"])
 # addressed directly by id. All three MUST precede the projects router.
 router.include_router(po_intake.router, tags=["project-po-intake"])
 router.include_router(schedules.router, tags=["project-delivery-schedules"])
+# Divergence (P8a) BEFORE sales orders, and the order is not cosmetic:
+# `/sales-orders/ingest` and `/sales-orders/{pso_id}` are the same shape to the router, so
+# declaring the sales-order router first would capture `ingest` as a sales order id.
+router.include_router(divergences.router, tags=["project-so-divergence"])
 router.include_router(sales_orders.router, tags=["project-sales-orders"])
 # Allocation (P9) hangs off sales order LINES and off claims between projects, so it is
 # root-mounted alongside sales orders. Its paths add a segment to the sales-order ones

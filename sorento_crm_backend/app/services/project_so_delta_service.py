@@ -555,6 +555,11 @@ class ProjectSODeltaService:
                 ),
                 code="amendment_not_published",
             )
+        # AC-N5: an unreconciled difference against AutoCount stops this here. Amending a
+        # record we already know is wrong is how the two systems drift apart for good.
+        from app.services.project_so_divergence_service import ProjectSODivergenceService
+
+        ProjectSODivergenceService(self.db).assert_amendable(order.id)
         delta = self.preview(
             pso_id, po_version_id=po_version_id, schedule_version_id=schedule_version_id
         )
@@ -633,6 +638,11 @@ class ProjectSODeltaService:
                 message="That amendment is already published.",
                 code="amendment_already_published",
             )
+        # AC-N5 again, and not only on create: a divergence can land BETWEEN proposing an
+        # amendment and publishing it, which is exactly when publishing it does the damage.
+        from app.services.project_so_divergence_service import ProjectSODivergenceService
+
+        ProjectSODivergenceService(self.db).assert_amendable(amendment.project_sales_order_id)
         ocn = (
             self.db.query(OrderChangeNotice)
             .filter(OrderChangeNotice.id == amendment.ocn_id)
