@@ -189,16 +189,22 @@ export function useTakeoverRequests(projectId: string | undefined) {
  *
  * `enabled` on a minimum length, because two characters match half the pipeline and
  * a warning that fires on every keystroke is noise the user learns to ignore.
- * `placeholderData` keeps the previous answer on screen while the next one loads so
- * the panel does not flicker between states mid-typing.
+ *
+ * `placeholderData` keeps the previous answer on screen while the NEXT one loads, so the
+ * panel does not flicker mid-typing - but only while the title is still long enough to ask
+ * about. Returning it unconditionally left the candidate list on screen after the field was
+ * cleared: an empty title showing "Similar projects" for a name nobody had typed.
  */
+const CLASH_MIN_CHARS = 4;
+
 export function useClashPreview(title: string, developerPartyId?: string | null) {
   const trimmed = title.trim();
+  const askable = trimmed.length >= CLASH_MIN_CHARS;
   return useQuery({
     queryKey: ['project-clash', trimmed.toLowerCase(), developerPartyId ?? null],
     queryFn: () => previewClashes({ title: trimmed, developer_party_id: developerPartyId }),
-    enabled: trimmed.length >= 4,
-    placeholderData: (previous) => previous,
+    enabled: askable,
+    placeholderData: (previous) => (askable ? previous : undefined),
     staleTime: 30_000,
   });
 }

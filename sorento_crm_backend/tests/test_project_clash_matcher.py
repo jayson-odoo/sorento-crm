@@ -456,31 +456,40 @@ def test_the_thresholds_come_from_system_settings(monkeypatch):
         assert tuned[0].blocks is True
 
 
-def test_without_a_developer_the_check_still_surfaces_similar_titles_as_context():
-    """The title is typed before the developer is chosen, or instead of it.
+def test_without_a_developer_a_title_match_blocks_rather_than_merely_informing():
+    """Reverses an earlier decision, on evidence: developer-less matches used to be context.
 
-    Identity is developer PLUS title, so a title-only match cannot BLOCK -- two
-    developers each having a "Phase 2" is not a conflict. But staying silent until a
-    developer is picked means the most common path (type the title, hit save) gets no
-    warning at all, which is the failure this module exists to prevent.
+    The original rule was "identity is developer PLUS title, so a title-only match cannot
+    BLOCK", on the grounds that two developers can each have a "Phase 2". True, but it made
+    the exclusivity lock opt-out with a blank optional field as the opt-out: an exact
+    re-registration of a claimed title sailed through whenever Developer was left empty,
+    and the candidate list showed the incumbent while nothing stopped the save.
 
-    So a developer-less check widens to every developer and returns everything as
-    context. The user sees "SP Setia already has something like this", picks the
-    developer, and the scoped check then decides whether it really blocks.
+    An unnamed developer does not make the two projects different - it leaves sameness
+    UNPROVEN, and the module prefers a visible block with Ask-to-join / Dispute recourse
+    over a silent duplicate (the same reasoning as ``are_sibling_developments``). Naming a
+    different developer clears it, so the verdict is never a dead end.
     """
     with blank_session() as db:
         company_id = _sorento(db)
         developer = _party(db, company_id, f"{MARKER} SP Setia")
         incumbent = _project(db, company_id, developer, "Setia Alam Phase 3B")
 
-        scoped = find_clashes(
-            db,
-            company_id=company_id,
-            developer_party_id=None,
-            title="Setia Alam Phase 3B",
-        )
-        assert scoped == [], "a null developer must not match another developer's project"
+        for widened in (False, True):
+            found = find_clashes(
+                db,
+                company_id=company_id,
+                developer_party_id=None,
+                title="Setia Alam Phase 3B",
+                include_other_developers=widened,
+            )
+            assert [c.project_id for c in found] == [incumbent.id], (
+                "a blank developer must search every developer, not only the "
+                f"developer-less ones (include_other_developers={widened})"
+            )
+            assert found[0].blocks is True, "sameness unproven is not sameness disproven"
 
+        # The widened search is the live preview, so it also has to name who holds it.
         widened = find_clashes(
             db,
             company_id=company_id,
@@ -488,10 +497,30 @@ def test_without_a_developer_the_check_still_surfaces_similar_titles_as_context(
             title="Setia Alam Phase 3B",
             include_other_developers=True,
         )
-
-        assert [c.project_id for c in widened] == [incumbent.id]
-        assert widened[0].blocks is False, "identity is unproven without a developer"
         assert widened[0].developer_name == f"{MARKER} SP Setia"
+
+
+def test_naming_a_different_developer_releases_the_unproven_block():
+    """The escape hatch, pinned: the block is about what is unknown, not about the title.
+
+    Without this, widening the developer-less search would strand a legitimate registration
+    with no way through the dialog.
+    """
+    with blank_session() as db:
+        company_id = _sorento(db)
+        setia = _party(db, company_id, f"{MARKER} SP Setia")
+        _project(db, company_id, setia, "Setia Alam Phase 3B")
+        mah_sing = _party(db, company_id, f"{MARKER} Mah Sing")
+
+        found = find_clashes(
+            db,
+            company_id=company_id,
+            developer_party_id=mah_sing.id,
+            title="Setia Alam Phase 3B",
+            include_other_developers=True,
+        )
+
+        assert [c.blocks for c in found] == [False]
 
 
 def test_widening_never_downgrades_a_real_block():

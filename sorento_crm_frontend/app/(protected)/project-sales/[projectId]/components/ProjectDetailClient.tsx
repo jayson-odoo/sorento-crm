@@ -244,76 +244,90 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
       </nav>
 
       {activeTab === 'overview' && (
+        // Four titled sections rather than one fifteen-field grid. The old single
+        // "Registration" card put the developer, the contract value and the originating
+        // lead in one undifferentiated list, so finding any one of them meant reading all
+        // of them, and the lead link was invisible at the bottom.
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="space-y-4 lg:col-span-2">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">Registration</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-                  <Fact label="Developer" value={project.developer_name} />
-                  <Fact label="Registered company / SPV" value={project.registered_company_name} />
-                  <Fact label="Project type" value={project.type_name} />
-                  <Fact label="Template" value={project.template_name} />
-                  <Fact label="Location" value={project.location} />
-                  <Fact label="Filing reference" value={project.admin_ref} />
-                  <Fact label="Architect" value={project.architect_name} />
-                  <Fact label="Main contractor" value={project.main_contractor_name} />
-                  <Fact
-                    label="Estimated sales value"
-                    value={
-                      project.estimated_sales_value
-                        ? formatMyr(project.estimated_sales_value)
-                        : null
-                    }
-                  />
-                  <Fact label="Launch date" value={formatDate(project.launch_date)} />
-                  <Fact
-                    label="Expected delivery"
-                    value={
-                      project.expected_delivery_from || project.expected_delivery_to
-                        ? [
-                            formatDate(project.expected_delivery_from),
-                            formatDate(project.expected_delivery_to),
-                          ]
-                            .filter(Boolean)
-                            .join(' - ')
-                        : null
-                    }
-                  />
-                  <Fact label="Owner" value={project.owner_name} />
-                  <Fact
-                    label="Brands"
-                    value={project.brands.length ? project.brands.join(', ') : null}
-                  />
-                  <div className="min-w-0">
-                    <dt className="text-xs text-muted-foreground">Source</dt>
-                    <dd className="break-words text-sm">
-                      {project.lead_id ? (
-                        <Link
-                          href={`/project-sales/leads/${project.lead_id}`}
-                          className="text-primary hover:underline"
-                        >
-                          {`Lead ${project.lead_code}`}
-                        </Link>
-                      ) : (
-                        'Registered directly'
-                      )}
-                    </dd>
-                  </div>
-                </dl>
+            <Section title="The development">
+              <Fact label="Developer" value={project.developer_name} />
+              <Fact label="Registered company / SPV" value={project.registered_company_name} />
+              <Fact label="Location" value={project.location} />
+              <Fact label="Project type" value={project.type_name} />
+              <Fact label="Template" value={project.template_name} />
+              <Fact label="Filing reference" value={project.admin_ref} />
+            </Section>
 
-                {/* AC-O10. "Registered directly" is a real answer, not a missing one: a
-                    tender notice claimed the same hour never had a lead. Said as one more
-                    fact in the same grid rather than a titled paragraph of its own. */}
-              </CardContent>
-            </Card>
+            <Section title="Value and timing">
+              <Fact
+                label="Estimated sales value"
+                value={
+                  project.estimated_sales_value
+                    ? formatMyr(project.estimated_sales_value)
+                    : null
+                }
+              />
+              <Fact label="Launch date" value={formatDate(project.launch_date)} />
+              <Fact
+                label="Expected delivery"
+                value={
+                  project.expected_delivery_from || project.expected_delivery_to
+                    ? [
+                        formatDate(project.expected_delivery_from),
+                        formatDate(project.expected_delivery_to),
+                      ]
+                        .filter(Boolean)
+                        .join(' - ')
+                    : null
+                }
+              />
+              <Fact
+                label="Brands"
+                value={project.brands.length ? project.brands.join(', ') : null}
+              />
+            </Section>
+
+            <Section title="Consultants">
+              <Fact label="Architect" value={project.architect_name} />
+              <Fact label="Main contractor" value={project.main_contractor_name} />
+            </Section>
 
             <CriticalPanel project={project} />
           </div>
 
           <div className="space-y-4">
+            {/* AC-O10, and its own card because "which lead did this come from" is a
+                question people ask directly. As one more Fact in a long grid it read as
+                filing metadata and got missed. "Registered directly" is a real answer,
+                not a missing one: a tender notice claimed the same hour never had a lead. */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm">Where this came from</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {project.lead_id ? (
+                  <dl className="grid gap-x-6 gap-y-3">
+                    <div className="min-w-0">
+                      <dt className="text-xs text-muted-foreground">Lead</dt>
+                      <dd className="break-words text-sm font-medium">
+                        <Link
+                          href={`/project-sales/leads/${project.lead_id}`}
+                          className="text-primary hover:underline"
+                        >
+                          {project.lead_code ?? 'View the lead'}
+                        </Link>
+                      </dd>
+                    </div>
+                    <Fact label="Lead source" value={labelise(project.lead_source)} />
+                    <Fact label="Lead raised" value={formatDate(project.lead_created_at)} />
+                  </dl>
+                ) : (
+                  <p className="text-sm">Registered directly, with no lead before it.</p>
+                )}
+              </CardContent>
+            </Card>
+
             <ProjectAccessPanel project={project} />
           </div>
         </div>
@@ -352,6 +366,20 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   );
 }
 
+/** One titled group of facts. Two columns from sm up, one on a phone. */
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm">{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">{children}</dl>
+      </CardContent>
+    </Card>
+  );
+}
+
 function Fact({ label, value }: { label: string; value?: string | null }) {
   return (
     <div className="min-w-0">
@@ -380,6 +408,13 @@ function formatMyr(value: string): string {
   const amount = Number(value);
   if (Number.isNaN(amount)) return value;
   return `RM ${amount.toLocaleString('en-MY', { maximumFractionDigits: 2 })}`;
+}
+
+/** A stored code ("tender_notice") as a readable phrase. No dictionary to drift. */
+function labelise(value?: string | null): string | null {
+  if (!value) return null;
+  const words = value.replace(/[_-]+/g, ' ').trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : null;
 }
 
 function formatDate(iso?: string | null): string | null {

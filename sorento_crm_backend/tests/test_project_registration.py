@@ -190,3 +190,132 @@ def test_registering_without_a_numbering_rule_is_refused_not_silently_uncoded():
 
         assert exc.value.status_code == 422
         assert "numbering" in exc.value.detail["message"].lower()
+
+
+def test_leaving_the_developer_blank_does_not_buy_a_free_duplicate():
+    """The exclusivity lock must not be opt-out, and the opt-out must not be a blank field.
+
+    Developer is optional on the form. The clash search used to be filtered on
+    ``developer_party_id == <the value given>``, so registering with it blank compared the
+    title against other developer-less projects only - in practice against nothing. Two
+    salespeople could each claim the same development simply by not saying whose it was,
+    which is the one outcome this module exists to prevent.
+    """
+    with blank_session() as db:
+        company_id = _sorento(db)
+        _numbering_rule(db)
+        owner = _user(db, f"{MARKER} Ali")
+        developer = _developer(db, company_id, f"{MARKER} Mah Sing")
+
+        register_project(
+            db,
+            company_id=company_id,
+            actor_user_id=owner,
+            developer_party_id=developer.id,
+            title="Kepong Metropolitan Serviced Apartments",
+        )
+
+        with pytest.raises(AppException) as exc:
+            register_project(
+                db,
+                company_id=company_id,
+                actor_user_id=owner,
+                developer_party_id=None,
+                title="Kepong Metropolitan Serviced Apartments",
+            )
+
+        assert exc.value.status_code == 409
+        assert exc.value.detail["code"] == "project_already_registered"
+
+
+def test_a_blank_developer_blocks_on_a_partial_name_too():
+    """Same rule as the named-developer path: containment is sameness.
+
+    Typing a shorter form of a claimed title with no developer chosen is the exact case
+    the user hit - the candidate was listed as similar but nothing stopped the save.
+    """
+    with blank_session() as db:
+        company_id = _sorento(db)
+        _numbering_rule(db)
+        owner = _user(db, f"{MARKER} Ali")
+        developer = _developer(db, company_id, f"{MARKER} Mah Sing")
+
+        register_project(
+            db,
+            company_id=company_id,
+            actor_user_id=owner,
+            developer_party_id=developer.id,
+            title="Kepong Metropolitan Serviced Apartments",
+        )
+
+        with pytest.raises(AppException) as exc:
+            register_project(
+                db,
+                company_id=company_id,
+                actor_user_id=owner,
+                developer_party_id=None,
+                title="Kepong Metropolitan",
+            )
+
+        assert exc.value.status_code == 409
+
+
+def test_naming_a_different_developer_clears_the_blank_developer_block():
+    """The block corrects itself as the form is filled in, so it cannot become a dead end.
+
+    Blocking an unknown developer is a "cannot rule it out" verdict, not a claim of
+    sameness. The moment the user names a developer who is demonstrably someone else, the
+    two projects are different developments and the registration must go through.
+    """
+    with blank_session() as db:
+        company_id = _sorento(db)
+        _numbering_rule(db)
+        owner = _user(db, f"{MARKER} Ali")
+        mah_sing = _developer(db, company_id, f"{MARKER} Mah Sing")
+        sp_setia = _developer(db, company_id, f"{MARKER} SP Setia")
+
+        register_project(
+            db,
+            company_id=company_id,
+            actor_user_id=owner,
+            developer_party_id=mah_sing.id,
+            title="Kepong Metropolitan Serviced Apartments",
+        )
+        second = register_project(
+            db,
+            company_id=company_id,
+            actor_user_id=owner,
+            developer_party_id=sp_setia.id,
+            title="Kepong Metropolitan Serviced Apartments",
+        )
+
+        assert second.developer_party_id == sp_setia.id
+
+
+def test_two_developer_less_projects_with_unrelated_titles_both_register():
+    """Widening the search must not turn every blank-developer save into a clash.
+
+    Only a title that scores at or above the blocking bar (or contains one) blocks; an
+    ordinary second project with its own name is unaffected.
+    """
+    with blank_session() as db:
+        company_id = _sorento(db)
+        _numbering_rule(db)
+        owner = _user(db, f"{MARKER} Ali")
+
+        register_project(
+            db,
+            company_id=company_id,
+            actor_user_id=owner,
+            developer_party_id=None,
+            title="Bukit Jalil Corporate Tower",
+        )
+        second = register_project(
+            db,
+            company_id=company_id,
+            actor_user_id=owner,
+            developer_party_id=None,
+            title="Penang Waterfront Convention Centre",
+        )
+
+        assert second.project_code == "PRJ-000124"

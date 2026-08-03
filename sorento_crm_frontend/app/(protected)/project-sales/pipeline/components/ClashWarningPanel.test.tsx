@@ -135,3 +135,25 @@ describe('ClashWarningPanel', () => {
     expect(screen.queryByText('Stage:')).not.toBeInTheDocument();
   });
 });
+
+describe('a block raised because the developer is still unstated', () => {
+  /**
+   * Leaving Developer blank used to skip the exclusivity check entirely (the clash search
+   * was filtered on the value given, so a blank one compared against nothing). It blocks
+   * now, which means the panel has to name the cheapest way out: say who the developer is.
+   * Offering only "ask to join" would send someone to a manager over a field they simply
+   * had not filled in yet.
+   */
+  it('tells the user to name their developer when none is chosen', () => {
+    render(<ClashWarningPanel candidates={[candidate()]} developerChosen={false} />);
+
+    expect(screen.getByText(/Name the developer below/i)).toBeInTheDocument();
+  });
+
+  it('drops that advice once a developer is named, leaving join and dispute', () => {
+    render(<ClashWarningPanel candidates={[candidate()]} developerChosen />);
+
+    expect(screen.queryByText(/Name the developer below/i)).toBeNull();
+    expect(screen.getByText(/raise a dispute/i)).toBeInTheDocument();
+  });
+});

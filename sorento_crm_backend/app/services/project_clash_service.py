@@ -220,8 +220,11 @@ def find_clashes(
 ) -> List[ClashCandidate]:
     """Existing projects that may be the same development as ``title``.
 
-    Scoped to one company and one developer: two different developers can each run
-    a "Phase 2" and neither should hear about the other.
+    Scoped to one company, and to one developer ONLY once a developer is known: two
+    different developers can each run a "Phase 2" and neither should hear about the other.
+    With the developer left blank there is nothing to scope by, so the search covers every
+    developer and a strong title match still blocks - otherwise the exclusivity lock is
+    opt-out, and the way to opt out is to skip an optional field.
 
     ``include_other_developers`` widens the search to every developer, for the
     live preview. Those extra rows are context ONLY -- a title match under a
@@ -242,7 +245,11 @@ def find_clashes(
     query = db.query(Project, score.label("score")).filter(
         Project.company_id == company_id, score >= surface
     )
-    if not include_other_developers:
+    # An UNSTATED developer must not narrow the search to other developer-less projects.
+    # It used to, and that was a hole straight through the exclusivity lock: registering
+    # with the Developer field left blank compared the title against almost nothing, so two
+    # people could each claim the same development by not saying whose it was.
+    if not include_other_developers and developer_party_id is not None:
         query = query.filter(Project.developer_party_id == developer_party_id)
     rows = query.order_by(score.desc()).all()
 
@@ -272,9 +279,15 @@ def find_clashes(
             # similar enough to be the same development, still being pursued, and not
             # a sibling phase. Anything else comes back as context.
             blocks=(
-                # A different developer's project is never the same development,
-                # however alike the titles read.
-                row.Project.developer_party_id == developer_party_id
+                # A different developer's project is never the same development, however
+                # alike the titles read. But a developer nobody has NAMED yet cannot be
+                # ruled out, and the module prefers a visible block with recourse over a
+                # silent pass (see are_sibling_developments). Naming a different developer
+                # clears it again, so the block corrects itself as the form is filled in.
+                (
+                    developer_party_id is None
+                    or row.Project.developer_party_id == developer_party_id
+                )
                 and (
                     float(row.score) >= block
                     # A name that literally contains, or is contained by, an existing one

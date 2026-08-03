@@ -319,3 +319,56 @@ describe('deleting a project', () => {
     await waitFor(() => expect(deleteProject).toHaveBeenCalledWith('p1'));
   });
 });
+
+describe('the overview, read as sections', () => {
+  /**
+   * The client's words: "too many information here, too many words" against a single
+   * fifteen-field card, then "like I said, like this" against a segregated reference
+   * layout. So what is pinned is the grouping itself, not the wording inside it.
+   */
+  it('groups the facts under named sections instead of one undifferentiated list', () => {
+    renderDetail();
+
+    for (const heading of ['The development', 'Value and timing', 'Consultants']) {
+      expect(screen.getByText(heading)).toBeInTheDocument();
+    }
+    // The old catch-all title is gone; if it comes back, so has the wall of fields.
+    expect(screen.queryByText('Registration')).toBeNull();
+  });
+
+  it('names the lead this project came from, and links to it', () => {
+    projectFixture = project({
+      lead_id: 'lead-1',
+      lead_code: 'LEAD-000042',
+      lead_source: 'tender_notice',
+      lead_created_at: '2026-03-04T02:15:00',
+    });
+
+    renderDetail();
+
+    const source = screen.getByText('Where this came from').closest('div')!.parentElement!;
+    const link = within(source).getByRole('link', { name: 'LEAD-000042' });
+    expect(link).toHaveAttribute('href', '/project-sales/leads/lead-1');
+    // The stored code is shown as a phrase, without a label dictionary to drift.
+    expect(within(source).getByText('Tender notice')).toBeInTheDocument();
+  });
+
+  it('says a directly registered project had no lead, rather than showing a blank', () => {
+    projectFixture = project({ lead_id: null, lead_code: null });
+
+    renderDetail();
+
+    expect(screen.getByText(/Registered directly/)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /LEAD-/ })).toBeNull();
+  });
+
+  it('answers an unrecorded fact with a dash and no sentence about it', () => {
+    renderDetail();
+
+    // Collaborators and Open requests both empty on the fixture, plus every unset
+    // registration fact: all of them read "-", none of them explain themselves.
+    expect(screen.queryByText(/Everyone can read this project/)).toBeNull();
+    expect(screen.queryByText('No open requests.')).toBeNull();
+    expect(screen.getAllByText('-').length).toBeGreaterThan(2);
+  });
+});

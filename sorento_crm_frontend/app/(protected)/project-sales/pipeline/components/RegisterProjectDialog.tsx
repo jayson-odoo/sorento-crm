@@ -202,6 +202,7 @@ export function RegisterProjectDialog({
                 <ClashWarningPanel
                   candidates={clash.data?.candidates ?? []}
                   isLoading={clash.isFetching}
+                  developerChosen={Boolean(developerId)}
                   onRequestJoin={(candidate) => setJoinTarget({ candidate, kind: 'join' })}
                   onDispute={(candidate) => setJoinTarget({ candidate, kind: 'dispute' })}
                 />

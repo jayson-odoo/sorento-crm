@@ -103,14 +103,44 @@ typing in the popover's search box → pick one (or many).
 
 - **An unknown value is `-`.** Not "Not recorded", not "Not set", not "None". A card of mostly
   empty fields reads as prose when each blank is a sentence; `-` keeps it a table of facts.
-  (A genuine ANSWER that happens to be negative — "Registered directly", "No open requests" —
-  is not an empty value and stays in words.)
+- **An empty COLLECTION is also `-`.** "No collaborators", "No open requests", "None yet" are
+  the same absence dressed as a sentence, and they cost a line each in a panel whose job is to
+  be skimmed. Zero rows renders `-`.
+- **What stays in words is an answer that names a different PATH or STATE, not an absence.**
+  "Registered directly, with no lead before it" says this project never had a lead, which is a
+  fact about how it began; "No source yet" is an allocation's real state. Test: could the value
+  ever become known later? If yes it is an absence, so `-`. If the answer is itself the record
+  of what happened, keep the words.
 - **Do not explain the feature inside the form.** Helper text under a field is for a CONSTRAINT
   the user cannot infer ("Codes must be unique per company"), never for teaching what the field
   is for or what the system will do with it. Explanations belong in the user guide. This is the
   existing cursor rule ("no feature explanations inside the UI itself") applied to field hints.
-- **Do not title a fact.** One more `Fact` in the same grid beats a bordered sub-section with its
-  own heading and a sentence.
+- **Do not title a fact inside a card.** One more `Fact` in the same grid beats a bordered
+  sub-section with its own heading and a sentence. (Promoting a fact to a top-level SECTION is a
+  different decision, governed by 1f: it is warranted when people come to the page asking for
+  that one thing.)
+
+---
+
+## 1f. Detail pages — group facts into named sections
+
+**Doctrine:** a detail page is a set of titled sections, each holding facts that are read
+together. One card listing every column the entity has is banned.
+
+- **Why.** In an undifferentiated grid of fifteen facts, finding any one of them means reading
+  all of them, and there is no signal about which belong together. The client's words against
+  exactly that layout: "too many information here, too many words". Sections give the eye a
+  place to land, and each heading answers "what is this group for" once instead of per field.
+- **Group by the question, not by the table.** "The development", "Value and timing",
+  "Consultants" are groups a salesperson thinks in. `project_profiles` versus `projects` is not
+  a grouping the reader can see or cares about, so it must not shape the page.
+- **A question people ask directly earns its own section.** "Which lead did this come from" was
+  one `Fact` labelled "Source" at the bottom of a long grid, and it was missed — it is now a
+  section of its own. The test is whether someone would open the record specifically to answer
+  it.
+- **Do not repeat a fact across sections.** Owner lives in Access; it is not also a registration
+  fact. Two copies drift the moment one of them gains a link or a badge.
+- Sections still follow section 3: **every one renders even when empty**, with `-` per 1e.
 
 ---
 

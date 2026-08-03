@@ -13,8 +13,9 @@ import type { ClashCandidate } from '../../_shared/types/project.types';
  *
  * Two visually distinct halves, because the two cases need different actions:
  *
- * - A BLOCKING match means someone else owns this pursuit. The user cannot save; the
- *   way forward is to talk to them, ask to join, or dispute it.
+ * - A BLOCKING match means someone else owns this pursuit, OR the developer is still
+ *   unstated and so sameness cannot be ruled out. The user cannot save; the way forward
+ *   is to name a different developer, ask to join, or dispute it.
  * - A CONTEXT match means "this looks similar, is it the same one?". The user saves
  *   normally. Rendering these identically is what trains people to dismiss the
  *   warning without reading it, at which point the blocking case stops working too.
@@ -22,11 +23,14 @@ import type { ClashCandidate } from '../../_shared/types/project.types';
 export function ClashWarningPanel({
   candidates,
   isLoading,
+  developerChosen = true,
   onRequestJoin,
   onDispute,
 }: {
   candidates: ClashCandidate[];
   isLoading?: boolean;
+  /** False while the Developer field is empty, which is a blocking reason of its own. */
+  developerChosen?: boolean;
   onRequestJoin?: (candidate: ClashCandidate) => void;
   onDispute?: (candidate: ClashCandidate) => void;
 }) {
@@ -58,8 +62,9 @@ export function ClashWarningPanel({
                 Already registered to someone else
               </h4>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                One development, one owner. Ask to join it, or raise a dispute for a
-                manager to decide.
+                {developerChosen
+                  ? 'One development, one owner. Ask to join it, or raise a dispute for a manager to decide.'
+                  : 'One development, one owner. Name the developer below if yours is a different one, or ask to join it.'}
               </p>
             </div>
           </header>

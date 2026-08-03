@@ -56,9 +56,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
             {collaborators.isLoading ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
             ) : (collaborators.data ?? []).length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                None. Everyone can read this project; only the owner can edit it.
-              </p>
+              <p className="text-sm text-muted-foreground">-</p>
             ) : (
               <ul className="mt-1 space-y-1">
                 {collaborators.data!.map((collaborator) => (
@@ -91,7 +89,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
           <div>
             <p className="text-xs text-muted-foreground">Open requests</p>
             {pending.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No open requests.</p>
+              <p className="text-sm text-muted-foreground">-</p>
             ) : (
               <ul className="mt-1 space-y-2">
                 {pending.map((request) => (
