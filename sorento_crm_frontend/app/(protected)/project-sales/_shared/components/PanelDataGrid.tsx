@@ -12,6 +12,7 @@ import { Card, CardFooter, CardHeader, CardTable, CardTitle } from '@/components
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -44,6 +45,8 @@ export function PanelDataGrid<TRow extends object>({
   emptyBody,
   emptyAction,
   onRowClick,
+  searchPlaceholder,
+  searchOf,
   pageSize = 10,
 }: {
   title: string;
@@ -61,17 +64,32 @@ export function PanelDataGrid<TRow extends object>({
   emptyBody?: string;
   emptyAction?: React.ReactNode;
   onRowClick?: (row: TRow) => void;
+  /** Shown in the search box. Omit both search props for a list too short to need one. */
+  searchPlaceholder?: string;
+  /**
+   * The text a search matches against, per row. Client-side on purpose: a detail tab holds
+   * one project's rows, so there is nothing to page through on the server, and filtering in
+   * the browser answers instantly.
+   */
+  searchOf?: (row: TRow) => string;
   pageSize?: number;
 }) {
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
     pageSize,
   });
+  const [search, setSearch] = React.useState('');
+
+  const filtered = React.useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    if (!needle || !searchOf) return rows;
+    return rows.filter((row) => searchOf(row).toLowerCase().includes(needle));
+  }, [rows, search, searchOf]);
 
   const table = useReactTable({
     columns: columns as ColumnDef<TRow, unknown>[],
-    data: rows,
-    pageCount: Math.ceil(rows.length / pagination.pageSize) || 0,
+    data: filtered,
+    pageCount: Math.ceil(filtered.length / pagination.pageSize) || 0,
     getRowId,
     state: { pagination },
     onPaginationChange: setPagination,
@@ -83,7 +101,7 @@ export function PanelDataGrid<TRow extends object>({
   return (
     <DataGrid
       table={table}
-      recordCount={rows.length}
+      recordCount={filtered.length}
       isLoading={isLoading}
       listingKey={listingKey}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
@@ -93,7 +111,23 @@ export function PanelDataGrid<TRow extends object>({
         {/* flex-col until sm so a title and a toolbar never overlap at phone width. */}
         <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="min-w-0 break-words text-sm">{title}</CardTitle>
-          {toolbar && <div className="flex flex-wrap items-center gap-2">{toolbar}</div>}
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+            {searchOf && (
+              <Input
+                type="search"
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  // Back to page one: filtering while on page three shows an empty table.
+                  setPagination((current) => ({ ...current, pageIndex: 0 }));
+                }}
+                placeholder={searchPlaceholder ?? 'Search…'}
+                aria-label={searchPlaceholder ?? `Search ${title}`}
+                className="h-8 w-full sm:w-56"
+              />
+            )}
+            {toolbar}
+          </div>
         </CardHeader>
 
         <CardTable>
@@ -107,11 +141,13 @@ export function PanelDataGrid<TRow extends object>({
               <Skeleton className="h-4 w-5/6" />
               <Skeleton className="h-4 w-2/3" />
             </div>
-          ) : rows.length === 0 ? (
+          ) : filtered.length === 0 ? (
             // Rendered rather than hidden, per the CRUD standard: a tab that vanishes when
             // empty makes the feature look absent instead of unused.
             <div className="px-6 py-10 text-center">
-              <h3 className="text-sm font-semibold">{emptyTitle}</h3>
+              <h3 className="text-sm font-semibold">
+                {rows.length > 0 ? 'Nothing matches that search' : emptyTitle}
+              </h3>
               {emptyBody && (
                 <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
                   {emptyBody}
@@ -127,7 +163,7 @@ export function PanelDataGrid<TRow extends object>({
           )}
         </CardTable>
 
-        {rows.length > pagination.pageSize && (
+        {filtered.length > pagination.pageSize && (
           <CardFooter>
             <DataGridPagination />
           </CardFooter>

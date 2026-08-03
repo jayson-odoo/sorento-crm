@@ -236,14 +236,6 @@ export function DeliverySchedulesPanel({ project }: { project: Project }) {
         isLoading={view.isLoading}
         error={view.isError ? view.error : undefined}
         emptyTitle="No delivery schedule yet"
-        emptyAction={
-          project.can_edit && hasPurchaseOrder ? (
-            <Button type="button" onClick={() => setUploading(true)}>
-              <Upload className="size-4" aria-hidden />
-              Upload the first schedule
-            </Button>
-          ) : undefined
-        }
         onRowClick={(row) => setOpenId((previous) => (previous === row.id ? null : row.id))}
       />
 

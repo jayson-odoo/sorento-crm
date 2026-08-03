@@ -164,9 +164,12 @@ describe('DeliverySchedulesPanel', () => {
   it('offers the first upload once a PO exists', async () => {
     renderPanel();
     expect(await screen.findByText(/No delivery schedule yet/i)).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: /Upload the first schedule/i }),
-    ).toBeInTheDocument();
+    // ONE way in, in the toolbar, and it is enabled now that a PO exists. The centred
+    // duplicate in the empty state is gone (ADR 1d).
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Upload a schedule/i })).toBeEnabled(),
+    );
+    expect(screen.queryByRole('button', { name: /Upload the first schedule/i })).toBeNull();
   });
 
   it('sends the user to the PO first when there is nothing to reconcile against', async () => {

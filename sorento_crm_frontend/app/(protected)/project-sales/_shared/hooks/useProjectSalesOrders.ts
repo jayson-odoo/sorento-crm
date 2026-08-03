@@ -133,7 +133,6 @@ export function useSalesOrderMutations(projectId: string, psoId: string) {
       updateSalesOrderLine(psoId, lineId, body),
     onSuccess: () => {
       invalidate();
-      toast.success('Line saved');
     },
     onError: (error: Error) => toast.error(error.message),
   });

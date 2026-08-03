@@ -3,7 +3,7 @@
 import * as React from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, Trash2, Upload } from 'lucide-react';
+import { Download, Eye, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -17,14 +17,15 @@ import {
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { FileDropzone } from '@/components/common/FileDropzone';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   type ProjectDocument,
   deleteProjectDocument,
-  listAttachmentTypeOptions,
   listProjectDocuments,
+  resolveProjectDocumentTypeId,
   uploadProjectDocument,
 } from '../../_shared/services/projectDocumentService';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
@@ -49,6 +50,7 @@ export function ProjectDocumentsPanel({ project }: { project: Project }) {
   const queryClient = useQueryClient();
   const [uploading, setUploading] = React.useState(false);
   const [deleting, setDeleting] = React.useState<ProjectDocument | null>(null);
+  const [previewIndex, setPreviewIndex] = React.useState<number | null>(null);
 
   const documents = useQuery({
     queryKey: ['project-documents', project.id],
@@ -62,7 +64,24 @@ export function ProjectDocumentsPanel({ project }: { project: Project }) {
     },
   });
 
-  const rows = documents.data ?? [];
+  const rows = React.useMemo(() => documents.data ?? [], [documents.data]);
+
+  /**
+   * The SAME preview the Files screen opens: zoom, pan, page through the whole list.
+   * Built over every row rather than one, so opening a drawing and paging to the next
+   * costs no round trip.
+   */
+  const previewItems = React.useMemo<AttachmentPreviewItem[]>(
+    () =>
+      rows.map((row) => ({
+        id: row.id,
+        name: row.stored_filename ?? row.original_filename ?? 'Unnamed file',
+        url: row.file_path ?? '',
+        downloadUrl: `/api/v1/resource-management/attachments/${row.id}/download`,
+        sizeBytes: row.file_size_bytes ?? null,
+      })),
+    [rows],
+  );
 
   const columns = React.useMemo<ColumnDef<ProjectDocument>[]>(
     () => [
@@ -139,6 +158,15 @@ export function ProjectDocumentsPanel({ project }: { project: Project }) {
         cell: ({ row }) => (
           <div className="flex justify-end gap-1" onClick={(event) => event.stopPropagation()}>
             <Button
+              mode="icon"
+              variant="ghost"
+              size="sm"
+              onClick={() => setPreviewIndex(row.index)}
+              aria-label={`Preview ${row.original.original_filename ?? 'this document'}`}
+            >
+              <Eye className="size-3.5" />
+            </Button>
+            <Button
               asChild
               mode="icon"
               variant="ghost"
@@ -165,7 +193,7 @@ export function ProjectDocumentsPanel({ project }: { project: Project }) {
             )}
           </div>
         ),
-        size: 100,
+        size: 130,
         enableResizing: false,
         meta: { headerTitle: 'Actions' },
       },
@@ -191,15 +219,32 @@ export function ProjectDocumentsPanel({ project }: { project: Project }) {
         listingKey="projects.projects.view::project-documents"
         isLoading={documents.isLoading}
         error={documents.isError ? documents.error : undefined}
+        // No second button in the middle of the empty state: the one in the toolbar is
+        // where it lives, and a centred duplicate is another thing to read.
         emptyTitle="No documents on this project"
-        emptyAction={
-          project.can_edit ? (
-            <Button type="button" onClick={() => setUploading(true)}>
-              <Upload className="size-4" aria-hidden />
-              Upload the first document
-            </Button>
-          ) : undefined
+        searchPlaceholder="Search documents"
+        searchOf={(row) =>
+          [
+            row.stored_filename,
+            row.original_filename,
+            row.attachment_type?.type_name,
+            row.uploaded_by_user?.name,
+          ]
+            .filter(Boolean)
+            .join(' ')
         }
+        // The row opens the preview, per ADR 1d: the eye is for people who look for a button.
+        onRowClick={(row) => {
+          const index = rows.findIndex((candidate) => candidate.id === row.id);
+          if (index >= 0) setPreviewIndex(index);
+        }}
+      />
+
+      <AttachmentPreviewModal
+        open={previewIndex !== null}
+        onOpenChange={(next) => !next && setPreviewIndex(null)}
+        items={previewItems}
+        startIndex={previewIndex ?? 0}
       />
 
       {uploading && (
@@ -249,20 +294,21 @@ function UploadDialog({
   onUploaded: () => void;
 }) {
   const [files, setFiles] = React.useState<File[]>([]);
-  const [typeId, setTypeId] = React.useState('');
   const [busy, setBusy] = React.useState(false);
-
-  // Required by the endpoint, not a nicety: the type decides the storage prefix and whether
-  // the n8n webhook fires, and an upload without one is refused with a 400.
-  const types = useQuery({
-    queryKey: ['attachment-type-options'],
-    queryFn: listAttachmentTypeOptions,
-  });
 
   async function submit() {
     setBusy(true);
     const failed: string[] = [];
     let uploaded = 0;
+    // Resolved once for the whole drop, not asked: everything here is a project document.
+    let typeId: string;
+    try {
+      typeId = await resolveProjectDocumentTypeId();
+    } catch (error) {
+      setBusy(false);
+      toast.error(error instanceof Error ? error.message : 'Could not resolve the document type');
+      return;
+    }
     for (const file of files) {
       try {
         await uploadProjectDocument(projectId, file, typeId);
@@ -288,25 +334,7 @@ function UploadDialog({
         <DialogHeader>
           <DialogTitle>Upload documents</DialogTitle>
         </DialogHeader>
-        <DialogBody className="max-h-[60vh] space-y-4 overflow-y-auto">
-          <div className="space-y-1.5">
-            <Label htmlFor="project-document-type">
-              Document type <span className="text-destructive">*</span>
-            </Label>
-            <SearchableSelect
-              id="project-document-type"
-              value={typeId}
-              onChange={setTypeId}
-              disabled={busy}
-              options={(types.data ?? []).map((type) => ({
-                value: type.id,
-                label: type.type_name,
-                description: type.code ?? undefined,
-              }))}
-              placeholder="Choose a document type"
-              emptyMessage="No document types yet. Add one under Resource Management"
-            />
-          </div>
+        <DialogBody className="max-h-[60vh] overflow-y-auto">
           <FileDropzone
             multiple
             files={files}
@@ -327,11 +355,7 @@ function UploadDialog({
           <Button type="button" variant="outline" onClick={onDone} disabled={busy}>
             Cancel
           </Button>
-          <Button
-            type="button"
-            onClick={submit}
-            disabled={files.length === 0 || !typeId || busy}
-          >
+          <Button type="button" onClick={submit} disabled={files.length === 0 || busy}>
             {busy ? 'Uploading…' : `Upload ${files.length || ''}`.trim()}
           </Button>
         </DialogFooter>

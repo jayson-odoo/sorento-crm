@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 // The shared products `/select` mapper. Its name says "variant" because that screen
 // needed it first; the endpoint and the shape are the generic ones.
+import { useUOMSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query';
 import { getProductsForVariantSelect } from '@/app/(protected)/master-data-management/products/services/productService';
 import {
   useQuotationLineMutations,
@@ -82,6 +83,19 @@ export function QuotationVersionEditor({
       ? 0
       : Math.max(...sortedLines.map((line) => line.sort_order)) + 10;
 
+  // The line stores the CODE, not the id, so the option value is the code. Cached with an
+  // infinite staleTime by the shared hook, so opening five versions costs one request.
+  const uoms = useUOMSelectQuery();
+  const uomOptions = React.useMemo(
+    () =>
+      (uoms.data ?? []).map((unit) => ({
+        value: unit.uom_code,
+        label: unit.uom_code,
+        description: unit.uom_name,
+      })),
+    [uoms.data],
+  );
+
   const fetchProducts = React.useCallback(async (query: string) => {
     const products = await getProductsForVariantSelect(query || undefined);
     return products.map((product) => ({
@@ -132,9 +146,14 @@ export function QuotationVersionEditor({
       {
         key: 'uom',
         header: 'UOM',
-        width: 88,
-        kind: 'text',
+        width: 110,
+        // A dropdown off the master list, not free text: a line typed "pcs" and another
+        // "PCS" are the same unit to a reader and two different strings to every report.
+        kind: 'select',
         placeholder: 'PCS',
+        options: uomOptions,
+        resolveSelected: (_line, draft) =>
+          uomOptions.find((option) => option.value === draft.uom),
       },
       {
         key: 'unit_price',
@@ -174,7 +193,7 @@ export function QuotationVersionEditor({
         derive: (draft) => formatMyr(multiplyMoney(draft.quantity, draft.unit_price) ?? '0'),
       },
     ],
-    [fetchProducts],
+    [fetchProducts, uomOptions],
   );
 
   const toDraft = React.useCallback(

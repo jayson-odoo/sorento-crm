@@ -192,14 +192,6 @@ export function SamplesPanel({ project }: { project: Project }) {
         isLoading={samples.isLoading}
         error={samples.isError ? samples.error : undefined}
         emptyTitle="No samples sent yet"
-        emptyAction={
-          project.can_edit ? (
-            <Button type="button" onClick={() => setCreating(true)}>
-              <Plus className="size-4" aria-hidden />
-              Record the first sample
-            </Button>
-          ) : undefined
-        }
       />
 
       {(creating || editing) && (

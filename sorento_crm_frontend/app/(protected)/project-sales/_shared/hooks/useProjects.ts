@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   addStakeholder,
@@ -100,6 +100,7 @@ import type {
   ProjectSampleBody,
   ProjectPurchaseOrderBody,
   PurchaseOrderLineBody,
+  ProjectQuotation,
   ProjectQuotationBody,
   ProjectSeriesBody,
   QuotationLineBody,
@@ -807,6 +808,35 @@ export function useQuotationVersions(quotationId: string | undefined) {
   });
 }
 
+/**
+ * Every version of every scope on one project, flattened.
+ *
+ * The Quotations tab lists REVISIONS, not just the current price per scope: the client's
+ * words were "in this list i can see a list of quotation for this project which includes all
+ * those revisions". Nothing on the server returns them in one call, so this fans out over the
+ * scopes - a handful per project - and react-query dedupes each against the per-quotation key
+ * the version editor already uses, so opening a scope below the list costs no extra request.
+ */
+export function useProjectQuotationVersions(quotations: ProjectQuotation[] | undefined) {
+  const list = quotations ?? [];
+  const results = useQueries({
+    queries: list.map((quotation) => ({
+      queryKey: versionsKey(quotation.id),
+      queryFn: () => listQuotationVersions(quotation.id),
+      staleTime: 30_000,
+    })),
+  });
+
+  return {
+    isLoading: results.some((result) => result.isLoading),
+    isError: results.some((result) => result.isError),
+    error: results.find((result) => result.error)?.error ?? null,
+    rows: list.flatMap((quotation, index) =>
+      (results[index]?.data ?? []).map((version) => ({ quotation, version })),
+    ),
+  };
+}
+
 export function useQuotationLines(versionId: string | undefined) {
   return useQuery({
     queryKey: linesKey(versionId ?? ''),
@@ -914,12 +944,13 @@ export function useQuotationLineMutations(projectId: string, versionId: string) 
     mutationFn: (body: QuotationLineBody) => createQuotationLine(versionId, body),
     onSuccess: (line) => {
       invalidate();
+      // Only NEWS gets a toast. A line that saved exactly as typed is not news: the row
+      // already shows the value, and a toast per blur moves the page under the cursor
+      // while somebody is working down a column of twenty lines.
       if (line.is_below_floor) {
         toast.warning(
           `Below the floor of ${line.floor_value_applied}. Management has been notified.`,
         );
-      } else {
-        toast.success('Line added');
       }
     },
     onError: (error: Error) => toast.error(error.message),
@@ -932,8 +963,6 @@ export function useQuotationLineMutations(projectId: string, versionId: string) 
       invalidate();
       if (line.is_below_floor) {
         toast.warning(`Below the floor of ${line.floor_value_applied}.`);
-      } else {
-        toast.success('Line saved');
       }
     },
     onError: (error: Error) => toast.error(error.message),
@@ -1143,8 +1172,6 @@ export function usePurchaseOrderLineMutations(projectId: string, poId: string) {
         toast.warning('Added. This item is not on the quoted version.');
       } else if (line.price_mismatch) {
         toast.warning(`Added. Quoted at ${line.quoted_unit_price}, ordered at ${line.unit_price}.`);
-      } else {
-        toast.success('Line added');
       }
     },
     onError: (error: Error) => toast.error(error.message),
@@ -1154,8 +1181,8 @@ export function usePurchaseOrderLineMutations(projectId: string, poId: string) {
     mutationFn: ({ id, body }: { id: string; body: Partial<PurchaseOrderLineBody> }) =>
       updatePurchaseOrderLine(poId, id, body),
     onSuccess: () => {
+      // Silent, like the quotation editor: a routine save is not news (see create above).
       invalidate();
-      toast.success('Line saved');
     },
     onError: (error: Error) => toast.error(error.message),
   });

@@ -238,14 +238,6 @@ export function StakeholdersPanel({ project }: { project: Project }) {
           isLoading={stakeholders.isLoading}
           error={stakeholders.isError ? stakeholders.error : undefined}
           emptyTitle="No stakeholders recorded"
-          emptyAction={
-            project.can_edit ? (
-              <Button type="button" onClick={() => setCreating(true)}>
-                <Plus className="size-4" aria-hidden />
-                Add the decision maker
-              </Button>
-            ) : undefined
-          }
         />
       ) : (
         <Card>

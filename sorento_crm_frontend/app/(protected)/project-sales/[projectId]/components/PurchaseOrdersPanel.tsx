@@ -292,20 +292,6 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
         isLoading={purchaseOrders.isLoading}
         error={purchaseOrders.isError ? purchaseOrders.error : undefined}
         emptyTitle="No PO received yet"
-        emptyAction={
-          project.can_edit ? (
-            <div className="flex flex-wrap items-center justify-center gap-2">
-              <Button type="button" onClick={() => setUploadingFor({ po: null })}>
-                <Upload className="size-4" aria-hidden />
-                Upload the PO document
-              </Button>
-              <Button type="button" variant="outline" onClick={() => setCreating(true)}>
-                <Plus className="size-4" aria-hidden />
-                Record it by hand
-              </Button>
-            </div>
-          ) : undefined
-        }
         // Selecting a row opens its lines below, rather than expanding inside the table:
         // a versions strip and a line editor cannot live inside a fixed-width cell.
         onRowClick={(row) => setOpenId((previous) => (previous === row.id ? null : row.id))}

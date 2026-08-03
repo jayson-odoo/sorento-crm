@@ -15,8 +15,10 @@ import { extractApiError } from '@/lib/api-client';
  * Resource Management → Files shows.
  *
  * `attachment_type_id` is REQUIRED by that endpoint (it 400s without one, and the type decides
- * the storage prefix and whether a webhook fires), so the dialog asks for it rather than
- * inventing a project-only default.
+ * the storage prefix and whether a webhook fires). The dialog does NOT ask for it: everything
+ * filed here is a project document by definition, and a required dropdown with one sensible
+ * answer is a question the user should not be asked. `resolveProjectDocumentTypeId` looks the
+ * type up once by code, falling back to its name.
  */
 const BASE = '/api/resource-management/attachments';
 
@@ -54,14 +56,20 @@ export async function listProjectDocuments(projectId: string): Promise<ProjectDo
   return body?.data ?? [];
 }
 
-export interface AttachmentTypeOption {
+interface AttachmentTypeOption {
   id: string;
   type_name: string;
   code?: string | null;
 }
 
-/** The same vocabulary the Files screen offers, so a project document is filed like any other. */
-export async function listAttachmentTypeOptions(): Promise<AttachmentTypeOption[]> {
+/**
+ * The one type project documents are filed under.
+ *
+ * Matched on the CODE first (stable) and the name second (what an admin sees and may have
+ * typed), so a rename does not break uploads and a missing type produces a readable error
+ * rather than a 400 from the attachment endpoint.
+ */
+export async function resolveProjectDocumentTypeId(): Promise<string> {
   const response = await apiFetch(
     '/api/resource-management/attachment-types?limit=200&sort=type_name&dir=asc',
   );
@@ -69,7 +77,16 @@ export async function listAttachmentTypeOptions(): Promise<AttachmentTypeOption[
     throw new Error(await extractApiError(response, 'Could not load the document types'));
   }
   const body = await response.json();
-  return body?.data ?? [];
+  const types: AttachmentTypeOption[] = body?.data ?? [];
+  const match =
+    types.find((type) => (type.code ?? '').toLowerCase() === 'project_document') ??
+    types.find((type) => type.type_name.trim().toLowerCase() === 'project document');
+  if (!match) {
+    throw new Error(
+      'No "Project Document" attachment type exists. Add one under Resource Management, Attachment Types.',
+    );
+  }
+  return match.id;
 }
 
 export async function uploadProjectDocument(

@@ -127,24 +127,32 @@ describe('QuotationsPanel', () => {
     renderPanel();
 
     expect(await screen.findByText(/Nothing priced yet/i)).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: /Add the first scope/i }),
-    ).toBeInTheDocument();
+    // ONE way in, in the toolbar. The centred duplicate is gone (ADR 1d): a second button
+    // in the middle of an empty state is another thing to read and decide between.
+    expect(screen.getByRole('button', { name: /Add a scope/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Add the first scope/i })).toBeNull();
   });
 
-  it('reads a scope without opening it: version position, total and outcome', async () => {
+  it('reads every revision without opening the scope: version, its own total, outcome', async () => {
     listQuotations.mockResolvedValue([
-      quotation({ version_count: 3, current_version_no: 3, current_total: '48250.50' }),
+      quotation({ version_count: 2, current_version_no: 2, current_total: '48250.50' }),
+    ]);
+    listQuotationVersions.mockResolvedValue([
+      version({ id: 'v2', version_no: 2, is_current: true, total_amount: '48250.50' }),
+      version({ id: 'v1', version_no: 1, is_current: false, total_amount: '31000.00' }),
     ]);
 
     renderPanel();
 
-    // The name appears twice once a scope is open: in its row, and as the heading of the
-    // version editor that opens beneath the list.
+    // One row per REVISION: the scope is a column, and each row carries the total THAT
+    // revision was quoted at - which is the history the old one-row-per-scope list hid.
     expect((await screen.findAllByText('House Units')).length).toBeGreaterThan(0);
-    expect(screen.getByText('v3 of 3')).toBeInTheDocument();
-    expect(screen.getByText('RM 48,250.50')).toBeInTheDocument();
-    expect(screen.getByText('Open')).toBeInTheDocument();
+    // Twice for the current one: its row, and the version editor open below the list.
+    expect(screen.getAllByText('RM 48,250.50').length).toBeGreaterThan(0);
+    expect(screen.getByText('RM 31,000.00')).toBeInTheDocument();
+    expect(screen.getByText('Frozen')).toBeInTheDocument();
+    // The outcome belongs to the scope, so it repeats down its rows.
+    expect(screen.getAllByText('Open').length).toBe(2);
   });
 
   it('surfaces both alerts per scope and totals them across scopes', async () => {

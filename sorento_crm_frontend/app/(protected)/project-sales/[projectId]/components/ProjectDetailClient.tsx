@@ -125,7 +125,12 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
     // the Activity tab so the composer is reachable from every tab -- the moment somebody
     // wants to record what a developer just said is rarely while looking at the feed.
     <EntityActivitiesLayout entityType="project" entityId={project.id}>
-    <div className="space-y-5">
+    {/* `pb-64` is for the dropdowns, not for looks. A picker on the last row of the last
+        panel sat flush against the end of the document, so the popover had a few dozen
+        pixels of viewport under it, shrank to two visible options, and there was nothing
+        below to scroll to - the client's words: "i am stuck, i can't scroll down". Trailing
+        space means an inline picker always has somewhere to open into. */}
+    <div className="space-y-5 pb-64">
       {/* flex-col until sm: a long title and the action buttons cannot share a row at
           phone width without overlapping and forcing page-wide horizontal overflow. */}
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

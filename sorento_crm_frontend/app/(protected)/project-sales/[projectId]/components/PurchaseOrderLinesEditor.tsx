@@ -5,6 +5,7 @@ import { AlertTriangle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 // The shared products `/select` mapper. Its name says "variant" because that screen
 // needed it first; the endpoint and the shape are the generic ones.
+import { useUOMSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query';
 import { getProductsForVariantSelect } from '@/app/(protected)/master-data-management/products/services/productService';
 import {
   usePurchaseOrderLineMutations,
@@ -48,6 +49,17 @@ export function PurchaseOrderLinesEditor({
   const nextSortOrder =
     rows.length === 0 ? 0 : Math.max(...rows.map((line) => line.sort_order)) + 10;
   const editable = project.can_edit;
+
+  const uoms = useUOMSelectQuery();
+  const uomOptions = React.useMemo(
+    () =>
+      (uoms.data ?? []).map((unit) => ({
+        value: unit.uom_code,
+        label: unit.uom_code,
+        description: unit.uom_name,
+      })),
+    [uoms.data],
+  );
 
   const fetchProducts = React.useCallback(async (query: string) => {
     const products = await getProductsForVariantSelect(query || undefined);
@@ -103,9 +115,14 @@ export function PurchaseOrderLinesEditor({
       {
         key: 'uom',
         header: 'UOM',
-        width: 88,
-        kind: 'text',
+        width: 110,
+        // Same dropdown the quotation editor uses: "pcs" and "PCS" are one unit to a reader
+        // and two strings to every report.
+        kind: 'select',
         placeholder: 'PCS',
+        options: uomOptions,
+        resolveSelected: (_line, draft) =>
+          uomOptions.find((option) => option.value === draft.uom),
       },
       {
         key: 'unit_price',
@@ -139,7 +156,7 @@ export function PurchaseOrderLinesEditor({
         derive: (draft) => formatMyr(multiplyMoney(draft.quantity, draft.unit_price) ?? '0'),
       },
     ],
-    [fetchProducts],
+    [fetchProducts, uomOptions],
   );
 
   const toDraft = React.useCallback(

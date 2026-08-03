@@ -161,19 +161,20 @@ describe('PurchaseOrdersPanel', () => {
     expect(
       screen.queryByText(/checked against the version they were last shown/i),
     ).toBeNull();
-    // The explainer under the heading is gone (ADR 1e); the two ways in remain.
-    expect(screen.getByRole('button', { name: /Upload the PO document/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Record it by hand/i })).toBeInTheDocument();
+    // The explainer under the heading is gone (ADR 1e); the two ways in live in the toolbar.
+    expect(screen.getByRole('button', { name: /Upload a PO document/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Record a PO/i })).toBeInTheDocument();
   });
 
   it('offers both ways in when nothing is recorded, without explaining the funnel', async () => {
     renderPos();
 
     expect(await screen.findByText(/No PO received yet/i)).toBeInTheDocument();
-    // Two ways in stay; the paragraph about what recording a PO does to the funnel is
-    // gone (ADR 1e - a tab is not the place to teach the feature).
-    expect(screen.getByRole('button', { name: /Upload the PO document/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Record it by hand/i })).toBeInTheDocument();
+    // The two ways in live in the TOOLBAR only (ADR 1d): no centred duplicates in the empty
+    // state, and no paragraph teaching what recording a PO does to the funnel.
+    expect(screen.getByRole('button', { name: /Upload a PO document/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Record a PO/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Record it by hand/i })).toBeNull();
     expect(screen.queryByText(/moves this project to PO Received/i)).not.toBeInTheDocument();
   });
 
