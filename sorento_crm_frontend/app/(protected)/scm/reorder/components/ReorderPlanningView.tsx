@@ -18,7 +18,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { recToDispositionRow, splitDispositionRows } from '../lib/planRow';
 import { resetRunDecisions } from '../services/reorderRunService';
 import { useOrderSummary } from '../hooks/useSummaryOrder';
+import { usePlanExceptions } from '../hooks/usePlanExceptions';
 import { usePoWorklist } from '../hooks/usePoWorklist';
+import { PlanExceptionsView } from './PlanExceptionsView';
 import { PoWorklistView } from './PoWorklistView';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import {
@@ -111,6 +113,12 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const poWorklistPending = cachedWorklist
     ? cachedWorklist.rows.filter((r) => r.chosen_qty > 0 && r.keyed_status !== 'keyed').length
     : null;
+
+  // And the same for the exception tile. The count is the OPEN ones, not every exception
+  // in the batch: an approved exception is a decision already taken, and counting it would
+  // leave the tile reading 6 with nothing left to do.
+  const { data: cachedExceptions } = usePlanExceptions({ run_id: currentRunId }, false);
+  const planExceptionsOpen = cachedExceptions ? cachedExceptions.counts.open_count : null;
   const isPastRun = !!currentItem && !isToday;
 
   const plan = useReorderPlan(currentRunId, view === 'buy' && !!currentRunId);
@@ -386,7 +394,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         // until they exist there is nothing to count. These tiles previously rendered mock
         // constants on the live page, so every user read "4 waiting on a decision" off
         // nothing at all.
-        planExceptionCount={null}
+        planExceptionCount={planExceptionsOpen}
         poWorklistCount={poWorklistPending}
         // From the report's own cache when it has been read, else null. Never a mock
         // constant: this tile rendered a hard-coded 2 on the live page against a real 317.
@@ -395,7 +403,11 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         onSelectView={setView}
       />
 
-      {view === 'po_worklist' ? (
+      {view === 'plan_exceptions' ? (
+        // Where the plan disagrees with supply already placed (S5, AC-D2). Reads the SAME
+        // run as the plan above, so a past run shows the batch that week produced.
+        <PlanExceptionsView runId={currentRunId} />
+      ) : view === 'po_worklist' ? (
         // What Mr Loo decided, ready to be keyed (S4, AC-E2.1). Reads the SAME run as
         // the plan above, so a past run's worklist is that week's decisions.
         <PoWorklistView runId={currentRunId} />

@@ -69,11 +69,20 @@ describe('ReorderStatTiles (M8-C0 / M8-C12)', () => {
     expect(screen.getByText('nothing left to key')).toBeInTheDocument();
   });
 
-  it('keeps Plan exceptions a STAT - its engine is S5, so there is no view to switch to', () => {
+  it('switches to plan exceptions when its card is clicked (S5, AC-D2)', () => {
+    // It was a plain stat until S5 shipped the view, for the same reason the PO worklist
+    // was: a card that switched to a view which did not exist is worse than a count.
     const { onSelectView } = renderTiles({ planExceptionCount: 4 });
-    expect(screen.queryByTitle('Show Plan exceptions recommendations')).not.toBeInTheDocument();
     fireEvent.click(screen.getByText('Plan exceptions'));
-    expect(onSelectView).not.toHaveBeenCalled();
+    expect(onSelectView).toHaveBeenCalledWith('plan_exceptions');
+  });
+
+  it('opens the exceptions view even at "not computed", so the empty state is reachable', () => {
+    // The queue is what somebody comes to this tile for. Gating the click on a count that
+    // is only fetched once the view has been opened would make it unopenable.
+    const { onSelectView } = renderTiles({ planExceptionCount: null });
+    fireEvent.click(screen.getByText('Plan exceptions'));
+    expect(onSelectView).toHaveBeenCalledWith('plan_exceptions');
   });
 
   it('switches to the PO worklist when its card is clicked (S4, AC-E2.1)', () => {

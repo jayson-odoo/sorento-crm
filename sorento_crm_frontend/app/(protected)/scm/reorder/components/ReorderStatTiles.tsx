@@ -14,7 +14,12 @@ import { fmtInt, fmtMoney } from '../../lib/format';
 
 /** Which recommendation set the plan view is filtered to. Cash impact is a stat,
  *  not a view, so it never appears here. */
-export type ReorderPlanView = 'buy' | 'disposition' | 'order_summary' | 'po_worklist';
+export type ReorderPlanView =
+  | 'buy'
+  | 'disposition'
+  | 'order_summary'
+  | 'plan_exceptions'
+  | 'po_worklist';
 
 /** Shown instead of a count when nothing computes it yet. */
 const UNKNOWN_VALUE = '-';
@@ -187,9 +192,9 @@ export function ReorderStatTiles({
         onClick={() => onSelectView('order_summary')}
       />
       <Tile label="Cash impact" value={fmtMoney(cashTotal)} icon={Wallet} />
-      {/* Both of these read "not computed" until their engines exist. A number here has to
-          come from somewhere: a fabricated count is a decision made on invented data, and a
-          0 is worse still, because "nothing waiting" is itself a claim. */}
+      {/* Reads "not computed" until the batch exists. A number here has to come from
+          somewhere: a fabricated count is a decision made on invented data, and a 0 is worse
+          still, because "nothing waiting" is itself a claim. */}
       <Tile
         label="Plan exceptions"
         value={planExceptionCount === null ? UNKNOWN_VALUE : fmtInt(planExceptionCount)}
@@ -203,6 +208,11 @@ export function ReorderStatTiles({
         icon={AlertTriangle}
         valueClass={planExceptionCount ? 'text-scm-stockout' : undefined}
         iconClass={planExceptionCount ? 'bg-scm-stockout-soft text-scm-stockout' : undefined}
+        // Clickable from S5 on, and clickable even at "not computed": the queue is what
+        // somebody comes to this tile for, and a tile that refuses to open until a count
+        // has already been fetched makes the empty state unreachable.
+        active={activeView === 'plan_exceptions'}
+        onClick={() => onSelectView('plan_exceptions')}
       />
       <Tile
         label="PO worklist"
