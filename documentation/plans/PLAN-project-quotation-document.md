@@ -152,6 +152,27 @@ way.
 - **playwright** — sidebar → project → Quotations → new document → add two scopes → price both
   → issue → PDF downloads and re-download after a template edit returns the ORIGINAL text.
 
+## Grill findings (self-grill, step 4)
+
+Two holes the first draft had. Both are recorded because each would have shipped as a silent
+data bug rather than a visible failure.
+
+**1. Issuing must freeze, or R1 rewrites itself.** `project_quotation_issue_scopes` points at a
+`version_id`, but today a line edit mutates the CURRENT version in place - a new version is only
+created by an explicit "new revision" action. So editing a line after issuing R1 would rewrite
+the very rows R1 claims to have contained, and the PDF on file would stop matching the record
+behind it. **Invariant:** issuing stamps `frozen_at` on the current version of EVERY scope in the
+issue, and any edit to a frozen version opens the next version instead of writing through. The
+service enforces it; a test asserts an edit after issue leaves the issued version byte-identical.
+
+**2. `document_numbering_rules` has no company.** `doc_type` is globally unique and the table
+carries no `company_id`, so SRT and MOCHA would draw from ONE counter and print the SAME prefix -
+the first cross-company quotation would expose it, and by then numbers are already on customer
+documents. Options: (a) accept one shared series, (b) add `company_id` and make the unique key
+`(company_id, doc_type)`, (c) encode the company in the prefix template. **[DECISION NEEDED]** -
+written as (b), because a customer-facing running number that two companies share is not a series,
+and (c) leaves the counter shared anyway.
+
 ## Risks
 
 1. **`document_id` NOT NULL** needs the backfill in the same migration; a two-step deploy would
