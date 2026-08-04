@@ -25,6 +25,8 @@ from app.schemas.dealer_kit import (
     CollectionRename,
     CollectionWrite,
     ResolvedBundleOut,
+    ProductThumbnailsIn,
+    ProductThumbnailsOut,
     ResolvedCollectionOut,
     TileOut,
 )
@@ -33,6 +35,8 @@ from app.services.dealer_kit import (
     collection_service,
     tile_template_service,
 )
+from app.models.product import Product
+from app.services.dealer_kit import product_images
 from app.services.dealer_kit.viewer import ViewerContext
 
 router = APIRouter()
@@ -65,6 +69,37 @@ def _out(db: Session, row, candidates=None) -> CollectionOut:
 # --------------------------------------------------------------------------
 # Collections
 # --------------------------------------------------------------------------
+
+
+@router.post("/product-thumbnails", response_model=ProductThumbnailsOut)
+def read_product_thumbnails(
+    payload: ProductThumbnailsIn,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """productId -> a signed thumbnail, for the products a picker is showing.
+
+    **Deliberately NOT a second product list.** Which products exist is answered
+    by `master-data/products/select`, and that stays the one answer - a second
+    endpoint returning products would be a second place for it to drift. This
+    takes ids it is GIVEN and answers only "what does this one look like", which
+    is a different question and one `select` should not grow: signing is not
+    free, and every picker in the app calls `select` while only this one shows
+    photographs.
+
+    Absent rather than blank: a product with no permitted image is simply not in
+    the map, so the card renders its no-image state instead of a broken one.
+    """
+    if not payload.product_ids:
+        return ProductThumbnailsOut(urls={})
+
+    # Capped, so a caller cannot ask for the whole catalogue's photos in one
+    # request - each one is a signature.
+    products = db.query(Product).filter(Product.id.in_(payload.product_ids[:200])).all()
+    # Staff: this is the internal builder, so trade imagery is permitted. What a
+    # CONSUMER may see is decided again, per reader, when the page is published.
+    viewer = ViewerContext(is_staff=True)
+    return ProductThumbnailsOut(urls=product_images.primary_image_urls(db, products, viewer))
 
 
 @router.get("/collections", response_model=list[CollectionOut])

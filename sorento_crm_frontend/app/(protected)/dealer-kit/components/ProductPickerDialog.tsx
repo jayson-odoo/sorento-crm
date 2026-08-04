@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { Check, Minus, Package, Search } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, ChevronDown, ChevronRight, ImageOff, Minus, Package, Search, X } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -25,6 +25,7 @@ import {
   PICKER_PAGE_SIZE,
   listPickerCategories,
   listPickerProducts,
+  listProductThumbnails,
   type PickerProduct,
 } from '../services/productPickerService';
 
@@ -65,12 +66,24 @@ export const EMPTY_SELECTION: ProductSelection = {
  * page. So a rule edit saves and the resolved count comes back.
  */
 
-function ProductRow({
+/**
+ * One product, as a picture.
+ *
+ * **Why a card and not a row.** Choosing four products out of seventeen
+ * thousand is a LOOKING task, and it was built as a reading task: rows of code
+ * and name, which is exactly what a consumer cannot navigate. `SRTBF11404` and
+ * `SRTBF11608` are indistinguishable as text and obvious as photographs.
+ *
+ * The code stays on the card because that is what staff search and reorder by.
+ */
+function ProductCard({
   product,
+  imageUrl,
   state,
   onToggle,
 }: {
   product: PickerProduct;
+  imageUrl?: string;
   state: 'in' | 'out' | 'rule';
   onToggle: () => void;
 }) {
@@ -80,43 +93,49 @@ function ProductRow({
       onClick={onToggle}
       aria-pressed={state !== 'out'}
       aria-label={`${state === 'out' ? 'Include' : 'Exclude'} ${product.name}`}
+      data-dk-picker-card={product.code}
       className={cn(
-        'flex w-full items-center gap-3 rounded-md border px-3 py-2 text-start transition-colors',
+        'group relative flex flex-col gap-1.5 rounded-lg border p-2 text-start transition-colors',
         state === 'out'
-          ? 'border-border bg-background hover:bg-muted/60'
-          : 'border-primary/40 bg-primary/5',
+          ? 'border-border bg-background hover:border-primary/50'
+          : 'border-primary bg-primary/5 ring-1 ring-primary/25',
       )}
     >
-      <span
-        className={cn(
-          'flex size-4 shrink-0 items-center justify-center rounded border',
-          state === 'out' ? 'border-border' : 'border-primary bg-primary text-primary-foreground',
+      <div className="relative aspect-square overflow-hidden rounded-md bg-muted">
+        {imageUrl ? (
+          // A plain img, not next/image: the src is a signed URL on a storage
+          // host that changes per request, which the optimiser cannot cache.
+          <img src={imageUrl} alt={product.name} className="size-full object-cover" />
+        ) : (
+          <div className="flex size-full items-center justify-center text-muted-foreground">
+            <ImageOff className="size-5" />
+          </div>
         )}
-      >
-        {state === 'in' && <Check className="size-3" />}
-        {state === 'rule' && <Minus className="size-3" />}
-      </span>
+        {state !== 'out' && (
+          <span className="absolute end-1 top-1 rounded-full bg-primary p-1 text-primary-foreground">
+            {state === 'rule' ? <Minus className="size-3" /> : <Check className="size-3" />}
+          </span>
+        )}
+      </div>
 
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm text-foreground">{product.name}</span>
-        <span className="block truncate font-mono text-xs text-muted-foreground">
-          {product.code} · {product.category}
-        </span>
+      <span className="block truncate font-mono text-xs text-foreground" title={product.code}>
+        {product.code}
       </span>
-
-      {product.isDiscontinued && (
-        <Badge variant="warning" appearance="ghost" className="shrink-0 text-xs">
-          Discontinued
-        </Badge>
+      <span className="block truncate text-xs text-muted-foreground" title={product.name}>
+        {product.name}
+      </span>
+      {product.price && (
+        <span className="block truncate text-xs text-muted-foreground">{product.price}</span>
       )}
-      {state === 'rule' && (
-        <Badge variant="outline" appearance="ghost" className="shrink-0 text-xs">
-          by rule
+      {product.isDiscontinued && (
+        <Badge variant="warning" appearance="ghost" className="w-fit text-xs">
+          Discontinued
         </Badge>
       )}
     </button>
   );
 }
+
 
 export function ProductPickerDialog({
   open,
@@ -181,6 +200,26 @@ export function ProductPickerDialog({
 
   const products = useMemo(() => (pages?.pages ?? []).flat(), [pages]);
 
+  /**
+   * Every product this dialog has loaded, by id.
+   *
+   * The chosen list has to keep naming a product after the user searches for
+   * something else or pages past it - it is THEIR list, and it emptying itself
+   * as they browse is the bug that makes a basket useless. The current page
+   * alone cannot answer that, so what has been seen is remembered.
+   */
+  const knownById = useRef(new Map<string, PickerProduct>());
+  products.forEach((product) => knownById.current.set(product.id, product));
+
+  // One request per page of results, for the products on it.
+  const productIds = products.map((product) => product.id);
+  const { data: thumbnails = {} } = useQuery({
+    queryKey: ['dealer-kit', 'picker-thumbnails', productIds.join(',')],
+    queryFn: () => listProductThumbnails(productIds),
+    enabled: open && productIds.length > 0,
+    staleTime: 5 * 60 * 1000,
+  });
+
   // Rule matches are resolved server-side after saving, so the live count here
   // reflects hand-picked products only. Saying so beats implying the rule has
   // already been applied.
@@ -195,11 +234,59 @@ export function ProductPickerDialog({
   // No client-side filtering: the server already answered this search.
   const visible = products;
 
+  /**
+   * Results grouped the way the catalogue is already organised.
+   *
+   * A flat list of 22,000 products is not browsable by anyone who does not
+   * already know the code, and the person this ends up in front of is a
+   * consumer. Grouping is over the LOADED pages only - the server decides which
+   * products, this decides how they are stacked - so a group grows as more
+   * pages are loaded rather than lying about how many there are.
+   */
+  const grouped = useMemo(() => {
+    const byCategory = new Map<string, PickerProduct[]>();
+    for (const product of visible) {
+      const key = product.category || 'Uncategorised';
+      const bucket = byCategory.get(key);
+      if (bucket) bucket.push(product);
+      else byCategory.set(key, [product]);
+    }
+    // Insertion order, which is the server's order: re-sorting here would make
+    // the list jump around as later pages arrive.
+    return Array.from(byCategory.entries());
+  }, [visible]);
+
+  /** Folded categories. Open by default - a picker that starts closed hides
+      everything the user came for. */
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+
   const stateOf = (product: PickerProduct): 'in' | 'out' | 'rule' => {
     if (draft.excludedProductIds.includes(product.id)) return 'out';
     if (draft.pinnedProductIds.includes(product.id)) return 'in';
     if (matchedByRule.includes(product.id)) return 'rule';
     return 'out';
+  };
+
+  /**
+   * Take a product back out, from the chosen list rather than by finding it.
+   *
+   * Same arithmetic as un-toggling it in the results: drop the pin if that is
+   * what put it in, and exclude it if the rule would otherwise keep pulling it
+   * back. Kept separate because the chosen list can name a product that is not
+   * on the current page at all, so there is no card to toggle.
+   */
+  const removeMember = (productId: string) => {
+    setDraft((current) => {
+      const pinned = new Set(current.pinnedProductIds);
+      const excluded = new Set(current.excludedProductIds);
+      pinned.delete(productId);
+      if (matchedByRule.includes(productId)) excluded.add(productId);
+      return {
+        ...current,
+        pinnedProductIds: [...pinned],
+        excludedProductIds: [...excluded],
+      };
+    });
   };
 
   const toggle = (product: PickerProduct) => {
@@ -228,7 +315,7 @@ export function ProductPickerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle>Choose products</DialogTitle>
           <DialogDescription>
@@ -292,68 +379,162 @@ export function ProductPickerDialog({
               </div>
             )}
 
-            {/* h-, not max-h-: a Radix ScrollArea with only a max height never
-                scrolls - the content simply overflows and the rows below the
-                fold become unreachable. */}
-            <ScrollArea className="h-72">
-              <div className="flex flex-col gap-1.5 pe-3">
-                {isLoading &&
-                  [0, 1, 2, 3].map((row) => <Skeleton key={row} className="h-12 w-full" />)}
-                {!isLoading && visible.length === 0 && (
-                  <p className="py-6 text-center text-sm text-muted-foreground">
-                    No products match that search.
-                  </p>
-                )}
-                {visible.map((product) => (
-                  <ProductRow
-                    key={product.id}
-                    product={product}
-                    state={stateOf(product)}
-                    onToggle={() => toggle(product)}
-                  />
-                ))}
-                {hasNextPage && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="mt-1"
-                    disabled={isFetching}
-                    onClick={() => fetchNextPage()}
-                  >
-                    {isFetching ? 'Loading' : 'Load more products'}
-                  </Button>
-                )}
+            {/*
+              Two panes: what there is, and what has been chosen.
+
+              The chosen list used to be one truncated line of codes under the
+              dialog, which is a receipt, not a basket - you could add a product
+              and have no way to take it back out except finding it again in
+              22,000. It is beside the results now, always visible, and every
+              entry removes itself.
+            */}
+            <div className="flex flex-col gap-3 lg:flex-row">
+              {/* h-, not max-h-: a Radix ScrollArea with only a max height never
+                  scrolls - the content simply overflows and the rows below the
+                  fold become unreachable. */}
+              <ScrollArea className="h-96 min-w-0 flex-1">
+                <div className="flex flex-col gap-4 pe-3">
+                  {isLoading && (
+                    <div className="grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-2">
+                      {[0, 1, 2, 3, 4, 5].map((row) => (
+                        <Skeleton key={row} className="aspect-square w-full" />
+                      ))}
+                    </div>
+                  )}
+                  {!isLoading && visible.length === 0 && (
+                    <p className="py-6 text-center text-sm text-muted-foreground">
+                      No products match that search.
+                    </p>
+                  )}
+
+                  {grouped.map(([category, items]) => (
+                    <div key={category} data-dk-picker-group={category}>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCollapsed((current) => ({
+                            ...current,
+                            [category]: !current[category],
+                          }))
+                        }
+                        aria-expanded={!collapsed[category]}
+                        className="mb-2 flex w-full items-center gap-1.5 text-start text-xs font-medium text-muted-foreground hover:text-foreground"
+                      >
+                        {collapsed[category] ? (
+                          <ChevronRight className="size-3.5" />
+                        ) : (
+                          <ChevronDown className="size-3.5" />
+                        )}
+                        <span className="truncate">{category}</span>
+                        <span className="shrink-0 font-normal">({items.length})</span>
+                      </button>
+
+                      {!collapsed[category] && (
+                        <div className="grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-2">
+                          {items.map((product) => (
+                            <ProductCard
+                              key={product.id}
+                              product={product}
+                              imageUrl={thumbnails[product.id]}
+                              state={stateOf(product)}
+                              onToggle={() => toggle(product)}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                  {hasNextPage && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={isFetching}
+                      onClick={() => fetchNextPage()}
+                    >
+                      {isFetching ? 'Loading' : 'Load more products'}
+                    </Button>
+                  )}
+                </div>
+              </ScrollArea>
+
+              <div className="flex w-full shrink-0 flex-col rounded-lg border border-border lg:w-64">
+                <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+                  <Package className="size-4 text-muted-foreground" aria-hidden />
+                  <span className="text-sm font-medium" data-dk-chosen-count>
+                    {members.length} chosen
+                  </span>
+                </div>
+                <ScrollArea className="h-[21rem]">
+                  {members.length === 0 ? (
+                    <p className="p-3 text-xs text-muted-foreground">
+                      Nothing chosen yet. Tap a product to add it.
+                    </p>
+                  ) : (
+                    <ul className="flex flex-col divide-y divide-border">
+                      {members.map((id) => {
+                        const product = knownById.current.get(id);
+                        return (
+                          <li
+                            key={id}
+                            className="flex items-center gap-2 px-3 py-2"
+                            data-dk-chosen={product?.code ?? id}
+                          >
+                            <div className="size-8 shrink-0 overflow-hidden rounded bg-muted">
+                              {thumbnails[id] ? (
+                                <img
+                                  src={thumbnails[id]}
+                                  alt=""
+                                  className="size-full object-cover"
+                                />
+                              ) : (
+                                <div className="flex size-full items-center justify-center text-muted-foreground">
+                                  <ImageOff className="size-3" />
+                                </div>
+                              )}
+                            </div>
+                            <span className="min-w-0 flex-1">
+                              <span
+                                className="block truncate font-mono text-xs"
+                                title={product?.code ?? ''}
+                              >
+                                {/* Falls back to nothing rather than the id: a
+                                    uuid on a screen is banned, and a product
+                                    loaded on a page the user has since left is
+                                    still THEIR choice. */}
+                                {product?.code ?? 'Chosen product'}
+                              </span>
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {product?.name ?? ''}
+                              </span>
+                            </span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="size-6 shrink-0 p-0"
+                              onClick={() => removeMember(id)}
+                              title="Remove"
+                              aria-label={`Remove ${product?.code ?? 'product'}`}
+                            >
+                              <X className="size-3.5" />
+                            </Button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </ScrollArea>
               </div>
-            </ScrollArea>
+            </div>
           </TabsContent>
         </Tabs>
 
-        <div className="rounded-lg border border-border bg-muted/30 p-3">
-          <div className="flex items-center gap-2">
-            <Package className="size-4 text-muted-foreground" aria-hidden />
-            <p className="text-sm font-medium text-foreground" data-dk-match-count>
-              {members.length} product{members.length === 1 ? '' : 's'} selected
-            </p>
-            {draft.excludedProductIds.length > 0 && (
-              <Badge variant="outline" appearance="ghost" className="text-xs">
-                {draft.excludedProductIds.length} excluded
-              </Badge>
-            )}
-          </div>
-
-          {members.length === 0 ? (
-            <p className="mt-1.5 text-xs text-muted-foreground">
-              Nothing selected yet. Add a rule, or pick products by hand.
-            </p>
-          ) : (
-            <p className="mt-1.5 truncate text-xs text-muted-foreground">
-              {members
-                .map((id) => products.find((product) => product.id === id)?.code)
-                .filter(Boolean)
-                .join(', ')}
-            </p>
-          )}
-        </div>
+        {draft.excludedProductIds.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {draft.excludedProductIds.length} product
+            {draft.excludedProductIds.length === 1 ? '' : 's'} excluded from the rule.
+          </p>
+        )}
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>

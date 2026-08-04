@@ -100,3 +100,31 @@ export async function listPickerCategories(): Promise<PickerCategory[]> {
   const rows = Array.isArray(body) ? body : (body.data ?? []);
   return rows.map((row) => ({ id: row.id, name: row.category_name }));
 }
+
+
+/**
+ * productId -> a signed thumbnail, for the products a picker is showing.
+ *
+ * A separate call from the product list on purpose. `products/select` stays the
+ * one answer to "which products exist" - a second endpoint returning products
+ * would be a second place for that to drift - and this answers only "what does
+ * this one look like". Signing is not free, and every picker in the app calls
+ * `select` while only this one shows photographs.
+ */
+export async function listProductThumbnails(
+  productIds: string[],
+): Promise<Record<string, string>> {
+  if (productIds.length === 0) return {};
+
+  const response = await apiFetch('/api/v1/dealer-kit/product-thumbnails', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ productIds }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not load product photos'));
+  }
+
+  const wire = (await response.json()) as { urls?: Record<string, string> };
+  return wire.urls ?? {};
+}

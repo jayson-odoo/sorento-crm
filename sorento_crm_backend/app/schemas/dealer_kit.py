@@ -174,6 +174,26 @@ class LabelMove(BaseModel):
     version_id: str = Field(validation_alias="versionId")
 
 
+class ProductThumbnailsIn(BaseModel):
+    """Which products a picker is showing right now.
+
+    Ids the CALLER already has, not a query: this endpoint does not decide which
+    products exist, it only says what the ones on screen look like.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    product_ids: list[str] = Field(default_factory=list, validation_alias="productIds")
+
+
+class ProductThumbnailsOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    # productId -> signed thumbnail. A product with no permitted image is
+    # ABSENT, so the card shows its no-image state rather than a broken one.
+    urls: dict[str, str] = Field(default_factory=dict)
+
+
 class PublicPage(BaseModel):
     """What an unauthenticated reader receives.
 
