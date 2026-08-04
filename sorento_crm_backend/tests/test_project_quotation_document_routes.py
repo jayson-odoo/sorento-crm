@@ -894,3 +894,76 @@ def test_someone_who_may_not_view_the_project_cannot_download_its_quotation(api)
     with _without_permission(VIEW):
         denied = client.get(f"{root}/{document['id']}/issues/{issue['id']}/pdf")
     assert denied.status_code in (401, 403), denied.text
+
+
+# --------------------------------------------------------------------- AC-F2 (Excel)
+
+
+def test_the_excel_download_returns_a_workbook_that_downloads_rather_than_previews(api):
+    """The Excel export exists because the customer's QS re-prices in Excel (AC-F2), so what
+    lands on the wire has to be a workbook their spreadsheet opens, not a JSON error served with
+    a spreadsheet content type. Sent as an ATTACHMENT rather than inline: nobody previews a
+    workbook in a browser tab, and an inline disposition on a binary a browser cannot render is
+    how a download turns into a blank page. The filename carries `Our Ref (R1)` for the same
+    reason the PDF's does - a saved `download.xlsx` cannot be matched back to the paper it is."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    client, db, _company_id, _user_id, project, _party = api
+    root, document, issue = _issue_one(client, db, project)
+
+    response = client.get(f"{root}/{document['id']}/issues/{issue['id']}/xlsx")
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    expected = f"quotation-{MARKER}-Q-0001-R1.xlsx"
+    assert response.headers["content-disposition"] == f'attachment; filename="{expected}"'
+
+    # A real workbook, not a 200 carrying an error page. One sheet per scope, with the money on
+    # it, so the route is proven to be wired to the exporter rather than to an empty stub.
+    workbook = load_workbook(BytesIO(response.content))
+    assert workbook.sheetnames == [f"{MARKER} Townhouse"]
+    assert Decimal("1000.00") in [  # 4 x 250
+        _money(cell.value)
+        for row in workbook.worksheets[0].iter_rows()
+        for cell in row
+        if isinstance(cell.value, (int, float, Decimal))
+    ]
+
+
+def test_a_revision_id_from_another_document_cannot_be_exported_through_this_one(api):
+    """Same leak as the PDF route, and it has to be closed separately because it is a separate
+    handler: the URL names a project, a document AND an issue, so the issue is checked against
+    the document rather than merely fetched by id. Without it a known issue id exports through
+    any document the caller may view, and a price list they were never shown lands as a
+    spreadsheet - which is the more useful artifact to leak, since it is already machine
+    readable."""
+    client, db, _company_id, _user_id, project, _party = api
+    root, document, issue = _issue_one(client, db, project)
+
+    other = _create_document(client, project.id)
+
+    stranger = client.get(f"{root}/{other['id']}/issues/{issue['id']}/xlsx")
+    assert stranger.status_code == 404, stranger.text
+    assert stranger.json()["code"] == "quotation_issue_not_found"
+
+    unknown = client.get(f"{root}/{document['id']}/issues/{_uid()}/xlsx")
+    assert unknown.status_code == 404, unknown.text
+
+    malformed = client.get(f"{root}/{document['id']}/issues/not-a-uuid/xlsx")
+    assert malformed.status_code in (400, 404, 422), malformed.text
+
+
+def test_someone_who_may_not_view_the_project_cannot_export_its_quotation(api):
+    """The workbook is the full price list in a form that can be re-sent, re-priced and pasted
+    into somebody else's tender. Read permission on the project is the gate and it is enforced at
+    the route, because the exporter takes an issue row and would build a workbook for anybody who
+    reached it."""
+    client, db, _company_id, _user_id, project, _party = api
+    root, document, issue = _issue_one(client, db, project)
+
+    with _without_permission(VIEW):
+        denied = client.get(f"{root}/{document['id']}/issues/{issue['id']}/xlsx")
+    assert denied.status_code in (401, 403), denied.text

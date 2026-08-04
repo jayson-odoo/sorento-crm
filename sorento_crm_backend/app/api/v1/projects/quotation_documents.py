@@ -443,3 +443,54 @@ async def download_quotation_issue_pdf(
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+# ---------------------------------------------------------------------- excel
+
+
+@router.get(
+    "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/xlsx",
+)
+async def download_quotation_issue_xlsx(
+    project_id: str,
+    document_id: str,
+    issue_id: str,
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The same issued quotation as a workbook, one sheet per scope (AC-F2).
+
+    Sent as an ATTACHMENT rather than inline: nobody previews a spreadsheet in a browser tab, and
+    an inline disposition on a binary the browser cannot render turns a download into a blank page.
+    Built from the ISSUE snapshot on demand, exactly as the PDF is, so the two artifacts of one
+    revision can never quote different money.
+    """
+    from app.services import project_quotation_excel_service as excel
+    from app.services.error_handler import AppException
+
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        validate_uuid_path(issue_id, resource="Revision")
+        validate_uuid_path(project_id, resource="Project")
+        projects.get_project_or_404(db, project_id)
+        document = svc.get_document_or_404(db, project_id, document_id)
+        # Checked against THIS document, not merely fetched by id: otherwise a known issue id
+        # exports through any document the caller may view, handing over a price list they were
+        # never shown in the one format that is already machine readable.
+        record = next(
+            (row for row in svc.list_issues(db, document) if str(row.id) == issue_id), None
+        )
+        if record is None:
+            raise AppException(
+                status_code=404, message="Revision not found.", code="quotation_issue_not_found"
+            )
+        payload, filename = excel.render_issue_xlsx(db, record)
+        return Response(
+            content=payload,
+            media_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

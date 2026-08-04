@@ -765,3 +765,64 @@ def test_the_issue_renders_to_real_pdf_bytes():
         assert len(pdf_bytes) > 1000
         assert filename.endswith(".pdf")
         assert "R1" in filename
+
+
+# ------------------------------------------------------- component lines (real data)
+
+
+def test_a_component_of_a_set_prints_no_money_rather_than_zero():
+    """Real quotations carry set components on their own rows: a pedestal at 305.55 followed by
+    its cistern, seat cover and connector at no separate charge, because the money sits on the
+    parent. The Tuju Residences quotation in the dev database has 4 of them under one item.
+
+    Printed as `0.00` those rows read as four free products, and a QS pricing against them is
+    entitled to hold Sorento to it. The artifact leaves the cell blank. Nothing here is
+    rate-only (that flag means a quoted alternate, and these are not alternates), so the blank
+    is driven off the amount itself. It cannot move any number: zero contributes zero either
+    way, which is exactly why this is safe to assert alongside an unchanged grand total."""
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_pdf_service as qpdf
+    from app.services import project_quotation_service as quotes
+
+    with blank_session() as db:
+        env = _setup(db)
+        owner = env["owner"]
+        parent = _product(
+            db, env["category"].id, env["uom"], description=f"{MARKER} close-coupled pedestal"
+        )
+        component = _product(
+            db, env["category"].id, env["uom"], description=f"{MARKER} cistern only, no charge"
+        )
+
+        document = qdocs.create_document(db, project=env["project"], actor_user_id=owner)
+        scope = qdocs.add_scope(
+            db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=owner
+        )
+        version = quotes.current_version(db, scope.id)
+        quotes.upsert_line(
+            db,
+            version=version,
+            actor_user_id=owner,
+            payload={"product_id": parent.id, "unit_price": "305.55", "quantity": "894"},
+        )
+        quotes.upsert_line(
+            db,
+            version=version,
+            actor_user_id=owner,
+            payload={"product_id": component.id, "unit_price": "0.00", "quantity": "894"},
+        )
+
+        issued = _issue(db, document, owner)
+        html = qpdf.build_issue_html(db, issued)
+
+        # The component is still listed, with its quantity: the customer is receiving 894 of them.
+        assert f"{MARKER} cistern only, no charge" in html
+        assert "894" in html
+
+        # But neither its rate nor its amount reads as a price.
+        assert "0.00" not in html
+
+        # The priced parent is untouched, and so is the arithmetic.
+        assert "305.55" in html
+        assert "273,161.70" in html
+        assert issued.grand_total == Decimal("273161.70")

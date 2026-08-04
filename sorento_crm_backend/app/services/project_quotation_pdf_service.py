@@ -94,6 +94,23 @@ def _money(value: Any) -> str:
     return f"{amount.quantize(ZERO):,.2f}"
 
 
+def _line_money(value: Any) -> str:
+    """Money on a LINE, where zero means "no separate charge" and must print blank.
+
+    Real quotations list the components of a complete set on their own rows: a pedestal carries
+    the price and its cistern, seat cover and connector follow at nothing, because the money is
+    already on the parent. Printed as `0.00` those rows read as free products the customer can
+    hold Sorento to. The artifact leaves the cell empty, so this does too.
+
+    Totals keep ``_money``: a scope that genuinely adds up to nothing should say so.
+    """
+    try:
+        amount = Decimal(value if value is not None else 0)
+    except (InvalidOperation, TypeError, ValueError):
+        return ""
+    return "" if amount == ZERO else _money(amount)
+
+
 def _qty(value: Any) -> str:
     """`1046`, not `1046.00`. The column is stored Numeric(12,2) but quantities are counts, and
     a trailing `.00` on every row is noise a QS has to read past."""
@@ -377,7 +394,7 @@ def _scope_html(
         money = (
             f'<span class="rate-only">{RATE_ONLY_TEXT}</span>'
             if line.is_rate_only
-            else _money(line.line_total)
+            else _line_money(line.line_total)
         )
         body.append(
             "<tr>"
@@ -388,7 +405,7 @@ def _scope_html(
             f"<td>{_cell(line.brand_snapshot)}</td>"
             f"<td>{_cell(line.product_code_snapshot)}</td>"
             f'<td class="num">{qty_text}</td>'
-            f'<td class="num">{_money(line.unit_price)}</td>'
+            f'<td class="num">{_line_money(line.unit_price)}</td>'
             f"<td>{_cell(line.complete_set)}</td>"
             f'<td class="num">{money}</td>'
             "</tr>"
