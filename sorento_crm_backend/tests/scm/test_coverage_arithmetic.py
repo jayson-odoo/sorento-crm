@@ -529,27 +529,27 @@ def test_stock_allocated_to_a_bin_in_no_pool_is_reported_rather_than_dropped(db,
 # =========================================================================== #
 # DEFECT 5: shipment status is a whitelist where the rest of the repo uses a blacklist
 #
-# `_INBOUND_SHIPMENT_STATUSES` lists five values. `procurement_service` WRITES
-# `fully_received` / `partial_received` and normalises `received` to `fully_received`, while
-# `incoming_stock_service._still_incoming_filter` and `procurement_service._is_received_status`
-# both test against received rather than for a known-good list.
+# `_INBOUND_SHIPMENT_STATUSES` lists five values. The column's real vocabulary is fixed by
+# the `inbound_shipments_shipment_status_check` constraint (in_transit, arrived_at_port,
+# at_warehouse, partially_received, fully_received, closed), and `incoming_stock_service.
+# _still_incoming_filter` and `procurement_service._is_received_status` both test against
+# received rather than for a known-good list.
 # =========================================================================== #
 
 
 def test_a_partially_received_shipment_still_contributes_what_is_outstanding(db, chain):
     """The most common state of a live container is the one state that reports nothing.
 
-    A container half unloaded is written as ``partial_received`` by ``procurement_service``,
-    and that value is not in the coverage whitelist, so the 60 units still on the vessel drop
-    out of the plan entirely. The planner sees no supply, buys again, and the second
-    container arrives behind the first. Every long-running import passes through this status,
-    so the whitelist does not fail on an exotic value - it fails in the middle of the normal
-    lifecycle.
+    A container half unloaded carries ``partially_received``, and that value was not in the
+    coverage whitelist, so the 60 units still on the vessel dropped out of the plan entirely.
+    The planner sees no supply, buys again, and the second container arrives behind the
+    first. Every long-running import passes through this status, so the whitelist does not
+    fail on an exotic value - it fails in the middle of the normal lifecycle.
     """
     product = chain["product"]
     ship, _line = _shipment(
         db, product, shipped=100, received=40,
-        arrival=_today() + timedelta(days=12), status="partial_received",
+        arrival=_today() + timedelta(days=12), status="partially_received",
     )
     _alloc(db, ship, product, chain["bin_a"], allocated=100, received=40)
 
@@ -596,6 +596,28 @@ def test_a_closed_shipment_line_is_not_supply_the_way_a_closed_po_line_is_not(db
     ship, _line = _shipment(
         db, product, shipped=100, received=0,
         arrival=_today() + timedelta(days=12), line_status="received",
+    )
+    _alloc(db, ship, product, chain["bin_a"], allocated=100, received=0)
+
+    cov = CoverageService(db).coverage_for(product.id, pool_id=chain["pool"].id)
+
+    assert _in_transit_qty(cov) == 0
+    assert cov.timeline.closing_balance == 0
+
+
+def test_a_closed_shipment_is_not_in_transit_supply(db, chain):
+    """A shipment closed off the book is not still on the water.
+
+    Found by the same constraint that rejected the earlier seeds: the column admits
+    ``closed`` and the excluded set did not list it, while listing three values
+    (``received`` / ``completed`` / ``cancelled``) the constraint forbids. So the one real
+    terminal state that was reachable was the one that still contributed cover, which is the
+    fail-open direction - it suppresses a purchase and nothing on screen admits it.
+    """
+    product = chain["product"]
+    ship, _line = _shipment(
+        db, product, shipped=100, received=0,
+        arrival=_today() + timedelta(days=12), status="closed",
     )
     _alloc(db, ship, product, chain["bin_a"], allocated=100, received=0)
 

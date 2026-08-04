@@ -310,13 +310,18 @@ def test_a_received_shipment_is_not_in_transit_supply(db, two_pools):
 
     Seeded with a real allocation so that the exclusion has to come from the shipment
     status rather than from the destination chain being unable to place it.
+
+    The status is ``fully_received`` rather than ``received`` because the column's CHECK
+    constraint does not admit the latter: `procurement_service` normalises it before any
+    write, so a `received` row cannot exist to be tested against.
     """
     product = two_pools["product"]
     _po, po_line = _po_with_line(
         db, product, two_pools["bin_a"], 200, _today() + timedelta(days=10)
     )
     _in_transit(
-        db, product, 60, _today() - timedelta(days=2), po_line=po_line, status="received"
+        db, product, 60, _today() - timedelta(days=2), po_line=po_line,
+        status="fully_received",
     )
 
     cov = CoverageService(db).coverage_for(product.id, pool_id=two_pools["pool_a"].id)

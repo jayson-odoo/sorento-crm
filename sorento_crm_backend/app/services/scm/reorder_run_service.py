@@ -31,6 +31,8 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.models.inventory import Warehouse
+from app.models.product import Product
 from app.models.scm import ReorderRecommendation, ReorderRun
 from app.services.error_handler import AppException
 from app.services.scm import cash_ranking
@@ -120,21 +122,36 @@ def _resolve_product_ids(
     """
     if not product_codes:
         return None
-    rows = db.execute(text(
-        "SELECT id FROM products WHERE product_code = ANY(:codes)"
-    ), {"codes": [str(c) for c in product_codes]}).fetchall()
+    # ORM, not raw SQL: the multi-company isolation filter runs on ORM execution only, and
+    # each company carries its own copy of the catalogue - 11,390 product codes exist twice
+    # in the real database. A raw `SELECT ... FROM products WHERE product_code = ANY(...)`
+    # therefore puts ANOTHER company's product into this run's scope. It is inert only for
+    # as long as one company owns every warehouse, which is not a property to depend on.
+    rows = (
+        db.query(Product.id)
+        .filter(Product.product_code.in_([str(c) for c in product_codes]))
+        .all()
+    )
     return [str(r[0]) for r in rows]
 
 
 def _resolve_warehouse_ids(db: Session, warehouse_codes: Optional[list[str]]) -> list[str]:
+    """Location codes to ids, or every active warehouse when no scope was asked for.
+
+    Returns an EMPTY list when codes were given and none resolved - a mistyped location
+    must plan nothing rather than the whole network (see ``_planning_rows``).
+
+    ORM for the same isolation reason as the product resolver: an unscoped run must list
+    THIS company's warehouses, not every company's.
+    """
     if warehouse_codes:
-        rows = db.execute(text(
-            "SELECT id FROM warehouses WHERE warehouse_code = ANY(:codes)"
-        ), {"codes": [str(c) for c in warehouse_codes]}).fetchall()
+        rows = (
+            db.query(Warehouse.id)
+            .filter(Warehouse.warehouse_code.in_([str(c) for c in warehouse_codes]))
+            .all()
+        )
         return [str(r[0]) for r in rows]
-    rows = db.execute(text(
-        "SELECT id FROM warehouses WHERE is_active = true"
-    )).fetchall()
+    rows = db.query(Warehouse.id).filter(Warehouse.is_active.is_(True)).all()
     return [str(r[0]) for r in rows]
 
 
@@ -253,6 +270,7 @@ def _execute_run(db: Session, run_id: str) -> dict:
         run.run_log = {"stage": _STAGES[3], **counts}
         db.add(run)
         db.commit()
+
         return {"run_id": run_id, "status": "completed", **counts}
     except Exception as exc:  # noqa: BLE001 — record, never crash the worker
         log.exception("run_reorder %s failed", run_id)
@@ -279,11 +297,15 @@ def _execute_run(db: Session, run_id: str) -> dict:
 def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
                    product_ids: Optional[list[str]] = None) -> list[dict]:
     """Active + ongoing SKU×warehouse rows with a net position / demand in the selected
-    warehouses (reuses the dashboard focus predicate). Empty ``warehouse_ids`` => all.
+    warehouses (reuses the dashboard focus predicate).
 
-    ``product_ids`` None => every product. A LIST narrows to it, and an EMPTY list narrows to
-    nothing: a scope was asked for and none of it resolved, so the honest answer is an empty
-    plan the operator can see rather than the whole catalogue dressed up as their request.
+    BOTH scopes use the same three-state convention, and the two must not drift or empty
+    means one thing for products and the opposite for locations. ``None`` => no scope was
+    asked for, so plan everything (the daily run). A LIST narrows to it. An EMPTY list
+    narrows to NOTHING: a scope was asked for and none of it resolved, so the honest answer
+    is an empty plan the operator can see rather than the whole catalogue dressed up as
+    their request. Reading `[]` as "no filter" is what turned one mistyped location code
+    into an 11,585-row plan of every warehouse.
     """
     where = ["p.is_active = true", "p.is_discontinued = false"]
     params: dict[str, Any] = {}
@@ -292,7 +314,9 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
             return []
         where.append("np.product_id::text = ANY(:pids)")
         params["pids"] = [str(p) for p in product_ids]
-    if warehouse_ids:
+    if warehouse_ids is not None:
+        if not warehouse_ids:
+            return []
         where.append("np.warehouse_id::text = ANY(:wids)")
         params["wids"] = [str(w) for w in warehouse_ids]
     sql = text(f"""
