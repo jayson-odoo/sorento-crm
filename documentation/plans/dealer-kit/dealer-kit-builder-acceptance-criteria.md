@@ -119,11 +119,17 @@ Convention: **Given / When / Then**. An AC passes only when the Then is observed
 
 ## Group L — Edition revision workflow (S2.5)
 
-> **Blocked.** ADR-0001 adopts the status engine as core, but it is **not built** — there is no
-> `statuses` / `status_transitions` model in the tree today. S2.5 must not ship a seventh
-> hardcoded status vocabulary, which is precisely what ADR-0001 exists to prevent. So S2.5
-> waits on that port. **S1 → S2 → S3 do not depend on it** and proceed unblocked; the builder
-> is fully usable without approval gating.
+> **Unblocked and BUILT 2026-08-03.** The status engine was ported by project-sales, and the
+> Edition became the first entity in the system to ride it rather than carry a status column.
+> AC-L1 to AC-L3 and AC-L7 to AC-L9 shipped; see `PLAN-edition-approval.md` and the
+> EXECUTION-LEDGER entry for S2.5.
+>
+> **AC-L4 to AC-L6 remain deferred**, and the reason is structural rather than scheduling: the
+> page document stores NO prices (they resolve per viewer at read time, ADR 0008), so an Edition
+> cannot tell a price-only edit from any other by diffing its own versions. Shipped behaviour is
+> blunter than AC-L4/L5 ask for - EVERY save drops an approved Edition back to
+> `pending_approval`. Stricter than the AC, and it cannot ship a silently altered catalogue.
+> AC-L6's diff has nothing to diff until L4/L5 have a mechanism.
 
 - **AC-L1** `[BE]` Given `dealer_kit.edition`, Then its status is one of `draft` / `pending_approval` / `approved` / `rejected` / `done`, driven by the **core status engine** — not a bespoke enum column with hand-written transition checks.
 - **AC-L2** `[BE]` Given the transition table, Then exactly these are permitted and all others 403: `draft→pending_approval` (Designer) · `pending_approval→approved` (Approver) · `pending_approval→rejected` (Approver) · `rejected→pending_approval` (Designer) · `approved→done` (Designer) · `done→draft` (Approver).

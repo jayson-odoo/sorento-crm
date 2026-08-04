@@ -27,7 +27,7 @@ allowed to see.
 | `CompanyScopedMixin` + `do_orm_execute` filter | **Exists, but ONLY on `feat/promo-expiry-rule-engine` — NOT on `main`** | Branch point is forced: `feat/dealer-kit-builder` is cut from that branch, not main, or AC-A6/A7 are unsatisfiable. Dealer Kit cannot merge before multi-company does |
 | `access_levels` / `is_direct_access` on products & attachments | **Exists** | Drives viewer-resolved pricing and badge gating |
 | `ai_prompt_versions` / `ai_prompt_labels` | **Exists** | Copied as the shape for `page_version` / `page_label` |
-| **Status engine (ADR-0001)** | **NOT BUILT** — no `statuses` model in the tree | **Blocks S2.5 only.** S1–S3 proceed |
+| **Status engine (ADR-0001)** | **BUILT** — ported by project-sales; S2.5 rides it (2026-08-03) | No longer blocks anything here |
 | `respond_contacts` ↔ `customers` link | **Does not exist** | Blocks S4, not this plan |
 
 **The one blocker worth stating plainly:** ADR-0001 adopted the status engine as core, but no
