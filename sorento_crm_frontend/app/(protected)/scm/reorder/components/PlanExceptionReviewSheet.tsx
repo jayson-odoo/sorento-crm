@@ -225,8 +225,16 @@ export function PlanExceptionReviewSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-2xl">
-        <SheetHeader>
+      {/* The BODY scrolls and the footer stays put, rather than the whole panel scrolling.
+          The two timelines, the reading and four action cards are taller than a laptop
+          viewport, and with a footer that scrolls away the Approve button sat below the fold
+          - present in the DOM, unreachable by clicking, which is the worst of both. */}
+      <SheetContent
+        side="right"
+        className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl"
+        aria-describedby={undefined}
+      >
+        <SheetHeader className="border-b p-4 pe-12 sm:p-6 sm:pe-12">
           <SheetTitle className="break-words">
             {exception.product_code}
             {exception.product_name ? (
@@ -248,7 +256,7 @@ export function PlanExceptionReviewSheet({
           </SheetDescription>
         </SheetHeader>
 
-        <SheetBody className="space-y-5">
+        <SheetBody className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:p-6">
           <section>
             <h4 className="mb-2 text-2xs font-medium uppercase text-muted-foreground">
               Position before and after the restatement
@@ -347,7 +355,7 @@ export function PlanExceptionReviewSheet({
           ) : null}
         </SheetBody>
 
-        <SheetFooter className="flex-row justify-end gap-2">
+        <SheetFooter className="flex-row justify-end gap-2 border-t p-4 sm:p-6">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Close
           </Button>

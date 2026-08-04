@@ -10,6 +10,7 @@ would otherwise silently become a SKU that gets planned and purchased.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Optional
@@ -27,11 +28,16 @@ from app.services.scm.outstanding_diff import (
     CLOSED,
     DATE_AND_QTY_CHANGED,
     QTY_CHANGED,
+    UNCHANGED,
     Diff,
     Line,
     diff_lines,
 )
+from app.services.scm import plan_exception_service
+from app.services.scm import reorder_run_service
 from app.services.scm.outstanding_reader import PO, SO, ReadResult, RowProblem, read_workbook
+
+logger = logging.getLogger(__name__)
 
 # Demand class drives fulfilment priority: `scm.priority_policy.demand_class_weights` is
 # keyed on it. A stated split that is not recognisably a project is retail, because that is
@@ -662,6 +668,27 @@ def _build(db: Session, file_data: bytes, doc_type: str) -> _Plan:
     )
 
 
+def _affected_product_ids(plan: _Plan) -> list[str]:
+    """Products whose position this restatement could move.
+
+    Only the ones that actually CHANGED: an unchanged line cannot make the plan disagree
+    with anything, and snapshotting the whole book on every upload would cost the dated
+    engine a run over thousands of products to find the handful that moved.
+    """
+    if plan.diff is None or plan.resolved is None:
+        return []
+    changed_codes = {
+        c.item_code for c in plan.diff.changes if c.kind != UNCHANGED
+    }
+    # `product_by_code` is keyed by the NORMALISED code, so normalise on lookup: the diff
+    # carries the code as the file spelled it, and a case difference would silently drop the
+    # product from the batch rather than fail.
+    by_code = plan.resolved.product_by_code
+    return sorted(
+        {str(by_code[_norm(code)]) for code in changed_codes if by_code.get(_norm(code))}
+    )
+
+
 def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
     """What this upload would change. Writes nothing."""
     plan = _build(db, file_data, doc_type)
@@ -737,6 +764,24 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
     read, resolved, diff = plan.read, plan.resolved, plan.diff
     if diff is None or resolved is None:
         return {"ok": False, "missing_columns": read.missing_columns, "counts": {}}
+
+    # The BEFORE half of every Plan Exception (AC-D4), taken while the old position is still
+    # the one in the database. Reconstructing it afterwards by inverting the deltas would be
+    # a second implementation of netting whose only job is to agree with the first, and the
+    # day it stopped agreeing the before-column would be a number nobody could reproduce.
+    #
+    # Best-effort like the generation below, and for the same reason: the upload is the
+    # operation the user asked for. A defect in the exception path must not send them back to
+    # re-upload a book that would otherwise have gone in - it must cost them the batch, which
+    # the next upload produces again.
+    exception_pids = _affected_product_ids(plan) if doc_type == SO else []
+    before_positions: dict = {}
+    if exception_pids:
+        try:
+            before_positions = plan_exception_service.snapshot(db, exception_pids)
+        except Exception:  # pragma: no cover - defensive, see above
+            logger.exception("plan exception BEFORE snapshot failed; skipping the batch")
+            exception_pids = []
 
     bind = _binding(doc_type)
     lift = set(plan.activate)
@@ -862,8 +907,39 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         applied["updated"] += 1
 
     db.flush()
+
+    # AC-D2a: exceptions are a BATCH produced on confirmation, not ad-hoc signals arriving
+    # one at a time. Best-effort, because the upload itself has already succeeded: a failure
+    # to diff the plan must not fail the write and send the operator back to re-upload a book
+    # that is already in.
+    exception_batch_id = None
+    if exception_pids:
+        try:
+            after_positions = plan_exception_service.snapshot(db, exception_pids)
+            # The batch belongs to the PLAN it contradicts. Without this the exception
+            # screen - which is a view OF a run - filters by a run id no batch carries and
+            # shows nothing for ever, while the rows sit in the table.
+            current = reorder_run_service.today_or_latest_run(db)
+            batch = plan_exception_service.generate_batch(
+                db,
+                run_id=str(current["row"]["id"]) if current else None,
+                before=before_positions,
+                after=after_positions,
+                # The upload's OWN count of changed lines, carried through unchanged so the
+                # screen can reconcile deltas against exceptions (AC-D2b).
+                delta_count=sum(
+                    n for kind, n in diff.counts.items() if kind != "unchanged"
+                ),
+                source_documents=list(diff.scope_documents),
+                actor=actor,
+            )
+            exception_batch_id = str(batch.id)
+        except Exception:  # pragma: no cover - defensive, see above
+            logger.exception("plan exception batch failed for a confirmed SO upload")
+
     return {
         "ok": True,
+        "exception_batch_id": exception_batch_id,
         "counts": diff.counts,
         "applied": applied,
         "scope_documents": list(diff.scope_documents),

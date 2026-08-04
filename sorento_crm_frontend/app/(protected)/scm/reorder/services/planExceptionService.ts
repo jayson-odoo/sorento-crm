@@ -4,13 +4,10 @@
  * ============================================================================
  * Layering: hooks (usePlanExceptions) -> THIS service -> lib/api-client -> backend.
  *
- * Phase 1: both branches are present. While `USE_PLAN_EXCEPTION_MOCKS` (in
- * `lib/planExceptionMockStore.ts`) is true every function serves the deterministic
- * fixture and NO request is made. The real `apiFetch` + `extractApiError` branch below
- * is written and unreachable, so Phase 2 is a flag flip plus deleting the mock store -
- * not a rewrite of this file.
+ * Off mocks: the fixture that carried Phase 1 has been deleted along with the flag that
+ * selected it, so there is no dead branch left to drift from the live one.
  *
- * -- PHASE-2 BACKEND CONTRACT ------------------------------------------------
+ * -- BACKEND CONTRACT --------------------------------------------------------
  * Mounted flat under `require_module_enabled_with_api_key("scm")`, alongside
  * `/order-summary` and `/po-worklist`. No nested `reorder/` segment.
  *
@@ -76,11 +73,6 @@
  */
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
-import {
-  USE_PLAN_EXCEPTION_MOCKS,
-  mockDecideException,
-  mockPlanExceptionReport,
-} from '../lib/planExceptionMockStore';
 import type {
   PlanExceptionDecisionInput,
   PlanExceptionDecisionResult,
@@ -98,7 +90,6 @@ export interface PlanExceptionQuery {
 export async function getPlanExceptions(
   q: PlanExceptionQuery = {},
 ): Promise<PlanExceptionReport> {
-  if (USE_PLAN_EXCEPTION_MOCKS) return mockPlanExceptionReport();
   const params = new URLSearchParams();
   if (q.run_id) params.set('run_id', q.run_id);
   if (q.status) params.set('status', q.status);
@@ -112,7 +103,6 @@ export async function getPlanExceptions(
 export async function decidePlanException(
   input: PlanExceptionDecisionInput,
 ): Promise<PlanExceptionDecisionResult> {
-  if (USE_PLAN_EXCEPTION_MOCKS) return mockDecideException(input);
   const { exception_id, ...body } = input;
   const res = await apiFetch(
     `/api/v1/scm/plan-exceptions/${encodeURIComponent(exception_id)}/decision`,

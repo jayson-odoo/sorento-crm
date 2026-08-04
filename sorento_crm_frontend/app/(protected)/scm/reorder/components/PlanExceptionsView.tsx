@@ -53,8 +53,8 @@ import {
  * ranked by the item's reading (AC-D10). This grid never re-sorts the actions - doing so
  * by quantity would silently undo the one rule the feature exists to enforce.
  *
- * Phase 1 serves `lib/planExceptionMockStore`; Phase 2 flips the flag in
- * `services/planExceptionService.ts` and this component is untouched.
+ * Live: the Phase-1 fixture is deleted and this component was untouched by the swap, which
+ * is what the mocked-service boundary was for.
  */
 
 /** Shares `/scm/reorder` with three other grids; an empty key opts out of persistence. */

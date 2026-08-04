@@ -15,6 +15,7 @@ from app.api.v1.scm import (
     explainer,
     market,
     order_summary,
+    plan_exceptions,
     outstanding_import,
     policies,
     purchase_orders,
@@ -36,3 +37,4 @@ router.include_router(explainer.router)
 router.include_router(market.router)
 router.include_router(coverage.router)
 router.include_router(order_summary.router)
+router.include_router(plan_exceptions.router)

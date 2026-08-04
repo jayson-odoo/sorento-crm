@@ -603,3 +603,114 @@ class OrderSummaryRow(Base, CompanyScopedMixin):
         ),
         {"schema": "scm"},
     )
+
+
+class PlanExceptionBatch(Base, CompanyScopedMixin):
+    """One confirmed restatement, and the exceptions it produced.
+
+    The batch exists as its own row because it carries a fact none of its exceptions can:
+    `delta_count`, the number of order lines that upload CHANGED. AC-D2b requires the screen
+    to reconcile that figure with the number of exceptions, and the reduction between them
+    (412 changed, 6 disagree with a placed order) is the value of the feature. Recounting the
+    deltas from the exceptions would make the two agree by construction, so the count is
+    carried through unchanged from the upload that computed it.
+
+    `run_id` is nullable on purpose. A batch is produced by an UPLOAD, and an upload confirmed
+    before any plan has ever run has no run to name - the exceptions are still real, because a
+    purchase order can be placed without a plan.
+    """
+    __tablename__ = "plan_exception_batch"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    run_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("scm.reorder_run.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    as_of = Column(Date, nullable=False)
+    generated_at = Column(DateTime(timezone=False), nullable=False)
+    last_upload_at = Column(DateTime(timezone=False), nullable=True)
+    delta_count = Column(Integer, nullable=False, default=0)
+    source_documents = Column(JSONB, nullable=True)
+    created_by = Column(UUID(as_uuid=False), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_scm_plan_exception_batch_generated", "generated_at"),
+        {"schema": "scm"},
+    )
+
+
+class PlanException(Base, CompanyScopedMixin):
+    """One disagreement between the restated plan and supply already placed.
+
+    Three JSONB columns are FROZEN at generation rather than recomputed on read. The order
+    book moves daily, so a timeline recomputed when somebody opens the row is a different
+    position wearing the same date, and a reclassified item would silently re-order the
+    proposed actions of a decision already taken. What the reviewer approves has to be what
+    the engine saw:
+
+      * `timeline_json` - before and after, side by side (AC-D4).
+      * `reading_json`  - lifecycle, velocity, business class, last purchase date, each with
+        the field it was read from (AC-D9, AC-D12).
+      * `actions_json`  - the proposed actions and their rank, which IS the reading's verdict
+        (AC-D10) and so is stored rather than re-derived.
+
+    `quantity` is always positive; the TYPE carries the direction. A signed quantity would let
+    a surplus and a shortfall be told apart two different ways, which is one too many.
+    """
+    __tablename__ = "plan_exception"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    batch_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("scm.plan_exception_batch.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False
+    )
+    warehouse_id = Column(
+        UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
+    )
+    pool_code = Column(String(50), nullable=True)
+
+    exception_type = Column(String(40), nullable=False)
+    quantity = Column(Numeric, nullable=False)
+
+    purchase_order_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("purchase_orders.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    po_expected_date = Column(Date, nullable=True)
+
+    timeline_json = Column(JSONB, nullable=True)
+    reading_json = Column(JSONB, nullable=True)
+    actions_json = Column(JSONB, nullable=True)
+
+    status = Column(String(20), nullable=False, default="open")
+    decided_by = Column(UUID(as_uuid=False), nullable=True)
+    decided_at = Column(DateTime(timezone=False), nullable=True)
+    decided_action = Column(String(40), nullable=True)
+    decision_reason = Column(Text, nullable=True)
+    split_qty = Column(Numeric, nullable=True)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_scm_plan_exception_batch", "batch_id"),
+        # The queue query: this batch's open rows. Status leads because "what is left to
+        # decide" is the question the screen opens on.
+        Index("ix_scm_plan_exception_batch_status", "batch_id", "status"),
+        CheckConstraint(
+            "exception_type IN ('shortfall_earlier', 'supply_early', 'supply_surplus', "
+            "'supply_wrong_location')",
+            name="ck_scm_plan_exception_type",
+        ),
+        CheckConstraint(
+            "status IN ('open', 'approved', 'rejected')",
+            name="ck_scm_plan_exception_status",
+        ),
+        {"schema": "scm"},
+    )

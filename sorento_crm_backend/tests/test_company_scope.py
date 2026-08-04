@@ -298,7 +298,10 @@ def test_every_company_id_table_is_registered():
     # purchasing_budget, scm_analytics_run, market_research_run.
     # (`demand_stat` / `item_classification` / the views derive it from the join;
     # `supplier_performance` from `suppliers`; market signals are facts about the world.)
-    assert len(owned) == 41, f"expected 41 owned tables, found {len(owned)}: {sorted(owned)}"
+    # S5 then added the exception batch and its rows: a batch is a company's decision QUEUE
+    # produced by that company's upload, and neither derives a location it could be filtered
+    # through (an exception's warehouse is nullable, because supply in transit names none).
+    assert len(owned) == 43, f"expected 43 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------
