@@ -17,8 +17,7 @@ import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { recToDispositionRow, splitDispositionRows } from '../lib/planRow';
 import { resetRunDecisions } from '../services/reorderRunService';
-import { orderSummaryKey } from '../hooks/useSummaryOrder';
-import type { OrderSummaryReport } from '../types/summaryOrder.types';
+import { useOrderSummary } from '../hooks/useSummaryOrder';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import {
   todayRunKey,
@@ -92,13 +91,13 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const isToday =
     !!todayData && currentRunId === todayData.run_id && todayData.is_today;
 
-  // How many planned products still have no decided quantity. Read from the report query's
-  // CACHE rather than fetched: the report is the whole book, and pulling it on every page
-  // load just to fill one tile is a cost nobody asked for. Null until the report has been
-  // opened once, and the tile says "open to count" instead of guessing.
-  const cachedOrderSummary = queryClient.getQueryData<OrderSummaryReport>(
-    orderSummaryKey({ run_id: currentRunId }),
-  );
+  // How many planned products still have no decided quantity. SUBSCRIBED to the report
+  // query with fetching DISABLED: the report is the whole book, and pulling it on every page
+  // load just to fill one tile is a cost nobody asked for, but reading the cache directly
+  // with `getQueryData` does not re-render when the panel below fills it, so the tile stayed
+  // on "open to count" with the report open on screen. `enabled: false` is the shape that
+  // gets both: no request of its own, and a re-render when the value arrives.
+  const { data: cachedOrderSummary } = useOrderSummary({ run_id: currentRunId }, false);
   const orderSummaryPending = cachedOrderSummary
     ? cachedOrderSummary.rows.filter((r) => r.chosen_qty === null).length
     : null;
