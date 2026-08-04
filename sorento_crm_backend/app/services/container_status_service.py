@@ -1,14 +1,20 @@
 """Match container status rows to shipments and write them.
 
-Three rules do the work, and each one is a deliberate departure from something
-that already exists in this codebase:
+**This importer NEVER creates a packing list. It only annotates existing ones.**
+
+The sheet carries no lines, no products, no quantities and no supplier, so a row
+for a container the system does not have cannot become a packing list - it becomes
+a hollow record with no shipment number, no supplier and a guessed shipment date.
+An earlier version did create them, and 296 of those landed in the list looking
+like real packing lists with "-" in every column. A packing list is created from an
+actual packing list; this sheet is a status feed over the ones that already exist
+(D32). Unmatched rows are counted and reported, never silently dropped.
 
 **Match across EVERY status.** ``procurement_service`` matches a packing list only
 among not-fully-received shipments, because a container carries exactly one open
 shipment at a time. That rule is right for a packing list and wrong here: 318 of
-the 407 rows in the workbook sit on the archived ``Arrived`` tab, so reusing it
-would create a duplicate shipment for every container that already completed.
-This importer therefore has its OWN matcher (A3).
+the 407 rows in the workbook sit on the archived ``Arrived`` tab, and the clearance
+history for a container that already completed still belongs on its row (A3).
 
 **A blank cell never clears (A5).** The parser only carries non-empty cells, so
 "absent" and "blank" collapse into the same thing here and neither can overwrite a
@@ -25,7 +31,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import date, datetime
 from typing import Any, Optional
 
 from sqlalchemy import func
@@ -76,11 +81,6 @@ WRITABLE_FIELDS: tuple[str, ...] = (
 _ACTIVITY_ENTITY_TYPE = "inbound_shipment"
 _REMARK_TEMPLATE = "container_status_remark"
 
-# The sheet has no shipment date column, but `inbound_shipments.shipment_date` is
-# NOT NULL. Fall back through the dates the sheet DOES carry, earliest-known first,
-# so a created row lands on something meaningful rather than on today.
-_SHIPMENT_DATE_FALLBACKS = ("etd_date", "etc_date", "loading_date", "eta_date")
-
 
 def _container_key_sql(column):
     """SQL twin of :func:`normalize_container`, using only UPPER/REPLACE."""
@@ -88,22 +88,6 @@ def _container_key_sql(column):
     for ch in (" ", "-", "/", ".", "_"):
         expr = func.replace(expr, ch, "")
     return func.upper(expr)
-
-
-class ContainerStatusCompanyScopeError(Exception):
-    """The import would create shipments but has no company to create them under.
-
-    `inbound_shipments.company_id` is NOT NULL in Postgres (migration 305) and is
-    filled by the auto-stamp on insert, which only fires when a company scope is
-    set. `_apply_import_job_scope` falls back to a system-wide (None) scope when the
-    job carries no company snapshot - fine for a read-only or update-only import,
-    fatal for this one, which creates 296 rows out of 407.
-
-    Without this guard the failure surfaces as a raw NotNullViolation naming a
-    random container, halfway through the run. The test suite cannot catch it: the
-    blank scratch schema is built by `create_all` from the MODEL, where the column
-    is deliberately nullable, so the NOT NULL only exists on a migrated database.
-    """
 
 
 class ContainerStatusImportService:
@@ -137,20 +121,44 @@ class ContainerStatusImportService:
             }
 
         existing = self._existing_by_key([r.container_key for r in parsed.rows])
-        would_update = sum(1 for r in parsed.rows if r.container_key in existing)
+        matched = [r for r in parsed.rows if r.container_key in existing]
+        unmatched = [r for r in parsed.rows if r.container_key not in existing]
         errors = self._errors_from(parsed)
+        warnings = list(parsed.warnings) + self._unmatched_warning(unmatched)
 
         return {
             "valid": not errors,
             "errors": errors,
-            "warnings": list(parsed.warnings),
+            "warnings": warnings,
+            # `would_create` is always 0 and stays in the payload on purpose: the
+            # shared upload dialog renders these four keys, and "Would create: 0" is
+            # the clearest possible statement that this import never invents a
+            # packing list.
             "summary": {
                 "total_rows": len(parsed.rows),
-                "would_update": would_update,
-                "would_create": len(parsed.rows) - would_update,
+                "would_update": len(matched),
+                "would_create": 0,
                 "error_count": len(errors),
             },
         }
+
+    def _unmatched_warning(self, unmatched: list[ParsedRow]) -> list[str]:
+        """Say which containers will be skipped, and name a few.
+
+        Never silent: an operator who uploads 407 rows and sees 111 updated must be
+        able to see where the other 296 went, and that the fix is a packing list for
+        those containers rather than a re-upload.
+        """
+        if not unmatched:
+            return []
+        sample = ", ".join(r.container for r in unmatched[:5])
+        more = f" and {len(unmatched) - 5} more" if len(unmatched) > 5 else ""
+        return [
+            f"{len(unmatched)} rows are for containers with no packing list in the "
+            f"system and will be skipped ({sample}{more}). This import only adds "
+            "clearance dates to packing lists that already exist - it never creates "
+            "one, because the sheet carries no lines, supplier or quantities."
+        ]
 
     def _errors_from(self, parsed: ParsedWorkbook) -> list[str]:
         """Rejected rows and in-run collisions, each locatable in the sheet."""
@@ -184,49 +192,47 @@ class ContainerStatusImportService:
         ``outcome`` is an optional :class:`~app.services.import_outcome.ImportOutcome`
         so Import Job Details can say what happened to every row.
         """
-        counts = {"created": 0, "updated": 0, "unchanged": 0, "rejected": 0}
+        counts = {"created": 0, "updated": 0, "unchanged": 0, "skipped": 0, "rejected": 0}
         existing = self._existing_by_key([r.container_key for r in parsed.rows])
-
-        would_create = sum(1 for r in parsed.rows if r.container_key not in existing)
-        if would_create:
-            self._assert_can_create()
 
         for row in parsed.rows:
             shipment = existing.get(row.container_key)
             if shipment is None:
-                shipment = self._create(row, user_id=user_id)
-                existing[row.container_key] = shipment
-                counts["created"] += 1
+                # No packing list for this container. Skipped, never created (D32).
+                counts["skipped"] += 1
                 if outcome is not None:
-                    outcome.success(
+                    outcome.skip(
                         row=row.excel_row,
-                        code="container_status_created",
+                        code="container_status_no_packing_list",
                         message=(
-                            f"Created container {row.container} "
-                            f"from {row.sheet} row {row.excel_row}."
+                            f"Container {row.container} ({row.sheet} row "
+                            f"{row.excel_row}) has no packing list in the system, so "
+                            "there is nothing to add these dates to."
+                        ),
+                        value=row.container,
+                    )
+                continue
+
+            changed = self._apply_values(shipment, row)
+            if changed:
+                counts["updated"] += 1
+                if outcome is not None:
+                    outcome.updated(
+                        row=row.excel_row,
+                        code="container_status_updated",
+                        message=(
+                            f"Updated container {row.container}: "
+                            + ", ".join(sorted(changed))
                         ),
                     )
             else:
-                changed = self._apply_values(shipment, row)
-                if changed:
-                    counts["updated"] += 1
-                    if outcome is not None:
-                        outcome.updated(
-                            row=row.excel_row,
-                            code="container_status_updated",
-                            message=(
-                                f"Updated container {row.container}: "
-                                + ", ".join(sorted(changed))
-                            ),
-                        )
-                else:
-                    counts["unchanged"] += 1
-                    if outcome is not None:
-                        outcome.unchanged(
-                            row=row.excel_row,
-                            code="container_status_unchanged",
-                            message=f"Container {row.container} already matches the sheet.",
-                        )
+                counts["unchanged"] += 1
+                if outcome is not None:
+                    outcome.unchanged(
+                        row=row.excel_row,
+                        code="container_status_unchanged",
+                        message=f"Container {row.container} already matches the sheet.",
+                    )
 
             self._record_remarks(shipment, row, user_id=user_id)
 
@@ -243,22 +249,6 @@ class ContainerStatusImportService:
         return counts
 
     # ---------------------------------------------------------------- internals
-
-    def _assert_can_create(self) -> None:
-        """Refuse up front when the auto-stamp would have nothing to stamp.
-
-        Checked once, before the first insert, so the operator gets a sentence they
-        can act on instead of a constraint violation naming an arbitrary container.
-        """
-        from app.services.job_service import active_company_id_from_scope
-
-        if active_company_id_from_scope(self.db):
-            return
-        raise ContainerStatusCompanyScopeError(
-            "This import creates packing lists, which must belong to a company, but "
-            "the job carries no company. Re-run it from the app with a company "
-            "selected."
-        )
 
     def _existing_by_key(self, keys: list[str]) -> dict[str, InboundShipment]:
         """Normalized container key -> shipment, across EVERY status (A3).
@@ -291,32 +281,6 @@ class ContainerStatusImportService:
                 key = normalize_container(shipment.shipping_container_number)
                 found.setdefault(key, shipment)
         return found
-
-    def _create(self, row: ParsedRow, *, user_id: Optional[str]) -> InboundShipment:
-        shipment = InboundShipment(
-            id=str(uuid.uuid4()),
-            shipping_container_number=row.container,
-            shipment_date=self._shipment_date_for(row),
-            shipment_status="in_transit",
-            created_by=user_id,
-        )
-        # `supplier_id` stays NULL: the sheet does not name a supplier, and
-        # inventing one would attribute the container to the wrong party.
-        for name in WRITABLE_FIELDS:
-            if name in row.values:
-                setattr(shipment, name, row.values[name])
-        self.db.add(shipment)
-        self.db.flush()
-        return shipment
-
-    def _shipment_date_for(self, row: ParsedRow) -> date:
-        for name in _SHIPMENT_DATE_FALLBACKS:
-            value = row.values.get(name)
-            if isinstance(value, date):
-                return value
-        # Nothing dated on the row at all. Use today rather than fail the insert;
-        # the real dates arrive with the next upload.
-        return datetime.utcnow().date()
 
     def _apply_values(self, shipment: InboundShipment, row: ParsedRow) -> list[str]:
         """Assign only what actually differs. Returns the field names changed.

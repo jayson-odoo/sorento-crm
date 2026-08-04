@@ -2,10 +2,13 @@
 
 The rules that carry risk:
 
+* **D32 - never create a packing list.** The sheet has no lines, no supplier and no
+  quantities, so a row for an unknown container cannot become a packing list - it
+  becomes a hollow row with "-" in every column. An earlier version created 296 of
+  them. Unmatched rows are skipped and counted, never silently dropped.
 * **A3 - match across EVERY status.** The packing-list matcher deliberately only
-  looks at not-fully-received shipments. Reusing it here would create a duplicate
-  row for every container that already completed, and 318 of the 407 rows in the
-  file are on the archived `Arrived` tab.
+  looks at not-fully-received shipments. 318 of the 407 rows are on the archived
+  `Arrived` tab, and their clearance history still belongs on their row.
 * **A5 - a blank cell never clears.** A re-upload of an older sheet must not wipe
   dates somebody has since filled in.
 * **A4 - idempotent.** Importing the same file twice must change nothing the
@@ -145,39 +148,53 @@ def test_matches_through_separator_differences(db, supplier_id):
     assert existing.gatepass_date == date(2026, 7, 17)
 
 
-def test_creates_a_shipment_for_a_container_the_system_has_never_seen(db):
+def test_skips_a_container_with_no_packing_list_instead_of_inventing_one(db):
+    """D32. The sheet has nothing to build a packing list out of."""
+    before = db.query(InboundShipment).count()
     parsed = parse_container_status_workbook(
         _one_row_workbook("TGBU9807730", eta_date=date(2026, 7, 19), liner_code="MSC")
     )
     result = _service(db).apply(parsed, user_id=None)
 
-    assert (result["updated"], result["created"]) == (0, 1)
-    created = (
+    assert result["skipped"] == 1
+    assert result["updated"] == 0
+    assert result["created"] == 0
+    assert db.query(InboundShipment).count() == before, "nothing may be created"
+    assert (
         db.query(InboundShipment)
         .filter(InboundShipment.shipping_container_number == "TGBU9807730")
-        .one()
+        .count()
+        == 0
     )
-    assert created.eta_date == date(2026, 7, 19)
-    assert created.liner_code == "MSC"
-    assert created.source_sheet == "Fitting"
-    # The sheet carries no supplier, and supplier_id is nullable.
-    assert created.supplier_id is None
 
 
-def test_a_created_shipment_gets_a_shipment_date_it_can_actually_store(db):
-    """`shipment_date` is NOT NULL. The sheet has no such column, so the importer
-    must supply something rather than blowing up on the insert."""
+def test_a_skipped_row_is_recorded_on_the_job_not_silently_dropped(db):
+    """An operator who uploads 407 rows and sees 111 updated must be able to find
+    out where the rest went, and that the fix is a packing list, not a re-upload."""
+    recorded: list[dict] = []
+
+    class _Outcome:
+        def skip(self, **kwargs):
+            recorded.append(kwargs)
+
+        def updated(self, **kwargs):
+            pass
+
+        def unchanged(self, **kwargs):
+            pass
+
+        def fail(self, **kwargs):
+            pass
+
     parsed = parse_container_status_workbook(
         _one_row_workbook("TGBU9807730", eta_date=date(2026, 7, 19))
     )
-    _service(db).apply(parsed, user_id=None)
+    _service(db).apply(parsed, user_id=None, outcome=_Outcome())
 
-    created = (
-        db.query(InboundShipment)
-        .filter(InboundShipment.shipping_container_number == "TGBU9807730")
-        .one()
-    )
-    assert created.shipment_date is not None
+    assert len(recorded) == 1
+    assert recorded[0]["code"] == "container_status_no_packing_list"
+    assert "TGBU9807730" in recorded[0]["message"]
+    assert "no packing list" in recorded[0]["message"]
 
 
 # --------------------------------------------------------- blank never clears
@@ -247,12 +264,12 @@ def test_importing_the_same_row_twice_changes_nothing_the_second_time(db, suppli
 
 
 @requires_fixture
-def test_the_real_workbook_imports_once_and_is_then_a_no_op(db, supplier_id):
+def test_the_real_workbook_annotates_what_exists_and_creates_nothing(db, supplier_id):
     """The golden case, seeded rather than borrowed.
 
-    Three real containers are seeded so the update path is exercised; the rest of
-    the file creates. Counts come from the committed FILE, so this holds on an
-    empty CI database as well as locally.
+    Three real containers are seeded, so 3 rows update and the other 404 are
+    skipped. Counts come from the committed FILE plus what this test seeded, so it
+    holds on an empty CI database as well as locally.
     """
     for container in ("GXYU5106903", "OOCU8630645", "CICU1013499"):
         _shipment(db, supplier_id, container)
@@ -262,18 +279,17 @@ def test_the_real_workbook_imports_once_and_is_then_a_no_op(db, supplier_id):
 
     first = _service(db).apply(parsed, user_id=None)
     assert first["updated"] == 3
-    assert first["created"] == 404
-    assert first["updated"] + first["created"] == 407
-
-    total = db.query(InboundShipment).count()
-    assert total == 407, "3 seeded rows were matched, not duplicated"
+    assert first["skipped"] == 404
+    assert first["created"] == 0
+    assert db.query(InboundShipment).count() == 3, "the row count must not move"
 
     second = _service(db).apply(
         parse_container_status_workbook(FIXTURE.read_bytes()), user_id=None
     )
-    assert (second["created"], second["updated"]) == (0, 0)
-    assert second["unchanged"] == 407
-    assert db.query(InboundShipment).count() == 407
+    assert (second["updated"], second["created"]) == (0, 0)
+    assert second["unchanged"] == 3
+    assert second["skipped"] == 404
+    assert db.query(InboundShipment).count() == 3
 
 
 # ----------------------------------------------------------------- remarks
@@ -338,10 +354,24 @@ def test_the_dry_run_reports_what_would_happen_and_writes_nothing(db, supplier_i
     assert report["summary"] == {
         "total_rows": 407,
         "would_update": 1,
-        "would_create": 406,
+        # Always 0, and kept in the payload on purpose: "Would create: 0" is the
+        # clearest possible statement that this import invents nothing.
+        "would_create": 0,
         "error_count": 0,
     }
     assert db.query(InboundShipment).count() == before, "a dry run must not write"
+
+
+@requires_fixture
+def test_the_dry_run_says_how_many_rows_have_no_packing_list(db, supplier_id):
+    _shipment(db, supplier_id, "GXYU5106903")
+
+    report = _service(db).validate(FIXTURE.read_bytes())
+    unmatched = [w for w in report["warnings"] if "no packing list" in w]
+
+    assert len(unmatched) == 1
+    assert "406 rows" in unmatched[0]
+    assert "never creates one" in unmatched[0]
 
 
 @requires_fixture
@@ -390,47 +420,3 @@ def test_a_file_that_is_not_a_container_status_sheet_fails_the_dry_run(db):
     assert report["valid"] is False
     assert any("CONTAINER" in e for e in report["errors"])
     assert report["summary"]["total_rows"] == 0
-
-
-def test_creating_without_a_company_scope_fails_with_a_sentence_not_a_constraint(db):
-    """`inbound_shipments.company_id` is NOT NULL on a migrated database and is
-    filled by the insert auto-stamp, which only fires when a company scope is set.
-    A job with no company snapshot runs system-scoped, so the stamp has nothing to
-    write and every insert dies.
-
-    The blank scratch schema is built by `create_all` from the MODEL, where the
-    column is deliberately nullable, so this test cannot reproduce the Postgres
-    violation - it pins the GUARD instead, which is what turns the failure into a
-    sentence the operator can act on.
-    """
-    from unittest.mock import patch
-
-    from app.services.container_status_service import ContainerStatusCompanyScopeError
-
-    parsed = parse_container_status_workbook(
-        _one_row_workbook("TGBU9807730", eta_date=date(2026, 7, 19))
-    )
-    with patch(
-        "app.services.job_service.active_company_id_from_scope", return_value=None
-    ):
-        with pytest.raises(ContainerStatusCompanyScopeError) as excinfo:
-            _service(db).apply(parsed, user_id=None)
-
-    assert "company" in str(excinfo.value).lower()
-
-
-def test_an_update_only_import_does_not_need_a_company_scope(db, supplier_id):
-    """The guard fires only when the run would CREATE. Updating existing rows
-    stamps nothing, so a system-scoped re-upload must still work."""
-    from unittest.mock import patch
-
-    _shipment(db, supplier_id, "GXYU5106903")
-    parsed = parse_container_status_workbook(
-        _one_row_workbook("GXYU5106903", eta_delay_date=date(2026, 7, 12))
-    )
-    with patch(
-        "app.services.job_service.active_company_id_from_scope", return_value=None
-    ):
-        result = _service(db).apply(parsed, user_id=None)
-
-    assert result["updated"] == 1

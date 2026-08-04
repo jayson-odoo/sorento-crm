@@ -2840,11 +2840,15 @@ def process_container_status_import(
 ):
     """Import the container status workbook onto `inbound_shipments`.
 
-    One sheet row is one packing list, matched on the normalized container number
-    across EVERY shipment status - 318 of the 407 rows are archived containers, so
-    the packing-list matcher's not-fully-received rule would duplicate them all.
-    A blank cell never clears, and a row whose values already agree is not touched
-    at all, so a daily re-upload is a genuine no-op rather than 407 phantom edits.
+    Update-only: it adds clearance dates to packing lists that ALREADY exist and
+    never creates one, because the sheet carries no lines, supplier or quantities
+    (D32). Rows for containers the system does not have are skipped and counted.
+
+    Matching is on the normalized container number across EVERY shipment status -
+    318 of the 407 rows are archived containers, and their clearance history still
+    belongs on their row. A blank cell never clears, and a row whose values already
+    agree is not touched at all, so a daily re-upload is a genuine no-op rather than
+    407 phantom edits.
     """
     from rq import get_current_job
 
@@ -2896,15 +2900,16 @@ def process_container_status_import(
         db.commit()
 
         errors = service._errors_from(parsed)
-        successful = counts["created"] + counts["updated"]
         total = len(parsed.rows) + len(parsed.rejected)
 
         job_service.complete_job(
             job_id=job_id_str,
             result={
-                "created": counts["created"],
                 "updated": counts["updated"],
                 "unchanged": counts["unchanged"],
+                # Rows for containers with no packing list. Reported, never silent -
+                # the operator must be able to see where the other rows went.
+                "skipped_no_packing_list": counts["skipped"],
                 "rejected": counts["rejected"],
                 "blocks": len(parsed.blocks),
                 "blank_rows": parsed.blank_row_count,
@@ -2913,9 +2918,11 @@ def process_container_status_import(
             },
             total_rows=total,
             processed_rows=len(parsed.rows),
-            successful_rows=successful,
+            successful_rows=counts["updated"],
             failed_rows=counts["rejected"],
-            skipped_rows=counts["unchanged"],
+            # Both "nothing changed" and "no packing list to change" are skips as far
+            # as the job counters are concerned.
+            skipped_rows=counts["unchanged"] + counts["skipped"],
         )
         outcome.flush()
         _write_import_audit(

@@ -40,7 +40,9 @@ revised ETA, then check CIDB ePermit for inspection and approval dates, then typ
    handoff the SPO allocation and delivery order imports already give. The toast links straight to
    the job, and Import Job Details shows per-row outcomes including which rows were rejected and why.
 4. **They open Procurement -> Packing Lists** and the containers they already know now carry
-   clearance dates, plus the containers that previously existed only in the sheet are present.
+   clearance dates. Containers that exist only in the sheet are NOT conjured into packing lists -
+   they are reported as skipped, because a packing list without lines, supplier or quantities is not
+   a packing list (D32).
 5. **What they hold at the end:** they stop answering "where is my container" by hand, and they can
    see for the first time whether the liner and ePermit feeds would have told them sooner.
 
@@ -83,9 +85,10 @@ revised ETA, then check CIDB ePermit for inspection and approval dates, then typ
   Uploading there enqueues a container-status import on the `imports` RQ queue and returns
   immediately. The file is still stored as a `Container Status` attachment so AC group D can serve
   it back.
-- **A1a.** A **dry run** is available before committing: it reports rows read, how many
-  containers will be updated, how many created, and which rows are rejected, without writing
-  anything. Against the current workbook that is 407 read / 111 update / 296 create / 0 rejected.
+- **A1a.** A **dry run** is available before committing: it reports rows read, how many packing
+  lists would be updated, how many rows have no packing list to update, and which rows are rejected,
+  without writing anything. Against the current workbook that is 407 read / 111 update /
+  0 create / 296 with no packing list / 0 rejected.
 - **A1b.** The "no container status imported yet" empty state on a packing list links to the
   import action itself (`?import=container-status` opens the dialog), never to a page where the
   user has to hunt for the upload.
@@ -112,10 +115,24 @@ revised ETA, then check CIDB ePermit for inspection and approval dates, then typ
   position would have mislabelled 55 liners. An unrecognised header is reported, not guessed at.
 - **A3.** Rows are matched to `inbound_shipments` on **normalized container number** (uppercase,
   separators stripped) across **every** `shipment_status`, including `fully_received` and
-  `completed`. Matched rows are updated in place; unmatched rows create a new shipment.
+  `completed` - the clearance history of a container that already completed still belongs on its
+  row.
+- **A3a.** The import is **update-only. It never creates a packing list** (decision D32). REVISED
+  after review: the first version created a shipment for every unmatched row, and on the real
+  workbook that put **296 hollow rows** into the list with no shipment number, no supplier, no lines
+  and a guessed shipment date. The sheet carries none of those things, so a row for an unknown
+  container is not a packing list. A packing list is created from an actual packing list; this sheet
+  annotates the ones that already exist.
+- **A3b.** An unmatched row is **skipped, counted and named** - never silently dropped. The dry run
+  says how many rows have no packing list and samples five container numbers, the job result carries
+  `skipped_no_packing_list`, and each row gets an Import Job Details entry saying the fix is a
+  packing list for that container, not a re-upload.
 - **A4.** Given the current workbook and the current database (112 shipments, 111 of which appear in
-  the workbook), a first import updates 111 in place and creates **296**, ending at **408**
-  shipments. A second import of the same file changes no row count and no field value.
+  the workbook), an import updates **111** in place, skips **296**, and leaves the shipment count at
+  **112**. A second import of the same file changes no row count and no field value.
+- **A4a.** The coverage consequence is accepted and must stay visible: only **111 of 407** sheet
+  containers (27%) can be answered about through the CRM until the other 296 have packing lists.
+  Those 296 are mostly the archived `Arrived` tab; 34 of them are open containers.
 - **A5.** A blank cell **never clears** an existing value. Sheet value wins only when non-empty.
 - **A6.** A row whose container number fails ISO 6346 (4 letters + 7 digits) is rejected, not
   silently skipped, and appears in Import Job Details with a reason. In the current workbook
