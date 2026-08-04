@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ArrowDown, ArrowUp } from 'lucide-react';
+import { GripVertical, Undo2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -17,6 +17,14 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Sortable, SortableItem, SortableItemHandle } from '@/components/ui/sortable';
+import {
+  canUndo,
+  newHistory,
+  pushHistory,
+  undo as undoHistory,
+  type History,
+} from '@/lib/dealer-kit/history';
 import { ProductTile } from '../../components/TileGrid';
 import {
   TILE_FIELDS,
@@ -31,6 +39,16 @@ import type { ResolvedTile, TileField, TileTemplate } from '@/lib/dealer-kit/typ
  * A tile design is an ordered list of the product fields a card shows. Order
  * matters, so it is editable - "price above the name" is a real design decision
  * and a checkbox list alone cannot express it.
+ *
+ * The order is changed by DRAGGING, using the same `Sortable` the routing rules
+ * and the column panel use. It was a pair of up/down arrows, which is a way of
+ * expressing "move this to third" one click at a time while everything shuffles
+ * under you - and it was the only reordering interaction in the system that did
+ * not match the rest of it.
+ *
+ * Every change is undoable. Adding a field, dropping one, or reordering is a
+ * design decision somebody is trying out, and trying something out is only free
+ * if putting it back is one click.
  *
  * The preview is the point. A Designer is choosing what a customer sees, and a
  * list of field names is not that. It renders through the SAME `ProductTile`
@@ -53,6 +71,8 @@ const SAMPLE: ResolvedTile = {
   badges: ['SIRIM'],
 };
 
+const DEFAULT_FIELDS: TileField[] = ['image', 'name', 'code', 'price'];
+
 export function TileDesignDialog({
   open,
   onOpenChange,
@@ -65,35 +85,43 @@ export function TileDesignDialog({
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
-  const [fields, setFields] = useState<TileField[]>(['image', 'name', 'code', 'price']);
   const [saving, setSaving] = useState(false);
+
+  /**
+   * The field list, with every step it has been through.
+   *
+   * Held as a history rather than a plain value because "I added Dimensions and
+   * now I want it back how it was" had no answer: the only way out was to
+   * remember what had been there and rebuild it by hand. The same `history`
+   * helper the room designer uses.
+   *
+   * The NAME is deliberately not in here. Undo is for the design decisions, and
+   * a text field that undoes a keystroke at a time behaves like nothing else on
+   * the page.
+   */
+  const [history, setHistory] = useState<History<TileField[]>>(() => newHistory(DEFAULT_FIELDS));
+  const fields = history.present;
 
   useEffect(() => {
     if (!open) return;
     setName(template?.name ?? '');
-    setFields(
-      template?.fields?.length ? [...template.fields] : ['image', 'name', 'code', 'price'],
-    );
+    // A fresh history per opening: undoing into the design you were editing
+    // BEFORE this one would be a change nobody asked for.
+    setHistory(newHistory(template?.fields?.length ? [...template.fields] : DEFAULT_FIELDS));
   }, [open, template]);
 
-  const toggle = (field: TileField) => {
-    setFields((current) =>
-      current.includes(field)
-        ? current.filter((candidate) => candidate !== field)
-        : [...current, field],
-    );
+  /** Record a new field list as one undoable step. */
+  const commit = (next: TileField[]) => setHistory((current) => pushHistory(current, next));
+
+  const add = (field: TileField) => {
+    if (fields.includes(field)) return;
+    commit([...fields, field]);
   };
 
-  const move = (field: TileField, direction: -1 | 1) => {
-    setFields((current) => {
-      const index = current.indexOf(field);
-      const target = index + direction;
-      if (index < 0 || target < 0 || target >= current.length) return current;
-      const next = [...current];
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
-    });
-  };
+  const remove = (field: TileField) => commit(fields.filter((candidate) => candidate !== field));
+
+  const labelOf = (field: TileField) =>
+    TILE_FIELDS.find((candidate) => candidate.value === field)?.label ?? field;
 
   const save = async () => {
     if (!name.trim() || fields.length === 0) return;
@@ -114,102 +142,133 @@ export function TileDesignDialog({
     }
   };
 
+  const available = TILE_FIELDS.filter((field) => !fields.includes(field.value));
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{template ? 'Edit tile design' : 'New tile design'}</DialogTitle>
           <DialogDescription>
-            Choose what each product card shows, and the order it shows it in. The preview is
-            the real tile, so this is exactly how it prints.
+            Choose what each product card shows, and drag to set the order. The preview is the
+            real tile, so this is exactly how it prints.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="dk-design-name" className="text-xs">
-            Name
-          </Label>
-          <Input
-            id="dk-design-name"
-            value={name}
-            placeholder="Standard product tile"
-            onChange={(event) => setName(event.target.value)}
-          />
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
+        {/* gap-6 between the sections and gap-3 inside them. It was gap-2
+            throughout, which put a checkbox row the same distance from the row
+            below it as from the heading of the next group - so the groups read
+            as one long list. */}
+        <div className="flex flex-col gap-6">
           <div className="flex flex-col gap-2">
-            <p className="text-xs font-medium text-foreground">Shown, in this order</p>
-
-            {fields.length === 0 && (
-              <p className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
-                Nothing selected. A tile has to show at least one thing.
-              </p>
-            )}
-
-            {fields.map((field, index) => {
-              const meta = TILE_FIELDS.find((candidate) => candidate.value === field);
-              return (
-                <div
-                  key={field}
-                  className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5"
-                >
-                  <span className="min-w-0 flex-1 truncate text-xs text-foreground">
-                    {index + 1}. {meta?.label ?? field}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    aria-label={`Move ${meta?.label ?? field} up`}
-                    disabled={index === 0}
-                    onClick={() => move(field, -1)}
-                  >
-                    <ArrowUp className="size-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    aria-label={`Move ${meta?.label ?? field} down`}
-                    disabled={index === fields.length - 1}
-                    onClick={() => move(field, 1)}
-                  >
-                    <ArrowDown className="size-3.5" />
-                  </Button>
-                </div>
-              );
-            })}
-
-            <p className="mt-2 text-xs font-medium text-foreground">Available</p>
-            {TILE_FIELDS.filter((field) => !fields.includes(field.value)).map((field) => (
-              <label
-                key={field.value}
-                className="flex cursor-pointer items-start gap-2 rounded-md border border-border px-2 py-1.5"
-              >
-                <Checkbox
-                  checked={false}
-                  aria-label={`Show ${field.label}`}
-                  onCheckedChange={() => toggle(field.value)}
-                />
-                <span className="min-w-0">
-                  <span className="block text-xs text-foreground">{field.label}</span>
-                  <span className="block text-xs text-muted-foreground">{field.hint}</span>
-                </span>
-              </label>
-            ))}
+            <Label htmlFor="dk-design-name" className="text-xs">
+              Name
+            </Label>
+            <Input
+              id="dk-design-name"
+              value={name}
+              placeholder="Standard product tile"
+              onChange={(event) => setName(event.target.value)}
+            />
           </div>
 
-          <div className="flex flex-col gap-2">
-            <p className="text-xs font-medium text-foreground">Preview</p>
-            <div className="rounded-lg border border-border bg-muted/30 p-4">
-              <div className="mx-auto max-w-[200px]" data-dk-design-preview>
-                <ProductTile tile={SAMPLE} fields={fields} />
+          <div className="grid gap-6 sm:grid-cols-2">
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-medium text-foreground">Shown, in this order</p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1 px-2 text-xs"
+                  disabled={!canUndo(history)}
+                  onClick={() => setHistory((current) => undoHistory(current))}
+                  data-dk-design-undo
+                >
+                  <Undo2 className="size-3.5" />
+                  Undo
+                </Button>
               </div>
+
+              {fields.length === 0 && (
+                <p className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
+                  Nothing selected. A tile has to show at least one thing.
+                </p>
+              )}
+
+              {/* The same Sortable the routing rules and the column panel use,
+                  so reordering behaves identically everywhere in the system. */}
+              <Sortable
+                value={fields}
+                onValueChange={(next) => commit(next as TileField[])}
+                getItemValue={(field) => field}
+                strategy="vertical"
+              >
+                <div className="flex flex-col gap-2" data-dk-design-fields>
+                  {fields.map((field, index) => (
+                    <SortableItem key={field} value={field}>
+                      <div className="flex items-center gap-2 rounded-md border border-border bg-background px-2 py-2">
+                        <SortableItemHandle aria-label={`Drag ${labelOf(field)} to reorder`}>
+                          <GripVertical className="size-4 text-muted-foreground" />
+                        </SortableItemHandle>
+                        <span className="w-4 shrink-0 text-xs text-muted-foreground">
+                          {index + 1}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-xs text-foreground">
+                          {labelOf(field)}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="size-6 shrink-0 p-0"
+                          aria-label={`Remove ${labelOf(field)}`}
+                          onClick={() => remove(field)}
+                        >
+                          <X className="size-3.5" />
+                        </Button>
+                      </div>
+                    </SortableItem>
+                  ))}
+                </div>
+              </Sortable>
+
+              {available.length > 0 && (
+                <>
+                  <p className="mt-1 text-xs font-medium text-foreground">Available</p>
+                  <div className="flex flex-col gap-2">
+                    {available.map((field) => (
+                      <label
+                        key={field.value}
+                        className="flex cursor-pointer items-start gap-2 rounded-md border border-border px-2 py-2"
+                      >
+                        <Checkbox
+                          checked={false}
+                          aria-label={`Show ${field.label}`}
+                          onCheckedChange={() => add(field.value)}
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-xs text-foreground">{field.label}</span>
+                          <span className="block text-xs text-muted-foreground">{field.hint}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
-            <p className="text-xs text-muted-foreground">
-              Shown with a sample product that is on promotion. Price is whatever the reader is
-              allowed to see, so a consumer and a dealer can see different figures in the same
-              design, and a product with no offer prints its list price on its own.
-            </p>
+
+            <div className="flex flex-col gap-3">
+              <p className="text-xs font-medium text-foreground">Preview</p>
+              <div className="rounded-lg border border-border bg-muted/30 p-4">
+                <div className="mx-auto max-w-[200px]" data-dk-design-preview>
+                  <ProductTile tile={SAMPLE} fields={fields} />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Shown with a sample product that is on promotion. Price is whatever the reader is
+                allowed to see, so a consumer and a dealer can see different figures in the same
+                design, and a product with no offer prints its list price on its own.
+              </p>
+            </div>
           </div>
         </div>
 

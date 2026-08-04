@@ -11,7 +11,7 @@ import {
   type PaginationState,
   type SortingState,
 } from '@tanstack/react-table';
-import { AlertCircle, Layers, Search, Trash2 } from 'lucide-react';
+import { AlertCircle, Layers, Plus, Search, Trash2 } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -28,6 +28,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { deleteCollection, listCollections } from '../../services/catalogueService';
 import type { CollectionSummary } from '@/lib/dealer-kit/types';
+import { CollectionDialog } from './CollectionDialog';
 
 /**
  * The reusable collection library.
@@ -44,6 +45,13 @@ import type { CollectionSummary } from '@/lib/dealer-kit/types';
 export function CollectionsList() {
   const [search, setSearch] = useState('');
   const [deleting, setDeleting] = useState<CollectionSummary | null>(null);
+  /**
+   * The collection being edited, or `undefined` when the dialog is shut.
+   *
+   * `null` is a real value here - it means "a new one" - so absence has to be a
+   * third state rather than being folded into null.
+   */
+  const [editing, setEditing] = useState<CollectionSummary | null | undefined>(undefined);
   const [sorting, setSorting] = useState<SortingState>([]);
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -157,6 +165,7 @@ export function CollectionsList() {
       isLoading={isLoading}
       standardToolbar={false}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
+      onRowClick={(row) => setEditing(row)}
       emptyMessage={
         <div className="py-8 text-center">
           <Layers className="mx-auto size-6 text-muted-foreground" />
@@ -166,13 +175,13 @@ export function CollectionsList() {
           <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
             {search
               ? 'Try a different name.'
-              : 'Pick products inside a page, then choose "Save as reusable" to keep that set for other pages. Editing it once updates every page that uses it.'}
+              : 'Start one with the button above, or pick products inside a page and save that set here. Editing it once updates every page that uses it.'}
           </p>
         </div>
       }
     >
       <Card>
-        <CardHeader className="block py-5">
+        <CardHeader className="flex-wrap gap-2 py-5">
           <div className="relative w-full sm:max-w-xs">
             <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -183,6 +192,14 @@ export function CollectionsList() {
               onChange={(event) => setSearch(event.target.value)}
             />
           </div>
+          {/* A collection could only be born inside a page editor, by picking
+              products in a block and then promoting the result. That is a fine
+              shortcut and a poor only-way-in: this is a list of records, and
+              every other list in the system can create one. */}
+          <Button size="sm" onClick={() => setEditing(null)}>
+            <Plus className="size-4" />
+            New collection
+          </Button>
         </CardHeader>
 
         <CardTable>
@@ -196,6 +213,12 @@ export function CollectionsList() {
           <DataGridPagination />
         </CardFooter>
       </Card>
+
+      <CollectionDialog
+        open={editing !== undefined}
+        onOpenChange={(next) => !next && setEditing(undefined)}
+        collection={editing ?? null}
+      />
 
       <ConfirmDeleteDialog
         open={!!deleting}
