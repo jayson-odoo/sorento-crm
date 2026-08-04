@@ -794,3 +794,103 @@ def test_the_line_endpoint_refuses_to_edit_a_version_the_customer_already_holds(
     lines = client.get(f"{BASE}/quotation-versions/{version_id}/lines").json()["data"]
     assert len(lines) == 1
     assert _money(lines[0]["unit_price"]) == Decimal("250.00")
+
+
+# --------------------------------------------------------------------- AC-G4 (PDF)
+
+
+def _issue_one(client, db, project, *, price: str = PRICED_RATE, qty: str = "4") -> tuple:
+    """A signed, issued document with one priced line. Returns ``(root, document, issue)``."""
+    uom = _uom(db)
+    category = _category(db, "Sanitary Ware")
+    product = _product(db, category.id, uom, "300.00")
+    db.commit()
+
+    root = f"{BASE}/projects/{project.id}/quotation-documents"
+    document = _create_document(client, project.id)
+    scope = _add_scope(client, project.id, document["id"], f"{MARKER} Townhouse")
+    _add_priced_line(
+        client, _current_version_id(db, scope["id"]), product, price=price, qty=qty
+    )
+    _sign(client, root, document["id"])
+    issued = client.post(f"{root}/{document['id']}/issue")
+    assert issued.status_code == 201, issued.text
+    return root, document, issued.json()
+
+
+def test_the_pdf_download_returns_a_real_pdf_named_after_the_reference(api):
+    """This is the file that goes in the customer's inbox, so two things have to hold on the
+    wire: the bytes are a PDF a browser will open inline rather than a JSON error rendered as
+    a download, and the filename carries `Our Ref (R1)`. A saved attachment named
+    `download.pdf` cannot be matched back to the paper it is, which is the whole reason the
+    reference exists."""
+    client, db, _company_id, _user_id, project, _party = api
+    root, document, issue = _issue_one(client, db, project)
+
+    response = client.get(f"{root}/{document['id']}/issues/{issue['id']}/pdf")
+    if response.status_code == 503:
+        pytest.skip(f"WeasyPrint unavailable on this host: {response.text}")
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("application/pdf")
+    # A PDF, not a 200 carrying an error page. The magic bytes are the only honest check.
+    assert response.content[:5] == b"%PDF-"
+    expected = f"quotation-{MARKER}-Q-0001-R1.pdf"
+    assert response.headers["content-disposition"] == f'inline; filename="{expected}"'
+
+
+def test_a_missing_rendering_library_is_a_503_that_names_itself_not_a_500(api, monkeypatch):
+    """Prod hosts need cairo/pango installed and CI hosts may not have them. Left as a bare
+    500 this looks like a bug in the quotation and sends somebody reading application code;
+    as a 503 with `pdf_rendering_unavailable` it sends them to the host. The FE also renders
+    off the code, so it is asserted rather than just the status."""
+    from app.services import project_quotation_pdf_service as pdf_service
+    from app.services.complaint_pdf_service import PDFRenderingUnavailable
+
+    client, db, _company_id, _user_id, project, _party = api
+    root, document, issue = _issue_one(client, db, project)
+
+    def _explode(_db, _issue):
+        raise PDFRenderingUnavailable("libpango not found")
+
+    monkeypatch.setattr(pdf_service, "render_issue_pdf", _explode)
+
+    response = client.get(f"{root}/{document['id']}/issues/{issue['id']}/pdf")
+    assert response.status_code == 503, response.text
+    body = response.json()
+    assert body["code"] == "pdf_rendering_unavailable"
+    assert "libpango not found" in body["message"]
+
+
+def test_a_revision_id_from_another_document_cannot_be_downloaded_through_this_one(api):
+    """The URL names a project, a document AND an issue, so the issue has to be checked
+    against the document rather than merely fetched by id. Without it, a known issue id
+    downloads through any document the caller may view, and the price list of a quotation
+    they were never shown lands as a PDF."""
+    client, db, _company_id, _user_id, project, _party = api
+    root, document, _issue = _issue_one(client, db, project)
+
+    # A second document on the same project: same permissions, different paper.
+    other = _create_document(client, project.id)
+
+    stranger = client.get(f"{root}/{other['id']}/issues/{_issue['id']}/pdf")
+    assert stranger.status_code == 404, stranger.text
+    assert stranger.json()["code"] == "quotation_issue_not_found"
+
+    unknown = client.get(f"{root}/{document['id']}/issues/{_uid()}/pdf")
+    assert unknown.status_code == 404, unknown.text
+
+    malformed = client.get(f"{root}/{document['id']}/issues/not-a-uuid/pdf")
+    assert malformed.status_code in (400, 404, 422), malformed.text
+
+
+def test_someone_who_may_not_view_the_project_cannot_download_its_quotation(api):
+    """A quotation PDF is the full price list. Read permission on the project is the gate, and
+    it has to be enforced at the route: the renderer takes an issue row and would happily
+    render one for anybody who reached it."""
+    client, db, _company_id, _user_id, project, _party = api
+    root, document, issue = _issue_one(client, db, project)
+
+    with _without_permission(VIEW):
+        denied = client.get(f"{root}/{document['id']}/issues/{issue['id']}/pdf")
+    assert denied.status_code in (401, 403), denied.text

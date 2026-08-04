@@ -385,3 +385,61 @@ async def create_quotation_sign_link(
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+# ------------------------------------------------------------------------ pdf
+
+
+@router.get(
+    "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/pdf",
+)
+async def download_quotation_issue_pdf(
+    project_id: str,
+    document_id: str,
+    issue_id: str,
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The issued quotation, as the customer received it.
+
+    Rendered from the ISSUE snapshot every time rather than from live rows, so a download next year
+    is what was sent. Generated on demand rather than stored: the snapshot IS the source of truth,
+    so a stored file would be a second copy of the same facts that could fall out of step with it.
+    """
+    from app.services.complaint_pdf_service import PDFRenderingUnavailable
+    from app.services import project_quotation_pdf_service as pdf
+    from app.services.error_handler import AppException
+
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        validate_uuid_path(issue_id, resource="Revision")
+        validate_uuid_path(project_id, resource="Project")
+        projects.get_project_or_404(db, project_id)
+        document = svc.get_document_or_404(db, project_id, document_id)
+        record = next(
+            (row for row in svc.list_issues(db, document) if str(row.id) == issue_id), None
+        )
+        if record is None:
+            raise AppException(
+                status_code=404, message="Revision not found.", code="quotation_issue_not_found"
+            )
+        try:
+            pdf_bytes, filename = pdf.render_issue_pdf(db, record)
+        except PDFRenderingUnavailable as unavailable:
+            # A missing native library is an operational fact, not a bug in the request. Say so,
+            # rather than letting it surface as an unexplained 500.
+            raise AppException(
+                status_code=503,
+                message=(
+                    "PDF rendering is not available on this server. "
+                    f"Ask an administrator to install the rendering libraries. ({unavailable})"
+                ),
+                code="pdf_rendering_unavailable",
+            )
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

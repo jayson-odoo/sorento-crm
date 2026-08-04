@@ -146,7 +146,11 @@ def _text_blocks(raw: Optional[str]) -> List[str]:
 # --------------------------------------------------------------------- images
 
 
-def _attachment_data_uri(db: Session, attachment_id: Optional[str]) -> Optional[str]:
+def _attachment_data_uri(
+    db: Session,
+    attachment_id: Optional[str],
+    cache: Optional[Dict[str, Optional[str]]] = None,
+) -> Optional[str]:
     """Fetch the product image and inline it as a data URI.
 
     Inlined rather than linked: WeasyPrint would otherwise have to fetch a signed CDN URL at
@@ -155,9 +159,22 @@ def _attachment_data_uri(db: Session, attachment_id: Optional[str]) -> Optional[
 
     Best-effort. Storage being down degrades to a missing picture, never to a quotation that
     cannot be produced - the customer is waiting for a price, not a photograph.
+
+    ``cache`` is per render: one product image commonly repeats down a scope (a WC beside its
+    valve and its hose), and without it the same object is downloaded once per line.
     """
     if not attachment_id:
         return None
+    key_id = str(attachment_id)
+    if cache is not None and key_id in cache:
+        return cache[key_id]
+    uri = _fetch_data_uri(db, key_id)
+    if cache is not None:
+        cache[key_id] = uri
+    return uri
+
+
+def _fetch_data_uri(db: Session, attachment_id: str) -> Optional[str]:
     try:
         row = db.query(Attachment).filter(Attachment.id == str(attachment_id)).first()
         if row is None:
@@ -273,7 +290,9 @@ def _header_html(
     issue: ProjectQuotationIssue,
     sender: Dict[str, Any],
 ) -> str:
-    sender_bits = [f'<div class="sender-name">{_cell(sender["name"])}</div>'] if sender["name"] else []
+    sender_bits: List[str] = []
+    if sender["name"]:
+        sender_bits.append(f'<div class="sender-name">{_cell(sender["name"])}</div>')
     sender_bits += [f"<div>{_cell(line)}</div>" for line in sender["address_lines"]]
     if sender["phone"]:
         sender_bits.append(f'<div>Tel: {_cell(sender["phone"])}</div>')
@@ -314,12 +333,22 @@ def _header_html(
 """
 
 
-def _scope_html(db: Session, scope: Dict[str, Any]) -> str:
+def _scope_html(
+    db: Session, scope: Dict[str, Any], image_cache: Dict[str, Optional[str]]
+) -> str:
     lines: Sequence[ProjectQuotationLine] = scope["lines"]
 
-    # Images resolved first, because the column set depends on whether any line has one.
-    images = {line.id: _attachment_data_uri(db, line.image_attachment_id) for line in lines}
+    # The column set depends on whether ANY line has an image, so the whole scope is resolved
+    # before a single row is written.
     show_image = any(line.image_attachment_id for line in lines)
+    images = (
+        {
+            line.id: _attachment_data_uri(db, line.image_attachment_id, image_cache)
+            for line in lines
+        }
+        if show_image
+        else {}
+    )
     columns = [c for c in _COLUMNS if c != _IMAGE_COLUMN or show_image]
 
     body: List[str] = []
@@ -338,7 +367,7 @@ def _scope_html(db: Session, scope: Dict[str, Any]) -> str:
         image_cell = ""
         if show_image:
             uri = images.get(line.id)
-            picture = f"<img src='{uri}'/>" if uri else ""
+            picture = f'<img src="{escape(uri)}"/>' if uri else ""
             image_cell = f'<td class="img">{picture}</td>'
 
         qty_text = _qty(line.quantity)
@@ -392,7 +421,10 @@ def _terms_html(issue: ProjectQuotationIssue) -> str:
     if not clauses:
         return ""
     items = "".join(f"<li>{clause}</li>" for clause in clauses)
-    return f'<div class="terms"><div class="terms-title">TERMS &amp; CONDITIONS</div><ol>{items}</ol></div>'
+    return (
+        '<div class="terms"><div class="terms-title">TERMS &amp; CONDITIONS</div>'
+        f"<ol>{items}</ol></div>"
+    )
 
 
 def _signature(db: Session, signature_id: Optional[str]) -> Optional[QuotationSignature]:
@@ -469,7 +501,11 @@ _STYLE = """
   .subject { margin: 12px 0 10px; font-weight: 700; text-transform: uppercase; }
   .letter p { margin: 0 0 6px; }
   .scope { margin-top: 12px; }
-  .scope-label { font-weight: 700; text-transform: uppercase; margin-bottom: 3px; }
+  /* A scope heading stranded at the foot of a page, or a row split across two, makes the
+     document unreadable against the customer's own bill of quantities. */
+  .scope-label { font-weight: 700; text-transform: uppercase; margin-bottom: 3px;
+                 break-after: avoid; }
+  table.grid tr { break-inside: avoid; }
   table.grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
   table.grid th, table.grid td { border: 1px solid #999; padding: 3px 4px; vertical-align: top;
                                  word-wrap: break-word; }
@@ -488,11 +524,14 @@ _STYLE = """
   .terms-title { font-weight: 700; margin-bottom: 4px; }
   .terms ol { margin: 0; padding-left: 16px; }
   .terms li { margin-bottom: 2px; }
-  .signoff { margin-top: 14px; line-height: 1.5; }
+  /* The closing sentence, the signature and the name are one statement: split across a page
+     break they read as an unsigned document with a stray signature on the next sheet. */
+  .signoff { margin-top: 14px; line-height: 1.5; break-inside: avoid; }
   .signatory { font-weight: 700; }
   .sig-box { margin-top: 10px; }
-  img.sig { height: 44px; }
-  .accepted { margin-top: 16px; border-top: 1px solid #ccc; padding-top: 6px; }
+  img.sig { height: 44px; max-width: 180px; }
+  .accepted { margin-top: 16px; border-top: 1px solid #ccc; padding-top: 6px;
+              break-inside: avoid; }
   .accepted-title { font-weight: 700; }
 """
 
@@ -509,7 +548,9 @@ def build_issue_html(db: Session, issue: ProjectQuotationIssue) -> str:
 
     letter = "".join(f"<p>{block}</p>" for block in _text_blocks(issue.cover_letter_rendered))
     letter_html = f'<div class="letter">{letter}</div>' if letter else ""
-    scopes_html = "".join(_scope_html(db, scope) for scope in scopes)
+    # One cache for the whole document: the same product often appears in more than one scope.
+    image_cache: Dict[str, Optional[str]] = {}
+    scopes_html = "".join(_scope_html(db, scope, image_cache) for scope in scopes)
 
     return f"""<!doctype html><html><head><meta charset="utf-8"/>
 <style>{_STYLE}</style></head><body>
@@ -550,4 +591,8 @@ def render_issue_pdf(db: Session, issue: ProjectQuotationIssue) -> Tuple[bytes, 
         raise PDFRenderingUnavailable(
             f"PDF rendering failed (WeasyPrint native libraries missing or broken: {e})."
         ) from e
+    # write_pdf() is typed as optional (it returns None when given a target to write into). An
+    # empty result would otherwise be served to the customer as a zero-byte quotation.
+    if not pdf_bytes:
+        raise PDFRenderingUnavailable("PDF rendering produced no output.")
     return pdf_bytes, build_filename(issue)

@@ -1,0 +1,351 @@
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { SignaturePad, type SignatureValue } from './SignaturePad';
+
+const STUB_PNG = 'data:image/png;base64,STUB';
+
+/**
+ * jsdom implements <canvas> as an element but ships NO 2d context (that needs the optional
+ * `canvas` native module), so `getContext('2d')` returns null and `toDataURL` throws. The pad
+ * would then be untestable, and skipping the tests would leave the one component whose whole
+ * job is producing a PNG uncovered. So stub the two members the pad touches: what is under
+ * test here is the state machine (which mode, when the output is produced, what metadata rides
+ * along), not Skia's rasteriser. Pixel fidelity is a browser concern, checked in Playwright.
+ */
+function makeStubContext(): CanvasRenderingContext2D {
+  const noop = () => {};
+  const stub = {
+    setTransform: noop,
+    fillRect: noop,
+    clearRect: noop,
+    beginPath: noop,
+    moveTo: noop,
+    lineTo: noop,
+    stroke: noop,
+    fillText: noop,
+    // Narrow enough that the fit-to-width loop in the pad actually runs a few passes.
+    measureText: (text: string) => ({ width: text.length * 24 }),
+    save: noop,
+    restore: noop,
+    fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 0,
+    lineCap: 'butt',
+    lineJoin: 'miter',
+    font: '',
+    textAlign: 'center',
+    textBaseline: 'middle',
+  };
+  // Deliberate cast: only the members the pad calls are implemented, and listing the other
+  // ~90 members of the real interface as no-ops would say nothing.
+  return stub as unknown as CanvasRenderingContext2D;
+}
+
+beforeAll(() => {
+  HTMLCanvasElement.prototype.getContext = vi.fn(
+    () => makeStubContext(),
+  ) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.toDataURL = vi.fn(() => STUB_PNG);
+});
+
+/** Radix activates a tab on mousedown, not click, so a plain click does not switch modes. */
+function switchTo(name: 'Draw' | 'Type' | 'Initials') {
+  fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0 });
+}
+
+const canvas = () => screen.getByTestId('signature-pad-canvas');
+/**
+ * By role, not by label text: Radix labels each tab PANEL with its trigger, so
+ * `getByLabelText('Initials')` matches both the panel and the field inside it.
+ */
+const nameField = () => screen.getByRole('textbox', { name: 'Full name' });
+const initialsField = () => screen.getByRole('textbox', { name: 'Initials' });
+const applyButton = () => screen.getByRole('button', { name: 'Apply signature' });
+const clearButton = () => screen.getByRole('button', { name: /clear/i });
+
+function drawAStroke() {
+  const target = canvas();
+  fireEvent.pointerDown(target, { pointerId: 1, clientX: 20, clientY: 30 });
+  fireEvent.pointerMove(target, { pointerId: 1, clientX: 60, clientY: 55 });
+  fireEvent.pointerMove(target, { pointerId: 1, clientX: 90, clientY: 40 });
+  fireEvent.pointerUp(target, { pointerId: 1, clientX: 90, clientY: 40 });
+}
+
+function stubGeolocation(behaviour: 'granted' | 'denied' | 'absent') {
+  if (behaviour === 'absent') {
+    Object.defineProperty(navigator, 'geolocation', { value: undefined, configurable: true });
+    return;
+  }
+  const getCurrentPosition = vi.fn(
+    (success: PositionCallback, failure?: PositionErrorCallback | null) => {
+      if (behaviour === 'granted') {
+        success({
+          coords: { latitude: 3.13901, longitude: 101.68685 },
+          timestamp: Date.now(),
+        } as GeolocationPosition);
+      } else {
+        // PERMISSION_DENIED. The pad must carry on and report null coordinates.
+        failure?.({ code: 1, message: 'denied' } as GeolocationPositionError);
+      }
+    },
+  );
+  Object.defineProperty(navigator, 'geolocation', {
+    value: { getCurrentPosition },
+    configurable: true,
+  });
+}
+
+beforeEach(() => {
+  stubGeolocation('absent');
+});
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
+describe('SignaturePad modes', () => {
+  it('opens on Draw and moves between all three modes', () => {
+    render(<SignaturePad onChange={vi.fn()} />);
+
+    expect(screen.getByRole('tab', { name: 'Draw' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('textbox', { name: 'Full name' })).not.toBeInTheDocument();
+
+    switchTo('Type');
+    expect(screen.getByRole('tab', { name: 'Type' })).toHaveAttribute('aria-selected', 'true');
+    expect(nameField()).toBeInTheDocument();
+
+    switchTo('Initials');
+    expect(screen.getByRole('tab', { name: 'Initials' })).toHaveAttribute('aria-selected', 'true');
+    expect(initialsField()).toBeInTheDocument();
+
+    switchTo('Draw');
+    expect(screen.getByRole('tab', { name: 'Draw' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('turns a typed name into one PNG', () => {
+    const onChange = vi.fn();
+    render(<SignaturePad onChange={onChange} />);
+
+    switchTo('Type');
+    expect(applyButton()).toBeDisabled();
+
+    fireEvent.change(nameField(), { target: { value: 'Ahmad Faizal' } });
+    expect(applyButton()).toBeEnabled();
+
+    fireEvent.click(applyButton());
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange.mock.calls[0][0]).toMatchObject({
+      dataUrl: STUB_PNG,
+      mode: 'type',
+      typedText: 'Ahmad Faizal',
+      gpsLat: null,
+      gpsLng: null,
+    });
+    expect(HTMLCanvasElement.prototype.toDataURL).toHaveBeenCalledWith('image/png');
+  });
+
+  it('derives initials from the name and lets the signer edit them', () => {
+    const onChange = vi.fn();
+    render(<SignaturePad onChange={onChange} typedNameDefault="Ahmad Faizal Hassan" />);
+
+    switchTo('Initials');
+    expect(initialsField()).toHaveValue('A.F.H.');
+
+    fireEvent.change(initialsField(), { target: { value: 'AFH' } });
+    fireEvent.click(applyButton());
+
+    expect(onChange.mock.calls[0][0]).toMatchObject({
+      dataUrl: STUB_PNG,
+      mode: 'initials',
+      typedText: 'AFH',
+    });
+  });
+
+  it('turns a drawn stroke into the same PNG shape', () => {
+    const onChange = vi.fn();
+    render(<SignaturePad onChange={onChange} />);
+
+    expect(applyButton()).toBeDisabled();
+    drawAStroke();
+    expect(applyButton()).toBeEnabled();
+
+    fireEvent.click(applyButton());
+
+    expect(onChange.mock.calls[0][0]).toMatchObject({
+      dataUrl: STUB_PNG,
+      mode: 'draw',
+      typedText: null,
+    });
+  });
+});
+
+describe('SignaturePad commit discipline', () => {
+  it('stays silent until the signer presses Apply', () => {
+    const onChange = vi.fn();
+    render(<SignaturePad onChange={onChange} />);
+
+    drawAStroke();
+    switchTo('Type');
+    fireEvent.change(nameField(), { target: { value: 'Siti' } });
+
+    expect(onChange).not.toHaveBeenCalled();
+
+    fireEvent.click(applyButton());
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('empties a drawing on Clear without committing anything', () => {
+    const onChange = vi.fn();
+    render(<SignaturePad onChange={onChange} />);
+
+    drawAStroke();
+    expect(applyButton()).toBeEnabled();
+
+    fireEvent.click(clearButton());
+
+    expect(applyButton()).toBeDisabled();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('empties a typed name on Clear', () => {
+    render(<SignaturePad onChange={vi.fn()} typedNameDefault="Ahmad Faizal" />);
+
+    switchTo('Type');
+    expect(nameField()).toHaveValue('Ahmad Faizal');
+
+    fireEvent.click(clearButton());
+
+    expect(nameField()).toHaveValue('');
+    expect(applyButton()).toBeDisabled();
+  });
+
+  it('drops an already-applied signature when the pad is cleared', () => {
+    const onChange = vi.fn();
+    const applied: SignatureValue = {
+      dataUrl: STUB_PNG,
+      mode: 'draw',
+      typedText: null,
+      signedAt: '2026-08-04T02:15:00Z',
+      gpsLat: null,
+      gpsLng: null,
+    };
+    render(<SignaturePad onChange={onChange} value={applied} />);
+
+    fireEvent.click(clearButton());
+
+    // A blank pad beside a committed image would misstate what is signed.
+    expect(onChange).toHaveBeenCalledWith(null);
+  });
+
+  it('offers nothing to press while disabled', () => {
+    const onChange = vi.fn();
+    render(<SignaturePad onChange={onChange} disabled />);
+
+    drawAStroke();
+
+    expect(applyButton()).toBeDisabled();
+    expect(clearButton()).toBeDisabled();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('SignaturePad metadata', () => {
+  it('reports the coordinates the browser granted', () => {
+    stubGeolocation('granted');
+    const onChange = vi.fn();
+    render(<SignaturePad onChange={onChange} />);
+
+    drawAStroke();
+    fireEvent.click(applyButton());
+
+    expect(onChange.mock.calls[0][0]).toMatchObject({ gpsLat: 3.13901, gpsLng: 101.68685 });
+    expect(screen.getByText('3.13901, 101.68685')).toBeInTheDocument();
+  });
+
+  it('still signs, with null coordinates, when GPS is refused', () => {
+    stubGeolocation('denied');
+    const onChange = vi.fn();
+    render(<SignaturePad onChange={onChange} />);
+
+    drawAStroke();
+    fireEvent.click(applyButton());
+
+    const committed = onChange.mock.calls[0][0] as SignatureValue;
+    expect(committed.dataUrl).toBe(STUB_PNG);
+    expect(committed.gpsLat).toBeNull();
+    expect(committed.gpsLng).toBeNull();
+    expect(typeof committed.signedAt).toBe('string');
+    // Stated as absent, not hidden.
+    expect(screen.getByText('GPS location')).toBeInTheDocument();
+    expect(screen.getByText('-')).toBeInTheDocument();
+  });
+
+  it('never asks for a fix when the caller opted out', () => {
+    stubGeolocation('granted');
+    render(<SignaturePad onChange={vi.fn()} requestGeolocation={false} />);
+
+    expect(navigator.geolocation.getCurrentPosition).not.toHaveBeenCalled();
+  });
+});
+
+describe('SignaturePad read-only', () => {
+  const signed: SignatureValue = {
+    dataUrl: STUB_PNG,
+    mode: 'draw',
+    typedText: null,
+    signedAt: '2026-08-04T02:15:00Z',
+    gpsLat: 3.13901,
+    gpsLng: 101.68685,
+  };
+
+  it('shows the signed image and its metadata with no editing controls', () => {
+    render(
+      <SignaturePad
+        readOnly
+        onChange={vi.fn()}
+        value={signed}
+        extraMetadata={[{ label: 'IP address', value: '203.0.113.9' }]}
+      />,
+    );
+
+    expect(screen.getByRole('img', { name: /signature image/i })).toHaveAttribute('src', STUB_PNG);
+    expect(screen.getByText('3.13901, 101.68685')).toBeInTheDocument();
+    expect(screen.getByText('203.0.113.9')).toBeInTheDocument();
+    // 10:15 am Malaysia time for the 02:15 UTC stamp above. Case-insensitive because the
+    // meridiem casing Intl emits for en-GB differs between Node and browser ICU builds.
+    expect(screen.getByText(/04\/08\/2026, 10:15\s?am/i)).toBeInTheDocument();
+
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
+    expect(screen.queryAllByRole('button')).toHaveLength(0);
+    expect(screen.queryByTestId('signature-pad-canvas')).not.toBeInTheDocument();
+  });
+
+  it('says a document is unsigned rather than rendering an empty box', () => {
+    render(<SignaturePad readOnly onChange={vi.fn()} value={null} />);
+
+    expect(screen.getByText('Not signed yet')).toBeInTheDocument();
+    expect(screen.getByText('GPS location')).toBeInTheDocument();
+    expect(screen.getAllByText('-').length).toBeGreaterThan(0);
+  });
+
+  it('asks for no location fix in read-only', () => {
+    stubGeolocation('granted');
+    render(<SignaturePad readOnly onChange={vi.fn()} value={signed} />);
+
+    expect(navigator.geolocation.getCurrentPosition).not.toHaveBeenCalled();
+  });
+});
+
+describe('SignaturePad accessibility and touch', () => {
+  it('labels the canvas and blocks the page from scrolling under a finger', () => {
+    render(<SignaturePad onChange={vi.fn()} label="Customer signature" />);
+
+    const target = canvas();
+    expect(target).toHaveAttribute('aria-label', 'Customer signature drawing area');
+    expect(target).toHaveClass('touch-none');
+    // Type mode is the keyboard-reachable path to the same output.
+    expect(screen.getByRole('tab', { name: 'Type' })).toBeInTheDocument();
+  });
+});
