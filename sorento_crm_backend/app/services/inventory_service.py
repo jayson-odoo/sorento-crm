@@ -200,8 +200,20 @@ class WarehouseService:
         for key, value in update_data.items():
             setattr(warehouse, key, value)
 
+        # Stamped here because the column has no ``onupdate``: without this an edit leaves
+        # "Last Updated" showing the creation date forever. Naive UTC, matching how every
+        # other datetime column in this codebase is stored.
+        warehouse.updated_at = datetime.utcnow()
+
         self.db.commit()
         self.db.refresh(warehouse)
+        # Re-resolve after the write. `pool_warehouse_code` is a plain attribute set by
+        # `_attach_pool_codes`, not a mapped column, so neither `commit()` nor `refresh()`
+        # touches it and the value the read at the top of this method attached survives.
+        # Without this, clearing a pool answers `pool_warehouse_id: null` next to the OLD
+        # `pool_warehouse_code`, and setting one answers the new id next to a stale null -
+        # one response contradicting itself in the only half of the pair the screen shows.
+        self._attach_pool_codes([warehouse])
         return warehouse
 
     def delete_warehouse(self, warehouse_id: str) -> dict:

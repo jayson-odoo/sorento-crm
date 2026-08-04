@@ -13,7 +13,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { act, render, screen, fireEvent, cleanup } from '@testing-library/react';
 
 class ResizeObserverStub {
   observe() {}
@@ -69,7 +69,24 @@ vi.mock('../../hooks/usePurchaseOrderActions', () => ({
   usePurchaseOrderActions: () => ({ confirm: confirmMut, createGr: createGrMut }),
 }));
 
+// The upload dialog is exercised by its own suite; here we only care that this screen
+// mounts it for the PURCHASE-ORDER book and refreshes itself when it applies.
+type UploadDialogProps = {
+  open: boolean;
+  kind: string;
+  onApplied?: (result: OutstandingApplyResult) => void;
+};
+let uploadProps: UploadDialogProps | null = null;
+vi.mock('../../reorder/components/OutstandingUploadDialog', () => ({
+  OutstandingUploadDialog: (props: UploadDialogProps) => {
+    uploadProps = props;
+    return props.open ? <div>{`outstanding-upload:${props.kind}`}</div> : null;
+  },
+}));
+
+import { toast } from 'sonner';
 import PurchaseOrdersList from './PurchaseOrdersList';
+import type { OutstandingApplyResult } from '../../reorder/services/outstandingImportService';
 import type { PurchaseOrder } from '../../types/scm.types';
 
 function po(over: Partial<PurchaseOrder>): PurchaseOrder {
@@ -91,12 +108,15 @@ function po(over: Partial<PurchaseOrder>): PurchaseOrder {
   } as PurchaseOrder;
 }
 
+/** Stable across a render so the upload's refresh is assertable. */
+const refetch = vi.fn();
+
 function mockList(rows: PurchaseOrder[], over: Record<string, unknown> = {}) {
   usePurchaseOrders.mockReturnValue({
     data: { data: rows, pagination: { page: 1, total: rows.length } },
     isLoading: false,
     isFetching: false,
-    refetch: vi.fn(),
+    refetch,
     ...over,
   });
 }
@@ -104,6 +124,7 @@ function mockList(rows: PurchaseOrder[], over: Record<string, unknown> = {}) {
 beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
+  uploadProps = null;
 });
 
 describe('PurchaseOrdersList — states (AC-M4.6)', () => {
@@ -183,5 +204,57 @@ describe('PurchaseOrdersList — select-all + bulk Confirm gating (AC-M4.6)', ()
     expect(screen.getByText(/Confirm purchase orders\?/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^Confirm POs$/ }));
     expect(confirmMut.mutateAsync).toHaveBeenCalledWith(['po-draft-1']);
+  });
+});
+
+// ── the outstanding PURCHASE-ORDER book (AC-A6) ─────────────────────────────
+// The extract spec defines two books, outstanding SO and outstanding PO. The PO book
+// says what is already on order, and it belongs to the actor working THIS screen, not
+// to the planner on the reorder screen. Nothing loads it unless this toolbar opens it.
+
+describe('PurchaseOrdersList - upload the order book', () => {
+  it('opens the outstanding PURCHASE-ORDER upload from the toolbar', () => {
+    mockList([po({ id: 'po-draft-1' })]);
+    render(<PurchaseOrdersList />);
+    expect(screen.queryByText(/^outstanding-upload:/)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /Upload order book/i }));
+    // The kind is the whole point: this screen must not open the sales-order book.
+    expect(screen.getByText('outstanding-upload:purchase-orders')).toBeInTheDocument();
+  });
+
+  it('offers the same upload from the empty state', () => {
+    // A fresh install has no POs at all - the upload has to be reachable from the
+    // state the user actually lands in, not only from a populated list.
+    mockList([], { data: { data: [], pagination: { page: 1, total: 0 } } });
+    render(<PurchaseOrdersList />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Upload order book/i }));
+    expect(screen.getByText('outstanding-upload:purchase-orders')).toBeInTheDocument();
+  });
+
+  it('refreshes the list and says what changed once the upload is applied', () => {
+    mockList([po({ id: 'po-draft-1' })]);
+    render(<PurchaseOrdersList />);
+    fireEvent.click(screen.getByRole('button', { name: /Upload order book/i }));
+    refetch.mockClear();
+
+    const onApplied = uploadProps?.onApplied;
+    if (!onApplied) throw new Error('the screen mounted the upload dialog without an onApplied');
+    act(() => {
+      onApplied({
+        ok: true,
+        counts: {},
+        applied: { added: 2, updated: 3, closed: 1, unchanged: 9 },
+        scope_documents: ['PO-2026/07-0009'],
+        resolution_issues: [],
+        row_problems: [],
+      });
+    });
+
+    // Without the refresh the applied rows are invisible until a manual reload.
+    expect(refetch).toHaveBeenCalled();
+    // 2 + 3 + 1 changed; `unchanged` is not a change.
+    expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/6 lines changed/i));
   });
 });

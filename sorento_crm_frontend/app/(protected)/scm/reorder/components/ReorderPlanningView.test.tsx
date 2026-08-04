@@ -10,7 +10,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { TodayRun } from '../services/reorderRunService';
 
@@ -36,6 +36,10 @@ vi.mock('./PlanAssistant', () => ({ PlanAssistant: () => <div>plan-assistant</di
 vi.mock('./DispositionResultsGrid', () => ({ DispositionResultsGrid: () => <div>disposition-grid</div> }));
 vi.mock('./RunHistoryPanel', () => ({ RunHistoryPanel: () => <div>run-history</div> }));
 vi.mock('./RunPlanningModal', () => ({ RunPlanningModal: ({ open }: { open: boolean }) => (open ? <div>manual-plan-modal</div> : null) }));
+vi.mock('./OutstandingUploadDialog', () => ({
+  OutstandingUploadDialog: ({ open, kind }: { open: boolean; kind: string }) =>
+    open ? <div>{`outstanding-upload:${kind}`}</div> : null,
+}));
 
 import { ReorderPlanningView } from './ReorderPlanningView';
 
@@ -106,6 +110,30 @@ describe('ReorderPlanningView — loading + error', () => {
     renderView();
     expect(screen.getByText('boom')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Try again/i })).toBeInTheDocument();
+  });
+});
+
+describe('ReorderPlanningView — upload the order book', () => {
+  // The plan is computed from the outstanding order book, so loading that book is a
+  // planning action and belongs on this screen. Nothing opens the dialog unless the
+  // toolbar carries an entry for it.
+  it('opens the outstanding sales-order upload from the toolbar', () => {
+    stubToday(todayRun());
+    renderView();
+    expect(screen.queryByText(/^outstanding-upload:/)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /Upload order book/i }));
+    expect(screen.getByText('outstanding-upload:sales-orders')).toBeInTheDocument();
+  });
+
+  it('offers the same upload from the no-plan empty state', () => {
+    // A fresh install has no plan AND no book - the upload has to be reachable from
+    // the state the user actually lands in, not only from a populated plan.
+    stubToday(null);
+    renderView();
+
+    fireEvent.click(screen.getByRole('button', { name: /Upload order book/i }));
+    expect(screen.getByText('outstanding-upload:sales-orders')).toBeInTheDocument();
   });
 });
 

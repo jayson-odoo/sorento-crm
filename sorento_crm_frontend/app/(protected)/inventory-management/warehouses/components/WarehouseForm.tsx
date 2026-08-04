@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
@@ -18,10 +18,9 @@ import {
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { useQuery } from '@tanstack/react-query';
-import { useCreateWarehouse, useUpdateWarehouse, useWarehouse } from '../hooks/useWarehouses';
-import { getWarehouses } from '../services/warehouseService';
+import { useCreateWarehouse, useUpdateWarehouse, useWarehouse, useWarehouses } from '../hooks/useWarehouses';
 import type { Warehouse } from '../types/warehouse.types';
 import { WarehouseSchema, type WarehouseSchemaType } from '../forms/warehouse-schema';
 
@@ -36,6 +35,21 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
   const { data: warehouse, isLoading: isLoadingWarehouse } = useWarehouse(warehouseId || null);
   const createMutation = useCreateWarehouse();
   const updateMutation = useUpdateWarehouse();
+
+  // The warehouse list, read here only to build the pool candidates below. Deliberately NOT
+  // also driving prev/next navigation: a chevron on an edit form pushes the neighbour's read
+  // view and silently discards whatever the user has typed. prev/next lives on the detail page.
+  const listParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 1000,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: '',
+    }),
+    [],
+  );
+  const { data: warehouseList } = useWarehouses(listParams);
+  const allWarehouses = useMemo<Warehouse[]>(() => warehouseList?.data ?? [], [warehouseList]);
 
   const form = useForm<WarehouseSchemaType>({
     resolver: zodResolver(WarehouseSchema),
@@ -54,19 +68,16 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
   // Candidate pools. Any location can be a pool, so this is the warehouse list itself,
   // minus the one being edited: a location pooling to itself is the default and is
   // expressed by leaving the field empty, never by selecting itself.
-  const { data: poolOptions } = useQuery({
-    queryKey: ['warehouses-select'],
-    queryFn: async () => {
-      const response = await getWarehouses({
-        pageIndex: 0,
-        pageSize: 1000,
-        sorting: [],
-        searchQuery: '',
-      });
-      return response.data || [];
-    },
-    staleTime: 1000 * 60 * 5,
-  });
+  const poolOptions = useMemo(
+    () =>
+      allWarehouses
+        .filter((w) => w.id !== warehouseId)
+        .map((w) => ({
+          value: w.id,
+          label: w.warehouse_name ? `${w.warehouse_name} (${w.warehouse_code})` : w.warehouse_code,
+        })),
+    [allWarehouses, warehouseId],
+  );
 
   // Load warehouse data when editing
   useEffect(() => {
@@ -99,7 +110,7 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
       } else {
         router.push('/inventory-management/warehouses');
       }
-    } catch (error) {
+    } catch {
       // Error is handled by the mutation hook
     }
   };
@@ -121,139 +132,131 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
           <CardHeader>
             <CardTitle>{isEditMode ? 'Edit Warehouse' : 'Create Warehouse'}</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <FormField
-                control={form.control}
-                name="warehouse_code"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>System Location *</FormLabel>
-                    <FormControl>
-                      <Input placeholder="WH-001" {...field} />
-                    </FormControl>
-                    <FormDescription>Must be unique.</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+          <CardContent>
+            {/* Same tab set, same field order, and the same grid spans as the read view. */}
+            <Tabs defaultValue="basic">
+              <TabsList>
+                <TabsTrigger value="basic">Basic Information</TabsTrigger>
+                <TabsTrigger value="planning">Planning</TabsTrigger>
+              </TabsList>
 
-              <FormField
-                control={form.control}
-                name="warehouse_name"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>System Location Description</FormLabel>
-                    <FormControl>
-                      <Input
-                        placeholder="e.g. Selangor Main DC"
-                        {...field}
-                        value={field.value ?? ''}
-                        onChange={(e) => field.onChange(e.target.value || null)}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              <TabsContent value="basic" className="mt-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <FormField
+                    control={form.control}
+                    name="warehouse_code"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>System Location *</FormLabel>
+                        <FormControl>
+                          <Input placeholder="WH-001" {...field} />
+                        </FormControl>
+                        <FormDescription>Must be unique.</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-              <FormField
-                control={form.control}
-                name="location"
-                render={({ field }) => (
-                  <FormItem className="md:col-span-2">
-                    <FormLabel>Warehouse</FormLabel>
-                    <FormControl>
-                      <Input
-                        placeholder="Warehouse name / address"
-                        {...field}
-                        value={field.value || ''}
-                        onChange={(e) => field.onChange(e.target.value || null)}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                  <FormField
+                    control={form.control}
+                    name="warehouse_name"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>System Location Description</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="e.g. Selangor Main DC"
+                            {...field}
+                            value={field.value ?? ''}
+                            onChange={(e) => field.onChange(e.target.value || null)}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-              <FormField
-                control={form.control}
-                name="is_active"
-                render={({ field }) => (
-                  <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                    <div className="space-y-0.5">
-                      <FormLabel className="text-base">Active Status</FormLabel>
-                      <FormDescription>
-                        Inactive warehouses will not appear in dropdowns
-                      </FormDescription>
-                    </div>
-                    <FormControl>
-                      <Switch
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                      />
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
+                  <FormField
+                    control={form.control}
+                    name="location"
+                    render={({ field }) => (
+                      <FormItem className="md:col-span-2">
+                        <FormLabel>Warehouse</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="Warehouse name / address"
+                            {...field}
+                            value={field.value || ''}
+                            onChange={(e) => field.onChange(e.target.value || null)}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-              <FormField
-                control={form.control}
-                name="counts_as_available"
-                render={({ field }) => (
-                  <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                    <div className="space-y-0.5">
-                      <FormLabel className="text-base">Available for planning</FormLabel>
-                      <FormDescription>
-                        Turn this off for held, reserved, defective or clearance locations.
-                        Stock here is real but cannot cover demand, so the plan ignores it.
-                      </FormDescription>
-                    </div>
-                    <FormControl>
-                      <Switch
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                      />
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
+                  <FormField
+                    control={form.control}
+                    name="is_active"
+                    render={({ field }) => (
+                      <FormItem className="md:col-span-2 flex flex-row items-center justify-between gap-4 rounded-lg border p-4">
+                        <div className="min-w-0 space-y-0.5">
+                          <FormLabel className="text-base">Active Status</FormLabel>
+                          <FormDescription>Off: hidden from dropdowns.</FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch checked={field.value} onCheckedChange={field.onChange} />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </TabsContent>
 
-              <FormField
-                control={form.control}
-                name="pool_warehouse_id"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Draws stock from</FormLabel>
-                    <FormControl>
-                      <SearchableSelect
-                        value={field.value ?? ''}
-                        onChange={(v) => field.onChange(v || null)}
-                        options={(poolOptions || [])
-                          .filter((w: Warehouse) => w.id !== warehouseId)
-                          .map((w: Warehouse) => ({
-                            value: w.id,
-                            label: w.warehouse_name
-                              ? `${w.warehouse_name} (${w.warehouse_code})`
-                              : w.warehouse_code,
-                          }))}
-                        placeholder="Leave empty if this location stands alone"
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      The shared pool this location draws on. A shortage here is covered from
-                      that pool before anything is bought. Leave empty unless this location
-                      genuinely shares stock with others on the same site.
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
+              <TabsContent value="planning" className="mt-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <FormField
+                    control={form.control}
+                    name="counts_as_available"
+                    render={({ field }) => (
+                      <FormItem className="md:col-span-2 flex flex-row items-center justify-between gap-4 rounded-lg border p-4">
+                        <div className="min-w-0 space-y-0.5">
+                          <FormLabel className="text-base">Available for planning</FormLabel>
+                          <FormDescription>Off: cannot cover demand.</FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch checked={field.value} onCheckedChange={field.onChange} />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="pool_warehouse_id"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Draws stock from</FormLabel>
+                        <FormControl>
+                          <SearchableSelect
+                            value={field.value ?? ''}
+                            onChange={(v) => field.onChange(v || null)}
+                            options={poolOptions}
+                            clearable
+                            placeholder="Stands alone"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </TabsContent>
+            </Tabs>
           </CardContent>
         </Card>
 
-        <div className="flex justify-end gap-3">
+        <div className="flex flex-wrap justify-end gap-3">
           <Button
             type="button"
             variant="outline"

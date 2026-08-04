@@ -11,7 +11,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { toast } from 'sonner';
-import { CheckCircle2, Info, PackageCheck, Search, X } from 'lucide-react';
+import { CheckCircle2, Info, PackageCheck, Search, Upload, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -30,6 +30,8 @@ import { usePurchaseOrders } from '../../hooks/usePurchaseOrders';
 import { usePurchaseOrderActions } from '../../hooks/usePurchaseOrderActions';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import { BulkActionsMenu } from '../../components/BulkActionsMenu';
+import { OutstandingUploadDialog } from '../../reorder/components/OutstandingUploadDialog';
+import type { OutstandingApplyResult } from '../../reorder/services/outstandingImportService';
 import { buildPoBulkActions } from '../lib/poBulkActions';
 import { fmtDate, fmtInt } from '../../lib/format';
 import type { PurchaseOrder, PurchaseOrderStatus } from '../../types/scm.types';
@@ -78,6 +80,9 @@ export default function PurchaseOrdersList() {
   // Confirm-flow dialog state.
   const [confirmIds, setConfirmIds] = useState<string[] | null>(null);
   const [grPo, setGrPo] = useState<PurchaseOrder | null>(null);
+  // The outstanding PURCHASE-ORDER book is loaded here, on the screen whose actor owns
+  // it, until AutoCount is integrated.
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   const { data, isLoading, isFetching, refetch } = usePurchaseOrders({
     pageIndex: pagination.pageIndex,
@@ -262,6 +267,14 @@ export default function PurchaseOrdersList() {
     }
   };
 
+  // The upload rewrites the on-order record this list shows, so refresh what feeds it
+  // and say what changed rather than leaving the user to guess and reload.
+  const bookApplied = (result: OutstandingApplyResult) => {
+    void refetch();
+    const changed = result.applied.added + result.applied.updated + result.applied.closed;
+    toast.success(`Order book updated - ${changed} line${changed === 1 ? '' : 's'} changed.`);
+  };
+
   const runCreateGr = async () => {
     if (!grPo) return;
     try {
@@ -361,6 +374,14 @@ export default function PurchaseOrdersList() {
                   }
                 />
               }
+              secondaryActions={[
+                {
+                  key: 'upload-order-book',
+                  label: 'Upload order book',
+                  icon: Upload,
+                  onClick: () => setUploadOpen(true),
+                },
+              ]}
               exportConfig={{ filename: 'purchase_orders_export.xlsx' }}
               onRefresh={() => void refetch()}
               isRefreshing={isFetching && !isLoading}
@@ -406,6 +427,13 @@ export default function PurchaseOrdersList() {
         confirmLabel="Create GR"
         onConfirm={runCreateGr}
         isBusy={createGr.isPending}
+      />
+
+      <OutstandingUploadDialog
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+        kind="purchase-orders"
+        onApplied={bookApplied}
       />
     </div>
   );

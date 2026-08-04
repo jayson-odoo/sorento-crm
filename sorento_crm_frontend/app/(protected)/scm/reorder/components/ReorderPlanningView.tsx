@@ -3,7 +3,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertCircle, CalendarClock, CalendarDays, History, PlayCircle, RotateCcw } from 'lucide-react';
+import {
+  AlertCircle,
+  CalendarClock,
+  CalendarDays,
+  History,
+  PlayCircle,
+  RotateCcw,
+  Upload,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -20,8 +28,10 @@ import {
 import { useReorderPlan } from '../hooks/useReorderPlan';
 import { decisionsKey } from '../hooks/useDecisions';
 import type { ReorderRunHistoryItem } from '../services/reorderRunService';
+import type { OutstandingApplyResult } from '../services/outstandingImportService';
 import { CashCopilotResults } from './CashCopilotResults';
 import { DispositionResultsGrid } from './DispositionResultsGrid';
+import { OutstandingUploadDialog } from './OutstandingUploadDialog';
 import { PlanAssistant } from './PlanAssistant';
 import { PlanMethodologySheet } from './PlanMethodologySheet';
 import { ReorderStatTiles, type ReorderPlanView } from './ReorderStatTiles';
@@ -61,6 +71,9 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(autoOpenRun);
   const [view, setView] = useState<ReorderPlanView>('buy');
+  // The outstanding order book the plan is computed from is uploaded here, because
+  // loading it IS a planning action (until AutoCount is integrated).
+  const [uploadOpen, setUploadOpen] = useState(false);
   // A history-selected run overrides today's; null = show today's default run.
   const [selectedRun, setSelectedRun] = useState<ReorderRunHistoryItem | null>(null);
 
@@ -142,6 +155,17 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
     }
   }, [manual.isComplete, manual.isFailed, manual.run?.run_id, manual.error, manual, queryClient]);
 
+  // The upload rewrites the demand the NEXT plan is computed from; today's snapshot is
+  // frozen, so refresh what the page reads and say what to do next.
+  const bookApplied = (result: OutstandingApplyResult) => {
+    void queryClient.invalidateQueries({ queryKey: todayRunKey });
+    void queryClient.invalidateQueries({ queryKey: runHistoryKey });
+    const changed = result.applied.added + result.applied.updated + result.applied.closed;
+    toast.success(
+      `Order book updated - ${changed} line${changed === 1 ? '' : 's'} changed. Generate a plan to use it.`,
+    );
+  };
+
   const launch = (inputs: ManualPlanInputs) => {
     setModalOpen(false);
     pendingManual.current = true;
@@ -222,16 +246,28 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
             The daily reorder plan runs automatically each morning. You can also generate one now for
             a single warehouse.
           </p>
-          <Button onClick={() => setModalOpen(true)}>
-            <PlayCircle className="size-4" />
-            Manual plan
-          </Button>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <Button variant="outline" onClick={() => setUploadOpen(true)}>
+              <Upload className="size-4" />
+              Upload order book
+            </Button>
+            <Button onClick={() => setModalOpen(true)}>
+              <PlayCircle className="size-4" />
+              Manual plan
+            </Button>
+          </div>
         </Card>
         <RunPlanningModal
           open={modalOpen}
           onOpenChange={setModalOpen}
           onSubmit={launch}
           isSubmitting={manual.isRunning || pendingManual.current}
+        />
+        <OutstandingUploadDialog
+          open={uploadOpen}
+          onOpenChange={setUploadOpen}
+          kind="sales-orders"
+          onApplied={bookApplied}
         />
       </>
     );
@@ -260,7 +296,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
             facts={methodologyFacts}
           />
         </div>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex flex-wrap items-center gap-1">
           {currentRunId ? (
             <button
               type="button"
@@ -272,6 +308,10 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
               <RotateCcw className="size-3.5" aria-hidden />
             </button>
           ) : null}
+          <Button variant="outline" onClick={() => setUploadOpen(true)}>
+            <Upload className="size-4" />
+            Upload order book
+          </Button>
           <Button onClick={() => setModalOpen(true)}>
             <PlayCircle className="size-4" />
             Manual plan
@@ -358,6 +398,13 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         onOpenChange={setModalOpen}
         onSubmit={launch}
         isSubmitting={manual.isRunning || pendingManual.current}
+      />
+
+      <OutstandingUploadDialog
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+        kind="sales-orders"
+        onApplied={bookApplied}
       />
     </div>
   );
