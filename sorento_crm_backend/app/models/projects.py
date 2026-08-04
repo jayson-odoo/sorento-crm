@@ -832,6 +832,162 @@ class PriceFloorRule(Base, CompanyScopedMixin):
     )
 
 
+class ProjectQuotationDocument(Base, CompanyScopedMixin):
+    """The letterhead: one quotation the customer receives, carrying several priced scopes.
+
+    Added ABOVE ``project_quotations`` rather than by moving scopes under the version, and the
+    reason is worth stating because the cheaper-looking option is wrong. Outcome is per SCOPE and
+    is not a property of a revision - winning the townhouse is not a fact about R2 - and every FK
+    that points at a version (``project_purchase_orders.quotation_version_id``,
+    ``project_samples.quotation_version_id``, task links, the divergence flow) stays valid only
+    while the scope keeps its own version chain.
+
+    So a document is a header plus an ordered set of scopes. The client's "tabs" are those scopes;
+    the sample workbook's "bands" are the same scopes rendered as sections, plus in-scope band
+    markers on the lines. One model, two renderings.
+
+    The recipient block is SNAPSHOTTED here (AC-A3), not read live from the party: a party address
+    edited next year must not rewrite what was sent last year, which is the same doctrine
+    ``ProjectQuotationLine`` already applies to product facts.
+    """
+
+    __tablename__ = "project_quotation_documents"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    project_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    # Claimed from `document_numbering_rules` (doc_type `project_quotation`) at create, and never
+    # changed afterwards: the customer quotes it back at us. The revision is appended by the
+    # ISSUE, so `Our Ref` reads e.g. "SRT/Q/2026/0141 (R2)".
+    document_no = Column(String(64), nullable=False)
+    your_ref = Column(String(120), nullable=True)
+    doc_date = Column(Date, nullable=True)
+
+    recipient_party_id = Column(
+        UUID(as_uuid=False), ForeignKey("project_parties.id", ondelete="SET NULL"), nullable=True
+    )
+    recipient_name_snapshot = Column(String(200), nullable=True)
+    recipient_address_snapshot = Column(Text, nullable=True)
+    recipient_phone_snapshot = Column(String(200), nullable=True)
+    attn_name = Column(String(120), nullable=True)
+    subject_title = Column(Text, nullable=True)
+
+    # The document's OWN editable copy, rendered from the company template at create. Editing it
+    # never touches the template, and editing the template never rewrites a document (AC-E2).
+    cover_letter_html = Column(Text, nullable=True)
+    terms_html = Column(Text, nullable=True)
+
+    signatory_name = Column(String(120), nullable=True)
+    signatory_phone = Column(String(60), nullable=True)
+
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_project_quotation_documents_project", "project_id"),
+        UniqueConstraint("company_id", "document_no", name="uq_project_quotation_documents_no"),
+    )
+
+
+class ProjectQuotationIssue(Base, CompanyScopedMixin):
+    """What the customer actually holds: R1, R2, ...
+
+    An issue is NOT a revision of one scope. It is the set of ``(scope, version)`` pairs that went
+    out together, which is why ``project_quotation_issue_scopes`` exists: a revision does not force
+    every scope to move, so "what did we send them in February" has to be recorded rather than
+    reconstructed from version numbers that advanced at different times.
+
+    The rendered letter, the rendered terms and the grand total are frozen ONTO the issue for the
+    same reason lines are snapshotted onto a version: the template will be rewritten, and what was
+    sent must stay readable.
+
+    No ``is_current`` flag. Current is ``MAX(issue_no)``, the same rule
+    ``ProjectQuotationVersion`` states, for the same reason.
+    """
+
+    __tablename__ = "project_quotation_issues"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    document_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_quotation_documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    issue_no = Column(Integer, nullable=False)
+    # The exact string printed as `Our Ref`, kept rather than recomputed: it is what the customer
+    # will quote back, and the format may change.
+    our_ref_text = Column(String(120), nullable=True)
+
+    issued_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    issued_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    cover_letter_rendered = Column(Text, nullable=True)
+    terms_rendered = Column(Text, nullable=True)
+    grand_total = Column(Numeric(15, 2), nullable=False, server_default="0", default=0)
+
+    pdf_attachment_id = Column(
+        UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True
+    )
+    xlsx_attachment_id = Column(
+        UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True
+    )
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("document_id", "issue_no", name="uq_project_quotation_issues_no"),
+    )
+
+
+class ProjectQuotationIssueScope(Base, CompanyScopedMixin):
+    """Which version of which scope a given issue contained.
+
+    This table is the reason an issued version can be recognised as frozen without a flag:
+    ``project_quotation_service.is_frozen`` treats "an issue points at this version" as freezing
+    it, alongside the existing "a later version exists". Editing then raises the existing 422 and
+    the reader revises, so the rows an issue claims to hold can never be rewritten under it.
+    """
+
+    __tablename__ = "project_quotation_issue_scopes"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    issue_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_quotation_issues.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    quotation_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_quotations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_quotation_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sort_order = Column(Integer, nullable=False, server_default="0", default=0)
+    scope_total = Column(Numeric(15, 2), nullable=False, server_default="0", default=0)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "issue_id", "quotation_id", name="uq_project_quotation_issue_scopes_scope"
+        ),
+        Index("ix_project_quotation_issue_scopes_version", "version_id"),
+    )
+
+
 class ProjectQuotation(Base, CompanyScopedMixin):
     """One priced scope of a project (AC-E1).
 
@@ -848,6 +1004,15 @@ class ProjectQuotation(Base, CompanyScopedMixin):
     project_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
+    # Nullable at the ORM level only for the backfill window; the migration sets it after
+    # creating one document per existing quotation.
+    document_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_quotation_documents.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    # Tab order on screen, band order in the printed document.
+    sort_order = Column(Integer, nullable=False, server_default="0", default=0)
     scope_label = Column(String(150), nullable=False)
     series_id = Column(
         UUID(as_uuid=False), ForeignKey("project_series.id", ondelete="SET NULL"), nullable=True
@@ -872,6 +1037,7 @@ class ProjectQuotation(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_project_quotations_project", "project_id"),
         Index("ix_project_quotations_outcome", "company_id", "outcome"),
+        Index("ix_project_quotations_document", "document_id", "sort_order"),
     )
 
 
@@ -949,11 +1115,26 @@ class ProjectQuotationLine(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True
     )
 
+    # The A / B / C letter off the printed document. A water closet, its angle valve and its
+    # flexible hose are ONE item to the customer's QS; the letter carries that grouping and the
+    # sub-lines leave it null rather than repeating it.
+    item_label = Column(String(8), nullable=True)
+    brand_snapshot = Column(String(100), nullable=True)
+    technical_spec = Column(Text, nullable=True)
+    complete_set = Column(String(100), nullable=True)
+    # A labelled break BEFORE this line, free text off the customer's own bill of quantities
+    # ("BILL NO 3 PAGE 15/4", "OPTION"). Carried by the line that OPENS the band rather than in a
+    # table of its own, so a band cannot orphan itself from the lines under it.
+    band_label = Column(String(150), nullable=True)
+
     unit_price = Column(Numeric(12, 2), nullable=False, server_default="0", default=0)
     quantity = Column(Numeric(12, 2), nullable=False, server_default="1", default=1)
     uom = Column(String(50), nullable=True)
     unit_type = Column(String(24), nullable=True)
     line_total = Column(Numeric(15, 2), nullable=False, server_default="0", default=0)
+    # Quoted and PRINTED, but contributing zero to every total. The sample workbook carries five
+    # such alternates; summing them would have overstated that quotation by more than RM 235,000.
+    is_rate_only = Column(Boolean, nullable=False, server_default="false", default=False)
 
     # Alert state, computed on save and STORED (AC-E7): recomputing on read would
     # re-flag old quotations the moment policy changes.

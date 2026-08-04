@@ -38,6 +38,7 @@ from app.models.projects import (
     UNIT_TYPES,
     Project,
     ProjectQuotation,
+    ProjectQuotationIssueScope,
     ProjectQuotationLine,
     ProjectQuotationVersion,
 )
@@ -71,7 +72,18 @@ LINE_FIELDS = (
     "unit_type",
     "sort_order",
     "notes",
+    # The columns the printed quotation carries but the screen did not: the A / B / C item letter
+    # that groups a fitting with its valve and hose, the band heading off the customer's own bill
+    # of quantities, and the alternate that is quoted at a rate WITHOUT being added up.
+    "item_label",
+    "brand_snapshot",
+    "technical_spec",
+    "complete_set",
+    "band_label",
+    "is_rate_only",
 )
+
+_NUMERIC_LINE_FIELDS = ("unit_price", "quantity")
 
 
 # ------------------------------------------------------------------- versions
@@ -121,25 +133,63 @@ def current_version(db: Session, quotation_id: str) -> ProjectQuotationVersion:
 
 
 def is_frozen(db: Session, version: ProjectQuotationVersion) -> bool:
-    """Derived, never read from a column: frozen means "not the highest number"."""
+    """Derived, never read from a column. Two ways a version stops being editable:
+
+    1. A later version exists, so this one was superseded.
+    2. An ISSUE points at it, so the customer already holds these rows.
+
+    The second clause is what stops an issue rewriting itself. ``issue_scopes`` records the exact
+    version each scope contributed to R1, but the highest-numbered version stays editable under
+    the first clause alone - so editing a line after issuing would have changed the very rows R1
+    claims to have contained, and the PDF on file would quietly stop matching the record behind it.
+
+    Extended rather than replaced by a ``frozen`` column ON PURPOSE: this function is the single
+    definition, and a stamped flag would be a second fact that has to agree with it. The model
+    comment on ``ProjectQuotationVersion`` says why - two facts that must agree drift the first
+    time a write half-fails, and then nobody can say which version the customer holds.
+    """
     highest = (
         db.query(func.max(ProjectQuotationVersion.version_no))
         .filter(ProjectQuotationVersion.quotation_id == version.quotation_id)
         .scalar()
     )
-    return bool(highest is not None and version.version_no < highest)
+    if highest is not None and version.version_no < highest:
+        return True
+    return is_issued(db, version)
+
+
+def is_issued(db: Session, version: ProjectQuotationVersion) -> bool:
+    """Whether any issue of the parent document went out carrying this version."""
+    return (
+        db.query(ProjectQuotationIssueScope.id)
+        .filter(ProjectQuotationIssueScope.version_id == version.id)
+        .first()
+        is not None
+    )
 
 
 def assert_editable(db: Session, version: ProjectQuotationVersion) -> None:
-    if is_frozen(db, version):
+    if not is_frozen(db, version):
+        return
+    # The two reasons read differently to a person: one says somebody moved on, the other says the
+    # customer is holding this paper. "Superseded" on a version you just issued would be baffling.
+    if is_issued(db, version):
         raise AppException(
             status_code=422,
             message=(
-                f"Version {version.version_no} was superseded and cannot be changed. "
-                "Edit the current version instead."
+                f"Version {version.version_no} has been issued to the customer and cannot be "
+                "changed. Open a revision instead."
             ),
-            code="quotation_version_frozen",
+            code="quotation_version_issued",
         )
+    raise AppException(
+        status_code=422,
+        message=(
+            f"Version {version.version_no} was superseded and cannot be changed. "
+            "Edit the current version instead."
+        ),
+        code="quotation_version_frozen",
+    )
 
 
 def get_version_or_404(
@@ -335,9 +385,19 @@ def list_lines(db: Session, version_id: str) -> List[ProjectQuotationLine]:
 
 
 def _recalculate_total(db: Session, version: ProjectQuotationVersion) -> None:
+    """The version's money, with rate-only lines EXCLUDED.
+
+    A rate-only line keeps its `line_total` (the rate is what the customer is being shown), so
+    summing the column blindly would make `total_amount` disagree with what the document footer
+    and the PDF print. The sample quotation's five alternates would have added RM 235,075 that
+    nobody quoted.
+    """
     total = (
         db.query(func.coalesce(func.sum(ProjectQuotationLine.line_total), 0))
-        .filter(ProjectQuotationLine.version_id == version.id)
+        .filter(
+            ProjectQuotationLine.version_id == version.id,
+            ProjectQuotationLine.is_rate_only.is_(False),
+        )
         .scalar()
     )
     version.total_amount = Decimal(total or 0).quantize(_CENTS)
@@ -509,7 +569,13 @@ def upsert_line(
 
     for field in LINE_FIELDS:
         if field in payload:
-            setattr(line, field, payload[field])
+            value = payload[field]
+            # Coerced on the way in, so the in-session value matches what a re-read would give.
+            # Left as the caller's string, `line.unit_price` stays a str until the session is
+            # expired, and any Python arithmetic on it downstream breaks on a type nobody expected.
+            if field in _NUMERIC_LINE_FIELDS and value is not None and not isinstance(value, Decimal):
+                value = Decimal(str(value))
+            setattr(line, field, value)
 
     if line.unit_price is None:
         line.unit_price = Decimal("0.00")

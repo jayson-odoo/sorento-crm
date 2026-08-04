@@ -1,6 +1,7 @@
 """Document numbering rules for system-generated running numbers."""
 import uuid
 from sqlalchemy import Column, String, Integer, Boolean, Text, DateTime, func
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from app.database import Base
 
@@ -10,7 +11,12 @@ class DocumentNumberingRule(Base):
     __tablename__ = "document_numbering_rules"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    doc_type = Column(String(50), unique=True, nullable=False, index=True)
+    # A running number printed on a customer document cannot be shared between companies: SRT and
+    # MOCHA drawing from one counter would print the same prefix, and the mistake only surfaces
+    # once the numbers are already on paper. `doc_type` alone was globally unique with no company
+    # column at all; the key is now (company_id, doc_type), enforced by migration 327.
+    company_id = Column(UUID(as_uuid=False), nullable=True, index=True)
+    doc_type = Column(String(50), nullable=False, index=True)
     enabled = Column(Boolean, default=True, nullable=False)
     prefix_template = Column(Text, nullable=True)  # e.g. "PR-{year}-" or "SF-{year}{month}-"
     number_digits = Column(Integer, default=4, nullable=False)
