@@ -187,7 +187,58 @@ def seed_user(db, role_slug: str | None) -> str:
     return uid
 
 
+# The fixed Sorento company row (migration 302 / `_seed_default_company`), which is the
+# company every reference row in this suite is stamped with.
+SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
+
+
 def as_user(app, get_current_user, get_current_user_or_api_key, uid: str) -> None:
+    """Authenticate as a staff principal AND give the session an active company.
+
+    The company half is not optional. SCM planning artefacts (`scm.reorder_run` and the six
+    others) are `CompanyScopedMixin`, so the auto-stamp REFUSES an insert with no single active
+    company - a plan that belongs to nobody is exactly what company isolation exists to
+    prevent. In a real request `apply_company_scope` resolves it from the caller's token; a
+    dependency override replaces that, so the override has to supply it too or every
+    run-creating route returns 400 and the failure looks like a bug in the route.
+
+    Scoped to the INCUMBENT company rather than a freshly created one on purpose: the reference
+    data this suite borrows (`ensure_reference_data`, and everything on a prod-copy database) is
+    Sorento's, so a new company would authenticate successfully into an empty catalogue.
+    """
+    from app.models.base import set_company_scope
+    from app.services.company_scope_resolver import apply_company_scope
+
     principal = {"id": uid, "email": f"scm-{uid}@test.com"}
     app.dependency_overrides[get_current_user] = lambda: principal
     app.dependency_overrides[get_current_user_or_api_key] = lambda: principal
+
+    scope = frozenset({SORENTO_COMPANY_ID})
+    for db in _sessions_for(app):
+        set_company_scope(db, scope)
+
+    async def _scope():
+        for db in _sessions_for(app):
+            set_company_scope(db, scope)
+        return scope
+
+    app.dependency_overrides[apply_company_scope] = _scope
+
+
+def _sessions_for(app):
+    """The session the `scm_app` fixture injected, if any.
+
+    Read off the `get_db` override rather than passed in, so `as_user`'s signature does not
+    change for its fourteen existing callers.
+    """
+    from app.database import get_db
+
+    override = app.dependency_overrides.get(get_db)
+    if override is None:
+        return []
+    try:
+        gen = override()
+        db = next(gen)
+    except Exception:  # noqa: BLE001 - a non-generator override is not ours to interpret
+        return []
+    return [db] if db is not None else []

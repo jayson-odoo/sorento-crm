@@ -31,6 +31,7 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
+from app.models.base import CompanyScopedMixin
 import uuid
 
 
@@ -164,7 +165,7 @@ class SupplierPerformance(Base):
     )
 
 
-class PurchasingBudget(Base):
+class PurchasingBudget(Base, CompanyScopedMixin):
     """Cash budget window for the reorder run (global | supplier | category)."""
     __tablename__ = "purchasing_budget"
     __table_args__ = {"schema": "scm"}
@@ -184,7 +185,7 @@ class PurchasingBudget(Base):
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
-class ReorderRun(Base):
+class ReorderRun(Base, CompanyScopedMixin):
     """One planning run; recommendations freeze their inputs against it."""
     __tablename__ = "reorder_run"
     __table_args__ = {"schema": "scm"}
@@ -218,7 +219,7 @@ class ReorderRun(Base):
     )
 
 
-class ReorderRecommendation(Base):
+class ReorderRecommendation(Base, CompanyScopedMixin):
     """A frozen buy/disposition recommendation produced by a run."""
     __tablename__ = "reorder_recommendation"
 
@@ -267,7 +268,7 @@ class ReorderRecommendation(Base):
     )
 
 
-class RecommendationOverride(Base):
+class RecommendationOverride(Base, CompanyScopedMixin):
     """Append-only human override of a recommendation; never mutates the recommendation."""
     __tablename__ = "recommendation_override"
 
@@ -435,7 +436,7 @@ class MarketSignal(Base):
     )
 
 
-class ScmAnalyticsRun(Base):
+class ScmAnalyticsRun(Base, CompanyScopedMixin):
     """Observability log for the M2 demand/classification/supplier analytics job."""
     __tablename__ = "scm_analytics_run"
     __table_args__ = {"schema": "scm"}
@@ -454,7 +455,7 @@ class ScmAnalyticsRun(Base):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
 
-class MarketResearchRun(Base):
+class MarketResearchRun(Base, CompanyScopedMixin):
     """Observability log for the M5 web-search market research job (mirrors
     ``scm_analytics_run``): one row per run, status running → completed | failed."""
     __tablename__ = "market_research_run"
@@ -511,7 +512,7 @@ class PriorityPolicy(Base):
     )
 
 
-class OrderSummaryRow(Base):
+class OrderSummaryRow(Base, CompanyScopedMixin):
     """One product's FROZEN Summary Order Report row for a run, plus its decision.
 
     Frozen because AC-C2.9 requires a past week to be reviewable: what the decider saw has to

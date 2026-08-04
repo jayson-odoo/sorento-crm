@@ -291,8 +291,14 @@ def test_every_company_id_table_is_registered():
         f"Tables have a company_id column but are not CompanyScopedMixin subclasses "
         f"(add the mixin or allowlist them): {offenders}"
     )
-    # Foundation slice ships exactly 34 owned tables (PLAN §4.1).
-    assert len(owned) == 34, f"expected 34 owned tables, found {len(owned)}: {sorted(owned)}"
+    # Foundation slice shipped 34 owned tables (PLAN §4.1); SCM company isolation added the
+    # seven PLANNING ARTEFACT tables, which are the SCM rows that are not facts about a
+    # location and so cannot derive their company from a joined warehouse:
+    # reorder_run, reorder_recommendation, order_summary_row, recommendation_override,
+    # purchasing_budget, scm_analytics_run, market_research_run.
+    # (`demand_stat` / `item_classification` / the views derive it from the join;
+    # `supplier_performance` from `suppliers`; market signals are facts about the world.)
+    assert len(owned) == 41, f"expected 41 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------

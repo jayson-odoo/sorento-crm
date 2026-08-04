@@ -31,6 +31,7 @@ from typing import Dict, List, Optional, Tuple
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.scm.reorder_policy import (
     DEFAULT_DEAD_STOCK_DAYS,
@@ -237,12 +238,19 @@ class ScmDashboardService:
         reference the same run. ``None`` when no run has ever completed (low-stock then
         reads as zero, never crashing)."""
         if not self._latest_run_loaded:
+            # Company-scoped by hand: raw SQL bypasses the ORM isolation filter, and the run
+            # this picks is what drives the low-stock signal. Another company's frozen reorder
+            # points would produce a warning list about stock this company does not hold.
+            co, co_params = company_sql_predicate(
+                self.db, "company_id", param_prefix="cdr"
+            )
             row = self.db.execute(text(
                 "SELECT id FROM scm.reorder_run "
                 "WHERE status = 'completed' "
+                f"{('AND ' + co + ' ') if co else ''}"
                 "ORDER BY COALESCE(finished_at, created_at) DESC, created_at DESC "
                 "LIMIT 1"
-            )).fetchone()
+            ), co_params).fetchone()
             self._latest_run_id = row[0] if row else None
             self._latest_run_loaded = True
         return self._latest_run_id

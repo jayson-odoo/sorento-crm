@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session
 from app.models.inventory import Warehouse
 from app.models.product import Product
 from app.models.scm import ReorderRecommendation, ReorderRun
+from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.scm import cash_ranking
 from app.services.scm import reorder_engine as eng
@@ -178,14 +179,20 @@ def today_or_latest_run(db: Session, today: Optional[date] = None) -> Optional[d
     if today is None:
         today = datetime.now(_KL_TZ).date()
     cols = ("id, status, buy_scope, warehouse_ids, started_at, finished_at, run_log")
+    # Company-scoped by hand: raw SQL, so the ORM isolation filter never sees it. Without the
+    # predicate the reorder page opens on whichever company ran most recently, which is
+    # another company's plan wearing this company's chrome.
+    co, co_params = company_sql_predicate(db, "company_id", param_prefix="ctr")
+    co_clause = f"AND {co}" if co else ""
     row = db.execute(text(f"""
         SELECT {cols}
         FROM scm.reorder_run
         WHERE status <> 'failed'
           AND ((started_at AT TIME ZONE 'utc') AT TIME ZONE 'Asia/Kuala_Lumpur')::date = :today
+          {co_clause}
         ORDER BY started_at DESC NULLS LAST, created_at DESC
         LIMIT 1
-    """), {"today": today}).mappings().first()
+    """), {"today": today, **co_params}).mappings().first()
     if row is not None:
         return {"row": dict(row), "is_today": True}
     # Same ordering key as dashboard_service._latest_completed_run_id so both surfaces
@@ -194,9 +201,10 @@ def today_or_latest_run(db: Session, today: Optional[date] = None) -> Optional[d
         SELECT {cols}
         FROM scm.reorder_run
         WHERE status = 'completed'
+          {co_clause}
         ORDER BY COALESCE(finished_at, created_at) DESC, created_at DESC
         LIMIT 1
-    """)).mappings().first()
+    """), co_params).mappings().first()
     if row is None:
         return None
     started = row["started_at"]
@@ -227,10 +235,57 @@ def run_reorder(run_id: str, db: Optional[Session] = None) -> dict:
             db.close()
 
 
+def _adopt_run_company_scope(db: Session, run: ReorderRun) -> None:
+    """Re-establish the company scope from the run row before reading anything.
+
+    The RQ work-horse receives a run id and NOTHING else: no request, no bearer token, and
+    therefore no company scope. An UNSET scope FAILS CLOSED, so a worker that relied on the
+    ambient scope would read no warehouses, no products and no positions, and the daily plan
+    would silently complete with zero recommendations - the worst failure shape available,
+    because an empty plan looks like a quiet week.
+
+    So the scope is a property of the RUN, adopted here. That also makes it auditable and makes
+    a past run reproducible under the company it was actually planned for.
+
+    A run with no company (a legacy row from before the column existed) is left alone rather
+    than defaulted: forcing a scope onto it would assert an ownership the row does not record.
+    Its reads then run under whatever scope the session already has, which for the worker is
+    UNSET and yields nothing - visibly empty rather than wrong.
+    """
+    from app.models.base import set_company_scope
+
+    company_id = getattr(run, "company_id", None)
+    if company_id:
+        set_company_scope(db, frozenset({str(company_id)}))
+    else:
+        log.warning(
+            "run_reorder %s has no company; planning under the ambient scope", run.id
+        )
+
+
 def _execute_run(db: Session, run_id: str) -> dict:
+    # Read the run under NO scope: the worker has none, and the run row is the thing that
+    # tells us which company to adopt, so it cannot itself sit behind that filter.
+    from app.models.base import get_company_scope, set_company_scope
+
+    caller_scope = get_company_scope(db)
+    set_company_scope(db, None)
     run = db.get(ReorderRun, run_id)
     if run is None:
+        set_company_scope(db, caller_scope)
         raise ValueError(f"reorder_run {run_id} not found")
+    _adopt_run_company_scope(db, run)
+    try:
+        return _execute_run_scoped(db, run, caller_scope)
+    finally:
+        # Restore what the caller had. A synchronous caller (a test, a script) did not ask to
+        # have its scope changed underneath it, and leaving the run's company behind would
+        # silently re-scope everything it does next.
+        set_company_scope(db, caller_scope)
+
+
+def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
+    run_id = str(run.id)
     started = run.started_at or datetime.utcnow()
 
     # The heavy evaluation runs inside a SAVEPOINT: on failure we roll back ONLY the
@@ -318,9 +373,25 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     is an empty plan the operator can see rather than the whole catalogue dressed up as
     their request. Reading `[]` as "no filter" is what turned one mistyped location code
     into an 11,585-row plan of every warehouse.
+
+    **Company-scoped by hand**, because this is raw SQL and the isolation filter runs on ORM
+    execution ONLY. The predicate goes on the JOINED `warehouses` and `products` rather than on
+    a denormalised column: company is a property of the location, and a second copy of that
+    fact on the view row would be free to disagree with it. Both sides are filtered - the
+    location because another company's stock counted here would ADD COVER and silently suppress
+    a purchase, and the product because 11,390 codes exist in both companies, so the same code
+    resolves to two rows.
     """
     where = ["p.is_active = true", "p.is_discontinued = false"]
     params: dict[str, Any] = {}
+    wh_scope, wh_params = company_sql_predicate(db, "w.company_id", param_prefix="cw")
+    if wh_scope:
+        where.append(wh_scope)
+        params.update(wh_params)
+    prod_scope, prod_params = company_sql_predicate(db, "p.company_id", param_prefix="cp")
+    if prod_scope:
+        where.append(prod_scope)
+        params.update(prod_params)
     if product_ids is not None:
         if not product_ids:
             return []
@@ -362,10 +433,17 @@ def _last_movement_map(db: Session, product_ids: list[str],
     if warehouse_ids:
         wh = "AND cv.warehouse_id::text = ANY(:wids)"
         params["wids"] = [str(w) for w in warehouse_ids]
+    # Company-scoped through the joined location, for the same reason as `_planning_rows`:
+    # this is raw SQL over a view, so the ORM isolation filter never sees it. A last-movement
+    # date read from another company's consumption would make a dead line here look alive.
+    co, co_params = company_sql_predicate(db, "w.company_id", param_prefix="clm")
+    params.update(co_params)
     rows = db.execute(text(f"""
         SELECT cv.product_id, cv.warehouse_id, MAX(cv.day) AS last_day
         FROM scm.consumption_v cv
+        JOIN warehouses w ON w.id = cv.warehouse_id
         WHERE cv.product_id::text = ANY(:pids) {wh}
+          {("AND " + co) if co else ""}
         GROUP BY cv.product_id, cv.warehouse_id
     """), params).fetchall()
     return {(str(r[0]), str(r[1])): r[2] for r in rows}
