@@ -1029,6 +1029,13 @@ class ProjectQuotationLineResponse(BaseModel):
     uom: Optional[str] = None
     unit_type: Optional[str] = None
     line_total: Decimal = Decimal("0")
+    # Quoted at a rate and printed, contributing nothing to any total (AC-C2).
+    is_rate_only: bool = False
+    item_label: Optional[str] = None
+    brand: Optional[str] = None
+    technical_spec: Optional[str] = None
+    complete_set: Optional[str] = None
+    band_label: Optional[str] = None
 
     is_non_standard: bool = False
     # The floor IN FORCE WHEN PRICED (AC-E7). A later policy change never rewrites it.

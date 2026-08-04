@@ -635,6 +635,8 @@ export interface QuotationLine {
   uom?: string | null;
   unit_type?: UnitType | null;
   line_total: string;
+  /** Quoted at a rate and PRINTED, but contributing nothing to any total (AC-C2). */
+  is_rate_only?: boolean;
 
   is_non_standard: boolean;
   /** The floor in force WHEN PRICED (AC-E7). A later policy change never rewrites it. */

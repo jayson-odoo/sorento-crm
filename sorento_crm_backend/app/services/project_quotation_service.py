@@ -938,6 +938,14 @@ def serialize_lines(
             "uom": line.uom,
             "unit_type": line.unit_type,
             "line_total": line.line_total,
+            # Printed as a rate, counted as nothing. The screen needs it to render "rate only"
+            # in the money column and to keep it out of the footer sum.
+            "is_rate_only": bool(line.is_rate_only),
+            "item_label": line.item_label,
+            "brand": line.brand_snapshot,
+            "technical_spec": line.technical_spec,
+            "complete_set": line.complete_set,
+            "band_label": line.band_label,
             "is_non_standard": line.is_non_standard,
             "floor_value_applied": line.floor_value_applied,
             "floor_level_applied": line.floor_level_applied,

@@ -51,6 +51,14 @@ export interface InlineLineColumn<TRow> {
   /** Read-only annotation under the editor: list price, quoted price, badges. */
   annotate?: (row: TRow | null, draft: InlineDraft) => React.ReactNode;
   /**
+   * A totals cell under this column, in the table's own footer.
+   *
+   * Same rule the shared DataGrid follows: a total belongs under the column it sums. Put beside
+   * the version chips instead - "RM 1,805,907.02  Issued by ...  Opened ..." - it reads as one
+   * more fact in a row of metadata, and nothing says WHICH column it totals.
+   */
+  footer?: (rows: TRow[]) => React.ReactNode;
+  /**
    * How the raw value reads when the table cannot be edited. An input must hold the
    * string the API wants (`900.00`), but a frozen version should still say `RM 900.00`.
    */
@@ -644,22 +652,38 @@ export function InlineLineTable<TRow>({
             })}
           </tbody>
 
-          {!readOnly && (
+          {(columns.some((column) => column.footer) || !readOnly) && (
             <tfoot>
-              <tr className="border-t border-border">
-                <td colSpan={columns.length + 1} className="px-2 py-1.5">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="text-primary hover:text-primary"
-                    onClick={addRow}
-                  >
-                    <Plus className="size-4" aria-hidden />
-                    {addLabel}
-                  </Button>
-                </td>
-              </tr>
+              {columns.some((column) => column.footer) && (
+                <tr className="border-t border-border bg-muted/30 text-sm font-semibold">
+                  {columns.map((column) => (
+                    <td
+                      key={column.key}
+                      style={{ width: column.width, minWidth: column.width }}
+                      className={`px-2 py-2 ${column.align === 'end' ? 'text-end' : 'text-start'}`}
+                    >
+                      {column.footer ? column.footer(rows) : null}
+                    </td>
+                  ))}
+                  {!readOnly && <td className="px-2 py-2" />}
+                </tr>
+              )}
+              {!readOnly && (
+                <tr className="border-t border-border">
+                  <td colSpan={columns.length + 1} className="px-2 py-1.5">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="text-primary hover:text-primary"
+                      onClick={addRow}
+                    >
+                      <Plus className="size-4" aria-hidden />
+                      {addLabel}
+                    </Button>
+                  </td>
+                </tr>
+              )}
             </tfoot>
           )}
         </table>

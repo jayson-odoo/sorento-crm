@@ -195,6 +195,23 @@ export function QuotationVersionEditor({
         // Recomputed from the draft rather than read off the row, so the number moves
         // while a quantity is being typed instead of after the save lands.
         derive: (draft) => formatMyr(multiplyMoney(draft.quantity, draft.unit_price) ?? '0'),
+        /**
+         * The version's total, under the column it sums. It used to sit in the metadata strip
+         * beside "Issued by" and "Opened", where it read as one more fact about the version
+         * rather than as the sum of the numbers directly above it.
+         *
+         * Summed from the SAVED rows: a half-typed line is not money yet, and the per-row
+         * `derive` above already shows what the line in hand will come to.
+         */
+        footer: (rows) =>
+          formatMyr(
+            String(
+              rows.reduce(
+                (sum, line) => sum + (line.is_rate_only ? 0 : Number(line.line_total || 0)),
+                0,
+              ),
+            ),
+          ),
       },
     ],
     [fetchProducts, uomOptions],
@@ -266,9 +283,6 @@ export function QuotationVersionEditor({
 
       {selected && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">
-            {formatMyr(selected.total_amount)}
-          </span>
           {selected.issued_by_name && <span>Issued by {selected.issued_by_name}</span>}
           {selected.created_at && (
             <span>Opened {formatDateTimeInMalaysia(selected.created_at)}</span>
