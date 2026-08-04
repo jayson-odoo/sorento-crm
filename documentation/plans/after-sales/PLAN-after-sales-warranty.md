@@ -1,6 +1,6 @@
 # PLAN - After-Sales, Warranty & Service Scheduling
 
-**Status:** **In build. S0, S1, S2, S2a, S2b, S3, S4, S4a, S5 (intake half) and S6 (backend) implemented;
+**Status:** **In build. S0, S1, S2, S2a, S2b, S3, S4, S4a, S5 (intake half) and S6 (backend + dispatch board) implemented;
 forms-platform F0 to F2c implemented alongside them.** Migrations 310 to 326. **S3-pre is RUN (2026-08-03) and passed** - see
 `S3-pre-extraction-accuracy.md`. **Fork 6's PDPA notice is BUILT** (migration 322,
 versioned + bilingual + admin-editable). **S3 Phases 1 and 2 are COMPLETE (2026-08-03)**:
@@ -1227,8 +1227,14 @@ external providers under three new permission slugs
 Two deviations from the text below, both deliberate and both explained where they are made: the
 numbering rule seeds `SV{yy}/{month:02d}-` rather than `SV{year}/{month}-` (an unpadded month sorts
 10 before 8), and `technicians.respond_contact_id` is TEXT rather than uuid because
-`respond_contacts.id` is TEXT. **Remaining: the dispatch board UI and the technician portal**, plus
-the photo-type configuration that rides S2a's validator.
+`respond_contacts.id` is TEXT. The **dispatch board and the technician master are built** (2026-08-04):
+`/complaint-management/service-jobs` (day picker, unassigned-first columns, stall list with
+elapsed time, a job panel enforcing AC-F5 and offering only graph-legal actions) and
+`/complaint-management/technicians`. 16 vitest specs; verified in a browser against the real
+stack through the sidebar, including the 422 refusal path and 375px. **Remaining: the
+technician portal** (the one-screen, no-login surface a technician opens from a WhatsApp
+link), the case-cost panel on the complaint detail, the external-provider master UI, and the
+photo-type configuration that rides S2a's validator.
 
 Satisfies **AC-F1 to AC-F23** (except **AC-F10 to AC-F18**, whose mechanism moved to **S2a**), plus
 **AC-M28, AC-M29, AC-M30, AC-M31**. Consumes **S2a** (validator) and **S4a** (waiting attribution).
