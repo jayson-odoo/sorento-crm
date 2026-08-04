@@ -139,3 +139,42 @@ def test_running_twice_changes_nothing(seeded):
         {"r": roles["approver"], "s": APPROVE},
     ).scalar()
     assert count == 1, f"expected one grant, found {count}"
+
+
+def test_a_sales_admin_who_already_had_triage_does_not_become_an_approver(seeded):
+    """The case the first version of this migration got wrong, on the real database.
+
+    `send_for_approval` was the ONLY slug granting Reject-at-submitted, so an admin who
+    wanted to give sales admin that ability before this migration had to grant it - and
+    then the "keep today's approvers" sweep saw them as an approver and handed them the
+    decision. Pre-grant triage to the sales-admin role and it must still come out with
+    triage only.
+    """
+    db, roles = seeded
+    triage_id = db.execute(
+        text("SELECT id FROM user_permissions WHERE slug = :s"), {"s": TRIAGE}
+    ).scalar()
+    _grant(db, roles["psm"], triage_id)
+    db.flush()
+
+    _run_upgrade(db)
+
+    assert _holds(db, roles["psm"], TRIAGE)
+    assert not _holds(db, roles["psm"], APPROVE), (
+        "a sales-admin role that already held send_for_approval was swept into the "
+        "approver decision"
+    )
+
+
+def test_an_approve_grant_on_a_sales_admin_role_is_removed(seeded):
+    """Convergence for an environment where the bad sweep already ran."""
+    db, roles = seeded
+    approve_id = _permission(db, APPROVE)
+    _grant(db, roles["psc"], approve_id)
+    db.flush()
+
+    _run_upgrade(db)
+
+    assert not _holds(db, roles["psc"], APPROVE)
+    assert _holds(db, roles["psc"], TRIAGE)
+

@@ -52,22 +52,43 @@ def upgrade() -> None:
         {"slug": APPROVE},
     )
 
-    # 2. Grant sweep - every role that can decide today keeps that ability.
+    # 2. Grant sweep - every role that can decide today keeps that ability, EXCEPT the
+    #    sales-admin roles. They may already hold send_for_approval: it is the only slug
+    #    that granted Reject-at-submitted, so an admin wanting to give them triage before
+    #    this migration had no other option. Sweeping them would hand them the approver
+    #    decision - the exact thing this split exists to prevent - so they are excluded
+    #    by name here and re-granted triage alone in step 3.
     conn.execute(
         text(
             """
             INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at)
             SELECT gen_random_uuid()::text, urp.role_id, new_p.id, now()
             FROM user_role_permissions urp
+            JOIN user_roles r ON r.id = urp.role_id
             JOIN user_permissions old_p ON old_p.id = urp.permission_id AND old_p.slug = :triage
             CROSS JOIN (SELECT id FROM user_permissions WHERE slug = :approve) AS new_p
-            WHERE NOT EXISTS (
+            WHERE r.name <> ALL(:roles)
+              AND NOT EXISTS (
                 SELECT 1 FROM user_role_permissions x
                 WHERE x.role_id = urp.role_id AND x.permission_id = new_p.id
             )
             """
         ),
-        {"triage": TRIAGE, "approve": APPROVE},
+        {"triage": TRIAGE, "approve": APPROVE, "roles": list(TRIAGE_ROLES)},
+    )
+
+    # 2b. Converge an environment where the sweep already ran, or where someone granted
+    #     `approve` to a sales-admin role by hand: triage roles must never be approvers.
+    conn.execute(
+        text(
+            """
+            DELETE FROM user_role_permissions urp
+            USING user_roles r, user_permissions p
+            WHERE urp.role_id = r.id AND urp.permission_id = p.id
+              AND p.slug = :approve AND r.name = ANY(:roles)
+            """
+        ),
+        {"approve": APPROVE, "roles": list(TRIAGE_ROLES)},
     )
 
     # 3. Sales admin can now triage. Skips silently where the role name is absent.
