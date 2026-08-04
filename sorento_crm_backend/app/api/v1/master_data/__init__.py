@@ -12,6 +12,7 @@ from app.api.v1.master_data import (
     field_linkage,
     ai_extract_field,
     respond_contacts_select,
+    spec_registry,
 )
 
 router = APIRouter()
@@ -20,6 +21,7 @@ router.include_router(products_select.router, prefix="/products", tags=["product
 router.include_router(products.router, prefix="/products", tags=["products"])
 router.include_router(brands.router, prefix="/brands", tags=["brands"])
 router.include_router(categories.router, prefix="/product-categories", tags=["product-categories"])
+router.include_router(spec_registry.router, prefix="/spec-registry", tags=["spec-registry"])
 router.include_router(units_of_measure.router, prefix="/units-of-measure", tags=["units-of-measure"])
 router.include_router(product_attachments.router, prefix="/product-attachments", tags=["product-attachments"])
 router.include_router(lookup_sets.router, prefix="/lookup-sets", tags=["lookup-sets"])
