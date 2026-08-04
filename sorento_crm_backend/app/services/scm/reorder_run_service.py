@@ -54,9 +54,15 @@ _STAGES = ("resolving_policies", "computing_reorder_points",
 def create_run(db: Session, warehouse_codes: Optional[list[str]],
                buy_scope: str = "warehouse",
                budget_id: Optional[str] = None, actor: Optional[str] = None,
-               enqueue: bool = True, include_market: bool = False) -> dict:
+               enqueue: bool = True, include_market: bool = False,
+               product_codes: Optional[list[str]] = None) -> dict:
     """Insert a ``running`` ``scm.reorder_run`` (scope snapshot + started_at) and
     enqueue the RQ ``run_reorder`` task. Returns ``{run_id, status, buy_scope, stage}``.
+
+    ``product_codes`` empty/None => plan every product; a narrowed run stores the resolved
+    ids so the RQ worker, which receives only a run id, can honour the scope. A scope that
+    was asked for but resolved to nothing is stored as an EMPTY list rather than NULL, so a
+    mistyped code plans nothing instead of quietly widening to the whole catalogue.
 
     ``warehouse_codes`` empty/None => plan every active warehouse. A re-run always
     creates a NEW run_id (runs are immutable). ``enqueue=False`` skips the RQ enqueue
@@ -69,6 +75,7 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
     """
     buy_scope = buy_scope if buy_scope in ("network", "warehouse") else "warehouse"
     warehouse_ids = _resolve_warehouse_ids(db, warehouse_codes)
+    product_ids = _resolve_product_ids(db, product_codes)
     run_id = str(uuid.uuid4())
     now = datetime.utcnow()
     db.add(ReorderRun(
@@ -76,6 +83,7 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
         created_by=actor,
         status="running",
         warehouse_ids=warehouse_ids,
+        product_ids=product_ids,
         buy_scope=buy_scope,
         budget_id=budget_id or None,
         include_market=bool(include_market),
@@ -98,6 +106,24 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
 
     return {"run_id": run_id, "status": "running", "buy_scope": buy_scope,
             "stage": _STAGES[0]}
+
+
+def _resolve_product_ids(
+    db: Session, product_codes: Optional[list[str]]
+) -> Optional[list[str]]:
+    """Human product codes to ids, or None when no scope was asked for.
+
+    Returns None for "no scope" and a list for "this scope", INCLUDING the empty list when
+    nothing resolved. Collapsing those two would make a typo indistinguishable from an
+    unnarrowed run, and the unnarrowed reading is the dangerous one: it plans everything and
+    looks intentional.
+    """
+    if not product_codes:
+        return None
+    rows = db.execute(text(
+        "SELECT id FROM products WHERE product_code = ANY(:codes)"
+    ), {"codes": [str(c) for c in product_codes]}).fetchall()
+    return [str(r[0]) for r in rows]
 
 
 def _resolve_warehouse_ids(db: Session, warehouse_codes: Optional[list[str]]) -> list[str]:
@@ -200,7 +226,7 @@ def _execute_run(db: Session, run_id: str) -> dict:
         policies = eng.load_policies(db)
         today = date.today()
 
-        rows = _planning_rows(db, run.warehouse_ids)
+        rows = _planning_rows(db, run.warehouse_ids, run.product_ids)
         last_move = _last_movement_map(db, [r["product_id"] for r in rows], run.warehouse_ids)
         wh_meta = {str(r["warehouse_id"]): (r["warehouse_code"], r["warehouse_name"]) for r in rows}
 
@@ -250,11 +276,22 @@ def _execute_run(db: Session, run_id: str) -> dict:
 # planning-SKU enumeration (M2 lifecycle/focus predicate: active + ongoing)
 # ===========================================================================
 
-def _planning_rows(db: Session, warehouse_ids: Optional[list[str]]) -> list[dict]:
+def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
+                   product_ids: Optional[list[str]] = None) -> list[dict]:
     """Active + ongoing SKU×warehouse rows with a net position / demand in the selected
-    warehouses (reuses the dashboard focus predicate). Empty ``warehouse_ids`` => all."""
+    warehouses (reuses the dashboard focus predicate). Empty ``warehouse_ids`` => all.
+
+    ``product_ids`` None => every product. A LIST narrows to it, and an EMPTY list narrows to
+    nothing: a scope was asked for and none of it resolved, so the honest answer is an empty
+    plan the operator can see rather than the whole catalogue dressed up as their request.
+    """
     where = ["p.is_active = true", "p.is_discontinued = false"]
     params: dict[str, Any] = {}
+    if product_ids is not None:
+        if not product_ids:
+            return []
+        where.append("np.product_id::text = ANY(:pids)")
+        params["pids"] = [str(p) for p in product_ids]
     if warehouse_ids:
         where.append("np.warehouse_id::text = ANY(:wids)")
         params["wids"] = [str(w) for w in warehouse_ids]

@@ -61,6 +61,9 @@ def create_reorder_run(
     result = svc.create_run(
         db,
         warehouse_codes=payload.warehouse_codes or [],
+        # Passed through EMPTY-AS-NONE deliberately: an unnarrowed run must carry no product
+        # scope at all, which is what the daily scheduled run sends.
+        product_codes=payload.product_codes or None,
         budget_id=payload.budget_id,
         actor=(_user or {}).get("id"),
         include_market=payload.include_market,

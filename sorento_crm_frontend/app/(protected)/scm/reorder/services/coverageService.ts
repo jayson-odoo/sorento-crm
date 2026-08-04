@@ -97,6 +97,17 @@ export async function getCoverageTimeline(q: CoverageQuery): Promise<CoverageTim
   return (await res.json()) as CoverageTimeline;
 }
 
+/**
+ * Whether accepting a transfer proposal is possible yet.
+ *
+ * FALSE deliberately. Accepting one moves physical stock, so the endpoint belongs to the
+ * fulfilment slice that owns transfers, and it does not exist: the POST below would 404
+ * after the user had already passed a confirmation dialog. A button that appears to work
+ * and silently does nothing is worse than one that states it is unavailable, because the
+ * planner walks away believing a lorry has been booked.
+ */
+export const CAN_ACCEPT_COVERAGE_TRANSFER = false;
+
 /** Accept a cross-site transfer proposal (AC-B1d). */
 export async function acceptCoverageTransfer(
   proposalRef: string,

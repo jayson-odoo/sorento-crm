@@ -35,6 +35,7 @@ import {
   supplySplit,
 } from '../lib/coverageTimeline';
 import { useAcceptCoverageTransfer, useCoverageTimeline } from '../hooks/useCoverage';
+import { CAN_ACCEPT_COVERAGE_TRANSFER } from '../services/coverageService';
 import type {
   CoverageRow,
   CoverageTimeline,
@@ -475,10 +476,14 @@ function TransferGrid({
             <Button
               variant="outline"
               size="sm"
-              disabled={isAccepting}
+              disabled={isAccepting || !CAN_ACCEPT_COVERAGE_TRANSFER}
               // `proposal_ref` is the key for the action and is never rendered.
               onClick={() => onAccept(row.original)}
-              title={`Accept the transfer from ${row.original.from_pool_code}`}
+              title={
+                CAN_ACCEPT_COVERAGE_TRANSFER
+                  ? `Accept the transfer from ${row.original.from_pool_code}`
+                  : 'Accepting a transfer is not available yet'
+              }
             >
               Accept
             </Button>

@@ -258,21 +258,21 @@ describe('CoverageTimelinePanel - undated demand, horizon and transfers', () => 
     expect(screen.queryByText('TP-MWH-0001')).not.toBeInTheDocument();
   });
 
-  it('confirms before accepting a transfer, stating the cost and the lead time', async () => {
+  it('offers no working Accept while the transfer endpoint does not exist', async () => {
+    // The endpoint belongs to the fulfilment slice that owns physical stock movement, and
+    // it is not built. Until it is, the button must not appear to work: it previously took a
+    // confirmation and then 404ed, so a planner walked away believing a lorry was booked.
     withData(SHORTFALL);
     const section = screen.getByRole('region', { name: 'Transfer proposals' });
-    fireEvent.click(within(section).getByRole('button', { name: /Accept/i }));
+    const accept = within(section).getByRole('button', { name: /Accept/i });
 
-    const dialog = await screen.findByRole('alertdialog');
-    expect(dialog).toHaveTextContent('Accept this transfer?');
-    expect(dialog).toHaveTextContent('moves 67 of SRTBS4832 from MWH to BRW');
-    expect(dialog).toHaveTextContent('RM 480');
-    expect(dialog).toHaveTextContent('5 days lead time');
-    // Nothing happens until the confirmation is given.
-    expect(mutate).not.toHaveBeenCalled();
+    expect(accept).toBeDisabled();
+    expect(accept).toHaveAttribute('title', expect.stringMatching(/not available yet/i));
 
-    fireEvent.click(within(dialog).getByRole('button', { name: /Accept transfer/i }));
-    await waitFor(() => expect(mutate).toHaveBeenCalledWith('TP-MWH-0001'));
+    fireEvent.click(accept);
+    // No confirmation, and above all no request.
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    await waitFor(() => expect(mutate).not.toHaveBeenCalled());
   });
 
   it('says no other site holds the item when there is no proposal', () => {

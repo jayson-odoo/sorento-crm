@@ -21,6 +21,9 @@ class CreateReorderRunRequest(BaseModel):
     ``include_market`` stays false here.
     """
     warehouse_codes: List[str] = []
+    # Empty means every product, which is what the daily scheduled run sends. Human codes,
+    # never ids, like every other field the frontend passes.
+    product_codes: List[str] = []
     budget_id: Optional[str] = None  # M4 — ignored in M3
     include_market: bool = False  # M7 — opt-in market-trend priority factor
 

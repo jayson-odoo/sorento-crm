@@ -15,7 +15,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { MOCK_PLAN_TILE_COUNTS } from '../lib/coverageMockStore';
 import { MOCK_ORDER_SUMMARY_PENDING } from '../lib/summaryOrderMockStore';
 import { recToDispositionRow, splitDispositionRows } from '../lib/planRow';
 import { resetRunDecisions } from '../services/reorderRunService';
@@ -362,8 +361,12 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         buyCount={summary?.buy_count ?? 0}
         dispositionCount={actionableDispositions.length}
         cashTotal={summary?.total_cash_impact ?? 0}
-        planExceptionCount={MOCK_PLAN_TILE_COUNTS.plan_exceptions}
-        poWorklistCount={MOCK_PLAN_TILE_COUNTS.po_worklist}
+        // Null, not a number: the plan-exception and PO-worklist engines are S5 and S4, and
+        // until they exist there is nothing to count. These tiles previously rendered mock
+        // constants on the live page, so every user read "4 waiting on a decision" off
+        // nothing at all.
+        planExceptionCount={null}
+        poWorklistCount={null}
         orderSummaryPendingCount={MOCK_ORDER_SUMMARY_PENDING}
         activeView={view}
         onSelectView={setView}

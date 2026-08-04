@@ -16,6 +16,10 @@ import { fmtInt, fmtMoney } from '../../lib/format';
  *  not a view, so it never appears here. */
 export type ReorderPlanView = 'buy' | 'disposition' | 'order_summary';
 
+/** Shown instead of a count when nothing computes it yet. */
+const UNKNOWN_VALUE = '-';
+const UNKNOWN_SUBLABEL = 'not computed yet';
+
 function Tile({
   label,
   value,
@@ -112,8 +116,8 @@ export function ReorderStatTiles({
   buyCount,
   dispositionCount,
   cashTotal,
-  planExceptionCount = 0,
-  poWorklistCount = 0,
+  planExceptionCount = null,
+  poWorklistCount = null,
   orderSummaryPendingCount = 0,
   activeView,
   onSelectView,
@@ -124,9 +128,11 @@ export function ReorderStatTiles({
   dispositionCount: number;
   cashTotal: number;
   /** Open plan exceptions waiting on a decision (S5). */
-  planExceptionCount?: number;
+  /** Null when no engine computes it yet. NOT 0: zero reads as "nothing waiting". */
+  planExceptionCount?: number | null;
   /** Decided buys still to be keyed into AutoCount (S4). */
-  poWorklistCount?: number;
+  /** Null when no engine computes it yet. NOT 0: zero reads as "nothing left to key". */
+  poWorklistCount?: number | null;
   /** Short products with no order quantity decided yet (S3b). */
   orderSummaryPendingCount?: number;
   activeView: ReorderPlanView;
@@ -163,18 +169,33 @@ export function ReorderStatTiles({
         onClick={() => onSelectView('order_summary')}
       />
       <Tile label="Cash impact" value={fmtMoney(cashTotal)} icon={Wallet} />
+      {/* Both of these read "not computed" until their engines exist. A number here has to
+          come from somewhere: a fabricated count is a decision made on invented data, and a
+          0 is worse still, because "nothing waiting" is itself a claim. */}
       <Tile
         label="Plan exceptions"
-        value={fmtInt(planExceptionCount)}
-        subLabel={planExceptionCount ? 'waiting on a decision' : 'nothing disagrees with placed supply'}
+        value={planExceptionCount === null ? UNKNOWN_VALUE : fmtInt(planExceptionCount)}
+        subLabel={
+          planExceptionCount === null
+            ? UNKNOWN_SUBLABEL
+            : planExceptionCount
+              ? 'waiting on a decision'
+              : 'nothing disagrees with placed supply'
+        }
         icon={AlertTriangle}
         valueClass={planExceptionCount ? 'text-scm-stockout' : undefined}
         iconClass={planExceptionCount ? 'bg-scm-stockout-soft text-scm-stockout' : undefined}
       />
       <Tile
         label="PO worklist"
-        value={fmtInt(poWorklistCount)}
-        subLabel={poWorklistCount ? 'not yet keyed into AutoCount' : 'nothing left to key'}
+        value={poWorklistCount === null ? UNKNOWN_VALUE : fmtInt(poWorklistCount)}
+        subLabel={
+          poWorklistCount === null
+            ? UNKNOWN_SUBLABEL
+            : poWorklistCount
+              ? 'not yet keyed into AutoCount'
+              : 'nothing left to key'
+        }
         icon={ClipboardList}
       />
     </div>

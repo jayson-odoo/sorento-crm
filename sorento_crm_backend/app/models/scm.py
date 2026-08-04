@@ -192,6 +192,10 @@ class ReorderRun(Base):
     created_by = Column(String, nullable=True)
     status = Column(String(30), default="running", nullable=False)  # running | completed | failed
     warehouse_ids = Column(JSONB, nullable=True)
+    # The product scope of a manual plan. NULL means none was asked for (the daily run,
+    # which plans everything); an EMPTY list means one was asked for and nothing resolved
+    # (a mistyped code), which must plan nothing rather than widen to the whole catalogue.
+    product_ids = Column(JSONB, nullable=True)
     buy_scope = Column(String(20), nullable=True)  # network | warehouse
     budget_id = Column(UUID(as_uuid=False), ForeignKey("scm.purchasing_budget.id", ondelete="SET NULL"), nullable=True)
     budget_amount = Column(Numeric(15, 2), nullable=True)  # M4 — chosen budget the "Apply budget" action persists
