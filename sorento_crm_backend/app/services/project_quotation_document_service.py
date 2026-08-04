@@ -175,7 +175,35 @@ def create_document(
     )
     db.add(document)
     db.flush()
+    _render_templates_onto(db, document, payload)
     return document
+
+
+def _render_templates_onto(
+    db: Session, document: ProjectQuotationDocument, payload: Dict[str, Any]
+) -> None:
+    """Journey step 5: the letter is already written when the salesperson gets there (AC-E2).
+
+    Rendered ONCE, into the document's own columns, AFTER the flush - the merge fields quote the
+    document's own reference, date and recipient snapshot, so the row has to exist first.
+
+    Never re-read at print time: an admin rewriting the company letter must not rewrite a
+    quotation drafted last month, and must never touch one already issued (AC-B4 / AC-E3). A
+    caller that supplied its own text has already decided, and rendering over it would discard
+    what a person typed.
+    """
+    from app.services import project_quotation_template_service as templates
+
+    for field, kind in (
+        ("cover_letter_html", templates.TEMPLATE_KIND_COVER_LETTER),
+        ("terms_html", templates.TEMPLATE_KIND_TERMS),
+    ):
+        if (payload.get(field) or "").strip():
+            continue
+        rendered = templates.render_for_document(db, document=document, kind=kind)
+        if rendered is not None:
+            setattr(document, field, rendered)
+    db.flush()
 
 
 def get_document(db: Session, document_id: str) -> Optional[ProjectQuotationDocument]:

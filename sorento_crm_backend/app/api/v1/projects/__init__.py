@@ -11,6 +11,7 @@ from app.api.v1.projects import (
     po_intake,
     projects,
     quotation_documents,
+    quotation_templates,
     quotations,
     sales_orders,
     samples_pos,
@@ -27,6 +28,12 @@ router = APIRouter()
 # literal segment that /projects/{project_id} must not capture.
 router.include_router(forecast.router, tags=["project-reports"])
 router.include_router(types.router, prefix="/config", tags=["project-config"])
+# Cover letter and terms templates are setup too, so they join the /config surface. Same
+# reason as above for being ahead of the projects router: /config is a literal segment that
+# /projects/{project_id} must not capture.
+router.include_router(
+    quotation_templates.router, prefix="/config", tags=["project-config"]
+)
 # Tasks mount at the module root because they span three shapes: nested under a
 # project, the cross-project /my-tasks worklist, and template checklist admin. Before
 # the projects router, so /projects/{id}/tasks is not captured by /projects/{id}.

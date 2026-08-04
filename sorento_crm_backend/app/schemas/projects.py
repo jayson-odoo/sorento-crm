@@ -1488,6 +1488,56 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     updated_at: Optional[datetime] = None
 
 
+# ------------------------------------------------ cover letter and terms templates
+
+
+class QuotationTemplateBase(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    body_html: str = Field(min_length=1)
+
+
+class QuotationTemplateCreate(QuotationTemplateBase):
+    kind: str = Field(description="cover_letter | terms")
+    # Optional because the FIRST template of a kind is active on arrival whatever the caller
+    # says: a company holding a template with nothing active renders an empty letter.
+    is_active: Optional[bool] = None
+
+
+class QuotationTemplateUpdate(BaseModel):
+    """The wording and the name only.
+
+    `kind` is not editable (a letter that became terms would vanish from the section it was
+    written for) and neither is `is_active`: switching the active template is its own act with
+    its own route, so one code path deactivates the incumbent.
+    """
+
+    name: Optional[str] = Field(default=None, max_length=150)
+    body_html: Optional[str] = None
+
+
+class QuotationTemplateResponse(QuotationTemplateBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    kind: str
+    is_active: bool = False
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class QuotationMergeFieldResponse(BaseModel):
+    """One entry in the merge-field picker, served from the backend registry.
+
+    The placeholder is built server-side so the token syntax has exactly one definition; a picker
+    that assembled "{{" + token itself would be a second one, free to drift.
+    """
+
+    token: str
+    placeholder: str
+    label: str
+    example: str
+
+
 # ------------------------------------------------------------- signing
 
 

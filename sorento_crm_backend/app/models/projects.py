@@ -37,6 +37,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -713,6 +714,13 @@ QUOTATION_OUTCOME_LOST = "lost"
 # as the lead disqualification reasons.
 QUOTATION_LOSS_REASON_SET_KEY = "project_quotation_loss_reason"
 
+# The two standing texts a quotation carries (AC-E1). A closed pair rather than free text:
+# every kind needs a renderer and a place on the PDF, so a third value would be a template
+# nothing ever prints while looking perfectly configured in Setup.
+TEMPLATE_KIND_COVER_LETTER = "cover_letter"
+TEMPLATE_KIND_TERMS = "terms"
+QUOTATION_TEMPLATE_KINDS = (TEMPLATE_KIND_COVER_LETTER, TEMPLATE_KIND_TERMS)
+
 # What a line is priced per. Sorento quotes a development by repeating unit, not by
 # one flat bill of quantities: 300 house units at one basin each is a different
 # conversation from 300 basins.
@@ -897,6 +905,56 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_project_quotation_documents_project", "project_id"),
         UniqueConstraint("company_id", "document_no", name="uq_project_quotation_documents_no"),
+    )
+
+
+class QuotationTemplate(Base, CompanyScopedMixin):
+    """The company's standing cover letter and terms, as prose with merge fields in it.
+
+    Per company and per kind (AC-E1): SRT sends its letter, Zenith sends its own, and neither
+    is a library a salesperson picks from per quotation. A document renders the ACTIVE template
+    into its own editable copy at create, so editing a template never rewrites a document that
+    already exists.
+
+    **One active row per (company, kind), enforced by the database.** The partial unique index
+    below is not belt-and-braces: "the active template" has to identify exactly one row, and the
+    service can only deactivate-then-activate as two writes, which two concurrent requests can
+    interleave. ``system_settings`` is the cautionary tale in this repo - a singleton nothing
+    enforced became two rows, and every read went non-deterministic while every screen still
+    returned 200.
+
+    Deliberately a rich-text body rather than a drag-and-drop block designer (plan scope note): a
+    cover letter is a page of prose with names filled in, and the block editor earns its keep
+    where layout IS the content. The column stores HTML either way, so a designer can be added
+    later without a migration.
+    """
+
+    __tablename__ = "quotation_templates"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    # cover_letter | terms. Two values, not free text: a third would create a template nothing
+    # ever renders, and it would look configured.
+    kind = Column(String(32), nullable=False)
+    name = Column(String(150), nullable=False)
+    body_html = Column(Text, nullable=False)
+    is_active = Column(Boolean, nullable=False, server_default="false", default=False)
+
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_quotation_templates_active",
+            "company_id",
+            "kind",
+            unique=True,
+            postgresql_where=text("is_active"),
+        ),
+        Index("ix_quotation_templates_company_kind", "company_id", "kind"),
     )
 
 
