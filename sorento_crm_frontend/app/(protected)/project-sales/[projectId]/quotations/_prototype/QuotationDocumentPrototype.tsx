@@ -2,31 +2,42 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { Plus } from 'lucide-react';
+import { Download, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { formatMyr } from '../../components/QuotationsPanel';
+import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { QuotationDocumentHeader } from './QuotationDocumentHeader';
+import { QuotationScopeTabs } from './QuotationScopeTabs';
 import { QuotationScopeTable } from './QuotationScopeTable';
+import { QuotationSectionDialog } from './QuotationSectionDialog';
 import { QuotationCoverLetterPanel, QuotationTermsPanel } from './QuotationLetterPanels';
 import { QuotationSignatureBlock } from './QuotationSignatureBlock';
-import { MOCK_DOCUMENT, documentTotal, scopeTotal } from './documentMocks';
+import {
+  MOCK_DOCUMENT,
+  MOCK_STATUSES,
+  MOCK_TRANSITIONS,
+  documentTotal,
+} from './documentMocks';
+import { documentMoves, splitDocumentMoves } from './documentStatusMoves';
 
 /**
  * PHASE 1 PROTOTYPE. Mock data only, no endpoint behind any of it.
  *
  * What it exists to settle, before a single table is created: whether ONE quotation carrying
  * several scopes as tabs, with the letterhead the printed document has and the total under the
- * column it sums, is the shape the client meant. Their words: "got a header as like the excel,
- * then can add multiple tabs (meaning add multiple scope), then in each scope can add lines,
- * then the total we should always put at the bottom of the corresponding column".
+ * column it sums, is the shape the client meant.
+ *
+ * The page header follows the system's own rule and nothing else: ONE primary CTA, derived from
+ * the status graph, and every other action behind the gear. Download PDF is not a call to action,
+ * it is a thing you can also do; "Issue R3" is not a hardcoded button, it is whatever the graph
+ * says the next rung is. The total moved down into the letterhead beside the date, where it reads
+ * as a fact about the document instead of competing with the action.
  *
  * The state switcher at the top is prototype furniture and does not ship. It is here because a
- * screen reviewed only in its happy state gets rebuilt when the empty one turns out to be
- * ugly - loading, empty and error each have to be looked at before the backend is written.
+ * screen reviewed only in its happy state gets rebuilt when the empty one turns out to be ugly.
  */
 type PrototypeState = 'data' | 'loading' | 'empty' | 'error';
 
@@ -40,14 +51,19 @@ const STATES: { key: PrototypeState; label: string }[] = [
 export function QuotationDocumentPrototype({ projectId }: { projectId: string }) {
   const [state, setState] = React.useState<PrototypeState>('data');
   const [activeScopeId, setActiveScopeId] = React.useState(MOCK_DOCUMENT.scopes[0].id);
+  const [sectionDialog, setSectionDialog] = React.useState<{ label: string | null } | null>(
+    null,
+  );
 
   const document = MOCK_DOCUMENT;
   const scopes = state === 'empty' ? [] : document.scopes;
   const activeScope = scopes.find((scope) => scope.id === activeScopeId) ?? scopes[0] ?? null;
   const grandTotal = state === 'empty' ? 0 : documentTotal(document);
 
-  const statusTone =
-    document.status === 'accepted' ? 'success' : document.status === 'issued' ? 'info' : 'secondary';
+  const currentStatus = MOCK_STATUSES.find((status) => status.id === document.status_id);
+  const { primary, secondary } = splitDocumentMoves(
+    documentMoves(MOCK_STATUSES, MOCK_TRANSITIONS, document.status_id),
+  );
 
   return (
     <div className="space-y-5 pb-24">
@@ -76,27 +92,38 @@ export function QuotationDocumentPrototype({ projectId }: { projectId: string })
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm text-muted-foreground">{document.document_no}</span>
-            <Badge variant={statusTone} appearance="light" className="capitalize">
-              {document.status}
-            </Badge>
+            {currentStatus && (
+              <Badge variant="info" appearance="light">
+                {currentStatus.label}
+              </Badge>
+            )}
           </div>
           <h1 className="mt-1 break-words text-xl font-semibold">{document.subject_title}</h1>
           <p className="text-sm text-muted-foreground">{document.recipient.name}</p>
         </div>
-        <div className="flex flex-col items-start gap-2 sm:items-end">
-          {/* The grand total across every scope, which is the sample's TOTAL AMOUNT. */}
-          <div className="text-right">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Grand total</p>
-            <p className="text-lg font-semibold tabular-nums">{formatMyr(String(grandTotal))}</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" size="sm">
-              Download PDF
-            </Button>
+
+        {/* One CTA, then the gear. The move the graph calls next is the button; corrections,
+            exits and exports live behind the gear so the header states one intent. */}
+        <div className="flex flex-wrap items-center gap-2">
+          {primary && (
             <Button type="button" size="sm">
-              Issue R3
+              {primary.label}
             </Button>
-          </div>
+          )}
+          <DetailActionsMenu ariaLabel="Quotation actions">
+            <DropdownMenuItem>
+              <Download className="size-4" aria-hidden />
+              Download PDF
+            </DropdownMenuItem>
+            <DropdownMenuItem>
+              <Download className="size-4" aria-hidden />
+              Download Excel
+            </DropdownMenuItem>
+            {secondary.length > 0 && <DropdownMenuSeparator />}
+            {secondary.map((move) => (
+              <DropdownMenuItem key={move.transitionId}>{move.label}</DropdownMenuItem>
+            ))}
+          </DetailActionsMenu>
         </div>
       </header>
 
@@ -117,51 +144,47 @@ export function QuotationDocumentPrototype({ projectId }: { projectId: string })
         </div>
       ) : (
         <>
-          <QuotationDocumentHeader document={document} />
+          <QuotationDocumentHeader document={document} grandTotal={grandTotal} />
 
           {scopes.length === 0 ? (
-            // Rendered, never hidden: a quotation with no scopes is a real state on the way to
-            // a priced one, and it has to say what to do next rather than look broken.
-            <Card>
-              <CardContent className="px-6 py-10 text-center">
-                <h3 className="text-sm font-semibold">No scopes on this quotation yet</h3>
-                <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                  A scope is a part of the development priced on its own - the townhouses, the
-                  guard house, the reception.
-                </p>
-                <Button type="button" className="mt-4">
-                  <Plus className="size-4" aria-hidden />
-                  Add a scope
-                </Button>
-              </CardContent>
-            </Card>
-          ) : (
+            // Rendered, never hidden: a quotation with no scopes is a real state on the way to a
+            // priced one. The way in stays TOP-RIGHT with the other one, so a reader learns one
+            // place for it rather than a centred button that exists only while the list is empty.
             <>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <Tabs
-                  value={activeScope?.id}
-                  onValueChange={setActiveScopeId}
-                  className="min-w-0"
-                >
-                  <TabsList className="flex-wrap">
-                    {scopes.map((scope) => (
-                      <TabsTrigger key={scope.id} value={scope.id}>
-                        <span className="truncate">{scope.label}</span>
-                        <span className="ms-2 text-xs tabular-nums text-muted-foreground">
-                          {formatMyr(String(scopeTotal(scope)))}
-                        </span>
-                      </TabsTrigger>
-                    ))}
-                  </TabsList>
-                </Tabs>
+              <div className="flex justify-end">
                 <Button type="button" variant="outline" size="sm">
                   <Plus className="size-4" aria-hidden />
                   Add a scope
                 </Button>
               </div>
+              <Card>
+                <CardContent className="px-6 py-10 text-center">
+                  <h3 className="text-sm font-semibold">No scopes on this quotation yet</h3>
+                  <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                    A scope is a part of the development priced on its own - the townhouses, the
+                    guard house, the reception.
+                  </p>
+                </CardContent>
+              </Card>
+            </>
+          ) : (
+            <>
+              <QuotationScopeTabs
+                scopes={scopes}
+                activeScopeId={activeScope?.id ?? ''}
+                onSelect={setActiveScopeId}
+                canEdit
+                onAddScope={() => undefined}
+              />
 
               {activeScope && (
-                <QuotationScopeTable scope={activeScope} canEdit onAddLine={() => undefined} />
+                <QuotationScopeTable
+                  scope={activeScope}
+                  canEdit
+                  onAddLine={() => undefined}
+                  onAddSection={() => setSectionDialog({ label: null })}
+                  onEditSection={(label) => setSectionDialog({ label })}
+                />
               )}
             </>
           )}
@@ -174,6 +197,18 @@ export function QuotationDocumentPrototype({ projectId }: { projectId: string })
           <QuotationTermsPanel terms={document.terms} />
           <QuotationSignatureBlock document={document} canEdit onSign={() => undefined} />
         </>
+      )}
+
+      {sectionDialog && (
+        <QuotationSectionDialog
+          open
+          onOpenChange={(next) => {
+            if (!next) setSectionDialog(null);
+          }}
+          initialLabel={sectionDialog.label}
+          onSave={() => setSectionDialog(null)}
+          onDelete={sectionDialog.label ? () => setSectionDialog(null) : undefined}
+        />
       )}
     </div>
   );

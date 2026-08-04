@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { Card, CardContent } from '@/components/ui/card';
+import { formatMyr } from '../../components/QuotationsPanel';
 import type { MockDocument } from './documentMocks';
 
 /**
@@ -24,7 +25,13 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-export function QuotationDocumentHeader({ document }: { document: MockDocument }) {
+export function QuotationDocumentHeader({
+  document,
+  grandTotal,
+}: {
+  document: MockDocument;
+  grandTotal: number;
+}) {
   const ourRef = document.issue_label
     ? `${document.document_no} (${document.issue_label})`
     : document.document_no;
@@ -69,6 +76,13 @@ export function QuotationDocumentHeader({ document }: { document: MockDocument }
           <Field label="Our Ref" value={ourRef} />
           <Field label="Your Ref" value={document.your_ref ?? '-'} />
           <Field label="Date" value={formatDateInMalaysia(document.doc_date)} />
+          {/* The total belongs with the refs, not beside the buttons in the page header. It is a
+              FACT about the document, the same kind as its date, and the client asked for it here.
+              Up in the header it competed with the primary action for the eye. */}
+          <div className="flex gap-2 border-t border-border pt-2 text-sm">
+            <span className="w-20 shrink-0 text-muted-foreground">Total</span>
+            <span className="font-semibold tabular-nums">{formatMyr(String(grandTotal))}</span>
+          </div>
         </div>
 
         <div className="md:col-span-2 border-t border-border pt-4">

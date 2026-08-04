@@ -44,7 +44,14 @@ export function splitStatusMoves(moves: StatusMove[]): {
 } {
   if (moves.length === 0) return { primary: null, secondary: [] };
   const forward =
+    // Advance along the funnel.
     moves.find((move) => !move.toIsTerminal && move.isForward) ??
+    // A FORWARD terminal rung is still the next step. Won, Accepted and Delivered are ends,
+    // and naming one beats offering a correction: with "Accepted" terminal and "Back to draft"
+    // open, preferring merely-non-terminal made "Back to draft" the primary button on an issued
+    // quotation, which is the same failure as the sort_order one below in a new disguise.
+    moves.find((move) => move.isForward) ??
+    // Only then a backward correction, because at this point there is nothing forward left.
     moves.find((move) => !move.toIsTerminal) ??
     moves[0];
   return {

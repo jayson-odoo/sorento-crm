@@ -2,10 +2,12 @@
 
 import * as React from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Plus } from 'lucide-react';
+import { Pencil, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
+import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { PanelDataGrid } from '../../../_shared/components/PanelDataGrid';
 import { formatMyr } from '../../components/QuotationsPanel';
 import { lineAmount, type MockLine, type MockScope } from './documentMocks';
@@ -30,10 +32,15 @@ export function QuotationScopeTable({
   scope,
   canEdit,
   onAddLine,
+  onAddSection,
+  onEditSection,
 }: {
   scope: MockScope;
   canEdit: boolean;
   onAddLine?: () => void;
+  onAddSection?: () => void;
+  /** Renaming a band is an edit of the heading only; the lines under it are untouched. */
+  onEditSection?: (label: string) => void;
 }) {
   const columns = React.useMemo<ColumnDef<MockLine>[]>(
     () => [
@@ -171,11 +178,26 @@ export function QuotationScopeTable({
     <PanelDataGrid<MockLine>
       title={scope.label}
       toolbar={
-        canEdit && onAddLine ? (
-          <Button type="button" size="sm" onClick={onAddLine}>
-            <Plus className="size-4" aria-hidden />
-            Add a line
-          </Button>
+        canEdit ? (
+          <>
+            {/* ONE button on a list toolbar, the rest behind the gear. Adding a line is what a
+                person came here to do; adding a heading is occasional, so it does not get to
+                compete for the same spot. */}
+            {onAddLine && (
+              <Button type="button" size="sm" onClick={onAddLine}>
+                <Plus className="size-4" aria-hidden />
+                Add a line
+              </Button>
+            )}
+            {onAddSection && (
+              <DetailActionsMenu ariaLabel={`Actions for ${scope.label}`}>
+                <DropdownMenuItem onSelect={() => onAddSection()}>
+                  <Plus className="size-4" aria-hidden />
+                  Add a section
+                </DropdownMenuItem>
+              </DetailActionsMenu>
+            )}
+          </>
         ) : undefined
       }
       columns={columns}
@@ -186,10 +208,34 @@ export function QuotationScopeTable({
       emptyBody="Add the first line to start pricing it."
       searchPlaceholder="Search lines"
       searchOf={(row) => [row.description, row.product_code, row.brand].filter(Boolean).join(' ')}
-      // A band heading is said once, above the row that opens it.
+      /**
+       * A band heading is said once, above the row that opens it, and it is EDITABLE in place -
+       * the client asked whether sections can be added by hand, and the answer being yes is only
+       * useful if a typo in one can also be fixed without rebuilding the scope. The pencil sits on
+       * the heading rather than in a separate settings screen because that is where the reader is
+       * looking when they notice the mistake.
+       */
       renderGroupHeader={(row, previous) =>
         row.band_label && row.band_label !== previous?.band_label ? (
-          <span className="font-semibold uppercase tracking-wide">{row.band_label}</span>
+          <span className="flex items-center gap-2">
+            <span className="font-semibold uppercase tracking-wide">{row.band_label}</span>
+            {canEdit && onEditSection && (
+              <Button
+                type="button"
+                mode="icon"
+                variant="ghost"
+                size="sm"
+                aria-label={`Rename section ${row.band_label}`}
+                onClick={(event) => {
+                  // The row underneath is a way into the line; renaming the heading is not.
+                  event.stopPropagation();
+                  onEditSection(row.band_label as string);
+                }}
+              >
+                <Pencil className="size-3.5" aria-hidden />
+              </Button>
+            )}
+          </span>
         ) : null
       }
       pageSize={25}

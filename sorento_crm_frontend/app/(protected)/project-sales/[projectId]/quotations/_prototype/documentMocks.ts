@@ -40,13 +40,60 @@ export type MockScope = {
   lines: MockLine[];
 };
 
+/**
+ * The document's own rungs, shaped like a status graph rather than a hardcoded enum, because
+ * the primary CTA is derived from the graph exactly as it is on the project header. The client:
+ * "our call to action for quotation is move to next stage ma, which should be based on our
+ * status graph lo". Phase 2 reads these from `statuses` / `status_transitions`.
+ */
+export type MockStatus = {
+  id: string;
+  label: string;
+  sort_order: number;
+  is_terminal: boolean;
+};
+
+export type MockTransition = {
+  id: string;
+  from_status_id: string;
+  to_status_id: string;
+  /** What the admin called this edge, which is what the button says. */
+  label: string;
+};
+
+export const MOCK_STATUSES: MockStatus[] = [
+  { id: 'st-draft', label: 'Draft', sort_order: 1, is_terminal: false },
+  { id: 'st-issued', label: 'Issued', sort_order: 2, is_terminal: false },
+  { id: 'st-accepted', label: 'Accepted', sort_order: 3, is_terminal: true },
+  { id: 'st-withdrawn', label: 'Withdrawn', sort_order: 4, is_terminal: true },
+];
+
+export const MOCK_TRANSITIONS: MockTransition[] = [
+  { id: 'tr-1', from_status_id: 'st-draft', to_status_id: 'st-issued', label: 'Issue R3' },
+  {
+    id: 'tr-2',
+    from_status_id: 'st-issued',
+    to_status_id: 'st-accepted',
+    label: 'Mark accepted',
+  },
+  // Backward and terminal edges are real moves and stay available, behind the gear, because a
+  // correction or an exit should be deliberate. Same rule as the project header.
+  { id: 'tr-3', from_status_id: 'st-issued', to_status_id: 'st-draft', label: 'Back to draft' },
+  {
+    id: 'tr-4',
+    from_status_id: 'st-issued',
+    to_status_id: 'st-withdrawn',
+    label: 'Withdraw',
+  },
+];
+
 export type MockDocument = {
   id: string;
   document_no: string;
   issue_label: string | null;
   your_ref: string | null;
   doc_date: string;
-  status: 'draft' | 'issued' | 'accepted';
+  status_id: string;
   sender: { name: string; lines: string[]; tel: string };
   recipient: { name: string; lines: string[]; phones: string[] };
   attn_name: string | null;
@@ -183,7 +230,7 @@ export const MOCK_DOCUMENT: MockDocument = {
   issue_label: 'R2',
   your_ref: null,
   doc_date: '2026-02-26',
-  status: 'issued',
+  status_id: 'st-issued',
   sender: {
     name: 'SORENTO SDN BHD (694526-P)',
     lines: ['NO 5, JALAN ASTANA 2/KU2', 'BANDAR BUKIT RAJA', '41050 KLANG SELANGOR'],
