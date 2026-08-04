@@ -6,8 +6,10 @@ search derives from it.
 
 See documentation/plans/products/PLAN-spec-search.md section 6.
 """
-from sqlalchemy import Boolean, Column, DateTime, Integer, Numeric, String, text
-from sqlalchemy.dialects.postgresql import JSONB
+import uuid
+
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
 
 from app.database import Base
@@ -55,3 +57,70 @@ class ProductSpecRegistry(Base):
     is_active = Column(Boolean, nullable=False, server_default=text("true"), default=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True, onupdate=func.now())
+
+
+class ProductSpecifications(Base):
+    """Derived spec values for one product row.
+
+    Keyed on `product_id`, but derived and reviewed per `product_code`: the same model
+    exists once per company (11,414 codes across 22,805 rows), and deriving per row
+    would let the two copies disagree with nothing detecting it. One derivation fans
+    out to every row sharing the code.
+    """
+
+    __tablename__ = "product_specifications"
+
+    product_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("products.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    # {"diameter": {"value": 407, "unit": "mm"}, "material": {"value": "ceramic"}}
+    values = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    # Same keys as `values`: {"source", "confidence", "evidence"}. `source='human'`
+    # marks a reviewer-confirmed value, which re-derivation must never overwrite.
+    provenance = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    # The code-free spec sentence that gets embedded. Populated in T0d, not here.
+    rendered_text = Column(Text, nullable=True)
+    status = Column(String(24), nullable=False, server_default="derived")
+    # Hash of the derivation inputs. Equal hash means nothing to do, so a re-run over
+    # the whole catalog costs one read per code instead of a rewrite.
+    derived_hash = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), nullable=True, onupdate=func.now())
+
+    __table_args__ = (
+        Index("ix_product_specifications_values", "values", postgresql_using="gin"),
+        Index("ix_product_specifications_status", "status"),
+    )
+
+
+class ProductSpecException(Base):
+    """Something a human needs to look at. Exceptions only, never routine successes.
+
+    If this table fills with successes the filter is wrong, and the queue becomes the
+    data-entry programme the design exists to avoid.
+    """
+
+    __tablename__ = "product_spec_exceptions"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    product_code = Column(String(100), nullable=False)
+    spec_key = Column(String(64), nullable=False)
+    # shape_mismatch  - stored L/W/H describe a round or square product
+    # column_conflict - the description disagrees with a stored column
+    # low_confidence  - derived below the review threshold
+    reason = Column(String(48), nullable=False)
+    proposed = Column(JSONB, nullable=True)
+    stored = Column(JSONB, nullable=True)
+    resolved_at = Column(DateTime(timezone=False), nullable=True)
+    resolved_by = Column(UUID(as_uuid=False), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_product_spec_exceptions_open",
+            "product_code",
+            postgresql_where=text("resolved_at IS NULL"),
+        ),
+    )

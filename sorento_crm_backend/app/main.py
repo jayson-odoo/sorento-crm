@@ -196,6 +196,12 @@ async def startup_event():
         logging.info("Embedding change listeners registered")
     except Exception as e:
         logging.error(f"Failed to register embedding change listeners: {str(e)}", exc_info=True)
+    try:
+        from app.services.product_spec_change_listener import register_product_spec_listeners
+        register_product_spec_listeners()
+        logging.info("Product spec listeners registered")
+    except Exception as e:
+        logging.error(f"Failed to register product spec listeners: {str(e)}", exc_info=True)
     # Register task handlers unconditionally so manual "run now" works on API
     # containers even when scheduler ticks are gated to the worker container.
     try:
