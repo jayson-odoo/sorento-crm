@@ -32,6 +32,13 @@ from app.models.warranty import (
     WarrantyPolicy,
     WarrantyTerm,
 )
+from app.models.service_jobs import (
+    CaseCostLine,
+    ExternalProvider,
+    ServiceJob,
+    ServiceJobAssignment,
+    Technician,
+)
 from app.models.complaint_master_data import ComplaintRootCause, ComplaintResolution
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.attachment_field_link import AttachmentFieldLink
