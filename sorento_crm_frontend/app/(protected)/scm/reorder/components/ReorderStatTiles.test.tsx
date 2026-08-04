@@ -69,13 +69,19 @@ describe('ReorderStatTiles (M8-C0 / M8-C12)', () => {
     expect(screen.getByText('nothing left to key')).toBeInTheDocument();
   });
 
-  it('keeps the two new tiles as STATS - they are not view filters until S4/S5', () => {
-    const { onSelectView } = renderTiles({ planExceptionCount: 4, poWorklistCount: 11 });
+  it('keeps Plan exceptions a STAT - its engine is S5, so there is no view to switch to', () => {
+    const { onSelectView } = renderTiles({ planExceptionCount: 4 });
     expect(screen.queryByTitle('Show Plan exceptions recommendations')).not.toBeInTheDocument();
-    expect(screen.queryByTitle('Show PO worklist recommendations')).not.toBeInTheDocument();
     fireEvent.click(screen.getByText('Plan exceptions'));
-    fireEvent.click(screen.getByText('PO worklist'));
     expect(onSelectView).not.toHaveBeenCalled();
+  });
+
+  it('switches to the PO worklist when its card is clicked (S4, AC-E2.1)', () => {
+    // It was a stat until S4 shipped the view. A card that switched to a view which did
+    // not exist would have been worse than a plain count, which is why it waited.
+    const { onSelectView } = renderTiles({ poWorklistCount: 11 });
+    fireEvent.click(screen.getByText('PO worklist'));
+    expect(onSelectView).toHaveBeenCalledWith('po_worklist');
   });
 
   it('shows the actionable disposition count on the Stock allocation card, never a hold sub-label', () => {

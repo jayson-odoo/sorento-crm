@@ -18,6 +18,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { recToDispositionRow, splitDispositionRows } from '../lib/planRow';
 import { resetRunDecisions } from '../services/reorderRunService';
 import { useOrderSummary } from '../hooks/useSummaryOrder';
+import { usePoWorklist } from '../hooks/usePoWorklist';
+import { PoWorklistView } from './PoWorklistView';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import {
   todayRunKey,
@@ -100,6 +102,14 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const { data: cachedOrderSummary } = useOrderSummary({ run_id: currentRunId }, false);
   const orderSummaryPending = cachedOrderSummary
     ? cachedOrderSummary.rows.filter((r) => r.chosen_qty === null).length
+    : null;
+
+  // Same shape for the worklist tile: subscribed, not fetched. A use-pool decision has
+  // no purchase order, so it is not something left to key and is excluded from the count
+  // even though it IS a row on the worklist.
+  const { data: cachedWorklist } = usePoWorklist({ run_id: currentRunId }, false);
+  const poWorklistPending = cachedWorklist
+    ? cachedWorklist.rows.filter((r) => r.chosen_qty > 0 && r.keyed_status !== 'keyed').length
     : null;
   const isPastRun = !!currentItem && !isToday;
 
@@ -377,7 +387,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         // constants on the live page, so every user read "4 waiting on a decision" off
         // nothing at all.
         planExceptionCount={null}
-        poWorklistCount={null}
+        poWorklistCount={poWorklistPending}
         // From the report's own cache when it has been read, else null. Never a mock
         // constant: this tile rendered a hard-coded 2 on the live page against a real 317.
         orderSummaryPendingCount={orderSummaryPending}
@@ -385,7 +395,11 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         onSelectView={setView}
       />
 
-      {view === 'order_summary' ? (
+      {view === 'po_worklist' ? (
+        // What Mr Loo decided, ready to be keyed (S4, AC-E2.1). Reads the SAME run as
+        // the plan above, so a past run's worklist is that week's decisions.
+        <PoWorklistView runId={currentRunId} />
+      ) : view === 'order_summary' ? (
         // The weekly sheet Mr Loo decides order quantities on (S3b, AC-C2.1). Reads
         // the SAME run as the plan above, so a past run reports the week it was.
         <SummaryOrderReportView runId={currentRunId} />

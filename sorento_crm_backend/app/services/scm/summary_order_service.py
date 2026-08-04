@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import math
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
 from sqlalchemy import func, or_
@@ -856,4 +856,250 @@ def record_decision(
         "chosen_supplier_name": supplier.supplier_name,
         "decided_by": row.decided_by,
         "decided_at": row.decided_at.isoformat(),
+    }
+
+
+# =========================================================================== #
+# S4: the PO creation worklist over the decisions
+# =========================================================================== #
+
+# The keyed-into-AutoCount states (AC-E2.2). Manual, because nothing can detect it: no
+# integration exists, so the person keying is the only source of truth. `keying` is
+# load-bearing rather than decorative - it is what stops two people keying the same PO.
+KEYED_STATUSES = ("not_keyed", "keying", "keyed")
+
+
+def po_worklist(db: Session, *, run_id: Optional[str] = None) -> dict:
+    """What was decided, ready to be keyed (AC-E2.1).
+
+    Rows are the frozen report rows that carry a DECISION, and only those: a product
+    nobody has decided on belongs on the report, not on the worklist. A decision of ZERO is
+    included and says no PO is needed (AC-E2.5) - filtered out, a use-pool decision would
+    be indistinguishable from one nobody made, and the worklist could not be reconciled
+    one-for-one against the decisions.
+
+    Need-by comes off the FROZEN shortfall date, because that is what the decision was
+    taken against. Place-by is derived LIVE from need-by minus the lead time, because a
+    corrected lead time should move the date an order has to be placed by; freezing it
+    would leave a stale place-by beside a current lead time.
+    """
+    run = _run_for(db, run_id)
+    rows = (
+        db.query(OrderSummaryRow, Product, Supplier)
+        .join(Product, Product.id == OrderSummaryRow.product_id)
+        .outerjoin(Supplier, Supplier.id == OrderSummaryRow.chosen_supplier_id)
+        .filter(
+            OrderSummaryRow.run_id == run.id,
+            OrderSummaryRow.chosen_qty.isnot(None),
+        )
+        .all()
+    )
+    leads = _lead_times(
+        db,
+        [(str(r.product_id), str(r.chosen_supplier_id)) for r, _p, _s in rows
+         if r.chosen_supplier_id],
+    )
+    today = _today()
+
+    out: list[dict] = []
+    for row, product, supplier in rows:
+        lead = leads.get((str(row.product_id), str(row.chosen_supplier_id or "")))
+        need_by = row.shortfall_at
+        # No place-by from a GUESSED lead time. A derived date is acted on, so producing
+        # one from a figure nobody recorded is worse than reporting that it cannot be
+        # derived - which is the same rule the report applies to months of cover.
+        place_by = (
+            need_by - timedelta(days=int(lead))
+            if need_by is not None and lead is not None
+            else None
+        )
+        cost = _f(row.chosen_qty) or 0.0
+        unit = leads.get(("cost", str(row.product_id), str(row.chosen_supplier_id or "")))
+        out.append({
+            "product_code": product.product_code,
+            "product_name": product.product_name,
+            "uom": getattr(getattr(product, "base_uom", None), "uom_code", None),
+            "chosen_qty": _f(row.chosen_qty) or 0.0,
+            "suggested_qty": _f(row.suggested_qty) or 0.0,
+            "chosen_supplier_code": supplier.supplier_code if supplier else None,
+            "chosen_supplier_name": supplier.supplier_name if supplier else None,
+            "decided_by": row.decided_by or "unknown",
+            "decided_at": row.decided_at.isoformat() if row.decided_at else None,
+            "need_by": need_by.isoformat() if need_by else None,
+            "place_by": place_by.isoformat() if place_by else None,
+            "lead_time_days": int(lead) if lead is not None else None,
+            # Flagged rather than silently listed among the ones still in time (AC-C2). An
+            # order that had to be placed five weeks ago is a different job.
+            "is_late": bool(place_by is not None and place_by < today),
+            "last_po_cost": unit,
+            "last_po_currency": leads.get(
+                ("ccy", str(row.product_id), str(row.chosen_supplier_id or ""))
+            ),
+            "cash_committed": (round(cost * unit, 2) if unit is not None else None),
+            "keyed_status": row.keyed_status or "not_keyed",
+            "keyed_by": row.keyed_by,
+            "keyed_at": row.keyed_at.isoformat() if row.keyed_at else None,
+        })
+
+    # SERVER-owned ordering, worst first: late, then by place-by with nulls last, then by
+    # code. Filtering to not-keyed is the primary use of the screen (AC-E2.4), but urgency
+    # decides WHICH not-keyed row to do first, and a client free to re-sort could disagree
+    # with the late flag beside it.
+    out.sort(
+        key=lambda r: (
+            not r["is_late"],
+            r["place_by"] is None,
+            r["place_by"] or "",
+            r["product_code"],
+        )
+    )
+    return {
+        "run_id": str(run.id),
+        "as_of": (rows[0][0].as_of.isoformat() if rows else None),
+        "rows": out,
+    }
+
+
+def _lead_times(
+    db: Session, pairs: list[tuple[str, str]]
+) -> dict:
+    """Lead time and last cost per (product, supplier), keyed for `po_worklist`.
+
+    MEASURED lead time wins over the supplier link's standard figure, for the same reason
+    it does on the report: what a supplier actually takes is what a place-by date has to be
+    derived from, and the link's value is the promise. Cost is the ORDERED cost off the
+    newest PO line (AC-C7), falling back to the link's quoted price.
+
+    One query per source rather than one per row: the worklist is as long as the number of
+    decisions, and this is called once for all of them.
+    """
+    if not pairs:
+        return {}
+    product_ids = list({p for p, _s in pairs})
+    supplier_ids = list({s for _p, s in pairs if s})
+    out: dict = {}
+
+    for pid, sid, lead, cost, ccy in (
+        db.query(
+            ProductSupplier.product_id,
+            ProductSupplier.supplier_id,
+            ProductSupplier.standard_lead_time_days,
+            ProductSupplier.unit_cost,
+            ProductSupplier.currency,
+        )
+        .filter(
+            ProductSupplier.product_id.in_(product_ids),
+            ProductSupplier.supplier_id.in_(supplier_ids),
+        )
+        .all()
+    ):
+        key = (str(pid), str(sid))
+        if lead is not None:
+            out[key] = float(lead)
+        if cost is not None:
+            out[("cost", str(pid), str(sid))] = float(cost)
+            out[("ccy", str(pid), str(sid))] = (ccy or "").upper() or None
+
+    # Measured performance overrides the promise where it exists.
+    for sid, pid, avg in (
+        db.query(
+            SupplierPerformance.supplier_id,
+            SupplierPerformance.product_id,
+            SupplierPerformance.avg_lead_time_days,
+        )
+        .filter(
+            SupplierPerformance.supplier_id.in_(supplier_ids),
+            or_(
+                SupplierPerformance.product_id.in_(product_ids),
+                SupplierPerformance.product_id.is_(None),
+            ),
+        )
+        .order_by(SupplierPerformance.period_end.desc().nullslast())
+        .all()
+    ):
+        if avg is None:
+            continue
+        for p in ([str(pid)] if pid else product_ids):
+            out[(p, str(sid))] = float(avg)
+
+    # The ordered cost wins over the link's quote (AC-C7 reads it off prior PO lines).
+    for pid, sid, cost, ccy in (
+        db.query(
+            PurchaseOrderLine.product_id,
+            PurchaseOrder.supplier_id,
+            PurchaseOrderLine.unit_cost,
+            PurchaseOrderLine.currency,
+        )
+        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+        .filter(
+            PurchaseOrderLine.product_id.in_(product_ids),
+            PurchaseOrder.supplier_id.in_(supplier_ids),
+            PurchaseOrderLine.unit_cost.isnot(None),
+        )
+        .order_by(PurchaseOrder.issue_date.desc().nullslast())
+        .all()
+    ):
+        key = ("cost", str(pid), str(sid))
+        if key in out and out.get(("po", str(pid), str(sid))):
+            continue  # already took this pair's newest PO
+        out[key] = float(cost)
+        out[("ccy", str(pid), str(sid))] = (ccy or "").upper() or None
+        out[("po", str(pid), str(sid))] = True
+
+    return out
+
+
+def set_keyed_status(
+    db: Session,
+    product_code: str,
+    *,
+    run_id: str,
+    keyed_status: str,
+    actor: Optional[str] = None,
+) -> dict:
+    """Record that a PO has been keyed into AutoCount, or un-record it (AC-E2.2).
+
+    ANY transition is allowed, including backwards. Somebody who marked a row keyed by
+    mistake has to be able to unmark it, and a state machine that only moved forward would
+    leave them editing the database by hand.
+
+    A use-pool decision (quantity zero) is refused: there is no purchase order to key, and
+    accepting the write would record a fiction the worklist then reports as done.
+    """
+    if keyed_status not in KEYED_STATUSES:
+        raise AppException(
+            422, f"A keyed status is one of {', '.join(KEYED_STATUSES)}."
+        )
+    run = _run_for(db, run_id)
+    product = _product_by_code(db, product_code)
+    row = (
+        db.query(OrderSummaryRow)
+        .filter(
+            OrderSummaryRow.run_id == run.id,
+            OrderSummaryRow.product_id == str(product.id),
+        )
+        .one_or_none()
+    )
+    if row is None or row.chosen_qty is None:
+        raise AppException(
+            404,
+            f"{product.product_code} has no decision in that plan, so there is nothing to key.",
+        )
+    if float(row.chosen_qty) <= 0:
+        raise AppException(
+            422,
+            f"{product.product_code} is covered from stock, so there is no purchase order "
+            "to key.",
+        )
+
+    row.keyed_status = keyed_status
+    row.keyed_by = actor or "unknown"
+    row.keyed_at = to_naive_datetime(datetime.now(MALAYSIA_TZ))
+    db.commit()
+    db.refresh(row)
+    return {
+        "product_code": product.product_code,
+        "keyed_status": row.keyed_status,
+        "keyed_by": row.keyed_by,
+        "keyed_at": row.keyed_at.isoformat(),
     }

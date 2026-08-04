@@ -164,3 +164,68 @@ class OrderSummaryDecisionOut(BaseModel):
     chosen_supplier_name: str
     decided_by: str
     decided_at: str
+
+
+# =========================================================================== #
+# S4 - the PO creation worklist (UAC Group E2)
+# =========================================================================== #
+
+
+class PoWorklistRowOut(BaseModel):
+    """One decided product, ready to be keyed.
+
+    Three nullable fields are load-bearing. ``need_by`` is absent whenever nothing
+    committed is uncovered, which is most of the book; ``place_by`` and ``lead_time_days``
+    are absent when the lead time is unknown. A fabricated place-by date is worse than none
+    because it is acted on.
+    """
+
+    product_code: str
+    product_name: Optional[str] = None
+    uom: Optional[str] = None
+
+    # Zero is the use-pool decision: no purchase order is needed (AC-E2.5).
+    chosen_qty: float
+    suggested_qty: float
+    chosen_supplier_code: Optional[str] = None
+    chosen_supplier_name: Optional[str] = None
+    decided_by: str
+    decided_at: Optional[str] = None
+
+    need_by: Optional[str] = None
+    place_by: Optional[str] = None
+    lead_time_days: Optional[int] = None
+    is_late: bool = False
+
+    last_po_cost: Optional[float] = None
+    last_po_currency: Optional[str] = None
+    cash_committed: Optional[float] = None
+
+    keyed_status: str = "not_keyed"
+    keyed_by: Optional[str] = None
+    keyed_at: Optional[str] = None
+
+
+class PoWorklistOut(BaseModel):
+    run_id: str
+    as_of: Optional[str] = None
+    rows: List[PoWorklistRowOut] = Field(default_factory=list)
+
+
+class KeyedStatusIn(BaseModel):
+    """Setting the keyed-into-AutoCount status (AC-E2.2).
+
+    Any transition is allowed, including backwards: somebody who marked a row keyed by
+    mistake has to be able to unmark it.
+    """
+
+    run_id: str
+    keyed_status: str
+
+
+class KeyedStatusOut(BaseModel):
+    product_code: str
+    keyed_status: str
+    # A human NAME, never a user id: it is rendered beside the row.
+    keyed_by: str
+    keyed_at: str

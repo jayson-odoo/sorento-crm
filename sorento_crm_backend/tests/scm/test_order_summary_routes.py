@@ -96,7 +96,11 @@ def _principal(app, db, gcu, gcuk, *, perms: list[str], name="Mr Loo") -> str:
     """
     uid = _u()
     db.add(User(id=uid, email=f"{uid}@zzt-sor.test", name=name, status="ACTIVE"))
-    role = UserRole(id=_u(), slug=_code("role").lower(), name=f"{MARKER} role")
+    # `user_roles.name` is UNIQUE, so the name is marker-prefixed AND unique: a test that
+    # re-authenticates as a second principal (to check a denial) seeds a second role in the
+    # same transaction, and a fixed name collides on the insert rather than in the assertion.
+    role_code = _code("role")
+    role = UserRole(id=_u(), slug=role_code.lower(), name=role_code)
     db.add(role)
     db.flush()
     for slug in perms:
@@ -427,6 +431,137 @@ def test_a_negative_quantity_is_rejected_by_the_endpoint(chain):
             "chosen_qty": -1,
             "supplier_code": f["supplier"].supplier_code,
         },
+    )
+
+    assert res.status_code == 422, res.text
+
+
+# --------------------------------------------------------------------------- #
+# S4 - the PO worklist endpoints
+# --------------------------------------------------------------------------- #
+
+
+def _decide(client, f, *, qty):
+    return client.post(
+        f"/api/v1/scm/order-summary/{f['product'].product_code}/decision",
+        json={
+            "run_id": str(f["run"].id),
+            "chosen_qty": qty,
+            "supplier_code": f["supplier"].supplier_code,
+        },
+    )
+
+
+def test_the_worklist_serialises_every_field_the_screen_reads(chain):
+    """A response model that drops a field is invisible until the column renders blank."""
+    f = chain
+    _principal(f["app"], f["db"], f["gcu"], f["gcuk"], perms=[_VIEW_PERM, _RUN_PERM])
+    client = TestClient(f["app"])
+    assert _decide(client, f, qty=250).status_code == 200, "the decision must land first"
+
+    res = client.get(f"/api/v1/scm/po-worklist?run_id={f['run'].id}")
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["run_id"] == str(f["run"].id)
+    row = next(r for r in body["rows"] if r["product_code"] == f["product"].product_code)
+    for key in (
+        "product_code", "product_name", "uom", "chosen_qty", "suggested_qty",
+        "chosen_supplier_code", "chosen_supplier_name", "decided_by", "decided_at",
+        "need_by", "place_by", "lead_time_days", "is_late", "last_po_cost",
+        "last_po_currency", "cash_committed", "keyed_status", "keyed_by", "keyed_at",
+    ):
+        assert key in row, f"the response model dropped {key}"
+    assert row["chosen_qty"] == 250
+    assert row["keyed_status"] == "not_keyed"
+    # 40 on hand against 100 due in 10 days, so there IS a dated shortfall here.
+    assert row["need_by"]
+
+
+def test_a_nullable_worklist_field_arrives_as_null_and_not_zero(chain):
+    """A place-by date coerced to a string, or a lead time to 0, would both be acted on."""
+    f = chain
+    _principal(f["app"], f["db"], f["gcu"], f["gcuk"], perms=[_VIEW_PERM, _RUN_PERM])
+    client = TestClient(f["app"])
+    _decide(client, f, qty=250)
+
+    row = next(
+        r for r in client.get(f"/api/v1/scm/po-worklist?run_id={f['run'].id}").json()["rows"]
+        if r["product_code"] == f["product"].product_code
+    )
+
+    # No product_suppliers link and no supplier_performance row, so the lead time is
+    # genuinely unknown and the place-by date cannot be derived from it.
+    assert row["lead_time_days"] is None
+    assert row["place_by"] is None
+    assert row["is_late"] is False
+    assert row["keyed_by"] is None
+
+
+def test_reading_the_worklist_requires_the_view_permission(chain):
+    f = chain
+    _principal(f["app"], f["db"], f["gcu"], f["gcuk"], perms=[_RUN_PERM])
+    client = TestClient(f["app"])
+
+    res = client.get(f"/api/v1/scm/po-worklist?run_id={f['run'].id}")
+
+    assert res.status_code == 403, res.text
+
+
+def test_setting_the_keyed_status_echoes_it_and_names_the_person(chain):
+    """`keyed_by` is a NAME: it is rendered beside the row on a shared queue."""
+    f = chain
+    _principal(
+        f["app"], f["db"], f["gcu"], f["gcuk"],
+        perms=[_VIEW_PERM, _RUN_PERM], name="Joey",
+    )
+    client = TestClient(f["app"])
+    _decide(client, f, qty=250)
+
+    res = client.post(
+        f"/api/v1/scm/po-worklist/{f['product'].product_code}/keyed-status",
+        json={"run_id": str(f["run"].id), "keyed_status": "keying"},
+    )
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["keyed_status"] == "keying"
+    assert body["keyed_by"] == "Joey"
+    # And the next reader sees it, which is the point on a queue two people work.
+    row = next(
+        r for r in client.get(f"/api/v1/scm/po-worklist?run_id={f['run'].id}").json()["rows"]
+        if r["product_code"] == f["product"].product_code
+    )
+    assert row["keyed_status"] == "keying"
+    assert row["keyed_by"] == "Joey"
+
+
+def test_setting_the_keyed_status_requires_the_run_permission(chain):
+    """Reading the worklist must not be enough to claim a row on it."""
+    f = chain
+    _principal(f["app"], f["db"], f["gcu"], f["gcuk"], perms=[_VIEW_PERM, _RUN_PERM])
+    client = TestClient(f["app"])
+    _decide(client, f, qty=250)
+    # Re-authenticate as a read-only principal.
+    _principal(f["app"], f["db"], f["gcu"], f["gcuk"], perms=[_VIEW_PERM])
+
+    res = client.post(
+        f"/api/v1/scm/po-worklist/{f['product'].product_code}/keyed-status",
+        json={"run_id": str(f["run"].id), "keyed_status": "keyed"},
+    )
+
+    assert res.status_code == 403, res.text
+
+
+def test_an_unknown_keyed_status_is_rejected_by_the_endpoint(chain):
+    f = chain
+    _principal(f["app"], f["db"], f["gcu"], f["gcuk"], perms=[_VIEW_PERM, _RUN_PERM])
+    client = TestClient(f["app"])
+    _decide(client, f, qty=250)
+
+    res = client.post(
+        f"/api/v1/scm/po-worklist/{f['product'].product_code}/keyed-status",
+        json={"run_id": str(f["run"].id), "keyed_status": "done"},
     )
 
     assert res.status_code == 422, res.text

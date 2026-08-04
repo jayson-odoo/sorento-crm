@@ -816,3 +816,314 @@ def test_a_stated_moq_and_multiple_reach_the_wire(db, chain):
 
     assert c["moq"] == 50
     assert c["order_multiple"] == 25
+
+
+# =========================================================================== #
+# S4 - the PO creation worklist
+# =========================================================================== #
+
+
+def _decide(db, chain, *, qty, supplier, actor="Mr Loo"):
+    svc.write_rows(db, chain["run"].id)
+    return svc.record_decision(
+        db, chain["product"].product_code, run_id=chain["run"].id,
+        chosen_qty=qty, supplier_code=supplier.supplier_code, actor=actor,
+    )
+
+
+def test_the_worklist_holds_only_decided_products(db, chain):
+    """A product nobody decided on belongs on the report, not on the worklist.
+
+    Listing it here would ask Joey to key an order that does not exist.
+    """
+    f = chain
+    other = Product(
+        id=_u(), product_code=_code("UNDECIDED"), product_name="nobody decided",
+        category_id=f["cat"].id, base_uom_id=f["uom"].id, list_price=0,
+        is_active=True, is_discontinued=False,
+    )
+    db.add(other)
+    db.flush()
+    db.add(ReorderRecommendation(
+        id=_u(), run_id=f["run"].id, rec_type="buy", product_id=other.id,
+        warehouse_id=f["bin"].id, rounded_qty=5, status="proposed",
+    ))
+    db.flush()
+    sup = _supplier(db)
+    _decide(db, f, qty=100, supplier=sup)
+
+    out = svc.po_worklist(db, run_id=f["run"].id)
+    codes = [r["product_code"] for r in out["rows"]]
+
+    assert codes == [f["product"].product_code]
+    assert other.product_code not in codes
+
+
+def test_the_worklist_shows_what_was_decided_with_the_engine_figure_beside_it(db, chain):
+    """AC-E2.1. The engine figure travels so a difference stays visible off the report too."""
+    f = chain
+    sup = _supplier(db)
+    _decide(db, f, qty=500, supplier=sup, actor="Mr Loo")
+
+    row = svc.po_worklist(db, run_id=f["run"].id)["rows"][0]
+
+    assert row["chosen_qty"] == 500
+    assert row["suggested_qty"] == 120
+    assert row["chosen_supplier_code"] == sup.supplier_code
+    assert row["decided_by"] == "Mr Loo"
+    assert row["decided_at"]
+
+
+def test_a_use_pool_decision_is_a_row_saying_no_purchase_order_is_needed(db, chain):
+    """AC-E2.5. Filtered out, it is indistinguishable from a decision nobody made.
+
+    The worklist has to reconcile one-for-one against the decisions, so the zero appears
+    and the quantity itself is what says no PO is needed.
+    """
+    f = chain
+    sup = _supplier(db)
+    _decide(db, f, qty=0, supplier=sup)
+
+    rows = svc.po_worklist(db, run_id=f["run"].id)["rows"]
+
+    assert len(rows) == 1
+    assert rows[0]["chosen_qty"] == 0
+
+
+def test_a_place_by_date_is_need_by_minus_the_lead_time(db, chain):
+    """AC-C2, and it is derived LIVE rather than frozen.
+
+    A corrected lead time has to move the date an order must be placed by; a frozen
+    place-by would sit beside a current lead time and disagree with it.
+    """
+    f = chain
+    # Dated short in 60 days: 100 due then against 40 on hand.
+    _stock(db, f["product"], f["bin"], 40)
+    _so(db, f["product"], f["bin"], 100, order_type="project", required_in=60)
+    sup = _supplier(db)
+    _link(db, f["product"], sup, cost=10, lead=45)
+    _decide(db, f, qty=100, supplier=sup)
+
+    row = svc.po_worklist(db, run_id=f["run"].id)["rows"][0]
+
+    assert row["need_by"] == (_today() + timedelta(days=60)).isoformat()
+    assert row["lead_time_days"] == 45
+    assert row["place_by"] == (_today() + timedelta(days=15)).isoformat()
+    assert row["is_late"] is False
+
+
+def test_a_place_by_date_already_past_is_flagged_late(db, chain):
+    """An order that had to be placed five weeks ago is a different job from one due later.
+
+    Flagged rather than listed silently among the ones still in time.
+    """
+    f = chain
+    _so(db, f["product"], f["bin"], 100, order_type="project", required_in=7)
+    sup = _supplier(db)
+    _link(db, f["product"], sup, cost=10, lead=45)
+    _decide(db, f, qty=100, supplier=sup)
+
+    row = svc.po_worklist(db, run_id=f["run"].id)["rows"][0]
+
+    assert row["is_late"] is True
+    assert row["place_by"] < _today().isoformat()
+
+
+def test_no_dated_shortfall_means_no_need_by_and_no_place_by(db, chain):
+    """Most of the book: the buy is a policy replenishment, not a response to an order.
+
+    Stamping today's date, or a place-by derived from it, would manufacture urgency.
+    """
+    f = chain
+    sup = _supplier(db)
+    _link(db, f["product"], sup, cost=10, lead=45)
+    _decide(db, f, qty=100, supplier=sup)
+
+    row = svc.po_worklist(db, run_id=f["run"].id)["rows"][0]
+
+    assert row["need_by"] is None
+    assert row["place_by"] is None
+    assert row["is_late"] is False
+    # The lead time is still known and still stated: it is the place-by date that cannot
+    # be derived, not the lead time that is missing.
+    assert row["lead_time_days"] == 45
+
+
+def test_an_unknown_lead_time_leaves_the_place_by_date_underivable(db, chain):
+    """A place-by date from a guessed lead time is worse than none, because it is acted on."""
+    f = chain
+    _so(db, f["product"], f["bin"], 100, order_type="project", required_in=30)
+    sup = _supplier(db)
+    _decide(db, f, qty=100, supplier=sup)  # no product_suppliers link at all
+
+    row = svc.po_worklist(db, run_id=f["run"].id)["rows"][0]
+
+    assert row["need_by"] == (_today() + timedelta(days=30)).isoformat()
+    assert row["lead_time_days"] is None
+    assert row["place_by"] is None
+    assert row["is_late"] is False
+
+
+def test_cash_committed_is_the_quantity_times_the_ordered_cost(db, chain):
+    """AC-C7 reads the cost off prior PO lines, so the ordered cost wins over the quote."""
+    f = chain
+    sup = _supplier(db)
+    _link(db, f["product"], sup, cost=8, currency="MYR", lead=14)
+    _po(db, f["product"], f["bin"], 10, supplier=sup, cost=10, currency="MYR")
+    _decide(db, f, qty=250, supplier=sup)
+
+    row = svc.po_worklist(db, run_id=f["run"].id)["rows"][0]
+
+    assert row["last_po_cost"] == 10
+    assert row["last_po_currency"] == "MYR"
+    assert row["cash_committed"] == 2500
+
+
+def test_no_recorded_cost_leaves_the_cash_figure_absent(db, chain):
+    """A zero would read as a free purchase order."""
+    f = chain
+    sup = _supplier(db)
+    _decide(db, f, qty=250, supplier=sup)
+
+    row = svc.po_worklist(db, run_id=f["run"].id)["rows"][0]
+
+    assert row["last_po_cost"] is None
+    assert row["cash_committed"] is None
+
+
+def test_the_server_orders_the_worklist_late_first(db, chain):
+    """AC-E2.4 makes not-keyed the filter, but urgency decides which not-keyed row is first.
+
+    A client free to re-sort could show a different first row than the late flag implies.
+    """
+    f = chain
+    sup = _supplier(db)
+    _link(db, f["product"], sup, cost=10, lead=45)
+    # A second decided product, not late, so the ordering has something to order.
+    calm = Product(
+        id=_u(), product_code=_code("CALM"), product_name="in time",
+        category_id=f["cat"].id, base_uom_id=f["uom"].id, list_price=0,
+        is_active=True, is_discontinued=False,
+    )
+    db.add(calm)
+    db.flush()
+    db.add(ReorderRecommendation(
+        id=_u(), run_id=f["run"].id, rec_type="buy", product_id=calm.id,
+        warehouse_id=f["bin"].id, rounded_qty=10, status="proposed",
+    ))
+    db.flush()
+    _link(db, calm, sup, cost=10, lead=14)
+    # The marker product is dated short next week against a 45-day lead: late.
+    _so(db, f["product"], f["bin"], 100, order_type="project", required_in=7)
+    svc.write_rows(db, f["run"].id)
+    for p in (f["product"], calm):
+        svc.record_decision(
+            db, p.product_code, run_id=f["run"].id, chosen_qty=10,
+            supplier_code=sup.supplier_code, actor="Mr Loo",
+        )
+
+    rows = svc.po_worklist(db, run_id=f["run"].id)["rows"]
+
+    assert rows[0]["product_code"] == f["product"].product_code
+    assert rows[0]["is_late"] is True
+    assert rows[1]["is_late"] is False
+
+
+# --------------------------------------------------------------------------- #
+# the keyed status
+# --------------------------------------------------------------------------- #
+
+
+def test_a_decided_row_starts_not_keyed(db, chain):
+    """Nothing has been keyed through this screen yet, which is the truth on every row."""
+    f = chain
+    sup = _supplier(db)
+    _decide(db, f, qty=100, supplier=sup)
+
+    row = svc.po_worklist(db, run_id=f["run"].id)["rows"][0]
+
+    assert row["keyed_status"] == "not_keyed"
+    assert row["keyed_by"] is None
+    assert row["keyed_at"] is None
+
+
+def test_setting_the_keyed_status_names_who_did_it_and_when(db, chain):
+    """AC-E2.2: manual, because nothing can detect it."""
+    f = chain
+    sup = _supplier(db)
+    _decide(db, f, qty=100, supplier=sup)
+
+    out = svc.set_keyed_status(
+        db, f["product"].product_code, run_id=f["run"].id,
+        keyed_status="keyed", actor="Joey",
+    )
+
+    assert out["keyed_status"] == "keyed"
+    assert out["keyed_by"] == "Joey"
+    assert out["keyed_at"]
+    assert svc.po_worklist(db, run_id=f["run"].id)["rows"][0]["keyed_status"] == "keyed"
+
+
+def test_the_keyed_status_can_move_backwards(db, chain):
+    """Somebody who marked a row keyed by mistake has to be able to unmark it.
+
+    A forward-only state machine would leave them editing the database by hand.
+    """
+    f = chain
+    sup = _supplier(db)
+    _decide(db, f, qty=100, supplier=sup)
+    svc.set_keyed_status(
+        db, f["product"].product_code, run_id=f["run"].id,
+        keyed_status="keyed", actor="Joey",
+    )
+
+    out = svc.set_keyed_status(
+        db, f["product"].product_code, run_id=f["run"].id,
+        keyed_status="not_keyed", actor="Joey",
+    )
+
+    assert out["keyed_status"] == "not_keyed"
+
+
+def test_an_unknown_keyed_status_is_refused(db, chain):
+    """A typo'd status renders as an unknown pill and filters to nothing."""
+    f = chain
+    sup = _supplier(db)
+    _decide(db, f, qty=100, supplier=sup)
+
+    with pytest.raises(AppException) as e:
+        svc.set_keyed_status(
+            db, f["product"].product_code, run_id=f["run"].id,
+            keyed_status="done", actor="Joey",
+        )
+    assert e.value.status_code == 422
+
+
+def test_keying_a_use_pool_decision_is_refused(db, chain):
+    """There is no purchase order to key, and accepting it would record a fiction.
+
+    The worklist would then report as done something that never existed.
+    """
+    f = chain
+    sup = _supplier(db)
+    _decide(db, f, qty=0, supplier=sup)
+
+    with pytest.raises(AppException) as e:
+        svc.set_keyed_status(
+            db, f["product"].product_code, run_id=f["run"].id,
+            keyed_status="keyed", actor="Joey",
+        )
+    assert e.value.status_code == 422
+
+
+def test_keying_a_product_with_no_decision_is_refused(db, chain):
+    """Nothing was decided, so there is nothing to key."""
+    f = chain
+    svc.write_rows(db, f["run"].id)
+
+    with pytest.raises(AppException) as e:
+        svc.set_keyed_status(
+            db, f["product"].product_code, run_id=f["run"].id,
+            keyed_status="keyed", actor="Joey",
+        )
+    assert e.value.status_code == 404

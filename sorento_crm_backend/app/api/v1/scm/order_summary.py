@@ -32,11 +32,14 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.schemas.scm_order_summary import (
+    KeyedStatusIn,
+    KeyedStatusOut,
     OrderSummaryDecisionIn,
     OrderSummaryDecisionOut,
     OrderSummaryDemandDrillOut,
     OrderSummaryReportOut,
     OrderSummarySuppliersOut,
+    PoWorklistOut,
 )
 from app.services.scm import summary_order_service as svc
 
@@ -135,5 +138,55 @@ def post_order_summary_decision(
         run_id=payload.run_id,
         chosen_qty=payload.chosen_qty,
         supplier_code=payload.supplier_code,
+        actor=_actor(_user),
+    )
+
+
+# =========================================================================== #
+# S4 - the PO creation worklist (UAC Group E2)
+# =========================================================================== #
+
+
+@router.get("/po-worklist", response_model=PoWorklistOut)
+def get_po_worklist(
+    run_id: Optional[str] = Query(
+        None,
+        description=(
+            "Which plan's decisions to work. Omitted means the newest completed plan. "
+            "Opaque, and never rendered."
+        ),
+    ),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """What Mr Loo decided, ready to be keyed (AC-E2.1).
+
+    Joey executes; she does not decide. There is no accept, reject or quantity route here -
+    a second decision point would let the two screens disagree about what was ordered.
+
+    The SERVER sorts, worst first: late rows, then by place-by date with nulls last. A
+    client free to re-sort could disagree with the late flag beside the row.
+    """
+    return svc.po_worklist(db, run_id=run_id)
+
+
+@router.post("/po-worklist/{product_code}/keyed-status", response_model=KeyedStatusOut)
+def post_keyed_status(
+    product_code: str,
+    payload: KeyedStatusIn = Body(...),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_RUN),
+):
+    """Record that a purchase order has been keyed into AutoCount, or un-record it.
+
+    Manual because nothing can detect it: no integration exists (AC-E2.2). Gated on the
+    same permission as the decision itself - somebody who may run and decide a plan is who
+    keys its orders.
+    """
+    return svc.set_keyed_status(
+        db,
+        product_code,
+        run_id=payload.run_id,
+        keyed_status=payload.keyed_status,
         actor=_actor(_user),
     )

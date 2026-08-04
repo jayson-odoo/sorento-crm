@@ -13,6 +13,7 @@ Per AC-M0.3 every table carries ``source_system`` + ``source_ref`` (``'seed'`` f
 rows, ``'manual'`` for future UI rows).
 """
 from sqlalchemy import (
+    CheckConstraint,
     Column,
     String,
     Boolean,
@@ -570,6 +571,16 @@ class OrderSummaryRow(Base):
     decided_by = Column(String, nullable=True)
     decided_at = Column(DateTime(timezone=False), nullable=True)
 
+    # Whether the purchase order has been keyed into AutoCount (S4, AC-E2.2). MANUAL:
+    # nothing can detect it, so the person keying is the only source of truth. `keying` is
+    # load-bearing rather than decorative - it is what stops two people keying the same PO.
+    # `keyed_by` is a human NAME, not a user id, because it is rendered beside the row.
+    keyed_status = Column(
+        String(20), nullable=False, default="not_keyed", server_default=text("'not_keyed'")
+    )
+    keyed_by = Column(String, nullable=True)
+    keyed_at = Column(DateTime(timezone=False), nullable=True)
+
     computed_at = Column(DateTime(timezone=False), nullable=False)
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
@@ -582,5 +593,12 @@ class OrderSummaryRow(Base):
             "uq_scm_order_summary_row_run_product", "run_id", "product_id", unique=True
         ),
         Index("ix_scm_order_summary_row_run_id", "run_id"),
+        # Filtering to not-keyed is the primary use of the worklist (AC-E2.4), always
+        # within one run.
+        Index("ix_scm_order_summary_row_run_keyed", "run_id", "keyed_status"),
+        CheckConstraint(
+            "keyed_status IN ('not_keyed', 'keying', 'keyed')",
+            name="ck_scm_order_summary_row_keyed_status",
+        ),
         {"schema": "scm"},
     )

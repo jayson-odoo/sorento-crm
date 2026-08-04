@@ -14,7 +14,7 @@ import { fmtInt, fmtMoney } from '../../lib/format';
 
 /** Which recommendation set the plan view is filtered to. Cash impact is a stat,
  *  not a view, so it never appears here. */
-export type ReorderPlanView = 'buy' | 'disposition' | 'order_summary';
+export type ReorderPlanView = 'buy' | 'disposition' | 'order_summary' | 'po_worklist';
 
 /** Shown instead of a count when nothing computes it yet. */
 const UNKNOWN_VALUE = '-';
@@ -104,9 +104,9 @@ function Tile({
  * to the SCM dashboard (M8-B). Prototype: counts are mock.
  *
  * Plan exceptions and the PO worklist are TILES, not pages (AC-B9), so a count is
- * visible without navigating. They are stats for now, not clickable filters: the two
- * views themselves land in S4 (worklist) and S5 (exceptions), and a card that
- * switched to a view that does not exist yet would be worse than a plain count.
+ * visible without navigating. Plan exceptions is still a stat only: its engine is S5,
+ * and a card that switched to a view that does not exist yet would be worse than a
+ * plain count. The PO worklist became the FOURTH clickable view in S4.
  *
  * Order summary (S3b, AC-C2.1) is the THIRD clickable view: the weekly sheet Mr Loo
  * decides order quantities on. Its count is the products still waiting for a
@@ -215,6 +215,11 @@ export function ReorderStatTiles({
               : 'nothing left to key'
         }
         icon={ClipboardList}
+        // Clickable from S4 on. It stays a plain count until the worklist has been read
+        // once, for the same reason as the order-summary tile: the list is fetched when
+        // it is opened, not on every page load to fill a tile.
+        active={activeView === 'po_worklist'}
+        onClick={() => onSelectView('po_worklist')}
       />
     </div>
   );
