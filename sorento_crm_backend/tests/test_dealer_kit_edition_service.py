@@ -360,6 +360,44 @@ class TestTheApprovalCannotBeSidesteppedByTheLabel:
         assert "edition" in caught.value.detail["message"].lower()
         assert db.query(PageLabel).filter(PageLabel.page_id == page.id).count() == 0
 
+    def test_the_refusal_speaks_the_state_it_is_actually_in(self, db) -> None:
+        """One message for all four states told the owner of an APPROVED
+        Edition to publish it "so it goes past an approver" - which it already
+        had - and otherwise to reject work somebody had just signed off.
+
+        A refusal that misdescribes the situation reads as a refusal that is
+        wrong, which is how this got reported.
+        """
+        page = _page(db)
+        _version(db, page, 1)
+        second = _version(db, page, 2)
+        edition = _through_to_approved(db, page)
+        assert edition.status_key == "approved"
+
+        with pytest.raises(AppException) as caught:
+            page_service.move_label(
+                db, page.id, page_service.PUBLISHED, version_id=second.id, user_id=USER
+            )
+
+        message = caught.value.detail["message"]
+        assert edition.name in message
+        assert "approved and ready to publish" in message
+        assert "goes past an approver" not in message
+        assert "reject" not in message.lower()
+
+    def test_a_draft_is_told_to_send_it_for_approval(self, db) -> None:
+        page = _page(db)
+        _version(db, page, 1)
+        second = _version(db, page, 2)
+        _started(db, page)
+
+        with pytest.raises(AppException) as caught:
+            page_service.move_label(
+                db, page.id, page_service.PUBLISHED, version_id=second.id, user_id=USER
+            )
+
+        assert "still a draft" in caught.value.detail["message"]
+
     def test_a_page_with_no_edition_publishes_exactly_as_before(self, db) -> None:
         # S1 to S3 behaviour. Editions are not mandatory.
         page = _page(db)

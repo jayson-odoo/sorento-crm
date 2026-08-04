@@ -74,7 +74,7 @@ export function TileDesignsList() {
         cell: ({ row }) => (
           <div className="flex flex-wrap gap-1">
             {row.original.fields.map((field) => (
-              <Badge key={field} variant="outline" appearance="ghost" className="text-[10px]">
+              <Badge key={field} variant="outline" appearance="ghost" className="text-xs">
                 {TILE_FIELDS.find((candidate) => candidate.value === field)?.label ?? field}
               </Badge>
             ))}
@@ -185,7 +185,7 @@ export function TileDesignsList() {
       }
     >
       <Card>
-        <CardHeader className="block">
+        <CardHeader className="block py-5">
           <div className="flex justify-end">
             <Button
               size="sm"

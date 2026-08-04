@@ -119,7 +119,7 @@ export function BlockChrome({
         >
           <GripVertical className="size-3.5" />
         </span>
-        <span className="truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        <span className="truncate text-xs font-medium uppercase tracking-wide text-muted-foreground">
           {block.type}
         </span>
         <Button

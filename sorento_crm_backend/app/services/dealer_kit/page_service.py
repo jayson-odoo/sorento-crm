@@ -388,13 +388,48 @@ def _assert_no_open_edition_bypass(db: Session, page_id: str, version_id: str) -
     if already_published is not None:
         return
 
-    raise AppException(
-        status_code=422,
-        message=(
-            f"This catalogue has an Edition in progress ('{open_edition.name}'). "
-            "Publish it from that Edition so it goes past an approver, or "
-            "reject it first."
-        ),
+    raise AppException(status_code=422, message=_bypass_message(open_edition))
+
+
+def _bypass_message(edition) -> str:
+    """What to do about it, in the words of the state it is actually in.
+
+    One message for all four open states told an APPROVED Edition's owner to
+    publish it "so it goes past an approver" - which it already had, and the
+    only other advice offered was to reject work somebody had just signed off.
+    That reads as the guard not knowing what it is looking at, and the honest
+    reading of a confusing refusal is that the refusal is wrong.
+
+    The rule is the same in every branch. Only the sentence changes.
+    """
+    from app.services.dealer_kit.edition_service import (
+        APPROVED,
+        PENDING_APPROVAL,
+        REJECTED,
+    )
+
+    name = edition.name
+
+    if edition.status_key == APPROVED:
+        return (
+            f"'{name}' is approved and ready to publish. Publish it from the "
+            "Edition rather than here, so the catalogue records which version "
+            "went live and the Edition closes with it."
+        )
+    if edition.status_key == PENDING_APPROVAL:
+        return (
+            f"'{name}' is waiting for approval. Publishing here would put it "
+            "live without that decision. Approve it first, then publish it "
+            "from the Edition."
+        )
+    if edition.status_key == REJECTED:
+        return (
+            f"'{name}' was sent back. Reopen it, fix what the reason says, and "
+            "send it for approval again - or start a new Edition."
+        )
+    return (
+        f"'{name}' is still a draft. Send it for approval and publish it from "
+        "the Edition, or reject it if it is not going anywhere."
     )
 
 

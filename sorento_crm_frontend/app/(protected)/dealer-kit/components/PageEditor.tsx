@@ -573,7 +573,7 @@ export function PageEditor({ pageId, doc, assets, onDocChange }: PageEditorProps
                   {section.name}
                 </span>
                 {section.printMode === 'breakBefore' && (
-                  <Badge variant="outline" appearance="ghost" className="shrink-0 text-[10px]">
+                  <Badge variant="outline" appearance="ghost" className="shrink-0 text-xs">
                     break
                   </Badge>
                 )}
@@ -604,7 +604,7 @@ export function PageEditor({ pageId, doc, assets, onDocChange }: PageEditorProps
                 onClick={() => handleAddBlock(type)}
               >
                 <Icon className="size-4" />
-                <span className="text-[11px]">{label}</span>
+                <span className="text-xs">{label}</span>
               </Button>
             ))}
           </CardContent>

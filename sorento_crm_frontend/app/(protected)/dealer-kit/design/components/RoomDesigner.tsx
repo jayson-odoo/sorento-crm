@@ -1230,7 +1230,7 @@ function SelectionRow({
           {line.productCode ?? line.productName}
           {line.quantity > 1 && <span className="text-muted-foreground"> ×{line.quantity}</span>}
         </span>
-        <span className="block text-[10px] text-muted-foreground">
+        <span className="block text-xs text-muted-foreground">
           {line.dimensionsMm
             ? `${line.dimensionsMm.length} x ${line.dimensionsMm.width} x ${line.dimensionsMm.height} mm`
             : 'No dimensions in the catalogue'}
@@ -1239,12 +1239,12 @@ function SelectionRow({
       </span>
       <span className="flex shrink-0 gap-1">
         {!line.isAvailable && (
-          <Badge variant="destructive" appearance="ghost" className="text-[9px]">
+          <Badge variant="destructive" appearance="ghost" className="text-xs">
             {line.unavailableReason === 'discontinued' ? 'Discontinued' : 'Unavailable'}
           </Badge>
         )}
         {clashing && (
-          <Badge variant="warning" appearance="ghost" className="text-[9px]">
+          <Badge variant="warning" appearance="ghost" className="text-xs">
             Overlapping
           </Badge>
         )}

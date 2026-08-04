@@ -51,7 +51,7 @@ export function BundlesList() {
 
   return (
     <Card>
-      <CardHeader className="block">
+      <CardHeader className="block py-5">
         <div className="flex justify-end">
           <Button size="sm" onClick={() => setCreating(true)}>
             <Plus className="size-4" />

@@ -196,7 +196,7 @@ export function FlyerReadingsList() {
       }
     >
       <Card>
-        <CardHeader className="block">
+        <CardHeader className="block py-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="relative w-full sm:max-w-xs">
               <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />

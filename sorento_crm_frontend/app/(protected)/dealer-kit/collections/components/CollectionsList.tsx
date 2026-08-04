@@ -172,7 +172,7 @@ export function CollectionsList() {
       }
     >
       <Card>
-        <CardHeader className="block">
+        <CardHeader className="block py-5">
           <div className="relative w-full sm:max-w-xs">
             <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input

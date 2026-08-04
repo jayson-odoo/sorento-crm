@@ -99,18 +99,18 @@ function ProductRow({
 
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm text-foreground">{product.name}</span>
-        <span className="block truncate font-mono text-[11px] text-muted-foreground">
+        <span className="block truncate font-mono text-xs text-muted-foreground">
           {product.code} · {product.category}
         </span>
       </span>
 
       {product.isDiscontinued && (
-        <Badge variant="warning" appearance="ghost" className="shrink-0 text-[10px]">
+        <Badge variant="warning" appearance="ghost" className="shrink-0 text-xs">
           Discontinued
         </Badge>
       )}
       {state === 'rule' && (
-        <Badge variant="outline" appearance="ghost" className="shrink-0 text-[10px]">
+        <Badge variant="outline" appearance="ghost" className="shrink-0 text-xs">
           by rule
         </Badge>
       )}
@@ -335,7 +335,7 @@ export function ProductPickerDialog({
               {members.length} product{members.length === 1 ? '' : 's'} selected
             </p>
             {draft.excludedProductIds.length > 0 && (
-              <Badge variant="outline" appearance="ghost" className="text-[10px]">
+              <Badge variant="outline" appearance="ghost" className="text-xs">
                 {draft.excludedProductIds.length} excluded
               </Badge>
             )}

@@ -188,7 +188,7 @@ export function EditionsList() {
       }
     >
       <Card>
-        <CardHeader className="flex-wrap gap-2 py-4">
+        <CardHeader className="flex-wrap gap-2 py-5">
           <div className="relative w-full sm:w-72">
             <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input

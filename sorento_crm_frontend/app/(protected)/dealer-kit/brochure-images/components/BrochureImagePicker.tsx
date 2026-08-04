@@ -276,7 +276,7 @@ export function BrochureImagePicker() {
         !nothingToChooseFrom &&
         rows.map((row) => (
           <Card key={row.productId} data-dk-bi-row={row.productCode}>
-            <CardHeader className="flex-col items-start gap-1 py-4">
+            <CardHeader className="flex-col items-start gap-1 py-5">
               <CardTitle className="text-sm">
                 {row.productCode}
                 {row.chosenAttachmentId && (
@@ -343,11 +343,11 @@ export function BrochureImagePicker() {
                         {/* The filename is the only thing distinguishing one
                             thumbnail from another when the photo is of a
                             different product entirely, so it is never hidden. */}
-                        <span className="truncate text-[11px]" title={candidate.filename}>
+                        <span className="truncate text-xs" title={candidate.filename}>
                           {candidate.filename}
                         </span>
                         {candidate.accessLevels?.includes('dealer') && (
-                          <span className="text-[10px] text-muted-foreground">dealer only</span>
+                          <span className="text-xs text-muted-foreground">dealer only</span>
                         )}
                       </button>
                     );

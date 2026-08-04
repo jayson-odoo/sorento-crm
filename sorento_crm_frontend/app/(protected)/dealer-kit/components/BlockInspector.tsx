@@ -147,7 +147,7 @@ export function BlockInspector({
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center justify-between gap-2 text-sm">
           <span className="capitalize">{block.type}</span>
-          <Badge variant="outline" appearance="ghost" className="text-[10px]">
+          <Badge variant="outline" appearance="ghost" className="text-xs">
             block
           </Badge>
         </CardTitle>

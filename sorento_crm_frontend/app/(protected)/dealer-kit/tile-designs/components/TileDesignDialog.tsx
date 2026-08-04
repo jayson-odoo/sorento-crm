@@ -192,7 +192,7 @@ export function TileDesignDialog({
                 />
                 <span className="min-w-0">
                   <span className="block text-xs text-foreground">{field.label}</span>
-                  <span className="block text-[10px] text-muted-foreground">{field.hint}</span>
+                  <span className="block text-xs text-muted-foreground">{field.hint}</span>
                 </span>
               </label>
             ))}
@@ -205,7 +205,7 @@ export function TileDesignDialog({
                 <ProductTile tile={SAMPLE} fields={fields} />
               </div>
             </div>
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Shown with a sample product that is on promotion. Price is whatever the reader is
               allowed to see, so a consumer and a dealer can see different figures in the same
               design, and a product with no offer prints its list price on its own.
