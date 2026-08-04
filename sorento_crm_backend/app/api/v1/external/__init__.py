@@ -47,6 +47,7 @@ from app.api.v1.external import (
     memory,
     ideation,
     ingest,
+    complaint_intake,
 )
 
 router = APIRouter()
@@ -54,6 +55,14 @@ router = APIRouter()
 # Ingest and current-state reads for the ESB. One route serves several
 # entities, each carrying a different permission, so the guard resolves the
 # slug from the path rather than being fixed at mount (see permissions.py).
+# S5: the one write call n8n makes when a dealer's WhatsApp burst closes. Wrapped as the
+# MCP tool `complaint_intake_submit`; the `*_submit` suffix is load-bearing, because
+# `_is_write_tool` keys off it to strip the tool from prompt dry-runs (AC-C0b).
+router.include_router(
+    complaint_intake.router,
+    prefix="/complaint-intake",
+    tags=["external"],
+)
 router.include_router(
     ingest.ingest_router,
     prefix="/ingest",

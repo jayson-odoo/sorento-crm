@@ -96,7 +96,7 @@ def _find_existing(db: Session, burst_key: str) -> Optional[Complaint]:
     )
 
 
-def _transcript(messages: List[Dict[str, Any]]) -> str:
+def transcript_of(messages: List[Dict[str, Any]]) -> str:
     """The burst as text, in the order it was sent.
 
     Kept verbatim because it is what a human reads when the extraction is wrong, and
@@ -218,7 +218,7 @@ def submit_intake(
             }
         )
 
-    transcript = _transcript(messages)
+    transcript = transcript_of(messages)
 
     complaint = Complaint(
         id=str(uuid.uuid4()),

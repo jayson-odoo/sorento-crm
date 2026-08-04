@@ -586,6 +586,34 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         ("include_tools",),
     ),
+    # --- S5: WhatsApp complaint intake (write) ---
+    ToolSpec(
+        "complaint_intake_submit",
+        (
+            "File a Sorento COMPLAINT from a dealer's WhatsApp message burst. Call this ONCE per "
+            "burst, after the debounce wait node closes it - one burst is one complaint however "
+            "many messages and photos it spans, and photos routinely arrive BEFORE the words that "
+            "explain them.\n\n"
+            "Use when a dealer reports a faulty or damaged product: 'holder broken', 'no soft "
+            "close', 'crack', 'leaking', 'pecah', 'rosak', 'tak boleh guna', 'pls replace to "
+            "shop', 'tolong tukar'. Typical message: 'DILOOMA-USJ. CSS3310BL holder broken. Pls "
+            "replace to shop'.\n\n"
+            "Required: `burst_key` (YOUR id for this burst - send the SAME value on a retry, or a "
+            "timeout will file the complaint twice) and `contact_id` (the Respond.io contact). "
+            "Send `messages` (each {text, sent_at, media_ref}) and `media_refs` for the photos.\n\n"
+            "Returns `complaint_number` to send back to the dealer, and `missing_fields` - reply "
+            "in the same conversation asking ONLY for those, never for anything already extracted. "
+            "`already_submitted: true` means this burst was filed earlier: send nothing further."
+        ),
+        "/api/v1/external/complaint-intake/submit",
+        (),
+        (),
+        method="POST",
+        body_params=("burst_key", "contact_id", "messages", "media_refs"),
+        module="complaints",
+        domain="complaints",
+        escalation_team="support",
+    ),
     # --- portal handoff ---
     ToolSpec(
         "crm_portal_link_get",
