@@ -118,7 +118,7 @@ export function ReorderStatTiles({
   cashTotal,
   planExceptionCount = null,
   poWorklistCount = null,
-  orderSummaryPendingCount = 0,
+  orderSummaryPendingCount = null,
   activeView,
   onSelectView,
 }: {
@@ -134,7 +134,9 @@ export function ReorderStatTiles({
   /** Null when no engine computes it yet. NOT 0: zero reads as "nothing left to key". */
   poWorklistCount?: number | null;
   /** Short products with no order quantity decided yet (S3b). */
-  orderSummaryPendingCount?: number;
+  /** Null until the report has been read once. See the tile body for why it is
+   *  not fetched eagerly. */
+  orderSummaryPendingCount?: number | null;
   activeView: ReorderPlanView;
   onSelectView: (view: ReorderPlanView) => void;
 }) {
@@ -162,8 +164,24 @@ export function ReorderStatTiles({
       />
       <Tile
         label="Order summary"
-        value={fmtInt(orderSummaryPendingCount)}
-        subLabel={orderSummaryPendingCount ? 'waiting on a quantity' : 'every short item decided'}
+        // Null until the report has actually been read. It used to render a hard-coded
+        // mock constant of 2 against a real book of 317 undecided rows - the same defect
+        // as the plan-exception tile, and worse for being plausible. The count is NOT
+        // fetched eagerly to fill it: the report is the whole book, and pulling it on every
+        // page load to populate one tile is a cost nobody asked for. Open the report and
+        // the tile becomes true.
+        value={
+          orderSummaryPendingCount === null
+            ? UNKNOWN_VALUE
+            : fmtInt(orderSummaryPendingCount)
+        }
+        subLabel={
+          orderSummaryPendingCount === null
+            ? 'open to count'
+            : orderSummaryPendingCount
+              ? 'waiting on a quantity'
+              : 'every planned item decided'
+        }
         icon={FileSpreadsheet}
         active={activeView === 'order_summary'}
         onClick={() => onSelectView('order_summary')}

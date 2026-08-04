@@ -658,3 +658,131 @@ def test_a_second_decision_restates_the_first(db, chain):
 
     assert out["chosen_qty"] == 150
     assert svc.report(db, run_id=f["run"].id)["rows"][0]["chosen_qty"] == 150
+
+
+# =========================================================================== #
+# the candidate SET is the linked suppliers, not the receipts
+# =========================================================================== #
+
+
+def _link(db, product, supplier, *, cost=None, currency="USD", lead=14,
+          moq=None, multiple=None, primary=False):
+    """A `product_suppliers` row: the link that makes a supplier choosable at all.
+
+    `standard_lead_time_days` is NOT NULL in the database, so it defaults to a real figure
+    here rather than None - the model marks it nullable, which is model-vs-column drift, and
+    the constraint is the one that decides.
+    """
+    from app.models.procurement import ProductSupplier
+
+    row = ProductSupplier(
+        id=_u(), product_id=product.id, supplier_id=supplier.id,
+        unit_cost=cost, currency=currency, standard_lead_time_days=lead,
+        moq=moq, order_multiple=multiple, is_primary_supplier=primary,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_a_linked_supplier_with_no_purchase_history_is_still_choosable(db, chain):
+    """The defect this fixes, seen on the live page.
+
+    C-FH24 showed a supplier and a cost on the plan grid while this screen said "No supplier
+    linked to this item": the plan sources from `product_suppliers` and the screen was built
+    from PO lines, so an item never bought had no choosable supplier and a newly linked one
+    could never be picked. "Supplier is a selectable choice" (AC-C2.5) means the choices are
+    the LINKS.
+    """
+    f = chain
+    sup = _supplier(db, "linked, never bought from")
+    _link(db, f["product"], sup, cost=42, lead=45)
+
+    out = svc.suppliers_for(db, f["product"].product_code)
+    codes = [c["supplier_code"] for c in out["candidates"]]
+
+    assert sup.supplier_code in codes
+    c = next(c for c in out["candidates"] if c["supplier_code"] == sup.supplier_code)
+    # The link's quoted price stands in for the ordered cost until there IS an ordered cost.
+    assert c["last_po_cost"] == 42
+    assert c["last_po_date"] is None
+    assert c["lead_time_days"] == 45
+    # Never bought is never delivered, and never bought is not stale either - there is no
+    # last purchase to be old.
+    assert c["delivered_line_count"] == 0
+    assert c["is_stale"] is False
+    assert c["stale_days"] is None
+
+
+def test_the_ordered_cost_beats_the_links_quoted_price(db, chain):
+    """AC-C3.1 reads the cost off the PO line. The link is a quote; the PO is a commitment."""
+    f = chain
+    sup = _supplier(db)
+    _link(db, f["product"], sup, cost=42, currency="USD")
+    _po(db, f["product"], f["bin"], 10, supplier=sup, cost=55, currency="USD")
+
+    c = svc.suppliers_for(db, f["product"].product_code)["candidates"][0]
+
+    assert c["last_po_cost"] == 55
+    assert c["last_po_number"]
+
+
+def test_a_supplier_bought_from_but_no_longer_linked_still_appears(db, chain):
+    """Dropping them would lose the comparison that makes a switch arguable.
+
+    They are a real historical source with a real price; the screen's job is to let a buyer
+    see it, not to hide it because somebody removed a link.
+    """
+    f = chain
+    unlinked = _supplier(db, "bought from, link removed")
+    _po(db, f["product"], f["bin"], 10, supplier=unlinked, cost=7)
+
+    codes = [
+        c["supplier_code"]
+        for c in svc.suppliers_for(db, f["product"].product_code)["candidates"]
+    ]
+
+    assert unlinked.supplier_code in codes
+
+
+def test_the_primary_supplier_leads_the_list_even_when_another_is_cheaper(db, chain):
+    """Burying the deliberately marked link under a cheaper one argues for an unproposed switch."""
+    f = chain
+    primary = _supplier(db, "the primary")
+    cheaper = _supplier(db, "cheaper but not primary")
+    _link(db, f["product"], primary, cost=100, primary=True)
+    _link(db, f["product"], cheaper, cost=10, primary=False)
+
+    out = svc.suppliers_for(db, f["product"].product_code)
+
+    assert out["candidates"][0]["supplier_code"] == primary.supplier_code
+    assert out["candidates"][1]["supplier_code"] == cheaper.supplier_code
+    # And the private sort marker does not leak onto the wire.
+    assert "_is_primary" not in out["candidates"][0]
+
+
+def test_an_unset_moq_is_absent_rather_than_one(db, chain):
+    """`moq` and `order_multiple` are populated in 0 of 17,408 links.
+
+    A 1 would read as "round to anything", which is a rounding rule nobody set.
+    """
+    f = chain
+    sup = _supplier(db)
+    _link(db, f["product"], sup, cost=5)
+
+    c = svc.suppliers_for(db, f["product"].product_code)["candidates"][0]
+
+    assert c["moq"] is None
+    assert c["order_multiple"] is None
+
+
+def test_a_stated_moq_and_multiple_reach_the_wire(db, chain):
+    """So the day somebody fills the columns in, the screen shows them without a code change."""
+    f = chain
+    sup = _supplier(db)
+    _link(db, f["product"], sup, cost=5, moq=50, multiple=25)
+
+    c = svc.suppliers_for(db, f["product"].product_code)["candidates"][0]
+
+    assert c["moq"] == 50
+    assert c["order_multiple"] == 25

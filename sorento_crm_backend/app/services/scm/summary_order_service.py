@@ -34,7 +34,12 @@ from sqlalchemy.orm import Session
 
 from app.models.inventory import Stock, Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
-from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
+from app.models.procurement import (
+    ProductSupplier,
+    PurchaseOrder,
+    PurchaseOrderLine,
+    Supplier,
+)
 from app.models.product import Product
 from app.models.scm import (
     DemandStat,
@@ -508,6 +513,33 @@ def suppliers_for(
     product = _product_by_code(db, product_code)
     today = _today()
 
+    # The candidate SET is the LINKED suppliers, from `product_suppliers` - the same table the
+    # reorder engine sources from, and the same one `decision_service` re-prices against. Built
+    # from purchase history instead, this screen offered nobody for an item that had never been
+    # bought while the plan beside it showed a supplier and a cost for that very item, and a
+    # newly linked supplier could never be chosen at all. "Supplier is a selectable choice"
+    # (AC-C2.5) means the choices are the links, not the receipts.
+    #
+    # That table also carries moq, order_multiple, unit_cost, currency and
+    # standard_lead_time_days across 17,408 rows, so those figures are read rather than
+    # reported absent.
+    link_rows = (
+        db.query(
+            Supplier.id,
+            Supplier.supplier_code,
+            Supplier.supplier_name,
+            ProductSupplier.unit_cost,
+            ProductSupplier.currency,
+            ProductSupplier.standard_lead_time_days,
+            ProductSupplier.moq,
+            ProductSupplier.order_multiple,
+            ProductSupplier.is_primary_supplier,
+        )
+        .join(ProductSupplier, ProductSupplier.supplier_id == Supplier.id)
+        .filter(ProductSupplier.product_id == product.id)
+        .all()
+    )
+
     # Every supplier with a PO line for this item, newest line first, so the first row seen per
     # supplier IS their last purchase. Ordered in SQL rather than compared in Python: a
     # max(date) subquery per supplier is the same answer at more cost.
@@ -530,19 +562,58 @@ def suppliers_for(
     )
 
     candidates: dict[str, dict] = {}
-    for sid, code, name, po_number, cost, currency, _expected, issued in po_rows:
-        key = str(sid)
-        if key in candidates:
-            continue
-        candidates[key] = {
+    for (
+        sid, code, name, link_cost, link_ccy, link_lead, moq, multiple, primary
+    ) in link_rows:
+        candidates[str(sid)] = {
             "supplier_code": code,
             "supplier_name": name,
-            "currency": (currency or "").upper() or None,
-            "last_po_cost": _f(cost),
-            "last_po_date": issued.isoformat() if issued else None,
-            "last_po_number": po_number,
-            "_issued": issued,
+            "currency": (link_ccy or "").upper() or None,
+            "last_po_cost": _f(link_cost),
+            "last_po_date": None,
+            "last_po_number": None,
+            # From the link, and NULL is the truth today: `moq` and `order_multiple` are
+            # populated in 0 of 17,408 rows, so a rounding rule cannot be stated. Sending 1
+            # would read as "round to anything", which is a rule nobody set. (The table also
+            # has a legacy `min_order_quantity` column the model does not map, equally empty,
+            # so nothing is lost by reading only `moq`.)
+            "moq": _f(moq),
+            "order_multiple": _f(multiple),
+            "lead_time_days": int(link_lead) if link_lead is not None else None,
+            "_issued": None,
+            "_primary": bool(primary),
         }
+
+    # PO history layered ON TOP of the links, never instead of them. A supplier who has been
+    # bought from but is no longer linked still appears: they are a real historical source and
+    # hiding them would lose the cost comparison that makes a switch arguable.
+    for sid, code, name, po_number, cost, currency, _expected, issued in po_rows:
+        key = str(sid)
+        c = candidates.get(key)
+        if c is None:
+            c = candidates[key] = {
+                "supplier_code": code,
+                "supplier_name": name,
+                "currency": None,
+                "last_po_cost": None,
+                "last_po_date": None,
+                "last_po_number": None,
+                "moq": None,
+                "order_multiple": None,
+                "lead_time_days": None,
+                "_issued": None,
+                "_primary": False,
+            }
+        if c["last_po_number"] is not None:
+            continue  # already holds this supplier's newest PO
+        c["last_po_number"] = po_number
+        c["last_po_date"] = issued.isoformat() if issued else None
+        c["_issued"] = issued
+        # The ORDERED cost is what AC-C3.1 asks for and it wins over the link's own figure:
+        # the link is a quoted price, the PO line is what was actually committed to.
+        if cost is not None:
+            c["last_po_cost"] = _f(cost)
+            c["currency"] = (currency or "").upper() or c["currency"]
 
     incoming = _last_incoming_cost(db, str(product.id))
     perf = _supplier_performance(db, str(product.id), list(candidates))
@@ -551,6 +622,7 @@ def suppliers_for(
     out: list[dict] = []
     for key, c in candidates.items():
         issued = c.pop("_issued")
+        primary = c.pop("_primary", False)
         inc_cost, inc_date, inc_ccy = incoming.get(key, (None, None, None))
         variance = cost_variance(
             c["last_po_cost"], c["currency"], inc_cost, inc_ccy
@@ -559,6 +631,7 @@ def suppliers_for(
         p = perf.get(key, {})
         out.append({
             **c,
+            "_is_primary": primary,
             "last_incoming_cost": _f(inc_cost),
             "last_incoming_date": inc_date.isoformat() if inc_date else None,
             # None whenever the two sides are not comparable (a missing figure, or two
@@ -566,23 +639,29 @@ def suppliers_for(
             # a reprice and is not one.
             "cost_variance": _f(variance.get("variance")),
             "on_time_rate": _f(p.get("on_time_rate")),
+            # MEASURED lead time wins over the link's standard figure: what a supplier
+            # actually takes is the number a place-by date has to be derived from, and the
+            # link's value is the promise. The link is the fallback, not the answer.
             "lead_time_days": (
                 int(p["avg_lead_time_days"]) if p.get("avg_lead_time_days") is not None
-                else None
+                else c.get("lead_time_days")
             ),
             "delivered_line_count": delivered.get(key, 0),
             "is_stale": bool(stale_days is not None and stale_days > stale_after_days),
             "stale_days": stale_days,
-            # MOQ and order multiple are supplier-and-item policy that S0 did not model, so
-            # they are stated as absent rather than as 1 - a multiple of 1 reads as "round to
-            # anything", which is a rounding rule nobody set.
-            "moq": None,
-            "order_multiple": None,
         })
 
-    # Cheapest comparable cost first, unknown costs last: a candidate with no recorded price
-    # is not the best offer, it is an unknown.
-    out.sort(key=lambda c: (c["last_po_cost"] is None, c["last_po_cost"] or 0))
+    # The primary supplier first, then cheapest comparable cost, then unknown costs last: a
+    # candidate with no recorded price is not the best offer, it is an unknown. Primary leads
+    # because it is the link somebody deliberately marked, and burying it under a cheaper
+    # unlinked historical source would quietly argue for a switch nobody proposed.
+    out.sort(
+        key=lambda c: (
+            not c.pop("_is_primary", False),
+            c["last_po_cost"] is None,
+            c["last_po_cost"] or 0,
+        )
+    )
     return {
         "product_code": product.product_code,
         "stale_after_days": stale_after_days,

@@ -171,23 +171,41 @@ export function SummaryOrderReportView({ runId = null }: SummaryOrderReportViewP
         size: 120,
         meta: { headerTitle: 'In transit', ...numMeta },
       },
+      // These two columns answer DIFFERENT questions and sit side by side, so each names
+      // the demand it is about. On the real book 317 of 317 planned rows read "0" here and
+      // a non-zero suggestion beside it - not a contradiction, but it reads as one under
+      // the bare labels "Shortfall" and "Suggested": there is almost no committed order
+      // book, while the policy still says restock against forecast history.
       {
         accessorKey: 'shortfall',
-        header: ({ column }) => <DataGridColumnHeader title="Shortfall" column={column} />,
+        header: ({ column }) => (
+          // `title` on this component is the LABEL, not an HTML tooltip, so the
+          // clarification lives on the cell instead.
+          <DataGridColumnHeader title="Short vs orders" column={column} />
+        ),
         cell: ({ row }) => (
-          <span className={cn(row.original.shortfall > 0 && 'font-medium text-scm-stockout')}>
+          <span
+            className={cn(row.original.shortfall > 0 && 'font-medium text-scm-stockout')}
+            title="The dated gap against committed orders"
+          >
             {fmtInt(row.original.shortfall)}
           </span>
         ),
-        size: 120,
-        meta: { headerTitle: 'Shortfall', ...numMeta },
+        size: 140,
+        meta: { headerTitle: 'Short vs orders', ...numMeta },
       },
       {
         accessorKey: 'suggested_qty',
-        header: ({ column }) => <DataGridColumnHeader title="Suggested" column={column} />,
-        cell: ({ row }) => fmtInt(row.original.suggested_qty),
-        size: 120,
-        meta: { headerTitle: 'Suggested', ...numMeta },
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Suggested (policy)" column={column} />
+        ),
+        cell: ({ row }) => (
+          <span title="What the reorder policy proposes against forecast demand, not against the orders on the book">
+            {fmtInt(row.original.suggested_qty)}
+          </span>
+        ),
+        size: 150,
+        meta: { headerTitle: 'Suggested (policy)', ...numMeta },
       },
       {
         accessorKey: 'chosen_qty',

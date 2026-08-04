@@ -195,10 +195,24 @@ describe('SummaryOrderReportView - on order and in transit stay separate (AC-C2.
   });
 });
 
+describe('SummaryOrderReportView - the two demand questions are named apart', () => {
+  it('labels the shortfall and the suggestion by the demand each is about', () => {
+    // They sit side by side and answer different questions: the shortfall is the dated gap
+    // against COMMITTED orders, the suggestion is the reorder policy against FORECAST
+    // demand. On the real book 317 of 317 planned rows show a zero shortfall beside a
+    // non-zero suggestion, which reads as a contradiction under the bare labels
+    // "Shortfall" and "Suggested" and is not one.
+    renderView(state({ data: REPORT }));
+    expect(screen.getByText('Short vs orders')).toBeInTheDocument();
+    expect(screen.getByText('Suggested (policy)')).toBeInTheDocument();
+    expect(screen.queryByText('Shortfall')).not.toBeInTheDocument();
+  });
+});
+
 describe('SummaryOrderReportView - the decision (AC-C2.7 / AC-C2.8)', () => {
   it('renders the suggested quantity beside the chosen one', () => {
     renderView(state({ data: REPORT }));
-    expect(screen.getByText('Suggested')).toBeInTheDocument();
+    expect(screen.getByText('Suggested (policy)')).toBeInTheDocument();
     expect(screen.getByText('Order qty')).toBeInTheDocument();
     const row = rowFor('B2155-NL-BLUE');
     expect(within(row).getByTestId('chosen-qty-B2155-NL-BLUE')).toHaveTextContent('600');

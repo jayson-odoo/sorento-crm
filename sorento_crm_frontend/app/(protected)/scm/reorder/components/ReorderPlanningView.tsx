@@ -15,9 +15,10 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { MOCK_ORDER_SUMMARY_PENDING } from '../lib/summaryOrderMockStore';
 import { recToDispositionRow, splitDispositionRows } from '../lib/planRow';
 import { resetRunDecisions } from '../services/reorderRunService';
+import { orderSummaryKey } from '../hooks/useSummaryOrder';
+import type { OrderSummaryReport } from '../types/summaryOrder.types';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import {
   todayRunKey,
@@ -90,6 +91,17 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const currentRunId = currentItem?.run_id ?? null;
   const isToday =
     !!todayData && currentRunId === todayData.run_id && todayData.is_today;
+
+  // How many planned products still have no decided quantity. Read from the report query's
+  // CACHE rather than fetched: the report is the whole book, and pulling it on every page
+  // load just to fill one tile is a cost nobody asked for. Null until the report has been
+  // opened once, and the tile says "open to count" instead of guessing.
+  const cachedOrderSummary = queryClient.getQueryData<OrderSummaryReport>(
+    orderSummaryKey({ run_id: currentRunId }),
+  );
+  const orderSummaryPending = cachedOrderSummary
+    ? cachedOrderSummary.rows.filter((r) => r.chosen_qty === null).length
+    : null;
   const isPastRun = !!currentItem && !isToday;
 
   const plan = useReorderPlan(currentRunId, view === 'buy' && !!currentRunId);
@@ -367,7 +379,9 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         // nothing at all.
         planExceptionCount={null}
         poWorklistCount={null}
-        orderSummaryPendingCount={MOCK_ORDER_SUMMARY_PENDING}
+        // From the report's own cache when it has been read, else null. Never a mock
+        // constant: this tile rendered a hard-coded 2 on the live page against a real 317.
+        orderSummaryPendingCount={orderSummaryPending}
         activeView={view}
         onSelectView={setView}
       />

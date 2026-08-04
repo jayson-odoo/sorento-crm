@@ -281,7 +281,10 @@ export function OrderDecisionSheet({
               <Position label="Dealer outstanding" value={row.dealer_outstanding} />
               <Position label="On order" value={row.qty_on_order} />
               <Position label="In transit" value={row.qty_in_transit} />
-              <Position label="Shortfall" value={row.shortfall} tone="short" />
+              {/* Same label as the grid column. The two surfaces are one click apart, and
+                  calling the same number "Shortfall" here and "Short vs orders" there
+                  reads as two different figures. */}
+              <Position label="Short vs orders" value={row.shortfall} tone="short" />
             </div>
           </section>
 

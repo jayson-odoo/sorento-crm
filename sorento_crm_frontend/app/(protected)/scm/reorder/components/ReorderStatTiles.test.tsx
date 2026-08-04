@@ -45,7 +45,16 @@ describe('ReorderStatTiles (M8-C0 / M8-C12)', () => {
 
   it('says what a zero order-summary count MEANS rather than leaving a bare 0', () => {
     renderTiles({ orderSummaryPendingCount: 0 });
-    expect(screen.getByText('every short item decided')).toBeInTheDocument();
+    expect(screen.getByText('every planned item decided')).toBeInTheDocument();
+  });
+
+  it('admits it has not counted yet rather than showing a number it does not have', () => {
+    // The count comes from the report query's cache, so before the report has been opened
+    // there is genuinely nothing to state. This tile used to render a hard-coded mock
+    // constant of 2 on the live page against a real book of 317 undecided rows.
+    renderTiles({ orderSummaryPendingCount: null });
+    expect(screen.getByText('open to count')).toBeInTheDocument();
+    expect(screen.queryByText('waiting on a quantity')).not.toBeInTheDocument();
   });
 
   it('switches to the order-summary view when the Order summary card is clicked (AC-C2.1)', () => {
