@@ -10,7 +10,13 @@
  *    on-order separate from in-transit: only the on-order half is still negotiable.
  */
 import { describe, it, expect } from 'vitest';
-import { computedAtLabel, coverVerdict, dayLabel, supplySplit } from './coverageTimeline';
+import {
+  computedAtLabel,
+  coverVerdict,
+  dayLabel,
+  shortfallWhen,
+  supplySplit,
+} from './coverageTimeline';
 import type { CoverageRow } from '../types/coverage.types';
 
 function row(over: Partial<CoverageRow['event']>, balance = 0): CoverageRow {
@@ -129,5 +135,19 @@ describe('coverVerdict', () => {
 
   it('says covered rather than naming a pool when there is no pool location', () => {
     expect(coverVerdict(true, 0, '', null).headline).toBe('Use existing stock');
+  });
+});
+
+
+describe('shortfallWhen', () => {
+  it('names the date when an event caused the shortfall', () => {
+    expect(shortfallWhen('2026-08-03')).toBe('on 03 Aug 2026');
+  });
+
+  it('says today when the opening balance is already under the floor', () => {
+    // The server sends `at: null` because no event caused it and the opening balance
+    // carries no date. Rendered through the dated phrasing this left "Short 1,539 on"
+    // dangling on screen.
+    expect(shortfallWhen(null)).toBe('today');
   });
 });

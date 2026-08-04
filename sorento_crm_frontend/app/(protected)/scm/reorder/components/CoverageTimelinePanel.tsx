@@ -31,6 +31,7 @@ import {
   dayLabel,
   firstLateSupply,
   monthLabel,
+  shortfallWhen,
   supplySplit,
 } from '../lib/coverageTimeline';
 import { useAcceptCoverageTransfer, useCoverageTimeline } from '../hooks/useCoverage';
@@ -654,7 +655,7 @@ export function CoverageTimelinePanel({
         >
           <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
             <span className="text-sm font-semibold text-scm-stockout">
-              Short {fmtInt(data.shortfall.qty)} on {dayLabel(data.shortfall.at)}
+              Short {fmtInt(data.shortfall.qty)} {shortfallWhen(data.shortfall.at)}
             </span>
             <span className="min-w-0 break-words text-2xs text-muted-foreground">
               {data.shortfall.ref}
@@ -694,7 +695,7 @@ export function CoverageTimelinePanel({
           tone={closingMisleading ? 'muted' : data.closing_balance < data.floor ? 'short' : 'good'}
           hint={
             closingMisleading
-              ? `does not clear the shortfall on ${dayLabel(data.shortfall?.at ?? null)}`
+              ? `does not clear the shortfall ${shortfallWhen(data.shortfall?.at ?? null)}`
               : undefined
           }
           testId="coverage-closing"

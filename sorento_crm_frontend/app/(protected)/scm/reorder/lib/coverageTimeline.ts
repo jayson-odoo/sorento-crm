@@ -200,3 +200,15 @@ export function coverVerdict(
   }
   return { tone: 'buy', headline: `Buy ${buyQty.toLocaleString('en-MY')}`, note: null };
 }
+
+/**
+ * "Short 1,539 on 03 Aug 2026", or "Short 1,539 today" when the shortfall carries no date.
+ *
+ * A dateless shortfall is the opening balance already sitting under the floor: no event
+ * caused it, so the server sends `at: null` rather than inventing today's date. Rendering
+ * it through the dated phrasing left the sentence hanging on the word "on", which reads
+ * like a bug even though the number is right.
+ */
+export function shortfallWhen(at: string | null): string {
+  return at ? `on ${dayLabel(at)}` : 'today';
+}
