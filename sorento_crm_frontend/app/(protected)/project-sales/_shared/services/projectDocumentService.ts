@@ -89,21 +89,40 @@ export async function resolveProjectDocumentTypeId(): Promise<string> {
   return match.id;
 }
 
+/** What to do when a file of the same name is already filed here. */
+export type UploadConflictChoice = 'copy' | 'replace';
+
+export type UploadOutcome =
+  | { status: 'uploaded'; document: ProjectDocument }
+  /**
+   * A same-name file already exists. NOT an error: the endpoint answers 409 precisely so the
+   * caller can ask, and it accepts `on_conflict=copy|replace` on the retry. Reporting this as
+   * "Could not upload this document" was the whole complaint - it named no cause and offered
+   * no way forward.
+   */
+  | { status: 'conflict'; existingName: string };
+
 export async function uploadProjectDocument(
   projectId: string,
   file: File,
   attachmentTypeId: string,
-): Promise<ProjectDocument> {
+  onConflict?: UploadConflictChoice,
+): Promise<UploadOutcome> {
   const form = new FormData();
   form.append('file', file);
   form.append('entity_type', 'project');
   form.append('entity_id', projectId);
   form.append('attachment_type_id', attachmentTypeId);
+  if (onConflict) form.append('on_conflict', onConflict);
+
   const response = await apiFetch(`${BASE}/`, { method: 'POST', body: form });
+  if (response.status === 409) {
+    return { status: 'conflict', existingName: file.name };
+  }
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Could not upload this document'));
   }
-  return response.json();
+  return { status: 'uploaded', document: await response.json() };
 }
 
 export async function deleteProjectDocument(attachmentId: string): Promise<void> {

@@ -129,7 +129,8 @@ describe('QuotationsPanel', () => {
     expect(await screen.findByText(/Nothing priced yet/i)).toBeInTheDocument();
     // ONE way in, in the toolbar. The centred duplicate is gone (ADR 1d): a second button
     // in the middle of an empty state is another thing to read and decide between.
-    expect(screen.getByRole('button', { name: /Add a scope/i })).toBeInTheDocument();
+    // "Add a quotation", not "Add a scope": the noun on the button is the one on the tab.
+    expect(screen.getByRole('button', { name: /Add a quotation/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Add the first scope/i })).toBeNull();
   });
 
@@ -219,7 +220,7 @@ describe('QuotationsPanel', () => {
     renderPanel({ can_edit: false });
 
     expect((await screen.findAllByText('House Units')).length).toBeGreaterThan(0);
-    expect(screen.queryByRole('button', { name: /Add a scope/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Add a quotation/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /Record outcome/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /Delete House Units/i })).toBeNull();
   });

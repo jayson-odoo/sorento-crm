@@ -303,17 +303,8 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
                   className="mx-auto size-5 text-muted-foreground"
                   aria-hidden
                 />
+                {/* One way in, in the toolbar (ADR 1d). The centred duplicate is gone. */}
                 <h3 className="mt-2 text-sm font-semibold">No sales order drafted yet</h3>
-                <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                  A confirmed purchase order and a confirmed delivery schedule produce the
-                  drafts.
-                </p>
-                {project.can_edit && (
-                  <Button type="button" className="mt-4" onClick={() => setBuilding(true)}>
-                    <Hammer className="size-4" aria-hidden />
-                    Build the first drafts
-                  </Button>
-                )}
               </div>
             ) : (
               <ScrollArea>

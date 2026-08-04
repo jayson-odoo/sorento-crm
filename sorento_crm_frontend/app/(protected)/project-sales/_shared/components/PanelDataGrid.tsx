@@ -47,6 +47,7 @@ export function PanelDataGrid<TRow extends object>({
   onRowClick,
   searchPlaceholder,
   searchOf,
+  summary,
   pageSize = 10,
 }: {
   title: string;
@@ -72,6 +73,12 @@ export function PanelDataGrid<TRow extends object>({
    * the browser answers instantly.
    */
   searchOf?: (row: TRow) => string;
+  /**
+   * A totals strip under the table. Belongs at the BOTTOM, not as a chip in the toolbar:
+   * a total is the last thing you read after the rows it sums, and a header chip saying
+   * "1 PO, RM 1,810,640.62" competes with the buttons beside it for no reason.
+   */
+  summary?: React.ReactNode;
   pageSize?: number;
 }) {
   const [pagination, setPagination] = React.useState<PaginationState>({
@@ -162,6 +169,12 @@ export function PanelDataGrid<TRow extends object>({
             </ScrollArea>
           )}
         </CardTable>
+
+        {summary && filtered.length > 0 && (
+          <CardFooter className="justify-end gap-6 border-t border-border text-sm">
+            {summary}
+          </CardFooter>
+        )}
 
         {filtered.length > pagination.pageSize && (
           <CardFooter>

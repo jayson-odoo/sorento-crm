@@ -1,11 +1,11 @@
 'use client';
 
 import * as React from 'react';
+import { useRouter } from 'next/navigation';
 import type { ColumnDef } from '@tanstack/react-table';
 import { AlertTriangle, FileStack, Plus, Trash2, TriangleAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
@@ -23,7 +23,6 @@ import type {
 } from '../../_shared/types/project.types';
 import { QuotationDialog } from './QuotationDialog';
 import { QuotationOutcomeDialog } from './QuotationOutcomeDialog';
-import { QuotationVersionEditor } from './QuotationVersionEditor';
 
 /**
  * Every quotation issued on this project, one row per REVISION.
@@ -40,6 +39,7 @@ import { QuotationVersionEditor } from './QuotationVersionEditor';
 type RevisionRow = { quotation: ProjectQuotation; version: QuotationVersion };
 
 export function QuotationsPanel({ project }: { project: Project }) {
+  const router = useRouter();
   const quotations = useQuotations(project.id);
   const { remove } = useQuotationMutations(project.id);
 
@@ -47,15 +47,9 @@ export function QuotationsPanel({ project }: { project: Project }) {
   const [editing, setEditing] = React.useState<ProjectQuotation | null>(null);
   const [deciding, setDeciding] = React.useState<ProjectQuotation | null>(null);
   const [deleting, setDeleting] = React.useState<ProjectQuotation | null>(null);
-  const [openId, setOpenId] = React.useState<string | null>(null);
 
   const rows = React.useMemo(() => quotations.data ?? [], [quotations.data]);
 
-  // Land on the first scope so the tab is not an accordion the user must open to see
-  // anything. One click saved on the common single-scope case.
-  React.useEffect(() => {
-    if (!openId && rows.length > 0) setOpenId(rows[0].id);
-  }, [openId, rows]);
 
   const totalBelowFloor = rows.reduce((sum, row) => sum + row.below_floor_count, 0);
   const totalNonStandard = rows.reduce((sum, row) => sum + row.non_standard_count, 0);
@@ -275,7 +269,6 @@ export function QuotationsPanel({ project }: { project: Project }) {
     [project.can_edit],
   );
 
-  const open = rows.find((row) => row.id === openId) ?? null;
 
   return (
     <>
@@ -298,7 +291,7 @@ export function QuotationsPanel({ project }: { project: Project }) {
             {project.can_edit && (
               <Button type="button" size="sm" onClick={() => setCreating(true)}>
                 <Plus className="size-4" aria-hidden />
-                Add a scope
+                Add a quotation
               </Button>
             )}
           </>
@@ -332,21 +325,13 @@ export function QuotationsPanel({ project }: { project: Project }) {
             .join(' ')
         }
         pageSize={15}
-        // Clicking a revision opens ITS scope below, on that revision. The editor is a full
-        // form and cannot live inside a fixed-width cell.
-        onRowClick={(row) => setOpenId(row.quotation.id)}
+        // The row is the way in, and it goes to the scope's own page: a list answers "what
+        // do we have", a form answers "what is in this one", and stacking them cramps both.
+        onRowClick={(row) =>
+          router.push(`/project-sales/${project.id}/quotations/${row.quotation.id}`)
+        }
       />
 
-      {open && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">{open.scope_label}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <QuotationVersionEditor project={project} quotation={open} />
-          </CardContent>
-        </Card>
-      )}
 
       {(creating || editing) && (
         <QuotationDialog

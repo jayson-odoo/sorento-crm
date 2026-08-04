@@ -58,6 +58,7 @@ vi.mock('../../_shared/services/projectService', async (importOriginal) => {
   };
 });
 
+import { PurchaseOrderLinesEditor } from './PurchaseOrderLinesEditor';
 import { PurchaseOrdersPanel } from './PurchaseOrdersPanel';
 import { SamplesPanel } from './SamplesPanel';
 
@@ -127,6 +128,21 @@ function renderPos(overrides: Partial<Project> = {}) {
   return render(
     <QueryClientProvider client={client}>
       <PurchaseOrdersPanel project={project(overrides)} />
+    </QueryClientProvider>,
+  );
+}
+
+/**
+ * The lines live on the PO's own PAGE now, not under the list, so the component under test is
+ * the editor itself. Rendering it through the panel was always indirect; it is now impossible.
+ */
+function renderLines(poOverrides: Partial<ProjectPurchaseOrder> = {}) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <PurchaseOrderLinesEditor project={project()} po={po(poOverrides)} />
     </QueryClientProvider>,
   );
 }
@@ -203,12 +219,11 @@ describe('PurchaseOrdersPanel', () => {
   });
 
   it('puts the quoted price beside the ordered price on a flagged line', async () => {
-    listPurchaseOrders.mockResolvedValue([po()]);
     listPurchaseOrderLines.mockResolvedValue([
       line({ unit_price: '820.00', quoted_unit_price: '900.00', price_mismatch: true }),
     ]);
 
-    renderPos();
+    renderLines();
 
     // The ordered price is now an editable cell, so it reads as a value rather than as text.
     expect(
@@ -219,10 +234,9 @@ describe('PurchaseOrdersPanel', () => {
   });
 
   it('says plainly when a PO is bound to no version, rather than implying a clean check', async () => {
-    listPurchaseOrders.mockResolvedValue([po({ quotation_version_id: null })]);
     listPurchaseOrderLines.mockResolvedValue([line()]);
 
-    renderPos();
+    renderLines({ quotation_version_id: null });
 
     expect(
       await screen.findByText(/not tied to a quotation version/i),

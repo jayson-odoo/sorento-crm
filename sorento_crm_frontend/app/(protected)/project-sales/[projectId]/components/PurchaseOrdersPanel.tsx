@@ -1,19 +1,17 @@
 'use client';
 
 import * as React from 'react';
+import { useRouter } from 'next/navigation';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
-  AlertTriangle,
   Pencil,
   Plus,
-  ReceiptText,
   Trash2,
   TrendingDown,
   Upload,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
@@ -22,15 +20,13 @@ import {
   usePurchaseOrderMutations,
   usePurchaseOrders,
 } from '../../_shared/hooks/useProjects';
-import { POToSalesOrderStep } from './POToSalesOrderStep';
 import type { Project, ProjectPurchaseOrder } from '../../_shared/types/project.types';
 import { formatMyr } from './QuotationsPanel';
 import { PurchaseOrderDialog } from './PurchaseOrderDialog';
-import { PurchaseOrderLinesEditor } from './PurchaseOrderLinesEditor';
 import { POIntakeUploadDialog } from './POIntakeUploadDialog';
-import { POIntakeVersionsStrip } from './POIntakeVersionsStrip';
 
-const SOURCE_LABELS: Record<string, string> = {
+/** Shared with the PO detail page, so a source reads the same in the list and on the record. */
+export const SOURCE_LABELS: Record<string, string> = {
   contractor_direct: 'Contractor direct',
   trading_house: 'Trading house',
 };
@@ -48,13 +44,13 @@ const SOURCE_LABELS: Record<string, string> = {
  * to "what did they order".
  */
 export function PurchaseOrdersPanel({ project }: { project: Project }) {
+  const router = useRouter();
   const purchaseOrders = usePurchaseOrders(project.id);
   const { remove } = usePurchaseOrderMutations(project.id);
 
   const [creating, setCreating] = React.useState(false);
   const [editing, setEditing] = React.useState<ProjectPurchaseOrder | null>(null);
   const [deleting, setDeleting] = React.useState<ProjectPurchaseOrder | null>(null);
-  const [openId, setOpenId] = React.useState<string | null>(null);
   // A `po` of null means "a PO we have no row for yet"; a PO means "another version of this
   // one", which is how a re-scanned PO stays one commitment instead of becoming two.
   const [uploadingFor, setUploadingFor] = React.useState<{
@@ -63,13 +59,7 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
 
   const rows = React.useMemo(() => purchaseOrders.data ?? [], [purchaseOrders.data]);
   const totalValue = rows.reduce((sum, row) => sum + Number(row.line_total || 0), 0);
-  const flagged = rows.filter(
-    (row) => row.model_mismatch_count > 0 || row.price_mismatch_count > 0,
-  ).length;
 
-  React.useEffect(() => {
-    if (!openId && rows.length > 0) setOpenId(rows[0].id);
-  }, [openId, rows]);
 
   const columns = React.useMemo<ColumnDef<ProjectPurchaseOrder>[]>(
     () => [
@@ -246,26 +236,15 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
     [project.can_edit],
   );
 
-  const open = rows.find((row) => row.id === openId) ?? null;
-
   return (
     <>
       <PanelDataGrid
         title="Purchase orders"
+        // The count and the value moved to the totals strip under the table, where a total
+        // belongs. "N with something to check" is gone outright: it named no PO and led
+        // nowhere, and the To check COLUMN already says which row and what about it.
         toolbar={
           <>
-            {rows.length > 0 && (
-              <Badge variant="secondary" appearance="light" className="gap-1">
-                <ReceiptText className="size-3" aria-hidden />
-                {`${rows.length} PO${rows.length === 1 ? '' : 's'}, ${formatMyr(String(totalValue))}`}
-              </Badge>
-            )}
-            {flagged > 0 && (
-              <Badge variant="destructive" appearance="light" className="gap-1">
-                <AlertTriangle className="size-3" aria-hidden />
-                {`${flagged} with something to check`}
-              </Badge>
-            )}
             {project.can_edit && (
               <>
                 <Button type="button" size="sm" onClick={() => setUploadingFor({ po: null })}>
@@ -292,37 +271,25 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
         isLoading={purchaseOrders.isLoading}
         error={purchaseOrders.isError ? purchaseOrders.error : undefined}
         emptyTitle="No PO received yet"
-        // Selecting a row opens its lines below, rather than expanding inside the table:
-        // a versions strip and a line editor cannot live inside a fixed-width cell.
-        onRowClick={(row) => setOpenId((previous) => (previous === row.id ? null : row.id))}
+        summary={
+          <>
+            <span className="text-muted-foreground">
+              {`${rows.length} PO${rows.length === 1 ? '' : 's'} on this project`}
+            </span>
+            <span className="font-semibold">{`Total ${formatMyr(String(totalValue))}`}</span>
+          </>
+        }
+        searchPlaceholder="Search POs"
+        searchOf={(row) =>
+          [row.po_number, row.issuing_party_name, row.scope_label, row.po_source]
+            .filter(Boolean)
+            .join(' ')
+        }
+        // The row is the way in, and it goes to the PO's own page. The documents, the
+        // readiness step and ninety lines do not belong under a list.
+        onRowClick={(row) => router.push(`/project-sales/${project.id}/pos/${row.id}`)}
       />
 
-      {open && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">{open.po_number}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {project.can_edit && (
-              <POToSalesOrderStep
-                projectId={project.id}
-                purchaseOrder={open}
-                readiness={{
-                  poConfirmed: Boolean(open.po_confirmed),
-                  scheduleConfirmed: Boolean(open.schedule_confirmed),
-                }}
-              />
-            )}
-            <POIntakeVersionsStrip
-              projectId={project.id}
-              poId={open.id}
-              canEdit={Boolean(project.can_edit)}
-              onUpload={() => setUploadingFor({ po: open })}
-            />
-            <PurchaseOrderLinesEditor project={project} po={open} />
-          </CardContent>
-        </Card>
-      )}
 
       {uploadingFor && (
         <POIntakeUploadDialog

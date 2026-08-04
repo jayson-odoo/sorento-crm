@@ -23,6 +23,7 @@ import AttachmentPreviewModal, {
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   type ProjectDocument,
+  type UploadConflictChoice,
   deleteProjectDocument,
   listProjectDocuments,
   resolveProjectDocumentTypeId,
@@ -295,37 +296,114 @@ function UploadDialog({
 }) {
   const [files, setFiles] = React.useState<File[]>([]);
   const [busy, setBusy] = React.useState(false);
+  /** Files the server said already exist here, held until the user decides what to do. */
+  const [conflicts, setConflicts] = React.useState<File[]>([]);
 
-  async function submit() {
-    setBusy(true);
+  /**
+   * Uploads sequentially, and returns whatever came back as a conflict.
+   *
+   * Sequential rather than parallel: the endpoint is per file, and a burst of ten concurrent
+   * multipart POSTs of tender drawings times out the slowest with no way to say WHICH failed.
+   */
+  async function send(batch: File[], onConflict?: UploadConflictChoice) {
     const failed: string[] = [];
+    const clashed: File[] = [];
     let uploaded = 0;
-    // Resolved once for the whole drop, not asked: everything here is a project document.
+
     let typeId: string;
     try {
       typeId = await resolveProjectDocumentTypeId();
     } catch (error) {
-      setBusy(false);
       toast.error(error instanceof Error ? error.message : 'Could not resolve the document type');
-      return;
+      return { uploaded: 0, clashed: [], failed: [] };
     }
-    for (const file of files) {
+
+    for (const file of batch) {
       try {
-        await uploadProjectDocument(projectId, file, typeId);
-        uploaded += 1;
+        const outcome = await uploadProjectDocument(projectId, file, typeId, onConflict);
+        if (outcome.status === 'conflict') clashed.push(file);
+        else uploaded += 1;
       } catch (error) {
         failed.push(`${file.name}: ${error instanceof Error ? error.message : 'failed'}`);
       }
     }
-    setBusy(false);
+
     if (uploaded > 0) {
       toast.success(`${uploaded} document${uploaded === 1 ? '' : 's'} uploaded`);
       onUploaded();
     }
     // Named, not counted: "2 failed" leaves the user guessing which two to retry.
     failed.forEach((message) => toast.error(message));
+    return { uploaded, clashed, failed };
+  }
+
+  async function submit() {
+    setBusy(true);
+    const { clashed, failed } = await send(files);
+    setBusy(false);
+    if (clashed.length > 0) {
+      setConflicts(clashed);
+      return;
+    }
     if (failed.length === 0) onDone();
     else setFiles([]);
+  }
+
+  async function resolveConflicts(choice: UploadConflictChoice) {
+    setBusy(true);
+    const batch = conflicts;
+    setConflicts([]);
+    const { failed } = await send(batch, choice);
+    setBusy(false);
+    if (failed.length === 0) onDone();
+  }
+
+  if (conflicts.length > 0) {
+    return (
+      <Dialog open onOpenChange={(next) => !next && setConflicts([])}>
+        <DialogContent className="max-h-[92vh] w-full max-w-lg overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>
+              {conflicts.length === 1
+                ? 'A file with this name is already here'
+                : `${conflicts.length} files with these names are already here`}
+            </DialogTitle>
+          </DialogHeader>
+          <DialogBody className="max-h-[50vh] overflow-y-auto">
+            <ul className="space-y-1">
+              {conflicts.map((file) => (
+                <li key={file.name} className="break-all text-sm">
+                  {file.name}
+                </li>
+              ))}
+            </ul>
+          </DialogBody>
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button type="button" variant="outline" onClick={onDone} disabled={busy}>
+              Cancel
+            </Button>
+            {/* Keep both is first and outlined, replace is the destructive one: replacing
+                overwrites bytes somebody else may be linking to. */}
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => resolveConflicts('copy')}
+              disabled={busy}
+            >
+              Keep both
+            </Button>
+            <Button
+              type="button"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => resolveConflicts('replace')}
+              disabled={busy}
+            >
+              Replace
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
   }
 
   return (

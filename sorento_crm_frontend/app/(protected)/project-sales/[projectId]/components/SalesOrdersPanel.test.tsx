@@ -177,13 +177,15 @@ describe('SalesOrdersPanel', () => {
     expect(screen.queryByText('No sales order drafted yet')).not.toBeInTheDocument();
   });
 
-  it('offers to build the first drafts when nothing is drafted', async () => {
+  it('states the empty case, with the one way in still in the toolbar', async () => {
     listProjectSalesOrders.mockResolvedValue({ data: [], total: 0, page: 1, limit: 25 });
 
     renderPanel();
 
     expect(await screen.findByText('No sales order drafted yet')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Build the first drafts/ })).toBeInTheDocument();
+    // ONE button, in the toolbar (ADR 1d). The centred duplicate is gone.
+    expect(screen.getByRole('button', { name: /Build drafts/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Build the first drafts/ })).toBeNull();
   });
 
   it('reports a failure to load instead of an empty table', async () => {
@@ -270,7 +272,7 @@ describe('SalesOrdersPanel', () => {
 
     renderPanel();
 
-    fireEvent.click(await screen.findByRole('button', { name: /Build the first drafts/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Build drafts/ }));
 
     fireEvent.change(await screen.findByLabelText('Select a purchase order'), {
       target: { value: 'po-1' },
