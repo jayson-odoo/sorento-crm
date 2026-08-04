@@ -37,6 +37,7 @@ import {
   useRecommendationExplanation,
 } from '../hooks/useExplainer';
 import { REFUSAL } from '../lib/explainerMockStore';
+import { CoverageTimelinePanel } from './CoverageTimelinePanel';
 import type { AskTurn } from '../types/explainer.types';
 import { xyzLabel } from '../../lib/health';
 import type { XyzClass } from '../../types/scm.types';
@@ -851,6 +852,25 @@ export function ReorderExplanationDialog({
                 (buy / exception / disposition) — the old deterministic one-liner was
                 redundant with it. */}
             <AiSummaryBlock rec={rec} enabled={open} />
+
+            {/* Coverage Timeline (UAC Group B) - the dated evidence for the number
+                above, sitting directly under it because the planner's first question
+                on opening a row is "do I believe this?", and the answer is a list of
+                documents she recognises. Rendered for EVERY rec type: a disposition
+                row's excess is as much a coverage question as a buy row's shortage.
+                The pool is resolved from the row's own location code (a code with no
+                pool pointer is its own pool), and the floor is the row's reorder
+                point - 0 when it has none, which is the project-demand case. */}
+            <div>
+              <SectionTitle>Coverage timeline</SectionTitle>
+              <CoverageTimelinePanel
+                productCode={rec.sku}
+                productName={rec.product_name}
+                poolCode={rec.warehouse_code}
+                floor={rec.reorder_point ?? 0}
+                enabled={open}
+              />
+            </div>
 
             {/* Step-by-step derivation */}
             <div>

@@ -236,6 +236,13 @@ export interface ReorderRun {
  *  is fixed server-side (M8-D5) — `buy_scope` is no longer a request field. */
 export interface CreateReorderRunRequest {
   warehouse_codes: string[];
+  /**
+   * Optional product scope (AC-B8a) - human product codes, never ids. Omitted or
+   * empty means EVERY product, so the scheduled daily run is unchanged. Sent only
+   * when non-empty; the Phase-2 backend adds the matching request field (today's
+   * `CreateReorderRunRequest` schema ignores it).
+   */
+  product_codes?: string[];
   /** M4 — always null in M3. */
   budget_id?: string | null;
   /** M7 — opt-in: factor market-trend signals into the funding priority (rank), not qty. */

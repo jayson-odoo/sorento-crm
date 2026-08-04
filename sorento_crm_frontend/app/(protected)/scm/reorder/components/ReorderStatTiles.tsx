@@ -1,6 +1,6 @@
 'use client';
 
-import { PackageX, ShoppingCart, Wallet } from 'lucide-react';
+import { AlertTriangle, ClipboardList, PackageX, ShoppingCart, Wallet } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { fmtInt, fmtMoney } from '../../lib/format';
@@ -80,8 +80,9 @@ function Tile({
 }
 
 /**
- * SCM M8 summary cards for today's plan (M8-C0): exactly three - Buy,
- * Stock allocation, Cash impact. Buy and Stock allocation are clickable FILTERS
+ * SCM M8 summary cards for today's plan (M8-C0), now five - Buy,
+ * Stock allocation, Cash impact, Plan exceptions, PO worklist. Buy and Stock
+ * allocation are clickable FILTERS
  * that switch the plan table between the buy cash co-pilot and the read-only
  * allocation list (the selected card shows an active ring); Cash impact is a stat
  * only. The Stock allocation count is ACTIONABLE dispositions only (Discontinue /
@@ -90,11 +91,18 @@ function Tile({
  * The prior Today's-plan / Stock-warning / Within-budget / Over-budget cards are gone:
  * within/over counts live in the table section headers, and stock warning moved
  * to the SCM dashboard (M8-B). Prototype: counts are mock.
+ *
+ * Plan exceptions and the PO worklist are TILES, not pages (AC-B9), so a count is
+ * visible without navigating. They are stats for now, not clickable filters: the two
+ * views themselves land in S4 (worklist) and S5 (exceptions), and a card that
+ * switched to a view that does not exist yet would be worse than a plain count.
  */
 export function ReorderStatTiles({
   buyCount,
   dispositionCount,
   cashTotal,
+  planExceptionCount = 0,
+  poWorklistCount = 0,
   activeView,
   onSelectView,
 }: {
@@ -103,11 +111,15 @@ export function ReorderStatTiles({
    *  from the plan entirely and are NOT surfaced here (they carry no action). */
   dispositionCount: number;
   cashTotal: number;
+  /** Open plan exceptions waiting on a decision (S5). */
+  planExceptionCount?: number;
+  /** Decided buys still to be keyed into AutoCount (S4). */
+  poWorklistCount?: number;
   activeView: ReorderPlanView;
   onSelectView: (view: ReorderPlanView) => void;
 }) {
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 xl:grid-cols-5">
       <Tile
         label="Buy"
         value={fmtInt(buyCount)}
@@ -129,6 +141,20 @@ export function ReorderStatTiles({
         onClick={() => onSelectView('disposition')}
       />
       <Tile label="Cash impact" value={fmtMoney(cashTotal)} icon={Wallet} />
+      <Tile
+        label="Plan exceptions"
+        value={fmtInt(planExceptionCount)}
+        subLabel={planExceptionCount ? 'waiting on a decision' : 'nothing disagrees with placed supply'}
+        icon={AlertTriangle}
+        valueClass={planExceptionCount ? 'text-scm-stockout' : undefined}
+        iconClass={planExceptionCount ? 'bg-scm-stockout-soft text-scm-stockout' : undefined}
+      />
+      <Tile
+        label="PO worklist"
+        value={fmtInt(poWorklistCount)}
+        subLabel={poWorklistCount ? 'not yet keyed into AutoCount' : 'nothing left to key'}
+        icon={ClipboardList}
+      />
     </div>
   );
 }

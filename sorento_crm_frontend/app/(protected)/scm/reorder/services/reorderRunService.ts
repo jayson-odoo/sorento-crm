@@ -10,6 +10,10 @@
  *    POST /api/v1/scm/reorder-runs
  *    body: {
  *      warehouse_codes: string[],          // which warehouses to plan for
+ *      product_codes?: string[],           // AC-B8a: omitted/empty = ALL products.
+ *                                          //   Human codes. Phase 2 adds the field to
+ *                                          //   the backend schema; sent only when the
+ *                                          //   user narrowed the run.
  *      budget_id?: string | null           // M4 — always null/omitted in M3
  *    }
  *    Planning scope is fixed server-side (M8-D5) — no `buy_scope` in the request.
@@ -214,6 +218,11 @@ export async function createReorderRun(req: CreateReorderRunRequest): Promise<Re
       warehouse_codes: req.warehouse_codes,
       budget_id: req.budget_id ?? null,
       include_market: req.include_market ?? false,
+      // Product scope (AC-B8a) is sent ONLY when the user narrowed the run. Empty
+      // means every product, and omitting the key keeps the request byte-identical
+      // to what the backend accepts today, so adding the picker cannot change an
+      // unnarrowed run.
+      ...(req.product_codes?.length ? { product_codes: req.product_codes } : {}),
     }),
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to start planning run'));

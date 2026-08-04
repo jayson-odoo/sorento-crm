@@ -61,6 +61,27 @@ describe('reorderRunService — createReorderRun', () => {
     });
     expect(JSON.parse(String(lastInit().body))).toMatchObject({ include_market: true });
   });
+
+  it('OMITS product_codes when the run was not narrowed, so an all-products run is unchanged (AC-B8a)', async () => {
+    apiFetch.mockResolvedValue(
+      ok({ run_id: 'run-11', status: 'running', buy_scope: 'warehouse', stage: 'resolving_policies' }),
+    );
+    await createReorderRun({ warehouse_codes: ['WH-KL'], product_codes: [] });
+    expect(JSON.parse(String(lastInit().body))).not.toHaveProperty('product_codes');
+  });
+
+  it('forwards product_codes as human codes when the run IS narrowed (AC-B8a)', async () => {
+    apiFetch.mockResolvedValue(
+      ok({ run_id: 'run-12', status: 'running', buy_scope: 'warehouse', stage: 'resolving_policies' }),
+    );
+    await createReorderRun({
+      warehouse_codes: ['WH-KL'],
+      product_codes: ['SRTWT7408', 'SRTBS4832'],
+    });
+    expect(JSON.parse(String(lastInit().body))).toMatchObject({
+      product_codes: ['SRTWT7408', 'SRTBS4832'],
+    });
+  });
 });
 
 describe('reorderRunService — getReorderRun', () => {

@@ -15,6 +15,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { MOCK_PLAN_TILE_COUNTS } from '../lib/coverageMockStore';
 import { recToDispositionRow, splitDispositionRows } from '../lib/planRow';
 import { resetRunDecisions } from '../services/reorderRunService';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
@@ -171,6 +172,8 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
     pendingManual.current = true;
     void manual.start({
       warehouse_codes: inputs.warehouse_codes,
+      // Empty = every product (AC-B8a), which is what the scheduled daily run does.
+      product_codes: inputs.product_codes,
       budget_id: null,
     });
     toast.info('Generating manual plan...');
@@ -349,10 +352,15 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         </div>
       ) : null}
 
+      {/* TODO(Phase 2, S4/S5): plan-exception and PO-worklist counts come from the run
+          summary once those slices exist. Until then they are the Phase-1 mock, which
+          dies with `coverageMockStore`. */}
       <ReorderStatTiles
         buyCount={summary?.buy_count ?? 0}
         dispositionCount={actionableDispositions.length}
         cashTotal={summary?.total_cash_impact ?? 0}
+        planExceptionCount={MOCK_PLAN_TILE_COUNTS.plan_exceptions}
+        poWorklistCount={MOCK_PLAN_TILE_COUNTS.po_worklist}
         activeView={view}
         onSelectView={setView}
       />

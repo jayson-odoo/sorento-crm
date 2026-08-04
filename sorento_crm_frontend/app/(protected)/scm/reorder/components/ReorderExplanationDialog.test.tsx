@@ -18,6 +18,23 @@ vi.mock('../hooks/useExplainer', () => ({
   useAskRecommendation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
+// The Coverage Timeline panel is react-query-backed too, and its own states are
+// covered in CoverageTimelinePanel.test.tsx. Here we only need to know WHICH row it
+// was asked about, so the stepping test can prove it follows the pager.
+const coverage = vi.hoisted(() => ({
+  useCoverageTimeline: vi.fn(),
+  useAcceptCoverageTransfer: vi.fn(),
+}));
+vi.mock('../hooks/useCoverage', () => coverage);
+coverage.useCoverageTimeline.mockReturnValue({
+  data: undefined,
+  isLoading: false,
+  isError: false,
+  error: null,
+  refetch: vi.fn(),
+});
+coverage.useAcceptCoverageTransfer.mockReturnValue({ mutate: vi.fn(), isPending: false });
+
 // jsdom polyfills for Radix Dialog / Tooltip.
 class ResizeObserverStub {
   observe() {}
@@ -216,6 +233,55 @@ describe('ReorderExplanationDialog', () => {
     expect(screen.getByRole('button', { name: /previous recommendation/i })).toBeEnabled();
     fireEvent.click(screen.getByRole('button', { name: /previous recommendation/i }));
     expect(onNavigate).toHaveBeenCalledWith(recs[0]);
+  });
+
+  it('asks for the STEPPED row when the pager moves, not the row the dialog opened on', () => {
+    const recs = [
+      rec({ id: 'r1', sku: 'SKU-ONE', warehouse_code: 'BRW-BB', reorder_point: 8 }),
+      rec({ id: 'r2', sku: 'SKU-TWO', warehouse_code: 'MWH-IR', reorder_point: 0 }),
+    ];
+    const { rerender } = render(
+      <ReorderExplanationDialog
+        rec={recs[0]}
+        open
+        onOpenChange={() => {}}
+        recs={recs}
+        totalCount={2}
+        pageItemOffset={0}
+        onNavigate={vi.fn()}
+      />,
+    );
+    expect(coverage.useCoverageTimeline).toHaveBeenLastCalledWith(
+      expect.objectContaining({ product_code: 'SKU-ONE', pool_code: 'BRW-BB', floor: 8 }),
+      true,
+    );
+
+    rerender(
+      <ReorderExplanationDialog
+        rec={recs[1]}
+        open
+        onOpenChange={() => {}}
+        recs={recs}
+        totalCount={2}
+        pageItemOffset={0}
+        onNavigate={vi.fn()}
+      />,
+    );
+    expect(coverage.useCoverageTimeline).toHaveBeenLastCalledWith(
+      expect.objectContaining({ product_code: 'SKU-TWO', pool_code: 'MWH-IR', floor: 0 }),
+      true,
+    );
+  });
+
+  it('renders the Coverage timeline section for a DISPOSITION row too, never hides it', () => {
+    render(
+      <ReorderExplanationDialog
+        rec={rec({ type: 'disposition', supplier: null, disposition_action: 'hold' })}
+        open
+        onOpenChange={() => {}}
+      />,
+    );
+    expect(screen.getByText('Coverage timeline')).toBeInTheDocument();
   });
 
   it('labels the ABC rank factor with the layman term "Value", not "ABC value" (M8-F4)', () => {

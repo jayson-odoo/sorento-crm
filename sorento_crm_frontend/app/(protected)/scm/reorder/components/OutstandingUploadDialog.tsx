@@ -9,6 +9,7 @@ import {
   DialogBody,
   DialogContent,
   DialogFooter,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -353,6 +354,10 @@ export function OutstandingUploadDialog({
       <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle>{TITLES[kind]}</DialogTitle>
+          {/* One line, and it earns its place twice over: it is the promise the two-step
+              flow makes, and it is the dialog's accessible description. Without a
+              description Radix warns that the content has no `aria-describedby`. */}
+          <DialogDescription>Nothing is saved until you confirm the changes.</DialogDescription>
         </DialogHeader>
 
         <DialogBody className="max-h-[65vh] space-y-4 overflow-y-auto">

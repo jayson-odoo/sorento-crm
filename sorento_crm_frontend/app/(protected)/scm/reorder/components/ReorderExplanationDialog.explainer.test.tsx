@@ -25,6 +25,20 @@ vi.mock('../hooks/useExplainer', () => ({
   useAskRecommendation: (...a: unknown[]) => hAsk(...a),
 }));
 
+// Same reason for the Coverage Timeline panel: react-query-backed, and its own
+// states belong to CoverageTimelinePanel.test.tsx. Inert here.
+const coverage = vi.hoisted(() => ({
+  useCoverageTimeline: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  })),
+  useAcceptCoverageTransfer: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+}));
+vi.mock('../hooks/useCoverage', () => coverage);
+
 // jsdom polyfills for Radix Dialog / Popover.
 class ResizeObserverStub {
   observe() {}

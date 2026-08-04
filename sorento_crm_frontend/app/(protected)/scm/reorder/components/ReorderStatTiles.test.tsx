@@ -1,8 +1,9 @@
 /**
- * SCM M8 — ReorderStatTiles (M8-C0 / M8-C12). Exactly THREE summary cards — Buy,
- * Stock allocation, Cash impact — no Today's-plan / Stock-warning / Within / Over
- * cards. Buy + Stock allocation are clickable view filters (active ring); Cash
- * impact is a stat only. The old "Disposition" label is renamed to "Stock allocation".
+ * SCM M8 - ReorderStatTiles (M8-C0 / M8-C12 + AC-B9). FIVE summary cards - Buy,
+ * Stock allocation, Cash impact, Plan exceptions, PO worklist - and no
+ * Today's-plan / Stock-warning / Within / Over cards. Buy + Stock allocation are
+ * clickable view filters (active ring); the other three are stats only. The old
+ * "Disposition" label is renamed to "Stock allocation".
  */
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
@@ -25,14 +26,33 @@ function renderTiles(over: Partial<React.ComponentProps<typeof ReorderStatTiles>
 }
 
 describe('ReorderStatTiles (M8-C0 / M8-C12)', () => {
-  it('renders exactly the three summary cards with their counts', () => {
-    renderTiles();
+  it('renders exactly the five summary cards with their counts', () => {
+    renderTiles({ planExceptionCount: 4, poWorklistCount: 11 });
     expect(screen.getByText('Buy')).toBeInTheDocument();
     expect(screen.getByText('Stock allocation')).toBeInTheDocument();
     expect(screen.getByText('Cash impact')).toBeInTheDocument();
+    expect(screen.getByText('Plan exceptions')).toBeInTheDocument();
+    expect(screen.getByText('PO worklist')).toBeInTheDocument();
     expect(screen.getByText('7')).toBeInTheDocument();
     expect(screen.getByText('3')).toBeInTheDocument();
     expect(screen.getByText('RM 125,000')).toBeInTheDocument();
+    expect(screen.getByText('4')).toBeInTheDocument();
+    expect(screen.getByText('11')).toBeInTheDocument();
+  });
+
+  it('says what a zero plan-exception / PO-worklist count MEANS rather than leaving a bare 0', () => {
+    renderTiles({ planExceptionCount: 0, poWorklistCount: 0 });
+    expect(screen.getByText('nothing disagrees with placed supply')).toBeInTheDocument();
+    expect(screen.getByText('nothing left to key')).toBeInTheDocument();
+  });
+
+  it('keeps the two new tiles as STATS - they are not view filters until S4/S5', () => {
+    const { onSelectView } = renderTiles({ planExceptionCount: 4, poWorklistCount: 11 });
+    expect(screen.queryByTitle('Show Plan exceptions recommendations')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Show PO worklist recommendations')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('Plan exceptions'));
+    fireEvent.click(screen.getByText('PO worklist'));
+    expect(onSelectView).not.toHaveBeenCalled();
   });
 
   it('shows the actionable disposition count on the Stock allocation card, never a hold sub-label', () => {
