@@ -13,6 +13,7 @@ import uuid
 from datetime import date
 
 import pytest
+from sqlalchemy import text
 
 from app.models.inventory import Stock, Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
@@ -230,6 +231,61 @@ def test_supply_stage_distinguishes_on_order_from_in_transit(db, chain):
     cov = CoverageService(db).coverage_for(chain["product"].id, pool_id=chain["pool"].id)
     stages = [r.event.supply_stage for r in cov.timeline.rows if r.event.supply_stage]
     assert stages == [SUPPLY_ON_ORDER]
+
+
+def test_a_closed_po_line_is_not_supply_and_the_timeline_agrees_with_on_order_v(db, chain):
+    """Two readers of "on order" must not disagree, and here the disagreement HIDES a
+    shortfall.
+
+    ``scm.on_order_v`` excludes a line whose ``line_status`` the outstanding-orders importer
+    has closed; the demand half of this very service applies the same predicate to
+    ``sales_order_lines``. The supply half does not, so a container the supplier is no longer
+    holding for us still arrives on the timeline and covers demand that is in fact uncovered.
+    A planner reading a shortfall of zero next to a dashboard reading a shortfall stops
+    trusting both numbers, so the agreement of the two figures is the real invariant, which
+    is why it is asserted directly rather than inferred from one of them.
+    """
+    sup = Supplier(id=_u(), supplier_code=unique_code("S"), supplier_name="KAILU")
+    db.add(sup)
+    db.flush()
+    po = PurchaseOrder(id=_u(), po_number=unique_code("PO"), supplier_id=sup.id, status="active")
+    db.add(po)
+    db.flush()
+    # Same PO, same product, same pool member: the only difference is line_status, so
+    # nothing else can explain a divergence between the two readers.
+    db.add(PurchaseOrderLine(
+        id=_u(), purchase_order_id=po.id, product_id=chain["product"].id,
+        warehouse_id=chain["bin_a"].id, qty_ordered=200, qty_received=0,
+        expected_date=date(2026, 8, 25), line_status="open",
+    ))
+    db.add(PurchaseOrderLine(
+        id=_u(), purchase_order_id=po.id, product_id=chain["product"].id,
+        warehouse_id=chain["bin_a"].id, qty_ordered=500, qty_received=0,
+        expected_date=date(2026, 8, 10), line_status="closed",
+    ))
+    db.flush()
+
+    on_order = db.execute(
+        text(
+            "SELECT COALESCE(SUM(on_order), 0) FROM scm.on_order_v "
+            "WHERE product_id = :p AND warehouse_id = :w"
+        ),
+        {"p": chain["product"].id, "w": chain["bin_a"].id},
+    ).scalar()
+
+    cov = CoverageService(db).coverage_for(chain["product"].id, pool_id=chain["pool"].id)
+
+    # The invariant: the dashboard's on-order figure and the timeline's supply are the
+    # same quantity described two ways.
+    assert cov.timeline.closing_balance == float(on_order)
+    # And the absolute figure, so a future change that breaks BOTH readers together still
+    # fails here rather than agreeing on the wrong number.
+    assert float(on_order) == 200
+    assert cov.timeline.closing_balance == 200
+    # One supply row, not two: the closed line must be absent from the timeline entirely,
+    # not merely netted to zero, or the planner reads a delivery that is not coming.
+    assert [r.event.ref for r in cov.timeline.rows] == ["", po.po_number]
+    assert [r.event.qty for r in cov.timeline.rows] == [0.0, 200.0]
 
 
 def test_an_undated_commitment_is_reported_rather_than_dated_today(db, chain):

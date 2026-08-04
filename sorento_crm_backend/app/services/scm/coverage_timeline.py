@@ -103,6 +103,10 @@ class TimelineResult:
     # first shortfall's own gap: a later event can dig deeper, and buying only the first
     # gap would leave the plan short a second time.
     peak_deficit: float
+    # How many events fell beyond the horizon and are therefore absent from `rows`. An
+    # omission a screen does not mention reads as data that is not there, so the count
+    # travels with the result rather than the caller having to re-derive it.
+    excluded_event_count: int = 0
 
 
 def _sort_key(e: TimelineEvent) -> tuple:
@@ -132,14 +136,20 @@ def build_timeline(
     ``floor`` is the level the balance must not fall below - 0 for project demand, or the
     reorder point for a continuous SKU, which is what makes ROP the one-bucket case.
 
-    ``horizon_end`` drops events beyond the planning horizon. Excluded events are simply
-    absent from ``rows``; the caller states the exclusion on screen rather than letting it
-    be silent.
+    ``horizon_end`` drops events beyond the planning horizon. Excluded events are absent
+    from ``rows`` but COUNTED into ``excluded_event_count``: a bound is necessary (a
+    ten-year tail makes the report unreadable) and the count is what keeps it honest,
+    because a planner who cannot see that nine years of demand was dropped reads the
+    visible shortfall as the whole picture.
     """
-    ordered = sorted(
-        (e for e in events if horizon_end is None or e.at is None or e.at <= horizon_end),
-        key=_sort_key,
-    )
+    kept: list[TimelineEvent] = []
+    excluded = 0
+    for e in events:
+        if horizon_end is not None and e.at is not None and e.at > horizon_end:
+            excluded += 1
+            continue
+        kept.append(e)
+    ordered = sorted(kept, key=_sort_key)
 
     rows: list[TimelineRow] = [
         TimelineRow(
@@ -165,6 +175,7 @@ def build_timeline(
         closing_balance=round(balance, 4),
         shortfall=shortfall,
         peak_deficit=round(peak_deficit, 4),
+        excluded_event_count=excluded,
     )
 
 

@@ -56,6 +56,17 @@ class ReorderPolicy(Base):
     buy_scope = Column(String(20), nullable=True)  # network | warehouse
     dead_stock_days = Column(Integer, nullable=True)
     overstock_days = Column(Integer, nullable=True)  # M2 (overstock state)
+    # Coverage Timeline config (S3). This table is the right home rather than a new one:
+    # it already carries scope resolution (scope_type / scope_ref / priority) plus an
+    # admin UI, so a per-warehouse or per-category override comes free.
+    # How far ahead the dated coverage axis runs. NULL = unconfigured, resolved to
+    # DEFAULT_PLANNING_HORIZON_MONTHS by the service.
+    planning_horizon_months = Column(Integer, nullable=True)
+    # Cross-site transfer economics. Both stay NULL when unconfigured and are NEVER
+    # defaulted to 0: a zero cost reads as a free move and a zero lead time as an instant
+    # one, and either would make a transfer proposal look better than the truth.
+    transfer_lead_time_days = Column(Integer, nullable=True)
+    transfer_cost_per_unit = Column(Numeric(12, 2), nullable=True)
     factor_toggles = Column(JSONB, nullable=True)
     factor_weights = Column(JSONB, nullable=True)
     min_override = Column(Numeric, nullable=True)

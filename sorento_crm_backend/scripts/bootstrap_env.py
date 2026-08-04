@@ -108,6 +108,10 @@ def create_views() -> None:
     # freshly built database silently keeps the original definition while every migrated
     # database has the new one. Appended in revision order so the last write wins.
     ordered.extend(_load("311_scm_purchasing_base.py")._REDEFINED_VIEWS)
+    # 327 re-emits scm.on_order_v from 311's own constant (311's DDL was edited in place
+    # after it had already been stamped somewhere, so databases at 311 can hold the old
+    # definition). Replayed here too, in revision order, rather than assumed identical.
+    ordered.extend(_load("327_scm_coverage_config.py")._REDEFINED_VIEWS)
     with engine.begin() as conn:
         for ddl in ordered:
             # The migration's DDL uses bare CREATE VIEW; make re-runs idempotent.

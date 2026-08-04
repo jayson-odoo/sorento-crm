@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from app.api.v1.scm import (
     analytics,
     config,
+    coverage,
     dashboard,
     decisions,
     explainer,
@@ -32,3 +33,4 @@ router.include_router(decisions.router)
 router.include_router(outstanding_import.router)
 router.include_router(explainer.router)
 router.include_router(market.router)
+router.include_router(coverage.router)
