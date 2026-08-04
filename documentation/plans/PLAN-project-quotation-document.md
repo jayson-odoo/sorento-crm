@@ -161,9 +161,29 @@ data bug rather than a visible failure.
 `version_id`, but today a line edit mutates the CURRENT version in place - a new version is only
 created by an explicit "new revision" action. So editing a line after issuing R1 would rewrite
 the very rows R1 claims to have contained, and the PDF on file would stop matching the record
-behind it. **Invariant:** issuing stamps `frozen_at` on the current version of EVERY scope in the
-issue, and any edit to a frozen version opens the next version instead of writing through. The
-service enforces it; a test asserts an edit after issue leaves the issued version byte-identical.
+behind it.
+
+The fix has to respect how frozen is already defined. `project_quotation_service.is_frozen` is
+DERIVED - `version_no < MAX(version_no)` for the scope - and the model comment is explicit that
+there is deliberately no `is_frozen` flag, because two facts that must agree drift the first time
+a write half-fails. Stamping `frozen_at` on the current version would introduce exactly that
+second fact: the highest-numbered version would claim to be frozen while the derivation says it
+is current.
+
+So the definition is EXTENDED rather than replaced, and stays derived:
+
+```
+frozen  =  version_no < MAX(version_no)        (superseded by a later revision)
+        OR EXISTS (issue_scopes WHERE version_id = this)   (already sent to the customer)
+```
+
+An issued version is frozen because the customer holds it, and editing it raises the existing 422
+telling the reader to revise - which opens the next version carrying the lines, through the
+`revise()` path that already exists and is already tested. Nothing is stamped, nothing can
+disagree, and no empty placeholder version is created at issue time.
+
+A test asserts that editing a line on an issued version is refused, and that the rows the issue
+points at are byte-identical afterwards.
 
 **2. `document_numbering_rules` has no company.** `doc_type` is globally unique and the table
 carries no `company_id`, so SRT and MOCHA would draw from ONE counter and print the SAME prefix -
