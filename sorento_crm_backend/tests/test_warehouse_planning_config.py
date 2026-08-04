@@ -278,3 +278,59 @@ def test_an_edit_that_never_mentions_the_pool_keeps_the_code(client, db):
     body = response.json()
     assert body["pool_warehouse_id"] == pool
     assert body["pool_warehouse_code"] == _code(db, pool)
+
+
+def test_the_route_answers_a_repointed_pool_with_the_new_code(client, db):
+    """Both codes non-null, through the serializer.
+
+    The narrower fix of "blank the code whenever the incoming id is null" satisfies the two
+    route tests above and still answers this one with the previous pool's code, which is the
+    worst of the three cases: the screen shows a real, wrong warehouse rather than a blank.
+    """
+    first = _warehouse(db)
+    second = _warehouse(db)
+    child = _warehouse(db, pool_id=first)
+
+    response = client.put(f"{BASE}/{child}", json={"pool_warehouse_id": second})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["pool_warehouse_id"] == second
+    assert body["pool_warehouse_code"] == _code(db, second)
+    assert body["pool_warehouse_code"] != _code(db, first)
+
+
+# --------------------------------------------------------------------------- #
+# The write and the read that follows it must agree.
+#
+# The detail page renders the PUT body and then refetches. If the two disagree the value
+# the user just saved changes on its own a moment later, which reads as the save having
+# been rejected. The GET has always been right, so this pair also pins WHICH of the two is
+# the reference answer.
+# --------------------------------------------------------------------------- #
+def test_a_cleared_pool_reads_back_the_same_as_the_write_answered(client, db):
+    pool = _warehouse(db)
+    child = _warehouse(db, pool_id=pool)
+
+    written = client.put(f"{BASE}/{child}", json={"pool_warehouse_id": None})
+    read = client.get(f"{BASE}/{child}")
+
+    assert written.status_code == 200, written.text
+    assert read.status_code == 200, read.text
+    pair = ("pool_warehouse_id", "pool_warehouse_code")
+    assert {k: written.json()[k] for k in pair} == {k: read.json()[k] for k in pair}
+    assert read.json()["pool_warehouse_code"] is None
+
+
+def test_a_set_pool_reads_back_the_same_as_the_write_answered(client, db):
+    pool = _warehouse(db)
+    child = _warehouse(db)
+
+    written = client.put(f"{BASE}/{child}", json={"pool_warehouse_id": pool})
+    read = client.get(f"{BASE}/{child}")
+
+    assert written.status_code == 200, written.text
+    assert read.status_code == 200, read.text
+    pair = ("pool_warehouse_id", "pool_warehouse_code")
+    assert {k: written.json()[k] for k in pair} == {k: read.json()[k] for k in pair}
+    assert read.json()["pool_warehouse_code"] == _code(db, pool)
