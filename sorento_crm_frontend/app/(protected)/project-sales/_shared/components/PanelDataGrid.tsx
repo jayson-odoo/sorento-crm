@@ -49,6 +49,7 @@ export function PanelDataGrid<TRow extends object>({
   onRowClick,
   searchPlaceholder,
   searchOf,
+  renderGroupHeader,
   pageSize = 10,
 }: {
   title: string;
@@ -74,6 +75,13 @@ export function PanelDataGrid<TRow extends object>({
    * the browser answers instantly.
    */
   searchOf?: (row: TRow) => string;
+  /**
+   * A band heading rendered above a row when it opens a new section - the quotation's
+   * "BILL NO 3 PAGE 15/4". Return null for a row that continues the band it is already in.
+   * Passed straight to the shared grid, so bands are a rendering of the row order rather than
+   * a second list living beside it.
+   */
+  renderGroupHeader?: (row: TRow, previousRow: TRow | null) => React.ReactNode | null;
   pageSize?: number;
 }) {
   const [pagination, setPagination] = React.useState<PaginationState>({
@@ -108,6 +116,7 @@ export function PanelDataGrid<TRow extends object>({
       listingKey={listingKey}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
       onRowClick={onRowClick}
+      renderGroupHeader={renderGroupHeader as never}
     >
       <Card>
         {/* flex-col until sm so a title and a toolbar never overlap at phone width. */}

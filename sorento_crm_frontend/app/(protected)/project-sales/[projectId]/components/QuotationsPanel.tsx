@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { ColumnDef } from '@tanstack/react-table';
 import { AlertTriangle, FileStack, Plus, Trash2, TriangleAlert } from 'lucide-react';
@@ -288,6 +289,14 @@ export function QuotationsPanel({ project }: { project: Project }) {
                 {`${totalNonStandard} non-standard`}
               </Badge>
             )}
+            {/* PHASE 1 ONLY. Removed when the real document screen lands. It sits here so
+                the prototype is reviewed by clicking through the app, not by pasting a URL -
+                a deep link hides whether the way in exists at all. */}
+            <Button asChild type="button" size="sm" variant="outline">
+              <Link href={`/project-sales/${project.id}/quotations/document-preview`}>
+                Preview document layout
+              </Link>
+            </Button>
             {project.can_edit && (
               <Button type="button" size="sm" onClick={() => setCreating(true)}>
                 <Plus className="size-4" aria-hidden />
