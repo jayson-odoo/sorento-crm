@@ -78,15 +78,36 @@ from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 # creates it. Mirrors scm.on_order_v.
 _PLACED_PO_STATUSES = ("active", "received", "partial", "closed")
 
-# Shipment states that mean the goods have LANDED, so their lines are on-hand and counting
-# them as incoming would double them. Expressed as the excluded set, not an allowed set,
-# because the rest of the repo does the same (`incoming_stock_service._still_incoming_filter`,
-# `procurement_service._is_received_status`) and because an allowed list silently drops any
-# status nobody thought of: `partial_received` is written by `procurement_service` today and
-# was absent from the old whitelist, so a part-arrived container contributed nothing to any
-# pool. A whitelist fails closed on real supply; a blacklist fails open on a state that does
-# not exist yet, which is the safer direction for a figure that stops purchases.
-_RECEIVED_SHIPMENT_STATUSES = ("fully_received", "received", "completed", "cancelled")
+# Shipment states that mean the goods have LANDED or left the book, so their lines are no
+# longer incoming and counting them would double real stock. Expressed as the excluded set,
+# not an allowed set, because the rest of the repo does the same
+# (`incoming_stock_service._still_incoming_filter`, `procurement_service._is_received_status`)
+# and because an allowed list silently drops any status nobody thought of. A whitelist fails
+# closed on real supply; a blacklist fails open on a state that does not exist yet, which is
+# the safer direction for a figure that STOPS purchases.
+#
+# The column's vocabulary is fixed by the `inbound_shipments_shipment_status_check`
+# constraint: in_transit, arrived_at_port, at_warehouse, partially_received, fully_received,
+# closed. Two consequences that were both wrong here:
+#
+#   * `closed` was missing, so a shipment closed off the book still contributed cover. That
+#     is the fail-open direction, and it suppresses a purchase silently.
+#   * `partially_received` is deliberately NOT excluded: part has arrived and the rest is
+#     still coming, and the per-line outstanding quantity is what the reader nets. Excluding
+#     the whole shipment would drop the half still on the water.
+#
+# `received` / `completed` / `cancelled` cannot appear in this column - `received` is
+# normalised to `fully_received` by `procurement_service._normalize_inbound_shipment_status`
+# and the other two are not in the constraint at all. They are kept only so a legacy row
+# written before the constraint, or an alias that stops being normalised, still fails in the
+# safe direction.
+_RECEIVED_SHIPMENT_STATUSES = (
+    "fully_received",
+    "closed",
+    "received",
+    "completed",
+    "cancelled",
+)
 
 # Shipment LINE states that are no longer inbound. The purchase-order half of this same
 # function filters `PurchaseOrderLine.line_status == "open"`, and one function disagreeing
@@ -157,6 +178,40 @@ class CoverageConfig:
 
 
 @dataclass(frozen=True)
+class NetworkPosition:
+    """One product's DATED position over the whole network, for the Summary Order Report.
+
+    Distinct from ``Coverage`` on purpose. ``Coverage`` answers "what should this pool do
+    about this product", and carries the source split, the transfer proposals and the
+    allocation advice that only make sense for one pool. This answers the narrower question
+    the report row asks - how much is here, how much is coming in each stage, and how far
+    below zero the dated balance ever gets - over every location that counts toward
+    availability. Netting the whole network is right for a purchasing decision because a PO
+    is raised once for the company, not once per pool.
+
+    ``shortfall`` is ``peak_deficit``, not the first gap: a later event can dig deeper, and
+    buying only the first gap leaves the plan short a second time.
+
+    The three "could not place" figures travel with the position rather than being dropped,
+    for the same reason they do on ``Coverage``: a quantity in none of the numbers is worse
+    than one in the wrong number.
+    """
+
+    product_id: str
+    on_hand: float
+    qty_on_order: float
+    qty_in_transit: float
+    shortfall: float
+    closing_balance: float
+    shortfall_at: Optional[date]
+    horizon_end: date
+    undated_demand_qty: float = 0.0
+    unattributed_in_transit_qty: float = 0.0
+    unplaceable_demand_qty: float = 0.0
+    unplaceable_on_order_qty: float = 0.0
+
+
+@dataclass(frozen=True)
 class Coverage:
     product_id: str
     product_code: str
@@ -216,6 +271,19 @@ class CoverageService:
             .all()
         )
 
+    def availability_warehouse_ids(self) -> list[str]:
+        """Every location whose stock and inbound supply count toward availability.
+
+        The network is the union of every pool, so this is the location set a network-wide
+        balance nets over. Read once per batch rather than per product.
+        """
+        return [
+            str(wid)
+            for (wid,) in self.db.query(Warehouse.id)
+            .filter(Warehouse.counts_as_available.is_(True))
+            .all()
+        ]
+
     def pool_for_location(self, warehouse_id: str) -> Optional[str]:
         w = self.db.query(Warehouse).filter(Warehouse.id == warehouse_id).one_or_none()
         if w is None:
@@ -226,12 +294,30 @@ class CoverageService:
     # -- events ---------------------------------------------------------------
 
     def _opening(self, product_id: str, wh_ids: Iterable[str]) -> float:
-        total = (
-            self.db.query(func.coalesce(func.sum(Stock.quantity_on_hand), 0))
-            .filter(Stock.product_id == product_id, Stock.warehouse_id.in_(list(wh_ids)))
-            .scalar()
+        return self._opening_many([product_id], wh_ids).get(str(product_id), 0.0)
+
+    def _opening_many(
+        self, product_ids: Iterable[str], wh_ids: Iterable[str]
+    ) -> dict[str, float]:
+        """Opening on hand per product over the given locations.
+
+        The batched form exists so a report over thousands of products pays ONE query rather
+        than one per product; the single-product method is a wrapper over it so there is only
+        ever one implementation of what "on hand for these locations" means.
+        """
+        pids = [str(p) for p in product_ids]
+        if not pids:
+            return {}
+        rows = (
+            self.db.query(
+                Stock.product_id,
+                func.coalesce(func.sum(Stock.quantity_on_hand), 0),
+            )
+            .filter(Stock.product_id.in_(pids), Stock.warehouse_id.in_(list(wh_ids)))
+            .group_by(Stock.product_id)
+            .all()
         )
-        return float(total or 0)
+        return {str(pid): float(total or 0) for pid, total in rows}
 
     def _demand_events(
         self, product_id: str, wh_ids: list[str]
@@ -243,8 +329,26 @@ class CoverageService:
         for such a row, so it belonged to no pool and appeared in no total. A commitment that
         is in none of the numbers is worse than one in the wrong number.
         """
+        return self._demand_events_many([product_id], wh_ids).get(
+            str(product_id), ([], [], 0.0)
+        )
+
+    def _demand_events_many(
+        self, product_ids: Iterable[str], wh_ids: list[str]
+    ) -> dict[str, tuple[list[TimelineEvent], list[UndatedDemand], float]]:
+        """`_demand_events` for many products at once, keyed by product id.
+
+        Deliberately the SAME body rather than a second reader: every predicate here is
+        load-bearing (open order, open line, outstanding quantity, the nullable-location
+        rows) and a parallel implementation would drift from it silently. Products with no
+        demand are absent from the result; callers read with a default.
+        """
+        pids = [str(p) for p in product_ids]
+        if not pids:
+            return {}
         rows = (
             self.db.query(
+                SalesOrderLine.product_id,
                 SalesOrderLine.qty_ordered,
                 SalesOrderLine.qty_delivered,
                 SalesOrderLine.required_date,
@@ -260,7 +364,7 @@ class CoverageService:
             .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
             .outerjoin(Product, Product.id == SalesOrderLine.product_id)
             .filter(
-                SalesOrderLine.product_id == product_id,
+                SalesOrderLine.product_id.in_(pids),
                 SalesOrderLine.warehouse_id.in_(wh_ids),
                 SalesOrder.status == "open",
                 SalesOrderLine.line_status == "open",
@@ -271,10 +375,14 @@ class CoverageService:
 
         # Same predicates, but the rows the location filter cannot place.
         unplaceable_rows = (
-            self.db.query(SalesOrderLine.qty_ordered, SalesOrderLine.qty_delivered)
+            self.db.query(
+                SalesOrderLine.product_id,
+                SalesOrderLine.qty_ordered,
+                SalesOrderLine.qty_delivered,
+            )
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .filter(
-                SalesOrderLine.product_id == product_id,
+                SalesOrderLine.product_id.in_(pids),
                 SalesOrderLine.warehouse_id.is_(None),
                 SalesOrder.status == "open",
                 SalesOrderLine.line_status == "open",
@@ -283,9 +391,10 @@ class CoverageService:
             .all()
         )
 
-        events: list[TimelineEvent] = []
-        undated: list[UndatedDemand] = []
+        events: dict[str, list[TimelineEvent]] = {}
+        undated: dict[str, list[UndatedDemand]] = {}
         for r in rows:
+            pid = str(r.product_id)
             outstanding = float(r.qty_ordered or 0) - float(r.qty_delivered or 0)
             if outstanding <= 0:
                 continue
@@ -293,7 +402,7 @@ class CoverageService:
             if when is None:
                 # An undated commitment cannot be planned. Dating it "today" would fabricate
                 # a shortfall, and dropping it would hide real demand, so it is surfaced.
-                undated.append(
+                undated.setdefault(pid, []).append(
                     UndatedDemand(
                         so_number=r.so_number or "",
                         item_code=r.product_code or "",
@@ -302,7 +411,7 @@ class CoverageService:
                     )
                 )
                 continue
-            events.append(
+            events.setdefault(pid, []).append(
                 TimelineEvent(
                     at=when,
                     qty=-outstanding,
@@ -312,14 +421,21 @@ class CoverageService:
                     location=r.warehouse_code or "",
                 )
             )
-        unplaceable = round(
-            sum(
-                float(r.qty_ordered or 0) - float(r.qty_delivered or 0)
-                for r in unplaceable_rows
-            ),
-            QTY_PRECISION,
-        )
-        return events, undated, max(unplaceable, 0.0)
+        unplaceable: dict[str, float] = {}
+        for r in unplaceable_rows:
+            pid = str(r.product_id)
+            qty = float(r.qty_ordered or 0) - float(r.qty_delivered or 0)
+            unplaceable[pid] = unplaceable.get(pid, 0.0) + qty
+
+        keys = set(events) | set(undated) | set(unplaceable)
+        return {
+            pid: (
+                events.get(pid, []),
+                undated.get(pid, []),
+                max(round(unplaceable.get(pid, 0.0), QTY_PRECISION), 0.0),
+            )
+            for pid in keys
+        }
 
     def _supply_events(
         self, product_id: str, wh_ids: list[str]
@@ -331,10 +447,27 @@ class CoverageService:
         about THIS call, and a service attribute would quietly describe whichever product
         was asked about last.
         """
-        events: list[TimelineEvent] = []
+        return self._supply_events_many([product_id], wh_ids).get(
+            str(product_id), ([], 0.0, 0.0)
+        )
+
+    def _supply_events_many(
+        self, product_ids: Iterable[str], wh_ids: list[str]
+    ) -> dict[str, tuple[list[TimelineEvent], float, float]]:
+        """`_supply_events` for many products at once, keyed by product id.
+
+        One body, batched, for the same reason as the demand half: the in-transit attribution
+        (destination through the allocation, per-allocation outstanding, cross-pool pro-rate)
+        is subtle enough that a second copy of it would be wrong within a release.
+        """
+        pids = [str(p) for p in product_ids]
+        if not pids:
+            return {}
+        events: dict[str, list[TimelineEvent]] = {}
 
         po_rows = (
             self.db.query(
+                PurchaseOrderLine.product_id,
                 PurchaseOrderLine.qty_ordered,
                 PurchaseOrderLine.qty_received,
                 PurchaseOrderLine.expected_date,
@@ -347,7 +480,7 @@ class CoverageService:
             .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
             .outerjoin(Warehouse, Warehouse.id == PurchaseOrderLine.warehouse_id)
             .filter(
-                PurchaseOrderLine.product_id == product_id,
+                PurchaseOrderLine.product_id.in_(pids),
                 PurchaseOrderLine.warehouse_id.in_(wh_ids),
                 PurchaseOrder.status.in_(_PLACED_PO_STATUSES),
                 # A line the importer has CLOSED left the supplier's order book, so it is
@@ -364,7 +497,7 @@ class CoverageService:
             incoming = float(r.qty_ordered or 0) - float(r.qty_received or 0)
             if incoming <= 0:
                 continue
-            events.append(
+            events.setdefault(str(r.product_id), []).append(
                 TimelineEvent(
                     at=r.expected_date or r.po_expected,
                     qty=incoming,
@@ -394,24 +527,27 @@ class CoverageService:
         # repeated per allocation row.
         # Placed PO supply the location filter cannot place. `purchase_order_lines.warehouse_id`
         # is nullable, so these are real containers on order that reached no pool's figure.
-        unplaceable_on_order = round(
-            sum(
+        unplaceable_on_order: dict[str, float] = {}
+        for pid, a, b in (
+            self.db.query(
+                PurchaseOrderLine.product_id,
+                PurchaseOrderLine.qty_ordered,
+                PurchaseOrderLine.qty_received,
+            )
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .filter(
+                PurchaseOrderLine.product_id.in_(pids),
+                PurchaseOrderLine.warehouse_id.is_(None),
+                PurchaseOrder.status.in_(_PLACED_PO_STATUSES),
+                PurchaseOrderLine.line_status == "open",
+                PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
+            )
+            .all()
+        ):
+            key = str(pid)
+            unplaceable_on_order[key] = unplaceable_on_order.get(key, 0.0) + (
                 float(a or 0) - float(b or 0)
-                for a, b in self.db.query(
-                    PurchaseOrderLine.qty_ordered, PurchaseOrderLine.qty_received
-                )
-                .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
-                .filter(
-                    PurchaseOrderLine.product_id == product_id,
-                    PurchaseOrderLine.warehouse_id.is_(None),
-                    PurchaseOrder.status.in_(_PLACED_PO_STATUSES),
-                    PurchaseOrderLine.line_status == "open",
-                    PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
-                )
-                .all()
-            ),
-            QTY_PRECISION,
-        )
+            )
 
         placeable_ids = {
             wid
@@ -422,6 +558,7 @@ class CoverageService:
         ship_rows = (
             self.db.query(
                 InboundShipmentLine.id.label("line_id"),
+                InboundShipmentLine.product_id,
                 InboundShipmentLine.quantity_shipped,
                 InboundShipmentLine.quantity_received,
                 InboundShipment.estimated_arrival_date,
@@ -441,7 +578,7 @@ class CoverageService:
                 ),
             )
             .filter(
-                InboundShipmentLine.product_id == product_id,
+                InboundShipmentLine.product_id.in_(pids),
                 InboundShipment.shipment_status.notin_(_RECEIVED_SHIPMENT_STATUSES),
                 InboundShipmentLine.line_status.notin_(_CLOSED_SHIPMENT_LINE_STATUSES),
                 InboundShipmentLine.quantity_shipped > InboundShipmentLine.quantity_received,
@@ -450,10 +587,11 @@ class CoverageService:
         )
 
         wh_set = set(wh_ids)
-        # line id -> (outstanding, arrival, ref, label, qty allocated anywhere, qty here)
+        # line id -> (product, outstanding, arrival, ref, label, qty allocated anywhere, qty here)
         by_line: dict[str, dict] = {}
         for r in ship_rows:
             entry = by_line.setdefault(str(r.line_id), {
+                "product_id": str(r.product_id),
                 "outstanding": float(r.quantity_shipped or 0) - float(r.quantity_received or 0),
                 "at": r.estimated_arrival_date,
                 "ref": r.shipment_number or "",
@@ -491,8 +629,9 @@ class CoverageService:
                 # what a planning report exists to surface.
                 entry["unplaceable"] += qty
 
-        unattributed = 0.0
+        unattributed: dict[str, float] = {}
         for entry in by_line.values():
+            pid = entry["product_id"]
             outstanding = entry["outstanding"]
             if outstanding <= 0:
                 continue
@@ -512,13 +651,13 @@ class CoverageService:
             # either from every pool is right; leaving it unsaid is not, because the same
             # quantity added to N pools instead suppresses N purchases and nothing on screen
             # ever admits it.
-            unattributed += (
+            unattributed[pid] = unattributed.get(pid, 0.0) + (
                 max(outstanding - min(entry["allocated"], outstanding), 0.0)
                 + entry["unplaceable"]
             )
             if here <= 0:
                 continue
-            events.append(
+            events.setdefault(pid, []).append(
                 TimelineEvent(
                     at=entry["at"],
                     qty=here,
@@ -532,11 +671,15 @@ class CoverageService:
         # An undated supply line cannot be placed on the axis. It is dropped from the balance
         # rather than assumed imminent, because assuming it arrives in time is exactly the
         # optimism that produces a stockout.
-        return (
-            [e for e in events if e.at is not None],
-            round(unattributed, QTY_PRECISION),
-            max(unplaceable_on_order, 0.0),
-        )
+        keys = set(events) | set(unattributed) | set(unplaceable_on_order)
+        return {
+            pid: (
+                [e for e in events.get(pid, []) if e.at is not None],
+                round(unattributed.get(pid, 0.0), QTY_PRECISION),
+                max(unplaceable_on_order.get(pid, 0.0), 0.0),
+            )
+            for pid in keys
+        }
 
     # -- availability ---------------------------------------------------------
 
@@ -882,6 +1025,88 @@ class CoverageService:
             unplaceable_demand_qty=unplaceable_demand,
             unplaceable_on_order_qty=unplaceable_on_order,
         )
+
+    def network_positions(
+        self,
+        product_ids: Iterable[str],
+        *,
+        horizon_end: Optional[date] = None,
+        horizon_months: Optional[int] = None,
+    ) -> dict[str, NetworkPosition]:
+        """Dated network positions for MANY products, keyed by product id.
+
+        Three queries for the events plus one for the locations, then ``build_timeline`` per
+        product over in-memory events. That ratio is the whole point: the Summary Order
+        Report covers thousands of products, and calling ``coverage_for`` per product would
+        be three queries each. The arithmetic is the SAME ``build_timeline`` the coverage
+        panel uses, so the shortfall a report row states and the shortfall the panel draws
+        for the same product cannot disagree - which is the one class of disagreement that
+        ends trust in a planning tool.
+
+        The horizon is a SINGLE window for the batch rather than resolved per product. A
+        report is read as one book and a row-by-row horizon would mean two rows stating
+        positions over different windows without saying so. ``horizon_months`` names the
+        window; ``horizon_end`` overrides it outright for a caller reproducing a past run.
+
+        Products with no events at all still get a position, from their opening stock. A
+        product absent from the result would read as "not planned" when the truth is
+        "nothing is happening to it", and the report has a row for it either way.
+        """
+        pids = [str(p) for p in product_ids]
+        if not pids:
+            return {}
+
+        wh_ids = self.availability_warehouse_ids()
+        today = to_naive_datetime(datetime.now(MALAYSIA_TZ)).date()
+        months = horizon_months or DEFAULT_PLANNING_HORIZON_MONTHS
+        resolved_horizon_end = horizon_end or _add_months(today, months)
+
+        openings = self._opening_many(pids, wh_ids)
+        demand = self._demand_events_many(pids, wh_ids)
+        supply = self._supply_events_many(pids, wh_ids)
+
+        out: dict[str, NetworkPosition] = {}
+        for pid in pids:
+            d_events, undated, unplaceable_demand = demand.get(pid, ([], [], 0.0))
+            s_events, unattributed, unplaceable_on_order = supply.get(pid, ([], 0.0, 0.0))
+            opening = openings.get(pid, 0.0)
+            timeline = build_timeline(
+                opening,
+                d_events + s_events,
+                floor=0.0,
+                horizon_end=resolved_horizon_end,
+            )
+            # Summed off the SAME events the balance used, never re-queried. A separate
+            # aggregate would drift from the timeline the moment a predicate changed, and the
+            # row would then show a quantity on order that the shortfall beside it did not
+            # account for.
+            on_order = sum(
+                e.qty for e in s_events
+                if e.supply_stage == SUPPLY_ON_ORDER
+                and (e.at is None or e.at <= resolved_horizon_end)
+            )
+            in_transit = sum(
+                e.qty for e in s_events
+                if e.supply_stage == SUPPLY_IN_TRANSIT
+                and (e.at is None or e.at <= resolved_horizon_end)
+            )
+            out[pid] = NetworkPosition(
+                product_id=pid,
+                on_hand=round(opening, QTY_PRECISION),
+                qty_on_order=round(on_order, QTY_PRECISION),
+                qty_in_transit=round(in_transit, QTY_PRECISION),
+                shortfall=timeline.peak_deficit,
+                closing_balance=timeline.closing_balance,
+                shortfall_at=timeline.shortfall.at if timeline.shortfall else None,
+                horizon_end=resolved_horizon_end,
+                undated_demand_qty=round(
+                    sum(u.qty for u in undated), QTY_PRECISION
+                ),
+                unattributed_in_transit_qty=unattributed,
+                unplaceable_demand_qty=unplaceable_demand,
+                unplaceable_on_order_qty=unplaceable_on_order,
+            )
+        return out
 
     def resolve_line(
         self, product_id: str, *, warehouse_id: str, qty: float, allow_borrow: bool = True
