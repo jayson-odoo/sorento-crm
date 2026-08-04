@@ -10,7 +10,7 @@
  *    on-order separate from in-transit: only the on-order half is still negotiable.
  */
 import { describe, it, expect } from 'vitest';
-import { computedAtLabel, dayLabel, supplySplit } from './coverageTimeline';
+import { computedAtLabel, coverVerdict, dayLabel, supplySplit } from './coverageTimeline';
 import type { CoverageRow } from '../types/coverage.types';
 
 function row(over: Partial<CoverageRow['event']>, balance = 0): CoverageRow {
@@ -82,5 +82,52 @@ describe('supplySplit', () => {
       on_order: 0,
       in_transit: 0,
     });
+  });
+});
+
+
+/**
+ * The verdict answers ONE question: is the committed demand covered from stock we
+ * already hold. The reorder engine on the same screen answers a different one: is
+ * stock above its reorder point. Both are legitimate and they disagree routinely,
+ * so the verdict has to say which question it answered.
+ *
+ * The case that forced this, live on the dev database: B2155-NL-BLUE opens at 10,831
+ * against a reorder point of 12,369.66. Committed demand of 7,646 IS covered, so the
+ * panel said "existing stock covers it" - sitting beside a grid row recommending a
+ * buy of 18,551, with a 1,539 deficit against the reorder point printed two lines
+ * above. A planner reading "covers it" ignores a real replenishment signal.
+ */
+describe('coverVerdict', () => {
+  it('names the pool when committed demand is covered and stock is above the floor', () => {
+    const v = coverVerdict(true, 0, 'BRW', null);
+    expect(v.tone).toBe('stock');
+    expect(v.headline).toBe('Use the pool (BRW)');
+    expect(v.note).toBeNull();
+  });
+
+  it('still says buy when the demand itself is short', () => {
+    const v = coverVerdict(false, 4056, 'BRW', { at: '2026-07-01', qty: 4056, ref: 'SO1', label: '' });
+    expect(v.tone).toBe('buy');
+    expect(v.headline).toBe('Buy 4,056');
+  });
+
+  it('qualifies the verdict when the demand is covered but stock is below the floor', () => {
+    const v = coverVerdict(true, 0, 'BRW', {
+      at: null,
+      qty: 1538.6555,
+      ref: '',
+      label: 'opening on hand',
+    });
+    expect(v.tone).toBe('stock');
+    // The scope of the claim is stated, so it cannot be read as "nothing to do".
+    expect(v.headline).toContain('Committed demand is covered');
+    // And the other question is answered too, with its number.
+    expect(v.note).toContain('1,539');
+    expect(v.note).toContain('reorder point');
+  });
+
+  it('says covered rather than naming a pool when there is no pool location', () => {
+    expect(coverVerdict(true, 0, '', null).headline).toBe('Use existing stock');
   });
 });

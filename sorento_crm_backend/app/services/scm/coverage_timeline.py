@@ -160,6 +160,16 @@ def build_timeline(
     balance = float(opening)
     shortfall: Optional[Shortfall] = None
     peak_deficit = max(0.0, floor - balance)
+    # Stock ALREADY under the floor is a shortfall, and the most urgent kind: it is short
+    # now rather than on some future date. Seeding only `peak_deficit` from it left the two
+    # figures disagreeing about whether anything was wrong, and a screen that prints
+    # "nothing is short" beside a non-zero deficit gets believed over the number.
+    # `at` stays None because no event caused it and the opening balance carries no date;
+    # stamping today would assert a fact the data does not hold.
+    if peak_deficit > 1e-9:
+        shortfall = Shortfall(
+            at=None, qty=round(peak_deficit, 4), ref="", label="opening on hand"
+        )
 
     for e in ordered:
         balance += float(e.qty)

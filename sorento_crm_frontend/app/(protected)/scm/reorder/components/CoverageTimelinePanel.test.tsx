@@ -190,7 +190,9 @@ describe('CoverageTimelinePanel - use the pool, do not buy (AC-B1c)', () => {
   it('reads "Use the pool" and buys nothing when the pool covers the line', () => {
     withData(USE_POOL);
     expect(screen.getByTestId('coverage-verdict')).toHaveTextContent('Use the pool (BRW)');
-    expect(screen.getByText(/Buy 0 · existing stock covers it/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Buy 0 · committed demand covered from existing stock/),
+    ).toBeInTheDocument();
     // The regression: demand 67 against 4,397 must never propose buying 67.
     expect(screen.queryByText('Buy 67')).not.toBeInTheDocument();
   });

@@ -167,17 +167,36 @@ export const SUPPLY_STAGE_LABEL: Record<string, string> = {
  * The one-line verdict a planner acts on: use existing stock, or buy.
  * `use_stock` true is the SRTWT7408 case - demand 67 against a pool holding 4,397
  * must read "use the pool", never a buy of 67 (AC-B1c).
+ *
+ * It answers ONE question: is the committed demand covered from stock we already hold.
+ * The reorder engine on the same screen answers a different one: is stock above its
+ * reorder point. Those disagree routinely, so when the demand is covered AND the balance
+ * is under the floor, the verdict states its own scope and reports the other answer
+ * beside it. Left unqualified it read "existing stock covers it" next to a grid row
+ * recommending a buy of 18,551, and the sentence gets believed over the number.
  */
 export function coverVerdict(
   useStock: boolean,
   buyQty: number,
   poolLocation: string,
-): { tone: 'stock' | 'buy'; headline: string } {
+  shortfall: CoverageShortfall | null = null,
+): { tone: 'stock' | 'buy'; headline: string; note: string | null } {
   if (useStock) {
+    if (shortfall) {
+      const short = Math.round(shortfall.qty).toLocaleString('en-MY');
+      return {
+        tone: 'stock',
+        headline: 'Committed demand is covered',
+        note: `Below the reorder point by ${short}${
+          poolLocation ? ` across ${poolLocation}` : ''
+        }`,
+      };
+    }
     return {
       tone: 'stock',
       headline: poolLocation ? `Use the pool (${poolLocation})` : 'Use existing stock',
+      note: null,
     };
   }
-  return { tone: 'buy', headline: `Buy ${buyQty.toLocaleString('en-MY')}` };
+  return { tone: 'buy', headline: `Buy ${buyQty.toLocaleString('en-MY')}`, note: null };
 }

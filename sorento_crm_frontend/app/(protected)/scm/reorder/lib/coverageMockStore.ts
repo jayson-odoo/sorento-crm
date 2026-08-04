@@ -32,7 +32,7 @@ import type {
 } from '../types/coverage.types';
 
 /** Phase-1 flag. Phase 2 sets this false and deletes the file. */
-export const USE_COVERAGE_MOCKS = true;
+export const USE_COVERAGE_MOCKS = false;
 
 /**
  * Counts for the two NEW plan tiles (AC-B9), so a reviewer can see them carrying a

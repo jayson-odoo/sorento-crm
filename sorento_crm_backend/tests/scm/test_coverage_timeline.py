@@ -301,3 +301,51 @@ def test_partial_pool_cover_still_reduces_the_buy():
     allocs = resolve_sources(7646, SourceAvailability(pool=3590, pool_location="BRW"))
     assert buy_quantity(allocs) == 4056
     assert is_use_stock(allocs) is False
+
+
+# --------------------------------------------------------------------------- #
+# opening below the floor
+# --------------------------------------------------------------------------- #
+
+def test_stock_already_below_the_floor_is_a_shortfall_today_not_a_silent_deficit():
+    """The most urgent shortfall of all, and the one the timeline used to stay quiet about.
+
+    `peak_deficit` was seeded from the opening gap while `shortfall` was only ever set
+    inside the event loop, so a SKU sitting under its reorder point right now reported a
+    deficit and no shortfall. Two figures on one screen disagreeing about whether there is
+    a problem is worse than either answer alone: the panel reads "nothing is short" beside
+    a non-zero deficit, and the planner trusts the sentence over the number.
+
+    Real case that surfaced it: B2155-NL-BLUE opens at 10,831 against a reorder point of
+    12,369.66. Nothing arrives before the next event, so the gap is real today.
+    """
+    result = build_timeline(
+        10831,
+        [TimelineEvent(at=date(2026, 6, 29), qty=8600, kind=SUPPLY,
+                       supply_stage=SUPPLY_IN_TRANSIT, ref="SH-1")],
+        floor=12369.655534,
+    )
+
+    assert result.shortfall is not None, "below the reorder point today, reported as nothing"
+    assert result.shortfall.qty == 1538.6555
+    # No event caused it, so there is no date and no document to point at. Saying "today"
+    # by stamping date.today() would be a fact the data does not carry.
+    assert result.shortfall.at is None
+    assert result.peak_deficit == 1538.6555
+
+
+def test_a_deficit_and_a_shortfall_never_disagree_about_existence():
+    """The invariant, stated once so neither half can drift away from the other again."""
+    cases = [
+        (10831, [], 12369.655534),                       # opening under the floor
+        (500, [TimelineEvent(at=date(2026, 7, 1), qty=-600, kind=DEMAND, ref="SO1")], 0),
+        (500, [], 0),                                    # nothing wrong at all
+        (0, [], 0),                                      # empty and at the floor
+        (5000, [TimelineEvent(at=date(2026, 7, 1), qty=-100, kind=DEMAND, ref="SO2")], 100),
+    ]
+    for opening, events, floor in cases:
+        r = build_timeline(opening, events, floor=floor)
+        assert (r.peak_deficit > 0) == (r.shortfall is not None), (
+            f"opening={opening} floor={floor} deficit={r.peak_deficit} "
+            f"shortfall={r.shortfall}"
+        )

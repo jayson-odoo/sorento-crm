@@ -598,7 +598,12 @@ export function CoverageTimelinePanel({
   const dated = data.rows.filter((r) => r.event.kind !== 'opening');
   const late = firstLateSupply(data.rows, data.shortfall);
   const split = supplySplit(data.rows);
-  const verdict = coverVerdict(data.use_stock, data.buy_qty, data.availability.pool_location);
+  const verdict = coverVerdict(
+    data.use_stock,
+    data.buy_qty,
+    data.availability.pool_location,
+    data.shortfall,
+  );
   // A positive closing balance with a real shortfall is NOT healthy: the supply that
   // lifts it is dated after the demand it is being read as covering.
   const closingMisleading = !!data.shortfall && data.closing_balance >= data.floor;
@@ -623,6 +628,11 @@ export function CoverageTimelinePanel({
           )}
           <div className="min-w-0 break-words">
             <div className="text-sm font-semibold">{verdict.headline}</div>
+            {verdict.note ? (
+              <div className="text-2xs font-medium text-scm-stockout" data-testid="coverage-verdict-note">
+                {verdict.note}
+              </div>
+            ) : null}
             <div className="text-2xs text-muted-foreground">
               {data.product_code}
               {data.product_name ? ` · ${data.product_name}` : ''} · pool {data.pool_code} ·{' '}
@@ -746,7 +756,7 @@ export function CoverageTimelinePanel({
         </div>
         <div className="mt-1.5 text-2xs text-muted-foreground">
           Buy {fmtInt(data.buy_qty)}
-          {data.use_stock ? ' · existing stock covers it' : ''}
+          {data.use_stock ? ' · committed demand covered from existing stock' : ''}
         </div>
       </section>
 
