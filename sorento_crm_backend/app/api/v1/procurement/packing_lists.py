@@ -1,12 +1,12 @@
 """Packing lists (Inbound Shipments) API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Body
+from fastapi import APIRouter, Depends, File, Query, HTTPException, UploadFile, status, Body
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
 
 from app.database import get_db
-from app.dependencies import get_current_user, get_current_user_or_api_key
+from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.models.procurement import SPOAllocation, PickingHeader, PickingLine
 from app.services.procurement_service import (
     DuplicatePackingListError,
@@ -26,6 +26,91 @@ router = APIRouter()
 
 class BulkDeletePackingListsRequest(BaseModel):
     ids: list[str]
+
+
+@router.post("/container-status-import", status_code=status.HTTP_202_ACCEPTED)
+async def import_container_status(
+    file: UploadFile = File(..., description="Container Status workbook (.xlsx / .xls / .xlsm)."),
+    validate_only: bool = Query(
+        False, description="Dry run: report what would change and write nothing."
+    ),
+    current_user: dict = Depends(
+        require_permission("procurement.packing_lists.import_container_status")
+    ),
+    db: Session = Depends(get_db),
+):
+    """Queue a container status import, or dry-run it.
+
+    The entry point lives on Packing Lists because one sheet row IS one packing
+    list. The workbook is parsed server-side: it holds 9 header blocks across 5
+    tabs, so a client-side parse of the first sheet would see one block and miss
+    most of the rows.
+
+    ``validate_only=true`` returns 200 with
+    ``{valid, errors[], warnings[], summary{total_rows, would_update, would_create,
+    error_count}}``. Those summary keys are fixed by the shared frontend upload
+    dialog, which renders exactly those and silently drops anything else.
+    """
+    from fastapi.responses import JSONResponse
+
+    from app.services.excel_macro_stripper import maybe_strip
+    from app.services.import_source_store import store_import_source_file
+    from app.services.job_service import JobService
+    from app.services.queue_service import enqueue_job
+    from app.tasks.import_tasks import (
+        process_container_status_import,
+        validate_container_status_import,
+    )
+
+    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls", ".xlsm")):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file type: {file.filename}. Please upload Excel (.xlsx, .xls or .xlsm).",
+        )
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="The uploaded file is empty."
+        )
+
+    cleaned, cleaned_name = maybe_strip(raw, file.filename)
+
+    if validate_only:
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=validate_container_status_import(cleaned, cleaned_name),
+        )
+
+    job_service = JobService(db)
+    job = job_service.create_job(
+        job_type="container_status_import",
+        user_id=current_user["id"],
+        filename=cleaned_name,
+    )
+    # Retain the ORIGINAL bytes, pre-macro-strip: the cost columns this importer
+    # deliberately skips (D9) survive only in the retained file, and the assistant
+    # serves the same workbook back to a contact who asks for it.
+    store_import_source_file(job, raw, file.filename, file.content_type)
+    db.commit()
+
+    rq_job = enqueue_job(
+        process_container_status_import,
+        str(job.id),
+        cleaned,
+        cleaned_name,
+        current_user["id"],
+        queue_name="imports",
+        job_timeout=3600,
+        job_id=str(job.job_id),
+    )
+    job_service.update_job_with_rq_id(job, rq_job.id)
+
+    return {
+        "message": "Container status import queued.",
+        "job_id": rq_job.id,
+        "queued": True,
+    }
 
 
 @router.get("/", response_model=ListResponse[InboundShipmentListItemResponse])
