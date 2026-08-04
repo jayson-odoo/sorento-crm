@@ -163,6 +163,22 @@ class FormSLAConfig(Base):
     # the stage without advancing to customer service). NULL = spawn on any resolve
     # (backward-compatible with existing single-event chains).
     advance_on_event = Column(String(100), nullable=True)
+    # --- Skip the rest of the chain (UAC-form-sla-skip-stage) ---------------- #
+    # When set, this stage may be closed by an explicit "skip" action instead of its
+    # normal resolve: the stage resolves, the next stage never spawns, and the entity
+    # jumps to `skip_terminal_status`. NULL `skip_event` = unskippable (the default,
+    # and exactly today's behaviour).
+    #
+    # `skip_event` MUST also appear in `resolve_event` and MUST NOT appear in
+    # `advance_on_event` - that pairing is what resolves the stage without advancing.
+    skip_event = Column(String(100), nullable=True)
+    # Terminal status written onto the entity. The adapter owns HOW to write it; this
+    # column only says WHAT. Per-entity by design: 'settled_on_site' for a complaint.
+    skip_terminal_status = Column(String(100), nullable=True)
+    # Label for the gear-menu item ("Settled on site"). Config supplies the label only;
+    # the consequence sentence shown in the confirm dialog is domain truth and comes
+    # from the adapter, never from here.
+    skip_action_label = Column(String(120), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     # When false, spawning this stage assigns the tracker but does NOT notify the
     # assignee (some stages route silently). Default true = notify on assignment.

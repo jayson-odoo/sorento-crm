@@ -9,7 +9,8 @@ generic renderer instead of per-tool field-mapping code:
       "intro": "Here are the orders I found.",
       "items": [
         {"title": "...", "fields": [{"label": "...", "value": "..."}],
-         "flags": {"discontinued": false, "expired": false}}
+         "flags": {"discontinued": false, "expired": false,
+                   "unallocated": false, "partially_allocated": false}}
       ],
       "attachments": [{"url","filename","mimeType","attachmentType"}],
       "action_links": [{"label","url","type"}],
@@ -167,7 +168,16 @@ class _Builder:
         self.attachments: list[dict[str, Any]] = []
         self.action_links: list[dict[str, Any]] = []
 
-    def item(self, title: Any, pairs: list[tuple[str, Any]], *, discontinued=False, expired=False) -> None:
+    def item(
+        self,
+        title: Any,
+        pairs: list[tuple[str, Any]],
+        *,
+        discontinued=False,
+        expired=False,
+        unallocated=False,
+        partially_allocated=False,
+    ) -> None:
         fields = [{"label": lbl, "value": val} for lbl, val in pairs if _filled(val)]
         if not fields:
             return
@@ -175,7 +185,12 @@ class _Builder:
             {
                 "title": title if _filled(title) else None,
                 "fields": fields,
-                "flags": {"discontinued": bool(discontinued), "expired": bool(expired)},
+                "flags": {
+                    "discontinued": bool(discontinued),
+                    "expired": bool(expired),
+                    "unallocated": bool(unallocated),
+                    "partially_allocated": bool(partially_allocated),
+                },
             }
         )
 
@@ -206,6 +221,32 @@ def _wh_alloc(allocs: Any) -> str:
     return ", ".join(
         f"{a.get('warehouse_code')} ({a.get('allocated_quantity')})" for a in (allocs or [])
     )
+
+
+def _alloc_state(row: Any) -> tuple[bool, bool, Any]:
+    """Allocation signal for one incoming line: (unallocated, partially_allocated, gap).
+
+    Mutually exclusive booleans. `unallocated` = nothing has been claimed by any
+    warehouse yet; `partially_allocated` = some but not all of the shipped quantity is
+    claimed, with `gap` carrying the remainder for the consumer's badge text.
+
+    The gap is NOT computed here — the backend derives it against `quantity_shipped`
+    (allocations are never decremented on receipt, so `remaining_incoming_quantity` is
+    the wrong base) and ships only the gap, so the shipped total never reaches a
+    consumer. A backend that predates the field simply omits it: allocations exist, so
+    nothing is claimed rather than a partial guessed from the wrong number.
+    """
+    if not isinstance(row, dict):
+        return False, False, None
+    if not (row.get("warehouse_allocations") or []):
+        # The empty allocation list is itself the signal; no number to show.
+        return True, False, None
+    gap = row.get("unallocated_quantity")
+    try:
+        gap = int(gap)
+    except (TypeError, ValueError):
+        return False, False, None
+    return False, gap > 0, (gap if gap > 0 else None)
 
 
 def _orders_list(rows: list[dict], b: _Builder) -> None:
@@ -259,6 +300,7 @@ def _orders_by_product(rows: list[dict], b: _Builder) -> None:
 def _incoming_list(rows: list[dict], b: _Builder) -> None:
     for s in rows:
         for l in s.get("lines") or []:
+            unallocated, partial, gap = _alloc_state(l)
             b.item(
                 l.get("product_code"),
                 [
@@ -270,7 +312,10 @@ def _incoming_list(rows: list[dict], b: _Builder) -> None:
                     ("Batch", l.get("batch_number")),
                     ("Incoming Quantity", l.get("remaining_incoming_quantity")),
                     ("Warehouse Allocations", _wh_alloc(l.get("warehouse_allocations"))),
+                    ("Unallocated Quantity", gap),
                 ],
+                unallocated=unallocated,
+                partially_allocated=partial,
             )
         if s.get("attachment"):
             b.attach(s["attachment"])
@@ -279,6 +324,7 @@ def _incoming_list(rows: list[dict], b: _Builder) -> None:
 def _incoming_by_product(rows: list[dict], b: _Builder) -> None:
     for p in rows:
         for s in p.get("shipments") or []:
+            unallocated, partial, gap = _alloc_state(s)
             b.item(
                 p.get("product_code"),
                 [
@@ -289,7 +335,10 @@ def _incoming_by_product(rows: list[dict], b: _Builder) -> None:
                     ("Batch", s.get("batch_number")),
                     ("Incoming Quantity", s.get("remaining_incoming_quantity")),
                     ("Warehouse Allocations", _wh_alloc(s.get("warehouse_allocations"))),
+                    ("Unallocated Quantity", gap),
                 ],
+                unallocated=unallocated,
+                partially_allocated=partial,
             )
             if s.get("attachment"):
                 b.attach(s["attachment"])

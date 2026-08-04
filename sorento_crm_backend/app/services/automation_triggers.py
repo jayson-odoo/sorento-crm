@@ -196,6 +196,41 @@ register(
 )
 
 
+def _trigger_complaint_settled_on_site(
+    db: Session,
+    config: dict[str, Any],
+    timezone: str,
+) -> Iterable[TriggerMatch]:
+    """Event-driven trigger; pull-mode evaluation yields nothing.
+
+    Matches come from :meth:`AutomationService.dispatch_event`, fired by the skip
+    engine's complaint adapter. Deliberately separate from ``complaint_approved``:
+    a settled complaint is a different business outcome and its context carries
+    ``status='settled_on_site'``, so reusing the approval trigger would hand every
+    subscribed automation a status that is not true.
+    """
+    return []
+
+
+register(
+    TriggerSpec(
+        type="complaint_settled_on_site",
+        label="Complaint settled on site",
+        description=(
+            "Fires when a complaint is closed as settled on site - the technician fixed "
+            "the issue during the visit, so no replacement is arranged and customer "
+            "service is never assigned (event-driven, dispatched from the skip flow)."
+        ),
+        config_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    ),
+    _trigger_complaint_settled_on_site,
+)
+
+
 def _trigger_complaint_technical_response_updated(
     db: Session,
     config: dict[str, Any],

@@ -556,7 +556,16 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
         return self
 
 
-_FORM_SLA_TYPES = ("stock_inquiry", "purchase_request", "sponsorship_form", "complaint", "ticket")
+# Must stay in lockstep with form_sla_service.FORM_SLA_TYPES; a type in one but not
+# the other is a live bug (see tests/test_form_sla_types_consistency.py).
+_FORM_SLA_TYPES = (
+    "stock_inquiry",
+    "purchase_request",
+    "sponsorship_form",
+    "complaint",
+    "ticket",
+    "workflow_submission",
+)
 
 
 class FormSLAConfigBase(BaseModel):
