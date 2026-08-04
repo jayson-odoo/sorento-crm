@@ -9,34 +9,79 @@ metadata edits, and resetting leak-prone process globals between tests.
 import pytest
 
 
-def _sweep_orphan_scratch_schemas():
-    """Drop every ``zzt_*`` scratch schema left by a prior run.
+# Holds the session-long advisory lock. Kept on a module global because the lock lives on the
+# CONNECTION: closing it would release the lock and let a concurrent run start sweeping.
+_SWEEP_LOCK: dict = {}
 
-    The end-of-session drop below only fires if the process exits cleanly. A
-    killed run -- a timeout, an interrupted agent, a crash -- leaves its ~199
-    table schema behind, and those pile up (105 had accumulated across this
-    migration's many interrupted runs). Sweeping at session START, before any
-    test builds a new one, keeps the shared database from filling with them
-    regardless of how the previous run died.
+# Arbitrary but fixed. Every pytest session in every worktree against this database competes for
+# this one key, which is exactly the point.
+_SWEEP_LOCK_KEY = 727327001
+
+
+def _sweep_orphan_scratch_schemas():
+    """Drop ``zzt_*`` scratch schemas left behind, and ONLY when no other run is live.
+
+    The end-of-session drop only fires if the process exits cleanly. A killed run -- a timeout, an
+    interrupted agent, a crash -- leaves its ~199 table schema behind and they pile up, so
+    sweeping at session START is worth doing.
+
+    The original version dropped EVERY ``zzt_%`` schema unconditionally, and that is a trap. A
+    second pytest session destroyed the blank schema the first was still using, so every remaining
+    test in the older run failed with ``relation "companies" does not exist`` in files it had
+    nothing to do with. It cost three debugging sessions and produced two confident, wrong
+    "this failure is pre-existing" conclusions -- wrong because the baseline run being compared
+    against was poisoned by the same sweep.
+
+    The fix is a Postgres advisory lock held for the WHOLE session rather than just across the
+    sweep. The first session in takes it and cleans up; any session that starts while that one is
+    still running fails to take it and touches nothing. Failing to acquire is therefore not an
+    error, it is the signal that somebody else is working.
     """
     try:
         from sqlalchemy import text
         from app.database import engine
 
         admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
-        try:
-            names = [
-                r[0]
-                for r in admin.execute(
-                    text("SELECT nspname FROM pg_namespace WHERE nspname LIKE 'zzt_%'")
-                )
-            ]
-            for name in names:
-                admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')
-        finally:
+        got = admin.execute(
+            text("SELECT pg_try_advisory_lock(:key)"), {"key": _SWEEP_LOCK_KEY}
+        ).scalar()
+        if not got:
+            # Another run owns the database. Leave its schemas alone.
             admin.close()
+            return
+
+        # Held until _release_sweep_lock, so nobody else sweeps underneath us.
+        _SWEEP_LOCK["connection"] = admin
+
+        names = [
+            r[0]
+            for r in admin.execute(
+                text("SELECT nspname FROM pg_namespace WHERE nspname LIKE 'zzt_%'")
+            )
+        ]
+        for name in names:
+            admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')
     except Exception:
         pass
+
+
+def _release_sweep_lock():
+    connection = _SWEEP_LOCK.pop("connection", None)
+    if connection is None:
+        return
+    try:
+        from sqlalchemy import text
+
+        connection.execute(
+            text("SELECT pg_advisory_unlock(:key)"), {"key": _SWEEP_LOCK_KEY}
+        )
+    except Exception:
+        pass
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -55,6 +100,8 @@ def _blank_schema_lifecycle():
         drop_blank_schema()
     except Exception:
         pass
+    # Last, so the lock outlives this run's own schema and a queued run finds the DB tidy.
+    _release_sweep_lock()
 
 
 _ORIGINAL_COLUMN_TYPES: dict = {}

@@ -994,6 +994,29 @@ class ProjectQuotationLineBase(BaseModel):
     )
     sort_order: int = 0
     notes: Optional[str] = None
+
+    # The columns the printed quotation carries. Writable from this slice on, so a line can be
+    # entered the way it will actually be sent rather than typed twice.
+    item_label: Optional[str] = Field(
+        None,
+        max_length=8,
+        description="The A / B / C letter. Blank on a sub-line under the letter above it.",
+    )
+    brand_snapshot: Optional[str] = Field(None, max_length=100)
+    technical_spec: Optional[str] = None
+    complete_set: Optional[str] = Field(None, max_length=100)
+    band_label: Optional[str] = Field(
+        None,
+        max_length=150,
+        description=(
+            "A section heading BEFORE this line, free text off the customer's own bill of "
+            "quantities. Carried by the line that opens the band."
+        ),
+    )
+    is_rate_only: bool = Field(
+        False,
+        description="Quoted at a rate and printed, contributing nothing to any total.",
+    )
     image_attachment_id: Optional[str] = None
 
 
@@ -1011,6 +1034,12 @@ class ProjectQuotationLineUpdate(BaseModel):
     sort_order: Optional[int] = None
     notes: Optional[str] = None
     image_attachment_id: Optional[str] = None
+    item_label: Optional[str] = Field(None, max_length=8)
+    brand_snapshot: Optional[str] = Field(None, max_length=100)
+    technical_spec: Optional[str] = None
+    complete_set: Optional[str] = Field(None, max_length=100)
+    band_label: Optional[str] = Field(None, max_length=150)
+    is_rate_only: Optional[bool] = None
 
 
 class ProjectQuotationLineResponse(BaseModel):
