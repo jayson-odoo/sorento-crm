@@ -32,10 +32,19 @@ from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 
 # Mirror of ``scm.on_order_v``'s status filter (M4-D5/D6): a PO counts as incoming
-# supply only in these statuses AND while it still has an unreceived line.
+# supply only in these statuses AND while it still has an unreceived OPEN line.
 _ON_ORDER_STATUSES = {"active", "received", "partial", "closed"}
+# The other half of that view's predicate. A line whose status is not ``open`` has left the
+# order book (cancelled, or dropped from the outstanding extract) and is no longer incoming,
+# so it must not appear in this PO's own totals either - two readers disagreeing about "on
+# order" is what makes a planning report untrustworthy.
+_OPEN_LINE_STATUS = "open"
 _DRAFT_STATUS = "draft_recommendation"
 _REC_SOURCE = "scm_recommendation"
+
+
+def _is_open_line(line) -> bool:
+    return (line.line_status or "") == _OPEN_LINE_STATUS
 
 
 class PurchaseOrderService:
@@ -48,7 +57,8 @@ class PurchaseOrderService:
         if po.status not in _ON_ORDER_STATUSES:
             return False
         return any(
-            float(ln.qty_ordered or 0) > float(ln.qty_received or 0) for ln in po.lines
+            _is_open_line(ln) and float(ln.qty_ordered or 0) > float(ln.qty_received or 0)
+            for ln in po.lines
         )
 
     def serialize(self, po: PurchaseOrder, gr_reference: Optional[str] = None) -> dict:
@@ -57,9 +67,16 @@ class PurchaseOrderService:
         wh_code = None
         wh_name = None
         total_qty = 0.0
+        open_lines = 0
         lines = []
         for ln in po.lines:
-            total_qty += float(ln.qty_ordered or 0)
+            # ``total_qty`` / ``line_count`` are what the PO contributes as supply, so they
+            # count OPEN lines only, exactly as ``scm.on_order_v`` does. Every line is still
+            # listed, each carrying its ``line_status``, so the screen can show a closed line
+            # as closed instead of rendering it as one still coming.
+            if _is_open_line(ln):
+                total_qty += float(ln.qty_ordered or 0)
+                open_lines += 1
             if wh_code is None and ln.warehouse is not None:
                 wh_code = ln.warehouse.warehouse_code
                 wh_name = ln.warehouse.warehouse_name or ln.warehouse.warehouse_code
@@ -69,6 +86,7 @@ class PurchaseOrderService:
                 "product_name": ln.product.product_name if ln.product else "",
                 "qty_ordered": float(ln.qty_ordered or 0),
                 "qty_received": float(ln.qty_received or 0),
+                "line_status": ln.line_status,
                 "uom": ln.product.base_uom.uom_code if (ln.product and ln.product.base_uom) else "",
             })
         return {
@@ -84,7 +102,7 @@ class PurchaseOrderService:
             ),
             "expected_date": po.expected_date.isoformat() if po.expected_date else None,
             "total_qty": total_qty,
-            "line_count": len(po.lines),
+            "line_count": open_lines,
             "lines": lines,
             "created_at": po.created_at.isoformat() if po.created_at else "",
             "is_on_order": self._is_on_order(po),
@@ -216,6 +234,13 @@ class PurchaseOrderService:
         self.db.flush()
 
         for ln in po.lines:
+            if ln.line_status == "closed":
+                # Goods that were cancelled never arrive, so receiving them invents inventory
+                # AND hands ``scm.receipt_lead_v`` a fabricated lead-time observation, which
+                # then skews the supplier's measured lead time and every safety stock and
+                # reorder point computed from it. A wrong lead time is worse than none,
+                # because it is trusted.
+                continue
             ordered = float(ln.qty_ordered or 0)
             received = float(ln.qty_received or 0)
             remaining = ordered - received

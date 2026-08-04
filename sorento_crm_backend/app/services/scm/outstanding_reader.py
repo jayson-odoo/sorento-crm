@@ -35,7 +35,11 @@ _REQUIRED = {
 # date in scope. Checked once against the header row, not per line.
 _REQUIRED_COLUMNS = {
     SO: ("so_number", "item_code", "qty_outstanding", "required_date"),
-    PO: ("po_number", "item_code", "qty_ordered"),
+    # `expected_date` is required for exactly the reason above. It was harmless while the PO
+    # path was read-only; now that it WRITES, a file with no ETA column blanks every arrival
+    # date in scope and the plan loses its time axis (coverage timelines, the arrival
+    # calendar, every "when does this land" answer) while on-order still looks right.
+    PO: ("po_number", "item_code", "qty_ordered", "expected_date"),
 }
 
 
@@ -54,6 +58,11 @@ class ReadResult:
     unmapped_headers: list[str] = field(default_factory=list)
     missing_columns: list[str] = field(default_factory=list)
     total_rows: int = 0
+    # Per-row fields the DIFF does not care about but the WRITE does: counterparty code,
+    # unit cost, currency. Kept in a side map keyed by `Line.row_ref` rather than added to
+    # `Line`, because `outstanding_diff` is deliberately document-agnostic and adding
+    # purchase-only columns to its value type would leak one document's shape into both.
+    extras: dict[str, dict] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -143,6 +152,15 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
     doc_field = "so_number" if doc_type == SO else "po_number"
     date_field = "required_date" if doc_type == SO else "expected_date"
     label_field = "customer_name" if doc_type == SO else "supplier_name"
+    order_date_field = "so_date" if doc_type == SO else "po_date"
+
+    # (document, item, location, date) -> the row that first stated it. The same line stated
+    # twice in one file is a spreadsheet accident, and it is invisible downstream: the diff
+    # pairs by content, so the first copy reads as `unchanged` and the second as `added`,
+    # doubling the supply and then sitting perfectly stable so no later upload surfaces it.
+    # Both rows are still carried - what the write should do with them is arguable, that a
+    # human is told is not.
+    first_seen: dict[tuple, int] = {}
 
     for row_number, row in enumerate(rows, start=2):
         if not any(c is not None and str(c).strip() for c in row):
@@ -182,14 +200,38 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
                 row_number, f"could not read the date in {date_field}",
                 value=_clean(raw_date)))
 
+        location = _clean(rec.get("stock_location"))
+        # Codes are compared uppercase because every consumer normalises with `upper()`.
+        dup_key = (doc.upper(), item.upper(), location.upper(), when)
+        if dup_key in first_seen:
+            result.problems.append(RowProblem(
+                row_number,
+                f"the same line is stated twice: {doc} / {item} at the same location and "
+                f"date already appears on row {first_seen[dup_key]}",
+                value=doc))
+        else:
+            first_seen[dup_key] = row_number
+
         result.lines.append(Line(
             doc_number=doc,
             item_code=item,
-            location=_clean(rec.get("stock_location")),
+            location=location,
             qty=qty,
             required_date=when,
             row_ref=str(row_number),
             label=_clean(rec.get(label_field)),
         ))
+        # An absent cost stays absent. A zero would read as free goods, and the cash
+        # co-pilot ranks on this column. `order_date` is the DOCUMENT's own date (PO DATE /
+        # SO DATE): carried per row because that is the shape of the file, folded onto the
+        # header by the write path. Without it `scm.receipt_lead_v` has no `po.issue_date` to
+        # measure lead days against, so an imported order contributes no lead-time evidence.
+        result.extras[str(row_number)] = {
+            "party_code": _clean(rec.get("debtor_code" if doc_type == SO
+                                         else "creditor_code")),
+            "unit_cost": _to_float(rec.get("unit_cost")),
+            "currency": _clean(rec.get("currency")) or None,
+            "order_date": _to_date(rec.get(order_date_field)),
+        }
 
     return result

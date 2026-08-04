@@ -37,7 +37,7 @@ _DOC_TYPES = {"sales-orders": SO, "purchase-orders": PO}
 # therefore created SALES orders whose so_number was the PO number - silent cross-table
 # corruption that a reader-level doc_type check did nothing to stop. Keep this allow-list even
 # after the PO write path lands: a type that can be read but not written must fail loudly.
-_WRITABLE_DOC_TYPES = {SO}
+_WRITABLE_DOC_TYPES = {SO, PO}
 
 
 def _doc_type(kind: str) -> str:

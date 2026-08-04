@@ -14,28 +14,116 @@ from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import func, text
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.order import Customer, SalesOrder, SalesOrderLine
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.inventory import Warehouse
 from app.models.product import Product
 from app.services.import_alias_service import AliasResolver
 from app.services.scm.outstanding_diff import (
     ADDED,
     CLOSED,
-    Change,
+    DATE_AND_QTY_CHANGED,
+    QTY_CHANGED,
     Diff,
     Line,
     diff_lines,
 )
-from app.services.scm.outstanding_reader import SO, ReadResult, RowProblem, read_workbook
+from app.services.scm.outstanding_reader import PO, SO, ReadResult, RowProblem, read_workbook
 
 # Demand class drives fulfilment priority. Anything that is not recognisably a project is
 # treated as retail: under-prioritising a project order is visible and complained about,
 # while over-prioritising every retail order quietly starves the projects.
 _PROJECT_SEGMENTS = {"project", "projects", "contract"}
 DEFAULT_DEMAND_CLASS = "retail"
+
+# A quantity difference below this is noise between two exports, not a decision. Same figure
+# the diff uses, for the same reason.
+_QTY_EPSILON = 0.0005
+
+
+@dataclass(frozen=True)
+class _Binding:
+    """How one document type maps onto its tables.
+
+    The write path is parameterised by this rather than branching on `doc_type` in a dozen
+    places, and `outstanding_diff` stays entirely document-agnostic. Two copy-pasted halves
+    is how the two sides drift: the original bug was precisely a write path that ignored
+    doc_type and put purchase orders into `sales_orders`.
+    """
+
+    header: type            # SalesOrder / PurchaseOrder
+    line: type              # SalesOrderLine / PurchaseOrderLine
+    number: str             # the header's human document number attribute
+    header_fk: str          # the line's FK back to its header
+    date: str               # the line's dated axis
+    fulfilled: str          # quantity already delivered / received
+    party_fk: str           # the header's counterparty FK
+    party_code: str         # the file field naming that counterparty
+    party: Optional[type]   # the counterparty model, or None when this path does not link one
+    party_code_col: str     # that model's code column
+    # Two DIFFERENT jobs, deliberately separate fields. `write_status` is what a header this
+    # import creates (or lifts) is stamped with; `live_statuses` is the predicate for reading
+    # existing ones. They were one field, and the narrower write value then hid every document
+    # that had moved on: a purchase order that has taken a goods receipt sits in `received`,
+    # so the diff saw a document with no lines and inserted them all again, doubling on-order.
+    write_status: str
+    live_statuses: tuple[str, ...]
+    # Line columns fed from the file's money columns, when it has any. Empty for the sales
+    # book, whose extract carries no price at all.
+    money_cols: tuple[tuple[str, str], ...] = ()
+    # Header columns fed from the file, per document. Same (column, extras key) shape.
+    header_cols: tuple[tuple[str, str], ...] = ()
+
+
+_BINDINGS: dict[str, _Binding] = {
+    SO: _Binding(
+        header=SalesOrder, line=SalesOrderLine,
+        number="so_number", header_fk="sales_order_id",
+        date="required_date", fulfilled="qty_delivered",
+        party_fk="customer_id", party_code="debtor_code",
+        # The SO path deliberately does NOT link the customer yet. The debtor code is read but
+        # nothing consumes `sales_orders.customer_id` from this channel, and reporting an
+        # unresolvable debtor code as an issue before anything reads it is noise on a screen
+        # whose whole job is to show the operator what needs fixing. Linking it is the same
+        # three lines as the PO side the day a consumer exists.
+        party=None, party_code_col="customer_code",
+        # `scm.committed_v` counts exactly one sales-order status, so writing and reading are
+        # the same value here.
+        write_status="open", live_statuses=("open",),
+    ),
+    PO: _Binding(
+        header=PurchaseOrder, line=PurchaseOrderLine,
+        number="po_number", header_fk="purchase_order_id",
+        date="expected_date", fulfilled="qty_received",
+        party_fk="supplier_id", party_code="creditor_code",
+        party=Supplier, party_code_col="supplier_code",
+        # NOT "draft". `scm.on_order_v` counts only placed orders, deliberately excluding
+        # drafts (M4-D5), and an outstanding-PO extract is a book of orders already placed
+        # with suppliers. Writing them as drafts would import the supply and then hide it.
+        write_status="active",
+        # Every status in which a purchase order is still a live document, matching
+        # `scm.on_order_v`, `dashboard_service.PLACED_PO_STATUSES` and
+        # `purchase_order_service._ON_ORDER_STATUSES`. A part-received order is the same
+        # order, so Monday's extract re-uploaded must diff against it rather than re-order it.
+        live_statuses=("active", "received", "partial", "closed"),
+        # (line column, extras key). Cost is what the cash co-pilot ranks on, so an absent
+        # cost stays absent rather than becoming a zero that reads as free goods.
+        money_cols=(("unit_cost", "unit_cost"), ("currency", "currency")),
+        # `scm.receipt_lead_v` measures lead days from `po.issue_date`, so an order imported
+        # without it contributes nothing to the measured supplier lead time.
+        header_cols=(("issue_date", "order_date"), ("currency", "currency")),
+    ),
+}
+
+
+def _binding(doc_type: str) -> _Binding:
+    try:
+        return _BINDINGS[doc_type]
+    except KeyError:  # pragma: no cover - guarded at the route
+        raise ValueError(f"no write binding for document type {doc_type!r}")
 
 
 @dataclass
@@ -57,6 +145,10 @@ class PreviewResult:
     row_problems: list[RowProblem] = field(default_factory=list)
     resolution_issues: list[ResolutionIssue] = field(default_factory=list)
     samples: dict = field(default_factory=dict)
+    # Documents this upload would lift to the live status. Same key as `apply`'s response, so
+    # the confirm screen shows the side effect BEFORE it happens and the commit reports the
+    # same fact afterwards.
+    activated_documents: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -74,6 +166,7 @@ class PreviewResult:
             "row_problems": [asdict(p) for p in self.row_problems],
             "resolution_issues": [asdict(i) for i in self.resolution_issues],
             "samples": self.samples,
+            "activated_documents": list(self.activated_documents),
         }
 
 
@@ -83,15 +176,45 @@ class _Resolved:
     issues: list[ResolutionIssue]
     product_by_code: dict
     warehouse_by_code: dict
-    customer_by_code: dict
-    header_by_doc: dict
+    # Which counterparty each document in the file belongs to. Per DOCUMENT, not per line:
+    # the counterparty lives on the header, and a file naming two different creditors on one
+    # PO number is a file problem, not a shape this write path should invent support for.
+    party_by_doc: dict
+    # The counterparty CODE behind each of those, so a report can name it instead of an id.
+    party_code_by_doc: dict = field(default_factory=dict)
+    # Header-level values the file states per document (`_Binding.header_cols`), first
+    # non-empty wins: the extract repeats them on every row of the document.
+    header_by_doc: dict = field(default_factory=dict)
 
 
 def _norm(code: str) -> str:
     return (code or "").strip().upper()
 
 
-def _resolve(db: Session, read: ReadResult) -> _Resolved:
+def _resolve_parties(db: Session, read: ReadResult, bind: _Binding) -> dict[str, str]:
+    """Counterparty code -> id, within the active company.
+
+    ORM, not raw SQL, for the same reason as every other lookup here: the isolation filter
+    runs on ORM execution only, and reading another company's supplier would attribute this
+    order to the wrong one. Who is late is the entire point of an expediting list.
+    """
+    if bind.party is None:
+        return {}
+    codes = {_norm(x.get("party_code")) for x in read.extras.values() if x.get("party_code")}
+    if not codes:
+        return {}
+    code_col = getattr(bind.party, bind.party_code_col)
+    return {
+        _norm(code): str(pid)
+        for pid, code in (
+            db.query(bind.party.id, code_col)
+            .filter(func.upper(code_col).in_(list(codes)))
+            .all()
+        )
+    }
+
+
+def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
     """Map codes in the file onto real rows, reporting whatever cannot be resolved.
 
     Deliberately ORM queries, not raw SQL. `products`, `warehouses` and `sales_orders` are
@@ -124,9 +247,15 @@ def _resolve(db: Session, read: ReadResult) -> _Resolved:
         ):
             warehouses[_norm(code)] = str(wid)
 
+    parties = _resolve_parties(db, read, bind)
+    party_by_doc: dict[str, str] = {}
+    party_code_by_doc: dict[str, str] = {}
+    header_by_doc: dict[str, dict] = {}
+
     kept: list[Line] = []
     for l in read.lines:
         row = int(l.row_ref) if (l.row_ref or "").isdigit() else 0
+        extra = read.extras.get(str(l.row_ref), {})
         pid = products.get(_norm(l.item_code))
         if not pid:
             # Never auto-create: a typo would become a SKU that gets planned and bought.
@@ -139,46 +268,182 @@ def _resolve(db: Session, read: ReadResult) -> _Resolved:
             continue
         kept.append(l)
 
+        # Header-level values the file repeats on every row of the document. First non-empty
+        # wins rather than last, so a trailing blank cell cannot erase a stated date.
+        if bind.header_cols:
+            slot = header_by_doc.setdefault(l.doc_number, {})
+            for _col, key in bind.header_cols:
+                if slot.get(key) is None and extra.get(key) is not None:
+                    slot[key] = extra.get(key)
+
+        # The counterparty is resolved but NEVER gates the line, unlike the item and the
+        # location. A quantity with no product cannot be planned, and a quantity in the wrong
+        # warehouse makes every coverage figure for that location wrong - so those rows are
+        # dropped. An unknown creditor leaves the quantity and the arrival date perfectly
+        # true, and dropping the line would make on-order UNDERSTATE supply, which is what
+        # causes a second, unnecessary purchase. So it is reported and the header is left
+        # unlinked.
+        if bind.party is None:
+            continue
+        code = _norm(extra.get("party_code"))
+        if not code:
+            continue
+        pid_party = parties.get(code)
+        if pid_party is None:
+            issues.append(ResolutionIssue(
+                row, bind.party_code, code,
+                f"no {bind.party.__name__.lower()} with this code"))
+            continue
+        seen_code = party_code_by_doc.get(l.doc_number)
+        if seen_code is not None and seen_code != code:
+            # One document has one counterparty, so a file naming two is a file to fix. The
+            # first row still wins the write, but silently: half the document's lines would
+            # otherwise be attributed to a company that never sold them, and the supplier
+            # scorecard would blame them for a delivery they were never asked to make.
+            issues.append(ResolutionIssue(
+                row, bind.party_code, code,
+                f"{l.doc_number} names two different {bind.party_code} values, "
+                f"{seen_code} and {code}; the first is being used"))
+            continue
+        party_by_doc.setdefault(l.doc_number, pid_party)
+        party_code_by_doc.setdefault(l.doc_number, code)
+
     return _Resolved(lines=kept, issues=issues, product_by_code=products,
-                     warehouse_by_code=warehouses, customer_by_code={},
-                     header_by_doc={})
+                     warehouse_by_code=warehouses, party_by_doc=party_by_doc,
+                     party_code_by_doc=party_code_by_doc, header_by_doc=header_by_doc)
 
 
-def _existing_lines(db: Session, docs: set[str]) -> list[Line]:
+def _existing_lines(db: Session, docs: set[str], bind: _Binding, *,
+                    fulfilled_into: Optional[dict[str, float]] = None) -> list[Line]:
     """Current outstanding lines for the documents named in the file, as diff Lines.
 
     `row_ref` carries the DB line id so apply() can update in place rather than matching
     twice by content.
+
+    `fulfilled_into`, when given, is filled with each returned line's already
+    delivered/received quantity. The diff has no place for it (it is deliberately
+    document-agnostic and compares OUTSTANDING figures) but the honesty checks need it, and a
+    caller that only wants the diff should not have to unpack a pair to get it.
     """
     if not docs:
         return []
     # ORM, so the company-isolation filter applies. See `_resolve`: another company's order
     # carrying the same SO number must never be diffed against this upload, let alone closed
     # by it.
+    line, header = bind.line, bind.header
+    fulfilled = getattr(line, bind.fulfilled)
     rows = (
         db.query(
-            SalesOrderLine.id,
-            SalesOrder.so_number,
+            line.id,
+            getattr(header, bind.number),
             Product.product_code,
             Warehouse.warehouse_code,
-            (SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered).label("outstanding"),
-            SalesOrderLine.required_date,
+            (line.qty_ordered - fulfilled).label("outstanding"),
+            getattr(line, bind.date),
+            fulfilled,
         )
-        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
-        .join(Product, Product.id == SalesOrderLine.product_id)
-        .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
+        .join(header, header.id == getattr(line, bind.header_fk))
+        .join(Product, Product.id == line.product_id)
+        .outerjoin(Warehouse, Warehouse.id == line.warehouse_id)
         .filter(
-            SalesOrder.so_number.in_(list(docs)),
-            SalesOrder.status == "open",
-            SalesOrderLine.line_status == "open",
-            SalesOrderLine.qty_ordered > SalesOrderLine.qty_delivered,
+            getattr(header, bind.number).in_(list(docs)),
+            # Every status the readers call live, not only the one this import writes.
+            header.status.in_(list(bind.live_statuses)),
+            # Open lines ONLY. A closed line that comes back arrives as an ADD, which is where
+            # apply() reopens it in place. Returning closed lines here instead would make the
+            # pair read as `unchanged` AND break idempotency, because a closed line absent
+            # from the next upload would be re-closed on every single re-run.
+            line.line_status == "open",
+            line.qty_ordered > fulfilled,
         )
         .all()
     )
+    if fulfilled_into is not None:
+        fulfilled_into.update({str(r[0]): float(r[6] or 0) for r in rows})
     return [
         Line(doc_number=r[1], item_code=r[2], location=r[3] or "",
              qty=float(r[4] or 0), required_date=r[5], row_ref=str(r[0]))
         for r in rows
+    ]
+
+
+def _header_state(db: Session, docs: tuple[str, ...],
+                  bind: _Binding) -> dict[str, tuple[str, Optional[str]]]:
+    """Each in-scope document's current (status, counterparty id), for the headers that exist.
+
+    ORM for the same isolation reason as every other lookup here.
+    """
+    if not docs:
+        return {}
+    rows = (
+        db.query(getattr(bind.header, bind.number), bind.header.status,
+                 getattr(bind.header, bind.party_fk))
+        .filter(getattr(bind.header, bind.number).in_(list(docs)))
+        .all()
+    )
+    return {r[0]: (r[1], str(r[2]) if r[2] else None) for r in rows}
+
+
+def _honesty_issues(diff: Diff, fulfilled_by_line: dict[str, float],
+                    header_state: dict[str, tuple[str, Optional[str]]],
+                    resolved: _Resolved, bind: _Binding) -> list[ResolutionIssue]:
+    """What the file says that a person has to see before it is believed.
+
+    Computed from the diff alone so preview and apply report the SAME thing: a preview that
+    does not mention a side effect the commit performs is a preview that lies.
+    """
+    out: list[ResolutionIssue] = []
+
+    for c in diff.of_kind(QTY_CHANGED, DATE_AND_QTY_CHANGED):
+        if c.before is None or c.after is None:
+            continue
+        fulfilled = fulfilled_by_line.get(str(c.before.row_ref))
+        if fulfilled is None:
+            continue
+        ordered = c.before.qty + fulfilled
+        # The extract states what is OUTSTANDING, so ordered becomes received plus outstanding.
+        # Right for a fresh file; a file taken BEFORE the goods receipt inflates the order by
+        # exactly what has already arrived. The two are indistinguishable from the file alone,
+        # so the write still happens and the question is asked rather than guessed at.
+        if fulfilled <= 0 or (fulfilled + c.after.qty) <= ordered + _QTY_EPSILON:
+            continue
+        row = int(c.after.row_ref) if (c.after.row_ref or "").isdigit() else 0
+        out.append(ResolutionIssue(
+            row, "qty_ordered", str(c.after.qty),
+            f"{c.doc_number} / {c.item_code} already has {fulfilled:g} received, so this "
+            f"raises the order from {ordered:g} to {fulfilled + c.after.qty:g}; either the "
+            f"order grew or this extract predates the receipt"))
+
+    for number in diff.scope_documents:
+        _status, current_party = header_state.get(number, (None, None))
+        party_id = resolved.party_by_doc.get(number)
+        code = resolved.party_code_by_doc.get(number)
+        if party_id and current_party and current_party != str(party_id):
+            # The file is the system of record for who we bought from: chasing the wrong
+            # supplier is the failure mode. Overwritten, and said out loud.
+            out.append(ResolutionIssue(
+                0, bind.party_code, code or "",
+                f"the {bind.party_code} on {number} disagrees with the file and is being "
+                f"changed to {code}"))
+
+    return out
+
+
+def _to_activate(diff: Diff, header_state: dict[str, tuple[str, Optional[str]]],
+                 bind: _Binding) -> list[str]:
+    """In-scope documents whose header is not live and therefore has to be lifted.
+
+    An outstanding-orders extract is a book of documents already placed, and AutoCount is the
+    system of record for that, so a document it names is by definition no longer a draft.
+    Leaving it as one imports the lines and then hides them: `scm.on_order_v` ignores drafts
+    (M4-D5), so on-order stays 0 while the response still reports `added: N` - a silent no-op
+    reporting success. Reported rather than merely done, because changing a document's status
+    crosses a decision boundary a person should see.
+    """
+    return [
+        number for number in diff.scope_documents
+        if (state := header_state.get(number)) is not None
+        and state[0] not in bind.live_statuses
     ]
 
 
@@ -207,19 +472,44 @@ def _samples(diff: Diff, limit: int = 8) -> dict:
     return out
 
 
-def _build(db: Session, file_data: bytes, doc_type: str):
+@dataclass
+class _Plan:
+    """Everything both entry points need, built once so they cannot disagree."""
+
+    read: ReadResult
+    resolved: Optional[_Resolved] = None
+    diff: Optional[Diff] = None
+    issues: list[ResolutionIssue] = field(default_factory=list)
+    # Documents that would be (preview) or were (apply) lifted to the live write status.
+    activate: list[str] = field(default_factory=list)
+
+
+def _build(db: Session, file_data: bytes, doc_type: str) -> _Plan:
+    bind = _binding(doc_type)
     resolver = AliasResolver.for_doc_type(db, doc_type)
     read = read_workbook(file_data, doc_type, resolver)
     if not read.ok:
-        return read, None, None
-    resolved = _resolve(db, read)
-    existing = _existing_lines(db, {l.doc_number for l in resolved.lines})
-    return read, resolved, diff_lines(existing, resolved.lines)
+        return _Plan(read=read)
+    resolved = _resolve(db, read, bind)
+    fulfilled: dict[str, float] = {}
+    existing = _existing_lines(db, {l.doc_number for l in resolved.lines}, bind,
+                               fulfilled_into=fulfilled)
+    diff = diff_lines(existing, resolved.lines)
+    header_state = _header_state(db, diff.scope_documents, bind)
+    return _Plan(
+        read=read,
+        resolved=resolved,
+        diff=diff,
+        issues=resolved.issues + _honesty_issues(diff, fulfilled, header_state,
+                                                 resolved, bind),
+        activate=_to_activate(diff, header_state, bind),
+    )
 
 
 def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
     """What this upload would change. Writes nothing."""
-    read, resolved, diff = _build(db, file_data, doc_type)
+    plan = _build(db, file_data, doc_type)
+    read, diff = plan.read, plan.diff
     if diff is None:
         return PreviewResult(
             doc_type=doc_type, scope_documents=(), counts={}, total_rows=read.total_rows,
@@ -234,9 +524,49 @@ def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
         unmapped_headers=read.unmapped_headers,
         missing_columns=read.missing_columns,
         row_problems=read.problems,
-        resolution_issues=resolved.issues,
+        resolution_issues=plan.issues,
         samples=_samples(diff),
+        activated_documents=plan.activate,
     )
+
+
+def _closed_line(db: Session, bind: _Binding, header_id: str, product_id: Optional[str],
+                 warehouse_id: Optional[str], when: Optional[date]):
+    """A closed line on this document matching the incoming row exactly, if there is one.
+
+    An explicit lookup rather than widening `_existing_lines`: the diff must stay open-only,
+    or a closed line simply absent from the next upload would be re-closed on every re-run
+    and `applied.closed` would never settle at 0.
+    """
+    if product_id is None:
+        return None
+    line = bind.line
+    q = (
+        db.query(line)
+        .filter(getattr(line, bind.header_fk) == header_id,
+                line.product_id == product_id,
+                line.line_status == "closed")
+    )
+    q = q.filter(line.warehouse_id.is_(None) if warehouse_id is None
+                 else line.warehouse_id == warehouse_id)
+    dated = getattr(line, bind.date)
+    q = q.filter(dated.is_(None) if when is None else dated == when)
+    return q.order_by(line.created_at).first()
+
+
+def _refresh_money(line, extra: dict, bind: _Binding) -> None:
+    """Bring the line's money columns up to what this extract says.
+
+    Applied on update, not on insert only: cost is what the cash co-pilot ranks and budgets
+    on, so a line frozen at the first extract's price is ranked on last week's money, and a
+    line that arrived with the column blank and was priced later would stay blank for ever -
+    ranked as if it were free. A value the file does NOT state leaves the column alone rather
+    than blanking a cost we already know.
+    """
+    for col, key in bind.money_cols:
+        value = extra.get(key)
+        if value is not None:
+            setattr(line, col, value)
 
 
 def _demand_class_for(db: Session, debtor_code: str) -> str:
@@ -263,43 +593,100 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
     against; erasing it would make last week's plan unexplainable, and `scm.committed_v`
     already excludes non-open lines (migration 311).
     """
-    read, resolved, diff = _build(db, file_data, doc_type)
-    if diff is None:
+    plan = _build(db, file_data, doc_type)
+    read, resolved, diff = plan.read, plan.resolved, plan.diff
+    if diff is None or resolved is None:
         return {"ok": False, "missing_columns": read.missing_columns, "counts": {}}
 
-    by_id = {str(l.row_ref): l for l in _existing_lines(db, set(diff.scope_documents))}
+    bind = _binding(doc_type)
+    lift = set(plan.activate)
+
+    # Header per document in scope, created if absent. `write_status` differs per type: an
+    # outstanding-PO extract is a book of orders already PLACED, and `scm.on_order_v`
+    # deliberately ignores drafts, so writing them as drafts would import supply and hide it.
     order_ids: dict[str, str] = {}
-    for so_number in diff.scope_documents:
-        so = db.query(SalesOrder).filter(SalesOrder.so_number == so_number).one_or_none()
-        if so is None:
-            so = SalesOrder(so_number=so_number, status="open",
-                            source_system="scm_upload", source_ref=doc_type)
-            db.add(so)
+    activated: list[str] = []
+    for number in diff.scope_documents:
+        header = (
+            db.query(bind.header)
+            .filter(getattr(bind.header, bind.number) == number)
+            .one_or_none()
+        )
+        if header is None:
+            header = bind.header(**{
+                bind.number: number,
+                "status": bind.write_status,
+                "source_system": "scm_upload",
+                "source_ref": doc_type,
+            })
+            db.add(header)
             db.flush()
-        order_ids[so_number] = so.id
+        elif number in lift:
+            # The extract is evidence the document has been placed, and AutoCount is the
+            # system of record for that. Left as a draft the lines land and the supply is
+            # invisible, while the response still reports them as added.
+            header.status = bind.write_status
+            activated.append(number)
+        # Header-level values the file states (PO DATE, currency). Written whenever the file
+        # supplies one: `scm.receipt_lead_v` measures lead days from `issue_date`, so
+        # discarding it costs the module every lead-time observation it could have had.
+        for col, key in bind.header_cols:
+            value = resolved.header_by_doc.get(number, {}).get(key)
+            if value is not None:
+                setattr(header, col, value)
+        # Attach the counterparty when the file named one we could resolve. A missing code
+        # never overwrites a present link; a code that CONTRADICTS it does, because the file
+        # is the system of record for who we bought from and chasing the wrong supplier is
+        # the failure mode. Both halves are reported by `_honesty_issues`.
+        party_id = resolved.party_by_doc.get(number)
+        if party_id and str(getattr(header, bind.party_fk, None) or "") != str(party_id):
+            setattr(header, bind.party_fk, party_id)
+        order_ids[number] = header.id
 
     applied = {"added": 0, "updated": 0, "closed": 0, "unchanged": 0}
     for c in diff.changes:
         if c.kind == CLOSED:
-            line = db.query(SalesOrderLine).filter(
-                SalesOrderLine.id == c.before.row_ref).one_or_none()
+            line = db.query(bind.line).filter(bind.line.id == c.before.row_ref).one_or_none()
             if line is not None:
+                # A status change, never a delete, and never a fabricated receipt: the line
+                # was planned against, and inventing a receipt no GRN supports would corrupt
+                # lead-time measurement and the picking reconciliation.
                 line.line_status = "closed"
                 applied["closed"] += 1
             continue
 
         if c.kind == ADDED:
-            pid = resolved.product_by_code.get(_norm(c.item_code))
-            wid = resolved.warehouse_by_code.get(_norm(c.location)) if c.location else None
-            db.add(SalesOrderLine(
-                sales_order_id=order_ids[c.doc_number],
-                product_id=pid,
-                warehouse_id=wid,
-                qty_ordered=c.after.qty,
-                qty_delivered=0,
-                required_date=c.after.required_date,
-                line_status="open",
-            ))
+            extra = read.extras.get(str(c.after.row_ref), {})
+            product_id = resolved.product_by_code.get(_norm(c.item_code))
+            warehouse_id = (resolved.warehouse_by_code.get(_norm(c.location))
+                            if c.location else None)
+            # A line that comes back is the SAME line, and the receipt already booked against
+            # it belongs to it. Inserting a second row would leave that receipt stranded on
+            # the old one while the new row starts at zero received, so the two together claim
+            # the full ordered quantity is still at sea - overstated for good, and stable, so
+            # re-uploading never corrects it.
+            revived = _closed_line(db, bind, order_ids[c.doc_number], product_id,
+                                   warehouse_id, c.after.required_date)
+            if revived is not None:
+                already = float(getattr(revived, bind.fulfilled) or 0)
+                revived.line_status = "open"
+                revived.qty_ordered = already + c.after.qty
+                setattr(revived, bind.date, c.after.required_date)
+                _refresh_money(revived, extra, bind)
+                applied["added"] += 1
+                continue
+            fields = {
+                bind.header_fk: order_ids[c.doc_number],
+                "product_id": product_id,
+                "warehouse_id": warehouse_id,
+                "qty_ordered": c.after.qty,
+                bind.fulfilled: 0,
+                bind.date: c.after.required_date,
+                "line_status": "open",
+            }
+            for col, key in bind.money_cols:
+                fields[col] = extra.get(key)
+            db.add(bind.line(**fields))
             applied["added"] += 1
             continue
 
@@ -308,14 +695,16 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
             continue
 
         # qty and/or date changed: update the row the diff paired, in place.
-        line = db.query(SalesOrderLine).filter(
-            SalesOrderLine.id == c.before.row_ref).one_or_none()
+        line = db.query(bind.line).filter(bind.line.id == c.before.row_ref).one_or_none()
         if line is None:
             continue
-        # The extract states what is OUTSTANDING; qty_ordered is outstanding plus whatever
-        # has already gone out, so a part-delivered line is not silently un-delivered.
-        line.qty_ordered = float(line.qty_delivered or 0) + c.after.qty
-        line.required_date = c.after.required_date
+        # The extract states what is OUTSTANDING, so ordered is outstanding plus whatever has
+        # already been delivered or received. Writing the figure straight in would erase a
+        # booked receipt and leave the goods counted as still at sea.
+        already = float(getattr(line, bind.fulfilled) or 0)
+        line.qty_ordered = already + c.after.qty
+        setattr(line, bind.date, c.after.required_date)
+        _refresh_money(line, read.extras.get(str(c.after.row_ref), {}), bind)
         applied["updated"] += 1
 
     db.flush()
@@ -324,6 +713,7 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         "counts": diff.counts,
         "applied": applied,
         "scope_documents": list(diff.scope_documents),
-        "resolution_issues": [asdict(i) for i in resolved.issues],
+        "activated_documents": activated,
+        "resolution_issues": [asdict(i) for i in plan.issues],
         "row_problems": [asdict(p) for p in read.problems],
     }

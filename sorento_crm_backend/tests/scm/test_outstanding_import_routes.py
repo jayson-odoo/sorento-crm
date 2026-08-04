@@ -28,8 +28,10 @@ from sqlalchemy import text
 from tests.scm._outstanding_workbooks import (
     MARKER,
     make_codes,
+    po_week1,
     require_aliases,
     seed_catalogue,
+    seed_suppliers,
     week1,
     workbook,
 )
@@ -84,6 +86,14 @@ def _seed(db):
     return codes
 
 
+def _seed_po(db):
+    """The same codes plus the suppliers the purchase-order book's creditor codes name."""
+    codes = make_codes()
+    seed_catalogue(db, codes, doc_type="outstanding_po")
+    seed_suppliers(db, codes)
+    return codes
+
+
 def _upload(data: bytes, name: str = "outstanding_so.xlsx"):
     return {"file": (name, data, _XLSX)}
 
@@ -128,6 +138,49 @@ def test_apply_writes_the_lines(scm_app):
         "JOIN sales_orders so ON so.id = sol.sales_order_id "
         "WHERE so.so_number = :so"
     ), {"so": codes.project_so}).scalar() == 3
+
+
+def test_preview_of_the_purchase_order_book_returns_the_diff(scm_app):
+    """The read half of the PO channel, which has always been safe and correct."""
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    codes = _seed_po(db)
+
+    r = TestClient(app).post("/api/v1/scm/outstanding/purchase-orders/preview",
+                             files=_upload(po_week1(codes), "outstanding_po.xlsx"))
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True
+    assert body["counts"]["added"] == 5
+    assert body["scope_documents"] == list(codes.po_documents)
+    assert body["resolution_issues"] == []
+
+
+def test_apply_of_the_purchase_order_book_writes_purchase_orders(scm_app):
+    """The endpoint that was corrupting: it accepted the supply book and wrote sales demand.
+
+    Asserted on the tables rather than on the response, because the broken version answered
+    200 with `applied.added == 5` while every one of those five rows was a sales order line.
+    """
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    codes = _seed_po(db)
+
+    r = TestClient(app).post("/api/v1/scm/outstanding/purchase-orders/apply",
+                             files=_upload(po_week1(codes), "outstanding_po.xlsx"))
+
+    assert r.status_code == 200, r.text
+    assert r.json()["applied"]["added"] == 5
+    assert db.execute(text(
+        "SELECT count(*) FROM purchase_order_lines pol "
+        "JOIN purchase_orders po ON po.id = pol.purchase_order_id "
+        "WHERE po.po_number = :po"
+    ), {"po": codes.main_po}).scalar() == 3
+    assert db.execute(text(
+        "SELECT count(*) FROM sales_orders WHERE so_number IN (:a, :b)"
+    ), {"a": codes.main_po, "b": codes.alt_po}).scalar() == 0, \
+        "the endpoint wrote the purchase order book into sales_orders"
 
 
 def test_a_file_missing_a_required_column_explains_which_one(scm_app):

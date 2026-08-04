@@ -490,8 +490,14 @@ class ScmDashboardService:
         return out
 
     def _placed_po_rows(self, filters: ScmFilters) -> List[dict]:
-        """Open (placed) PO lines with remaining supply, respecting scope filters."""
-        where = ["po.status = ANY(:statuses)", "pol.qty_ordered > pol.qty_received"]
+        """Open (placed) PO lines with remaining supply, respecting scope filters.
+
+        The predicates mirror ``scm.on_order_v`` exactly, ``pol.line_status`` included: a line
+        that left the order book is not incoming, and a dashboard that counted it while the net
+        position did not would have the buyer looking at two answers on one screen.
+        """
+        where = ["po.status = ANY(:statuses)", "pol.line_status = 'open'",
+                 "pol.qty_ordered > pol.qty_received"]
         where.extend(self._lifecycle_where(filters))
         params: dict = {"statuses": list(PLACED_PO_STATUSES)}
         if filters.warehouses:

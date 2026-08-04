@@ -46,15 +46,20 @@ from app.models.base import set_company_scope
 from app.models.company import Company
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
+from app.models.procurement import Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services.scm import outstanding_import_service as svc
-from app.services.scm.outstanding_reader import SO
+from app.services.scm.outstanding_reader import PO, SO
 from tests._pg_fixture import pg_session
 
 MARKER = "ZZTISO"
 
 # The header row the seeded `import_field_alias` rows map (doc_type = outstanding_so).
 _HEADERS = ["S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE", "STOCK LOCATION"]
+
+# The same, for doc_type = outstanding_po. The creditor code is the PO book's third
+# company-scoped lookup, alongside the item code and the stock location.
+_PO_HEADERS = ["PO NO", "CREDITOR CODE", "ITEM CODE", "QTY ORDERED", "ETA", "STOCK LOCATION"]
 
 
 def _u() -> str:
@@ -67,17 +72,21 @@ def _code(stem: str) -> str:
     return f"{MARKER}-{stem}-{uuid.uuid4().hex[:8]}".upper()
 
 
-def _workbook(rows) -> bytes:
+def _workbook(rows, headers=None) -> bytes:
     import openpyxl
 
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.append(_HEADERS)
+    ws.append(headers or _HEADERS)
     for row in rows:
         ws.append(list(row))
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def _po_workbook(rows) -> bytes:
+    return _workbook(rows, headers=_PO_HEADERS)
 
 
 # --------------------------------------------------------------------------- #
@@ -134,6 +143,14 @@ class World:
                                    required_date=required_date, company_id=company))
         self.db.flush()
         return lid
+
+    def supplier(self, code: str, company: str, name: str | None = None) -> str:
+        sid = _u()
+        self.db.add(Supplier(id=sid, supplier_code=code,
+                             supplier_name=name or f"{MARKER} supplier {code}",
+                             is_active=True, company_id=company))
+        self.db.flush()
+        return sid
 
     def segment(self, stem: str) -> str:
         """A market segment whose CODE carries the word the demand class keys off.
@@ -340,7 +357,7 @@ def test_existing_lines_never_returns_another_companys_order(world):
 
     _act_as(db, world.a)
 
-    assert svc._existing_lines(db, {so_number}) == []
+    assert svc._existing_lines(db, {so_number}, svc._binding(SO)) == []
 
 
 def test_the_preview_does_not_propose_closing_another_companys_order(world):
@@ -434,3 +451,84 @@ def test_a_customer_owned_only_by_another_company_does_not_set_the_demand_class(
     _act_as(db, world.a)
 
     assert svc._demand_class_for(db, code) == svc.DEFAULT_DEMAND_CLASS
+
+
+# --------------------------------------------------------------------------- #
+# 5. suppliers / the creditor code on the purchase-order book
+# --------------------------------------------------------------------------- #
+# The PO book adds a third company-scoped lookup, and it gets the same treatment as the
+# other two for the same reason: suppliers are company-scoped, every company carries its
+# own creditor list, and a code resolved across the boundary attaches this company's
+# incoming shipment to a supplier it does not buy from - which is then who gets chased,
+# scored for lateness, and paid.
+
+def _po_supplier_code(db: Session, po_number: str):
+    """The supplier code on the written purchase order, read with raw SQL on purpose."""
+    return db.execute(text(
+        "SELECT s.supplier_code FROM purchase_orders po "
+        "LEFT JOIN suppliers s ON s.id = po.supplier_id "
+        "WHERE po.po_number = :po"
+    ), {"po": po_number}).scalar()
+
+
+def _requires_po_aliases(db: Session) -> None:
+    if not db.execute(text("SELECT 1 FROM import_field_alias "
+                           "WHERE doc_type = 'outstanding_po' LIMIT 1")).scalar():
+        pytest.skip("no outstanding_po aliases seeded in this database")
+
+
+def test_a_creditor_code_owned_only_by_another_company_is_never_resolved(world):
+    """Company A does not buy from this creditor. The code must be reported, not borrowed.
+
+    The deterministic half of the pair: a raw `SELECT ... FROM suppliers WHERE
+    supplier_code = ...` finds company B's row every time, whatever the row order.
+    """
+    db = world.db
+    _requires_po_aliases(db)
+    item = _code("ITEM")
+    creditor = _code("CRED")[:50]
+    world.product(item, world.a)
+    world.supplier(creditor, world.b)
+    po_number = _code("PO")
+
+    _act_as(db, world.a)
+    file = _po_workbook([[po_number, creditor, item, 10, date(2026, 7, 1), ""]])
+    preview = svc.preview(db, file, PO)
+
+    assert [(i.field, i.value) for i in preview.resolution_issues] == [
+        ("creditor_code", creditor)
+    ]
+
+    svc.apply(db, file, PO)
+    assert _po_supplier_code(db, po_number) is None, \
+        "the purchase order was attached to another company's supplier"
+
+
+def test_a_creditor_code_held_by_both_companies_resolves_to_the_active_one(world):
+    """The production duplicate, on the schema that permits it (see
+    `_seed_duplicate_or_skip`). Company A's upload must attach to company A's supplier."""
+    db = world.db
+    _requires_po_aliases(db)
+    item = _code("ITEM")
+    creditor = _code("CRED")[:50]
+    world.product(item, world.a)
+    world.supplier(creditor, world.a, name=f"{MARKER} A supplier")     # inserted first
+    _seed_duplicate_or_skip(
+        db,
+        Supplier(id=_u(), supplier_code=creditor, supplier_name=f"{MARKER} B supplier",
+                 is_active=True, company_id=world.b),
+        "this schema enforces a globally unique supplier_code, so the two companies cannot "
+        "both hold the code",
+    )
+    po_number = _code("PO")
+
+    _act_as(db, world.a)
+    svc.apply(db, _po_workbook([[po_number, creditor, item, 10, date(2026, 7, 1), ""]]), PO)
+
+    name = db.execute(text(
+        "SELECT s.supplier_name FROM purchase_orders po "
+        "JOIN suppliers s ON s.id = po.supplier_id WHERE po.po_number = :po"
+    ), {"po": po_number}).scalar()
+    assert name == f"{MARKER} A supplier", (
+        "the purchase order was attached to another company's supplier with the same code"
+    )

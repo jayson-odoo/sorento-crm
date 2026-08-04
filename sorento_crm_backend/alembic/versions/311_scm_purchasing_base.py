@@ -53,7 +53,20 @@ _STATE_SUFFIXES = ("HOLD", "REWO", "RSV", "DFCT", "DISP", "CLR")
 # instead of running migration bodies, so it has to be able to import the CURRENT
 # definition. Migration 274 stays frozen as the original: it has already run everywhere,
 # and editing a shipped migration's DDL would change history without changing any
-# existing database. Ordered committed_v before net_position_v, which selects from it.
+# existing database. Ordered on_order_v and committed_v before net_position_v, which
+# selects from both.
+_ON_ORDER_V = """
+CREATE VIEW scm.on_order_v AS
+SELECT pol.product_id, pol.warehouse_id,
+       SUM(pol.qty_ordered - pol.qty_received) AS on_order
+FROM purchase_order_lines pol
+JOIN purchase_orders po ON po.id = pol.purchase_order_id
+WHERE po.status IN ('active', 'received', 'partial', 'closed')  -- placed POs only; drafts are NOT supply (M4-D5)
+  AND pol.line_status = 'open'   -- a line that left the order book is no longer incoming
+  AND pol.qty_ordered > pol.qty_received
+GROUP BY pol.product_id, pol.warehouse_id;
+"""
+
 _COMMITTED_V = """
 CREATE VIEW scm.committed_v AS
 SELECT sol.product_id, sol.warehouse_id,
@@ -91,7 +104,7 @@ LEFT JOIN scm.committed_v cm
   ON cm.product_id = k.product_id AND cm.warehouse_id = k.warehouse_id;
 """
 
-_REDEFINED_VIEWS = (_COMMITTED_V, _NET_POSITION_V)
+_REDEFINED_VIEWS = (_ON_ORDER_V, _COMMITTED_V, _NET_POSITION_V)
 
 
 # --- data seeds, callable from outside a migration run ------------------------------
@@ -432,7 +445,7 @@ def upgrade() -> None:
 
     seed_priority_policy(bind)
 
-    # --- 8. one definition of committed demand -------------------------------------
+    # --- 8. one definition of committed demand, and of incoming supply --------------
     # `scm.committed_v` (migration 274) counted every outstanding line on an open sales
     # order, with no line-level predicate. The Coverage Timeline resolver requires
     # `line_status = 'open'`, because a line closed short is no longer a commitment:
@@ -445,8 +458,21 @@ def upgrade() -> None:
     # already `open`, verified before writing this. It changes behaviour only once
     # cancelled or short-closed lines exist, which is precisely when the old view
     # would have started over-counting.
+    #
+    # `scm.on_order_v` gains the SAME predicate on `purchase_order_lines.line_status`, and
+    # for the same reason on the supply side. Closing a PO line is how the importer records
+    # a line leaving the supplier's order book, and the alternatives are both worse: flipping
+    # the ORDER's status would erase every other line still coming on that purchase order,
+    # and setting `qty_received = qty_ordered` would fabricate a receipt no GRN supports,
+    # which `scm.receipt_lead_v` and the picking reconciliation both read. Without this
+    # predicate a closed line keeps counting as incoming supply forever, and overstated
+    # supply is what stops a purchase that should have been made.
     op.execute("DROP VIEW IF EXISTS scm.net_position_v CASCADE")
     op.execute("DROP VIEW IF EXISTS scm.committed_v CASCADE")
+    # No CASCADE: net_position_v is the only dependent and it is already gone, so anything
+    # else that has grown a dependency on this view should fail loudly rather than be dropped
+    # silently.
+    op.execute("DROP VIEW IF EXISTS scm.on_order_v")
     for ddl in _REDEFINED_VIEWS:
         op.execute(ddl)
 
