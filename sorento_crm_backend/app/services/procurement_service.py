@@ -3745,14 +3745,49 @@ class StockInquiryService:
         self.db.refresh(inquiry)
         return inquiry
 
+    STOCK_INQUIRY_REPLY_PREAMBLE = "There is a response to your stock inquiry"
+
+    @classmethod
+    def compose_stock_inquiry_reply_message(cls, bare_body: str, portal_url: str) -> str:
+        """The contact-facing WhatsApp text for a purchasing reply.
+
+        Composed HERE, not in the frontend. The FE used to build
+        ``f"{preamble}{' ' + view_url}: {body}"``, which produced two defects:
+
+        1. The ``:`` landed immediately after the URL, so WhatsApp's autolinker
+           pulled it into the href and the contact got an invalid link.
+        2. It used the read-only ``/view/stock-inquiry?token=`` page, built on
+           ``window.location.origin`` — whatever host the staff browser was on —
+           instead of the interactive portal link the backend already resolves via
+           ``_stock_inquiry_portal_or_view_url`` for the template's ``portal_url``.
+
+        The URL therefore goes LAST, alone on its own line after a blank line, so
+        no punctuation or word can ever be absorbed into it. The colon stays where
+        it reads correctly: after the preamble.
+        """
+        body = (bare_body or "").strip()
+        url = (portal_url or "").strip()
+        text = f"{cls.STOCK_INQUIRY_REPLY_PREAMBLE}:"
+        if body:
+            text = f"{text}\n{body}"
+        return f"{text}\n\n{url}" if url else text
+
     @staticmethod
     def _bare_stock_inquiry_reply(raw: Optional[str]) -> str:
-        """Strip the FE-composed "There is a response to your stock inquiry
-        {link}: " preamble from a purchasing reply, keeping ONLY the
-        technician's wording for the lean ``update`` template var. The FE sends
-        ``f"There is a response to your stock inquiry{linkPart}: {body}"`` as
-        purchasing_response; the link has no ": " (colon-space), so the last
-        ": " is the body separator. Mirrors complaint reply normalization.
+        """Strip a LEGACY "There is a response to your stock inquiry {link}: "
+        preamble, keeping ONLY the technician's wording for the lean ``update``
+        template var.
+
+        The frontend no longer composes that string — it posts the bare wording and
+        ``compose_stock_inquiry_reply_message`` builds the outgoing text — so for
+        current clients this is a no-op passthrough. It stays for two inputs that
+        still carry the old shape: a stored ``purchasing_response`` written before
+        the change and re-sent, and any client not yet on the new build. Without it
+        those would stack a second preamble and re-send the stale read-only view
+        link.
+
+        The old link had no ": " (colon-space), so the last ": " is the body
+        separator. Mirrors complaint reply normalization.
         """
         s = (raw or "").strip()
         # Both spellings: the module was renamed Stock Inquiry -> Stock Inquiry, and
@@ -3841,13 +3876,12 @@ class StockInquiryService:
         attachment_sentence = compose_response_attachment_sentence(
             count_staff_attachments(self.db, "stock_inquiry", str(inquiry.id))
         )
+        # The FE now posts only the technician's wording, so the strip is a no-op;
+        # it still runs so a legacy client (or a re-sent stored row) carrying the old
+        # "{preamble} {view_url}: {body}" shape is normalised instead of stacking a
+        # second preamble and re-sending the stale read-only view link.
         bare_reply = self._bare_stock_inquiry_reply(message_to_send)
-        if attachment_sentence:
-            outgoing_bare = f"{bare_reply}\n{attachment_sentence}"
-            outgoing_text = f"{message_to_send}\n{attachment_sentence}"
-        else:
-            outgoing_bare = bare_reply
-            outgoing_text = message_to_send
+        outgoing_bare = f"{bare_reply}\n{attachment_sentence}" if attachment_sentence else bare_reply
 
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         if transition_to_responded_workflow:
@@ -3903,11 +3937,15 @@ class StockInquiryService:
         # Structured-template vars: bare purchasing_response text (+ attachment
         # sentence, D10) as `update` core + links. Mirrors complaint's bare
         # `stored_body`.
+        # One resolution, shared by the in-window text and the out-of-window
+        # template, so both carry the same interactive portal link.
+        portal_url = self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id))
         reply_extra_vars = {
             "update": outgoing_bare,
-            "portal_url": self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id)),
+            "portal_url": portal_url,
             "view_url": (self._build_stock_inquiry_view_url(str(inquiry.id)) or "").strip(),
         }
+        outgoing_text = self.compose_stock_inquiry_reply_message(outgoing_bare, portal_url)
         self._enqueue_stock_inquiry_respond_message(
             inquiry_id=inquiry_id,
             identifier=identifier,
