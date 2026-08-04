@@ -10,6 +10,7 @@ from app.api.v1.projects import (
     parties,
     po_intake,
     projects,
+    quotation_documents,
     quotations,
     sales_orders,
     samples_pos,
@@ -34,6 +35,7 @@ router.include_router(tasks.router, tags=["project-tasks"])
 # (nested under a project, then /quotations/{id} and /quotation-versions/{id} for the
 # revision history) plus their own /config surface.
 router.include_router(quotations.router, tags=["project-quotations"])
+router.include_router(quotation_documents.router, tags=["project-quotations"])
 # Samples and customer POs mount at the root for the same reason: both are nested
 # under a project for listing but addressed directly for editing.
 router.include_router(samples_pos.router, tags=["project-samples-pos"])

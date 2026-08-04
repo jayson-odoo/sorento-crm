@@ -348,3 +348,180 @@ def delete_document(db: Session, document: ProjectQuotationDocument) -> None:
         )
     db.delete(document)
     db.flush()
+
+
+# ------------------------------------------------------------------ serialize
+
+
+def _scope_summary(db: Session, scope: ProjectQuotation) -> Dict[str, Any]:
+    version = (
+        db.query(ProjectQuotationVersion)
+        .filter(ProjectQuotationVersion.quotation_id == scope.id)
+        .order_by(ProjectQuotationVersion.version_no.desc())
+        .first()
+    )
+    line_count = 0
+    if version is not None:
+        line_count = (
+            db.query(func.count(ProjectQuotationLine.id))
+            .filter(ProjectQuotationLine.version_id == version.id)
+            .scalar()
+            or 0
+        )
+    return {
+        "id": str(scope.id),
+        "scope_label": scope.scope_label,
+        "sort_order": int(scope.sort_order or 0),
+        "outcome": scope.outcome,
+        "current_version_id": str(version.id) if version is not None else None,
+        "current_version_no": version.version_no if version is not None else None,
+        "line_count": int(line_count),
+        "scope_total": version_total(db, version) if version is not None else ZERO,
+    }
+
+
+def serialize_document(db: Session, document: ProjectQuotationDocument) -> Dict[str, Any]:
+    """One document, with its tabs and its money.
+
+    `grand_total` is summed HERE rather than by the caller, so the header, the tabs and the PDF
+    cannot disagree about what a rate-only line contributes (nothing).
+    """
+    scopes = list_scopes(db, document)
+    summaries = [_scope_summary(db, scope) for scope in scopes]
+    latest = current_issue(db, document)
+    issue_count = (
+        db.query(func.count(ProjectQuotationIssue.id))
+        .filter(ProjectQuotationIssue.document_id == document.id)
+        .scalar()
+        or 0
+    )
+    return {
+        "id": str(document.id),
+        "project_id": str(document.project_id),
+        "document_no": document.document_no,
+        "our_ref": (
+            f"{document.document_no} (R{latest.issue_no})"
+            if latest is not None
+            else document.document_no
+        ),
+        "your_ref": document.your_ref,
+        "doc_date": document.doc_date,
+        "recipient_party_id": (
+            str(document.recipient_party_id) if document.recipient_party_id else None
+        ),
+        "recipient_name_snapshot": document.recipient_name_snapshot,
+        "recipient_address_snapshot": document.recipient_address_snapshot,
+        "recipient_phone_snapshot": document.recipient_phone_snapshot,
+        "attn_name": document.attn_name,
+        "subject_title": document.subject_title,
+        "cover_letter_html": document.cover_letter_html,
+        "terms_html": document.terms_html,
+        "signatory_name": document.signatory_name,
+        "signatory_phone": document.signatory_phone,
+        "scopes": summaries,
+        "grand_total": sum((row["scope_total"] for row in summaries), ZERO),
+        "issue_count": int(issue_count),
+        "current_issue_no": latest.issue_no if latest is not None else None,
+        "is_issued": latest is not None,
+        "created_at": document.created_at,
+        "updated_at": document.updated_at,
+    }
+
+
+def serialize_documents(
+    db: Session, documents: List[ProjectQuotationDocument]
+) -> List[Dict[str, Any]]:
+    return [serialize_document(db, document) for document in documents]
+
+
+def serialize_issue(db: Session, record: ProjectQuotationIssue) -> Dict[str, Any]:
+    from app.models.user import User
+
+    name = None
+    if record.issued_by:
+        user = db.query(User).filter(User.id == record.issued_by).first()
+        name = user.name if user else None
+    scope_count = (
+        db.query(func.count(ProjectQuotationIssueScope.id))
+        .filter(ProjectQuotationIssueScope.issue_id == record.id)
+        .scalar()
+        or 0
+    )
+    return {
+        "id": str(record.id),
+        "document_id": str(record.document_id),
+        "issue_no": record.issue_no,
+        "our_ref_text": record.our_ref_text,
+        "issued_at": record.issued_at,
+        "issued_by": record.issued_by,
+        "issued_by_name": name,
+        "grand_total": Decimal(record.grand_total or 0),
+        "scope_count": int(scope_count),
+    }
+
+
+def list_documents(db: Session, project_id: str) -> List[ProjectQuotationDocument]:
+    return (
+        db.query(ProjectQuotationDocument)
+        .filter(ProjectQuotationDocument.project_id == project_id)
+        .order_by(ProjectQuotationDocument.created_at.desc())
+        .all()
+    )
+
+
+def update_document(
+    db: Session, *, document: ProjectQuotationDocument, payload: Dict[str, Any]
+) -> ProjectQuotationDocument:
+    """Header edits only. `document_no` is deliberately not editable: the customer has it."""
+    for field in (
+        "your_ref",
+        "doc_date",
+        "attn_name",
+        "subject_title",
+        "cover_letter_html",
+        "terms_html",
+        "signatory_name",
+        "signatory_phone",
+    ):
+        if field in payload:
+            setattr(document, field, payload[field])
+    db.flush()
+    return document
+
+
+def update_scope(
+    db: Session, *, scope: ProjectQuotation, payload: Dict[str, Any]
+) -> ProjectQuotation:
+    if "scope_label" in payload and payload["scope_label"] is not None:
+        label = " ".join(str(payload["scope_label"]).split())
+        if not label:
+            raise AppException(
+                status_code=422,
+                message="A scope needs a name, e.g. Townhouse or Guard House.",
+                code="quotation_scope_required",
+            )
+        scope.scope_label = label
+    if payload.get("sort_order") is not None:
+        scope.sort_order = int(payload["sort_order"])
+    if "notes" in payload:
+        scope.notes = payload["notes"]
+    db.flush()
+    return scope
+
+
+def get_scope_or_404(
+    db: Session, document: ProjectQuotationDocument, quotation_id: str
+) -> ProjectQuotation:
+    scope = (
+        db.query(ProjectQuotation)
+        .filter(
+            ProjectQuotation.id == quotation_id,
+            ProjectQuotation.document_id == document.id,
+        )
+        .first()
+    )
+    if not scope:
+        raise AppException(
+            status_code=404, message="Scope not found.", code="quotation_scope_not_found"
+        )
+    return scope

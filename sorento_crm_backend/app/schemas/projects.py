@@ -1343,3 +1343,99 @@ class ProjectDashboardResponse(BaseModel):
         default_factory=SponsorshipConversionResponse
     )
     delivery_lag_months: int = 30
+
+
+# ---------------------------------------------------------- quotation documents
+
+
+class ProjectQuotationDocumentBase(BaseModel):
+    your_ref: Optional[str] = None
+    doc_date: Optional[date] = None
+    attn_name: Optional[str] = None
+    subject_title: Optional[str] = None
+    cover_letter_html: Optional[str] = None
+    terms_html: Optional[str] = None
+    signatory_name: Optional[str] = None
+    signatory_phone: Optional[str] = None
+
+
+class ProjectQuotationDocumentCreate(ProjectQuotationDocumentBase):
+    """Every field optional on purpose (AC-A2).
+
+    The document arrives already filled in: the reference from the numbering rule, the recipient
+    off the project's developer party, the subject from the project title. A create form that
+    asked for them would be asking for facts the system already holds.
+    """
+
+
+class ProjectQuotationDocumentUpdate(ProjectQuotationDocumentBase):
+    pass
+
+
+class ProjectQuotationScopeCreate(BaseModel):
+    scope_label: str = Field(
+        min_length=1, max_length=150, description="e.g. Townhouse, Guard House, Reception."
+    )
+    series_id: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class ProjectQuotationScopeUpdate(BaseModel):
+    scope_label: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    sort_order: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class ProjectQuotationScopeSummary(BaseModel):
+    """A tab: enough to render it and its total, without its lines."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    scope_label: str
+    sort_order: int = 0
+    outcome: str = "open"
+    current_version_id: Optional[str] = None
+    current_version_no: Optional[int] = None
+    line_count: int = 0
+    # Rate-only lines excluded, so this agrees with the footer under the money column.
+    scope_total: Decimal = Decimal("0.00")
+
+
+class ProjectQuotationIssueResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    document_id: str
+    issue_no: int
+    our_ref_text: Optional[str] = None
+    issued_at: Optional[datetime] = None
+    issued_by: Optional[str] = None
+    issued_by_name: Optional[str] = None
+    grand_total: Decimal = Decimal("0.00")
+    scope_count: int = 0
+
+
+class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+    document_no: str
+    # What the customer quotes back: the number plus the revision they hold.
+    our_ref: Optional[str] = None
+
+    recipient_party_id: Optional[str] = None
+    recipient_name_snapshot: Optional[str] = None
+    recipient_address_snapshot: Optional[str] = None
+    recipient_phone_snapshot: Optional[str] = None
+
+    scopes: List[ProjectQuotationScopeSummary] = Field(default_factory=list)
+    grand_total: Decimal = Decimal("0.00")
+
+    issue_count: int = 0
+    current_issue_no: Optional[int] = None
+    is_issued: bool = False
+
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
