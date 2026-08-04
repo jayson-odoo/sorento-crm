@@ -43,6 +43,15 @@ from typing import Iterable, Optional, Sequence
 # event kinds and source types
 # --------------------------------------------------------------------------- #
 
+# The one threshold that governs BOTH the shortfall trigger and the reported figure.
+# They used to differ: the trigger was 1e-9 while the quantity was rounded to 4 decimals,
+# so any gap in (1e-9, 5e-5) reported "Short 0" beside a peak deficit of 0 and the hint
+# "never goes short". Since the floor is a computed reorder point (12369.655534 in the
+# fixtures), that window is reachable. Rounding first, then comparing on the SAME
+# precision, is what makes the two figures agree by construction.
+QTY_PRECISION = 4
+EPSILON = 10 ** -QTY_PRECISION / 2
+
 OPENING = "opening"
 DEMAND = "demand"
 SUPPLY = "supply"
@@ -166,25 +175,26 @@ def build_timeline(
     # "nothing is short" beside a non-zero deficit gets believed over the number.
     # `at` stays None because no event caused it and the opening balance carries no date;
     # stamping today would assert a fact the data does not hold.
-    if peak_deficit > 1e-9:
+    peak_deficit = round(peak_deficit, QTY_PRECISION)
+    if peak_deficit >= EPSILON:
         shortfall = Shortfall(
-            at=None, qty=round(peak_deficit, 4), ref="", label="opening on hand"
+            at=None, qty=peak_deficit, ref="", label="opening on hand"
         )
 
     for e in ordered:
         balance += float(e.qty)
         rows.append(TimelineRow(event=e, balance=balance))
-        gap = floor - balance
-        if gap > 1e-9:
+        gap = round(floor - balance, QTY_PRECISION)
+        if gap >= EPSILON:
             if shortfall is None:
-                shortfall = Shortfall(at=e.at, qty=round(gap, 4), ref=e.ref, label=e.label)
+                shortfall = Shortfall(at=e.at, qty=gap, ref=e.ref, label=e.label)
             peak_deficit = max(peak_deficit, gap)
 
     return TimelineResult(
         rows=rows,
         closing_balance=round(balance, 4),
         shortfall=shortfall,
-        peak_deficit=round(peak_deficit, 4),
+        peak_deficit=peak_deficit,
         excluded_event_count=excluded,
     )
 

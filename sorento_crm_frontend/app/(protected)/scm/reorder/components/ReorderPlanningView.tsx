@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { MOCK_PLAN_TILE_COUNTS } from '../lib/coverageMockStore';
+import { MOCK_ORDER_SUMMARY_PENDING } from '../lib/summaryOrderMockStore';
 import { recToDispositionRow, splitDispositionRows } from '../lib/planRow';
 import { resetRunDecisions } from '../services/reorderRunService';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
@@ -38,6 +39,7 @@ import { PlanMethodologySheet } from './PlanMethodologySheet';
 import { ReorderStatTiles, type ReorderPlanView } from './ReorderStatTiles';
 import { RunHistoryPanel } from './RunHistoryPanel';
 import { RunPlanningModal, type ManualPlanInputs } from './RunPlanningModal';
+import { SummaryOrderReportView } from './SummaryOrderReportView';
 
 /** Parse a naive-UTC ISO string as UTC, then format date / time in Malaysia. */
 function labelsFor(startedAt: string | null): { date: string; time: string } {
@@ -352,20 +354,26 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         </div>
       ) : null}
 
-      {/* TODO(Phase 2, S4/S5): plan-exception and PO-worklist counts come from the run
-          summary once those slices exist. Until then they are the Phase-1 mock, which
-          dies with `coverageMockStore`. */}
+      {/* TODO(Phase 2, S3b/S4/S5): plan-exception, PO-worklist and order-summary
+          counts come from the run summary once those slices exist. Until then they
+          are the Phase-1 mock, which dies with `coverageMockStore` and
+          `summaryOrderMockStore`. */}
       <ReorderStatTiles
         buyCount={summary?.buy_count ?? 0}
         dispositionCount={actionableDispositions.length}
         cashTotal={summary?.total_cash_impact ?? 0}
         planExceptionCount={MOCK_PLAN_TILE_COUNTS.plan_exceptions}
         poWorklistCount={MOCK_PLAN_TILE_COUNTS.po_worklist}
+        orderSummaryPendingCount={MOCK_ORDER_SUMMARY_PENDING}
         activeView={view}
         onSelectView={setView}
       />
 
-      {view === 'buy' ? (
+      {view === 'order_summary' ? (
+        // The weekly sheet Mr Loo decides order quantities on (S3b, AC-C2.1). Reads
+        // the SAME run as the plan above, so a past run reports the week it was.
+        <SummaryOrderReportView runId={currentRunId} />
+      ) : view === 'buy' ? (
         <>
           <PlanAssistant
             runId={currentRunId}

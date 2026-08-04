@@ -206,6 +206,8 @@ function shortfallFixture(sku: string, productName: string | null): CoverageTime
     ...HORIZON,
     excluded_event_count: 2,
     unattributed_in_transit_qty: 40,
+    unplaceable_demand_qty: 0,
+    unplaceable_on_order_qty: 0,
     computed_at: COMPUTED_AT,
   };
 }
@@ -262,6 +264,8 @@ function poolFixture(): CoverageTimeline {
     ...HORIZON,
     excluded_event_count: 0,
     unattributed_in_transit_qty: 0,
+    unplaceable_demand_qty: 0,
+    unplaceable_on_order_qty: 0,
     computed_at: COMPUTED_AT,
   };
 }
@@ -325,6 +329,8 @@ function healthyFixture(sku: string, productName: string | null): CoverageTimeli
     ...HORIZON,
     excluded_event_count: 0,
     unattributed_in_transit_qty: 0,
+    unplaceable_demand_qty: 0,
+    unplaceable_on_order_qty: 0,
     computed_at: COMPUTED_AT,
   };
 }
@@ -382,6 +388,8 @@ function undatedFixture(sku: string, productName: string | null): CoverageTimeli
     ...HORIZON,
     excluded_event_count: 3,
     unattributed_in_transit_qty: 0,
+    unplaceable_demand_qty: 0,
+    unplaceable_on_order_qty: 0,
     computed_at: COMPUTED_AT,
   };
 }
@@ -416,6 +424,8 @@ function emptyFixture(sku: string, productName: string | null): CoverageTimeline
     ...HORIZON,
     excluded_event_count: 0,
     unattributed_in_transit_qty: 0,
+    unplaceable_demand_qty: 0,
+    unplaceable_on_order_qty: 0,
     computed_at: COMPUTED_AT,
   };
 }

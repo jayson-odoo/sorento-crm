@@ -33,9 +33,10 @@ from app.services.scm.outstanding_diff import (
 )
 from app.services.scm.outstanding_reader import PO, SO, ReadResult, RowProblem, read_workbook
 
-# Demand class drives fulfilment priority. Anything that is not recognisably a project is
-# treated as retail: under-prioritising a project order is visible and complained about,
-# while over-prioritising every retail order quietly starves the projects.
+# Demand class drives fulfilment priority: `scm.priority_policy.demand_class_weights` is
+# keyed on it. A stated split that is not recognisably a project is retail, because that is
+# the only other class the seeded weights carry and a new word would score as nothing.
+# A split nobody states is NOT retail - see `_class_of`.
 _PROJECT_SEGMENTS = {"project", "projects", "contract"}
 DEFAULT_DEMAND_CLASS = "retail"
 
@@ -76,6 +77,18 @@ class _Binding:
     money_cols: tuple[tuple[str, str], ...] = ()
     # Header columns fed from the file, per document. Same (column, extras key) shape.
     header_cols: tuple[tuple[str, str], ...] = ()
+    # Header columns the file FILLS rather than restates: written only where the header
+    # holds nothing. Separate from `header_cols` because the two answer different questions.
+    # `header_cols` is for figures the file is the system of record for (the PO date), so a
+    # later extract corrects them; these are for a value a person may have set by hand, where
+    # a weekly re-upload silently overwriting it is the failure.
+    header_fill_cols: tuple[tuple[str, str], ...] = ()
+    # The header column fulfilment priority is weighed on, and the header column the
+    # project-versus-dealer split is stated in. Both None for purchase orders, which carry
+    # no demand at all. `demand_split_col` is the source of truth (plan amendment of
+    # 4 Aug 2026); `demand_class_col` is what the policy reads, stamped from it at import.
+    demand_class_col: Optional[str] = None
+    demand_split_col: Optional[str] = None
 
 
 _BINDINGS: dict[str, _Binding] = {
@@ -93,6 +106,12 @@ _BINDINGS: dict[str, _Binding] = {
         # `scm.committed_v` counts exactly one sales-order status, so writing and reading are
         # the same value here.
         write_status="open", live_statuses=("open",),
+        # OPTIONAL in the file and FILL-only on the header: no export carries an order type
+        # today, so this is the column that lets a differently-worded export classify its own
+        # documents the day it does, without a release. A value already on the header wins,
+        # because that is what a person set and the extract is not the record of it.
+        header_fill_cols=(("order_type", "order_type"),),
+        demand_class_col="demand_class", demand_split_col="order_type",
     ),
     PO: _Binding(
         header=PurchaseOrder, line=PurchaseOrderLine,
@@ -270,9 +289,9 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
 
         # Header-level values the file repeats on every row of the document. First non-empty
         # wins rather than last, so a trailing blank cell cannot erase a stated date.
-        if bind.header_cols:
+        if bind.header_cols or bind.header_fill_cols:
             slot = header_by_doc.setdefault(l.doc_number, {})
-            for _col, key in bind.header_cols:
+            for _col, key in bind.header_cols + bind.header_fill_cols:
                 if slot.get(key) is None and extra.get(key) is not None:
                     slot[key] = extra.get(key)
 
@@ -283,9 +302,15 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
         # true, and dropping the line would make on-order UNDERSTATE supply, which is what
         # causes a second, unnecessary purchase. So it is reported and the header is left
         # unlinked.
-        if bind.party is None:
-            continue
         code = _norm(extra.get("party_code"))
+        if bind.party is None:
+            # Nothing is LINKED on this path, but the code is not discarded either: the
+            # demand class falls back to this customer's market segment, and a code kept
+            # only per row is a fallback that can never fire. First non-empty wins, the same
+            # rule as the header columns, because the extract repeats it on every row.
+            if code:
+                party_code_by_doc.setdefault(l.doc_number, code)
+            continue
         if not code:
             continue
         pid_party = parties.get(code)
@@ -382,6 +407,127 @@ def _header_state(db: Session, docs: tuple[str, ...],
         .all()
     )
     return {r[0]: (r[1], str(r[2]) if r[2] else None) for r in rows}
+
+
+def _class_of(value: Optional[str]) -> Optional[str]:
+    """The planning class a stated split maps to, or None when it states nothing.
+
+    None is NOT retail, and the difference is the whole point: "this is not a project" and
+    "nobody said" look identical in the column and mean opposite things. Only the second is
+    worth a person's time, and only the first may be written.
+    """
+    stated = (value or "").strip().lower()
+    if not stated:
+        return None
+    return "project" if any(seg in stated for seg in _PROJECT_SEGMENTS) else DEFAULT_DEMAND_CLASS
+
+
+def _segment_of(db: Session, debtor_code: str) -> Optional[str]:
+    """This customer's market segment code, or None when there is no customer to read.
+
+    Split from `_demand_class_for` so the caller can tell "no such customer" and "customer
+    with no segment" (both None, both nothing to go on) from "a segment that says retail".
+    Since the amendment of 4 Aug 2026 the segment is the FALLBACK, not the source of truth:
+    it is NULL on 3,276 of 3,284 customers, so an answer from it is a bonus rather than the
+    rule, and treating its silence as "retail" is exactly the invisible mis-prioritisation
+    the report path exists to prevent.
+    """
+    if not debtor_code:
+        return None
+    # ORM again: customers are company-scoped too, and reading another company's customer
+    # would decide this order's fulfilment priority from the wrong row.
+    return (
+        db.query(func.lower(func.coalesce(Customer.market_segment_code, "")))
+        .filter(func.upper(Customer.customer_code) == _norm(debtor_code))
+        .limit(1)
+        .scalar()
+    )
+
+
+def _demand_class_for(db: Session, debtor_code: str) -> str:
+    """The class this customer's market segment implies, defaulting when it implies none.
+
+    The never-None facade: a caller holding this answer alone has to write something, and
+    for a customer nothing is known about the safe write is the default. The import path
+    does NOT use it - it needs to tell "no answer" apart from "retail" so it can report the
+    document instead of guessing - but the vocabulary is the same one, `_class_of`.
+    """
+    return _class_of(_segment_of(db, debtor_code)) or DEFAULT_DEMAND_CLASS
+
+
+def _demand_state(db: Session, docs: tuple[str, ...],
+                  bind: _Binding) -> dict[str, tuple[Optional[str], Optional[str]]]:
+    """Each existing in-scope document's (stated split, current classification).
+
+    ORM for the same isolation reason as every other lookup here: another company's order
+    carrying this SO number must not decide this one's fulfilment priority.
+    """
+    if bind.demand_class_col is None or bind.demand_split_col is None or not docs:
+        return {}
+    rows = (
+        db.query(getattr(bind.header, bind.number),
+                 getattr(bind.header, bind.demand_split_col),
+                 getattr(bind.header, bind.demand_class_col))
+        .filter(getattr(bind.header, bind.number).in_(list(docs)))
+        .all()
+    )
+    return {r[0]: (r[1], r[2]) for r in rows}
+
+
+def _classify_demand(db: Session, diff: Diff, resolved: _Resolved,
+                     state: dict[str, tuple[Optional[str], Optional[str]]],
+                     bind: _Binding) -> tuple[dict[str, str], list[RowProblem]]:
+    """What each in-scope document's demand class should be, and what could not be decided.
+
+    Per DOCUMENT, in order: the order type the header already carries, then the one the file
+    states (which is also the value that fills an absent header), then the customer's market
+    segment via the debtor code the file names. When none of the three answers, the document
+    is REPORTED and left exactly as it was.
+
+    Defaulting to retail is the failure this column exists to avoid: it under-prioritises a
+    project order invisibly, and the wrong answer is stable, so no later upload surfaces it
+    either. The symptom is a project that simply stops winning stock.
+
+    Computed here rather than inside `apply` so preview and the commit report the same thing,
+    which is the rule the rest of this module already follows.
+
+    Reported as a `RowProblem` rather than a `ResolutionIssue`: the issue list means "a code
+    in this file names nothing we hold", and this is the opposite complaint - the file states
+    nothing to resolve. Both lists are put in front of the same person on the same screen.
+    """
+    if bind.demand_class_col is None:
+        return {}, []
+
+    # The row a document is reported against. The report is per DOCUMENT and both lists are
+    # per row, so it is pinned to the first row that named it: a row number the operator can
+    # actually find in the file beats a 0 that points at nothing.
+    first_row: dict[str, int] = {}
+    for l in resolved.lines:
+        if l.doc_number not in first_row:
+            first_row[l.doc_number] = int(l.row_ref) if (l.row_ref or "").isdigit() else 0
+
+    out: dict[str, str] = {}
+    problems: list[RowProblem] = []
+    for number in diff.scope_documents:
+        stored_split, current = state.get(number, (None, None))
+        stated_split = resolved.header_by_doc.get(number, {}).get("order_type")
+        cls = (_class_of(stored_split) or _class_of(stated_split)
+               or _class_of(_segment_of(db, resolved.party_code_by_doc.get(number, ""))))
+        if cls is not None:
+            out[number] = cls
+            continue
+        if current:
+            # Already classified, and this upload knows nothing better. Never downgraded:
+            # a project quietly demoted to retail mid-fulfilment shows up only as an order
+            # that stopped winning stock, weeks later, with nothing to point at.
+            continue
+        problems.append(RowProblem(
+            first_row.get(number, 0),
+            f"{number} states no order type and its debtor code resolves to no customer "
+            f"market segment, so its fulfilment priority is left unclassified rather than "
+            f"defaulted to {DEFAULT_DEMAND_CLASS}",
+            value=number))
+    return out, problems
 
 
 def _honesty_issues(diff: Diff, fulfilled_by_line: dict[str, float],
@@ -482,6 +628,12 @@ class _Plan:
     issues: list[ResolutionIssue] = field(default_factory=list)
     # Documents that would be (preview) or were (apply) lifted to the live write status.
     activate: list[str] = field(default_factory=list)
+    # Document number -> the demand class this upload could decide. A document absent from
+    # this map is one nothing could classify, and it is reported rather than defaulted.
+    demand: dict[str, str] = field(default_factory=dict)
+    # Row-scoped complaints this module raises on top of the reader's own, so both entry
+    # points hand the operator ONE list of rows to look at.
+    problems: list[RowProblem] = field(default_factory=list)
 
 
 def _build(db: Session, file_data: bytes, doc_type: str) -> _Plan:
@@ -496,6 +648,8 @@ def _build(db: Session, file_data: bytes, doc_type: str) -> _Plan:
                                fulfilled_into=fulfilled)
     diff = diff_lines(existing, resolved.lines)
     header_state = _header_state(db, diff.scope_documents, bind)
+    demand, demand_problems = _classify_demand(
+        db, diff, resolved, _demand_state(db, diff.scope_documents, bind), bind)
     return _Plan(
         read=read,
         resolved=resolved,
@@ -503,6 +657,8 @@ def _build(db: Session, file_data: bytes, doc_type: str) -> _Plan:
         issues=resolved.issues + _honesty_issues(diff, fulfilled, header_state,
                                                  resolved, bind),
         activate=_to_activate(diff, header_state, bind),
+        demand=demand,
+        problems=demand_problems,
     )
 
 
@@ -523,7 +679,7 @@ def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
         total_rows=read.total_rows,
         unmapped_headers=read.unmapped_headers,
         missing_columns=read.missing_columns,
-        row_problems=read.problems,
+        row_problems=read.problems + plan.problems,
         resolution_issues=plan.issues,
         samples=_samples(diff),
         activated_documents=plan.activate,
@@ -567,22 +723,6 @@ def _refresh_money(line, extra: dict, bind: _Binding) -> None:
         value = extra.get(key)
         if value is not None:
             setattr(line, col, value)
-
-
-def _demand_class_for(db: Session, debtor_code: str) -> str:
-    if not debtor_code:
-        return DEFAULT_DEMAND_CLASS
-    # ORM again: customers are company-scoped too, and reading another company's customer
-    # would decide this order's fulfilment priority from the wrong row.
-    row = (
-        db.query(func.lower(func.coalesce(Customer.market_segment_code, "")))
-        .filter(func.upper(Customer.customer_code) == _norm(debtor_code))
-        .limit(1)
-        .scalar()
-    )
-    if row and any(seg in row for seg in _PROJECT_SEGMENTS):
-        return "project"
-    return DEFAULT_DEMAND_CLASS
 
 
 def apply(db: Session, file_data: bytes, doc_type: str = SO,
@@ -634,6 +774,20 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
             value = resolved.header_by_doc.get(number, {}).get(key)
             if value is not None:
                 setattr(header, col, value)
+        # Columns the file FILLS rather than restates. The sales book's order type is the
+        # case: for a document this upload creates the file is the only evidence there is,
+        # while a value already on the header was set by a person and a weekly re-upload
+        # silently overwriting it is the failure.
+        for col, key in bind.header_fill_cols:
+            value = resolved.header_by_doc.get(number, {}).get(key)
+            if value is not None and not getattr(header, col, None):
+                setattr(header, col, value)
+        # What the fulfilment policy actually weighs, stamped from the split above.
+        # Written ONLY when this upload could decide it: a document nothing classified keeps
+        # whatever it already had and is reported by name instead (`_classify_demand`).
+        cls = plan.demand.get(number)
+        if cls and bind.demand_class_col:
+            setattr(header, bind.demand_class_col, cls)
         # Attach the counterparty when the file named one we could resolve. A missing code
         # never overwrites a present link; a code that CONTRADICTS it does, because the file
         # is the system of record for who we bought from and chasing the wrong supplier is
@@ -715,5 +869,5 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         "scope_documents": list(diff.scope_documents),
         "activated_documents": activated,
         "resolution_issues": [asdict(i) for i in plan.issues],
-        "row_problems": [asdict(p) for p in read.problems],
+        "row_problems": [asdict(p) for p in read.problems + plan.problems],
     }

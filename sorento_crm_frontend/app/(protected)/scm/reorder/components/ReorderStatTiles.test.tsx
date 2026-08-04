@@ -1,9 +1,10 @@
 /**
- * SCM M8 - ReorderStatTiles (M8-C0 / M8-C12 + AC-B9). FIVE summary cards - Buy,
- * Stock allocation, Cash impact, Plan exceptions, PO worklist - and no
- * Today's-plan / Stock-warning / Within / Over cards. Buy + Stock allocation are
- * clickable view filters (active ring); the other three are stats only. The old
- * "Disposition" label is renamed to "Stock allocation".
+ * SCM M8 - ReorderStatTiles (M8-C0 / M8-C12 + AC-B9 + AC-C2.1). SIX summary
+ * cards - Buy, Stock allocation, Order summary, Cash impact, Plan exceptions,
+ * PO worklist - and no Today's-plan / Stock-warning / Within / Over cards. Buy,
+ * Stock allocation and Order summary are clickable view filters (active ring);
+ * the other three are stats only. The old "Disposition" label is renamed to
+ * "Stock allocation".
  */
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
@@ -26,18 +27,31 @@ function renderTiles(over: Partial<React.ComponentProps<typeof ReorderStatTiles>
 }
 
 describe('ReorderStatTiles (M8-C0 / M8-C12)', () => {
-  it('renders exactly the five summary cards with their counts', () => {
-    renderTiles({ planExceptionCount: 4, poWorklistCount: 11 });
+  it('renders exactly the six summary cards with their counts', () => {
+    renderTiles({ planExceptionCount: 4, poWorklistCount: 11, orderSummaryPendingCount: 2 });
     expect(screen.getByText('Buy')).toBeInTheDocument();
     expect(screen.getByText('Stock allocation')).toBeInTheDocument();
+    expect(screen.getByText('Order summary')).toBeInTheDocument();
     expect(screen.getByText('Cash impact')).toBeInTheDocument();
     expect(screen.getByText('Plan exceptions')).toBeInTheDocument();
     expect(screen.getByText('PO worklist')).toBeInTheDocument();
     expect(screen.getByText('7')).toBeInTheDocument();
     expect(screen.getByText('3')).toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument();
     expect(screen.getByText('RM 125,000')).toBeInTheDocument();
     expect(screen.getByText('4')).toBeInTheDocument();
     expect(screen.getByText('11')).toBeInTheDocument();
+  });
+
+  it('says what a zero order-summary count MEANS rather than leaving a bare 0', () => {
+    renderTiles({ orderSummaryPendingCount: 0 });
+    expect(screen.getByText('every short item decided')).toBeInTheDocument();
+  });
+
+  it('switches to the order-summary view when the Order summary card is clicked (AC-C2.1)', () => {
+    const { onSelectView } = renderTiles({ activeView: 'buy' });
+    fireEvent.click(screen.getByText('Order summary'));
+    expect(onSelectView).toHaveBeenCalledWith('order_summary');
   });
 
   it('says what a zero plan-exception / PO-worklist count MEANS rather than leaving a bare 0', () => {

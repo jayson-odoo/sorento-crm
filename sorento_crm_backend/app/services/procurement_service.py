@@ -21,6 +21,7 @@ from app.models.procurement import (
     Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation,
     PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine,
     ApprovalToken,
+    PurchaseOrderLine,
     ViewToken,
 )
 from app.models.product import Product
@@ -1382,8 +1383,100 @@ class SPOAllocationService:
         self.db.add(allocation)
         self.db.commit()
         self.db.refresh(allocation)
+        self._capture_incoming_cost(allocation)
         InboundShipmentService(self.db).refresh_shipment_line_statuses(allocation.inbound_shipment_id)
         return allocation
+
+    def _capture_incoming_cost(self, allocation: SPOAllocation) -> None:
+        """Stamp the packing-list cost, in its currency, on the inbound shipment line.
+
+        AC-C3.2. The allocation is the moment the incoming cost becomes a fact about this
+        purchase, so it is captured here rather than left to be reconstructed later.
+
+        The packing-list line IS ``inbound_shipment_lines``, so the cost is already on the
+        row this writes to; the half that is missing is the CURRENCY, which the packing list
+        does not state. It resolves through ``po_line_id`` to the ordered line's currency,
+        and where there is no such source it stays NULL. It is never guessed: a currency
+        invented for a cost silently changes what the variance means.
+
+        The ordered line is only READ (AC-C3.3). Its cost, its currency and its updated_at
+        must come out untouched, because a supplier whose incoming cost drifts above its
+        ordered cost has repriced after we committed, and overwriting the ordered figure
+        destroys the only evidence of that.
+
+        NOTE (external dependency, recorded in PLAN-scm-purchasing-fulfilment): the
+        packing-list ingest cannot supply a cost today -- the extracted product carries
+        product_code and quantity only -- so in production every line takes the uncosted
+        branch below and is logged. The mechanism is correct the day a cost arrives.
+
+        Best-effort: this runs AFTER the allocation has committed, so a failure here must
+        not turn a successful write into a 500 for the caller.
+        """
+        try:
+            line = (
+                self.db.query(InboundShipmentLine)
+                .filter(
+                    InboundShipmentLine.shipment_id == allocation.inbound_shipment_id,
+                    InboundShipmentLine.product_id == allocation.product_id,
+                )
+                .first()
+            )
+            if line is None:
+                # An allocation against a product that is not on the packing list. Real,
+                # and not this function's problem to resolve.
+                return
+
+            if line.unit_cost is None:
+                # Reported, never defaulted. A zero here would read as free goods and would
+                # flow into the variance as a 100% saving.
+                logger.warning(
+                    "SPO allocation %s is written against an uncosted packing-list line "
+                    "(shipment %s, product %s): no incoming cost to capture, so the cost "
+                    "variance against the ordered line is not computable",
+                    allocation.id,
+                    allocation.inbound_shipment_id,
+                    allocation.product_id,
+                )
+                return
+
+            if line.currency:
+                # The packing list stated the unit itself. Nothing to resolve, and the
+                # stated currency is never overwritten by an inferred one.
+                return
+
+            currency = None
+            if allocation.po_line_id:
+                currency = (
+                    self.db.query(PurchaseOrderLine.currency)
+                    .filter(PurchaseOrderLine.id == allocation.po_line_id)
+                    .scalar()
+                )
+
+            if not currency:
+                logger.warning(
+                    "SPO allocation %s captured an incoming cost of %s with no currency "
+                    "(shipment %s, product %s): %s, so the unit stays unknown rather than "
+                    "assumed",
+                    allocation.id,
+                    line.unit_cost,
+                    allocation.inbound_shipment_id,
+                    allocation.product_id,
+                    "the allocation links no PO line"
+                    if not allocation.po_line_id
+                    else "the linked PO line states no currency",
+                )
+                return
+
+            line.currency = currency
+            line.updated_at = datetime.utcnow()
+            self.db.commit()
+        except Exception:  # noqa: BLE001 - best-effort side effect, see docstring
+            logger.warning(
+                "Failed to capture the incoming cost for SPO allocation %s",
+                getattr(allocation, "id", None),
+                exc_info=True,
+            )
+            self.db.rollback()
 
     def upsert_allocation(
         self, allocation_data: SPOAllocationCreate, created_by: str
@@ -1430,6 +1523,10 @@ class SPOAllocationService:
         existing.updated_at = datetime.utcnow()
         self.db.commit()
         self.db.refresh(existing)
+        # The allocation was written, so the incoming cost is re-captured against it
+        # (AC-C3.2). The "unchanged" path above returns before any write and stamps
+        # nothing, because there was no moment of allocation to capture at.
+        self._capture_incoming_cost(existing)
         InboundShipmentService(self.db).refresh_shipment_line_statuses(existing.inbound_shipment_id)
         return ("updated", existing)
 

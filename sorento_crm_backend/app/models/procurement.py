@@ -175,6 +175,14 @@ class InboundShipmentLine(Base, CompanyScopedMixin):
     cartons_count = Column(Integer, default=1, nullable=False)
     weight_per_carton = Column(Numeric(10, 2), nullable=True)
     unit_cost = Column(Numeric(12, 2), nullable=True)
+    # The unit `unit_cost` is stated in (AC-C3.2). Mirrors purchase_order_lines.currency
+    # as String(3) so the incoming and the ordered figure are comparable at all; a cost
+    # with no currency is a number with no meaning.
+    # NULLABLE, and never defaulted: where no currency is knowable (the packing list does
+    # not state one and the linked PO line has none either) it stays NULL. A house default
+    # here would silently assert that ordered and incoming are in the same unit, which is
+    # the whole content of the variance.
+    currency = Column(String(3), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)

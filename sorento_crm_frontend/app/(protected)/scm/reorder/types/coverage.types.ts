@@ -162,6 +162,14 @@ export interface CoverageTimeline {
    * and suppress a purchase per pool, invisibly, so it is set aside and stated here.
    */
   unattributed_in_transit_qty: number;
+  /**
+   * Committed demand, and placed on-order supply, carrying no warehouse at all. Both
+   * columns are nullable, so these rows belonged to no pool and appeared in no total
+   * until they were reported here. A commitment that is in none of the figures is worse
+   * than one in the wrong figure: nobody discovers it until a delivery date.
+   */
+  unplaceable_demand_qty: number;
+  unplaceable_on_order_qty: number;
   /** Naive Malaysia wall-clock ISO timestamp of this computation. */
   computed_at: string;
 }

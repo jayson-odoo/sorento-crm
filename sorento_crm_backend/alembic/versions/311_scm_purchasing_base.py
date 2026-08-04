@@ -200,6 +200,15 @@ _ALIASES = [
     ("outstanding_so", "required_date", "DELIVERY DATE", "en"),
     ("outstanding_so", "stock_location", "STOCK LOCATION", "en"),
     ("outstanding_so", "remark", "REMARK", "en"),
+    # OPTIONAL. The extract carries no order type today, so a document the upload CREATES
+    # has no evidence of the project-versus-dealer split anywhere and takes the customer
+    # segment fallback, which is NULL for almost every customer. The day the export gains
+    # the column it classifies on import with no code change, because this table is data.
+    # Absent, the file is still valid and nothing changes.
+    ("outstanding_so", "order_type", "ORDER TYPE", "en"),
+    ("outstanding_so", "order_type", "SO TYPE", "en"),
+    ("outstanding_so", "order_type", "S/O TYPE", "en"),
+    ("outstanding_so", "order_type", "SALES ORDER TYPE", "en"),
     # outstanding purchase orders
     ("outstanding_po", "po_number", "PO NO", "en"),
     ("outstanding_po", "po_date", "PO DATE", "en"),

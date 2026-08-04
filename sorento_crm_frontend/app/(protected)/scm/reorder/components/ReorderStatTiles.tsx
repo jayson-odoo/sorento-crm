@@ -1,13 +1,20 @@
 'use client';
 
-import { AlertTriangle, ClipboardList, PackageX, ShoppingCart, Wallet } from 'lucide-react';
+import {
+  AlertTriangle,
+  ClipboardList,
+  FileSpreadsheet,
+  PackageX,
+  ShoppingCart,
+  Wallet,
+} from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { fmtInt, fmtMoney } from '../../lib/format';
 
 /** Which recommendation set the plan view is filtered to. Cash impact is a stat,
  *  not a view, so it never appears here. */
-export type ReorderPlanView = 'buy' | 'disposition';
+export type ReorderPlanView = 'buy' | 'disposition' | 'order_summary';
 
 function Tile({
   label,
@@ -96,6 +103,10 @@ function Tile({
  * visible without navigating. They are stats for now, not clickable filters: the two
  * views themselves land in S4 (worklist) and S5 (exceptions), and a card that
  * switched to a view that does not exist yet would be worse than a plain count.
+ *
+ * Order summary (S3b, AC-C2.1) is the THIRD clickable view: the weekly sheet Mr Loo
+ * decides order quantities on. Its count is the products still waiting for a
+ * quantity, which is the only question he has when he opens it.
  */
 export function ReorderStatTiles({
   buyCount,
@@ -103,6 +114,7 @@ export function ReorderStatTiles({
   cashTotal,
   planExceptionCount = 0,
   poWorklistCount = 0,
+  orderSummaryPendingCount = 0,
   activeView,
   onSelectView,
 }: {
@@ -115,11 +127,13 @@ export function ReorderStatTiles({
   planExceptionCount?: number;
   /** Decided buys still to be keyed into AutoCount (S4). */
   poWorklistCount?: number;
+  /** Short products with no order quantity decided yet (S3b). */
+  orderSummaryPendingCount?: number;
   activeView: ReorderPlanView;
   onSelectView: (view: ReorderPlanView) => void;
 }) {
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 xl:grid-cols-5">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 xl:grid-cols-6">
       <Tile
         label="Buy"
         value={fmtInt(buyCount)}
@@ -139,6 +153,14 @@ export function ReorderStatTiles({
         active={activeView === 'disposition'}
         activeRingClass="ring-scm-overstock"
         onClick={() => onSelectView('disposition')}
+      />
+      <Tile
+        label="Order summary"
+        value={fmtInt(orderSummaryPendingCount)}
+        subLabel={orderSummaryPendingCount ? 'waiting on a quantity' : 'every short item decided'}
+        icon={FileSpreadsheet}
+        active={activeView === 'order_summary'}
+        onClick={() => onSelectView('order_summary')}
       />
       <Tile label="Cash impact" value={fmtMoney(cashTotal)} icon={Wallet} />
       <Tile

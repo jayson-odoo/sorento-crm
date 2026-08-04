@@ -226,12 +226,16 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
         # SO DATE): carried per row because that is the shape of the file, folded onto the
         # header by the write path. Without it `scm.receipt_lead_v` has no `po.issue_date` to
         # measure lead days against, so an imported order contributes no lead-time evidence.
+        # `order_type` is the same shape and OPTIONAL: no export carries it today, and when
+        # one does it is what the sales book's demand class is stamped from, so an order
+        # this upload creates can be classified instead of reported as unclassifiable.
         result.extras[str(row_number)] = {
             "party_code": _clean(rec.get("debtor_code" if doc_type == SO
                                          else "creditor_code")),
             "unit_cost": _to_float(rec.get("unit_cost")),
             "currency": _clean(rec.get("currency")) or None,
             "order_date": _to_date(rec.get(order_date_field)),
+            "order_type": _clean(rec.get("order_type")) or None,
         }
 
     return result

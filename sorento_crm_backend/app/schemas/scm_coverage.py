@@ -155,6 +155,17 @@ class CoverageTimelineResult(BaseModel):
         description="Events dropped for falling beyond `horizon_end`. Stated so a bounded "
         "axis cannot read as 'nothing else is coming'."
     )
+    unplaceable_demand_qty: float = Field(
+        default=0.0,
+        description="Committed demand carrying no warehouse at all, so it reached no pool's "
+        "timeline. Stated rather than swallowed: a commitment in none of the figures is "
+        "worse than one in the wrong figure.",
+    )
+    unplaceable_on_order_qty: float = Field(
+        default=0.0,
+        description="Placed on-order supply carrying no warehouse at all. Same treatment as "
+        "the demand side, for the same reason.",
+    )
     unattributed_in_transit_qty: float = Field(
         default=0.0,
         description="In-transit quantity no allocation places at a warehouse, so it counts "

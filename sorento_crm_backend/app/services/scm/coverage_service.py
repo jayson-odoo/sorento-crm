@@ -53,9 +53,12 @@ from app.models.product import Product
 from app.models.scm import ReorderPolicy
 from app.services.scm.coverage_timeline import (
     DEMAND,
+    EPSILON,
     SUPPLY,
     SUPPLY_IN_TRANSIT,
     SUPPLY_ON_ORDER,
+    QTY_PRECISION,
+    SOURCE_ORDER,
     SOURCE_OWN,
     SOURCE_POOL,
     SourceAllocation,
@@ -75,9 +78,20 @@ from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 # creates it. Mirrors scm.on_order_v.
 _PLACED_PO_STATUSES = ("active", "received", "partial", "closed")
 
-# Shipment states whose lines are still inbound. Once received they are on-hand and would
-# otherwise be counted twice.
-_INBOUND_SHIPMENT_STATUSES = ("in_transit", "pending", "booked", "loaded", "arrived")
+# Shipment states that mean the goods have LANDED, so their lines are on-hand and counting
+# them as incoming would double them. Expressed as the excluded set, not an allowed set,
+# because the rest of the repo does the same (`incoming_stock_service._still_incoming_filter`,
+# `procurement_service._is_received_status`) and because an allowed list silently drops any
+# status nobody thought of: `partial_received` is written by `procurement_service` today and
+# was absent from the old whitelist, so a part-arrived container contributed nothing to any
+# pool. A whitelist fails closed on real supply; a blacklist fails open on a state that does
+# not exist yet, which is the safer direction for a figure that stops purchases.
+_RECEIVED_SHIPMENT_STATUSES = ("fully_received", "received", "completed", "cancelled")
+
+# Shipment LINE states that are no longer inbound. The purchase-order half of this same
+# function filters `PurchaseOrderLine.line_status == "open"`, and one function disagreeing
+# with itself about what "still open" means is the defect.
+_CLOSED_SHIPMENT_LINE_STATUSES = ("closed", "cancelled", "received")
 
 # How far ahead the dated axis runs when no policy configures it. Six months is long
 # enough to cover a China lead time plus a review cycle and short enough that the report
@@ -165,6 +179,14 @@ class Coverage:
     # In-transit quantity no allocation places, so it is counted for NO pool. Surfaced
     # rather than dropped in silence: supply set aside is a thing somebody has to chase.
     unattributed_in_transit_qty: float = 0.0
+    # Committed demand, and placed on-order supply, carrying NO warehouse at all. Both
+    # columns are nullable, and `warehouse_id.in_(...)` evaluates NULL to NULL, so these rows
+    # reached no pool's timeline and no report: real commitments and real containers that
+    # simply were not in any figure. Same treatment as the in-transit case above, for the same
+    # reason - a quantity nobody can place is exactly what a planner has to be told about,
+    # since the alternative is discovering it on a delivery date.
+    unplaceable_demand_qty: float = 0.0
+    unplaceable_on_order_qty: float = 0.0
 
     @property
     def excluded_event_count(self) -> int:
@@ -213,7 +235,14 @@ class CoverageService:
 
     def _demand_events(
         self, product_id: str, wh_ids: list[str]
-    ) -> tuple[list[TimelineEvent], list[UndatedDemand]]:
+    ) -> tuple[list[TimelineEvent], list[UndatedDemand], float]:
+        """Dated demand for this pool, its undated rows, and the quantity carrying no
+        location at all.
+
+        The third figure exists because `warehouse_id` is nullable and `in_(wh_ids)` is NULL
+        for such a row, so it belonged to no pool and appeared in no total. A commitment that
+        is in none of the numbers is worse than one in the wrong number.
+        """
         rows = (
             self.db.query(
                 SalesOrderLine.qty_ordered,
@@ -233,6 +262,20 @@ class CoverageService:
             .filter(
                 SalesOrderLine.product_id == product_id,
                 SalesOrderLine.warehouse_id.in_(wh_ids),
+                SalesOrder.status == "open",
+                SalesOrderLine.line_status == "open",
+                SalesOrderLine.qty_ordered > SalesOrderLine.qty_delivered,
+            )
+            .all()
+        )
+
+        # Same predicates, but the rows the location filter cannot place.
+        unplaceable_rows = (
+            self.db.query(SalesOrderLine.qty_ordered, SalesOrderLine.qty_delivered)
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .filter(
+                SalesOrderLine.product_id == product_id,
+                SalesOrderLine.warehouse_id.is_(None),
                 SalesOrder.status == "open",
                 SalesOrderLine.line_status == "open",
                 SalesOrderLine.qty_ordered > SalesOrderLine.qty_delivered,
@@ -269,12 +312,20 @@ class CoverageService:
                     location=r.warehouse_code or "",
                 )
             )
-        return events, undated
+        unplaceable = round(
+            sum(
+                float(r.qty_ordered or 0) - float(r.qty_delivered or 0)
+                for r in unplaceable_rows
+            ),
+            QTY_PRECISION,
+        )
+        return events, undated, max(unplaceable, 0.0)
 
     def _supply_events(
         self, product_id: str, wh_ids: list[str]
-    ) -> tuple[list[TimelineEvent], float]:
-        """Dated supply for this pool, plus the in-transit quantity nobody could place.
+    ) -> tuple[list[TimelineEvent], float, float]:
+        """Dated supply for this pool, the in-transit quantity nobody could place, and the
+        placed on-order quantity carrying no location at all.
 
         The second element is returned rather than stashed on the instance: it is a fact
         about THIS call, and a service attribute would quietly describe whichever product
@@ -336,6 +387,38 @@ class CoverageService:
         # nullable and 860 existing rows have none (stock can arrive against no PO), so
         # keying on it would drop legitimately allocated supply. One shipment line can be
         # split across warehouses, so the attribution is per allocation, not per line.
+        # Which locations belong to SOME pool, read as a set rather than joined. An aliased
+        # join onto `warehouses` cannot be used here: the company-isolation filter injects
+        # `warehouses.company_id` into the ON clause under the unaliased table name, and
+        # Postgres rejects the reference. One small set read is also cheaper than a join
+        # repeated per allocation row.
+        # Placed PO supply the location filter cannot place. `purchase_order_lines.warehouse_id`
+        # is nullable, so these are real containers on order that reached no pool's figure.
+        unplaceable_on_order = round(
+            sum(
+                float(a or 0) - float(b or 0)
+                for a, b in self.db.query(
+                    PurchaseOrderLine.qty_ordered, PurchaseOrderLine.qty_received
+                )
+                .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+                .filter(
+                    PurchaseOrderLine.product_id == product_id,
+                    PurchaseOrderLine.warehouse_id.is_(None),
+                    PurchaseOrder.status.in_(_PLACED_PO_STATUSES),
+                    PurchaseOrderLine.line_status == "open",
+                    PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
+                )
+                .all()
+            ),
+            QTY_PRECISION,
+        )
+
+        placeable_ids = {
+            wid
+            for (wid,) in self.db.query(Warehouse.id)
+            .filter(Warehouse.counts_as_available.is_(True))
+            .all()
+        }
         ship_rows = (
             self.db.query(
                 InboundShipmentLine.id.label("line_id"),
@@ -346,6 +429,7 @@ class CoverageService:
                 Supplier.supplier_name,
                 SPOAllocation.warehouse_id,
                 SPOAllocation.allocated_quantity,
+                SPOAllocation.quantity_received.label("allocation_received"),
             )
             .join(InboundShipment, InboundShipment.id == InboundShipmentLine.shipment_id)
             .outerjoin(Supplier, Supplier.id == InboundShipment.supplier_id)
@@ -358,7 +442,8 @@ class CoverageService:
             )
             .filter(
                 InboundShipmentLine.product_id == product_id,
-                InboundShipment.shipment_status.in_(_INBOUND_SHIPMENT_STATUSES),
+                InboundShipment.shipment_status.notin_(_RECEIVED_SHIPMENT_STATUSES),
+                InboundShipmentLine.line_status.notin_(_CLOSED_SHIPMENT_LINE_STATUSES),
                 InboundShipmentLine.quantity_shipped > InboundShipmentLine.quantity_received,
             )
             .all()
@@ -375,27 +460,62 @@ class CoverageService:
                 "label": r.supplier_name or "",
                 "allocated": 0.0,
                 "here": 0.0,
+                "elsewhere": 0.0,
+                "unplaceable": 0.0,
             })
             if r.warehouse_id is None:
                 continue
-            qty = float(r.allocated_quantity or 0)
+            # Each allocation's OWN outstanding quantity. `allocated_quantity` is never
+            # decremented as goods arrive (stated at incoming_stock_service.py:78-80), so the
+            # only honest per-destination figure is allocated minus what that allocation has
+            # itself received. Capping each pool at the LINE's outstanding instead handed the
+            # same 40 units to two pools: 80 units of cover against 40 still on the water,
+            # with each pool's screen internally consistent on its own.
+            qty = max(
+                float(r.allocated_quantity or 0) - float(r.allocation_received or 0), 0.0
+            )
             entry["allocated"] += qty
             if r.warehouse_id in wh_set:
                 entry["here"] += qty
+            elif r.warehouse_id in placeable_ids:
+                # Allocated to a location that belongs to SOME pool, just not this one. It is
+                # placed: another pool's screen accounts for it, so it is neither cover here
+                # nor missing.
+                entry["elsewhere"] += qty
+            else:
+                # Allocated to a location that belongs to NO pool: a quarantine or damaged
+                # bin excluded by `counts_as_available`. No pool's balance may count it, and
+                # no pool's screen would otherwise mention it, so it is reported as
+                # unattributed on EVERY pool - "which pool should have told me" has no
+                # answer, and stock somebody paid for sitting where nobody looks is exactly
+                # what a planning report exists to surface.
+                entry["unplaceable"] += qty
 
         unattributed = 0.0
         for entry in by_line.values():
             outstanding = entry["outstanding"]
             if outstanding <= 0:
                 continue
-            # Never more than is actually still coming: an allocation written before a
-            # partial receipt would otherwise re-supply what has already landed.
-            here = min(entry["here"], outstanding)
-            # What no allocation claims has no derivable destination. It is EXCLUDED from
-            # every pool rather than added to all of them, and reported instead: understating
-            # supply causes one visible extra purchase, whereas the same quantity counted on
-            # N pools suppresses N purchases and nothing on screen ever says so.
-            unattributed += max(outstanding - min(entry["allocated"], outstanding), 0.0)
+            # Never more than is actually still coming. When the allocations CLAIM more than
+            # the supplier is still sending (a real data error: 60 + 60 against 40 on the
+            # water) each destination is pro-rated rather than each being capped at the
+            # line's full outstanding, because capping per pool hands 40 to one pool and 40
+            # to the other and invents 40 units of cover. Understating costs one visible
+            # extra purchase; overstating suppresses purchases silently, which is the failure
+            # nobody catches.
+            claimed = entry["here"] + entry["elsewhere"] + entry["unplaceable"]
+            scale = min(1.0, outstanding / claimed) if claimed > 0 else 0.0
+            here = round(entry["here"] * scale, QTY_PRECISION)
+            # Two ways a quantity ends up on nobody's timeline, both reported. What no
+            # allocation claims has no derivable destination at all; what an allocation sends
+            # to a location in no pool has a destination nobody can sell from. Excluding
+            # either from every pool is right; leaving it unsaid is not, because the same
+            # quantity added to N pools instead suppresses N purchases and nothing on screen
+            # ever admits it.
+            unattributed += (
+                max(outstanding - min(entry["allocated"], outstanding), 0.0)
+                + entry["unplaceable"]
+            )
             if here <= 0:
                 continue
             events.append(
@@ -412,7 +532,11 @@ class CoverageService:
         # An undated supply line cannot be placed on the axis. It is dropped from the balance
         # rather than assumed imminent, because assuming it arrives in time is exactly the
         # optimism that produces a stockout.
-        return [e for e in events if e.at is not None], round(unattributed, 4)
+        return (
+            [e for e in events if e.at is not None],
+            round(unattributed, QTY_PRECISION),
+            max(unplaceable_on_order, 0.0),
+        )
 
     # -- availability ---------------------------------------------------------
 
@@ -452,8 +576,14 @@ class CoverageService:
 
         members = self.pool_members(pool_id)
         by_id = {w.id: w for w in members}
+        # `quantity_on_hand`, deliberately NOT `quantity_available`. The generated
+        # `quantity_available` column is on-hand minus reserved, and the sales-order lines
+        # that did the reserving are ALREADY demand events on the timeline. Netting them
+        # here as well counted the same reservation twice: 100 on hand fully reserved against
+        # one open line for 100 showed "opening 100, own 0, pool 0, Buy 100" while the
+        # timeline balance was exactly 0 and nothing was short. One basis for both halves.
         rows = (
-            self.db.query(Stock.warehouse_id, Stock.quantity_available)
+            self.db.query(Stock.warehouse_id, Stock.quantity_on_hand)
             .filter(
                 Stock.product_id == product_id,
                 Stock.warehouse_id.in_(list(by_id)),
@@ -649,15 +779,29 @@ class CoverageService:
         members = self.pool_members(pool_id)
         wh_ids = [w.id for w in members]
         product = self.db.query(Product).filter(Product.id == product_id).one_or_none()
-        pool_code = next((w.warehouse_code for w in members if w.id == pool_id), "")
+        # Read off the pool row directly, NOT off `members`: `pool_members` filters
+        # `counts_as_available`, so a pool bin flagged out of availability with sub-bins still
+        # pointing at it returned an empty code, and the screen then printed "pool" followed
+        # by a blank while the verdict lost the pool's name entirely.
+        pool_code = next(
+            (w.warehouse_code for w in members if w.id == pool_id),
+            (
+                self.db.query(Warehouse.warehouse_code)
+                .filter(Warehouse.id == pool_id)
+                .scalar()
+                or ""
+            ),
+        )
 
         config = self.config_for(product_id, pool_id=pool_id)
         computed_at = to_naive_datetime(datetime.now(MALAYSIA_TZ))
         today = computed_at.date()
         resolved_horizon_end = horizon_end or _add_months(today, config.horizon_months)
 
-        demand, undated = self._demand_events(product_id, wh_ids)
-        supply, unattributed_in_transit = self._supply_events(product_id, wh_ids)
+        demand, undated, unplaceable_demand = self._demand_events(product_id, wh_ids)
+        supply, unattributed_in_transit, unplaceable_on_order = self._supply_events(
+            product_id, wh_ids
+        )
         opening = self._opening(product_id, wh_ids)
         timeline = build_timeline(
             opening, demand + supply, floor=floor, horizon_end=resolved_horizon_end
@@ -680,8 +824,28 @@ class CoverageService:
         pool_demand = round(
             sum(-row.event.qty for row in timeline.rows if row.event.kind == DEMAND), 4
         )
+        # WHERE today's cover comes from. This answers a different question from `buy_qty`
+        # and must not be confused with it: it turns "you have cover" into an instruction
+        # somebody can act on (own bin, shared pool, another holder's bin).
         allocations = resolve_sources(pool_demand, availability)
-        buy_qty = buy_quantity(allocations)
+        # What must be BOUGHT is what DATED supply cannot cover, which the timeline has
+        # already worked out. The residual of `resolve_sources` is a dateless figure: it
+        # compares total demand against a snapshot of current stock and ignores every
+        # arrival, so it recommended buying 100 units while 500 were already on the water
+        # and due to land first - printed in an alarm colour two inches from a healthy
+        # closing balance. A planner who acts on the loud number buys a second container;
+        # one who learns to ignore it stops reading the panel. `peak_deficit` is the worst
+        # the balance ever gets against the floor, so it is also right in the opposite
+        # direction: supply dated AFTER the commitment it would cover still leaves the buy
+        # standing, which netting on the closing balance would silently drop.
+        buy_qty = timeline.peak_deficit
+        # The `order` slice `resolve_sources` produces is that same dateless residual, so it
+        # is replaced by the timeline's figure rather than left to contradict it two inches
+        # away on the screen. The own / pool / other slices stand: they describe stock a
+        # person can pick today, which is a different question and still worth answering.
+        allocations = [a for a in allocations if a.source_type != SOURCE_ORDER]
+        if buy_qty >= EPSILON:
+            allocations.append(SourceAllocation(source_type=SOURCE_ORDER, qty=buy_qty))
 
         return Coverage(
             product_id=product_id,
@@ -696,7 +860,9 @@ class CoverageService:
             availability=availability,
             allocations=tuple(allocations),
             buy_qty=buy_qty,
-            use_stock=is_use_stock(allocations),
+            # Derived from the SAME figure as `buy_qty`, never from the allocations, or the
+            # verdict sentence and the number beside it can disagree.
+            use_stock=buy_qty < EPSILON,
             undated_demand=tuple(undated),
             transfer_proposals=tuple(
                 self.transfer_proposals(
@@ -713,6 +879,8 @@ class CoverageService:
             horizon_end=resolved_horizon_end,
             computed_at=computed_at,
             unattributed_in_transit_qty=unattributed_in_transit,
+            unplaceable_demand_qty=unplaceable_demand,
+            unplaceable_on_order_qty=unplaceable_on_order,
         )
 
     def resolve_line(

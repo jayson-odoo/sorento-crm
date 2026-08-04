@@ -119,6 +119,8 @@ def _payload(cov: Coverage) -> dict:
         "horizon_end": cov.horizon_end,
         "excluded_event_count": cov.excluded_event_count,
         "unattributed_in_transit_qty": cov.unattributed_in_transit_qty,
+        "unplaceable_demand_qty": cov.unplaceable_demand_qty,
+        "unplaceable_on_order_qty": cov.unplaceable_on_order_qty,
         # Naive Malaysia wall-clock. Serialised as a string on purpose: an offset-aware
         # timestamp is re-normalised to UTC by downstream consumers and displays eight
         # hours out, which makes a report that is seconds old look like the middle of the

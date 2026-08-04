@@ -85,6 +85,8 @@ TIMELINE_FIELDS = {
     "horizon_end",
     "excluded_event_count",
     "unattributed_in_transit_qty",
+    "unplaceable_demand_qty",
+    "unplaceable_on_order_qty",
     "computed_at",
 }
 EVENT_FIELDS = {"at", "qty", "kind", "ref", "label", "location", "supply_stage"}

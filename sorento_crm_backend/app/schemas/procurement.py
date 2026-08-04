@@ -273,7 +273,12 @@ class SPOAllocationBase(BaseModel):
 
 
 class SPOAllocationCreate(SPOAllocationBase):
-    pass
+    # Which Supply PO line this allocation draws down (PO -> SPO -> GRN). The model column
+    # exists; without it on the create schema the allocation is written with no link to the
+    # ordered line, so the incoming cost has no currency to resolve from and no ordered cost
+    # to be compared against (AC-C3.2).
+    # Optional: 860 pre-existing allocations have no PO, and stock can arrive against none.
+    po_line_id: Optional[str] = None
 
 
 class SPOAllocationUpdate(BaseModel):

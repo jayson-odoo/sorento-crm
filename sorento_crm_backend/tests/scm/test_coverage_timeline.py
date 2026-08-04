@@ -342,6 +342,14 @@ def test_a_deficit_and_a_shortfall_never_disagree_about_existence():
         (500, [], 0),                                    # nothing wrong at all
         (0, [], 0),                                      # empty and at the floor
         (5000, [TimelineEvent(at=date(2026, 7, 1), qty=-100, kind=DEMAND, ref="SO2")], 100),
+        # A gap the shortfall's epsilon (1e-9) calls real and `peak_deficit`'s rounding
+        # (4 places) flattens to 0.0. Anything in (1e-9, 5e-5) lands in that window, and the
+        # window is reachable in production because the floor is a COMPUTED reorder point,
+        # not a figure a person typed. The panel then prints "Short 0 today" beside a tile
+        # reading 0 with the hint "never goes short" - two contradictory sentences about the
+        # same SKU, which costs more trust than either answer alone. One threshold has to
+        # govern both.
+        (100, [], 100.00004),
     ]
     for opening, events, floor in cases:
         r = build_timeline(opening, events, floor=floor)
