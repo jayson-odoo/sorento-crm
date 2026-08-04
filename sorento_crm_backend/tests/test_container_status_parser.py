@@ -161,6 +161,16 @@ def test_warns_about_header_drift_it_had_to_alias(parsed):
     assert "RL" in joined and "LINER" in joined
 
 
+@requires_fixture
+def test_does_not_warn_about_aliases_on_columns_it_never_imports(parsed):
+    """Three of the five live aliases are on the deferred cost block. Warning
+    about them buries LINER <- RL, the one that decides whether 55 rows get a
+    liner at all."""
+    joined = " ".join(parsed.warnings)
+    for noise in ("CHINA FREIGHT", "DEMURRANGE", "10% SST"):
+        assert noise not in joined
+
+
 # ------------------------------------------------------------ synthetic shapes
 
 

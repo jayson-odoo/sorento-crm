@@ -473,8 +473,17 @@ def parse_container_status_workbook(file_data: bytes) -> ParsedWorkbook:
 
 
 def _alias_warnings(aliased: Iterable[tuple[str, str, str]]) -> list[str]:
+    """Only aliases for columns we actually IMPORT are worth telling anyone about.
+
+    Three of the five live aliases are on the cost block (`CHINA FREIGHT (RMB)`,
+    `DEMURRANGE`, `10% SST`), which this importer deliberately skips. Warning about
+    those buries the one that matters - `LINER <- RL`, which decides whether 55
+    Ceramic rows get a liner at all.
+    """
     grouped: dict[str, list[str]] = {}
     for canonical, raw, sheet in sorted(aliased):
+        if canonical not in FIELD_MAP:
+            continue
         grouped.setdefault(canonical, []).append(f'"{raw}" on {sheet}')
     return [
         f'Header matched by alias: {canonical} <- {", ".join(sources)}.'

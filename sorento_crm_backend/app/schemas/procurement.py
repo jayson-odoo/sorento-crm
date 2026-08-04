@@ -151,7 +151,51 @@ class InboundShipmentLineResponse(InboundShipmentLineBase):
         from_attributes = True
 
 
-class InboundShipmentBase(BaseModel):
+class ClearanceFields(BaseModel):
+    """Container status fields carried on every shipment payload.
+
+    Mirrors `ClearanceFields` in
+    packing-lists/types/packingList.types.ts one-for-one; a pytest parity check
+    (tests/test_container_status_schema.py) fails if the two drift, because a
+    field missing on one side does not error - it just never reaches the UI.
+
+    Inherited by `InboundShipmentBase`, so the list response, the detail response
+    and the create payload all get them from one place rather than from three
+    hand-maintained field lists.
+    """
+
+    loc: Optional[str] = None
+    liner_code: Optional[str] = None
+    china_forwarder: Optional[str] = None
+    malaysia_forwarder: Optional[str] = None
+    consignee: Optional[str] = None
+    free_days_available: Optional[int] = None
+    stacked: Optional[str] = None
+
+    loading_date: Optional[date] = None
+    etc_date: Optional[date] = None
+    etd_date: Optional[date] = None
+    eta_date: Optional[date] = None
+    eta_delay_date: Optional[date] = None
+    inspection_date: Optional[date] = None
+    approval_date: Optional[date] = None
+    gatepass_date: Optional[date] = None
+    delivery_warehouse: Optional[str] = None
+    warehouse_arrival_date: Optional[date] = None
+    informed_collection_date: Optional[date] = None
+    collection_date: Optional[date] = None
+
+    # Round-trip only; no status node, alert or integration reads these (B7).
+    ata_date: Optional[date] = None
+    ori_doc_received_date: Optional[date] = None
+    k1_submission_date: Optional[date] = None
+    yard_arrival_date: Optional[date] = None
+
+    coa_permit_no: Optional[str] = None
+    source_sheet: Optional[str] = None
+
+
+class InboundShipmentBase(ClearanceFields):
     shipment_number: Optional[str] = None
     supplier_id: Optional[str] = None
     shipment_date: date

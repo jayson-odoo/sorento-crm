@@ -1,8 +1,13 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useUploadManager } from '@/components/upload-activity';
+import {
+  importContainerStatus,
+  validateContainerStatusImport,
+} from '../services/packingListService';
 import {
   TemplateUploadDialog,
   type TemplateUploadHelpers,
@@ -23,14 +28,11 @@ import {
  * the job then drives its own polling until terminal, and the toast offers a
  * shortcut to the job page. An import is never a fire-and-forget toast.
  *
- * PHASE 1 MOCK - `onTest` and `onUpload` are stubbed. Wire to
- * POST /api/v1/procurement/packing-lists/container-status-import in S3 (issue #61).
- *
- * EXPECTED CONTRACT (documented here so S3 builds to it):
- *   POST  multipart/form-data { file }
- *   202   { job_id, queued: true }
- *   POST  .../container-status-import/validate  (dry run, no writes)
- *   200   { valid, errors[], warnings[],
+ * LIVE CONTRACT (slice 3):
+ *   POST /api/v1/procurement/packing-lists/container-status-import
+ *     multipart { file } -> 202 { message, job_id, queued: true }
+ *   POST  ...?validate_only=true
+ *     200 { valid, errors[], warnings[],
  *           summary: { total_rows, would_update, would_create, error_count } }
  *
  * Those summary key names are NOT free choice: TemplateUploadDialog renders a fixed
@@ -38,60 +40,15 @@ import {
  */
 
 /**
- * HOW THE PARSER MUST READ THE WORKBOOK, and the numbers that follow from it.
+ * WHY THE RAW FILE IS POSTED, rather than the dialog's parsed rows.
  *
- * Nothing here is positional. Every sheet is scanned for rows whose cell text is
- * exactly "CONTAINER"; each such row OPENS a block, and that block's columns are
- * resolved from its own header row. `Container Status 2026.xlsx` has 5 tabs holding
- * 9 blocks, because several tabs stack more than one titled section:
- *
- *   Fitting                          header rows 2, 31        17 + 2   = 19
- *   Ceramic                          header rows 2, 69, 75    55 + 0 + 0 = 55
- *   Arrived                          header row  2            318
- *   Arrived - Joint Mocha Container  header rows 2, 22        15 + 0   = 15
- *   Arrived (Mocha) Joint BL         header row  2            0
- *                                                             ------------
- *                                                             407 containers
- *
- * 407 values, 407 distinct, zero collisions across tabs.
- *
- * A repeated header row is therefore a SECTION BOUNDARY, not a bad data row. An
- * earlier draft of this mock reported those 4 rows (Fitting 31, Ceramic 69 and 75,
- * Joint Mocha 22) as ISO 6346 rejects, which was wrong twice over: they are headers,
- * and the true reject count is 0 - every one of the 407 values matches ^[A-Z]{4}\d{7}$.
- *
- * Header names drift between tabs, so matching is by NAME WITH ALIASES:
- *   LINER              <- Ceramic calls it "RL" (values are CMA / WHL / OOCL / ...)
- *   WAREHOUSE ARRIVALS <- Arrived calls it "W/H ARRIVALS"
- *   CHINA FORWARDING COST (RMB) <- Arrived calls it "CHINA FREIGHT (RMB)"
- *   SST                <- Joint Mocha calls it "10% SST"
- *   DEMURRAGE          <- three tabs misspell it "Demurrange"
- * Reading Ceramic's column 4 positionally would have mislabelled 55 liners.
+ * `Container Status 2026.xlsx` has 5 tabs holding 9 header blocks, because several
+ * tabs stack more than one titled section (Fitting rows 2 and 31, Ceramic 2/69/75,
+ * Arrived 2, Arrived - Joint Mocha 2 and 22, Arrived (Mocha) Joint BL 2) for 407
+ * containers in total. TemplateUploadDialog's own client-side parse reads the FIRST
+ * SHEET ONLY, so it would see one block and miss 390 rows. Both handlers below
+ * ignore that parse and post the file; the backend does the real read.
  */
-const MOCK_DRY_RUN: ValidateImportResult = {
-  valid: true,
-  errors: [],
-  // Warnings are for things the operator might need to ACT on. Block detection
-  // is how the parser works, not news - it stays in the code comment above and
-  // in A2a, and is deliberately not surfaced here.
-  warnings: [
-    'Ceramic labels its liner column "RL" while every other tab labels it "LINER"; Arrived uses "W/H ARRIVALS" for "WAREHOUSE ARRIVALS". Matched by name, so all 407 rows still resolve.',
-    '475 numbered rows carry no container number and are skipped without an error. Arrived alone accounts for 427 of them.',
-    '4 of the 9 blocks are empty scaffolding: Ceramic sections 2 and 3, Arrived - Joint Mocha section 2, and the whole Arrived (Mocha) Joint BL tab.',
-    '140 of 407 containers sit on a liner with no tracking adapter. Adapters cover WHL (116), CMA (79) and OOCL (72); the other 15 liners stay manual.',
-  ],
-  // Canonical summary keys - TemplateUploadDialog only renders these, so the S3
-  // endpoint must return them under exactly these names.
-  summary: {
-    total_rows: 407,
-    would_update: 111,
-    would_create: 296,
-    error_count: 0,
-  },
-};
-
-/** Stand-in for the `job_id` the real 202 returns. */
-const MOCK_JOB_ID = '00000000-0000-4000-8000-000000000c51';
 
 export default function ContainerStatusImportDialog({
   open,
@@ -101,11 +58,15 @@ export default function ContainerStatusImportDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { startSession } = useUploadManager();
 
-  const handleTest = async (): Promise<ValidateImportResult> => {
-    await new Promise((r) => setTimeout(r, 900));
-    return MOCK_DRY_RUN;
+  const handleTest = async (
+    _rows: unknown[],
+    file?: File,
+  ): Promise<ValidateImportResult> => {
+    if (!file) throw new Error('Choose a workbook first.');
+    return validateContainerStatusImport(file);
   };
 
   const handleUpload = async (
@@ -116,11 +77,12 @@ export default function ContainerStatusImportDialog({
     // The workbook is parsed server-side: 9 header blocks over 5 tabs, so the raw
     // file is what gets posted. `_rows` (the dialog's client-side parse of the first
     // sheet only) is deliberately unused - it would see one block and miss 390 rows.
+    if (!file) throw new Error('Choose a workbook first.');
+
     helpers?.setStatus?.('Uploading workbook...');
-    for (const pct of [15, 45, 75, 100]) {
-      helpers?.setProgress(pct);
-      await new Promise((r) => setTimeout(r, 220));
-    }
+    helpers?.setProgress(20);
+    const queued = await importContainerStatus(file);
+    helpers?.setProgress(100);
     helpers?.setStatus?.('Queued for import');
     onOpenChange(false);
 
@@ -128,31 +90,28 @@ export default function ContainerStatusImportDialog({
     // empty panel. `notifyImportQueued()` alone only invalidates the backend feed,
     // and the feed has no row until the worker has created the job - so the drawer
     // opens on nothing, which is exactly what it must not do. `startSession` opens
-    // the drawer itself and the real BE row replaces this one on reconcile.
-    if (file) {
-      startSession({
-        files: [file],
-        sessionType: 'import_job',
-        importJobId: MOCK_JOB_ID,
-        title: file.name,
-        jobType: 'container_status',
-        totalRows: MOCK_DRY_RUN.summary?.total_rows as number,
-        // PHASE 1 MOCK - S3 replaces this with the multipart POST that returns
-        // { job_id, queued: true }, and importJobId becomes that job_id.
-        uploader: async () => {
-          await new Promise((r) => setTimeout(r, 700));
-          return { attachment_id: MOCK_JOB_ID };
-        },
-      });
-    }
+    // the drawer itself and the real backend row replaces this one on reconcile.
+    // The uploader has already run (the POST above), so it resolves immediately.
+    startSession({
+      files: [file],
+      sessionType: 'import_job',
+      importJobId: queued.job_id,
+      title: file.name,
+      jobType: 'container_status',
+      uploader: async () => ({ attachment_id: queued.job_id }),
+    });
+
+    // The worker writes onto the shipments this list is showing.
+    void queryClient.invalidateQueries({ queryKey: ['packing-lists'] });
 
     toast.success(
-      `${file?.name ?? 'Workbook'} queued. Clearance dates appear on each container once the import finishes.`,
+      `${file.name} queued. Clearance dates appear on each container once the import finishes.`,
       {
         duration: 6000,
         action: {
           label: 'View job',
-          onClick: () => router.push(`/system-management/import-jobs/${MOCK_JOB_ID}`),
+          onClick: () =>
+            router.push(`/system-management/import-jobs/${queued.job_id}`),
         },
       },
     );
