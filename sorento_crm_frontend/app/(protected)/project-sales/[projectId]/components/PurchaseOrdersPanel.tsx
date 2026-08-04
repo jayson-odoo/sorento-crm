@@ -58,8 +58,6 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
   } | null>(null);
 
   const rows = React.useMemo(() => purchaseOrders.data ?? [], [purchaseOrders.data]);
-  const totalValue = rows.reduce((sum, row) => sum + Number(row.line_total || 0), 0);
-
 
   const columns = React.useMemo<ColumnDef<ProjectPurchaseOrder>[]>(
     () => [
@@ -72,6 +70,9 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
             {row.original.po_number}
           </span>
         ),
+        // Labels the totals row in the table's own footer. Sits under the first column the
+        // way a spreadsheet labels its sum, so the number under Value needs no caption.
+        footer: () => <span className="text-muted-foreground">Total</span>,
         size: 160,
         meta: { headerTitle: 'PO number' },
       },
@@ -96,6 +97,18 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
             {formatMyr(row.original.line_total)}
           </span>
         ),
+        /**
+         * Summed from the rows the table currently holds, so a search narrows the total with
+         * the list instead of leaving a project-wide figure under a filtered set.
+         */
+        footer: ({ table }) =>
+          formatMyr(
+            String(
+              table
+                .getCoreRowModel()
+                .rows.reduce((sum, row) => sum + Number(row.original.line_total || 0), 0),
+            ),
+          ),
         size: 140,
         meta: { headerTitle: 'Value' },
       },
@@ -240,9 +253,10 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
     <>
       <PanelDataGrid
         title="Purchase orders"
-        // The count and the value moved to the totals strip under the table, where a total
-        // belongs. "N with something to check" is gone outright: it named no PO and led
-        // nowhere, and the To check COLUMN already says which row and what about it.
+        // The total is a footer row INSIDE the table now, under the Value column it sums, and
+        // the count comes from the standard pagination bar ("1 - 1 of 1"). "N with something to
+        // check" is gone outright: it named no PO and led nowhere, and the To check COLUMN
+        // already says which row and what about it.
         toolbar={
           <>
             {project.can_edit && (
@@ -271,14 +285,6 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
         isLoading={purchaseOrders.isLoading}
         error={purchaseOrders.isError ? purchaseOrders.error : undefined}
         emptyTitle="No PO received yet"
-        summary={
-          <>
-            <span className="text-muted-foreground">
-              {`${rows.length} PO${rows.length === 1 ? '' : 's'} on this project`}
-            </span>
-            <span className="font-semibold">{`Total ${formatMyr(String(totalValue))}`}</span>
-          </>
-        }
         searchPlaceholder="Search POs"
         searchOf={(row) =>
           [row.po_number, row.issuing_party_name, row.scope_label, row.po_source]

@@ -27,8 +27,10 @@ import { Skeleton } from '@/components/ui/skeleton';
  *
  * So all of them render THIS, which is the same `DataGrid` the top-level listings use, with
  * the contract from ARCHITECTURE-RULES already applied: fixed table layout, resizable
- * columns, `onChange` resize mode, pagination only once there is more than a page. Callers
- * supply columns with explicit sizes, and nothing else.
+ * columns, `onChange` resize mode, and the same pagination bar as the user list -- "1 - 1 of 1",
+ * a page picker and a rows-per-page selector, shown WHENEVER there are rows. It was previously
+ * hidden below one page, which is exactly what made a short list look like a different component
+ * from the long one. Callers supply columns with explicit sizes, and nothing else.
  *
  * The row is the way in (ADR 1d), so pass `onRowClick` rather than adding an action column.
  */
@@ -47,7 +49,6 @@ export function PanelDataGrid<TRow extends object>({
   onRowClick,
   searchPlaceholder,
   searchOf,
-  summary,
   pageSize = 10,
 }: {
   title: string;
@@ -73,12 +74,6 @@ export function PanelDataGrid<TRow extends object>({
    * the browser answers instantly.
    */
   searchOf?: (row: TRow) => string;
-  /**
-   * A totals strip under the table. Belongs at the BOTTOM, not as a chip in the toolbar:
-   * a total is the last thing you read after the rows it sums, and a header chip saying
-   * "1 PO, RM 1,810,640.62" competes with the buttons beside it for no reason.
-   */
-  summary?: React.ReactNode;
   pageSize?: number;
 }) {
   const [pagination, setPagination] = React.useState<PaginationState>({
@@ -170,13 +165,7 @@ export function PanelDataGrid<TRow extends object>({
           )}
         </CardTable>
 
-        {summary && filtered.length > 0 && (
-          <CardFooter className="justify-end gap-6 border-t border-border text-sm">
-            {summary}
-          </CardFooter>
-        )}
-
-        {filtered.length > pagination.pageSize && (
+        {filtered.length > 0 && (
           <CardFooter>
             <DataGridPagination />
           </CardFooter>

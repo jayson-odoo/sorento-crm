@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   Project,
@@ -251,6 +251,43 @@ describe('PurchaseOrdersPanel', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Delete PO-9001/i }));
 
     expect(await screen.findByText(/stays at PO Received/i)).toBeInTheDocument();
+  });
+
+  it('totals the value inside the table, under the column it sums', async () => {
+    listPurchaseOrders.mockResolvedValue([
+      po({ id: 'po1', po_number: 'PO-9001', line_total: '20000.00' }),
+      po({ id: 'po2', po_number: 'PO-9002', line_total: '5000.50' }),
+    ]);
+
+    const { container } = renderPos();
+
+    await screen.findByText('PO-9001');
+
+    // In the table's own <tfoot>, not a strip beside the toolbar: a total nobody can align
+    // with a column is a number without a unit.
+    const footer = container.querySelector('tfoot');
+    expect(footer).not.toBeNull();
+    expect(within(footer as HTMLElement).getByText('RM 25,000.50')).toBeInTheDocument();
+    expect(within(footer as HTMLElement).getByText('Total')).toBeInTheDocument();
+
+    // The footer cell sits at the same column index as the Value header, which is what makes
+    // it read as a sum rather than as a stray figure.
+    const headers = [...container.querySelectorAll('thead th')].map((th) => th.textContent);
+    const valueIndex = headers.findIndex((text) => text?.includes('Value'));
+    const footerCells = [...(footer as HTMLElement).querySelectorAll('td')];
+    expect(footerCells[valueIndex]?.textContent).toBe('RM 25,000.50');
+  });
+
+  it('counts the rows through the standard pagination bar, not a sentence', async () => {
+    listPurchaseOrders.mockResolvedValue([po()]);
+
+    renderPos();
+
+    // "1 PO on this project" told the user what "1 - 1 of 1" already tells them, in a place
+    // the rest of the system does not use.
+    expect(await screen.findByText(/1 - 1 of 1/)).toBeInTheDocument();
+    expect(screen.getByText(/Rows per page/i)).toBeInTheDocument();
+    expect(screen.queryByText(/on this project/i)).toBeNull();
   });
 
   it('offers no write affordance to a reader', async () => {

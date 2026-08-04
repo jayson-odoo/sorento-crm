@@ -96,6 +96,16 @@ typing in the popover's search box → pick one (or many).
   between two rows, cannot be quoted to anybody, and change meaning depending on when the page
   was loaded — a list left open overnight goes on claiming "today" about yesterday. Use
   `describeLastActivity`.
+- **A total belongs IN the table, under the column it sums.** Declare `footer` on the column
+  definition and the shared `DataGrid` renders a `<tfoot>` row aligned to it (both the draggable
+  and non-draggable branches). A total parked beside the toolbar - "1 PO, RM 1,810,640.62" -
+  competes with the buttons and never says WHICH column it totals; under its own column it needs
+  no caption at all. Sum from `table.getCoreRowModel().rows` so a search narrows the total with
+  the list.
+- **Row counts come from the standard pagination bar, always shown.** "1 - 1 of 1", a page picker
+  and a rows-per-page selector, exactly as the user list has them. Never write a sentence like
+  "1 PO on this project", and never hide the bar because the list fits on one page: a short list
+  that drops its footer reads as a different component from the long one.
 
 ---
 
