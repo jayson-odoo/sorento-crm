@@ -23,27 +23,43 @@
  * 509 of those products meant five hundred clicks that could each only go one
  * way. They are now taken automatically and shown as taken.
  *
- * **A list, not a wall.** The candidates used to be laid out under every
- * product on the page. With 11,390 products the codes - which is what somebody
- * navigates by - were buried under their own pictures. The page is a list; the
- * pictures open per row, and the dialog walks the same rows in the same order.
+ * **The standard DataGrid, like every other list in the system.** The
+ * candidates used to be laid out under every product on the page, and then in a
+ * hand-rolled list with its own Previous/Next buttons at the bottom. Both were
+ * this screen inventing a list the system already has: same header, same column
+ * controls, same pager as the users list. The pictures open per row, and the
+ * dialog walks the same rows in the same order.
  */
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import {
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+  type PaginationState,
+} from '@tanstack/react-table';
 
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Card, CardContent, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { TriangleAlert, Check, ImageOff, Images } from 'lucide-react';
 
-import { BROCHURE_IMAGE_PAGE_SIZE, PROMOTION_PAGE_SIZE } from '../../services/brochureImageService';
+import {
+  BROCHURE_IMAGE_PAGE_SIZE,
+  PROMOTION_PAGE_SIZE,
+  type BrochureImageRow,
+} from '../../services/brochureImageService';
 import {
   useAdoptSingleBrochureImages,
   useBrochureImagePromotionOptions,
@@ -57,7 +73,10 @@ export function BrochureImagePicker() {
   const [onlyUnset, setOnlyUnset] = useState(true);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: BROCHURE_IMAGE_PAGE_SIZE,
+  });
 
   const promotionOptions = useBrochureImagePromotionOptions();
 
@@ -69,15 +88,15 @@ export function BrochureImagePicker() {
 
   // Any change of filter is a different worklist, so page 1 is where it starts.
   useEffect(() => {
-    setPage(1);
+    setPagination((current) => ({ ...current, pageIndex: 0 }));
   }, [promotionId, onlyUnset, search]);
 
   const query = useBrochureImagesQuery({
     promotionId,
     onlyUnset,
     query: search,
-    page,
-    limit: BROCHURE_IMAGE_PAGE_SIZE,
+    page: pagination.pageIndex + 1,
+    limit: pagination.pageSize,
   });
 
   const setImage = useSetBrochureImage();
@@ -108,9 +127,7 @@ export function BrochureImagePicker() {
     Products on this page whose photo is not in doubt, answered without asking.
 
     Keyed on the ids so a refetch of the same page does not re-fire, and the
-    server call is idempotent besides. `mutate` is read from a ref-stable hook
-    result, so the effect depends on the ids alone rather than re-running every
-    render.
+    server call is idempotent besides.
   */
   const singleCandidateIds = useMemo(
     () =>
@@ -139,7 +156,6 @@ export function BrochureImagePicker() {
   // can appear. Paging over `total` offers pages that hold nothing - a
   // 998-product promotion with 900 answered would advertise 40 pages for 4.
   const listable = query.data?.shown ?? 0;
-  const pageCount = Math.max(1, Math.ceil(listable / BROCHURE_IMAGE_PAGE_SIZE));
 
   const choose = (productId: string, attachmentId: string, isChosen: boolean) => {
     // Idempotent, not a toggle: clicking the chosen one again leaves it chosen
@@ -167,6 +183,128 @@ export function BrochureImagePicker() {
       },
     );
   };
+
+  const columns = useMemo<ColumnDef<BrochureImageRow>[]>(
+    () => [
+      {
+        id: 'image',
+        header: '',
+        size: 64,
+        enableSorting: false,
+        enableResizing: false,
+        meta: { headerTitle: 'Image' },
+        cell: ({ row }) => {
+          const chosen = row.original.candidates.find(
+            (candidate) => candidate.attachmentId === row.original.chosenAttachmentId,
+          );
+          return (
+            // Small on purpose: this is a list somebody scans by CODE, and the
+            // thumbnail is confirmation rather than the thing being read.
+            <div className="relative size-10 overflow-hidden rounded-md bg-muted">
+              {chosen?.url ? (
+                // A plain img, not next/image: the src is a signed URL on a
+                // storage host that changes per request, which the optimiser
+                // cannot cache anyway.
+                <img src={chosen.url} alt={chosen.filename} className="size-full object-cover" />
+              ) : (
+                <div className="flex size-full items-center justify-center text-muted-foreground">
+                  <ImageOff className="size-4" />
+                </div>
+              )}
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: 'productCode',
+        header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
+        size: 240,
+        minSize: 140,
+        enableSorting: false,
+        meta: { headerTitle: 'Product' },
+        cell: ({ row }) => (
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate font-mono text-sm" title={row.original.productCode}>
+              {row.original.productCode}
+            </span>
+            {row.original.chosenAttachmentId && (
+              <Badge variant="success" appearance="light" size="sm">
+                {/* Said out loud. A product that answered itself must not look
+                    like one somebody reviewed. */}
+                {row.original.candidates.length === 1 ? 'only photo' : 'chosen'}
+              </Badge>
+            )}
+          </div>
+        ),
+      },
+      {
+        accessorKey: 'productName',
+        header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
+        size: 340,
+        minSize: 160,
+        enableSorting: false,
+        meta: { headerTitle: 'Name' },
+        cell: ({ row }) => (
+          <span
+            className="block truncate text-sm text-muted-foreground"
+            title={row.original.productName}
+          >
+            {row.original.productName}
+          </span>
+        ),
+      },
+      {
+        id: 'candidates',
+        header: ({ column }) => <DataGridColumnHeader title="Photos" column={column} />,
+        size: 110,
+        minSize: 90,
+        enableSorting: false,
+        meta: { headerTitle: 'Photos' },
+        cell: ({ row }) => (
+          <span className="text-sm text-muted-foreground">
+            {row.original.candidates.length === 0 ? 'no photo' : row.original.candidates.length}
+          </span>
+        ),
+      },
+      {
+        id: 'actions',
+        header: '',
+        size: 130,
+        enableSorting: false,
+        enableResizing: false,
+        meta: { headerTitle: 'Choose' },
+        cell: ({ row }) => (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={row.original.candidates.length === 0}
+            onClick={() => setOpenIndex(row.index)}
+            data-dk-bi-open={row.original.productCode}
+            aria-label={`Choose a photo for ${row.original.productCode}`}
+          >
+            <Images className="size-4" />
+            {row.original.chosenAttachmentId ? 'Change' : 'Choose'}
+          </Button>
+        ),
+      },
+    ],
+    [],
+  );
+
+  const table = useReactTable({
+    columns,
+    data: rows,
+    pageCount: Math.max(1, Math.ceil(listable / pagination.pageSize)),
+    getRowId: (row) => row.productId,
+    state: { pagination },
+    onPaginationChange: setPagination,
+    getCoreRowModel: getCoreRowModel(),
+    // The server pages and filters; the grid renders only what it is handed.
+    manualPagination: true,
+    manualFiltering: true,
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+  });
 
   return (
     <div className="flex flex-col gap-5">
@@ -245,23 +383,6 @@ export function BrochureImagePicker() {
         </Alert>
       )}
 
-      {query.isPending && (
-        <div className="flex flex-col gap-4" data-dk-bi-loading>
-          {[0, 1, 2].map((index) => (
-            <Card key={index}>
-              <CardContent className="flex flex-col gap-3 py-5">
-                <Skeleton className="h-4 w-48" />
-                <div className="flex gap-3">
-                  {[0, 1, 2, 3].map((tile) => (
-                    <Skeleton key={tile} className="h-24 w-24 rounded-md" />
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-
       {query.isError && (
         <Alert variant="destructive" appearance="light" data-dk-bi-error>
           <AlertIcon>
@@ -269,12 +390,7 @@ export function BrochureImagePicker() {
           </AlertIcon>
           <AlertTitle>
             {(query.error as Error)?.message || 'The product list could not be loaded.'}
-            <Button
-              variant="inverse"
-              size="sm"
-              className="ms-3"
-              onClick={() => query.refetch()}
-            >
+            <Button variant="inverse" size="sm" className="ms-3" onClick={() => query.refetch()}>
               Try again
             </Button>
           </AlertTitle>
@@ -298,96 +414,39 @@ export function BrochureImagePicker() {
         </Card>
       )}
 
-      {query.isSuccess && !nothingToChooseFrom && rows.length === 0 && (
-        <Card data-dk-bi-empty>
-          <CardContent className="flex flex-col items-center gap-2 py-14 text-center">
-            <Check className="size-8 text-muted-foreground" />
-            <div className="text-base font-medium">Every product here has a brochure image</div>
-            <p className="max-w-md text-sm text-muted-foreground">
-              Turn off the filter above to review or change one.
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      {query.isSuccess && !nothingToChooseFrom && rows.length > 0 && (
-        <Card>
-          <CardContent className="p-0">
-            <div className="divide-y divide-border" data-dk-bi-list>
-              {rows.map((row, index) => {
-                const chosen = row.candidates.find(
-                  (candidate) => candidate.attachmentId === row.chosenAttachmentId,
-                );
-                const takenAutomatically =
-                  Boolean(row.chosenAttachmentId) && row.candidates.length === 1;
-
-                return (
-                  <div
-                    key={row.productId}
-                    className="flex items-center gap-3 px-4 py-3"
-                    data-dk-bi-row={row.productCode}
-                  >
-                    {/* The chosen photo, at row height. Small on purpose: this
-                        is a list somebody scans by CODE, and the thumbnail is
-                        confirmation rather than the thing being read. */}
-                    <div className="relative size-12 shrink-0 overflow-hidden rounded-md bg-muted">
-                      {chosen?.url ? (
-                        <img
-                          src={chosen.url}
-                          alt={chosen.filename}
-                          className="size-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex size-full items-center justify-center text-muted-foreground">
-                          <ImageOff className="size-4" />
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex min-w-0 flex-1 flex-col">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate font-mono text-sm" title={row.productCode}>
-                          {row.productCode}
-                        </span>
-                        {row.chosenAttachmentId && (
-                          <Badge variant="success" appearance="light" size="sm">
-                            {/* Said out loud. A product that answered itself
-                                must not look like one somebody reviewed. */}
-                            {takenAutomatically ? 'only photo' : 'chosen'}
-                          </Badge>
-                        )}
-                      </div>
-                      <span className="truncate text-xs text-muted-foreground" title={row.productName}>
-                        {row.productName}
-                      </span>
-                    </div>
-
-                    <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
-                      {row.candidates.length === 0
-                        ? 'no photo'
-                        : `${row.candidates.length} photo${row.candidates.length === 1 ? '' : 's'}`}
-                    </span>
-
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="shrink-0"
-                      disabled={row.candidates.length === 0}
-                      onClick={() => setOpenIndex(index)}
-                      data-dk-bi-open={row.productCode}
-                      aria-label={`Choose a photo for ${row.productCode}`}
-                    >
-                      <Images className="size-4" />
-                      <span className="hidden sm:inline">
-                        {row.chosenAttachmentId ? 'Change' : 'Choose'}
-                      </span>
-                    </Button>
-                  </div>
-                );
-              })}
+      {!query.isError && !nothingToChooseFrom && (
+        <DataGrid
+          table={table}
+          recordCount={listable}
+          isLoading={query.isPending}
+          tableLayout={{ width: 'fixed', columnsResizable: true }}
+          // Prefixed with the permission that guards the screen, so saved column
+          // widths survive the route moving.
+          listingKey="master_data.product_attachments.view::brochure-images"
+          emptyMessage={
+            <div className="py-8 text-center" data-dk-bi-empty>
+              <Check className="mx-auto size-8 text-muted-foreground" />
+              <p className="mt-2 text-sm font-medium text-foreground">
+                Every product here has a brochure image
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Turn off the filter above to review or change one.
+              </p>
             </div>
-          </CardContent>
-        </Card>
+          }
+        >
+          <Card>
+            <CardTable>
+              <ScrollArea>
+                <DataGridTable />
+                <ScrollBar orientation="horizontal" />
+              </ScrollArea>
+            </CardTable>
+            <CardFooter>
+              <DataGridPagination />
+            </CardFooter>
+          </Card>
+        </DataGrid>
       )}
 
       <BrochureImageDialog
@@ -407,34 +466,6 @@ export function BrochureImagePicker() {
           }
         }}
       />
-
-      {/* No pager behind the empty state: 456 pages of products with no photos
-          is a lot of nothing to page through. */}
-      {query.isSuccess && !nothingToChooseFrom && pageCount > 1 && (
-        <div className="flex items-center justify-between" data-dk-bi-pager>
-          <span className="text-sm text-muted-foreground">
-            Page {page} of {pageCount}
-          </span>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={page <= 1}
-              onClick={() => setPage((current) => Math.max(1, current - 1))}
-            >
-              Previous
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={page >= pageCount}
-              onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
-            >
-              Next
-            </Button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

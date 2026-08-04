@@ -434,23 +434,30 @@ export function RoomDesigner() {
     );
   }, [selectedId, outline, placed, openings, finishes]);
 
-  const removeSelected = useCallback(() => {
-    const box = placed.find((candidate) => candidate.id === selectedId);
-    if (!box) return;
+  const removeBoxById = useCallback(
+    (boxId: string) => {
+      const box = placed.find((candidate) => candidate.id === boxId);
+      if (!box) return;
 
-    // Take the clicked copy out locally FIRST, renumbering what is left, then
-    // tell the server the new count. Sending only "one fewer" would leave the
-    // rebuild deleting the last copy instead of the one they clicked.
-    setHistory((current) => pushHistory(current, { outline, placed, openings, finishes }));
-    const remaining = removeBox(placed, box.id);
-    setPlaced(remaining);
-    setSelectedId(null);
-    setDirty(true);
-    lineMutation.mutate({
-      productId: box.productId,
-      quantity: quantityOf(remaining, box.productId),
-    });
-  }, [placed, selectedId, lineMutation, outline, openings, finishes]);
+      // Take the clicked copy out locally FIRST, renumbering what is left, then
+      // tell the server the new count. Sending only "one fewer" would leave the
+      // rebuild deleting the last copy instead of the one they clicked.
+      setHistory((current) => pushHistory(current, { outline, placed, openings, finishes }));
+      const remaining = removeBox(placed, box.id);
+      setPlaced(remaining);
+      setSelectedId((current) => (current === box.id ? null : current));
+      setDirty(true);
+      lineMutation.mutate({
+        productId: box.productId,
+        quantity: quantityOf(remaining, box.productId),
+      });
+    },
+    [placed, lineMutation, outline, openings, finishes],
+  );
+
+  const removeSelected = useCallback(() => {
+    if (selectedId) removeBoxById(selectedId);
+  }, [selectedId, removeBoxById]);
 
   /** Record the room as it stands now, as one undoable step. */
   const commit = useCallback(() => {
@@ -1028,6 +1035,51 @@ export function RoomDesigner() {
                   outline={outline}
                   boxes={placed}
                   selectedBoxId={selectedId}
+                  /*
+                    ON the object, not under the canvas. The plan already puts
+                    rotate, copy and remove over the thing you clicked, and a
+                    bar at the bottom of a 3D view makes you look away from it
+                    to act on it. Icon-only for the same reason the plan's is:
+                    three labelled buttons over a 600mm box cover the box.
+                  */
+                  selectionToolbar={
+                    selectedBox ? (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="size-7 p-0"
+                          onClick={rotateSelected}
+                          title="Rotate"
+                          aria-label={`Rotate ${selectedBox.label}`}
+                        >
+                          <RotateCw className="size-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="size-7 p-0"
+                          onClick={() => duplicateBox(selectedBox.id)}
+                          disabled={busy}
+                          title="Duplicate"
+                          aria-label={`Duplicate ${selectedBox.label}`}
+                        >
+                          <Copy className="size-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="size-7 p-0"
+                          onClick={removeSelected}
+                          disabled={busy}
+                          title="Remove"
+                          aria-label={`Remove ${selectedBox.label}`}
+                        >
+                          <Trash2 className="size-3.5 text-destructive" />
+                        </Button>
+                      </>
+                    ) : null
+                  }
                   onSelectBox={setSelectedId}
                   ceilingHeightMm={ceilingHeightMm}
                   openings={openings}
@@ -1037,52 +1089,6 @@ export function RoomDesigner() {
                   onSelectOpening={setSelectedOpeningId}
                   onCommit={commit}
                 />
-                {/*
-                  The same three actions the plan puts on the object itself.
-
-                  The 3D view could already SELECT a box - clicking one has
-                  always worked - but nothing you could do with it afterwards
-                  was here, so selecting appeared to do nothing. A bar under the
-                  canvas rather than a toolbar floating over the object: the
-                  plan can put one at a known screen position, and 3D would have
-                  to project the object into screen space every frame to keep it
-                  there.
-                */}
-                {selectedBox && (
-                  <div
-                    className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2"
-                    data-dk-scene-actions
-                  >
-                    <span className="min-w-0 truncate text-xs font-medium" title={selectedBox.label}>
-                      {selectedBox.label}
-                    </span>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button variant="outline" size="sm" onClick={rotateSelected}>
-                        <RotateCw className="size-4" />
-                        Rotate
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => duplicateBox(selectedBox.id)}
-                        disabled={busy}
-                      >
-                        <Copy className="size-4" />
-                        Duplicate
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={removeSelected}
-                        disabled={busy}
-                      >
-                        <Trash2 className="size-4 text-destructive" />
-                        Remove
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <Label htmlFor="dk-ceiling-height" className="text-xs text-muted-foreground">
                     Ceiling height
@@ -1208,25 +1214,24 @@ export function RoomDesigner() {
                 clashing={placed.some(
                   (box) => box.productId === line.productId && collisions.has(box.id),
                 )}
+                removing={busy}
                 onSelect={() => {
                   const box = placed.find((candidate) => candidate.productId === line.productId);
                   if (box) setSelectedId(box.id);
                 }}
+                onRemove={() => {
+                  // The LAST copy of this product, matching what the plan does
+                  // when nothing is selected: `removeBox` renumbers the
+                  // survivors, so the one that disappears is the one the count
+                  // says went.
+                  const copies = placed.filter(
+                    (candidate) => candidate.productId === line.productId,
+                  );
+                  const target = copies[copies.length - 1];
+                  if (target) removeBoxById(target.id);
+                }}
               />
             ))}
-
-            {selectedId && (
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={rotateSelected}>
-                  <RotateCw className="size-4" />
-                  Rotate
-                </Button>
-                <Button variant="outline" size="sm" onClick={removeSelected} disabled={busy}>
-                  <Trash2 className="size-4 text-destructive" />
-                  Remove
-                </Button>
-              </div>
-            )}
 
             {unplaced.length > 0 && (
               <Alert variant="warning" appearance="light" data-dk-unplaced>
@@ -1319,21 +1324,44 @@ function SelectionRow({
   selected,
   clashing,
   onSelect,
+  onRemove,
+  removing,
   currency,
 }: {
   line: SelectionLine;
   selected: boolean;
   clashing: boolean;
   onSelect: () => void;
+  /**
+   * Take one copy of this product out.
+   *
+   * On the ROW, not in a pair of buttons under the list. Rotating belongs to
+   * the object in the plan and the scene - it is a spatial decision made while
+   * looking at the room - but removing is a decision about the LIST, and a
+   * shared button under it acts on whichever row happens to be selected, which
+   * is one misclick away from deleting the wrong product.
+   */
+  onRemove: () => void;
+  removing: boolean;
   /** Prices are never printed bare: "1020.00" is not a price, it is a number. */
   currency: string;
 }) {
   return (
-    <button
-      type="button"
+    // A div and not a button: a remove control inside a button is invalid HTML
+    // and the browser's own recovery from it is to move the inner button out,
+    // which puts the trash icon somewhere nobody put it.
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
       aria-label={`Select ${line.productCode ?? line.productName}`}
-      className={`flex items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-start ${
+      className={`flex cursor-pointer items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-start ${
         selected ? 'border-primary bg-primary/5' : 'border-border'
       }`}
     >
@@ -1360,7 +1388,23 @@ function SelectionRow({
             Overlapping
           </Badge>
         )}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="size-7 shrink-0 p-0"
+          disabled={removing}
+          onClick={(event) => {
+            // The row selects; the icon removes. Without this the click reaches
+            // the row underneath and selects the product it just deleted.
+            event.stopPropagation();
+            onRemove();
+          }}
+          title="Remove"
+          aria-label={`Remove ${line.productCode ?? line.productName}`}
+        >
+          <Trash2 className="size-3.5 text-destructive" />
+        </Button>
       </span>
-    </button>
+    </div>
   );
 }

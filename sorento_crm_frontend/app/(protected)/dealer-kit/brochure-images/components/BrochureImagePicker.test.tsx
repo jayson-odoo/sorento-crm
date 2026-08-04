@@ -16,6 +16,18 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+/*
+  The shared DataGrid asks the server which columns this user has hidden or
+  resized, and renders skeletons until it answers. Under jsdom nothing answers,
+  so every row stays a skeleton and the whole grid asserts as empty - which is
+  the real reason "DataGridTable does not mount rows in jsdom" has been written
+  off as untestable across this codebase. It is one unmocked fetch, not a
+  limitation of the component.
+*/
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+}));
+
 vi.mock('../../services/brochureImageService', () => ({
   BROCHURE_IMAGE_PAGE_SIZE: 25,
   PROMOTION_PAGE_SIZE: 50,
@@ -176,7 +188,10 @@ describe('BrochureImagePicker', () => {
 
     const { container } = renderPicker();
 
-    expect(container.querySelector('[data-dk-bi-loading]')).not.toBeNull();
+    // The shared grid draws its own skeletons, which is the point of using it:
+    // this screen no longer has a bespoke loading state to keep in step with
+    // every other list in the system.
+    expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
   });
 
   it('says the list could not be loaded when the request fails', async () => {
@@ -394,8 +409,8 @@ describe('BrochureImagePicker', () => {
     await openRow('SRTSCBD320');
     expect(tile('SRTSCBD320.jpg')).toHaveAttribute('aria-pressed', 'true');
     expect(
-      Array.from(container.querySelectorAll('[data-dk-bi-row]')).map((row) =>
-        row.getAttribute('data-dk-bi-row'),
+      Array.from(container.querySelectorAll('[data-dk-bi-open]')).map((row) =>
+        row.getAttribute('data-dk-bi-open'),
       ),
     ).toEqual(['SRTSCBD320', 'SRTWC286-SH']);
   });
@@ -530,7 +545,14 @@ describe('BrochureImagePicker', () => {
     const { container } = renderPicker();
 
     await screen.findByText('SRT-0');
-    expect(container.querySelector('[data-dk-bi-pager] span')?.textContent).toBe('Page 1 of 4');
+    // 98 listable at 25 a page is FOUR pages, not the 40 that `total` would
+    // advertise. The standard pager counts off the table's own pageCount, so
+    // the guard is that `shown` is what feeds it.
+    // Awaited, not asserted outright: the pager renders after the grid settles,
+    // which under a loaded full-suite run is a tick later than the first row.
+    await waitFor(() => expect(container.textContent).toContain('1 - 25 of 98'));
+    expect(screen.getByRole('button', { name: '4' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '5' })).toBeNull();
   });
 
   it('asks the server for only the products still without an image by default', async () => {

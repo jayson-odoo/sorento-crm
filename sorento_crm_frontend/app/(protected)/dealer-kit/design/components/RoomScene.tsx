@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
@@ -142,6 +142,7 @@ export function RoomScene({
   outline,
   boxes,
   selectedBoxId,
+  selectionToolbar,
   onSelectBox,
   onMoveBox,
   onCommit,
@@ -154,6 +155,14 @@ export function RoomScene({
   outline: Point[];
   boxes: SceneBox[];
   selectedBoxId?: string | null;
+  /**
+   * Buttons to float over the selected product.
+   *
+   * Passed in rather than built here: what can be done to a box is the
+   * designer's business, and this component's job is only to say WHERE the box
+   * is on screen.
+   */
+  selectionToolbar?: ReactNode;
   onSelectBox?: (boxId: string) => void;
   /** Dragging a product across the floor, in the same shape the plan uses. */
   onMoveBox?: (boxId: string, x: number, y: number, rotation: number) => void;
@@ -176,6 +185,21 @@ export function RoomScene({
   // The scene is imperative and outlives every render, so it reads the current
   // props through refs rather than through a closure that would be stale by the
   // time a pointer event arrives.
+  /**
+   * Where the selected product is on screen, in canvas pixels.
+   *
+   * The actions belong ON the object, the way the plan puts them there: a bar
+   * under the canvas makes the user look away from the thing they just clicked
+   * to act on it. 3D has no element to hang them off - it is one canvas - so
+   * the position is projected from the camera every frame and the toolbar is an
+   * HTML overlay at that point.
+   */
+  const [selectionAt, setSelectionAt] = useState<{ x: number; y: number } | null>(null);
+  // Through a ref so the render loop, which is created once, is not rebuilt
+  // every time the position changes.
+  const selectionAtRef = useRef(setSelectionAt);
+  selectionAtRef.current = setSelectionAt;
+
   const dataRef = useRef({ outline, boxes, openings, selectedBoxId });
   dataRef.current = { outline, boxes, openings, selectedBoxId };
 
@@ -430,10 +454,15 @@ export function RoomScene({
         if (value !== lastProjection) {
           lastProjection = value;
           mount.setAttribute('data-dk-selected-at', value);
+          // The same number the toolbar is positioned by, so the buttons over
+          // the object and the attribute anything else reads can never
+          // disagree. Only on change - this runs every frame.
+          selectionAtRef.current(at);
         }
       } else if (lastProjection) {
         lastProjection = '';
         mount.removeAttribute('data-dk-selected-at');
+        selectionAtRef.current(null);
       }
 
       // And the same for the openings, which have it worse: a door is a HOLE,
@@ -712,6 +741,24 @@ export function RoomScene({
         className="h-[420px] w-full overflow-hidden rounded-lg border border-border bg-muted/20"
         data-dk-room-scene
       />
+      {selectionToolbar && selectionAt && (
+        <div
+          className="pointer-events-none absolute z-10"
+          // Above the object and centred on it, matching the plan's toolbar.
+          // `pointer-events-none` on the wrapper so the space around the
+          // buttons still rotates the camera; the buttons re-enable it.
+          style={{
+            left: selectionAt.x,
+            top: Math.max(4, selectionAt.y - 56),
+            transform: 'translateX(-50%)',
+          }}
+          data-dk-scene-actions
+        >
+          <div className="pointer-events-auto flex items-center gap-0.5 rounded-md border border-border bg-background/95 p-0.5 shadow-sm backdrop-blur">
+            {selectionToolbar}
+          </div>
+        </div>
+      )}
       <button
         type="button"
         onClick={() => refocusRef.current()}
