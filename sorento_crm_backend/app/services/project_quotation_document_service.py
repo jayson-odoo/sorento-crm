@@ -18,7 +18,8 @@ wrong once somewhere in this codebase:
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+import secrets
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
@@ -27,6 +28,8 @@ from sqlalchemy.orm import Session
 
 from app.models.numbering import DocumentNumberingRule
 from app.models.projects import (
+    QUOTATION_OUTCOME_LOST,
+    QUOTATION_OUTCOME_WON,
     Project,
     ProjectParty,
     ProjectQuotation,
@@ -35,6 +38,7 @@ from app.models.projects import (
     ProjectQuotationIssueScope,
     ProjectQuotationLine,
     ProjectQuotationVersion,
+    QuotationSignature,
 )
 from app.services import project_quotation_service as scope_service
 from app.services.error_handler import AppException
@@ -290,6 +294,14 @@ def issue(
             message="Add at least one scope before issuing this quotation.",
             code="quotation_document_no_scopes",
         )
+    # AC-H1. No signature, no issue: an unsigned quotation in a customer's inbox is a thing
+    # nobody can explain later, so the refusal happens here rather than being left to a reviewer.
+    if not document.signatory_signature_id:
+        raise AppException(
+            status_code=422,
+            message="Sign this quotation before issuing it.",
+            code="quotation_document_unsigned",
+        )
 
     highest = (
         db.query(func.max(ProjectQuotationIssue.issue_no))
@@ -308,6 +320,9 @@ def issue(
         cover_letter_rendered=document.cover_letter_html,
         terms_rendered=document.terms_html,
         grand_total=ZERO,
+        # Copied, not referenced: re-signing the draft later must not change the signature this
+        # revision went out with.
+        sorento_signature_id=document.signatory_signature_id,
     )
     db.add(record)
     db.flush()
@@ -530,3 +545,332 @@ def get_scope_or_404(
             status_code=404, message="Scope not found.", code="quotation_scope_not_found"
         )
     return scope
+
+
+# ------------------------------------------------------------------ signing
+
+SIGN_TOKEN_TTL_DAYS = 30
+
+
+def record_signature(
+    db: Session,
+    *,
+    company_id: Optional[str],
+    owner_kind: str,
+    signer_name: Optional[str],
+    mode: str,
+    image_data_uri: Optional[str],
+    user_id: Optional[str] = None,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+    gps_lat: Optional[str] = None,
+    gps_lng: Optional[str] = None,
+) -> QuotationSignature:
+    """Store one signature exactly as captured.
+
+    Always a NEW row, never a reference to a reusable one: a signature applied to a document has to
+    stay what it was on the day, so re-drawing your signature next year cannot rewrite what you
+    already signed. Same snapshot rule as the lines and the rendered letter.
+    """
+    if mode not in ("draw", "type", "initials"):
+        raise AppException(
+            status_code=422,
+            message=f"Unknown signature mode '{mode}'.",
+            code="signature_mode_invalid",
+        )
+    if not image_data_uri:
+        raise AppException(
+            status_code=422,
+            message="A signature needs to be drawn, typed or initialled before it can be saved.",
+            code="signature_empty",
+        )
+
+    signature = QuotationSignature(
+        company_id=company_id,
+        owner_kind=owner_kind,
+        user_id=user_id,
+        signer_name=(signer_name or "").strip() or None,
+        mode=mode,
+        image_data_uri=image_data_uri,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        gps_lat=gps_lat,
+        gps_lng=gps_lng,
+        signed_at=datetime.utcnow(),
+    )
+    db.add(signature)
+    db.flush()
+    return signature
+
+
+def sign_as_sorento(
+    db: Session,
+    *,
+    document: ProjectQuotationDocument,
+    actor_user_id: str,
+    payload: Dict[str, Any],
+) -> QuotationSignature:
+    """The internal signature, held on the DOCUMENT until an issue carries it.
+
+    Kept on the document rather than demanded at issue time so the signing and the issuing are
+    separate acts: a person signs once and can then issue, which is the order the journey has.
+    """
+    signature = record_signature(
+        db,
+        company_id=document.company_id,
+        owner_kind="user",
+        signer_name=payload.get("signer_name") or document.signatory_name,
+        mode=payload.get("mode") or "draw",
+        image_data_uri=payload.get("image_data_uri"),
+        user_id=actor_user_id,
+        ip_address=payload.get("ip_address"),
+        user_agent=payload.get("user_agent"),
+        gps_lat=payload.get("gps_lat"),
+        gps_lng=payload.get("gps_lng"),
+    )
+    document.signatory_signature_id = signature.id
+    db.flush()
+    return signature
+
+
+def issue_sign_link(
+    db: Session, *, record: ProjectQuotationIssue, ttl_days: int = SIGN_TOKEN_TTL_DAYS
+) -> str:
+    """Mint (or reuse) the tokenised counter-sign link for an issue.
+
+    Reused while it is still valid so re-sending the same quotation does not invalidate the link
+    the customer already has sitting in their inbox. Rotated once it has expired.
+    """
+    now = datetime.utcnow()
+    if (
+        record.sign_token
+        and record.sign_token_expires_at
+        and record.sign_token_expires_at > now
+    ):
+        return record.sign_token
+    record.sign_token = secrets.token_urlsafe(32)
+    record.sign_token_expires_at = now + timedelta(days=ttl_days)
+    db.flush()
+    return record.sign_token
+
+
+def get_issue_by_sign_token(db: Session, token: str) -> ProjectQuotationIssue:
+    """Resolve a counter-sign link, refusing anything expired or unknown with the SAME message.
+
+    Deliberately one message for both: telling a caller that a token exists but has expired
+    confirms the token, and this endpoint is public.
+    """
+    record = (
+        db.query(ProjectQuotationIssue)
+        .filter(ProjectQuotationIssue.sign_token == token)
+        .first()
+    )
+    if (
+        record is None
+        or record.sign_token_expires_at is None
+        or record.sign_token_expires_at <= datetime.utcnow()
+    ):
+        raise AppException(
+            status_code=404,
+            message="This link is no longer valid. Ask your contact at Sorento to resend it.",
+            code="quotation_sign_link_invalid",
+        )
+    return record
+
+
+def accept_issue(
+    db: Session,
+    *,
+    record: ProjectQuotationIssue,
+    signer_name: Optional[str],
+    mode: str,
+    image_data_uri: Optional[str],
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+    gps_lat: Optional[str] = None,
+    gps_lng: Optional[str] = None,
+) -> ProjectQuotationIssue:
+    """The customer counter-signs, and that WINS the quotation.
+
+    Client decision (2026-08-04), overruling the evidence-only reading the UAC first proposed: a
+    counter-signature is the commitment, so every scope the issue carried is marked won and the
+    project's outcome derives to won through the rule that already exists.
+
+    A scope already marked LOST is left alone. Somebody decided that deliberately, and a signature
+    on a document that still lists the scope must not silently overrule a person. It stays lost,
+    and the acceptance is still recorded.
+
+    Idempotent: signing twice keeps the FIRST signature and the first accepted_at. A customer who
+    double-taps has not signed two different things, and overwriting would lose the timestamp that
+    matters.
+    """
+    if record.accepted_at is not None:
+        return record
+
+    signature = record_signature(
+        db,
+        company_id=record.company_id,
+        owner_kind="customer",
+        signer_name=signer_name,
+        mode=mode,
+        image_data_uri=image_data_uri,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        gps_lat=gps_lat,
+        gps_lng=gps_lng,
+    )
+    record.customer_signature_id = signature.id
+    record.accepted_at = datetime.utcnow()
+    db.flush()
+
+    _win_the_scopes_on(db, record)
+    return record
+
+
+def _win_the_scopes_on(db: Session, record: ProjectQuotationIssue) -> List[ProjectQuotation]:
+    """Mark every scope this issue carried as won, skipping any already lost.
+
+    Goes through `scope_service.set_outcome` rather than setting the column, so the project's
+    derived outcome is recomputed by the one function that owns that rule.
+    """
+    scopes = (
+        db.query(ProjectQuotation)
+        .join(
+            ProjectQuotationIssueScope,
+            ProjectQuotationIssueScope.quotation_id == ProjectQuotation.id,
+        )
+        .filter(ProjectQuotationIssueScope.issue_id == record.id)
+        .all()
+    )
+    won: List[ProjectQuotation] = []
+    for scope in scopes:
+        if scope.outcome == QUOTATION_OUTCOME_LOST:
+            continue
+        if scope.outcome == QUOTATION_OUTCOME_WON:
+            won.append(scope)
+            continue
+        scope_service.set_outcome(db, quotation=scope, outcome=QUOTATION_OUTCOME_WON)
+        won.append(scope)
+    db.flush()
+    return won
+
+
+# ------------------------------------------------------- the public sign page
+
+
+def _serialize_signature(signature: Optional[QuotationSignature]) -> Optional[Dict[str, Any]]:
+    if signature is None:
+        return None
+    return {
+        "id": str(signature.id),
+        "signer_name": signature.signer_name,
+        "mode": signature.mode,
+        "image_data_uri": signature.image_data_uri,
+        "signed_at": signature.signed_at,
+        "ip_address": signature.ip_address,
+        "gps_lat": signature.gps_lat,
+        "gps_lng": signature.gps_lng,
+    }
+
+
+def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str, Any]:
+    """The quotation as ISSUED, for the customer's read-only counter-sign page.
+
+    Every line comes from the `version_id` the issue recorded, never from the scope's current
+    version. If it read live rows, the page could show the customer something different from the
+    PDF in their inbox, which is the one thing a signing surface must never do.
+    """
+    document = (
+        db.query(ProjectQuotationDocument)
+        .filter(ProjectQuotationDocument.id == record.document_id)
+        .first()
+    )
+    pairs = (
+        db.query(ProjectQuotationIssueScope)
+        .filter(ProjectQuotationIssueScope.issue_id == record.id)
+        .order_by(ProjectQuotationIssueScope.sort_order)
+        .all()
+    )
+
+    scopes: List[Dict[str, Any]] = []
+    for pair in pairs:
+        scope = (
+            db.query(ProjectQuotation)
+            .filter(ProjectQuotation.id == pair.quotation_id)
+            .first()
+        )
+        lines = (
+            db.query(ProjectQuotationLine)
+            .filter(ProjectQuotationLine.version_id == pair.version_id)
+            .order_by(ProjectQuotationLine.sort_order, ProjectQuotationLine.created_at)
+            .all()
+        )
+        scopes.append(
+            {
+                # The label is read live, and that is a deliberate, small exception: renaming a tab
+                # does not change what was priced, and a stale label helps nobody.
+                "scope_label": scope.scope_label if scope else "",
+                "scope_total": Decimal(pair.scope_total or 0),
+                "lines": [
+                    {
+                        "item_label": line.item_label,
+                        "description": line.description_snapshot,
+                        "technical_spec": line.technical_spec,
+                        "brand": line.brand_snapshot,
+                        "product_code": line.product_code_snapshot,
+                        "quantity": Decimal(line.quantity or 0),
+                        "unit_price": Decimal(line.unit_price or 0),
+                        "complete_set": line.complete_set,
+                        "band_label": line.band_label,
+                        "is_rate_only": bool(line.is_rate_only),
+                        # None, not zero: the page prints "rate only" and a zero would read as free.
+                        "amount": None if line.is_rate_only else Decimal(line.line_total or 0),
+                    }
+                    for line in lines
+                ],
+            }
+        )
+
+    sorento = (
+        db.query(QuotationSignature)
+        .filter(QuotationSignature.id == record.sorento_signature_id)
+        .first()
+        if record.sorento_signature_id
+        else None
+    )
+    customer = (
+        db.query(QuotationSignature)
+        .filter(QuotationSignature.id == record.customer_signature_id)
+        .first()
+        if record.customer_signature_id
+        else None
+    )
+
+    company_name = None
+    if document is not None and document.company_id:
+        from app.models.company import Company
+
+        company = (
+            db.query(Company).filter(Company.id == document.company_id).first()
+        )
+        company_name = company.name if company else None
+
+    return {
+        "our_ref": record.our_ref_text,
+        "issue_no": record.issue_no,
+        "doc_date": document.doc_date if document else None,
+        "subject_title": document.subject_title if document else None,
+        "sender_name": company_name,
+        "recipient_name": document.recipient_name_snapshot if document else None,
+        "recipient_address": document.recipient_address_snapshot if document else None,
+        "attn_name": document.attn_name if document else None,
+        "cover_letter": record.cover_letter_rendered,
+        "terms": record.terms_rendered,
+        "signatory_name": document.signatory_name if document else None,
+        "scopes": scopes,
+        "grand_total": Decimal(record.grand_total or 0),
+        "sorento_signature": _serialize_signature(sorento),
+        "customer_signature": _serialize_signature(customer),
+        "accepted_at": record.accepted_at,
+        "is_accepted": record.accepted_at is not None,
+    }

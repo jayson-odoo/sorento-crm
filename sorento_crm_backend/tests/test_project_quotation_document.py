@@ -54,6 +54,28 @@ def _uid() -> str:
     return str(uuid.uuid4())
 
 
+
+def _sign(db, document, owner):
+    """Sign the draft so it can be issued.
+
+    AC-H1: an unsigned quotation cannot be issued, so every test that issues has to sign first.
+    This is a real contract change from the client's both-sides-e-sign decision, not a hoop: the
+    old tests issued unsigned because the gate did not exist yet.
+    """
+    from app.services import project_quotation_document_service as qdocs
+
+    return qdocs.sign_as_sorento(
+        db,
+        document=document,
+        actor_user_id=owner,
+        payload={
+            "signer_name": f"{MARKER} Baser",
+            "mode": "draw",
+            "image_data_uri": "data:image/png;base64,zzt",
+        },
+    )
+
+
 def _sorento(db) -> str:
     """Sorento's company id as a STRING, which is the shape the app passes around.
 
@@ -246,6 +268,7 @@ def test_a_rate_only_line_is_quoted_but_adds_nothing_to_any_total():
         db.refresh(version)
         assert version.total_amount == CORRECT_TOTAL
 
+        _sign(db, document, owner)
         issued = qdocs.issue(db, document=document, actor_user_id=owner)
         assert issued.grand_total == CORRECT_TOTAL
         assert issued.grand_total != WRONG_TOTAL_IF_RATE_ONLY_COUNTED
@@ -290,6 +313,7 @@ def test_issuing_freezes_the_version_the_customer_now_holds():
         )
 
         assert quotes.is_frozen(db, version) is False
+        _sign(db, document, owner)
         issued = qdocs.issue(db, document=document, actor_user_id=owner)
 
         before = [
@@ -368,6 +392,7 @@ def test_reissuing_records_the_version_each_scope_actually_contributed():
         document.terms_html = f"<p>{MARKER} first terms</p>"
         db.flush()
 
+        _sign(db, document, owner)
         r1 = qdocs.issue(db, document=document, actor_user_id=owner)
         r1_pairs = _version_by_scope(db, r1.id)
         townhouse_v1 = r1_pairs[townhouse.id]
@@ -384,6 +409,7 @@ def test_reissuing_records_the_version_each_scope_actually_contributed():
 
         document.cover_letter_html = f"<p>{MARKER} revised letter</p>"
         db.flush()
+        _sign(db, document, owner)
         r2 = qdocs.issue(db, document=document, actor_user_id=owner)
 
         assert (r1.issue_no, r2.issue_no) == (1, 2)
@@ -418,7 +444,9 @@ def test_two_issues_of_one_document_can_never_share_a_revision_number():
             db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=owner
         )
 
+        _sign(db, document, owner)
         first = qdocs.issue(db, document=document, actor_user_id=owner)
+        _sign(db, document, owner)
         second = qdocs.issue(db, document=document, actor_user_id=owner)
         assert (first.issue_no, second.issue_no) == (1, 2)
 
@@ -652,6 +680,7 @@ def test_a_document_the_customer_has_been_sent_cannot_be_deleted():
         qdocs.add_scope(
             db, document=issued_doc, scope_label=f"{MARKER} Townhouse", actor_user_id=owner
         )
+        _sign(db, issued_doc, owner)
         qdocs.issue(db, document=issued_doc, actor_user_id=owner)
 
         with pytest.raises(AppException) as refused:
@@ -717,6 +746,7 @@ def test_every_new_table_is_company_scoped_and_stamped_on_insert():
         scope = qdocs.add_scope(
             db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=owner
         )
+        _sign(db, document, owner)
         issued = qdocs.issue(db, document=document, actor_user_id=owner)
 
         assert document.company_id == company_id

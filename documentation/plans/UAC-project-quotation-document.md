@@ -196,10 +196,16 @@ The client's reference is the ecohub handover screen: a drawn signature on a whi
   and the acceptance timestamp are stored against the ISSUE.
 - **AC-H6** A counter-signed issue is stamped **Accepted**, and the accepted PDF - with BOTH
   signatures on it - is stored and downloadable. That file is the record of what was agreed.
-- **AC-H7** **Acceptance does NOT set a scope's outcome to won.** A signed quotation is evidence,
-  not revenue; the scope is won when the salesperson decides or a PO lands (AC-A5, and the PO
-  binding that already exists). Acceptance is surfaced loudly on the project instead, as the next
-  action. **[FLAG]** Say so if the intent is the opposite and acceptance should win the scopes.
+- **AC-H7** **Acceptance WINS the quotation.** Client decision, 2026-08-04, overruling the
+  evidence-only reading this document first proposed. When the customer counter-signs an issue,
+  every scope that issue carried is set to `won` and the project's outcome derives to won through
+  the existing rule. The signature is the commitment, so the system stops pretending it is only
+  paperwork.
+  - **A scope already marked `lost` is NOT flipped.** Somebody decided that deliberately, and a
+    signature on a document that still lists it must not silently overrule a human decision. It
+    stays lost and the acceptance is recorded anyway. **[FLAG]** say so if the opposite is wanted.
+  - Winning is recorded with `decided_at` and an audit trail naming the acceptance as the cause,
+    so "why is this won" is answerable without reading the signature blob.
 - **AC-H8** Nothing about counter-signing is required for the CRM record to be complete: a
   customer who never signs leaves the issue in `Issued`, which is a legitimate resting state and
   reads as one, not as an error.
@@ -229,6 +235,6 @@ The client's reference is the ecohub handover screen: a drawn signature on a whi
 
 Still to settle, raised BY those answers:
 
-- **AC-H7** - does customer acceptance win the scopes, or stay evidence? Written as evidence.
+- ~~AC-H7~~ ANSWERED 2026-08-04: acceptance WINS the quotation. Folded in above.
 - The counter-sign link's identity check: reuse the contact portal's existing confirmation, or
   let anyone holding the link sign? Written as reuse.

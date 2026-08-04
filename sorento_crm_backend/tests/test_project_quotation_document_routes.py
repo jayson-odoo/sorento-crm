@@ -78,6 +78,24 @@ CORRECT_GRAND_TOTAL = Decimal("263100.00")
 WRONG_GRAND_TOTAL_IF_RATE_ONLY_COUNTED = Decimal("451380.00")  # + 1046 x 180
 
 
+
+def _sign(client, root: str, document_id: str) -> None:
+    """Sign a draft over HTTP so it can be issued.
+
+    AC-H1 is a real contract change from the client's both-sides-e-sign decision: an unsigned
+    quotation cannot be issued. These tests predate the gate, so they sign first rather than having
+    the assertion loosened.
+    """
+    response = client.post(
+        f"{root}/{document_id}/sign",
+        json={
+            "signer_name": f"{MARKER} Baser",
+            "mode": "draw",
+            "image_data_uri": "data:image/png;base64,zzt",
+        },
+    )
+    assert response.status_code == 201, response.text
+
 def _uid() -> str:
     return str(uuid.uuid4())
 
@@ -536,6 +554,8 @@ def test_someone_who_may_not_edit_the_project_cannot_change_its_quotation(api):
                 f"{root}/{document['id']}/scopes/{scope['id']}",
                 json={"scope_label": f"{MARKER} Renamed By Nobody"},
             ),
+            # No signing here on purpose: this caller has no edit permission, so the 403 lands
+            # before the signature gate is ever consulted.
             "issue": client.post(f"{root}/{document['id']}/issue"),
         }
     for what, response in denials.items():
@@ -646,6 +666,7 @@ def test_an_issued_document_refuses_deletion_and_a_draft_takes_its_scopes_with_i
 
     issued = _create_document(client, project.id)
     _add_scope(client, project.id, issued["id"], f"{MARKER} Townhouse")
+    _sign(client, root, issued["id"])
     assert client.post(f"{root}/{issued['id']}/issue").status_code == 201
 
     refused = client.delete(f"{root}/{issued['id']}")
@@ -692,6 +713,7 @@ def test_reissuing_stamps_r1_then_r2_which_is_what_the_customer_quotes_back(api)
         qty=SAMPLE_QTY,
     )
 
+    _sign(client, root, document["id"])
     first = client.post(f"{root}/{document['id']}/issue")
     assert first.status_code == 201, first.text
     r1 = first.json()
@@ -710,6 +732,7 @@ def test_reissuing_stamps_r1_then_r2_which_is_what_the_customer_quotes_back(api)
         json={"unit_price": "230.00"},
     )
 
+    _sign(client, root, document["id"])
     second = client.post(f"{root}/{document['id']}/issue")
     assert second.status_code == 201, second.text
     r2 = second.json()
@@ -748,6 +771,7 @@ def test_the_line_endpoint_refuses_to_edit_a_version_the_customer_already_holds(
     version_id = _current_version_id(db, scope["id"])
     line = _add_priced_line(client, version_id, product, price=PRICED_RATE, qty="4")
 
+    _sign(client, root, document["id"])
     assert client.post(f"{root}/{document['id']}/issue").status_code == 201
 
     edited = client.put(

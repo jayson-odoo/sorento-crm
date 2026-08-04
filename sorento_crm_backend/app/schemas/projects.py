@@ -1486,3 +1486,80 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
 
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+# ------------------------------------------------------------- signing
+
+
+class QuotationSignatureRequest(BaseModel):
+    """One captured signature. Drawn, typed or initialled, all arriving as one PNG data URI."""
+
+    signer_name: Optional[str] = Field(None, max_length=200)
+    mode: str = Field("draw", description="draw | type | initials")
+    image_data_uri: str = Field(min_length=1)
+    gps_lat: Optional[Decimal] = None
+    gps_lng: Optional[Decimal] = None
+
+
+class QuotationSignAcceptRequest(QuotationSignatureRequest):
+    pass
+
+
+class QuotationSignatureResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    signer_name: Optional[str] = None
+    mode: str = "draw"
+    image_data_uri: Optional[str] = None
+    signed_at: Optional[datetime] = None
+    ip_address: Optional[str] = None
+    # Null when the browser refused. The screen shows "-" rather than hiding the field.
+    gps_lat: Optional[Decimal] = None
+    gps_lng: Optional[Decimal] = None
+
+
+class QuotationSignScopeLine(BaseModel):
+    item_label: Optional[str] = None
+    description: Optional[str] = None
+    technical_spec: Optional[str] = None
+    brand: Optional[str] = None
+    product_code: Optional[str] = None
+    quantity: Decimal = Decimal("0")
+    unit_price: Decimal = Decimal("0")
+    complete_set: Optional[str] = None
+    band_label: Optional[str] = None
+    is_rate_only: bool = False
+    amount: Optional[Decimal] = None
+
+
+class QuotationSignScope(BaseModel):
+    scope_label: str
+    scope_total: Decimal = Decimal("0")
+    lines: List[QuotationSignScopeLine] = Field(default_factory=list)
+
+
+class QuotationSignPageResponse(BaseModel):
+    """The read-only quotation a customer sees on the counter-sign link.
+
+    Deliberately does NOT carry ids: the page needs no handle on anything, and a public payload
+    that leaks internal identifiers invites somebody to try them elsewhere.
+    """
+
+    our_ref: Optional[str] = None
+    issue_no: int
+    doc_date: Optional[date] = None
+    subject_title: Optional[str] = None
+    sender_name: Optional[str] = None
+    recipient_name: Optional[str] = None
+    recipient_address: Optional[str] = None
+    attn_name: Optional[str] = None
+    cover_letter: Optional[str] = None
+    terms: Optional[str] = None
+    signatory_name: Optional[str] = None
+    scopes: List[QuotationSignScope] = Field(default_factory=list)
+    grand_total: Decimal = Decimal("0")
+    sorento_signature: Optional[QuotationSignatureResponse] = None
+    customer_signature: Optional[QuotationSignatureResponse] = None
+    accepted_at: Optional[datetime] = None
+    is_accepted: bool = False

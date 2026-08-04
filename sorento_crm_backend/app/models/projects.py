@@ -881,6 +881,12 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
 
     signatory_name = Column(String(120), nullable=True)
     signatory_phone = Column(String(60), nullable=True)
+    # The internal signature held on the DRAFT, so signing and issuing are separate acts: a person
+    # signs once, then issues. Copied onto the issue at issue time, never referenced from it, so a
+    # later re-sign cannot rewrite what an already-issued revision carried.
+    signatory_signature_id = Column(
+        UUID(as_uuid=False), ForeignKey("quotation_signatures.id", ondelete="SET NULL"), nullable=True
+    )
 
     created_by = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
@@ -938,6 +944,25 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True
     )
 
+    # Sorento's side. Required to issue, so an unsigned quotation never circulates.
+    sorento_signature_id = Column(
+        UUID(as_uuid=False), ForeignKey("quotation_signatures.id", ondelete="SET NULL"), nullable=True
+    )
+    # The customer's counter-signature, and the moment it landed. Null is a legitimate resting
+    # state, not an error: plenty of quotations are simply never signed back.
+    customer_signature_id = Column(
+        UUID(as_uuid=False), ForeignKey("quotation_signatures.id", ondelete="SET NULL"), nullable=True
+    )
+    accepted_at = Column(DateTime(timezone=False), nullable=True)
+    # The PDF carrying BOTH signatures, which is the record of what was agreed.
+    signed_pdf_attachment_id = Column(
+        UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True
+    )
+    # The tokenised counter-sign link. Random, single-purpose and expiring, so a leaked URL stops
+    # working; it identifies the ISSUE, never a user.
+    sign_token = Column(String(255), nullable=True, unique=True)
+    sign_token_expires_at = Column(DateTime(timezone=False), nullable=True)
+
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -946,6 +971,51 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
     __table_args__ = (
         UniqueConstraint("document_id", "issue_no", name="uq_project_quotation_issues_no"),
     )
+
+
+class QuotationSignature(Base, CompanyScopedMixin):
+    """One captured signature: drawn, typed or initialled, all of them ending as one image.
+
+    Kept as a table rather than columns on the issue because BOTH sides sign and each signature
+    carries its own metadata, and because a user's reusable signature is a row of this shape with
+    no issue behind it.
+
+    Applying a reusable signature to an issue COPIES the row. It must not point at the user's
+    stored one: re-drawing a signature next year would otherwise silently rewrite the signature on
+    every document already signed with it, which is the same snapshot rule the lines and the
+    rendered letter already follow.
+    """
+
+    __tablename__ = "quotation_signatures"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    # `user` for a member of staff, `customer` for the counter-signing recipient.
+    owner_kind = Column(String(16), nullable=False)
+    user_id = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Who signed, as typed or as known. For a customer this is the only name we have.
+    signer_name = Column(String(200), nullable=True)
+    # draw | type | initials. Recorded because "they typed their name" and "they drew it" are
+    # different evidentiary weights, and the difference is invisible once both are a PNG.
+    mode = Column(String(16), nullable=False, server_default="draw")
+    image_attachment_id = Column(
+        UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True
+    )
+    # The PNG itself, for the common case where it is a few KB of strokes. Storing it inline keeps
+    # a signature from depending on object storage being reachable at PDF-render time.
+    image_data_uri = Column(Text, nullable=True)
+
+    signed_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    ip_address = Column(String(64), nullable=True)
+    user_agent = Column(Text, nullable=True)
+    # Null when the browser refused, and shown as "-" rather than hidden: the ecohub screen the
+    # client pointed at shows the field either way, and that is the honest rendering.
+    gps_lat = Column(Numeric(10, 7), nullable=True)
+    gps_lng = Column(Numeric(10, 7), nullable=True)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (Index("ix_quotation_signatures_user", "user_id", "owner_kind"),)
 
 
 class ProjectQuotationIssueScope(Base, CompanyScopedMixin):

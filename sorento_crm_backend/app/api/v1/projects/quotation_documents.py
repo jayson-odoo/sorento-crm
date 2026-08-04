@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import List
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
@@ -24,6 +24,8 @@ from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.common import ListResponse
 from app.schemas.projects import (
     ProjectQuotationDocumentCreate,
+    QuotationSignatureRequest,
+    QuotationSignatureResponse,
     ProjectQuotationDocumentResponse,
     ProjectQuotationDocumentUpdate,
     ProjectQuotationIssueResponse,
@@ -51,6 +53,14 @@ def _envelope(data: List[dict]):
         "pagination": {"total": len(data), "page": 1, "limit": max(len(data), 1)},
         "empty": not data,
     }
+
+
+def _client_ip(request: Request) -> str | None:
+    """The signer's address, recorded because a signature with provenance is stronger evidence."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip() or None
+    return request.client.host if request.client else None
 
 
 def _editable_project(db: Session, project_id: str, current_user: dict):
@@ -291,6 +301,87 @@ async def issue_quotation_document(
         db.commit()
         db.refresh(record)
         return svc.serialize_issue(db, record)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+# --------------------------------------------------------------------- signing
+
+
+@router.post(
+    "/projects/{project_id}/quotation-documents/{document_id}/sign",
+    response_model=QuotationSignatureResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def sign_quotation_document(
+    project_id: str,
+    document_id: str,
+    payload: QuotationSignatureRequest,
+    request: Request,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Sign the draft, which is what makes it issuable (AC-H1).
+
+    Separate from issuing on purpose: a person signs, checks the document, then issues. Signing
+    again before issuing simply replaces the signature on the draft; a signature already carried by
+    an issue is a copy and is never touched.
+    """
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        _editable_project(db, project_id, current_user)
+        document = svc.get_document_or_404(db, project_id, document_id)
+        body = payload.model_dump(exclude_unset=True)
+        body["ip_address"] = _client_ip(request)
+        body["user_agent"] = request.headers.get("user-agent")
+        signature = svc.sign_as_sorento(
+            db, document=document, actor_user_id=current_user["id"], payload=body
+        )
+        db.commit()
+        db.refresh(signature)
+        return svc._serialize_signature(signature)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/sign-link",
+)
+async def create_quotation_sign_link(
+    project_id: str,
+    document_id: str,
+    issue_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """The tokenised link to send the customer.
+
+    Reused while still valid, so re-sending a quotation does not invalidate the link already
+    sitting in somebody's inbox.
+    """
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        validate_uuid_path(issue_id, resource="Revision")
+        _editable_project(db, project_id, current_user)
+        document = svc.get_document_or_404(db, project_id, document_id)
+        record = next(
+            (row for row in svc.list_issues(db, document) if str(row.id) == issue_id), None
+        )
+        if record is None:
+            from app.services.error_handler import AppException
+
+            raise AppException(
+                status_code=404, message="Revision not found.", code="quotation_issue_not_found"
+            )
+        token = svc.issue_sign_link(db, record=record)
+        db.commit()
+        return {
+            "token": token,
+            "path": f"/quotation-sign/{token}",
+            "expires_at": record.sign_token_expires_at,
+        }
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
