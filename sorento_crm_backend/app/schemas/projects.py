@@ -959,6 +959,17 @@ class ProjectQuotationVersionResponse(BaseModel):
     is_current: bool = Field(
         description="Derived: version_no == MAX(version_no). Everything else is frozen."
     )
+    is_issued: bool = Field(
+        default=False,
+        description="An issue of the parent document went out carrying this version.",
+    )
+    is_editable: bool = Field(
+        default=True,
+        description=(
+            "Current AND not issued. The flag a screen should gate on: an issued version is "
+            "still the highest, so `is_current` alone offers edits the server refuses."
+        ),
+    )
     frozen_at: Optional[datetime] = None
     issued_by: Optional[str] = None
     issued_by_name: Optional[str] = None

@@ -1,7 +1,8 @@
 """S2 quotation DOCUMENT routes (UAC-project-quotation-document, Groups A, B, D, G).
 
-Written BEFORE the routes exist. Everything here is red until they land, and it is red
-because a URL 404s, not because a fixture is wrong.
+Written against the UAC rather than against the handlers: nothing in this file was derived
+from reading ``app/api/v1/projects/quotation_documents.py``, so it states what the routes owe
+a client rather than restating what they happen to do.
 
 Route-level rather than service-level because the HTTP seam carries decisions the service
 cannot: whether a refusal reaches the client as a 422 it can render, whether a document

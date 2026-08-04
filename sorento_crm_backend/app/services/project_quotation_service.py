@@ -857,6 +857,17 @@ def serialize_versions(
     )
     real_max = {row[0]: row[1] for row in rows}
 
+    # Which of these versions has already gone out to a customer. Batched rather than asked per
+    # row: the editor needs it for every version it renders, and `is_current` alone cannot answer
+    # it - an issued version is still the HIGHEST version until somebody revises, so a screen
+    # gated on `is_current` offers edits the server then refuses with 422.
+    issued_ids = {
+        row[0]
+        for row in db.query(ProjectQuotationIssueScope.version_id)
+        .filter(ProjectQuotationIssueScope.version_id.in_([v.id for v in versions]))
+        .all()
+    }
+
     issuer_ids = {v.issued_by for v in versions if v.issued_by}
     names: Dict[str, str] = {}
     if issuer_ids:
@@ -873,6 +884,13 @@ def serialize_versions(
             "quotation_id": version.quotation_id,
             "version_no": version.version_no,
             "is_current": version.version_no == real_max.get(version.quotation_id),
+            # Sent to the customer, so its rows are what they hold and cannot be rewritten.
+            "is_issued": version.id in issued_ids,
+            # The one flag the editor should gate on: superseded OR issued.
+            "is_editable": (
+                version.version_no == real_max.get(version.quotation_id)
+                and version.id not in issued_ids
+            ),
             "frozen_at": version.frozen_at,
             "issued_by": version.issued_by,
             "issued_by_name": names.get(version.issued_by or ""),

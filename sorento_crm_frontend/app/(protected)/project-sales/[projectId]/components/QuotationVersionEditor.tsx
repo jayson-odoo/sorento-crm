@@ -73,7 +73,11 @@ export function QuotationVersionEditor({
   const lines = useQuotationLines(selected?.id);
   const lineMutations = useQuotationLineMutations(project.id, selected?.id ?? '');
 
-  const editable = Boolean(selected?.is_current) && project.can_edit;
+  // `is_editable` from the server, NOT `is_current`. An issued version is still the highest
+  // version until somebody revises, so gating on `is_current` left the fields open on a
+  // quotation the customer already holds: the user typed a price, the server refused with 422,
+  // and the number stayed on screen looking saved.
+  const editable = Boolean(selected?.is_editable ?? selected?.is_current) && project.can_edit;
   const sortedLines = React.useMemo(
     () => [...(lines.data ?? [])].sort((a, b) => a.sort_order - b.sort_order),
     [lines.data],
@@ -275,11 +279,24 @@ export function QuotationVersionEditor({
               Frozen {formatDateTimeInMalaysia(selected.frozen_at)}
             </span>
           )}
+          {selected.is_issued && (
+            <span className="flex items-center gap-1">
+              <Lock className="size-3" aria-hidden />
+              Issued to the customer
+            </span>
+          )}
         </div>
       )}
 
       {/* Why this version is read only, in one line. The reasoning behind freezing a
           version was a paragraph and is now simply the consequence. */}
+      {selected && selected.is_issued && (
+        <p className="text-xs text-muted-foreground">
+          The customer holds this version, so its lines cannot be changed. Open a revision to
+          re-price it.
+        </p>
+      )}
+
       {selected && !selected.is_current && (
         <p className="text-xs text-muted-foreground">
           {`Frozen. Make changes on ${current ? `v${current.version_no}` : 'the current version'}.`}

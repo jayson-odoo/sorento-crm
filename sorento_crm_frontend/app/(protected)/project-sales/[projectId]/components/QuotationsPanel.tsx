@@ -1,383 +1,228 @@
 'use client';
 
 import * as React from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import type { ColumnDef } from '@tanstack/react-table';
-import { AlertTriangle, FileStack, Plus, Trash2, TriangleAlert } from 'lucide-react';
+import type { ColumnDef, Table } from '@tanstack/react-table';
+import { AlertTriangle, Plus, TriangleAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { useQuotations } from '../../_shared/hooks/useProjects';
 import {
-  useProjectQuotationVersions,
-  useQuotationMutations,
-  useQuotations,
-} from '../../_shared/hooks/useProjects';
-import { OutcomePill } from '../../_shared/components/OutcomePill';
-import type {
-  Project,
-  ProjectQuotation,
-  QuotationVersion,
-} from '../../_shared/types/project.types';
-import { QuotationDialog } from './QuotationDialog';
-import { QuotationOutcomeDialog } from './QuotationOutcomeDialog';
+  useQuotationDocumentMutations,
+  useQuotationDocuments,
+} from '../../_shared/hooks/useQuotationDocuments';
+import type { QuotationDocument } from '../../_shared/services/quotationDocumentService';
+import type { Project } from '../../_shared/types/project.types';
+import { formatMyrExact, sumMoney } from './POIntakeMoney';
 
 /**
- * Every quotation issued on this project, one row per REVISION.
+ * Every quotation DOCUMENT on this project: one row per letterhead the customer receives.
  *
- * The list used to hold one row per scope showing only its current price, which hid the
- * thing people come here to read: what we quoted, when, and how it moved. The client's words
- * were "in this list i can see a list of quotation for this project which includes all those
- * revisions". So v1 and v2 of House Units are two rows, and the scope is a column.
+ * The list used to hold one row per scope revision, which is the wrong grain now that a
+ * document carries several scopes and is issued as a whole: a customer holds "SRT/Q/2026/0141
+ * (R2)", not "House Units v2". So the row is the document, the scopes are a count, and the
+ * revision history lives on the document's own page.
  *
- * Scope-per-quotation is still the model, not a convenience: House Units and Common Area are
- * won or lost separately, which is why the PROJECT's outcome is derived rather than set
- * (AC-E10). A project with a won house-unit scope and an open common-area scope is still live.
+ * The two alert badges stay in the toolbar. They are the guardrail management asked for, they
+ * are counted across the project's scopes rather than per document, and a number is not a
+ * second call to action competing with the button beside it.
  */
-type RevisionRow = { quotation: ProjectQuotation; version: QuotationVersion };
-
 export function QuotationsPanel({ project }: { project: Project }) {
   const router = useRouter();
-  const quotations = useQuotations(project.id);
-  const { remove } = useQuotationMutations(project.id);
+  const documents = useQuotationDocuments(project.id);
+  const scopes = useQuotations(project.id);
+  const { create } = useQuotationDocumentMutations(project.id);
 
-  const [creating, setCreating] = React.useState(false);
-  const [editing, setEditing] = React.useState<ProjectQuotation | null>(null);
-  const [deciding, setDeciding] = React.useState<ProjectQuotation | null>(null);
-  const [deleting, setDeleting] = React.useState<ProjectQuotation | null>(null);
+  const rows = React.useMemo(() => documents.data ?? [], [documents.data]);
 
-  const rows = React.useMemo(() => quotations.data ?? [], [quotations.data]);
+  const scopeRows = React.useMemo(() => scopes.data ?? [], [scopes.data]);
+  const totalBelowFloor = scopeRows.reduce((sum, row) => sum + row.below_floor_count, 0);
+  const totalNonStandard = scopeRows.reduce((sum, row) => sum + row.non_standard_count, 0);
 
-
-  const totalBelowFloor = rows.reduce((sum, row) => sum + row.below_floor_count, 0);
-  const totalNonStandard = rows.reduce((sum, row) => sum + row.non_standard_count, 0);
-
-  const revisions = useProjectQuotationVersions(quotations.data);
-
-  // Newest first, grouped by scope: a reader scans down one scope's history, and the scopes
-  // keep the order the list gives them.
-  const revisionRows = React.useMemo(
-    () =>
-      [...revisions.rows].sort(
-        (a, b) =>
-          a.quotation.scope_label.localeCompare(b.quotation.scope_label) ||
-          b.version.version_no - a.version.version_no,
-      ),
-    [revisions.rows],
-  );
-
-  const columns = React.useMemo<ColumnDef<RevisionRow>[]>(
+  const columns = React.useMemo<ColumnDef<QuotationDocument>[]>(
     () => [
       {
-        id: 'scope_label',
-        accessorFn: (row) => row.quotation.scope_label,
-        header: ({ column }) => <DataGridColumnHeader title="Scope" column={column} />,
-        cell: ({ row }) => (
-          <span
-            className="truncate text-sm font-medium"
-            title={row.original.quotation.scope_label}
-          >
-            {row.original.quotation.scope_label}
-          </span>
-        ),
+        id: 'our_ref',
+        accessorFn: (row) => row.our_ref ?? row.document_no,
+        header: ({ column }) => <DataGridColumnHeader title="Reference" column={column} />,
+        cell: ({ row }) => {
+          const reference = row.original.our_ref ?? row.original.document_no;
+          return (
+            <span className="truncate text-sm font-medium" title={reference}>
+              {reference}
+            </span>
+          );
+        },
         size: 190,
-        meta: { headerTitle: 'Scope' },
+        meta: { headerTitle: 'Reference' },
       },
       {
-        id: 'version_no',
-        accessorFn: (row) => row.version.version_no,
-        header: ({ column }) => <DataGridColumnHeader title="Revision" column={column} />,
-        cell: ({ row }) => (
-          <div className="flex min-w-0 items-center gap-1.5">
-            <FileStack className="size-3 shrink-0 text-muted-foreground" aria-hidden />
-            <span className="text-sm">{`v${row.original.version.version_no}`}</span>
-            {/* Said outright, not implied by a missing badge: quoting off a frozen version
-                is the expensive mistake. */}
-            <Badge
-              variant={row.original.version.is_current ? 'secondary' : 'warning'}
-              appearance="light"
-              className="shrink-0 text-[11px]"
-            >
-              {row.original.version.is_current ? 'Current' : 'Frozen'}
-            </Badge>
-          </div>
-        ),
-        size: 170,
-        meta: { headerTitle: 'Revision' },
-      },
-      {
-        id: 'total_amount',
-        accessorFn: (row) => Number(row.version.total_amount ?? 0),
-        header: ({ column }) => <DataGridColumnHeader title="Total" column={column} />,
-        cell: ({ row }) => (
-          <span className="truncate text-sm font-medium">
-            {formatMyr(row.original.version.total_amount)}
-          </span>
-        ),
-        size: 150,
-        meta: { headerTitle: 'Total' },
-      },
-      {
-        id: 'outcome',
-        accessorFn: (row) => row.quotation.outcome,
-        header: ({ column }) => <DataGridColumnHeader title="Outcome" column={column} />,
-        // The outcome belongs to the SCOPE, not to one revision, so it repeats down a
-        // scope's rows. That is honest: v1 and v2 were not won separately.
-        cell: ({ row }) => <OutcomePill outcome={row.original.quotation.outcome} />,
-        size: 120,
-        meta: { headerTitle: 'Outcome' },
-      },
-      {
-        id: 'issued_by_name',
-        accessorFn: (row) => row.version.issued_by_name ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Issued by" column={column} />,
+        id: 'subject_title',
+        accessorFn: (row) => row.subject_title ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Subject" column={column} />,
         cell: ({ row }) =>
-          row.original.version.issued_by_name ? (
-            <span className="truncate text-sm">{row.original.version.issued_by_name}</span>
+          row.original.subject_title ? (
+            <span className="truncate text-sm" title={row.original.subject_title}>
+              {row.original.subject_title}
+            </span>
           ) : (
             <span className="text-muted-foreground">-</span>
           ),
-        size: 170,
-        meta: { headerTitle: 'Issued by' },
+        size: 260,
+        meta: { headerTitle: 'Subject' },
       },
       {
-        id: 'issued_on',
-        accessorFn: (row) => row.version.issued_on ?? row.version.created_at ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Issued" column={column} />,
+        id: 'recipient_name_snapshot',
+        accessorFn: (row) => row.recipient_name_snapshot ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Recipient" column={column} />,
+        cell: ({ row }) =>
+          row.original.recipient_name_snapshot ? (
+            <span className="truncate text-sm" title={row.original.recipient_name_snapshot}>
+              {row.original.recipient_name_snapshot}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 200,
+        meta: { headerTitle: 'Recipient' },
+      },
+      {
+        id: 'scope_count',
+        accessorFn: (row) => row.scopes.length,
+        header: ({ column }) => <DataGridColumnHeader title="Scopes" column={column} />,
+        cell: ({ row }) => <span className="text-sm">{row.original.scopes.length}</span>,
+        size: 100,
+        meta: { headerTitle: 'Scopes' },
+      },
+      {
+        id: 'status',
+        accessorFn: (row) => (row.is_issued ? 'Issued' : 'Draft'),
+        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        cell: ({ row }) => (
+          <Badge
+            variant={row.original.is_issued ? 'success' : 'secondary'}
+            appearance="light"
+            className="text-[11px]"
+          >
+            {row.original.is_issued ? 'Issued' : 'Draft'}
+          </Badge>
+        ),
+        size: 120,
+        meta: { headerTitle: 'Status' },
+      },
+      {
+        id: 'grand_total',
+        accessorFn: (row) => row.grand_total,
+        header: ({ column }) => <DataGridColumnHeader title="Value" column={column} />,
+        cell: ({ row }) => (
+          <span className="block truncate text-end text-sm font-medium tabular-nums">
+            {formatMyrExact(row.original.grand_total)}
+          </span>
+        ),
+        // Summed off the STRINGS, to the cent: a float sum of a page of quotations drifts, and
+        // a footer that disagrees with the documents above it by a cent is worse than no footer.
+        footer: ({ table }: { table: Table<QuotationDocument> }) => {
+          const total = sumMoney(
+            table.getCoreRowModel().rows.map((row) => row.original.grand_total),
+          );
+          return (
+            <span className="block text-end tabular-nums">
+              {total === null ? '-' : formatMyrExact(total)}
+            </span>
+          );
+        },
+        size: 160,
+        meta: { headerTitle: 'Value' },
+      },
+      {
+        id: 'doc_date',
+        accessorFn: (row) => row.doc_date ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Dated" column={column} />,
         cell: ({ row }) => {
-          const at = row.original.version.issued_on ?? row.original.version.created_at;
-          return at ? (
-            <span className="truncate text-sm">{formatDateInMalaysia(at)}</span>
+          const dated = row.original.doc_date
+            ? formatDateInMalaysia(row.original.doc_date)
+            : '';
+          return dated ? (
+            <span className="truncate text-sm">{dated}</span>
           ) : (
             <span className="text-muted-foreground">-</span>
           );
         },
         size: 130,
-        meta: { headerTitle: 'Issued' },
+        meta: { headerTitle: 'Dated' },
       },
-      {
-        id: 'alerts',
-        accessorFn: (row) =>
-          row.quotation.below_floor_count + row.quotation.non_standard_count,
-        // Readable WITHOUT opening the scope: the guardrail is the whole point of the tab.
-        header: ({ column }) => <DataGridColumnHeader title="Alerts" column={column} />,
-        cell: ({ row }) => {
-          const { below_floor_count: floor, non_standard_count: nonStandard } =
-            row.original.quotation;
-          if (floor === 0 && nonStandard === 0) {
-            return <span className="text-muted-foreground">-</span>;
-          }
-          return (
-            <div className="flex min-w-0 flex-wrap gap-1">
-              {floor > 0 && (
-                <Badge variant="destructive" appearance="light" className="text-[11px]">
-                  {`${floor} below floor`}
-                </Badge>
-              )}
-              {nonStandard > 0 && (
-                <Badge variant="warning" appearance="light" className="text-[11px]">
-                  {`${nonStandard} non-standard`}
-                </Badge>
-              )}
-            </div>
-          );
-        },
-        size: 200,
-        meta: { headerTitle: 'Alerts' },
-      },
-      {
-        id: 'series_name',
-        accessorFn: (row) => row.quotation.series_name ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Series" column={column} />,
-        cell: ({ row }) =>
-          row.original.quotation.series_name ? (
-            <span className="truncate text-sm" title={row.original.quotation.series_name}>
-              {row.original.quotation.series_name}
-            </span>
-          ) : (
-            <span className="text-muted-foreground">-</span>
-          ),
-        size: 140,
-        meta: { headerTitle: 'Series' },
-      },
-      {
-        id: 'loss_reason_label',
-        accessorFn: (row) => row.quotation.loss_reason_label ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Lost because" column={column} />,
-        cell: ({ row }) =>
-          row.original.quotation.loss_reason_label ? (
-            <span
-              className="truncate text-sm"
-              title={row.original.quotation.loss_reason_label}
-            >
-              {row.original.quotation.loss_reason_label}
-            </span>
-          ) : (
-            <span className="text-muted-foreground">-</span>
-          ),
-        size: 160,
-        meta: { headerTitle: 'Lost because' },
-      },
-      ...(project.can_edit
-        ? [
-            {
-              id: 'actions',
-              header: () => <span className="sr-only">Actions</span>,
-              cell: ({ row }: { row: { original: RevisionRow } }) => (
-                <div
-                  className="flex flex-wrap items-center justify-end gap-1.5"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setDeciding(row.original.quotation)}
-                  >
-                    {row.original.quotation.outcome === 'open'
-                      ? 'Record outcome'
-                      : 'Change outcome'}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setEditing(row.original.quotation)}
-                  >
-                    Edit
-                  </Button>
-                  <Button
-                    mode="icon"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setDeleting(row.original.quotation)}
-                    aria-label={`Delete ${row.original.quotation.scope_label}`}
-                  >
-                    <Trash2 className="size-3.5 text-destructive" />
-                  </Button>
-                </div>
-              ),
-              size: 250,
-              enableResizing: false,
-              meta: { headerTitle: 'Actions' },
-            } as ColumnDef<RevisionRow>,
-          ]
-        : []),
     ],
-    [project.can_edit],
+    [],
   );
 
-
   return (
-    <>
-      <PanelDataGrid
-        title="Quotations"
-        toolbar={
-          <>
-            {totalBelowFloor > 0 && (
-              <Badge variant="destructive" appearance="light" className="gap-1">
-                <AlertTriangle className="size-3" aria-hidden />
-                {`${totalBelowFloor} below the price floor`}
-              </Badge>
-            )}
-            {totalNonStandard > 0 && (
-              <Badge variant="warning" appearance="light" className="gap-1">
-                <TriangleAlert className="size-3" aria-hidden />
-                {`${totalNonStandard} non-standard`}
-              </Badge>
-            )}
-            {/* PHASE 1 ONLY. Removed when the real document screen lands. It sits here so
-                the prototype is reviewed by clicking through the app, not by pasting a URL -
-                a deep link hides whether the way in exists at all. */}
-            <Button asChild type="button" size="sm" variant="outline">
-              <Link href={`/project-sales/${project.id}/quotations/document-preview`}>
-                Preview document layout
-              </Link>
+    <PanelDataGrid
+      title="Quotations"
+      toolbar={
+        <>
+          {totalBelowFloor > 0 && (
+            <Badge variant="destructive" appearance="light" className="gap-1">
+              <AlertTriangle className="size-3" aria-hidden />
+              {`${totalBelowFloor} below the price floor`}
+            </Badge>
+          )}
+          {totalNonStandard > 0 && (
+            <Badge variant="warning" appearance="light" className="gap-1">
+              <TriangleAlert className="size-3" aria-hidden />
+              {`${totalNonStandard} non-standard`}
+            </Badge>
+          )}
+          {project.can_edit && (
+            <Button
+              type="button"
+              size="sm"
+              disabled={create.isPending}
+              // Nothing is asked for: the reference, the recipient and the subject are all
+              // derived from the project, so creating one is a single press and the salesperson
+              // lands on it to price it.
+              onClick={async () => {
+                try {
+                  const created = await create.mutateAsync({});
+                  router.push(
+                    `/project-sales/${project.id}/quotation-documents/${created.id}`,
+                  );
+                } catch {
+                  // The mutation already toasted the reason; the list stays as it was.
+                }
+              }}
+            >
+              <Plus className="size-4" aria-hidden />
+              Add a quotation
             </Button>
-            {project.can_edit && (
-              <Button type="button" size="sm" onClick={() => setCreating(true)}>
-                <Plus className="size-4" aria-hidden />
-                Add a quotation
-              </Button>
-            )}
-          </>
-        }
-        columns={columns}
-        rows={revisionRows}
-        getRowId={(row) => row.version.id}
-        // Suffixed `-revisions` on purpose: the column SET changed when the list went from
-        // one row per scope to one row per revision, and a saved per-user order for the old
-        // set appends the new columns to the end, which reads as scrambled.
-        listingKey="projects.projects.view::project-quotation-revisions"
-        isLoading={quotations.isLoading || revisions.isLoading}
-        error={
-          quotations.isError
-            ? quotations.error
-            : revisions.isError
-              ? revisions.error
-              : undefined
-        }
-        emptyTitle="Nothing priced yet"
-        searchPlaceholder="Search revisions"
-        searchOf={(row) =>
-          [
-            row.quotation.scope_label,
-            `v${row.version.version_no}`,
-            row.quotation.series_name,
-            row.version.issued_by_name,
-            row.quotation.loss_reason_label,
-          ]
-            .filter(Boolean)
-            .join(' ')
-        }
-        pageSize={15}
-        // The row is the way in, and it goes to the scope's own page: a list answers "what
-        // do we have", a form answers "what is in this one", and stacking them cramps both.
-        onRowClick={(row) =>
-          router.push(`/project-sales/${project.id}/quotations/${row.quotation.id}`)
-        }
-      />
-
-
-      {(creating || editing) && (
-        <QuotationDialog
-          project={project}
-          quotation={editing}
-          onDone={() => {
-            setCreating(false);
-            setEditing(null);
-          }}
-        />
-      )}
-
-      {deciding && (
-        <QuotationOutcomeDialog
-          project={project}
-          quotation={deciding}
-          onDone={() => setDeciding(null)}
-        />
-      )}
-
-      <ConfirmDeleteDialog
-        open={Boolean(deleting)}
-        onOpenChange={(next) => !next && setDeleting(null)}
-        title="Confirm delete"
-        description={
-          deleting
-            ? `Delete the "${deleting.scope_label}" quotation and all ${deleting.version_count} of its versions? This action cannot be undone, and the project's outcome will be recalculated without it.`
-            : ''
-        }
-        onDelete={async () => {
-          if (!deleting) return;
-          await remove.mutateAsync(deleting.id);
-        }}
-        onSuccess={() => setDeleting(null)}
-        successMessage="Quotation deleted"
-      />
-    </>
+          )}
+        </>
+      }
+      columns={columns}
+      rows={rows}
+      getRowId={(row) => row.id}
+      // Suffixed on purpose: the column SET changed when the list went from one row per scope
+      // revision to one row per document, and a saved per-user order for the old set appends
+      // the new columns to the end, which reads as scrambled.
+      listingKey="projects.projects.view::project-quotation-documents"
+      isLoading={documents.isLoading}
+      error={documents.isError ? documents.error : undefined}
+      emptyTitle="Nothing quoted yet"
+      searchPlaceholder="Search quotations"
+      searchOf={(row) =>
+        [row.our_ref, row.document_no, row.subject_title, row.recipient_name_snapshot]
+          .filter(Boolean)
+          .join(' ')
+      }
+      pageSize={15}
+      // The row is the way in, and it goes to the document's own page: a list answers "what do
+      // we have", a document answers "what is in this one", and stacking them cramps both.
+      onRowClick={(row) =>
+        router.push(`/project-sales/${project.id}/quotation-documents/${row.id}`)
+      }
+    />
   );
 }
 

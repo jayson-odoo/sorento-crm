@@ -608,6 +608,10 @@ export interface QuotationVersion {
   quotation_id: string;
   version_no: number;
   is_current: boolean;
+  /** Sent to a customer. Its rows are what they hold, so they cannot be rewritten. */
+  is_issued?: boolean;
+  /** Current AND not issued. Gate the editor on this, never on `is_current` alone. */
+  is_editable?: boolean;
   frozen_at?: string | null;
   issued_by?: string | null;
   issued_by_name?: string | null;
