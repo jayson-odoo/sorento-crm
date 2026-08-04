@@ -12,6 +12,13 @@ is the running gotcha log; deep design detail lives in `documentation/`. Keep th
 
 ## Methodology (mandatory order, every non-trivial feature)
 
+**Run it with `/feature`** (`.claude/skills/feature/SKILL.md`) — it executes this order and
+calls the `mattpocock-skills` plugin at the slots below. Two rules override that plugin:
+**(a) files are the source of truth, tickets are the queue** — the UAC + PLAN files under
+`documentation/plans/` are the contract, and `to-spec` must write there rather than publish
+a spec issue; **(b) frontend mock before any backend code** — `implement` has no concept of
+Phase 1, so scope it to Phase 2 only.
+
 0. **Guided user experience FIRST — design the journey before the system.** Before any entity,
    table, endpoint or status graph is discussed, write the **guided journey**: who the actor is,
    what they see on the very first screen, what the system already knows (so they are never asked
@@ -22,20 +29,30 @@ is the running gotcha log; deep design detail lives in `documentation/`. Keep th
    asked**. The data model is then designed **backwards from that journey**. A plan that opens with
    a schema is a process violation. The journey goes at the top of the UAC file as its `Journey`
    section, and every AC traces to a step in it.
-1. **Grill → UAC → plan.** Every piece of work starts with a **`grill-me`** session (frontend
-   AND backend) that resolves the full decision tree. Then **write the User Acceptance Criteria
+1. **Grill → UAC → plan.** Every piece of work starts with a grilling session (frontend
+   AND backend) that resolves the full decision tree — **`/grill-with-docs`** when the work
+   touches domain language or needs an ADR (it challenges the design against `CONTEXT-MAP.md`
+   and writes ADRs into `documentation/adr/` inline), plain **`/grill-me`** for a pure UX or
+   flow question. Module-sized work charts its unknowns with **`/wayfinder`** first. Then
+   **write the User Acceptance Criteria
    FIRST** — `documentation/plans/<domain>/<slug>-acceptance-criteria.md`, the independently-
    verifiable Given/When/Then list (per-AC id, grouped by phase, tagged `[BE]`/`[FE]`/`[E2E]`/`[T]`).
    UAC is the contract. **THEN** write the plan (`documentation/plans/<domain>/PLAN-<slug>.md`)
-   as the design that *fulfils* the UAC. **No plan ships without its UAC file.** Grill the plan
-   itself before coding. Defer-items go to `documentation/backlogs/backlog.md`.
+   as the design that *fulfils* the UAC. **No plan ships without its UAC file.** `/to-spec`
+   may draft both, but its output goes to those two files — it must NOT publish the spec as an
+   issue. Render the plan with `/lavish` for review, then grill the plan itself before coding.
+   Slice it with `/to-tickets` (tracer-bullet vertical slices, blocking edges) into GitHub
+   Issues whose bodies link back to the PLAN and UAC paths; the files stay the contract and an
+   issue that contradicts the UAC loses. Defer-items go to `documentation/backlogs/backlog.md`.
 2. **Component-library discipline** — reuse first; a new variant = add a prop/mode to the shared
    component, never a parallel one-off. (`extractApiError`, `buildDataGridParams`,
    `userSelectService`, `ConfirmDeleteDialog`, `DataGrid`, mutation-hook factories.)
 3. **Phase 1 — Frontend-first (mock).** UI → hook → service → **mock**. Tune every state
    (loading / empty / error / partial / success) with no backend running. Verify in a real
    browser (Playwright MCP, sidebar-click nav). Document the expected API contract. NO tests yet
-   (shape may still shift), NO backend code.
+   (shape may still shift), NO backend code. When the open question is "which of these designs",
+   run `/prototype` BEFORE this phase and throw the result away — it is not built to the layering
+   rules below and must never become the shipped FE.
 4. **Phase 2 — Backend wiring, TDD.** Build BE (models → migration → schema → service → route)
    to match the Phase-1 contract, then swap the mock for the real `api-client` call (one-line at
    the service boundary). **This phase is test-FIRST (red → green → refactor), not test-after:**
@@ -46,9 +63,14 @@ is the running gotcha log; deep design detail lives in `documentation/`. Keep th
    numbers are written as failing tests first, and the code is built to satisfy them. FE hook/logic
    tests (vitest) are likewise test-first; FE component-state tests may follow once the prototype
    shape settles. One Playwright E2E per user flow (real clicks, FE→BE→DB). Tests are **never
-   deferred** to Phase 3. Re-verify live.
+   deferred** to Phase 3. Re-verify live. `/tdd` drives the loop; `/implement` may drive a whole
+   ticket **at this phase only** (it calls `/tdd` internally and knows nothing of Phase 1).
 5. **Phase 3 — Code review.** `/code-review` (or `ultra` for big diffs) → address via `--fix` /
    `/simplify` → open PR. Reviewer runs `documentation/PR-CHECKLIST.md` + the DoD gate below.
+   Use THIS repo's `/code-review`, not the plugin's same-named skill, unless asked otherwise.
+   Inbound bugs enter via `/triage` (labels in `documentation/agents/triage-labels.md`) and are
+   worked with `/diagnosing-bugs`; `/improve-codebase-architecture` and `/codebase-design` are
+   periodic, never part of the feature loop.
 6. **Branch** per feature; merge only after review. The user codes concurrently in the main
    checkout — `git status` before ANY branch/commit op; never assume the tree is clean.
 
