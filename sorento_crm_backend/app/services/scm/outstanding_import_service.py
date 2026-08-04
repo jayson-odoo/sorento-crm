@@ -14,10 +14,11 @@ from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.models.order import Customer, SalesOrder, SalesOrderLine
+from app.models.inventory import Warehouse
 from app.models.product import Product
 from app.services.import_alias_service import AliasResolver
 from app.services.scm.outstanding_diff import (
@@ -91,25 +92,36 @@ def _norm(code: str) -> str:
 
 
 def _resolve(db: Session, read: ReadResult) -> _Resolved:
-    """Map codes in the file onto real rows, reporting whatever cannot be resolved."""
+    """Map codes in the file onto real rows, reporting whatever cannot be resolved.
+
+    Deliberately ORM queries, not raw SQL. `products`, `warehouses` and `sales_orders` are
+    all company-scoped, and the isolation filter runs on ORM execution only - a raw
+    `SELECT ... FROM products` sees EVERY company. That matters here rather than in theory:
+    each company carries its own copy of the catalogue, so 11,390 product codes exist twice
+    in this database. A raw lookup keyed by code would resolve to whichever row came back
+    last and could attach an imported order line to another company's product.
+    """
     issues: list[ResolutionIssue] = []
 
     item_codes = {_norm(l.item_code) for l in read.lines if l.item_code}
     loc_codes = {_norm(l.location) for l in read.lines if l.location}
 
-    products = {}
+    products: dict[str, str] = {}
     if item_codes:
-        for pid, code in db.execute(text(
-            "SELECT id, product_code FROM products WHERE upper(product_code) = ANY(:codes)"
-        ), {"codes": list(item_codes)}).fetchall():
+        for pid, code in (
+            db.query(Product.id, Product.product_code)
+            .filter(func.upper(Product.product_code).in_(list(item_codes)))
+            .all()
+        ):
             products[_norm(code)] = str(pid)
 
-    warehouses = {}
+    warehouses: dict[str, str] = {}
     if loc_codes:
-        for wid, code in db.execute(text(
-            "SELECT id, warehouse_code FROM warehouses "
-            "WHERE upper(warehouse_code) = ANY(:codes)"
-        ), {"codes": list(loc_codes)}).fetchall():
+        for wid, code in (
+            db.query(Warehouse.id, Warehouse.warehouse_code)
+            .filter(func.upper(Warehouse.warehouse_code).in_(list(loc_codes)))
+            .all()
+        ):
             warehouses[_norm(code)] = str(wid)
 
     kept: list[Line] = []
@@ -140,22 +152,29 @@ def _existing_lines(db: Session, docs: set[str]) -> list[Line]:
     """
     if not docs:
         return []
-    rows = db.execute(text(
-        """
-        SELECT sol.id, so.so_number, p.product_code,
-               COALESCE(w.warehouse_code, '') AS wh,
-               (sol.qty_ordered - sol.qty_delivered) AS outstanding,
-               sol.required_date
-        FROM sales_order_lines sol
-        JOIN sales_orders so ON so.id = sol.sales_order_id
-        JOIN products p ON p.id = sol.product_id
-        LEFT JOIN warehouses w ON w.id = sol.warehouse_id
-        WHERE so.so_number = ANY(:docs)
-          AND so.status = 'open'
-          AND sol.line_status = 'open'
-          AND sol.qty_ordered > sol.qty_delivered
-        """
-    ), {"docs": list(docs)}).fetchall()
+    # ORM, so the company-isolation filter applies. See `_resolve`: another company's order
+    # carrying the same SO number must never be diffed against this upload, let alone closed
+    # by it.
+    rows = (
+        db.query(
+            SalesOrderLine.id,
+            SalesOrder.so_number,
+            Product.product_code,
+            Warehouse.warehouse_code,
+            (SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered).label("outstanding"),
+            SalesOrderLine.required_date,
+        )
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .join(Product, Product.id == SalesOrderLine.product_id)
+        .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
+        .filter(
+            SalesOrder.so_number.in_(list(docs)),
+            SalesOrder.status == "open",
+            SalesOrderLine.line_status == "open",
+            SalesOrderLine.qty_ordered > SalesOrderLine.qty_delivered,
+        )
+        .all()
+    )
     return [
         Line(doc_number=r[1], item_code=r[2], location=r[3] or "",
              qty=float(r[4] or 0), required_date=r[5], row_ref=str(r[0]))
@@ -223,10 +242,14 @@ def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
 def _demand_class_for(db: Session, debtor_code: str) -> str:
     if not debtor_code:
         return DEFAULT_DEMAND_CLASS
-    row = db.execute(text(
-        "SELECT lower(COALESCE(market_segment_code, '')) FROM customers "
-        "WHERE upper(customer_code) = :c LIMIT 1"
-    ), {"c": _norm(debtor_code)}).scalar()
+    # ORM again: customers are company-scoped too, and reading another company's customer
+    # would decide this order's fulfilment priority from the wrong row.
+    row = (
+        db.query(func.lower(func.coalesce(Customer.market_segment_code, "")))
+        .filter(func.upper(Customer.customer_code) == _norm(debtor_code))
+        .limit(1)
+        .scalar()
+    )
     if row and any(seg in row for seg in _PROJECT_SEGMENTS):
         return "project"
     return DEFAULT_DEMAND_CLASS
