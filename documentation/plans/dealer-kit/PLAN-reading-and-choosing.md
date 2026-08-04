@@ -1,6 +1,13 @@
 # PLAN - S9: reading it, and choosing what goes in it
 
-**Status:** in progress. AC-P done and measured. Rest sequenced below.
+**Status:** DONE. Every section below shipped and was verified in a browser
+against live data. Four commits: perf, tile design + overlap gate, UI
+corrections, brochure images, picker, collections + tile dialog.
+
+Two things were found rather than built, and both outlived this slice:
+`DataGridTable` rows ARE testable under jsdom (one unmocked preferences fetch,
+not a limitation), and `SortableItemHandle` was dropping every `aria-label` in
+the codebase.
 **UAC:** `dealer-kit-reading-and-choosing-acceptance-criteria.md`
 
 ---
