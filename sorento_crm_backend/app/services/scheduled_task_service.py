@@ -7,6 +7,7 @@ from typing import Callable, Optional, Any, Dict
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
+from app.models.base import set_company_scope
 from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
 
 # Module-level UTC handle: update_task() shadows the imported `timezone` with its
@@ -460,7 +461,17 @@ def run_due_tasks(db: Session) -> None:
     """
     Find due tasks, run their handlers, persist run logs and update next_run_at.
     Handlers are looked up by task.key; unknown keys are skipped (run marked skipped).
+
+    Scheduled tasks are system jobs: they sweep every company, so the session runs
+    system-scoped. The caller (``_scheduled_tasks_heartbeat``) opens a bare
+    ``SessionLocal()``, whose company scope is therefore UNSET — and UNSET fail-closes
+    to ``false()``, so every handler touching a ``CompanyScopedMixin`` table read zero
+    rows. ``promotion_active_window`` ran hourly for months reporting success with
+    ``scanned: 0``, which is why promotions past their ``end_date`` stayed active.
+    Scoping here rather than in the heartbeat covers every caller, and mirrors what
+    the RQ workers already do (``import_tasks`` / ``export_tasks``).
     """
+    set_company_scope(db, None)
     due = get_due_tasks(db)
     if not due:
         return
