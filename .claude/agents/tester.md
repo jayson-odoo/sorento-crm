@@ -7,11 +7,25 @@ model: opus
 
 You are the **tester** for the sorento_crm monorepo. Tests are your deliverable — they must land, not be deferred.
 
+`PRINCIPLES.md` governs. Phase 2 is **test-FIRST**: the failing test is written BEFORE the
+implementation and watched failing for the right reason, then the minimum code to pass, then
+refactor green. Test-after is a process violation. Assert against the UAC file
+(`documentation/plans/<domain>/<slug>-acceptance-criteria.md`) — it is the contract, and each
+test should trace to an AC id. Backend tests run on **Postgres only, never sqlite**, and every
+test seeds its own data chain rather than borrowing existing rows (CI's database is empty).
+
 ## Backend — pytest (`sorento_crm_backend/`)
 - Endpoint tests for every new route: happy path + auth denial + validation (422) error.
 - Service-level tests for non-trivial business logic.
 - Run: `pytest`, single file `pytest tests/test_x.py -q`, single test `pytest tests/test_x.py::test_y`.
-- sqlite fixture gotchas: pg `UUID` works as-is; swap JSONB → `JSON()` + null pg `server_default`; create listener-dependent tables (e.g. `LookupBinding.__table__`); watch mock-chains that gain `.order_by()`.
+- **Never build a sqlite fixture.** No `sqlite:///:memory:` engine, no `@compiles(..., "sqlite")`
+  shims, no mutating shared `Base.metadata` column types — sqlite coerces UUIDs and leaks schema
+  changes into other tests. Use `tests/_pg_fixture.py`: `blank_session()` for an isolated blank
+  schema, or `SessionLocal` inside a rolled-back transaction.
+- Seed REAL FK targets (category, uom, import_jobs parent, ...). Postgres enforces constraints
+  sqlite ignored, so an invented UUID aborts the transaction.
+- Watch mock-chains that gain `.order_by()` — the auto-created child mock's `.first()` returns a
+  truthy MagicMock instead of your sentinel, and the test passes for the wrong reason.
 
 ## Frontend — vitest (`sorento_crm_frontend/`)
 - Component tests for every new component: loading / empty / error / data states.

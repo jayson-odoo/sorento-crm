@@ -130,7 +130,7 @@ Backend tests run on **Postgres only, never sqlite**.
 `--fix` for the findings. The plugin ships its own `code-review`; prefer this
 repo's unless the user asks otherwise.
 
-Reviewer runs `documentation/PR-CHECKLIST.md` plus the DoD gate.
+Reviewer runs `documentation/reference/PR-CHECKLIST.md` plus the DoD gate.
 
 ### Step 9 — Definition of Done gate
 

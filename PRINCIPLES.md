@@ -66,7 +66,7 @@ Phase 1, so scope it to Phase 2 only.
    deferred** to Phase 3. Re-verify live. `/tdd` drives the loop; `/implement` may drive a whole
    ticket **at this phase only** (it calls `/tdd` internally and knows nothing of Phase 1).
 5. **Phase 3 — Code review.** `/code-review` (or `ultra` for big diffs) → address via `--fix` /
-   `/simplify` → open PR. Reviewer runs `documentation/PR-CHECKLIST.md` + the DoD gate below.
+   `/simplify` → open PR. Reviewer runs `documentation/reference/PR-CHECKLIST.md` + the DoD gate below.
    Use THIS repo's `/code-review`, not the plugin's same-named skill, unless asked otherwise.
    Inbound bugs enter via `/triage` (labels in `documentation/agents/triage-labels.md`) and are
    worked with `/diagnosing-bugs`; `/improve-codebase-architecture` and `/codebase-design` are
@@ -137,7 +137,7 @@ the same axis as the module decision — not a separate schema axis.
 
 ## Design mandates (non-negotiable)
 
-- **CRUD standard** (`documentation/ADR-PRODUCT-STANDARDS.md`): list = DataGrid + search/filters +
+- **CRUD standard** (`documentation/reference/ADR-PRODUCT-STANDARDS.md`): list = DataGrid + search/filters +
   Add; create/edit = **modal by default** (dedicated page only for complex/multi-tab/file flows);
   view = dedicated `/{module}/{id}` detail page rendering **every section** with an explicit empty
   state + next-step CTA (never hide a section on missing data).

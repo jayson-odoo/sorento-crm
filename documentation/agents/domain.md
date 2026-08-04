@@ -59,6 +59,6 @@ If your output contradicts an existing ADR, surface it explicitly rather than si
 These are not glossaries, but they constrain implementation and are treated as
 binding by `CLAUDE.md`:
 
-- `documentation/ADR-PRODUCT-STANDARDS.md` — CRUD UX standard
-- `documentation/ARCHITECTURE-RULES.md` — frontend layering rules
+- `documentation/reference/ADR-PRODUCT-STANDARDS.md` — CRUD UX standard
+- `documentation/reference/PR-CHECKLIST.md` — reviewer checklist
 - `PRINCIPLES.md` — governing process rules (step 0: guided user experience first)
