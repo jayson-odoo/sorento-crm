@@ -170,6 +170,36 @@ def _po(db, product, wh, qty, *, supplier, cost=None, currency="USD",
 # =========================================================================== #
 
 
+def test_the_suggested_quantity_is_orderable_rather_than_six_decimal_places(db, chain):
+    """`rounded_qty` is only rounded when an order multiple exists, and none is configured.
+
+    So it holds the raw engine figure - 1819.722194 for C-FH24 on the live book. The plan grid
+    hides that behind an integer format, but this report pre-fills an EDITABLE order quantity
+    from it, so the box read 1819.722194 under a label saying 1,820. Rounded UP because
+    rounding down would suggest less than the policy says is needed.
+    """
+    f = chain
+    rec = (
+        db.query(ReorderRecommendation)
+        .filter(ReorderRecommendation.run_id == f["run"].id)
+        .one()
+    )
+    rec.rounded_qty = 1819.722194
+    db.flush()
+
+    svc.write_rows(db, f["run"].id)
+
+    assert svc.report(db, run_id=f["run"].id)["rows"][0]["suggested_qty"] == 1820
+
+
+def test_a_whole_suggested_quantity_is_left_alone(db, chain):
+    """Rounding up must not add a unit to a figure that is already whole."""
+    f = chain
+    svc.write_rows(db, f["run"].id)
+
+    assert svc.report(db, run_id=f["run"].id)["rows"][0]["suggested_qty"] == 120
+
+
 def test_the_report_states_the_dated_position_the_run_froze(db, chain):
     """The row's figures come off the frozen snapshot, not off a live read."""
     f = chain

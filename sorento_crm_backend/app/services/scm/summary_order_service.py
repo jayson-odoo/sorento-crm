@@ -25,6 +25,7 @@ exception and it is opaque: it says which week is being read and is never render
 from __future__ import annotations
 
 import logging
+import math
 import uuid
 from datetime import date, datetime
 from typing import Any, Optional
@@ -121,8 +122,14 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
     # suggested = the SUM of the run's rounded quantities for the product. A network-scope run
     # has one recommendation per product so the sum IS that figure; a warehouse-scope run
     # (the M8-D5 default) has one per location, and summing over-states against a single
-    # network rounding, never under-states. Re-rounding here instead would make the report
-    # disagree with the reorder page's own numbers for the same run.
+    # network rounding, never under-states.
+    #
+    # `rounded_qty` is only actually rounded when the item has an order multiple, and moq /
+    # order_multiple are populated in 0 of 17,408 supplier links, so in practice it holds the
+    # raw engine figure: 1819.722194 for C-FH24. The plan grid hides that behind an integer
+    # format, but this report pre-fills an EDITABLE order quantity from it, so the box read
+    # 1819.722194 under a label saying 1,820. A purchase order for 1819.722194 units is not a
+    # thing anybody raises.
     rec_rows = (
         db.query(
             ReorderRecommendation.product_id,
@@ -135,7 +142,11 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
         .group_by(ReorderRecommendation.product_id)
         .all()
     )
-    suggested = {str(pid): float(qty or 0) for pid, qty in rec_rows}
+    # Rounded UP to a whole unit, which is the conservative direction: rounding down would
+    # suggest less than the policy says is needed. This is NOT a rounding policy - a real moq
+    # or order multiple, once configured, is applied by the engine and arrives here already
+    # applied. It is only the last step that makes the figure orderable.
+    suggested = {str(pid): float(math.ceil(float(qty or 0))) for pid, qty in rec_rows}
     product_ids = list(suggested)
     if not product_ids:
         return 0
