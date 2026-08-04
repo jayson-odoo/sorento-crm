@@ -110,6 +110,77 @@ def set_brochure_image(
     return link
 
 
+def adopt_single_candidates(
+    db: Session,
+    product_ids: Sequence[str],
+    user_id: Optional[str] = None,
+) -> list[str]:
+    """Take the only photo a product has, without asking.
+
+    **This reverses a deliberate earlier decision, and the reasoning changed
+    with it.** The original rule was that nothing is chosen on the user's
+    behalf, because a wrong photo is a wrong product in front of a customer -
+    even a product with exactly one candidate took a click. That argument holds
+    when there is a choice to get wrong. With exactly ONE candidate there is
+    not: the renderer already shows that image (`primary_image_urls` falls back
+    to the first linked photo when nothing is marked), so this changes nothing
+    about what a reader sees. It only records the decision, which is what
+    downstream work like mesh generation reads.
+
+    What it saves is real. 509 of the flyer's 535 products have one candidate,
+    and asking somebody to press OK five hundred times is not a decision, it is
+    a toll.
+
+    Products with none, or with two or more, are untouched: those are the ones
+    that need a human. Returns the products it answered.
+    """
+    if not product_ids:
+        return []
+
+    rows = (
+        db.query(ProductAttachment.product_id, ProductAttachment.attachment_id)
+        .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
+        .filter(
+            ProductAttachment.product_id.in_(list(product_ids)),
+            # The same conditions as the candidate list. A PDF is not a
+            # candidate, so a product whose only "image" is a spec sheet has
+            # none and is left alone rather than answered wrongly.
+            Attachment.mime_type.ilike("image/%"),
+            Attachment.is_deleted.is_(False),
+        )
+        .all()
+    )
+
+    by_product: dict[str, list[str]] = {}
+    for product_id, attachment_id in rows:
+        by_product.setdefault(product_id, []).append(attachment_id)
+
+    adopted: list[str] = []
+    for product_id, attachments in by_product.items():
+        if len(attachments) != 1:
+            continue
+        # Idempotent: already chosen is already the answer, and re-setting it
+        # would churn `is_primary` on every page load.
+        already = (
+            db.query(ProductAttachment.id)
+            .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
+            .filter(
+                ProductAttachment.product_id == product_id,
+                ProductAttachment.is_primary.is_(True),
+                Attachment.mime_type.ilike("image/%"),
+                Attachment.is_deleted.is_(False),
+            )
+            .first()
+        )
+        if already is not None:
+            continue
+
+        set_brochure_image(db, product_id, attachments[0], user_id=user_id)
+        adopted.append(product_id)
+
+    return adopted
+
+
 def clear_brochure_image(db: Session, product_id: str) -> None:
     """Leave a product with no chosen image.
 

@@ -18,6 +18,8 @@ from app.services import brochure_image_service
 from app.services.product_service import ProductAttachmentService
 from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.product import (
+    BrochureImageAdopted,
+    BrochureImageAdoptSingle,
     BrochureImageChoice,
     BrochureImageList,
     BrochureImageSet,
@@ -78,6 +80,30 @@ async def list_brochure_images(
     # Signing is the route's job, and only for the page actually being sent.
     brochure_image_service.signed_urls(result["items"], db)
     return result
+
+
+@router.post("/brochure-images/adopt-single", response_model=BrochureImageAdopted)
+async def adopt_single_candidate_images(
+    payload: BrochureImageAdoptSingle,
+    current_user: dict = Depends(require_permission("master_data.product_attachments.edit")),
+    db: Session = Depends(get_db),
+):
+    """Take the only photo a product has, for every product named here.
+
+    A POST and not part of the list GET, deliberately: a read must not write.
+    The screen calls this once per page of the worklist, so 509 products with a
+    single candidate cost one request rather than 509 clicks.
+
+    Products with no candidate, or with two or more, are left alone - those are
+    the ones that need somebody to look.
+    """
+    adopted = brochure_image_service.adopt_single_candidates(
+        db,
+        payload.product_ids,
+        user_id=str(current_user.get("id", "")) if current_user else None,
+    )
+    db.commit()
+    return BrochureImageAdopted(productIds=adopted)
 
 
 @router.put("/brochure-images/{product_id}", response_model=BrochureImageChoice)

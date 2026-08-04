@@ -21,6 +21,7 @@ vi.mock('../../services/brochureImageService', () => ({
   PROMOTION_PAGE_SIZE: 50,
   listBrochureImages: vi.fn(),
   listBrochureImagePromotionOptions: vi.fn(),
+  adoptSingleBrochureImages: vi.fn(),
 }));
 
 // Setting the flag is product master data; this screen is the second caller of
@@ -39,6 +40,7 @@ import {
   setBrochureImage,
 } from '@/app/(protected)/master-data-management/products/services/productBrochureImageService';
 import {
+  adoptSingleBrochureImages,
   listBrochureImages,
   listBrochureImagePromotionOptions,
 } from '../../services/brochureImageService';
@@ -53,6 +55,7 @@ const mockList = vi.mocked(listBrochureImages);
 const mockSet = vi.mocked(setBrochureImage);
 const mockPromotions = vi.mocked(listBrochureImagePromotionOptions);
 const mockToastError = vi.mocked(toast.error);
+const mockAdopt = vi.mocked(adoptSingleBrochureImages);
 
 /** A promise this test resolves or rejects on cue, to hold a save in flight. */
 function deferred<T>() {
@@ -138,6 +141,20 @@ function renderPicker() {
   return { ...utils, client };
 }
 
+/**
+ * Open a product's photo dialog.
+ *
+ * The candidates are no longer laid out under every row: with 11,390 products
+ * that buried the codes people navigate by. They open per row instead.
+ */
+async function openRow(productCode: string) {
+  const button = document.querySelector(`[data-dk-bi-open="${productCode}"]`);
+  expect(button).not.toBeNull();
+  await act(async () => {
+    fireEvent.click(button as HTMLElement);
+  });
+}
+
 /** The candidate tile for a filename, whatever wrapper it renders inside. */
 function tile(filename: string): HTMLElement {
   const found = document.querySelector(`[data-dk-bi-candidate="${filename}"]`);
@@ -148,6 +165,9 @@ function tile(filename: string): HTMLElement {
 beforeEach(() => {
   vi.clearAllMocks();
   mockPromotions.mockResolvedValue([]);
+  // Answers nothing unless a test says otherwise, so a fixture with a single
+  // candidate stays unanswered and the tests about CHOOSING still test choosing.
+  mockAdopt.mockResolvedValue([]);
 });
 
 describe('BrochureImagePicker', () => {
@@ -226,6 +246,7 @@ describe('BrochureImagePicker', () => {
     renderPicker();
 
     expect(await screen.findByText('SRTWC286-SH')).toBeInTheDocument();
+    await openRow('SRTWC286-SH');
     // The filename is the only thing telling a blank page apart from the
     // product, so it is never hidden behind a hover or a tooltip alone.
     expect(screen.getByText('SRTWC286-SH.jpg')).toBeInTheDocument();
@@ -233,15 +254,50 @@ describe('BrochureImagePicker', () => {
     expect(screen.getByText('SRTBF3141-GY_01.jpg')).toBeInTheDocument();
   });
 
-  it('leaves a single-candidate product unchosen until it is clicked', async () => {
+  it('takes the only photo a product has, without asking', async () => {
+    /*
+      This REVERSES the rule these tests used to pin, and the reversal is only
+      correct for one reason. Nothing is GUESSED on the user's behalf - a
+      filename that looks like the product code is still never trusted. But with
+      exactly ONE candidate there is no choice to get wrong: the renderer
+      already falls back to the first linked photo, so recording it changes
+      nothing a reader sees. 509 of the flyer's 535 products are in that state,
+      and asking somebody to press OK five hundred times is a toll, not a
+      decision.
+    */
     mockList.mockResolvedValue(page([SINGLE_CANDIDATE_ROW]));
+    mockAdopt.mockResolvedValue(['p-2']);
 
     renderPicker();
 
     await screen.findByText('SRTSCBD320');
-    expect(tile('SRTSCBD320.jpg')).toHaveAttribute('aria-pressed', 'false');
-    // Nothing is chosen on the user's behalf, however obvious the answer looks.
-    expect(mockSet).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockAdopt).toHaveBeenCalledWith(['p-2']));
+    // And it says so, rather than looking like a product somebody reviewed.
+    expect(await screen.findByText(/only photo/i)).toBeInTheDocument();
+  });
+
+  it('does not answer a product that has a real choice to make', async () => {
+    mockList.mockResolvedValue(page([MESSY_ROW]));
+
+    renderPicker();
+
+    await screen.findByText('SRTWC286-SH');
+    // Three candidates, one of them a blank page and one another product
+    // entirely. Somebody has to look.
+    await waitFor(() => expect(mockAdopt).not.toHaveBeenCalled());
+  });
+
+  it('does not answer a product that has no photo at all', async () => {
+    // Paired with a product that HAS photos: a page where nothing is choosable
+    // is a different screen entirely (its own empty state), and this test is
+    // about the row, not that state.
+    mockList.mockResolvedValue(page([NO_CANDIDATE_ROW, MESSY_ROW]));
+
+    renderPicker();
+
+    await screen.findByText('SRT2210-2');
+    // The answer there is a photo shoot, not a click.
+    await waitFor(() => expect(mockAdopt).not.toHaveBeenCalled());
   });
 
   it('keeps a product with no candidates in the list and says a photo is needed', async () => {
@@ -254,7 +310,12 @@ describe('BrochureImagePicker', () => {
     renderPicker();
 
     expect(await screen.findByText('SRT2210-2')).toBeInTheDocument();
-    expect(screen.getByText(/no photo is linked to this product yet/i)).toBeInTheDocument();
+    // Said on the row itself, where somebody scanning the list will see it.
+    // The longer sentence lives in the dialog, which this product cannot open.
+    expect(screen.getAllByText(/no photo/i).length).toBeGreaterThan(0);
+    expect(
+      document.querySelector('[data-dk-bi-open="SRT2210-2"]'),
+    ).toBeDisabled();
   });
 
   it('marks the candidate that is already chosen', async () => {
@@ -263,6 +324,7 @@ describe('BrochureImagePicker', () => {
     renderPicker();
 
     await screen.findByText('SRTWC8354-SH');
+    await openRow('SRTWC8354-SH');
     expect(tile('SRTWC8354-SH.jpg')).toHaveAttribute('aria-pressed', 'true');
     expect(tile('SRTWC8354-SH_02.jpg')).toHaveAttribute('aria-pressed', 'false');
   });
@@ -273,6 +335,8 @@ describe('BrochureImagePicker', () => {
 
     renderPicker();
     await screen.findByText('SRTWC286-SH');
+    await openRow('SRTWC286-SH');
+    await openRow('SRTWC286-SH');
 
     await act(async () => {
       fireEvent.click(tile('SRTBF3141-GY_01.jpg'));
@@ -286,6 +350,8 @@ describe('BrochureImagePicker', () => {
 
     renderPicker();
     await screen.findByText('SRTWC8354-SH');
+    await openRow('SRTWC8354-SH');
+    await openRow('SRTWC8354-SH');
 
     await act(async () => {
       fireEvent.click(tile('SRTWC8354-SH.jpg'));
@@ -310,6 +376,7 @@ describe('BrochureImagePicker', () => {
 
     const { container } = renderPicker();
     await screen.findByText('SRTSCBD320');
+    await openRow('SRTSCBD320');
 
     await act(async () => {
       fireEvent.click(tile('SRTSCBD320.jpg'));
@@ -321,6 +388,10 @@ describe('BrochureImagePicker', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
 
+    // The dialog has moved on to the next product by now - choosing is a
+    // sitting and each choice advances - so the mark is checked by coming back
+    // to the row rather than by whatever happens to be on screen.
+    await openRow('SRTSCBD320');
     expect(tile('SRTSCBD320.jpg')).toHaveAttribute('aria-pressed', 'true');
     expect(
       Array.from(container.querySelectorAll('[data-dk-bi-row]')).map((row) =>
@@ -341,6 +412,8 @@ describe('BrochureImagePicker', () => {
 
     const { container } = renderPicker();
     await screen.findByText('SRTSCBD320');
+    await openRow('SRTSCBD320');
+    await openRow('SRTSCBD320');
 
     await act(async () => {
       fireEvent.click(tile('SRTSCBD320.jpg'));
@@ -371,6 +444,7 @@ describe('BrochureImagePicker', () => {
 
     const { container } = renderPicker();
     await screen.findByText('SRTSCBD320');
+    await openRow('SRTSCBD320');
 
     await act(async () => {
       fireEvent.click(tile('SRTSCBD320.jpg'));
@@ -396,6 +470,7 @@ describe('BrochureImagePicker', () => {
 
     renderPicker();
     await screen.findByText('SRTWC8354-SH');
+    await openRow('SRTWC8354-SH');
 
     await act(async () => {
       fireEvent.click(tile('SRTWC8354-SH_02.jpg'));
@@ -417,6 +492,7 @@ describe('BrochureImagePicker', () => {
 
     renderPicker();
     await screen.findByText('SRTWC286-SH');
+    await openRow('SRTWC286-SH');
 
     await act(async () => {
       fireEvent.click(tile('61. BLANK PAGE_PG12.jpg'));
@@ -567,5 +643,88 @@ describe('BrochureImagePicker, a company with no product photos at all', () => {
 
     await waitFor(() => expect(container.querySelector('[data-dk-bi-empty]')).not.toBeNull());
     expect(container.querySelector('[data-dk-bi-no-photos]')).toBeNull();
+  });
+
+  it('walks to the next product without closing', async () => {
+    // Choosing photos is a sitting, not an errand. Closing to open the next row
+    // costs two clicks per product and loses the user's place.
+    mockList.mockResolvedValue(page([MESSY_ROW, CHOSEN_ROW]));
+
+    renderPicker();
+    await screen.findByText('SRTWC286-SH');
+    await openRow('SRTWC286-SH');
+
+    expect(screen.getByText('61. BLANK PAGE_PG12.jpg')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+    });
+
+    expect(screen.getByText('SRTWC8354-SH_02.jpg')).toBeInTheDocument();
+    expect(screen.queryByText('61. BLANK PAGE_PG12.jpg')).toBeNull();
+  });
+
+  it('walks back to the previous product', async () => {
+    mockList.mockResolvedValue(page([MESSY_ROW, CHOSEN_ROW]));
+
+    renderPicker();
+    await screen.findByText('SRTWC8354-SH');
+    await openRow('SRTWC8354-SH');
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /previous/i }));
+    });
+
+    expect(screen.getByText('61. BLANK PAGE_PG12.jpg')).toBeInTheDocument();
+  });
+
+  it('stops at both ends rather than wrapping round', async () => {
+    // Arriving back at the first product after the last reads as the list
+    // having reloaded, and the user starts again.
+    mockList.mockResolvedValue(page([MESSY_ROW, CHOSEN_ROW]));
+
+    renderPicker();
+    await screen.findByText('SRTWC286-SH');
+    await openRow('SRTWC286-SH');
+
+    expect(screen.getByRole('button', { name: /previous/i })).toBeDisabled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+    });
+
+    expect(screen.getByRole('button', { name: /next/i })).toBeDisabled();
+  });
+
+  it('moves on by itself once a photo is chosen', async () => {
+    mockList.mockResolvedValue(page([MESSY_ROW, CHOSEN_ROW]));
+    mockSet.mockResolvedValue({ productId: 'p-1', chosenAttachmentId: 'att-1' });
+
+    renderPicker();
+    await screen.findByText('SRTWC286-SH');
+    await openRow('SRTWC286-SH');
+
+    await act(async () => {
+      fireEvent.click(tile('SRTWC286-SH.jpg'));
+    });
+
+    // The next product, not a closed dialog: the whole point is that this is
+    // one sitting.
+    expect(await screen.findByText('SRTWC8354-SH_02.jpg')).toBeInTheDocument();
+  });
+
+  it('stays put on the last product so a final choice can be corrected', async () => {
+    mockList.mockResolvedValue(page([CHOSEN_ROW]));
+    mockSet.mockResolvedValue({ productId: 'p-4', chosenAttachmentId: 'att-21' });
+
+    renderPicker();
+    await screen.findByText('SRTWC8354-SH');
+    await openRow('SRTWC8354-SH');
+
+    await act(async () => {
+      fireEvent.click(tile('SRTWC8354-SH_02.jpg'));
+    });
+
+    expect(tile('SRTWC8354-SH_02.jpg')).toHaveAttribute('aria-pressed', 'true');
   });
 });

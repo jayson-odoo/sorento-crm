@@ -8,6 +8,7 @@ import { setBrochureImage } from '@/app/(protected)/master-data-management/produ
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 
 import {
+  adoptSingleBrochureImages,
   listBrochureImages,
   listBrochureImagePromotionOptions,
   type BrochureImageListParams,
@@ -34,6 +35,50 @@ export function useBrochureImagesQuery(params: BrochureImageListParams) {
     retry: 1,
   });
 }
+
+/**
+ * Answer every product on the page whose photo is not in doubt.
+ *
+ * Fired once per page of the worklist, and idempotent on the server, so a
+ * remount or a refetch costs one no-op request rather than churning
+ * `is_primary`. Silent on success: it is not news that a product with one photo
+ * uses that photo, and a toast per page would be noise between the user and the
+ * rows that DO need them.
+ */
+export function useAdoptSingleBrochureImages() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (productIds: string[]) => adoptSingleBrochureImages(productIds),
+    onSuccess: (adopted) => {
+      if (adopted.length === 0) return;
+      // Patched in place, exactly as a single choice is, and for the same
+      // reason: an invalidation with `only_unset` on would pull the answered
+      // rows out from under whoever is working down the list.
+      queryClient.setQueriesData<BrochureImagePage>(
+        { queryKey: [BROCHURE_IMAGES_QUERY_KEY] },
+        (current) => {
+          if (!current) return current;
+          const answered = new Set(adopted);
+          return {
+            ...current,
+            items: current.items.map((row) =>
+              answered.has(row.productId) && row.candidates.length === 1
+                ? { ...row, chosenAttachmentId: row.candidates[0].attachmentId }
+                : row,
+            ),
+            remaining: Math.max(0, current.remaining - adopted.length),
+          };
+        },
+      );
+    },
+    onError: (error: Error) => {
+      // Worth saying: the user will otherwise see single-photo products sitting
+      // unanswered and assume the screen is broken.
+      toast.error(error.message || 'Could not take the single photos');
+    },
+  });
+}
+
 
 export function useSetBrochureImage() {
   const queryClient = useQueryClient();

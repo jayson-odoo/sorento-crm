@@ -11,11 +11,22 @@
  * products' photographs. There is nothing to fix in the renderer; somebody has
  * to say which picture is the product.
  *
- * **Nothing is chosen on the user's behalf.** A filename matching the product
+ * **Nothing is GUESSED on the user's behalf.** A filename matching the product
  * code would identify the right image for 509 of 535 products, and that is
  * deliberately not used: a wrong photo is a wrong product in front of a
  * customer, and the same wrong photo fed to a mesh generator is that plus a
- * bill. Even a product with exactly one candidate takes a click.
+ * bill.
+ *
+ * A product with exactly ONE candidate is a different case, and it used to be
+ * treated the same. There is no choice to get wrong: the renderer already falls
+ * back to the first linked photo, so recording it changes nothing a reader sees.
+ * 509 of those products meant five hundred clicks that could each only go one
+ * way. They are now taken automatically and shown as taken.
+ *
+ * **A list, not a wall.** The candidates used to be laid out under every
+ * product on the page. With 11,390 products the codes - which is what somebody
+ * navigates by - were buried under their own pictures. The page is a list; the
+ * pictures open per row, and the dialog walks the same rows in the same order.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -23,21 +34,23 @@ import Link from 'next/link';
 
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { TriangleAlert, Check, ImageOff } from 'lucide-react';
+import { TriangleAlert, Check, ImageOff, Images } from 'lucide-react';
 
 import { BROCHURE_IMAGE_PAGE_SIZE, PROMOTION_PAGE_SIZE } from '../../services/brochureImageService';
 import {
+  useAdoptSingleBrochureImages,
   useBrochureImagePromotionOptions,
   useBrochureImagesQuery,
   useSetBrochureImage,
 } from '../hooks/useBrochureImages';
+import { BrochureImageDialog } from './BrochureImageDialog';
 
 export function BrochureImagePicker() {
   const [promotionId, setPromotionId] = useState('');
@@ -68,6 +81,9 @@ export function BrochureImagePicker() {
   });
 
   const setImage = useSetBrochureImage();
+  const adoptSingle = useAdoptSingleBrochureImages();
+  /** Which row of THIS page the dialog is showing, or null when it is closed. */
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
 
   /**
    * What the user just clicked, held until the refetch confirms it.
@@ -87,6 +103,28 @@ export function BrochureImagePicker() {
       })),
     [query.data, pendingChoice],
   );
+
+  /*
+    Products on this page whose photo is not in doubt, answered without asking.
+
+    Keyed on the ids so a refetch of the same page does not re-fire, and the
+    server call is idempotent besides. `mutate` is read from a ref-stable hook
+    result, so the effect depends on the ids alone rather than re-running every
+    render.
+  */
+  const singleCandidateIds = useMemo(
+    () =>
+      (query.data?.items ?? [])
+        .filter((row) => row.candidates.length === 1 && !row.chosenAttachmentId)
+        .map((row) => row.productId),
+    [query.data],
+  );
+  const adoptKey = singleCandidateIds.join(',');
+  const adoptMutate = adoptSingle.mutate;
+  useEffect(() => {
+    if (!adoptKey) return;
+    adoptMutate(adoptKey.split(','));
+  }, [adoptKey, adoptMutate]);
 
   const total = query.data?.total ?? 0;
   const remaining = query.data?.remaining ?? 0;
@@ -272,91 +310,103 @@ export function BrochureImagePicker() {
         </Card>
       )}
 
-      {query.isSuccess &&
-        !nothingToChooseFrom &&
-        rows.map((row) => (
-          <Card key={row.productId} data-dk-bi-row={row.productCode}>
-            <CardHeader className="flex-col items-start gap-1 py-5">
-              <CardTitle className="text-sm">
-                {row.productCode}
-                {row.chosenAttachmentId && (
-                  <Badge variant="success" appearance="light" size="sm" className="ms-2">
-                    chosen
-                  </Badge>
-                )}
-              </CardTitle>
-              <div className="text-xs text-muted-foreground">
-                {row.productName}
-                {row.candidates.length > 0 && (
-                  <>
-                    {' '}
-                    &middot; {row.candidates.length} candidate
-                    {row.candidates.length === 1 ? '' : 's'}
-                  </>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent className="py-4">
-              {row.candidates.length === 0 ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <ImageOff className="size-4" />
-                  No photo is linked to this product yet.
-                </div>
-              ) : (
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-3">
-                  {row.candidates.map((candidate) => {
-                    const isChosen = candidate.attachmentId === row.chosenAttachmentId;
-                    return (
-                      <button
-                        key={candidate.attachmentId}
-                        type="button"
-                        onClick={() => choose(row.productId, candidate.attachmentId, isChosen)}
-                        aria-pressed={isChosen}
-                        data-dk-bi-candidate={candidate.filename}
-                        className={`group flex flex-col gap-2 rounded-lg border p-2 text-start transition ${
-                          isChosen
-                            ? 'border-primary ring-2 ring-primary/25'
-                            : 'border-border hover:border-primary/50'
-                        }`}
-                      >
-                        <div className="relative aspect-square overflow-hidden rounded-md bg-muted">
-                          {candidate.url ? (
-                            // A plain img, not next/image: the src is a signed
-                            // URL on a storage host that changes per request,
-                            // which the optimiser cannot cache anyway.
-                            <img
-                              src={candidate.url}
-                              alt={candidate.filename}
-                              className="size-full object-cover"
-                            />
-                          ) : (
-                            <div className="flex size-full items-center justify-center text-muted-foreground">
-                              <ImageOff className="size-5" />
-                            </div>
-                          )}
-                          {isChosen && (
-                            <span className="absolute end-1 top-1 rounded-full bg-primary p-1 text-primary-foreground">
-                              <Check className="size-3" />
-                            </span>
-                          )}
+      {query.isSuccess && !nothingToChooseFrom && rows.length > 0 && (
+        <Card>
+          <CardContent className="p-0">
+            <div className="divide-y divide-border" data-dk-bi-list>
+              {rows.map((row, index) => {
+                const chosen = row.candidates.find(
+                  (candidate) => candidate.attachmentId === row.chosenAttachmentId,
+                );
+                const takenAutomatically =
+                  Boolean(row.chosenAttachmentId) && row.candidates.length === 1;
+
+                return (
+                  <div
+                    key={row.productId}
+                    className="flex items-center gap-3 px-4 py-3"
+                    data-dk-bi-row={row.productCode}
+                  >
+                    {/* The chosen photo, at row height. Small on purpose: this
+                        is a list somebody scans by CODE, and the thumbnail is
+                        confirmation rather than the thing being read. */}
+                    <div className="relative size-12 shrink-0 overflow-hidden rounded-md bg-muted">
+                      {chosen?.url ? (
+                        <img
+                          src={chosen.url}
+                          alt={chosen.filename}
+                          className="size-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex size-full items-center justify-center text-muted-foreground">
+                          <ImageOff className="size-4" />
                         </div>
-                        {/* The filename is the only thing distinguishing one
-                            thumbnail from another when the photo is of a
-                            different product entirely, so it is never hidden. */}
-                        <span className="truncate text-xs" title={candidate.filename}>
-                          {candidate.filename}
+                      )}
+                    </div>
+
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="truncate font-mono text-sm" title={row.productCode}>
+                          {row.productCode}
                         </span>
-                        {candidate.accessLevels?.includes('dealer') && (
-                          <span className="text-xs text-muted-foreground">dealer only</span>
+                        {row.chosenAttachmentId && (
+                          <Badge variant="success" appearance="light" size="sm">
+                            {/* Said out loud. A product that answered itself
+                                must not look like one somebody reviewed. */}
+                            {takenAutomatically ? 'only photo' : 'chosen'}
+                          </Badge>
                         )}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        ))}
+                      </div>
+                      <span className="truncate text-xs text-muted-foreground" title={row.productName}>
+                        {row.productName}
+                      </span>
+                    </div>
+
+                    <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
+                      {row.candidates.length === 0
+                        ? 'no photo'
+                        : `${row.candidates.length} photo${row.candidates.length === 1 ? '' : 's'}`}
+                    </span>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      disabled={row.candidates.length === 0}
+                      onClick={() => setOpenIndex(index)}
+                      data-dk-bi-open={row.productCode}
+                      aria-label={`Choose a photo for ${row.productCode}`}
+                    >
+                      <Images className="size-4" />
+                      <span className="hidden sm:inline">
+                        {row.chosenAttachmentId ? 'Change' : 'Choose'}
+                      </span>
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <BrochureImageDialog
+        rows={rows}
+        index={openIndex}
+        onIndexChange={setOpenIndex}
+        onChoose={(productId, attachmentId, isChosen) => {
+          choose(productId, attachmentId, isChosen);
+          // Straight on to the next product. Choosing a photo is a sitting, and
+          // making somebody close and reopen between each one is most of the
+          // work. The last row stays put rather than closing, so a final choice
+          // can still be corrected.
+          if (!isChosen) {
+            setOpenIndex((current) =>
+              current !== null && current < rows.length - 1 ? current + 1 : current,
+            );
+          }
+        }}
+      />
 
       {/* No pager behind the empty state: 456 pages of products with no photos
           is a lot of nothing to page through. */}

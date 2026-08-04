@@ -166,6 +166,33 @@ export async function listBrochureImages(
 }
 
 /** Page size for the promotion filter. Matches SearchableSelect's default. */
+/**
+ * Take the only photo a product has, for every product named here.
+ *
+ * A POST rather than something the list does on its way past: a read must not
+ * write. One request per page of the worklist, so 509 products with a single
+ * candidate cost one call instead of 509 clicks.
+ *
+ * Returns the products it actually answered - ones with no candidate, or with a
+ * choice to make, come back absent.
+ */
+export async function adoptSingleBrochureImages(productIds: string[]): Promise<string[]> {
+  if (productIds.length === 0) return [];
+
+  const response = await apiFetch(`${BASE}/adopt-single`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ product_ids: productIds }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not take the single photos'));
+  }
+
+  const wire = (await response.json()) as { productIds?: string[] };
+  return wire.productIds ?? [];
+}
+
+
 export const PROMOTION_PAGE_SIZE = 50;
 
 /**

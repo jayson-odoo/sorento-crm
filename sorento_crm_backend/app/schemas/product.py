@@ -438,6 +438,26 @@ class BrochureImageChoice(BaseModel):
     chosen_attachment_id: Optional[str] = Field(default=None, alias="chosenAttachmentId")
 
 
+class BrochureImageAdoptSingle(BaseModel):
+    """Which products to answer, where the answer is not in doubt.
+
+    A list rather than "everything matching the filter": the screen knows which
+    products it is showing, and a filter re-evaluated on the server could take
+    in rows the user never saw.
+    """
+
+    product_ids: List[str]
+
+
+class BrochureImageAdopted(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    # The ones actually answered. Products with no candidate, or with a choice
+    # to make, are absent - so the screen can say what it did rather than what
+    # it tried.
+    product_ids: List[str] = Field(default_factory=list, alias="productIds")
+
+
 # Max rows per product import (queued job); kept reasonable to avoid huge request payloads
 BULK_IMPORT_MAX_ROWS_PER_REQUEST = 50_000
 
