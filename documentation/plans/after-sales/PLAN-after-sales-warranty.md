@@ -1,7 +1,7 @@
 # PLAN - After-Sales, Warranty & Service Scheduling
 
-**Status:** **In build. S0, S1, S2, S2a, S2b, S3, S4 and S4a implemented; forms-platform F0 to F2c
-implemented alongside them.** Migrations 310 to 323. **S3-pre is RUN (2026-08-03) and passed** - see
+**Status:** **In build. S0, S1, S2, S2a, S2b, S3, S4, S4a and S5 (intake half) implemented; forms-platform F0 to F2c
+implemented alongside them.** Migrations 310 to 324. **S3-pre is RUN (2026-08-03) and passed** - see
 `S3-pre-extraction-accuracy.md`. **Fork 6's PDPA notice is BUILT** (migration 322,
 versioned + bilingual + admin-editable). **S3 Phases 1 and 2 are COMPLETE (2026-08-03)**:
 consumer intake journey, dealer + product resolution, the lodge transaction, three portal
@@ -1169,6 +1169,46 @@ contact was actually made.
 
 If either gate fails, this subsection drops out of S5 with no other change to the slice, and calls remain
 manual. That is the reason it is a subsection and not a dependency.
+
+---
+
+### S5 build state (2026-08-04)
+
+**The intake half is BUILT** (commits 1fa070c25, b2f6fa3d6). 35 tests. `intake_extractor`
+prompt key, `complaint_intake_service` (the burst-to-Complaint transaction),
+`complaint_intake_extractor` (the model call), `POST /api/v1/external/complaint-intake/submit`,
+and the `complaint_intake_submit` ToolSpec. Migration 324 adds
+`complaints.intake_burst_key` (partial UNIQUE index) and `intake_transcript`.
+
+Three decisions worth keeping:
+
+- **The idempotency guarantee is the index, not the lookup.** The first draft stored the key
+  in a text column and found it with an `ILIKE` scan - a sequential scan of every complaint,
+  and lookup-then-insert loses a race, so two n8n retries arriving together would both find
+  nothing and both write. The insert now catches the unique violation and returns the winner.
+- **The extractor is injected into the service.** AC-C8 forbids a keyword branch per phrasing,
+  and injection is what makes that testable: the service's tests assert what it DOES with an
+  extraction, never how English was parsed. It also means a model outage degrades intake to
+  "a Complaint carrying the raw transcript" instead of taking it down.
+- **Every extractor failure returns an empty extraction rather than raising.** No API key, a
+  failed call, unreadable JSON - all three file the Complaint anyway. Refusing would leave the
+  message in WhatsApp, which is where it already goes to die.
+
+**AC-C0c cannot be satisfied as written.** It requires `agent_mcp_tools` linkage seeded by the
+startup hook, but this schema has no such table and `mcp_tools` carries no `agent_id` column.
+`sync_catalog` maintains only the catalog row, which the existing startup hook already does
+for this tool. Needs either a schema for agent ownership or an amended AC.
+
+**Environment note:** the backend venv's editable `sorento_crm_mcp` resolves to the MAIN
+checkout, not this worktree, so `sync_catalog` here reads the main repo's catalog. The
+worktree's catalog entry is correct and committed; it simply cannot be observed from this
+venv without touching the main checkout.
+
+**Still open in S5, and both are gated on Sorento rather than on code:** the call path
+(AC-M36 to AC-M36f) needs one real test call to verify the `On Call ended` payload shape
+(AC-M36e) and confirmation that the trigger exists on the current n8n Respond.io node - the
+installed one reports 1.12.0 (Legacy) (AC-M36f). Per this plan, if either gate fails the
+subsection drops out of S5 with no other change and calls stay manual on S4's path.
 
 ---
 
