@@ -89,10 +89,13 @@ revised ETA, then check CIDB ePermit for inspection and approval dates, then typ
 - **A1b.** The "no container status imported yet" empty state on a packing list links to the
   import action itself (`?import=container-status` opens the dialog), never to a page where the
   user has to hunt for the upload.
-- **A1c.** The queued import is **visible while it runs**, exactly like the SPO allocation and
-  delivery order imports: the upload calls `notifyImportQueued()` so the Upload Activity drawer
-  opens and polls, and the toast offers a direct link to the import job. An import must never be a
-  fire-and-forget toast that leaves the user with nothing to watch.
+- **A1c.** The queued import is **visible while it runs**. The upload pushes an `import_job`
+  session through `useUploadManager().startSession(...)`, so the Upload Activity drawer opens
+  **already showing this import** - filename, row count, and a row that navigates to its import-job
+  page - and the toast carries the same link. `notifyImportQueued()` on its own is not enough: it
+  only invalidates the backend feed, and the feed has no row until the worker has created the job,
+  so the drawer opens on an empty panel. The backend entry replaces the optimistic one through the
+  normal reconcile path once it exists.
 - **A2.** The import reads **all 5 tabs**. The tab name is recorded on each row for traceability
   and is **never** used to derive status.
 - **A2a.** Parsing is **header-anchored, never positional**. Each sheet is scanned for rows whose

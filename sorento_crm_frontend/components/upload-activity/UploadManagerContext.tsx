@@ -197,6 +197,22 @@ export interface StartSessionInput {
   /** Per-file uploader. Required — must wrap the api-client POST and
    *  resolve to the attachment id (or throw on failure). */
   uploader: (file: File, batchId: string) => Promise<{ attachment_id: string }>;
+
+  // ---- `import_job` sessions (Excel/data imports) --------------------------
+  // Without these, an Excel import could only ever open the drawer and show
+  // nothing: `notifyImportQueued()` just invalidates the BE feed, and the feed
+  // has no row until the worker has created the job. These let the page that
+  // queued the import show its own row immediately; the BE entry replaces it
+  // through the normal reconcile path as soon as it exists.
+  /** The queued job's id, so the row navigates to its import-job page. */
+  importJobId?: string;
+  /** Override the derived title (filename for `single`, "N files" otherwise). */
+  title?: string;
+  /** Which import this is, for the row summary. */
+  jobType?: string;
+  /** Rows the dry run counted, so the row shows scale before the worker
+   *  reports any progress of its own. */
+  totalRows?: number;
 }
 
 const Ctx = createContext<UploadManagerApi | null>(null);
@@ -294,16 +310,19 @@ export function UploadManagerProvider({ children }: { children: ReactNode }) {
         session_id: sessionId,
         session_type: input.sessionType,
         title:
-          input.sessionType === 'single' && input.files[0]
+          input.title ??
+          (input.sessionType === 'single' && input.files[0]
             ? input.files[0].name
-            : `${input.files.length} files`,
+            : `${input.files.length} files`),
         started_at: nowIso,
         finished_at: null,
         status: 'uploading',
         aggregate: recomputeAggregate(files),
         files,
-        import_job_id: null,
+        import_job_id: input.importJobId ?? null,
         needs_action: false,
+        job_type: input.jobType ?? null,
+        total_rows: input.totalRows ?? null,
       };
 
       const blobs: Record<string, File> = {};

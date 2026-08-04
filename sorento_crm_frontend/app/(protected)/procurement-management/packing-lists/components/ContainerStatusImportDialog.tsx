@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { useImportJobDrawer } from '@/components/upload-activity';
+import { useUploadManager } from '@/components/upload-activity';
 import {
   TemplateUploadDialog,
   type TemplateUploadHelpers,
@@ -71,8 +71,10 @@ import {
 const MOCK_DRY_RUN: ValidateImportResult = {
   valid: true,
   errors: [],
+  // Warnings are for things the operator might need to ACT on. Block detection
+  // is how the parser works, not news - it stays in the code comment above and
+  // in A2a, and is deliberately not surfaced here.
   warnings: [
-    '9 header blocks across 5 tabs. Each block is anchored on its own row reading "CONTAINER" (Fitting 2 and 31, Ceramic 2, 69 and 75, Arrived 2, Arrived - Joint Mocha 2 and 22, Arrived (Mocha) Joint BL 2) and its columns are read from that row, so a repeated header opens a new section instead of failing as a data row.',
     'Ceramic labels its liner column "RL" while every other tab labels it "LINER"; Arrived uses "W/H ARRIVALS" for "WAREHOUSE ARRIVALS". Matched by name, so all 407 rows still resolve.',
     '475 numbered rows carry no container number and are skipped without an error. Arrived alone accounts for 427 of them.',
     '4 of the 9 blocks are empty scaffolding: Ceramic sections 2 and 3, Arrived - Joint Mocha section 2, and the whole Arrived (Mocha) Joint BL tab.',
@@ -99,7 +101,7 @@ export default function ContainerStatusImportDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
-  const { notifyImportQueued } = useImportJobDrawer();
+  const { startSession } = useUploadManager();
 
   const handleTest = async (): Promise<ValidateImportResult> => {
     await new Promise((r) => setTimeout(r, 900));
@@ -122,9 +124,28 @@ export default function ContainerStatusImportDialog({
     helpers?.setStatus?.('Queued for import');
     onOpenChange(false);
 
-    // Same handoff as the SPO and delivery order imports: open the Upload Activity
-    // drawer so the job is visible while it runs, and offer the job page directly.
-    notifyImportQueued();
+    // Push an `import_job` session so the drawer shows THIS import, not just an
+    // empty panel. `notifyImportQueued()` alone only invalidates the backend feed,
+    // and the feed has no row until the worker has created the job - so the drawer
+    // opens on nothing, which is exactly what it must not do. `startSession` opens
+    // the drawer itself and the real BE row replaces this one on reconcile.
+    if (file) {
+      startSession({
+        files: [file],
+        sessionType: 'import_job',
+        importJobId: MOCK_JOB_ID,
+        title: file.name,
+        jobType: 'container_status',
+        totalRows: MOCK_DRY_RUN.summary?.total_rows as number,
+        // PHASE 1 MOCK - S3 replaces this with the multipart POST that returns
+        // { job_id, queued: true }, and importJobId becomes that job_id.
+        uploader: async () => {
+          await new Promise((r) => setTimeout(r, 700));
+          return { attachment_id: MOCK_JOB_ID };
+        },
+      });
+    }
+
     toast.success(
       `${file?.name ?? 'Workbook'} queued. Clearance dates appear on each container once the import finishes.`,
       {
