@@ -1,13 +1,15 @@
 # PLAN - After-Sales, Warranty & Service Scheduling
 
-**Status:** **In build. S0, S1, S2, S2a, S2b, S3, S4, S4a and S5 (intake half) implemented; forms-platform F0 to F2c
-implemented alongside them.** Migrations 310 to 324. **S3-pre is RUN (2026-08-03) and passed** - see
+**Status:** **In build. S0, S1, S2, S2a, S2b, S3, S4, S4a, S5 (intake half) and S6 (backend) implemented;
+forms-platform F0 to F2c implemented alongside them.** Migrations 310 to 326. **S3-pre is RUN (2026-08-03) and passed** - see
 `S3-pre-extraction-accuracy.md`. **Fork 6's PDPA notice is BUILT** (migration 322,
 versioned + bilingual + admin-editable). **S3 Phases 1 and 2 are COMPLETE (2026-08-03)**:
 consumer intake journey, dealer + product resolution, the lodge transaction, three portal
 routes, receipt extraction on its own form key, and Consumer 360 as the ledger's first read
-surface. Phase 3 (code review) is the remaining gate before a PR. Next slice after that:
-**S5**. Outstanding for Sorento rather than for the build: sign-off on the Malay wording.
+surface. Phase 3 (code review) is the remaining gate before a PR. **S6's backend is COMPLETE
+(2026-08-04)**: the status graph, the dispatch service, the API, three permission slugs, and the
+technician / external-provider masters. The dispatch board and technician portal front ends are the
+remaining S6 work. Next slice after that: **S7**. Outstanding for Sorento rather than for the build: sign-off on the Malay wording.
 The `consumer_icon` question is CLOSED - text-only tiles accepted 2026-08-03. Everything below the "In build, S0" history is the
 original plan text, amended in place.
 
@@ -1213,6 +1215,20 @@ subsection drops out of S5 with no other change and calls stay manual on S4's pa
 ---
 
 ## S6 - Service Jobs, dispatch and the technician
+
+**Status: backend implemented 2026-08-04.** Migrations `325_service_jobs` and
+`326_seed_service_job_graph`; gates `tests/test_service_jobs_foundation.py` (15),
+`tests/test_service_job_dispatch.py` (24), `tests/test_service_job_endpoints.py` (17).
+Delivered: the `service_job` status graph on the engine (FK-based, seven states), the dispatch
+service (AC-F5's two-part confirm gate, rejected-attempt history, waiting attribution consumed from
+S4a, the job's own clocks), the board and stall reads, case cost lines, and CRUD for technicians and
+external providers under three new permission slugs
+(`complaint_management.service_jobs.view` / `.dispatch`, `complaint_management.case_costs.manage`).
+Two deviations from the text below, both deliberate and both explained where they are made: the
+numbering rule seeds `SV{yy}/{month:02d}-` rather than `SV{year}/{month}-` (an unpadded month sorts
+10 before 8), and `technicians.respond_contact_id` is TEXT rather than uuid because
+`respond_contacts.id` is TEXT. **Remaining: the dispatch board UI and the technician portal**, plus
+the photo-type configuration that rides S2a's validator.
 
 Satisfies **AC-F1 to AC-F23** (except **AC-F10 to AC-F18**, whose mechanism moved to **S2a**), plus
 **AC-M28, AC-M29, AC-M30, AC-M31**. Consumes **S2a** (validator) and **S4a** (waiting attribution).
