@@ -206,6 +206,12 @@ async def startup_event():
     except Exception as e:
         logging.error(f"Failed to register status entities: {str(e)}", exc_info=True)
     try:
+        from app.services.service_job_status_graph import register_service_job_status_entity
+        register_service_job_status_entity()
+        logging.info("Status entity registered: service_job")
+    except Exception as e:
+        logging.error(f"Failed to register status entities: {str(e)}", exc_info=True)
+    try:
         from app.services.workflow_submission_status_graph import (
             register_workflow_submission_status_entity,
         )

@@ -403,6 +403,39 @@ PERMISSION_REGISTRY.extend([
 ])
 
 
+# Service jobs (S6). Three slugs, and the split is about who is trusted with what,
+# not about screen count.
+#
+# `dispatch` is separate from `view` because dispatching commits a person to a place
+# at a time: a CS agent reading a case to answer the phone should not be one misclick
+# from re-assigning somebody's afternoon. `costs.manage` is separate again because a
+# cost line is money leaving the company, and the people who schedule vans are not
+# automatically the people who record what the plumber charged.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "complaint_management.service_jobs.view",
+        "name": "View Service Jobs",
+        "description": "Open service jobs, the dispatch board and the stall list.",
+    },
+    {
+        "slug": "complaint_management.service_jobs.dispatch",
+        "name": "Dispatch Service Jobs",
+        "description": (
+            "Raise, confirm, assign and cancel service jobs. Commits a technician to "
+            "a site at a time, so it is a separate grant from viewing."
+        ),
+    },
+    {
+        "slug": "complaint_management.case_costs.manage",
+        "name": "Record Case Costs",
+        "description": (
+            "Record and remove what a case cost Sorento (labour, parts, travel). "
+            "Independent of chargeability, which is the customer-facing number."
+        ),
+    },
+])
+
+
 # Status engine (ADR-0001) — CORE plumbing that other modules ride. Configuring a
 # state machine changes what every record of that entity can legally do, so edit is
 # a deliberately separate grant from view.
