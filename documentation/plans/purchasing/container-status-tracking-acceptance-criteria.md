@@ -1,0 +1,278 @@
+# Container status tracking - acceptance criteria
+
+> Status: DRAFT 2026-08-04, written FIRST per methodology, grilled with the user before any code.
+> Source material: `Container Status 2026.xlsx` (5 tabs, **407 real unique containers** across 411
+> container-bearing rows - `Fitting` 20 open, `Ceramic` 57 open, `Arrived` 318 archived,
+> `Arrived - Joint Mocha Container` 16, `Arrived (Mocha) Joint BL` 0 populated; the 4 remaining rows
+> are repeated header rows whose container cell reads literally `CONTAINER`). **No container appears
+> in more than one tab** - verified, so there is no cross-tab precedence problem on import. CIDB
+> `Procedures for Importing Construction Products 5th Edition`, live `sorento-consume-main` +
+> `sub-get-results` n8n workflows.
+>
+> Guardrail: integration-sourced values NEVER overwrite a human-entered value. They land in a
+> separate append-only ledger and exist only to validate the system against the Excel before the
+> Excel is retired.
+
+## Journey
+
+Four actors. In phase 1 the sheet stays the source of truth and nobody is asked to change how they
+work. What changes is that the data stops being trapped in a file.
+
+### The sheet maintainer - purchasing / logistics
+
+Today they check each liner's website daily by shipper + container number to learn ETA and the
+revised ETA, then check CIDB ePermit for inspection and approval dates, then type all of it into
+`Container Status 2026.xlsx`. Roughly 500 containers a year, ~77 open at any time.
+
+1. **They keep maintaining the Excel exactly as today.** Deliberate. Phase 1 asks them to change
+   nothing about their own process, because a cutover before the data is trusted is how dual
+   sources of truth get born.
+2. **They upload the sheet** at **Resource Management -> Files**, attachment type `Container
+   Status`. They fill in nothing else - the file carries every field.
+3. **A toast confirms the job is queued**, and a notification arrives on completion. Import Job
+   Details shows per-row outcomes, including which rows were rejected and why.
+4. **They open Procurement -> Packing Lists** and the containers they already know now carry
+   clearance dates, plus the containers that previously existed only in the sheet are present.
+5. **What they hold at the end:** they stop answering "where is my container" by hand, and they can
+   see for the first time whether the liner and ePermit feeds would have told them sooner.
+
+### The contact asking on WhatsApp - access-gated
+
+1. **They send a question in their own words** - "what's the eta delay for GXYU5106903", "when is
+   the Yanggang container reaching", "has the CIDB approval come out".
+2. **The system already knows** who they are (Respond contact -> access types -> company) and which
+   agents they hold. They supply nothing but the question.
+3. **They get the answer they asked for**, one line, with the date it was last known good. Not the
+   record, not 51 fields, not a table.
+4. **They ask for the sheet** - "send me container status" - and receive the actual uploaded
+   workbook as a file in the chat.
+5. **A contact without the grant gets neither**, and is never told the data exists.
+
+### The admin
+
+1. **Grants `container_status_enquiries`** to specific contacts. Nothing is visible by default.
+2. **Maintains liner and forwarder options** as lookup sets, including aliases so the sheet's dirty
+   spellings resolve on import.
+3. **Reads the validation report** and gets the one sentence that justifies retiring the Excel:
+   how often the feeds agree, how often they disagreed, and how many days earlier they knew.
+
+### The system, unattended
+
+1. **Container tracking aggregator pushes on ETA change** -> one observation row, timestamped. The
+   record is not touched.
+2. **CIDB ePermit is polled** for inspection and approval -> observation rows. The record is not
+   touched.
+3. **Every external call writes an `integration_log` row**, success or failure.
+
+---
+
+## Acceptance criteria
+
+### A. Capture - upload and import (journey: maintainer 2-4)
+
+- **A1.** A new attachment type `Container Status` exists. Uploading a file of that type at
+  `/resource-management/attachment-directories` enqueues a container-status import on the `imports`
+  RQ queue and returns immediately with a queued toast.
+- **A2.** The import reads **all 5 tabs**. The tab name is recorded on each row for traceability
+  and is **never** used to derive status.
+- **A3.** Rows are matched to `inbound_shipments` on **normalized container number** (uppercase,
+  separators stripped) across **every** `shipment_status`, including `fully_received` and
+  `completed`. Matched rows are updated in place; unmatched rows create a new shipment.
+- **A4.** Given the current workbook and the current database (112 shipments, 111 of which appear in
+  the workbook), a first import updates 111 in place and creates **296**, ending at **408**
+  shipments. A second import of the same file changes no row count and no field value.
+- **A5.** A blank cell **never clears** an existing value. Sheet value wins only when non-empty.
+- **A6.** A row whose container number fails ISO 6346 (4 letters + 7 digits) is rejected, not
+  silently skipped, and appears in Import Job Details with a reason. In the current workbook exactly
+  4 rows fail it - the repeated header rows whose container cell reads `CONTAINER` and whose `LINER`
+  reads `LINER` (`Fitting` r31, `Ceramic` r69, `Ceramic` r75, `Arrived - Joint Mocha` r22). No other
+  row fails, so the rule is neither over- nor under-inclusive on real data.
+- **A6a.** The importer asserts container uniqueness within a single import run and reports any
+  collision rather than last-write-wins. Verified today at zero collisions; the assertion is what
+  keeps that true if a future workbook changes.
+- **A7.** The original uploaded bytes are retained (`import_jobs.source_file_key`) and the
+  attachment row persists. Re-uploads accumulate; nothing is overwritten or deleted.
+- **A8.** Cost columns are **not** imported in phase 1 (decision D9). The retained original file is
+  what preserves them.
+
+### B. Storage shape (journey: maintainer 4)
+
+- **B1.** The 29 operational columns land as flat columns on `inbound_shipments`. No milestone
+  table, no milestone-policy table (decisions D3, D4).
+- **B2.** `LINER`, `CHINA FORWARDER`, `MALAYSIA FORWARDER` and `LOC` resolve through
+  `lookup_sets` / `lookup_options`, bound to their columns, with `lookup_option_keywords` carrying
+  aliases so `KAIDILA`/`Kaidila` and `MAE`/`Maersk` both resolve. No new reference tables.
+- **B3.** `InboundShipment` carries `__audit_track__ = True`, so every ETA revision writes an
+  `audit_logs` row with `old_values`/`new_values`. There is no revision table (decision D5).
+- **B4.** `REMARKS 1/2/3` become `activity_events` rows with `kind='user_update'` - the shared
+  feed, **not** `internal_notes` (which is private to its author and would hide them).
+- **B5.** `inbound_shipments` is registered as a status entity and carries `status_id`. The legacy
+  `shipment_status` string is retained as a denormalized cache so the existing dedup logic and
+  `eta_from`/`eta_to` filters keep working untouched.
+- **B6.** Auto-transitions key on `ETA DELAY <= today` or `W/H ARRIVALS`, **never** on `ATA` -
+  which is populated in 6 of 411 rows because `ETA DELAY` does double duty as the de-facto arrival
+  date.
+- **B7.** `ATA`, `ORI DOC RECEIVED`, `K1 SUBMISSION` and `YARD ARRIVALS` are stored but carry no
+  status node, no alert and no integration. Fill rates are 6, 4, 4 and 4 out of 411.
+
+### C. Answering (journey: contact 1-3)
+
+**Division of labour (decision D15-revised): the CRM is the answer provider, n8n is the
+orchestrator.** The CRM exposes every field the caller is entitled to see and enforces who may see
+what. n8n knows which attribute was asked for and decides what to say. Narrowing is n8n's job;
+visibility is ours.
+
+- **C1.** A new access agent `container_status_enquiries` exists. No contact holds it by default;
+  it is granted per contact via `contact_agent_access`.
+- **C2.** **No new query tool.** `crm_incoming_stock_list` (existing, at
+  `/api/v1/incoming-stock/list`) is extended with the clearance fields. There is exactly one
+  shipment-rooted list tool, so there is no tool-picking ambiguity to design against.
+- **C3.** **Clearance fields are gated server-side on the caller**, never by prompt and never by n8n
+  alone. For a contact caller, entitlement resolves from `contact_id` -> `contact_access_types`; for
+  a staff caller, from the JWT principal's permissions. A caller without entitlement receives the
+  response **with the clearance keys absent**, not null-filled and not empty-stringed - absence is
+  the only shape that cannot be mistaken for "no gatepass yet".
+- **C4.** A salesperson-equivalent contact calling `crm_incoming_stock_list` today receives byte-for-
+  byte what they receive before this change. Regression-tested explicitly, because this is the
+  failure the user flagged: *"once deployed, all the eta delay, gate pass will be visible to
+  salesperson"*.
+- **C5.** n8n's safeguard is an **additional** layer on top of C3, not the mechanism. If the n8n
+  safeguard were removed entirely, an unentitled caller would still receive no clearance field.
+- **C6.** `sub-get-results`' output schema gains an **optional** `direct_answer` field carrying the
+  answer to `user_goal`. Existing agents' outputs remain valid without it. Only the new agent's
+  intents populate it.
+- **C7.** The `answers[]` "return every record, never a sample" rule is **not** relaxed. List intents
+  keep it; point lookups answer through `direct_answer`. **Consequence to accept:** if n8n does not
+  implement the narrowing, a point lookup still renders a full record - the dump is prevented in n8n,
+  not in the CRM.
+- **C8.** `escalated_agent` in the `sub-get-results` prompt enum is extended to include the new
+  agent, or escalation to it silently fails.
+- **C9.** Asked "what's the eta delay for GXYU5106903", an entitled contact receives the ETA delay
+  date and its as-of date as the reply. They do not receive a field dump, and no caller ever receives
+  a cost field (no cost column is imported in phase 1).
+- **C10.** Server-side `view=answer` projection via `PRESENTER_TOOLS` is **deferred**, not built.
+  With n8n narrowing, it is redundant in phase 1. Revisit only if n8n-side narrowing proves
+  unreliable across paraphrases.
+
+### D. Serving the sheet (journey: contact 4)
+
+**Access as data, not code (D19/D20/D21).** The scalability requirement is that a new file or a
+newly-sensitive field must be *configuration*, never a deploy. `attachments.access_levels` already
+proves the shape works at scale - Promotion files split `["dealer"]` 198 / `["end_user"]` 96 /
+`["sorento_office"]` 59 rows today with no code. What is missing is enforcement, and one generic tool
+rather than one tool per document.
+
+- **D1.** **No new attachment tool and no new endpoint.** `crm_resource_attachments_list` +
+  `attachment_type_id` filter serves container status. A type-pinned tool would be unreachable anyway:
+  the RAG side only surfaces the generic list.
+- **D2.** **Caller may narrow, never widen.** When `contact_id`/`space_id` is supplied, the backend
+  resolves that contact's codes via the existing
+  `ContactAccessTypeService.resolve_contact_access_codes` and **intersects** them with the caller's
+  requested `access_levels`. A caller that omits `access_levels`, or asks for codes the contact does
+  not hold, receives only what the contact is entitled to.
+  - Today `access_levels` is a caller-supplied Query filter (`app/api/v1/resources/attachments.py:239`)
+    and `sub-get-results` passes a precomputed intersection, so **n8n is the enforcement**. This AC
+    closes a pre-existing gap affecting every promotion, catalogue and stock-list file - not only
+    container status.
+- **D3.** **Field visibility is data:** `resource_field_access (resource_key, field_name,
+  access_levels jsonb)`. The serializer intersects with the caller's entitlement and **omits**
+  non-permitted keys. A newly-sensitive field is one row, no deploy. This is what satisfies "a contact
+  may access incoming stock but not certain dates".
+- **D4.** **Unmapped fields stay visible.** Absence of a policy row means no restriction, so existing
+  responses are unchanged. Proven by a test asserting today's responses are byte-identical.
+- **D5.** **Attachment types carry natural-language aliases** (same pattern as
+  `lookup_option_keywords`), so "send me the container status", "price tag template" and "warranty"
+  each resolve to a type without a tool per document. This is the one-time build that makes every
+  future document configuration-only.
+- **D6.** Container status attachments carry `access_levels = ["sorento_office"]`.
+- **D7.** **Every upload is retained**; the list returns the newest by `created_at`. Prior uploads
+  remain as attachments and as per-job `import_jobs.source_file_key` bytes, which is what makes a bad
+  re-import reversible.
+- **D8.** Delivery uses the existing path with **zero n8n changes on the file-send leg**: the agent
+  maps `file_path` -> `url`, `stored_filename` -> `filename`, `mime_type` -> `mimeType`, sets
+  `response_intro` to "I have attached the file(s) below.", and consume-main's `get-presigned-url` +
+  `send-message-files` nodes carry it to Respond.
+
+### E. Integrations - observe, never overwrite (journey: system 1-3)
+
+- **E1.** `shipment_tracking_observations (shipment_id, field_key, observed_value, source,
+  source_ref, observed_at, fetched_at)` is append-only. Only integrations write it. No human write
+  path exists.
+- **E2.** No integration write ever mutates a column on `inbound_shipments`. Verified by a test
+  that runs a full observation ingest and asserts the shipment row is byte-identical.
+- **E3.** Container tracking runs through one adapter registry keyed on carrier. **Per-carrier
+  adapters are the implementation** (decision D13-revised), starting with CMA
+  (`https://www.cma-cgm.com/ebusiness/tracking`, searched by container number). The registry shape is
+  unchanged from the aggregator design, so an aggregator or a third-party per-carrier API can be
+  dropped in later as just another adapter without touching callers.
+- **E3a.** Because a scraper has no push channel, acquisition is **polled, not webhooked**. The
+  scheduler home is the existing `scheduled_task_service.register_handler(key, handler)` + RQ
+  dispatch. Scope is open containers only (~77), one pass per day, staggered.
+- **E3b.** A carrier adapter that cannot fetch (403, bot challenge, markup drift, timeout) records the
+  failure in `integration_log` and writes **no** observation. It must never write a guessed or
+  partially-parsed value, and it must not mark the carrier unsupported on a transient failure -
+  `unsupported` is for carriers with no adapter, not for adapters that broke.
+- **E4.** Lookup is **by container number only**. The sheet's `LINER` value selects the adapter and is
+  also cross-checked against whatever carrier identity the page returns; a mismatch is reported as a
+  data-quality flag.
+- **E5.** A carrier with **no adapter built** produces an observation row with `source='unsupported'`
+  and flags the carrier's lookup option. Coverage is now the sum of adapters built, not ~92% - with
+  CMA alone it is **79 of 407 rows (19%)**. The uncovered remainder must never appear covered. No
+  silent caps.
+- **E5a.** Adapter build order follows volume, not convenience: **WHL 116, CMA 79, OOCL 72, MSC 25,
+  COSCO 22** (= 77% cumulative), then EMC 21, YML 19, TCLC 19, SITC 12. CMA first is accepted as the
+  *pattern* sample; WHL is the largest single win.
+- **E6.** CIDB ePermit (`epermit.dagangnet.com.my`, Sorento's own account) is an authenticated
+  adapter producing `inspection` and `approval` observations. Credentials live in
+  `Integration.credentials_json`. Built and tested against `epermitdev.dagangnet.com.my` first.
+- **E7.** Every external call writes an `integration_log` row on success **and** failure, with
+  `business_table='inbound_shipments'` and `business_id` = the shipment UUID.
+- **E8.** `coa_permit_no` exists on `inbound_shipments`.
+
+### F. Validation surface (journey: admin 3)
+
+- **F1.** A read-only page under `system-management` (sibling to `api-call-logs` / `import-logs`)
+  lists container, field, sheet value, observed value, verdict and lag in days.
+- **F2.** Verdict is one of `agree`, `disagree`, `integration_led`. `integration_led` carries the
+  lag: observed on the 2nd, typed on the 5th = 3 days.
+- **F3.** The page shows one aggregate line - "over N containers: X% agree, Y% integration led by
+  avg Z days, W% disagree".
+- **F4.** Observed values are **not** rendered on the packing-list detail page in phase 1. Nothing
+  invites a user to treat them as authoritative.
+
+### G. Read surface (journey: maintainer 4)
+
+- **G1.** The existing `procurement-management/packing-lists` list and detail pages are extended.
+  No second page is created for the same entity.
+- **G2.** New operational columns are added to the DataGrid **hidden by default** and surfaced
+  through the existing `list_query` column-config personalization keyed by `listing_key`.
+- **G3.** The detail page gains a "Clearance & Delivery" section rendering every milestone date,
+  always shown, with an explicit empty state per the CRUD UX standard.
+- **G4.** Status pills come from `lib/status-pill.ts`, driven by the status graph.
+- **G5.** No inline editing and no bulk-set in phase 1. The upload is the update mechanism
+  (decision D12).
+
+---
+
+## Explicitly out of scope in phase 1
+
+| Item | Why |
+|---|---|
+| 22 cost columns | Not needed for Q&A; retained original file preserves them (D9) |
+| Generated Excel export in system format | Phase 1 serves the uploaded original (D10) |
+| Bulk-set / inline date editing | Upload is the update path; `bulk_update_registry` is ready when wanted (D12) |
+| Form SLA chasing and escalation | Worthless until dates land daily; handling lock is wrong for a container (D6) |
+| `cidb_required` derivation | Cannot be derived from the sheet; lands with the ePermit adapter (D11) |
+| Making `direct_answer` required for all agents | Needs the golden-master regression harness first (D8) |
+| A new `container_status` query tool / domain | Reversed. One shipment-rooted list tool; n8n orchestrates (D15-revised) |
+| Server-side `view=answer` projection | Redundant while n8n narrows (C10) |
+| Cutover off the Excel | Deliberate. The validation report is what earns it. |
+
+## Open items requiring the user or a third party
+
+| # | Item | Blocks |
+|---|---|---|
+| O1 | **How the CMA scraper fetches.** A plain HTTP GET of `https://www.cma-cgm.com/ebusiness/tracking` returns **403 Forbidden**, so `httpx` alone cannot do it. The backend has `httpx` and no HTML parser and no browser; the image is `python:3.11-slim` (pango/cairo were already added for WeasyPrint, same class of native-dependency cost). Pick one: (a) headless Chromium in the backend/worker image, (b) a separate scraper container the worker calls, (c) a rendering/unblocking proxy, (d) a third-party per-carrier API. This is a spike, not a guess. | E3, E3a, E3b, E4 |
+| O2 | ePermit login for Sorento's account | E6 - the screen scrape cannot be designed unseen |
+| O3 | Which contacts get `container_status_enquiries` | C1 configuration only, not the build |
+| O4 | Ask DagangNet (careline, 1300 133 133) for a supported system-to-system feed | Would replace the E6 scraper entirely |

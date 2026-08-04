@@ -28,6 +28,7 @@ import { useDownloadAttachment } from '@/app/(protected)/resource-management/att
 import { getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import { toast } from 'sonner';
 import ComplaintLinkAttachmentBrowserDialog from '@/app/(protected)/complaint-management/complaints/components/ComplaintLinkAttachmentBrowserDialog';
+import ClearanceDeliveryCard from './ClearanceDeliveryCard';
 
 interface PackingListDetailProps {
   packingListId: string;
@@ -291,6 +292,8 @@ export default function PackingListDetail({
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <ClearanceDeliveryCard packingList={packingList} />
+
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Shipment Information</CardTitle>

@@ -16,6 +16,9 @@ import {
   type PackingListsListParams,
 } from '../services/packingListService';
 import type { PackingListFormData } from '../types/packingList.types';
+// PHASE 1 MOCK — remove this import and the two `withMockClearance` calls below when
+// S4 (issue #62) lands the real clearance fields on the endpoint.
+import { withMockClearance } from '../__mocks__/containerStatusClearance';
 
 /**
  * Prev/next neighbours of a packing list within the active filtered+sorted list set.
@@ -45,7 +48,11 @@ export function usePackingLists(params: PackingListsListParams) {
       params.supplier_id,
       params.shipment_status,
     ],
-    queryFn: () => getPackingLists(params),
+    queryFn: async () => {
+      const result = await getPackingLists(params);
+      // PHASE 1 MOCK: overlay clearance fields by container number.
+      return { ...result, data: (result.data ?? []).map(withMockClearance) };
+    },
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,
@@ -56,9 +63,10 @@ export function usePackingLists(params: PackingListsListParams) {
 export function usePackingList(id: string | null) {
   return useQuery({
     queryKey: ['packing-list', id],
-    queryFn: () => {
+    queryFn: async () => {
       if (!id) throw new Error('Packing list ID is required');
-      return getPackingList(id);
+      // PHASE 1 MOCK: overlay clearance fields by container number.
+      return withMockClearance(await getPackingList(id));
     },
     enabled: !!id,
     retry: 1,

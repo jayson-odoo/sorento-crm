@@ -37,7 +37,7 @@ export interface InboundShipmentLine {
   }>;
 }
 
-export interface PackingList {
+export interface PackingList extends ClearanceFields {
   id: string;
   shipment_number: string | null;
   supplier_id: string;
@@ -78,6 +78,57 @@ export interface PackingList {
   spo_allocations_count?: number;
   display_total_items?: number | null;
   display_total_cartons?: number | null;
+}
+
+/**
+ * Container-status clearance fields.
+ *
+ * PHASE 1 CONTRACT (mocked). These arrive on the same `inbound_shipments` row as
+ * the packing list: one Container Status sheet row = one packing list. Every field
+ * is optional because a caller without entitlement receives the keys **absent**,
+ * not null - absent means "you may not see this", null means "not reached yet".
+ * See documentation/plans/purchasing/container-status-tracking-acceptance-criteria.md
+ * sections B and C.
+ */
+export interface ClearanceFields {
+  /** Yard / warehouse location code (sheet column LOC). */
+  loc?: string | null;
+  liner_code?: string | null;
+  china_forwarder?: string | null;
+  malaysia_forwarder?: string | null;
+  consignee?: string | null;
+  /** Free days before demurrage / detention starts. */
+  free_days_available?: number | null;
+  stacked?: string | null;
+
+  loading_date?: string | null;
+  etc_date?: string | null;
+  etd_date?: string | null;
+  /** First-published ETA. */
+  eta_date?: string | null;
+  /** Revised ETA - the accurate one. Doubles as de-facto arrival. */
+  eta_delay_date?: string | null;
+  inspection_date?: string | null;
+  approval_date?: string | null;
+  gatepass_date?: string | null;
+  delivery_warehouse?: string | null;
+  warehouse_arrival_date?: string | null;
+  informed_collection_date?: string | null;
+  collection_date?: string | null;
+
+  /**
+   * Dead in practice - kept for round-tripping the sheet only. Fill rates across
+   * 411 rows: ata 6, ori_doc_received 4, k1_submission 4, yard_arrival 4.
+   * No status node, alert or integration keys off these.
+   */
+  ata_date?: string | null;
+  ori_doc_received_date?: string | null;
+  k1_submission_date?: string | null;
+  yard_arrival_date?: string | null;
+
+  coa_permit_no?: string | null;
+  /** Which workbook tab the row came from. Traceability only - never derives status. */
+  source_sheet?: string | null;
 }
 
 export interface PackingListDetail extends PackingList {

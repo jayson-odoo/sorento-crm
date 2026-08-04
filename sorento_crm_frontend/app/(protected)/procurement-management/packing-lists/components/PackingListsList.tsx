@@ -8,6 +8,7 @@ import {
   PaginationState,
   RowSelectionState,
   SortingState,
+  VisibilityState,
   useReactTable,
   getCoreRowModel,
   getFilteredRowModel,
@@ -43,6 +44,31 @@ export default function PackingListsList() {
     { id: 'created_at', desc: true },
   ]);
   const [searchQuery, setSearchQuery] = useState('');
+  /**
+   * Clearance columns are OFF by default. There are 17 of them; showing them all
+   * would bury the eight columns everyone already uses. Each user turns on the ones
+   * they care about via the toolbar's column picker and the choice persists through
+   * the existing `listing_key` column-config personalization.
+   */
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
+    liner_code: false,
+    china_forwarder: false,
+    malaysia_forwarder: false,
+    consignee: false,
+    loc: false,
+    free_days_available: false,
+    loading_date: false,
+    etc_date: false,
+    etd_date: false,
+    eta_date: false,
+    eta_delay_date: false,
+    inspection_date: false,
+    approval_date: false,
+    gatepass_date: false,
+    warehouse_arrival_date: false,
+    informed_collection_date: false,
+    collection_date: false,
+  });
   const [packingListToDelete, setPackingListToDelete] =
     useState<PackingList | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
@@ -69,8 +95,49 @@ export default function PackingListsList() {
     router.push(`/procurement-management/packing-lists/${packingListId}${qs}`);
   };
 
-  const columns = useMemo<ColumnDef<PackingList>[]>(
-    () => [
+  const columns = useMemo<ColumnDef<PackingList>[]>(() => {
+    /** Clearance date column: same shape 11 times, so build it once. */
+    const dateColumn = (
+      key: keyof PackingList,
+      title: string,
+      size = 130,
+    ): ColumnDef<PackingList> => ({
+      accessorKey: key as string,
+      header: ({ column }) => (
+        <DataGridColumnHeader title={title} column={column} />
+      ),
+      cell: ({ row }) => {
+        const value = row.original[key] as string | null | undefined;
+        return value ? formatDate(new Date(value)) : '-';
+      },
+      size,
+      meta: { headerTitle: title, skeleton: <Skeleton className="h-4 w-20" /> },
+    });
+
+    /** Clearance text column - truncated with a title, per ARCHITECTURE-RULES. */
+    const textColumn = (
+      key: keyof PackingList,
+      title: string,
+      size = 140,
+    ): ColumnDef<PackingList> => ({
+      accessorKey: key as string,
+      header: ({ column }) => (
+        <DataGridColumnHeader title={title} column={column} />
+      ),
+      cell: ({ row }) => {
+        const value = row.original[key] as string | number | null | undefined;
+        if (value === null || value === undefined || value === '') return '-';
+        return (
+          <span className="block truncate" title={String(value)}>
+            {String(value)}
+          </span>
+        );
+      },
+      size,
+      meta: { headerTitle: title, skeleton: <Skeleton className="h-4 w-24" /> },
+    });
+
+    return [
       buildSelectColumn<PackingList>(),
       {
         accessorKey: 'shipment_number',
@@ -161,6 +228,24 @@ export default function PackingListsList() {
         size: 120,
         meta: { headerTitle: 'Created At', skeleton: <Skeleton className="h-4 w-20" /> },
       },
+      // --- Container status / clearance chain. All hidden by default. ---
+      textColumn('liner_code', 'Liner', 110),
+      textColumn('china_forwarder', 'China Forwarder'),
+      textColumn('malaysia_forwarder', 'MY Forwarder'),
+      textColumn('consignee', 'Consignee', 170),
+      textColumn('loc', 'Loc', 90),
+      textColumn('free_days_available', 'Free Days', 110),
+      dateColumn('loading_date', 'Loading'),
+      dateColumn('etc_date', 'ETC', 110),
+      dateColumn('etd_date', 'ETD', 110),
+      dateColumn('eta_date', 'ETA', 110),
+      dateColumn('eta_delay_date', 'ETA Delay'),
+      dateColumn('inspection_date', 'Inspection'),
+      dateColumn('approval_date', 'Approval'),
+      dateColumn('gatepass_date', 'Gatepass'),
+      dateColumn('warehouse_arrival_date', 'W/H Arrival'),
+      dateColumn('informed_collection_date', 'Informed Collection', 170),
+      dateColumn('collection_date', 'Collection'),
       {
         accessorKey: 'actions',
         header: '',
@@ -185,20 +270,21 @@ export default function PackingListsList() {
         size: 80,
         enableHiding: false,
       },
-    ],
-    [],
-  );
+    ];
+  }, []);
 
   const table = useReactTable({
     columns,
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting, rowSelection },
+    state: { pagination, sorting, columnVisibility, rowSelection },
     enableRowSelection: true,
     onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
+    onColumnVisibilityChange: setColumnVisibility,
+    columnResizeMode: 'onChange',
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
@@ -214,7 +300,7 @@ export default function PackingListsList() {
       isLoading={isLoading}
       onRowClick={handleRowClick}
       standardToolbar={false}
-      tableLayout={{ columnsVisibility: true }}
+      tableLayout={{ width: 'fixed', columnsVisibility: true, columnsResizable: true }}
     >
       <Card>
         <CardHeader className="block">
