@@ -178,7 +178,18 @@ Frontend DataGrid-backed list services should build query params via `buildDataG
 
 ### Plan First
 
-Always make a short plan before executing a task. For small changes, the plan can be a brief checklist in the agent's working notes or user update. For larger changes, identify the files/areas to inspect, expected implementation steps, and verification commands before editing.
+`PRINCIPLES.md` governs and defines a **mandatory order** for every non-trivial feature: guided
+journey → grill → UAC → plan → Phase 1 frontend mock → Phase 2 backend TDD → Phase 3 code review
+→ Definition of Done gate. Skipping or reordering a step is a process violation; if a step cannot
+be done, say so explicitly in the PR description rather than dropping it silently. Read
+`PRINCIPLES.md` before starting.
+
+In Claude Code, run this pipeline with `/feature` (`.claude/skills/feature/SKILL.md`). Agents
+without that skill follow the same order manually.
+
+For small changes, a brief checklist in the agent's working notes is enough. For larger changes,
+identify the files/areas to inspect, expected implementation steps, and verification commands
+before editing.
 
 ### Frontend Layering
 
@@ -266,6 +277,44 @@ Frontend env uses `.env` / `.env.local`. Important variables include `DATABASE_U
 MCP env requires `CRM_BASE_URL` and `EXTERNAL_API_KEY`; optional settings include host, port, timeout, max response size, and log level.
 
 Never commit real secrets.
+
+## Agent Skills
+
+Shared configuration so any agent resolves the same tracker, labels and domain docs. Full detail
+in `documentation/agents/`.
+
+### Delivery pipeline
+
+Non-trivial feature work follows the mandatory order in `PRINCIPLES.md`. Claude Code runs it via
+`/feature`; the skill map at the bottom of `.claude/skills/feature/SKILL.md` names which skill
+belongs at each step. Two rules override the `mattpocock-skills` plugin:
+
+1. **Files are the contract, tickets are the queue.** The UAC and PLAN files under
+   `documentation/plans/<domain>/` are the source of truth. `to-spec` writes there — it does not
+   publish a spec issue. An issue that contradicts the UAC loses.
+2. **Frontend mock before any backend code.** `implement` has no concept of Phase 1, so scope it
+   to Phase 2 only. `prototype` output is throwaway and must never become the shipped frontend.
+
+### Issue tracker
+
+GitHub Issues on `jayson-odoo/sorento-crm`, via the `gh` CLI. See
+`documentation/agents/issue-tracker.md`.
+
+### Triage labels
+
+`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix` — all five exist on
+the repo. See `documentation/agents/triage-labels.md`.
+
+### Domain docs
+
+Multi-context. `CONTEXT-MAP.md` at the root indexes two glossaries: root `CONTEXT.md` (Dealer
+Sales Kit, Authoring, Products and selling, Space and design, After-sales, Supply and purchasing)
+and `documentation/CONTEXT.md` (Project Sales, Company vs Tenant, Core vs Module). ADRs live in
+`documentation/adr/`. Use the glossary's vocabulary in output; flag ADR conflicts rather than
+silently overriding them. See `documentation/agents/domain.md`.
+
+Note this repo uses `documentation/`, not `docs/`. Anything referring to `docs/adr/` means
+`documentation/adr/`.
 
 ## Assumptions
 
