@@ -967,3 +967,46 @@ def test_someone_who_may_not_view_the_project_cannot_export_its_quotation(api):
     with _without_permission(VIEW):
         denied = client.get(f"{root}/{document['id']}/issues/{issue['id']}/xlsx")
     assert denied.status_code in (401, 403), denied.text
+
+
+# ------------------------------------------------------------------- AC-H1 (wire)
+
+
+def test_the_document_tells_the_client_whether_it_has_been_signed(api):
+    """The Issue CTA is gated on the signature, so the client has to be able to SEE the
+    signature after a page refresh, not only in the response to its own sign call.
+
+    Without it the client has to guess, and the only available guess - "it is issued, so it
+    must have been signed" - is wrong twice. It is wrong on a document issued before the
+    signature gate existed, where it enables an Issue button the server then refuses with
+    `quotation_document_unsigned`. And it is wrong the other way on a signed DRAFT, where a
+    refresh loses the signature and the client disables issuing on a document that is ready to
+    go. Same family as the get_user rule: a column that never reaches the serializer never
+    reaches the screen."""
+    client, db, _company_id, _user_id, project, _party = api
+    root = f"{BASE}/projects/{project.id}/quotation-documents"
+    document = _create_document(client, project.id)
+
+    before = client.get(f"{root}/{document['id']}").json()
+    assert before["is_signed"] is False
+    assert before["signatory_signature"] is None
+
+    _sign(client, root, document["id"])
+
+    after = client.get(f"{root}/{document['id']}").json()
+    assert after["is_signed"] is True
+    signature = after["signatory_signature"]
+    assert signature is not None
+    # Enough to RENDER, not just a boolean: the screen shows who signed and when beside the ink.
+    assert signature["signer_name"] == f"{MARKER} Baser"
+    assert signature["image_data_uri"] == "data:image/png;base64,zzt"
+    assert signature["mode"] == "draw"
+    assert signature["signed_at"]
+
+    # It survives into the list, which is where a salesperson scans for what is ready to issue.
+    listed = next(
+        row
+        for row in client.get(root).json()["data"]
+        if row["id"] == document["id"]
+    )
+    assert listed["is_signed"] is True

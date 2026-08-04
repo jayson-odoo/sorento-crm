@@ -39,9 +39,8 @@ export function QuotationSignatureBlock({
   /** Passed in rather than read off `document`: the screen owns where it got the signature. */
   sorentoSignature?: QuotationSignatureRecord | null;
   /**
-   * The counter-signature, which lives on the ISSUE. Not carried by the document contract, so it
-   * is a prop rather than a read off `document`: the counter-sign page has it today, and this
-   * panel starts showing it the moment an internal route serializes it.
+   * The counter-signature, which lives on the ISSUE rather than the document (the issue is the
+   * copy the customer held and signed). A prop for that reason, fed from the newest issue.
    */
   customerSignature?: QuotationSignatureRecord | null;
   acceptedAt?: string | null;

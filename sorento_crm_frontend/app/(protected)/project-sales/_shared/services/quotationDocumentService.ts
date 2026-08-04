@@ -79,15 +79,13 @@ export type QuotationDocument = {
   /**
    * The signature held on the DRAFT, which is what makes the document issuable (AC-H1).
    *
-   * OPTIONAL because the document GET does not serialize it yet: `serialize_document` returns no
-   * signature, so on a fresh page load a signed draft is indistinguishable from an unsigned one.
-   * The POST /sign response writes it into the cached document (see `useQuotationDocumentMutations`)
-   * so the screen is right for the whole session in which somebody signs, and the day the backend
-   * adds `signatory_signature` to the serializer this field starts arriving for free with no other
-   * change. Until then a reloaded signed draft asks to be signed again, which the backend accepts
-   * (re-signing a draft replaces the draft signature and never touches an issued copy).
+   * Serialized on every document read, so it survives a refresh. It has to: the Issue CTA is
+   * gated on it, and the only alternative signal (`is_issued`) gives the wrong answer on a
+   * document issued before the signature gate existed.
    */
   signatory_signature?: QuotationSignatureRecord | null;
+  /** The same fact as a flag, for list rows that do not need the ink itself. */
+  is_signed?: boolean;
 };
 
 export type QuotationIssue = {
@@ -100,6 +98,13 @@ export type QuotationIssue = {
   issued_by_name: string | null;
   grand_total: string;
   scope_count: number;
+  /**
+   * The customer's acceptance. It belongs to the ISSUE, because that is the thing they held and
+   * signed, but the screen watching for it is the document, so it travels with the issue history.
+   */
+  customer_signature?: QuotationSignatureRecord | null;
+  accepted_at?: string | null;
+  is_accepted?: boolean;
 };
 
 export type QuotationDocumentBody = Partial<{
@@ -299,5 +304,25 @@ export async function downloadQuotationIssuePdf(
   );
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to generate the PDF'));
+  return response.blob();
+}
+
+/**
+ * The same issue as a workbook, one sheet per scope.
+ *
+ * A separate call rather than a format flag on the PDF one: the two artifacts have different
+ * audiences (the PDF is the document of record, this is what the customer's QS re-prices in) and
+ * the caller saves this one instead of opening it.
+ */
+export async function downloadQuotationIssueXlsx(
+  projectId: string,
+  documentId: string,
+  issueId: string,
+): Promise<Blob> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/issues/${issueId}/xlsx`,
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to generate the Excel file'));
   return response.blob();
 }

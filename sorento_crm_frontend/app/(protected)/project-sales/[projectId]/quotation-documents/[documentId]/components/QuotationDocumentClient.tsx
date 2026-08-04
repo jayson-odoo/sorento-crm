@@ -120,11 +120,11 @@ export function QuotationDocumentClient({
    * `quotation_document_unsigned`, so the CTA says so up front rather than letting somebody
    * press it and read an error.
    *
-   * `is_issued` counts as signed because the server could not have issued it otherwise; the
-   * signature itself only reaches this screen through the sign response (see the note on
-   * `QuotationDocument.signatory_signature`).
+   * Read off the signature alone. "It is issued, so it must have been signed" looks equivalent
+   * and is wrong on any document issued before the gate existed: the button goes live and the
+   * server refuses it.
    */
-  const isSigned = Boolean(sorentoSignature) || record.is_issued;
+  const isSigned = Boolean(sorentoSignature);
 
   async function openIssuePdf() {
     if (!latestIssue) return;
@@ -155,6 +155,28 @@ export function QuotationDocumentClient({
     } catch {
       // The mutation already toasted the reason, including the 503 a host without the native
       // rendering libraries answers with.
+    }
+  }
+
+  async function saveIssueXlsx() {
+    if (!latestIssue) return;
+    try {
+      const blob = await mutations.issueXlsx.mutateAsync({
+        id: documentId,
+        issueId: latestIssue.id,
+      });
+      const url = URL.createObjectURL(blob);
+      // Saved, never opened in a tab: no browser renders a workbook, so window.open would show
+      // the user a blank tab and then a download anyway.
+      const anchor = window.document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${record.document_no.replace(/\//g, '-')}-R${latestIssue.issue_no}.xlsx`;
+      window.document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch {
+      // Already toasted by the mutation.
     }
   }
 
@@ -249,11 +271,18 @@ export function QuotationDocumentClient({
                   )}
                 </span>
               </DropdownMenuItem>
-              <DropdownMenuItem disabled>
+              <DropdownMenuItem
+                disabled={!record.is_issued || mutations.issueXlsx.isPending}
+                onSelect={() => void saveIssueXlsx()}
+              >
                 <Download className="size-4" aria-hidden />
                 <span className="min-w-0">
                   Download Excel
-                  <span className="block text-xs text-muted-foreground">Not built yet</span>
+                  {!record.is_issued && (
+                    <span className="block text-xs text-muted-foreground">
+                      Issue it first
+                    </span>
+                  )}
                 </span>
               </DropdownMenuItem>
               {canEdit && (
@@ -386,7 +415,15 @@ export function QuotationDocumentClient({
 
       <QuotationCoverLetterPanel html={record.cover_letter_html} />
       <QuotationTermsPanel html={record.terms_html} />
-      <QuotationSignatureBlock document={record} sorentoSignature={sorentoSignature} />
+      {/* The counter-signature is read off the LATEST issue, which is the copy the customer is
+          holding. An older revision may have been accepted too, but what this panel answers is
+          "where does the current quotation stand", and that is the newest one. */}
+      <QuotationSignatureBlock
+        document={record}
+        sorentoSignature={sorentoSignature}
+        customerSignature={latestIssue?.customer_signature ?? null}
+        acceptedAt={latestIssue?.accepted_at ?? null}
+      />
 
       <QuotationSignDialog
         open={signing}

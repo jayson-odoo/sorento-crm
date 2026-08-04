@@ -13,9 +13,9 @@ import { extractApiError } from '@/lib/api-client';
  * 1. **Plain `fetch`, not `apiFetch`.** `apiFetch` mints a NextAuth bearer token and attaches it
  *    to anything under `/api/v1/`. The signer is a stranger with no session, and a staff member
  *    opening the same link would otherwise send their own credential to a public endpoint. Plain
- *    `fetch` on a relative path is also what the contact portal already does
+ *    `fetch` against a resolved base is also what the contact portal already does
  *    (`app/(auth)/portal/lib/portal-client.ts`), so this is the established public-surface path
- *    rather than a new one.
+ *    rather than a new one. See `apiBase` below for why the base cannot be left off.
  * 2. **A typed error carrying the HTTP status**, because the page has to tell "this link is dead"
  *    (a calm, final message) apart from "the network hiccuped" (retry). A bare Error string cannot.
  *
@@ -24,7 +24,25 @@ import { extractApiError } from '@/lib/api-client';
  * up here - and a float sum is how a quotation ends up disagreeing with its own PDF by a cent.
  */
 
-const BASE = '/api/v1/public/quotation-sign';
+const PATH = '/api/v1/public/quotation-sign';
+
+/**
+ * Where the backend actually is.
+ *
+ * A relative path alone is NOT enough, and looks fine right up until it 404s: the dev rewrite in
+ * `next.config` only proxies `/api/v1/*` when `NEXT_PUBLIC_API_URL` is UNSET. Set it (every
+ * deployed environment does, and so does any worktree running the backend off :8000) and the
+ * relative URL resolves against the Next origin, which serves no such route. Same resolution the
+ * contact portal uses, for the same reason.
+ */
+function apiBase(): string {
+  const configured = process.env.NEXT_PUBLIC_API_URL;
+  return configured ? configured.replace(/\/$/, '') : '';
+}
+
+function signUrl(path: string): string {
+  return `${apiBase()}${PATH}${path}`;
+}
 
 /** Carries the status so the page can render 404 as a resting state, not as a failure. */
 export class QuotationSignError extends Error {
@@ -106,7 +124,7 @@ export type QuotationSignAcceptBody = {
 };
 
 export async function getQuotationSignPage(token: string): Promise<QuotationSignPage> {
-  const response = await fetch(`${BASE}/${encodeURIComponent(token)}`);
+  const response = await fetch(signUrl(`/${encodeURIComponent(token)}`));
   if (!response.ok) {
     throw new QuotationSignError(
       await extractApiError(response, 'This quotation could not be loaded.'),
@@ -120,7 +138,7 @@ export async function acceptQuotation(
   token: string,
   body: QuotationSignAcceptBody,
 ): Promise<QuotationSignPage> {
-  const response = await fetch(`${BASE}/${encodeURIComponent(token)}/accept`, {
+  const response = await fetch(signUrl(`/${encodeURIComponent(token)}/accept`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

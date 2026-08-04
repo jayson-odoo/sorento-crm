@@ -8,6 +8,7 @@ import {
   createQuotationSignLink,
   deleteQuotationDocument,
   downloadQuotationIssuePdf,
+  downloadQuotationIssueXlsx,
   getQuotationDocument,
   issueQuotationDocument,
   listQuotationDocuments,
@@ -172,6 +173,13 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
     onError: (error: Error) => toast.error(error.message),
   });
 
+  /** The issued workbook as bytes. Same shape as `issuePdf`; the caller decides what to do. */
+  const issueXlsx = useMutation({
+    mutationFn: ({ id, issueId }: { id: string; issueId: string }) =>
+      downloadQuotationIssueXlsx(projectId, id, issueId),
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   return {
     create,
     update,
@@ -182,6 +190,7 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
     sign,
     signLink,
     issuePdf,
+    issueXlsx,
     documentId,
   };
 }

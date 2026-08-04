@@ -166,9 +166,18 @@ describe('QuotationDocumentClient signing gate', () => {
     expect(screen.queryByRole('button', { name: 'Sign' })).not.toBeInTheDocument();
   });
 
-  it('treats an issued document as signed, because the server could not have issued it otherwise', async () => {
+  it('refuses to re-issue an issued document that carries no signature', async () => {
+    // "It is issued, so it must have been signed" is the tempting shortcut and it is wrong on
+    // every document issued before the signature gate existed. Those rows are real: pressing
+    // Issue on one puts the user straight into the server's `quotation_document_unsigned` 422.
+    // Signed-ness is read off the signature and nothing else.
     getQuotationDocument.mockResolvedValue(
-      quotationDocument({ is_issued: true, current_issue_no: 1, issue_count: 1 }),
+      quotationDocument({
+        is_issued: true,
+        current_issue_no: 1,
+        issue_count: 1,
+        signatory_signature: null,
+      }),
     );
     listQuotationIssues.mockResolvedValue([
       {
@@ -186,8 +195,10 @@ describe('QuotationDocumentClient signing gate', () => {
     renderScreen();
 
     const issue = await screen.findByRole('button', { name: 'Issue R2' });
-    expect(issue).toBeEnabled();
-    expect(screen.queryByText('Sign it first')).not.toBeInTheDocument();
+    expect(issue).toBeDisabled();
+    expect(issue).toHaveAttribute('title', 'Sign it first');
+    // And the way out is offered, not just the refusal.
+    expect(screen.getByRole('button', { name: 'Sign' })).toBeEnabled();
   });
 
   it('shows the captured signature read-only in the signatures panel', async () => {

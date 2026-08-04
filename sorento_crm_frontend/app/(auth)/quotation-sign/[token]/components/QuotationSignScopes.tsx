@@ -22,17 +22,29 @@ function text(value: string | null | undefined): string {
 }
 
 /**
- * The money column for ONE line.
+ * Money on a line, where zero means "no separate charge" and the cell stays empty.
  *
- * A rate-only line prints the WORDS. `RM 0.00` would tell the customer the item is free and a
- * blank cell reads as a rendering fault, while what is true is that they are being quoted a rate
- * nobody adds into the total (AC-C2 / AC-D3, and the same rule the PDF renderer follows).
+ * Quotations list the parts of a complete set on their own rows, priced at nothing because the
+ * money is already on the parent item. `RM 0.00` on those rows tells the customer they are
+ * getting four free products, and this page is the one they are signing. Same rule as the PDF and
+ * the workbook, deliberately: the three have to agree.
+ */
+function lineMoney(value: string | null | undefined): string {
+  const amount = Number(value ?? 0);
+  return Number.isFinite(amount) && amount === 0 ? '' : formatMyrExact(value ?? '0');
+}
+
+/**
+ * The amount column for ONE line.
+ *
+ * A rate-only line prints the WORDS rather than a blank, because it is a different fact: not "no
+ * separate charge" but "quoted at this rate, and not added into the total" (AC-C2 / AC-D3).
  */
 function LineAmount({ line }: { line: QuotationSignLine }) {
   if (line.is_rate_only) {
     return <span className="italic text-muted-foreground">rate only</span>;
   }
-  return <span className="tabular-nums">{formatMyrExact(line.amount ?? '0')}</span>;
+  return <span className="tabular-nums">{lineMoney(line.amount)}</span>;
 }
 
 function ScopeTable({ lines }: { lines: QuotationSignLine[] }) {
@@ -85,7 +97,7 @@ function ScopeTable({ lines }: { lines: QuotationSignLine[] }) {
                   <td className="px-2 py-2">{text(line.product_code)}</td>
                   <td className="px-2 py-2 text-right tabular-nums">{formatQty(line.quantity)}</td>
                   <td className="px-2 py-2 text-right tabular-nums">
-                    {formatMyrExact(line.unit_price)}
+                    {lineMoney(line.unit_price)}
                   </td>
                   <td className="px-2 py-2 text-muted-foreground">{text(line.complete_set)}</td>
                   <td className="px-2 py-2 text-right">

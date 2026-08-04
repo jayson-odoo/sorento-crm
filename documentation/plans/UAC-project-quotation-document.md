@@ -1,11 +1,22 @@
 # UAC — Quotation as a DOCUMENT (multi-scope, cover letter, issue snapshot)
 
-**Status:** written, not built. Open questions ANSWERED by the client on 2026-08-04 and folded
-in below (Groups A, E, F, H). Awaiting the grill on the answered shape.
+**Status:** BUILT (S1-S8) on `feat/project-lead-to-so`, 2026-08-04. Open questions were answered
+by the client the same day and are folded in below (Groups A, E, F, H).
 **Slug:** project-quotation-document
 **Source:** client review of the built quotation screens (images 40-41) plus the real
 artifact `Cabana Elmina - nadi cergas R2.xlsx` (Sorento → Nadi Cergas, 2026-02-26,
 TOTAL AMOUNT RM 696,923).
+
+Verified end to end in a browser against real production-copy data, not fixtures: signed as
+Sorento, minted the counter-sign link, signed as the customer at 375px, and confirmed AC-H7 by
+reading the database (scope `won`, project `won`).
+
+Two ACs are NOT met, recorded here rather than quietly dropped:
+
+- **AC-F1's sender block** still prints `Sorento` alone. `companies` holds no legal name,
+  registration number, address or phone, which the artifact table below already marks `✗`.
+- **AC-H3's reusable saved signature** is not built. The pad captures every time; nothing is
+  stored against the user for one-click re-use.
 
 The client's words: *"got a header as like the excel, then can add multiple tabs (meaning
 add multiple scope), then in each scope can add lines, then the total we should always put

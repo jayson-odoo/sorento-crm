@@ -1462,6 +1462,12 @@ class ProjectQuotationIssueResponse(BaseModel):
     grand_total: Decimal = Decimal("0.00")
     scope_count: int = 0
 
+    # The customer's acceptance lives on the issue, but the screen watching for it is the
+    # document, so it has to travel with the issue history the document reads.
+    customer_signature: Optional["QuotationSignatureResponse"] = None
+    accepted_at: Optional[datetime] = None
+    is_accepted: bool = False
+
 
 class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     model_config = ConfigDict(from_attributes=True)
@@ -1483,6 +1489,11 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     issue_count: int = 0
     current_issue_no: Optional[int] = None
     is_issued: bool = False
+
+    # AC-H1 gates issuing on the signature, so it has to survive a page refresh. Forward-declared
+    # because the signature schema is defined further down; resolved by the model_rebuild below.
+    signatory_signature: Optional["QuotationSignatureResponse"] = None
+    is_signed: bool = False
 
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -1567,6 +1578,11 @@ class QuotationSignatureResponse(BaseModel):
     # Null when the browser refused. The screen shows "-" rather than hiding the field.
     gps_lat: Optional[Decimal] = None
     gps_lng: Optional[Decimal] = None
+
+
+# Both refer to the signature above by name, so they cannot be built until here.
+ProjectQuotationIssueResponse.model_rebuild()
+ProjectQuotationDocumentResponse.model_rebuild()
 
 
 class QuotationSignScopeLine(BaseModel):

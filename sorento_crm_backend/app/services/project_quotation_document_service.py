@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.models.base import company_scope, set_company_scope
 from app.models.numbering import DocumentNumberingRule
 from app.models.projects import (
     QUOTATION_OUTCOME_LOST,
@@ -437,6 +438,16 @@ def serialize_document(db: Session, document: ProjectQuotationDocument) -> Dict[
     scopes = list_scopes(db, document)
     summaries = [_scope_summary(db, scope) for scope in scopes]
     latest = current_issue(db, document)
+    # AC-H1 gates issuing on this, so the client has to be able to read it after a refresh and
+    # not only in the response to its own sign call. "It is issued, so it must be signed" is not
+    # a safe substitute: it is wrong on documents issued before the gate existed.
+    signature = (
+        db.query(QuotationSignature)
+        .filter(QuotationSignature.id == document.signatory_signature_id)
+        .first()
+        if document.signatory_signature_id
+        else None
+    )
     issue_count = (
         db.query(func.count(ProjectQuotationIssue.id))
         .filter(ProjectQuotationIssue.document_id == document.id)
@@ -466,6 +477,8 @@ def serialize_document(db: Session, document: ProjectQuotationDocument) -> Dict[
         "terms_html": document.terms_html,
         "signatory_name": document.signatory_name,
         "signatory_phone": document.signatory_phone,
+        "signatory_signature": _serialize_signature(signature),
+        "is_signed": signature is not None,
         "scopes": summaries,
         "grand_total": sum((row["scope_total"] for row in summaries), ZERO),
         "issue_count": int(issue_count),
@@ -505,6 +518,18 @@ def serialize_issue(db: Session, record: ProjectQuotationIssue) -> Dict[str, Any
         "issued_by_name": name,
         "grand_total": Decimal(record.grand_total or 0),
         "scope_count": int(scope_count),
+        # The acceptance lands HERE, on the thing the customer actually held and signed, while the
+        # screen watching for it is the document. Without these the document panel says "not
+        # counter-signed yet" forever on a quotation that is already won.
+        "customer_signature": _serialize_signature(
+            db.query(QuotationSignature)
+            .filter(QuotationSignature.id == record.customer_signature_id)
+            .first()
+            if record.customer_signature_id
+            else None
+        ),
+        "accepted_at": record.accepted_at,
+        "is_accepted": record.accepted_at is not None,
     }
 
 
@@ -687,12 +712,24 @@ def get_issue_by_sign_token(db: Session, token: str) -> ProjectQuotationIssue:
 
     Deliberately one message for both: telling a caller that a token exists but has expired
     confirms the token, and this endpoint is public.
+
+    Resolved with the company scope OPEN, then pinned shut to the issue's own company. The signer
+    is a stranger with no session and no API key, so the scope resolver leaves this request at
+    UNSET, which is fail-closed and reads zero rows from every owned table: without the open
+    window a live link answers "no longer valid" and the customer is told to ask for a resend of
+    something that was never broken. The token is what makes opening it safe, being globally
+    unique and the whole credential. Pinning afterwards is not optional: everything the handler
+    reads next (scopes, lines, signatures) must stay inside the company the token belongs to, or
+    one leaked link becomes a reader for every company's data.
     """
-    record = (
-        db.query(ProjectQuotationIssue)
-        .filter(ProjectQuotationIssue.sign_token == token)
-        .first()
-    )
+    with company_scope(db, None):
+        record = (
+            db.query(ProjectQuotationIssue)
+            .filter(ProjectQuotationIssue.sign_token == token)
+            .first()
+        )
+    if record is not None and record.company_id:
+        set_company_scope(db, frozenset({str(record.company_id)}))
     if (
         record is None
         or record.sign_token_expires_at is None

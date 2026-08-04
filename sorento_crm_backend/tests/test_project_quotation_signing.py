@@ -393,3 +393,101 @@ def test_the_sign_page_shows_what_was_issued_not_what_changed_since():
         after = qdocs.serialize_sign_page(db, record)
         assert after["grand_total"] == PRICED_TOTAL
         assert after["scopes"][0]["scope_total"] == PRICED_TOTAL
+
+
+# ------------------------------------------------------- the public wire (AC-H4)
+
+
+def test_the_customer_reaches_the_page_with_no_credential_but_only_their_own_company():
+    """The signer is a stranger: no session, no API key, nothing but the link.
+
+    That collides with company isolation, which is fail-closed by design - a request that
+    resolves no company scope reads ZERO rows from every owned table. So the service tests here
+    all pass while the actual public URL answers 404 for a perfectly live token, and the customer
+    is told to ask Sorento to resend a link that was never broken. It only reproduces over HTTP,
+    which is why this test goes through the app rather than calling the service.
+
+    The token is what makes this safe to answer at all: it is globally unique and IS the
+    credential, so it is resolved without a scope and then the scope is PINNED to that issue's own
+    company. The pinning is the half that matters and is asserted below, because resolving the
+    token unscoped and then leaving the session wide open would turn one leaked link into a reader
+    for every company's data.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.database import get_db
+    from app.main import app
+    from app.models.base import UNSET, get_company_scope
+
+    with blank_session() as db:
+        _project_row, document, owner, _scopes = _setup(db)
+        _sign_draft(db, document, owner)
+        record = qdocs.issue(db, document=document, actor_user_id=owner)
+        token = qdocs.issue_sign_link(db, record=record)
+        company_id = str(document.company_id)
+        db.commit()
+
+        # No auth override and no scope override: exactly what a customer's browser sends.
+        app.dependency_overrides[get_db] = lambda: db
+        try:
+            client = TestClient(app)
+            response = client.get(f"/api/v1/public/quotation-sign/{token}")
+            assert response.status_code == 200, response.text
+            assert response.json()["our_ref"] == record.our_ref_text
+
+            # Pinned to the issue's own company, not left open to all of them. Asserted HERE,
+            # while the resolved issue is the last thing the session touched: these requests
+            # share one session, so a later miss would wind the scope back and hide the pin.
+            assert get_company_scope(db) == frozenset({company_id})
+
+            unknown = client.get("/api/v1/public/quotation-sign/zzt-not-a-real-token")
+            assert unknown.status_code == 404
+            # A miss pins nothing and leaves nothing open behind it.
+            assert get_company_scope(db) is UNSET
+        finally:
+            app.dependency_overrides.clear()
+
+
+def test_the_issue_history_reports_the_counter_signature_the_customer_left():
+    """The salesperson's screen has to be able to show that the customer accepted.
+
+    The acceptance lands on the ISSUE (that is the thing the customer held and signed), while the
+    screen they watch is the DOCUMENT. So unless the issue serializer carries the acceptance, the
+    document panel has no way to know it happened and goes on saying "the customer has not
+    counter-signed yet" forever, on a quotation that is already won. The scopes flip and the
+    project outcome moves, so the system knows; the person who needs to know does not.
+
+    Enough to RENDER, not just a boolean: the panel shows who signed, when, and the ink.
+    """
+    with blank_session() as db:
+        _project_row, document, owner, _scopes = _setup(db)
+        _sign_draft(db, document, owner)
+        record = qdocs.issue(db, document=document, actor_user_id=owner)
+
+        before = qdocs.serialize_issue(db, record)
+        assert before["is_accepted"] is False
+        assert before["customer_signature"] is None
+        assert before["accepted_at"] is None
+
+        qdocs.accept_issue(
+            db,
+            record=record,
+            signer_name=f"{MARKER} Lim",
+            mode="type",
+            image_data_uri=A_SIGNATURE,
+            ip_address="203.0.113.9",
+            user_agent="zzt-agent",
+            gps_lat=None,
+            gps_lng=None,
+        )
+        db.flush()
+
+        after = qdocs.serialize_issue(db, record)
+        assert after["is_accepted"] is True
+        assert after["accepted_at"] is not None
+        signature = after["customer_signature"]
+        assert signature is not None
+        assert signature["signer_name"] == f"{MARKER} Lim"
+        assert signature["image_data_uri"] == A_SIGNATURE
+        assert signature["mode"] == "type"
+        assert signature["ip_address"] == "203.0.113.9"

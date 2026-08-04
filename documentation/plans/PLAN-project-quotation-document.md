@@ -1,8 +1,14 @@
 # PLAN — Quotation as a DOCUMENT (multi-scope, cover letter, issue snapshot)
 
-**Status:** written, not started. The UAC's five open questions were answered on 2026-08-04 and
-are folded in: running-number `Our Ref`, both-sides e-sign, free-text bands, one Excel sheet per
-scope, one terms set per company. Ready for the grill.
+**Status:** S1-S8 implemented on `feat/project-lead-to-so` (2026-08-04), verified end to end in a
+browser against real production-copy data (the Tuju Residences quotation, RM 1,805,907.02): signed
+as Sorento, minted the counter-sign link, signed as the customer at 375px, and confirmed the scope
+and the project both moved to `won`. Remaining gaps are listed under "Known gaps" below.
+
+The UAC's five open questions were answered on 2026-08-04 and are folded in: running-number
+`Our Ref`, both-sides e-sign, free-text bands, one Excel sheet per scope, one terms set per
+company. **AC-H7 was overruled by the client the same day**: a counter-signature DOES win the
+scopes (see the scope note below, which records the superseded reasoning).
 **UAC:** `documentation/plans/UAC-project-quotation-document.md`
 **Slug:** project-quotation-document
 
@@ -125,6 +131,25 @@ family. What it does need is a decision the UAC flags: **acceptance does not win
 (AC-H7). A signed quotation is evidence; the scope is won when the salesperson says so or a PO
 lands. Building it the other way would flip projects to won on a signature and then need unwinding
 when the PO never arrives.
+
+> **Superseded 2026-08-04.** The client overruled this: a counter-signature IS the commitment, so
+> acceptance marks every scope the issue carried as won and the project outcome follows. Shipped
+> that way. One exception is kept and tested: a scope somebody already marked LOST is not flipped,
+> because a signature must not silently overrule a human decision.
+
+### Known gaps
+
+- **The letterhead is a stub.** The sender block prints `Sorento`, not
+  `SORENTO SDN BHD (694526-P)` with an address and phone. `companies` has only `name`, `code` and
+  `logo_url` - there is nowhere to put them. The UAC's artifact table already marks this row `✗`.
+  Needs letterhead columns on `companies` plus an admin screen, in its own slice.
+- **The internal line editor still prints `RM 0.00`** on a zero-priced set component. The three
+  CUSTOMER-facing surfaces (PDF, workbook, counter-sign page) leave it blank; the editor is an
+  input surface where a blank cell is ambiguous with "not filled in yet", so it was left alone
+  deliberately rather than by omission.
+- **The per-scope page `/quotations/{quotationId}` has no inbound link.** Dead but harmless.
+- **S5's "saved to the user, reused with one click"** is not built. The pad captures a signature
+  every time; it is not yet stored against the user for re-use.
 
 ### Scope note — the template designer
 

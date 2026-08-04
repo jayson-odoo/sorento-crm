@@ -126,6 +126,63 @@ describe('QuotationSignClient reading the quotation', () => {
     expect(screen.queryByText('RM 0.00')).not.toBeInTheDocument();
   });
 
+  it('leaves the money blank on a set component priced at nothing', async () => {
+    // Quotations list the parts of a complete set on their own rows at no separate charge,
+    // because the price sits on the parent. Printed as RM 0.00 they read as free products, on
+    // the one page where the customer is about to commit. Not "rate only" either: that is a
+    // different fact (a quoted alternate), so the words must not appear on this row.
+    getQuotationSignPage.mockResolvedValue(
+      page({
+        scopes: [
+          {
+            scope_label: 'Type A',
+            scope_total: '102000.00',
+            lines: [
+              {
+                item_label: '1',
+                description: 'Close coupled pedestal',
+                technical_spec: null,
+                brand: null,
+                product_code: 'SRTWCX8608-RL',
+                quantity: '894',
+                unit_price: '305.55',
+                complete_set: null,
+                band_label: null,
+                is_rate_only: false,
+                amount: '273161.70',
+              },
+              {
+                item_label: '2',
+                description: 'Cistern only, no separate charge',
+                technical_spec: null,
+                brand: null,
+                product_code: 'SRTWCY8608',
+                quantity: '894',
+                unit_price: '0.00',
+                complete_set: null,
+                band_label: null,
+                is_rate_only: false,
+                amount: '0.00',
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    renderPage();
+
+    // The component is still listed, with the quantity the customer receives.
+    expect(await screen.findByText('Cistern only, no separate charge')).toBeInTheDocument();
+    // Both rows carry 894 (a set and its part ship together), so count rather than match one.
+    expect(screen.getAllByText('894')).toHaveLength(2);
+    // No money on it, in either column, and no "rate only" standing in for the blank.
+    expect(screen.queryByText('RM 0.00')).not.toBeInTheDocument();
+    expect(screen.queryByText('rate only')).not.toBeInTheDocument();
+    // The priced parent is untouched.
+    expect(screen.getByText('RM 305.55')).toBeInTheDocument();
+    expect(screen.getByText('RM 273,161.70')).toBeInTheDocument();
+  });
+
   it('heads a band once, above the lines it covers', async () => {
     getQuotationSignPage.mockResolvedValue(page());
     renderPage();
