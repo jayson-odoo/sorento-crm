@@ -226,6 +226,18 @@ class ScmDashboardService:
         self._latest_run_id: Optional[str] = None
         self._latest_run_loaded = False
 
+    def _company_clause(self, column: str, prefix: str) -> Tuple[str, dict]:
+        """``(clause, params)`` restricting a RAW query to the caller's company.
+
+        Every reader on this service is raw SQL over the `scm.*` views, so the ORM
+        isolation filter never sees any of them. Company is a property of the LOCATION,
+        so the clause is applied to the joined `warehouses` (or `products` / `suppliers`
+        where the row names no location) and everything derived from that row inherits it.
+        Always returns a usable boolean, so callers can splice it unconditionally.
+        """
+        clause, params = company_sql_predicate(self.db, column, param_prefix=prefix)
+        return (clause or "true"), params
+
     # -- latest completed reorder run (reorder-point source) -----------------
 
     def _latest_completed_run_id(self) -> Optional[str]:
@@ -319,6 +331,10 @@ class ScmDashboardService:
         where = ["1=1"]
         where.extend(self._lifecycle_where(filters))
         params: dict = {}
+        for column, prefix in (("w.company_id", "cbw"), ("p.company_id", "cbp")):
+            clause, co_params = self._company_clause(column, prefix)
+            where.append(clause)
+            params.update(co_params)
         if filters.warehouses:
             where.append("w.warehouse_code = ANY(:whs)")
             params["whs"] = filters.warehouses
@@ -461,12 +477,14 @@ class ScmDashboardService:
         if warehouses:
             wh_clause = "AND w.warehouse_code = ANY(:whs)"
             params["whs"] = warehouses
+        co, co_params = self._company_clause("w.company_id", "clw")
+        params.update(co_params)
         rows = self.db.execute(text(
             f"""
             SELECT cv.product_id, cv.warehouse_id, MAX(cv.day) AS last_day
             FROM scm.consumption_v cv
             JOIN warehouses w ON w.id = cv.warehouse_id
-            WHERE cv.product_id = ANY(:pids) {wh_clause}
+            WHERE cv.product_id = ANY(:pids) AND {co} {wh_clause}
             GROUP BY cv.product_id, cv.warehouse_id
             """
         ), params).fetchall()
@@ -476,17 +494,18 @@ class ScmDashboardService:
         """One representative supplier per product (primary first, else lowest lead time)."""
         if not product_ids:
             return {}
+        co, co_params = self._company_clause("su.company_id", "csm")
         rows = self.db.execute(text(
-            """
+            f"""
             SELECT ps.product_id, su.supplier_code, su.supplier_name,
                    ps.standard_lead_time_days, ps.is_primary_supplier
             FROM product_suppliers ps
             JOIN suppliers su ON su.id = ps.supplier_id
-            WHERE ps.product_id = ANY(:pids)
+            WHERE ps.product_id = ANY(:pids) AND {co}
             ORDER BY ps.is_primary_supplier DESC NULLS LAST,
                      ps.standard_lead_time_days ASC NULLS LAST
             """
-        ), {"pids": product_ids}).fetchall()
+        ), {"pids": product_ids, **co_params}).fetchall()
         out: Dict[str, dict] = {}
         for r in rows:
             if r[0] not in out:  # first per product wins (ordered primary-first)
@@ -727,16 +746,17 @@ class ScmDashboardService:
         rather than fabricating a score."""
         if not supplier_codes:
             return {}
+        co, co_params = self._company_clause("su.company_id", "csp")
         rows = self.db.execute(text(
-            """
+            f"""
             SELECT su.supplier_code, sp.on_time_rate, sp.avg_lead_time_days,
                    sp.reject_rate, sp.fill_rate, sp.composite_score, sp.sample_size,
                    sp.confidence
             FROM scm.supplier_performance sp
             JOIN suppliers su ON su.id = sp.supplier_id
-            WHERE sp.product_id IS NULL AND su.supplier_code = ANY(:codes)
+            WHERE sp.product_id IS NULL AND su.supplier_code = ANY(:codes) AND {co}
             """
-        ), {"codes": supplier_codes}).fetchall()
+        ), {"codes": supplier_codes, **co_params}).fetchall()
         out: Dict[str, dict] = {}
         for r in rows:
             out[r[0]] = {
@@ -1004,18 +1024,24 @@ class ScmDashboardService:
         Returns the oldest→newest monthly buckets (zero-filled) plus the SKU's
         xyz_class + plain-language demand label so the caption can echo it.
         """
+        # 11,390 product codes exist in more than one company, so an unscoped lookup by
+        # code resolves to whichever copy Postgres returns first - and then every figure
+        # below is about another company's stock.
+        pco, pco_params = self._company_clause("company_id", "cds")
         prow = self.db.execute(text(
-            "SELECT id, product_code, product_name FROM products WHERE product_code = :c"
-        ), {"c": sku}).fetchone()
+            f"SELECT id, product_code, product_name FROM products "
+            f"WHERE product_code = :c AND {pco}"
+        ), {"c": sku, **pco_params}).fetchone()
         if not prow:
             raise AppException(status_code=404, message=f"Unknown SKU '{sku}'.")
         pid = prow[0]
 
         wid = None
         if warehouse:
+            wco, wco_params = self._company_clause("company_id", "cdw")
             wrow = self.db.execute(text(
-                "SELECT id FROM warehouses WHERE warehouse_code = :c"
-            ), {"c": warehouse}).fetchone()
+                f"SELECT id FROM warehouses WHERE warehouse_code = :c AND {wco}"
+            ), {"c": warehouse, **wco_params}).fetchone()
             if not wrow:
                 raise AppException(status_code=404, message=f"Unknown warehouse '{warehouse}'.")
             wid = wrow[0]

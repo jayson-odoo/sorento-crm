@@ -275,6 +275,77 @@ def test_a_run_belonging_to_another_company_is_not_visible(db, two_companies):
     assert b_run["run_id"] not in visible
 
 
+def test_the_dashboard_shows_this_companys_positions_only(db, two_companies):
+    """The SCM dashboard reads the same views the planner does, in raw SQL too.
+
+    `_base_rows` is the one reader every dashboard figure derives from (grid, rollups,
+    valuation), so an unscoped one puts another company's warehouses in the grid and its
+    stock in the totals.
+    """
+    from app.services.scm.dashboard_service import ScmDashboardService, ScmFilters
+
+    f = two_companies
+    _as_a(db, f)
+
+    rows = ScmDashboardService(db)._base_rows(ScmFilters())
+
+    wh_codes = {r["warehouse_code"] for r in rows}
+    assert f["wh_b"].warehouse_code not in wh_codes
+    # and B's copy of the shared code contributes no quantity
+    b_rows = [r for r in rows if str(r["product_id"]) == str(f["p_b"].id)]
+    assert b_rows == []
+
+
+def test_a_duplicated_sku_code_resolves_to_this_companys_copy(db, two_companies):
+    """11,390 product codes exist twice, so a lookup BY CODE must be scoped.
+
+    Unscoped, the demand drill for a shared code resolves to whichever copy Postgres
+    returns first and then charts another company's outflow under this company's SKU.
+    """
+    from app.services.scm.dashboard_service import ScmDashboardService
+
+    f = two_companies
+    _as_a(db, f)
+
+    a_series = ScmDashboardService(db).demand_series(f["code"])
+    set_company_scope(db, frozenset({str(f["b"].id)}))
+    b_series = ScmDashboardService(db).demand_series(f["code"])
+
+    # the two copies are named differently, so the name says which one was resolved
+    assert a_series["product_name"] == "A's copy"
+    assert b_series["product_name"] == "B's copy"
+
+
+def test_naming_another_companys_run_is_a_404_not_its_contents(db, two_companies):
+    """Holding a run id must not be enough to read the plan it names.
+
+    Every per-run read downstream (recommendations, decisions, the explainer's aggregates,
+    the frozen order-summary rows) is raw SQL keyed by `run_id`, so none of them is reached
+    by the ORM isolation filter. The id is therefore checked ONCE at the entry point, and
+    404 rather than 403 so another company's run is indistinguishable from one that never
+    existed.
+    """
+    from app.services.error_handler import AppException
+
+    f = two_companies
+    set_company_scope(db, frozenset({str(f["b"].id)}))
+    b_run = svc.create_run(db, [f["wh_b"].warehouse_code], enqueue=False)
+
+    _as_a(db, f)
+    with pytest.raises(AppException) as caught:
+        svc.assert_run_visible(db, b_run["run_id"])
+    assert caught.value.status_code == 404
+
+
+def test_this_companys_own_run_passes_the_gate(db, two_companies):
+    """The gate must not be a blanket denial: A's own plan stays readable."""
+    f = two_companies
+    _as_a(db, f)
+    out = svc.create_run(db, [f["wh_a"].warehouse_code], enqueue=False)
+
+    svc.assert_run_visible(db, out["run_id"])  # raises if the gate is wrong
+
+
 def test_the_page_opens_on_this_companys_run_not_the_most_recent_one(db, two_companies):
     """`today_or_latest_run` is raw SQL, so the ORM filter never sees it.
 

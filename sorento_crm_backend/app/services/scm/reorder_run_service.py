@@ -215,6 +215,27 @@ def today_or_latest_run(db: Session, today: Optional[date] = None) -> Optional[d
     return {"row": dict(row), "is_today": is_today}
 
 
+def assert_run_visible(db: Session, run_id: str) -> None:
+    """404 unless ``run_id`` names a run the caller's company owns.
+
+    THE gate for every route that takes a run id from the caller. Downstream reads of a
+    run's children (recommendations, overrides, order-summary rows, the explainer's
+    aggregates) are keyed by that run id and are raw SQL, so none of them are reached by
+    the ORM isolation filter. Rather than repeat a predicate across ~30 of those reads,
+    the id is validated ONCE at the entry point and the children inherit the decision.
+
+    404 rather than 403: a run belonging to another company should not be distinguishable
+    from one that does not exist.
+    """
+    co, co_params = company_sql_predicate(db, "company_id", param_prefix="crv")
+    found = db.execute(
+        text(f"SELECT 1 FROM scm.reorder_run WHERE id = :id AND {co or 'true'}"),
+        {"id": run_id, **co_params},
+    ).first()
+    if not found:
+        raise AppException(404, "Run not found")
+
+
 # ===========================================================================
 # run_reorder — the worker task body
 # ===========================================================================
@@ -1250,9 +1271,13 @@ def explain_net(db: Session, rec_id: str) -> dict:
     ``committed``, and ``on_hand + on_order - committed == net`` holds. Read-only; no
     numeric write anywhere.
     """
+    # Raw SQL, so company-scoped by hand: a recommendation id from another company's plan
+    # must read as absent, not as a net breakdown of stock this caller cannot see.
+    co, co_params = company_sql_predicate(db, "company_id", param_prefix="cnb")
     rec = db.execute(text(
-        "SELECT product_id, warehouse_id FROM scm.reorder_recommendation WHERE id = :id"
-    ), {"id": rec_id}).mappings().first()
+        "SELECT product_id, warehouse_id FROM scm.reorder_recommendation "
+        f"WHERE id = :id AND {co or 'true'}"
+    ), {"id": rec_id, **co_params}).mappings().first()
     if not rec:
         raise AppException(status_code=404, message="Recommendation not found.")
     return net_breakdown(

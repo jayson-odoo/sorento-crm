@@ -23,6 +23,7 @@ from app.schemas.scm_reorder import (
     ReorderRunStatusResponse,
     ReorderRunTodayResponse,
 )
+from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.scm import reorder_run_service as svc
 
@@ -85,13 +86,19 @@ def list_reorder_runs(
     summary counts read from the immutable ``run_log``. The FE loads a past run's
     detail by reusing ``GET /{id}`` (summary) + ``/{id}/recommendations`` (grid).
     No UUIDs surface — runs are identified by time + warehouses."""
-    total = db.execute(text("SELECT count(*) FROM scm.reorder_run")).scalar() or 0
-    rows = db.execute(text("""
+    # Raw SQL, so the ORM isolation filter never sees it: this company's run history only.
+    co, co_params = company_sql_predicate(db, "company_id", param_prefix="crl")
+    where = f"WHERE {co}" if co else ""
+    total = db.execute(
+        text(f"SELECT count(*) FROM scm.reorder_run {where}"), co_params
+    ).scalar() or 0
+    rows = db.execute(text(f"""
         SELECT id, status, buy_scope, warehouse_ids, started_at, finished_at, run_log
         FROM scm.reorder_run
+        {where}
         ORDER BY started_at DESC NULLS LAST, created_at DESC
         LIMIT :limit OFFSET :offset
-    """), {"limit": limit, "offset": (page - 1) * limit}).mappings().all()
+    """), {"limit": limit, "offset": (page - 1) * limit, **co_params}).mappings().all()
 
     # Resolve every warehouse id across the page → human code in ONE query.
     all_ids: set[str] = set()
@@ -200,11 +207,14 @@ def get_reorder_run(
 ):
     """Poll a run's status. ``summary`` is populated once ``status='completed'``;
     ``error`` once ``status='failed'``."""
+    co, co_params = company_sql_predicate(db, "company_id", param_prefix="crg")
     row = db.execute(text(
         "SELECT id, status, buy_scope, error_text, run_log FROM scm.reorder_run "
-        "WHERE id = :id"
-    ), {"id": run_id}).mappings().first()
+        f"WHERE id = :id AND {co or 'true'}"
+    ), {"id": run_id, **co_params}).mappings().first()
     if not row:
+        # 404 rather than 403 - another company's run must not be distinguishable
+        # from one that does not exist.
         raise AppException(status_code=404, message="Reorder run not found.")
     log_obj = row["run_log"] or {}
     summary = None
@@ -250,9 +260,7 @@ def list_recommendations(
     (funded|deferred|needs_cost) from the greedy skip-overflow allocation over the
     run's FROZEN rank_score — no engine re-run, no persistence. Omitting ``budget``
     returns the last persisted funding_status (or null for costed buys never funded)."""
-    if not db.execute(text("SELECT 1 FROM scm.reorder_run WHERE id = :id"),
-                      {"id": run_id}).first():
-        raise AppException(status_code=404, message="Reorder run not found.")
+    svc.assert_run_visible(db, run_id)
 
     where = ["rr.run_id = :rid"]
     params: dict[str, Any] = {"rid": run_id}
@@ -318,9 +326,7 @@ def apply_reorder_run_budget(
 
     Full-budget request (``full: true`` OR a null ``budget``) funds every costed buy — the
     daily-cron / 'fund all' path — and stamps a null ``budget_amount``."""
-    if not db.execute(text("SELECT 1 FROM scm.reorder_run WHERE id = :id"),
-                      {"id": run_id}).first():
-        raise AppException(status_code=404, message="Reorder run not found.")
+    svc.assert_run_visible(db, run_id)
     budget = payload.get("budget")
     if payload.get("full") or budget is None:
         return svc.apply_run_budget(db, run_id, None, full=True)

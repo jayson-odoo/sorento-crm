@@ -25,6 +25,7 @@ from app.schemas.scm_decisions import (
     RecDecisionListResponse,
     RejectRequest,
 )
+from app.services.scm import reorder_run_service
 from app.services.scm import decision_service as svc
 
 router = APIRouter()
@@ -108,6 +109,7 @@ def confirm_decisions(
     db: Session = Depends(get_db),
     _user: dict = Depends(_RUN),
 ):
+    reorder_run_service.assert_run_visible(db, run_id)
     result = svc.confirm_decisions(db, run_id, payload.ids, (_user or {}).get("id"))
     db.commit()
     return result
@@ -119,6 +121,7 @@ def list_decisions(
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
+    reorder_run_service.assert_run_visible(db, run_id)
     return {"data": svc.list_decisions(db, run_id)}
 
 
@@ -133,6 +136,7 @@ def reset_decisions(
     demonstrated again. Only draft POs are removed; confirmed (active) orders are left
     untouched. Guarded by ``scm.reorder.run`` (the same permission that makes the
     decisions)."""
+    reorder_run_service.assert_run_visible(db, run_id)
     result = svc.reset_run_decisions(db, run_id, (_user or {}).get("id"))
     db.commit()
     return result

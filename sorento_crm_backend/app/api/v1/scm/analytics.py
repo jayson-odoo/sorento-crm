@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
+from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.scm import analytics_service
 
@@ -45,11 +46,14 @@ def list_runs(
     _user: dict = Depends(_VIEW),
 ):
     """Recent analytics run logs (newest first) — status / counts / window / coverage."""
+    # Raw SQL, so the ORM scope filter does not reach it: this company's run log only.
+    co, co_params = company_sql_predicate(db, "company_id", param_prefix="car")
     rows = db.execute(text(
         "SELECT id, started_at, finished_at, status, scope, counts, window_days, "
         "config_ref, error_text FROM scm.scm_analytics_run "
+        f"WHERE {co or 'true'} "
         "ORDER BY started_at DESC NULLS LAST LIMIT :lim"
-    ), {"lim": limit}).fetchall()
+    ), {"lim": limit, **co_params}).fetchall()
     data: List[dict[str, Any]] = []
     for r in rows:
         data.append({
