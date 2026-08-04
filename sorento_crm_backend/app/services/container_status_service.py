@@ -90,6 +90,22 @@ def _container_key_sql(column):
     return func.upper(expr)
 
 
+class ContainerStatusCompanyScopeError(Exception):
+    """The import would create shipments but has no company to create them under.
+
+    `inbound_shipments.company_id` is NOT NULL in Postgres (migration 305) and is
+    filled by the auto-stamp on insert, which only fires when a company scope is
+    set. `_apply_import_job_scope` falls back to a system-wide (None) scope when the
+    job carries no company snapshot - fine for a read-only or update-only import,
+    fatal for this one, which creates 296 rows out of 407.
+
+    Without this guard the failure surfaces as a raw NotNullViolation naming a
+    random container, halfway through the run. The test suite cannot catch it: the
+    blank scratch schema is built by `create_all` from the MODEL, where the column
+    is deliberately nullable, so the NOT NULL only exists on a migrated database.
+    """
+
+
 class ContainerStatusImportService:
     """Dry-run and apply for the container status workbook."""
 
@@ -171,6 +187,10 @@ class ContainerStatusImportService:
         counts = {"created": 0, "updated": 0, "unchanged": 0, "rejected": 0}
         existing = self._existing_by_key([r.container_key for r in parsed.rows])
 
+        would_create = sum(1 for r in parsed.rows if r.container_key not in existing)
+        if would_create:
+            self._assert_can_create()
+
         for row in parsed.rows:
             shipment = existing.get(row.container_key)
             if shipment is None:
@@ -223,6 +243,22 @@ class ContainerStatusImportService:
         return counts
 
     # ---------------------------------------------------------------- internals
+
+    def _assert_can_create(self) -> None:
+        """Refuse up front when the auto-stamp would have nothing to stamp.
+
+        Checked once, before the first insert, so the operator gets a sentence they
+        can act on instead of a constraint violation naming an arbitrary container.
+        """
+        from app.services.job_service import active_company_id_from_scope
+
+        if active_company_id_from_scope(self.db):
+            return
+        raise ContainerStatusCompanyScopeError(
+            "This import creates packing lists, which must belong to a company, but "
+            "the job carries no company. Re-run it from the app with a company "
+            "selected."
+        )
 
     def _existing_by_key(self, keys: list[str]) -> dict[str, InboundShipment]:
         """Normalized container key -> shipment, across EVERY status (A3).

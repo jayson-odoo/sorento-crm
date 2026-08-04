@@ -390,3 +390,47 @@ def test_a_file_that_is_not_a_container_status_sheet_fails_the_dry_run(db):
     assert report["valid"] is False
     assert any("CONTAINER" in e for e in report["errors"])
     assert report["summary"]["total_rows"] == 0
+
+
+def test_creating_without_a_company_scope_fails_with_a_sentence_not_a_constraint(db):
+    """`inbound_shipments.company_id` is NOT NULL on a migrated database and is
+    filled by the insert auto-stamp, which only fires when a company scope is set.
+    A job with no company snapshot runs system-scoped, so the stamp has nothing to
+    write and every insert dies.
+
+    The blank scratch schema is built by `create_all` from the MODEL, where the
+    column is deliberately nullable, so this test cannot reproduce the Postgres
+    violation - it pins the GUARD instead, which is what turns the failure into a
+    sentence the operator can act on.
+    """
+    from unittest.mock import patch
+
+    from app.services.container_status_service import ContainerStatusCompanyScopeError
+
+    parsed = parse_container_status_workbook(
+        _one_row_workbook("TGBU9807730", eta_date=date(2026, 7, 19))
+    )
+    with patch(
+        "app.services.job_service.active_company_id_from_scope", return_value=None
+    ):
+        with pytest.raises(ContainerStatusCompanyScopeError) as excinfo:
+            _service(db).apply(parsed, user_id=None)
+
+    assert "company" in str(excinfo.value).lower()
+
+
+def test_an_update_only_import_does_not_need_a_company_scope(db, supplier_id):
+    """The guard fires only when the run would CREATE. Updating existing rows
+    stamps nothing, so a system-scoped re-upload must still work."""
+    from unittest.mock import patch
+
+    _shipment(db, supplier_id, "GXYU5106903")
+    parsed = parse_container_status_workbook(
+        _one_row_workbook("GXYU5106903", eta_delay_date=date(2026, 7, 12))
+    )
+    with patch(
+        "app.services.job_service.active_company_id_from_scope", return_value=None
+    ):
+        result = _service(db).apply(parsed, user_id=None)
+
+    assert result["updated"] == 1
