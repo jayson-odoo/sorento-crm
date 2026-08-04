@@ -458,6 +458,95 @@ describe('InlineLineTable', () => {
     expect(onDelete).not.toHaveBeenCalled();
   });
 
+  it('ticks a box in the row and hands the caller the string it holds', async () => {
+    // A boolean still travels as a string, like every other draft field, so the value the
+    // caller reads is the one the shared helper defines rather than one each screen invents.
+    renderTable({
+      columns: [
+        ...columns(),
+        { key: 'flagged', header: 'Rate only', width: 90, kind: 'checkbox' },
+      ],
+    });
+
+    const box = screen.getByRole('checkbox', { name: 'Rate only on pcs' });
+    expect(box).not.toBeChecked();
+
+    fireEvent.click(box);
+    expect(box).toBeChecked();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save pcs' }));
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(1));
+    expect(onUpdate.mock.calls[0][1]).toMatchObject({ flagged: 'true' });
+  });
+
+  it('reads a ticked box as a word when the table cannot be edited', () => {
+    renderTable({
+      readOnly: true,
+      columns: [
+        ...columns(),
+        { key: 'flagged', header: 'Rate only', width: 90, kind: 'checkbox' },
+      ],
+      toDraft: (item) => ({ ...toDraft(item), flagged: 'true' }),
+    });
+
+    // Not a greyed-out box, which is easy to mistake for one that has not loaded yet.
+    expect(screen.getByText('Yes')).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).toBeNull();
+  });
+
+  it('renders a band heading once, spanning the table, above the line that carries it', () => {
+    renderTable({
+      rows: [row(), row({ id: 'r2', code: 'set' })],
+      toDraft: (item) => ({
+        ...toDraft(item),
+        band_label: item.id === 'r1' ? 'BILL NO 3 PAGE 15/4' : '',
+      }),
+      band: { key: 'band_label', label: 'Section heading' },
+    });
+
+    const heading = screen.getByRole('textbox', { name: 'Section heading on pcs' });
+    expect(heading).toHaveValue('BILL NO 3 PAGE 15/4');
+    // Only the line that opens the section shows it. The one below is inside the band.
+    expect(screen.getAllByDisplayValue('BILL NO 3 PAGE 15/4')).toHaveLength(1);
+    expect(screen.queryByRole('textbox', { name: 'Section heading on set' })).toBeNull();
+
+    // Immediately above its own line and inside the same table, so no amount of sorting or
+    // re-rendering can leave a heading stranded over somebody else's lines.
+    const bandRow = heading.closest('tr');
+    expect(bandRow?.nextElementSibling).toBe(cell('Qty on pcs').closest('tr'));
+    expect(bandRow?.querySelector('td')?.getAttribute('colspan')).toBe(
+      String(columns().length + 1),
+    );
+  });
+
+  it('carries the band heading to the server with the line that owns it', async () => {
+    renderTable({ band: { key: 'band_label', label: 'Section heading' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Section heading on pcs' }));
+    const heading = await screen.findByRole('textbox', { name: 'Section heading on pcs' });
+    fireEvent.change(heading, { target: { value: 'OPTION' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save pcs' }));
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(1));
+    expect(onUpdate.mock.calls[0][1]).toMatchObject({ band_label: 'OPTION' });
+  });
+
+  it('folds an empty band editor away when the caret leaves the row', async () => {
+    renderTable({
+      rows: [row(), row({ id: 'r2', code: 'set' })],
+      band: { key: 'band_label', label: 'Section heading' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Section heading on pcs' }));
+    await screen.findByRole('textbox', { name: 'Section heading on pcs' });
+
+    // A mis-click should not strand a blank heading above a line for the rest of the session.
+    cell('Qty on set').focus();
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Section heading on pcs' })).toBeNull(),
+    );
+  });
+
   it('offers nothing to type into when it cannot be edited', () => {
     renderTable({ readOnly: true });
 

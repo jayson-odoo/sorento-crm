@@ -223,14 +223,195 @@ describe('QuotationVersionEditor', () => {
     expect(screen.getByText('Non-standard')).toBeInTheDocument();
   });
 
-  it('lays every field of a line out as a column', async () => {
+  it('lays every field of a line out as a column, in the printed order', async () => {
     renderEditor();
 
-    for (const header of ['Product', 'Description', 'Qty', 'UOM', 'Unit price', 'Counts per', 'Total']) {
+    // The order matters: the row is filled in reading left to right the way the customer
+    // reads the printed quotation back.
+    const printed = [
+      'Item',
+      'Product',
+      'Description',
+      'Tech spec',
+      'Brand',
+      'Qty',
+      'UOM',
+      'Unit price',
+      'Complete set',
+      'Counts per',
+      'Rate only',
+      'Total',
+    ];
+    for (const header of printed) {
       expect(await screen.findByRole('columnheader', { name: header })).toBeInTheDocument();
     }
+    expect(
+      screen.getAllByRole('columnheader').map((cell) => cell.textContent?.trim()),
+    ).toEqual([...printed, 'Row actions']);
     // Notes is a paragraph, so it keeps a home off the row rather than a six-character cell.
     expect(screen.getByRole('button', { name: 'Notes on SRT-WC-01' })).toBeInTheDocument();
+  });
+
+  it('holds the printed columns as cells, and sends every one of them back', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({
+        item_label: 'A',
+        brand: 'SORENTO',
+        technical_spec: 'Rimless, 4/2.6L dual flush',
+        complete_set: 'c/w seat cover',
+      }),
+    ]);
+
+    renderEditor();
+
+    // What the server sent is on screen, under the name the RESPONSE uses for it.
+    expect(await screen.findByRole('textbox', { name: 'Item on SRT-WC-01' })).toHaveValue('A');
+    expect(screen.getByRole('textbox', { name: 'Brand on SRT-WC-01' })).toHaveValue('SORENTO');
+    expect(screen.getByRole('textbox', { name: 'Tech spec on SRT-WC-01' })).toHaveValue(
+      'Rimless, 4/2.6L dual flush',
+    );
+    expect(screen.getByRole('textbox', { name: 'Complete set on SRT-WC-01' })).toHaveValue(
+      'c/w seat cover',
+    );
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Brand on SRT-WC-01' }), {
+      target: { value: 'MOCHA' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save SRT-WC-01' }));
+
+    await waitFor(() => expect(updateQuotationLine).toHaveBeenCalledTimes(1));
+    // The REQUEST calls the brand `brand_snapshot` while the response calls it `brand`. The
+    // asymmetry is the API's, and the editor honours it rather than sending its own name.
+    expect(updateQuotationLine.mock.calls[0][2]).toMatchObject({
+      item_label: 'A',
+      brand_snapshot: 'MOCHA',
+      technical_spec: 'Rimless, 4/2.6L dual flush',
+      complete_set: 'c/w seat cover',
+    });
+  });
+
+  it('prints the words on a rate-only line, and leaves it out of the footer sum', async () => {
+    listQuotationLines.mockResolvedValue([
+      line(),
+      line({
+        id: 'l2',
+        product_code: 'SRT-BIDET-09',
+        unit_price: '500.00',
+        quantity: '1.00',
+        // Stored and printed, because the customer IS being shown a rate. It just does not
+        // count: adding the sample's five alternates would have overstated it by RM 235,000.
+        line_total: '500.00',
+        is_rate_only: true,
+      }),
+    ]);
+
+    renderEditor();
+
+    expect(await screen.findByText('rate only')).toBeInTheDocument();
+    // Never RM 0.00, which reads as free, and never blank, which reads as a fault.
+    expect(screen.queryByText('RM 0.00')).toBeNull();
+    expect(screen.queryByText('RM 500.00')).toBeNull();
+    // The footer under the money column is the other line alone, not RM 9,500.00.
+    const footer = screen.getByRole('table').querySelector('tfoot');
+    expect(footer?.textContent).toContain('RM 9,000.00');
+    expect(footer?.textContent).not.toContain('9,500');
+    expect(
+      screen.getByRole('checkbox', { name: 'Rate only on SRT-BIDET-09' }),
+    ).toBeChecked();
+  });
+
+  it('marks a line rate-only from its own row, and says so in the total column', async () => {
+    renderEditor();
+
+    const toggle = await screen.findByRole('checkbox', { name: 'Rate only on SRT-WC-01' });
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+
+    // The total column answers immediately, off the draft, before anything is saved.
+    expect(screen.getByText('rate only')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save SRT-WC-01' }));
+    await waitFor(() => expect(updateQuotationLine).toHaveBeenCalledTimes(1));
+    expect(updateQuotationLine.mock.calls[0][2]).toMatchObject({ is_rate_only: true });
+  });
+
+  it('opens a section with one heading above the line that carries it', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ band_label: 'BILL NO 3 PAGE 15/4' }),
+      line({ id: 'l2', product_code: 'SRT-BIDET-09', sort_order: 10 }),
+    ]);
+
+    renderEditor();
+
+    const heading = await screen.findByRole('textbox', {
+      name: 'Section heading on SRT-WC-01',
+    });
+    expect(heading).toHaveValue('BILL NO 3 PAGE 15/4');
+    // ONCE, and only for the line that carries it: the line below is inside the section, it
+    // does not repeat the heading.
+    expect(screen.getAllByDisplayValue('BILL NO 3 PAGE 15/4')).toHaveLength(1);
+    expect(
+      screen.queryByRole('textbox', { name: 'Section heading on SRT-BIDET-09' }),
+    ).toBeNull();
+
+    // Directly above its own line, inside the same table, so the two cannot drift apart.
+    const bandRow = heading.closest('tr');
+    const lineRow = screen.getByRole('textbox', { name: 'Qty on SRT-WC-01' }).closest('tr');
+    expect(bandRow?.nextElementSibling).toBe(lineRow);
+  });
+
+  it('starts a band on a line that had none', async () => {
+    renderEditor();
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Section heading on SRT-WC-01' }),
+    );
+    const heading = await screen.findByRole('textbox', {
+      name: 'Section heading on SRT-WC-01',
+    });
+    fireEvent.change(heading, { target: { value: 'OPTIONAL ITEMS FOR OKU TOILET' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save SRT-WC-01' }));
+
+    await waitFor(() => expect(updateQuotationLine).toHaveBeenCalledTimes(1));
+    expect(updateQuotationLine.mock.calls[0][2]).toMatchObject({
+      band_label: 'OPTIONAL ITEMS FOR OKU TOILET',
+    });
+  });
+
+  it('clears a band by emptying its heading', async () => {
+    listQuotationLines.mockResolvedValue([line({ band_label: 'OPTION' })]);
+
+    renderEditor();
+
+    const heading = await screen.findByRole('textbox', {
+      name: 'Section heading on SRT-WC-01',
+    });
+    fireEvent.change(heading, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save SRT-WC-01' }));
+
+    await waitFor(() => expect(updateQuotationLine).toHaveBeenCalledTimes(1));
+    // Null, not an empty string: the column is nullable and a blank heading is no heading.
+    expect(updateQuotationLine.mock.calls[0][2]).toMatchObject({ band_label: null });
+  });
+
+  it('reads a frozen version\'s bands and rate-only lines without offering an editor', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({
+        version_id: 'v1',
+        band_label: 'BILL NO 3 PAGE 15/4',
+        is_rate_only: true,
+      }),
+    ]);
+
+    renderEditor();
+    fireEvent.click(await screen.findByRole('button', { name: 'v1 (frozen)' }));
+
+    expect(await screen.findByText('BILL NO 3 PAGE 15/4')).toBeInTheDocument();
+    expect(screen.getByText('rate only')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('textbox', { name: 'Section heading on SRT-WC-01' }),
+    ).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: 'Rate only on SRT-WC-01' })).toBeNull();
   });
 
   it('moves the line total while the quantity is typed, before anything is saved', async () => {
@@ -259,6 +440,14 @@ describe('QuotationVersionEditor', () => {
       uom: null,
       unit_type: null,
       notes: null,
+      // Every printed column travels with the save, whether or not it was typed into: a body
+      // that omitted them would leave the document's own fields behind on an unrelated edit.
+      item_label: null,
+      brand_snapshot: null,
+      technical_spec: null,
+      complete_set: null,
+      band_label: null,
+      is_rate_only: false,
     });
   });
 
@@ -284,6 +473,12 @@ describe('QuotationVersionEditor', () => {
       uom: null,
       unit_type: null,
       notes: null,
+      item_label: null,
+      brand_snapshot: null,
+      technical_spec: null,
+      complete_set: null,
+      band_label: null,
+      is_rate_only: false,
       // The line goes after the one already there, as the dialog placed it.
       sort_order: 10,
     });

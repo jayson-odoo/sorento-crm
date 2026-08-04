@@ -226,7 +226,11 @@ export function QuotationDocumentClient({
                   </Button>
                 )}
               </CardHeader>
-              <CardContent className="py-5">
+              {/* min-w-0 is load-bearing. CardContent is a flex item, and a flex item defaults
+                  to min-width:auto, so it refuses to shrink below its content: the 1,900px line
+                  table then stretched this Card and the whole PAGE scrolled sideways at phone
+                  width, instead of the table scrolling inside its own gutter. */}
+              <CardContent className="min-w-0 py-5">
                 <QuotationVersionEditor project={project.data} quotation={activeQuotation} />
               </CardContent>
             </Card>

@@ -638,6 +638,15 @@ export interface QuotationLine {
   /** Quoted at a rate and PRINTED, but contributing nothing to any total (AC-C2). */
   is_rate_only?: boolean;
 
+  /** The printed document's own columns (AC-C1). */
+  item_label?: string | null;
+  /** The response's name for what the request calls `brand_snapshot`. */
+  brand?: string | null;
+  technical_spec?: string | null;
+  complete_set?: string | null;
+  /** Set on the line that OPENS a section, so a band cannot orphan itself (AC-C3). */
+  band_label?: string | null;
+
   is_non_standard: boolean;
   /** The floor in force WHEN PRICED (AC-E7). A later policy change never rewrites it. */
   floor_value_applied?: string | null;
@@ -658,6 +667,14 @@ export interface QuotationLineBody {
   sort_order?: number;
   notes?: string | null;
   image_attachment_id?: string | null;
+
+  item_label?: string | null;
+  /** The REQUEST's name for the brand. The response calls the same value `brand`. */
+  brand_snapshot?: string | null;
+  technical_spec?: string | null;
+  complete_set?: string | null;
+  band_label?: string | null;
+  is_rate_only?: boolean;
 }
 
 export interface QuotationOutcomeBody {

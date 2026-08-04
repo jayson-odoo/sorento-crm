@@ -1,8 +1,9 @@
 'use client';
 
 import * as React from 'react';
-import { Check, Plus, StickyNote, Trash2 } from 'lucide-react';
+import { Check, Heading, Plus, StickyNote, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -23,7 +24,26 @@ import {
  */
 export type InlineDraft = Record<string, string>;
 
-export type InlineCellKind = 'text' | 'number' | 'select' | 'searchable-select' | 'derived';
+export type InlineCellKind =
+  | 'text'
+  | 'number'
+  | 'select'
+  | 'searchable-select'
+  | 'checkbox'
+  | 'derived';
+
+/**
+ * A ticked box, as a string, because a draft is strings all the way through.
+ *
+ * The value is exported rather than left to each call site to invent: two screens spelling
+ * "on" differently (`'1'` here, `'true'` there) would each read the other's saved row as off.
+ */
+export const INLINE_CHECKED = 'true';
+
+/** Tolerant on the way in, so a draft seeded `'1'` from an older payload still reads as on. */
+export function isInlineChecked(value: string | undefined): boolean {
+  return value === INLINE_CHECKED || value === '1';
+}
 
 export interface InlineLineColumn<TRow> {
   /** Also the draft field name, and half of a cell's focus coordinate. */
@@ -44,8 +64,16 @@ export interface InlineLineColumn<TRow> {
    * for the thing that is already selected.
    */
   resolveSelected?: (row: TRow | null, draft: InlineDraft) => SearchableSelectOption | undefined;
-  /** `derived`: recomputed from the live draft on every keystroke, never stored. */
-  derive?: (draft: InlineDraft) => string;
+  /**
+   * `derived`: recomputed from the live draft on every keystroke, never stored.
+   *
+   * A node rather than a string so a cell can say something that is not a number - a
+   * rate-only line prints the words `rate only` where its total would be, and both a blank
+   * and `RM 0.00` would be read as a fault rather than as a deliberate exclusion.
+   */
+  derive?: (draft: InlineDraft) => React.ReactNode;
+  /** Caps what can be typed, so a column with a server length limit cannot 422. */
+  maxLength?: number;
   /** Per-cell shape check. A message marks the cell; it does not raise a toast. */
   validate?: (value: string) => string | null;
   /** Read-only annotation under the editor: list price, quoted price, badges. */
@@ -73,6 +101,22 @@ export interface InlineRowDetail {
   rows?: number;
 }
 
+/**
+ * A heading that opens a section, carried by the line it sits above.
+ *
+ * It renders as a row spanning every column INSIDE this table rather than as a separate
+ * list, so a band cannot drift away from the lines it introduces: reorder, filter or
+ * paginate the lines and the heading travels with the one that owns it. That is also why
+ * the label lives on the line and not in a table of its own.
+ */
+export interface InlineBandRow {
+  /** Draft field holding the heading. Non-empty means this line opens a section. */
+  key: string;
+  label: string;
+  placeholder?: string;
+  maxLength?: number;
+}
+
 export interface InlineLineTableProps<TRow> {
   rows: TRow[];
   getRowId: (row: TRow) => string;
@@ -92,6 +136,7 @@ export interface InlineLineTableProps<TRow> {
   /** Cross-field rules. Keys are column keys, so a message lands on the cell at fault. */
   validateRow?: (draft: InlineDraft) => Record<string, string>;
   rowDetail?: InlineRowDetail;
+  band?: InlineBandRow;
   /** Names a row for labels and for the delete confirmation, e.g. "line 2" or a code. */
   describeRow: (row: TRow | null, index: number) => string;
   readOnly?: boolean;
@@ -143,7 +188,8 @@ function sameDraft(a: InlineDraft, b: InlineDraft): boolean {
  * survive an empty table. It also has nowhere to put an UNSAVED draft row, which is the
  * whole trick. So the table below is written out, without `table-fixed`, sized by explicit
  * per-column widths inside an `overflow-x-auto` box so a wide line table scrolls in its
- * own gutter and the page never moves sideways at 375px.
+ * own gutter and the page never moves sideways at 375px. It also renders a row that SPANS
+ * every column (`band`), which a column-driven grid has nowhere to put.
  *
  * WHEN A ROW SAVES: when focus leaves it, for a row that is dirty and valid. That is the
  * Odoo rule and it needs no button. There is a button anyway, one tick per dirty row,
@@ -164,6 +210,7 @@ export function InlineLineTable<TRow>({
   onDelete,
   validateRow,
   rowDetail,
+  band,
   describeRow,
   readOnly = false,
   isLoading = false,
@@ -176,6 +223,14 @@ export function InlineLineTable<TRow>({
   const [errors, setErrors] = React.useState<Record<string, Record<string, string>>>({});
   const [saving, setSaving] = React.useState<string[]>([]);
   const [pendingDelete, setPendingDelete] = React.useState<PendingDelete<TRow> | null>(null);
+  /**
+   * Rows whose band editor is open although the heading is still empty.
+   *
+   * A band cannot be started by typing into a row that has no heading yet, so the control
+   * beside the row opens an empty one. Left empty, it closes again when the caret leaves the
+   * row: a mis-click should not strand a blank heading above a line.
+   */
+  const [bandOpen, setBandOpen] = React.useState<string[]>([]);
 
   const nextNewId = React.useRef(0);
   const activeRowKey = React.useRef<string | null>(null);
@@ -267,9 +322,21 @@ export function InlineLineTable<TRow>({
     [],
   );
 
+  /** Folds an empty band editor away once the caret has left the row that opened it. */
+  const closeEmptyBand = React.useCallback(
+    (rowKey: string) => {
+      if (!band) return;
+      const held = statesRef.current[rowKey];
+      if (held && (held.draft[band.key] ?? '').trim() !== '') return;
+      setBandOpen((keys) => keys.filter((key) => key !== rowKey));
+    },
+    [band],
+  );
+
   const dropRow = React.useCallback((rowKey: string) => {
     if (activeRowKey.current === rowKey) activeRowKey.current = null;
     setNewRowKeys((keys) => keys.filter((key) => key !== rowKey));
+    setBandOpen((keys) => keys.filter((key) => key !== rowKey));
     setStates((previous) => {
       const next = { ...previous };
       delete next[rowKey];
@@ -388,7 +455,10 @@ export function InlineLineTable<TRow>({
     if (rowKey === activeRowKey.current) return;
     const leaving = activeRowKey.current;
     activeRowKey.current = rowKey;
-    if (leaving) void commitRow(leaving);
+    if (leaving) {
+      void commitRow(leaving);
+      closeEmptyBand(leaving);
+    }
   };
 
   /** Is this where focus landed still part of the table, or of something it opened? */
@@ -420,7 +490,10 @@ export function InlineLineTable<TRow>({
   const leaveRow = () => {
     const leaving = activeRowKey.current;
     activeRowKey.current = null;
-    if (leaving) void commitRow(leaving);
+    if (leaving) {
+      void commitRow(leaving);
+      closeEmptyBand(leaving);
+    }
   };
 
   const moveFocus = (rowKey: string, columnIndex: number, delta: number) => {
@@ -482,15 +555,30 @@ export function InlineLineTable<TRow>({
     setPendingDelete({ rowKey, row, index });
   };
 
+  // Sized for the buttons that actually render (remove, the save tick, and a note or a band
+  // control when the call site asks for one), or four icons would spill past a fixed 132.
+  const actionsWidth = 88 + (rowDetail ? 36 : 0) + (band ? 36 : 0);
   const totalWidth =
-    columns.reduce((sum, column) => sum + column.width, 0) + (readOnly ? 0 : 132);
+    columns.reduce((sum, column) => sum + column.width, 0) + (readOnly ? 0 : actionsWidth);
 
   if (isLoading) return <Skeleton className="h-24 w-full" />;
 
   return (
     <div className="min-w-0 space-y-2">
       <div
-        className="min-w-0 overflow-x-auto rounded-lg border border-border"
+        /**
+         * `relative` is load-bearing, not decoration.
+         *
+         * Every `sr-only` label in here is `position: absolute` (that is what the utility does).
+         * With a STATIC scroller those absolute boxes resolve against a containing block OUTSIDE
+         * it, so they escape its clipping and extend the DOCUMENT's scrollable width - which made
+         * the whole page scroll ~1,500px sideways at phone width while the table itself scrolled
+         * correctly in its own gutter. Making the scroller a containing block keeps them inside.
+         *
+         * `w-full` + `max-w-full` pin the box to the space it is given rather than to the table's
+         * intrinsic width, so an ancestor that forgets `min-w-0` cannot stretch it either.
+         */
+        className="relative w-full min-w-0 max-w-full overflow-x-auto rounded-lg border border-border"
         onFocus={handleFocusIn}
         onBlur={handleFocusOut}
       >
@@ -510,7 +598,11 @@ export function InlineLineTable<TRow>({
                 </th>
               ))}
               {!readOnly && (
-                <th scope="col" style={{ width: 132, minWidth: 132 }} className="px-2 py-2">
+                <th
+                  scope="col"
+                  style={{ width: actionsWidth, minWidth: actionsWidth }}
+                  className="px-2 py-2"
+                >
                   <span className="sr-only">Row actions</span>
                 </th>
               )}
@@ -541,113 +633,180 @@ export function InlineLineTable<TRow>({
                 ? true
                 : !sameDraft(held.draft, held.committed);
               const label = describeRow(row, rowIndex);
+              const bandValue = band ? (held.draft[band.key] ?? '') : '';
+              const showBand =
+                Boolean(band) && (bandValue.trim() !== '' || bandOpen.includes(rowKey));
               let editableIndex = -1;
 
               return (
-                <tr
-                  key={rowKey}
-                  data-row-key={rowKey}
-                  className="border-b border-border/60 align-top last:border-b-0"
-                >
-                  {columns.map((column) => {
-                    if (column.kind !== 'derived') editableIndex += 1;
-                    const columnIndex = editableIndex;
-                    const value = held.draft[column.key] ?? '';
-                    const message = rowErrors[column.key];
-                    const describedBy = message
-                      ? `${cellId(rowKey, column.key)}-error`
-                      : undefined;
-
-                    return (
-                      <td
-                        key={column.key}
-                        style={{ width: column.width, minWidth: column.width }}
-                        className={`px-2 py-1.5 ${column.align === 'end' ? 'text-end' : ''}`}
-                      >
-                        <div
-                          ref={(element) => {
-                            cellHosts.current.set(cellId(rowKey, column.key), element);
-                          }}
-                          className="min-w-0"
-                          onKeyDown={
-                            column.kind === 'derived' || readOnly
-                              ? undefined
-                              : (event) =>
-                                  handleCellKeyDown(event, rowKey, column, columnIndex)
-                          }
-                        >
-                          <InlineCell
-                            column={column}
-                            row={row}
-                            draft={held.draft}
-                            cellId={cellId(rowKey, column.key)}
-                            value={value}
-                            invalid={Boolean(message)}
-                            describedBy={describedBy}
-                            label={`${column.header} on ${label}`}
-                            readOnly={readOnly}
-                            onChange={(next) => setDraftValue(rowKey, column.key, next)}
-                          />
-                          {column.annotate?.(row, held.draft)}
-                          {message && (
-                            <p
-                              id={describedBy}
-                              className="mt-1 text-xs text-destructive"
-                            >
-                              {message}
-                            </p>
-                          )}
-                        </div>
-                      </td>
-                    );
-                  })}
-
-                  {!readOnly && (
-                    <td className="px-2 py-1.5">
-                      <div className="flex items-center justify-end gap-0.5">
-                        {rowDetail && (
-                          <RowDetailPopover
-                            detail={rowDetail}
-                            label={label}
-                            value={held.draft[rowDetail.key] ?? ''}
-                            onChange={(next) =>
-                              setDraftValue(rowKey, rowDetail.key, next)
-                            }
-                            onClosed={() => void commitRow(rowKey)}
-                          />
+                <React.Fragment key={rowKey}>
+                  {showBand && band && (
+                    // Same `data-row-key` as the line below it, so the heading counts as part of
+                    // that row: focus moving into it must not read as leaving, or the row would
+                    // commit mid-edit and the heading would never be saved with its line.
+                    <tr data-row-key={rowKey} className="border-b border-border/60 bg-muted/40">
+                      <td colSpan={columns.length + (readOnly ? 0 : 1)} className="px-2 py-1.5">
+                        {readOnly ? (
+                          <span
+                            className="block truncate text-sm font-semibold"
+                            title={bandValue}
+                          >
+                            {bandValue}
+                          </span>
+                        ) : (
+                          <div
+                            ref={(element) => {
+                              cellHosts.current.set(cellId(rowKey, band.key), element);
+                            }}
+                            className="min-w-0"
+                          >
+                            <Input
+                              value={bandValue}
+                              aria-label={`${band.label} on ${label}`}
+                              title={bandValue}
+                              placeholder={band.placeholder}
+                              maxLength={band.maxLength}
+                              className="h-8 max-w-md text-sm font-semibold"
+                              onChange={(event) =>
+                                setDraftValue(rowKey, band.key, event.target.value)
+                              }
+                            />
+                          </div>
                         )}
-                        {dirty && (
+                      </td>
+                    </tr>
+                  )}
+                  <tr
+                    data-row-key={rowKey}
+                    className="border-b border-border/60 align-top last:border-b-0"
+                  >
+                    {columns.map((column) => {
+                      if (column.kind !== 'derived') editableIndex += 1;
+                      const columnIndex = editableIndex;
+                      const value = held.draft[column.key] ?? '';
+                      const message = rowErrors[column.key];
+                      const describedBy = message
+                        ? `${cellId(rowKey, column.key)}-error`
+                        : undefined;
+
+                      return (
+                        <td
+                          key={column.key}
+                          style={{ width: column.width, minWidth: column.width }}
+                          className={`px-2 py-1.5 ${column.align === 'end' ? 'text-end' : ''}`}
+                        >
+                          <div
+                            ref={(element) => {
+                              cellHosts.current.set(cellId(rowKey, column.key), element);
+                            }}
+                            className="min-w-0"
+                            onKeyDown={
+                              column.kind === 'derived' || readOnly
+                                ? undefined
+                                : (event) =>
+                                    handleCellKeyDown(event, rowKey, column, columnIndex)
+                            }
+                          >
+                            <InlineCell
+                              column={column}
+                              row={row}
+                              draft={held.draft}
+                              cellId={cellId(rowKey, column.key)}
+                              value={value}
+                              invalid={Boolean(message)}
+                              describedBy={describedBy}
+                              label={`${column.header} on ${label}`}
+                              readOnly={readOnly}
+                              onChange={(next) => setDraftValue(rowKey, column.key, next)}
+                            />
+                            {column.annotate?.(row, held.draft)}
+                            {message && (
+                              <p
+                                id={describedBy}
+                                className="mt-1 text-xs text-destructive"
+                              >
+                                {message}
+                              </p>
+                            )}
+                          </div>
+                        </td>
+                      );
+                    })}
+
+                    {!readOnly && (
+                      <td className="px-2 py-1.5">
+                        <div className="flex items-center justify-end gap-0.5">
+                          {band && (
+                            <Button
+                              type="button"
+                              mode="icon"
+                              variant="ghost"
+                              size="sm"
+                              aria-label={`${band.label} on ${label}`}
+                              aria-pressed={showBand}
+                              onClick={() => {
+                                setBandOpen((keys) =>
+                                  keys.includes(rowKey) ? keys : [...keys, rowKey],
+                                );
+                                // The heading row mounts in the same commit, so the caret can
+                                // only be put in it once it exists.
+                                window.setTimeout(() => {
+                                  activeRowKey.current = rowKey;
+                                  focusCell(rowKey, band.key);
+                                }, 0);
+                              }}
+                            >
+                              <Heading
+                                className={`size-3.5 ${
+                                  bandValue.trim() ? 'text-primary' : 'text-muted-foreground'
+                                }`}
+                              />
+                            </Button>
+                          )}
+                          {rowDetail && (
+                            <RowDetailPopover
+                              detail={rowDetail}
+                              label={label}
+                              value={held.draft[rowDetail.key] ?? ''}
+                              onChange={(next) =>
+                                setDraftValue(rowKey, rowDetail.key, next)
+                              }
+                              onClosed={() => void commitRow(rowKey)}
+                            />
+                          )}
+                          {dirty && (
+                            <Button
+                              type="button"
+                              mode="icon"
+                              variant="ghost"
+                              size="sm"
+                              aria-label={`Save ${label}`}
+                              disabled={saving.includes(rowKey)}
+                              onClick={() => void commitRow(rowKey)}
+                            >
+                              <Check className="size-3.5 text-primary" />
+                            </Button>
+                          )}
                           <Button
                             type="button"
                             mode="icon"
                             variant="ghost"
                             size="sm"
-                            aria-label={`Save ${label}`}
-                            disabled={saving.includes(rowKey)}
-                            onClick={() => void commitRow(rowKey)}
+                            aria-label={`Remove ${label}`}
+                            onClick={() => requestDelete(rowKey, row, rowIndex)}
                           >
-                            <Check className="size-3.5 text-primary" />
+                            <Trash2 className="size-3.5 text-destructive" />
                           </Button>
+                        </div>
+                        {dirty && (
+                          <p className="mt-0.5 text-end text-[11px] text-muted-foreground">
+                            Unsaved
+                          </p>
                         )}
-                        <Button
-                          type="button"
-                          mode="icon"
-                          variant="ghost"
-                          size="sm"
-                          aria-label={`Remove ${label}`}
-                          onClick={() => requestDelete(rowKey, row, rowIndex)}
-                        >
-                          <Trash2 className="size-3.5 text-destructive" />
-                        </Button>
-                      </div>
-                      {dirty && (
-                        <p className="mt-0.5 text-end text-[11px] text-muted-foreground">
-                          Unsaved
-                        </p>
-                      )}
-                    </td>
-                  )}
-                </tr>
+                      </td>
+                    )}
+                  </tr>
+                </React.Fragment>
               );
             })}
           </tbody>
@@ -750,9 +909,13 @@ function InlineCell<TRow>({
     const shown =
       column.kind === 'select' || column.kind === 'searchable-select'
         ? (column.resolveSelected?.(row, draft)?.label ?? (value ? value : '-'))
-        : value
-          ? (column.formatReadOnly?.(value, row) ?? value)
-          : '-';
+        : column.kind === 'checkbox'
+          ? // A frozen version reads rather than clicks, and a greyed-out box is easy to
+            // mistake for one that simply has not loaded.
+            (isInlineChecked(value) ? 'Yes' : '-')
+          : value
+            ? (column.formatReadOnly?.(value, row) ?? value)
+            : '-';
     return (
       <span className={`block truncate text-sm ${alignment}`} title={shown}>
         {shown}
@@ -787,6 +950,17 @@ function InlineCell<TRow>({
     );
   }
 
+  if (column.kind === 'checkbox') {
+    return (
+      <Checkbox
+        size="sm"
+        aria-label={label}
+        checked={isInlineChecked(value)}
+        onCheckedChange={(next) => onChange(next === true ? INLINE_CHECKED : '')}
+      />
+    );
+  }
+
   return (
     <Input
       value={value}
@@ -794,6 +968,7 @@ function InlineCell<TRow>({
       aria-invalid={invalid || undefined}
       aria-describedby={describedBy}
       title={value}
+      maxLength={column.maxLength}
       placeholder={column.placeholder}
       // Money and quantity stay text: a number input hands back a re-serialised float,
       // and the contract on both endpoints is a decimal STRING.

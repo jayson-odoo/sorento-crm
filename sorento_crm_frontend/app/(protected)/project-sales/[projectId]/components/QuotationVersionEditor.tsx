@@ -23,12 +23,14 @@ import type {
 } from '../../_shared/types/project.types';
 import {
   InlineLineTable,
+  INLINE_CHECKED,
+  isInlineChecked,
   type InlineDraft,
   type InlineLineColumn,
 } from '../../_shared/components/InlineLineTable';
 import { ReviseQuotationDialog } from './ReviseQuotationDialog';
 import { formatMyr } from './QuotationsPanel';
-import { isDecimalString, multiplyMoney } from './POIntakeMoney';
+import { formatMyrExact, isDecimalString, multiplyMoney, sumMoney } from './POIntakeMoney';
 
 const FLOOR_LEVEL_LABELS: Record<string, string> = {
   product: 'this product',
@@ -109,8 +111,19 @@ export function QuotationVersionEditor({
     }));
   }, []);
 
+  // The order the printed quotation uses, so a line is entered reading left to right the way
+  // the customer will read it back: item letter, what it is, how much, then what it comes to.
   const columns = React.useMemo<InlineLineColumn<QuotationLine>[]>(
     () => [
+      {
+        key: 'item_label',
+        header: 'Item',
+        width: 70,
+        kind: 'text',
+        placeholder: 'A',
+        // The server caps it at 8, and a cap the field enforces beats a 422 on save.
+        maxLength: 8,
+      },
       {
         key: 'product_id',
         header: 'Product',
@@ -136,6 +149,23 @@ export function QuotationVersionEditor({
         width: 240,
         kind: 'text',
         placeholder: "The product's own description",
+      },
+      {
+        key: 'technical_spec',
+        header: 'Tech spec',
+        width: 200,
+        kind: 'text',
+        placeholder: 'Rimless, 4/2.6L dual flush',
+      },
+      {
+        // The draft key is the REQUEST field. The response calls the same value `brand`, and
+        // naming the cell after what is sent keeps `toBody` a straight copy of the draft.
+        key: 'brand_snapshot',
+        header: 'Brand',
+        width: 140,
+        kind: 'text',
+        placeholder: 'SORENTO',
+        maxLength: 100,
       },
       {
         key: 'quantity',
@@ -177,6 +207,14 @@ export function QuotationVersionEditor({
           ) : null,
       },
       {
+        key: 'complete_set',
+        header: 'Complete set',
+        width: 160,
+        kind: 'text',
+        placeholder: 'c/w seat cover, flush valve',
+        maxLength: 100,
+      },
+      {
         key: 'unit_type',
         header: 'Counts per',
         width: 168,
@@ -187,31 +225,50 @@ export function QuotationVersionEditor({
           UNIT_TYPE_OPTIONS.find((option) => option.value === draft.unit_type),
       },
       {
+        // In the row, next to the money it governs, rather than behind the notes popover: a
+        // reader scanning the Total column has to be able to see WHY a line says "rate only"
+        // without opening anything, and five of them in the sample quotation is normal.
+        key: 'is_rate_only',
+        header: 'Rate only',
+        width: 92,
+        kind: 'checkbox',
+      },
+      {
         key: 'line_total',
         header: 'Total',
         width: 128,
         kind: 'derived',
         align: 'end',
         // Recomputed from the draft rather than read off the row, so the number moves
-        // while a quantity is being typed instead of after the save lands.
-        derive: (draft) => formatMyr(multiplyMoney(draft.quantity, draft.unit_price) ?? '0'),
+        // while a quantity is being typed instead of after the save lands. A rate-only line
+        // prints the words: blank reads as "we forgot" and RM 0.00 reads as "free", while the
+        // customer is in fact being quoted a rate that nobody adds up (AC-C2, AC-D3).
+        derive: (draft) =>
+          isInlineChecked(draft.is_rate_only) ? (
+            <Badge variant="secondary" appearance="light">
+              rate only
+            </Badge>
+          ) : (
+            // Grouped from the STRING `multiplyMoney` produced, like the footer below it, so
+            // one column is never rendered by two different formatters.
+            formatMyrExact(multiplyMoney(draft.quantity, draft.unit_price) ?? '0')
+          ),
         /**
          * The version's total, under the column it sums. It used to sit in the metadata strip
          * beside "Issued by" and "Opened", where it read as one more fact about the version
          * rather than as the sum of the numbers directly above it.
          *
          * Summed from the SAVED rows: a half-typed line is not money yet, and the per-row
-         * `derive` above already shows what the line in hand will come to.
+         * `derive` above already shows what the line in hand will come to. Off the STRINGS,
+         * to the cent, and skipping rate-only lines exactly as the backend's `line_amount`
+         * does, so this footer and the document's grand total cannot drift apart.
          */
-        footer: (rows) =>
-          formatMyr(
-            String(
-              rows.reduce(
-                (sum, line) => sum + (line.is_rate_only ? 0 : Number(line.line_total || 0)),
-                0,
-              ),
-            ),
-          ),
+        footer: (rows) => {
+          const total = sumMoney(
+            rows.filter((line) => !line.is_rate_only).map((line) => line.line_total),
+          );
+          return total === null ? '-' : formatMyrExact(total);
+        },
       },
     ],
     [fetchProducts, uomOptions],
@@ -219,12 +276,20 @@ export function QuotationVersionEditor({
 
   const toDraft = React.useCallback(
     (line: QuotationLine): InlineDraft => ({
+      item_label: line.item_label ?? '',
       product_id: line.product_id ?? '',
       description: line.description ?? '',
+      technical_spec: line.technical_spec ?? '',
+      // The response names this one `brand`, the request `brand_snapshot`. The draft holds the
+      // request's name so the payload stays a copy rather than a translation.
+      brand_snapshot: line.brand ?? '',
       quantity: line.quantity ?? '1',
       uom: line.uom ?? '',
       unit_price: line.unit_price ?? '',
+      complete_set: line.complete_set ?? '',
       unit_type: line.unit_type ?? '',
+      is_rate_only: line.is_rate_only ? INLINE_CHECKED : '',
+      band_label: line.band_label ?? '',
       notes: line.notes ?? '',
     }),
     [],
@@ -232,12 +297,18 @@ export function QuotationVersionEditor({
 
   const emptyDraft = React.useCallback(
     (): InlineDraft => ({
+      item_label: '',
       product_id: '',
       description: '',
+      technical_spec: '',
+      brand_snapshot: '',
       quantity: '1',
       uom: '',
       unit_price: '',
+      complete_set: '',
       unit_type: '',
+      is_rate_only: '',
+      band_label: '',
       notes: '',
     }),
     [],
@@ -339,6 +410,14 @@ export function QuotationVersionEditor({
           label: 'Notes',
           placeholder: 'Why this price, what was agreed, what it replaces',
         }}
+        // Free text off the customer's own bill of quantities. The CRM does not model bill and
+        // page numbers because the next customer numbers their BQ differently (AC-C3).
+        band={{
+          key: 'band_label',
+          label: 'Section heading',
+          placeholder: 'e.g. BILL NO 3 PAGE 15/4, OPTIONAL ITEMS',
+          maxLength: 150,
+        }}
         // Off-catalog lines carry the description the customer reads, so it is the one
         // thing that cannot be left out.
         validateRow={(draft): Record<string, string> =>
@@ -424,7 +503,13 @@ function LineFlags({ line }: { line: QuotationLine }) {
   );
 }
 
-/** Draft to the body the per-line endpoint already takes. Unchanged from the dialog. */
+/**
+ * Draft to the body the per-line endpoint takes.
+ *
+ * `brand_snapshot` is the request's name for the field the response calls `brand`. The
+ * asymmetry is the API's and is deliberate (the column snapshots the brand at the moment the
+ * line was priced), so it is honoured here rather than smoothed over.
+ */
 function toBody(draft: InlineDraft) {
   return {
     product_id: draft.product_id || null,
@@ -434,6 +519,12 @@ function toBody(draft: InlineDraft) {
     uom: draft.uom.trim() || null,
     unit_type: (draft.unit_type || null) as UnitType | null,
     notes: draft.notes.trim() || null,
+    item_label: draft.item_label.trim() || null,
+    brand_snapshot: draft.brand_snapshot.trim() || null,
+    technical_spec: draft.technical_spec.trim() || null,
+    complete_set: draft.complete_set.trim() || null,
+    band_label: draft.band_label.trim() || null,
+    is_rate_only: isInlineChecked(draft.is_rate_only),
   };
 }
 

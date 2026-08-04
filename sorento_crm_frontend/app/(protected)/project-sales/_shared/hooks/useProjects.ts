@@ -114,6 +114,8 @@ import type {
   TaskPhase,
   TaskStatusChangeBody,
 } from '../types/project.types';
+// Keys only, and the document hooks import nothing from here, so the two files do not circle.
+import { quotationDocumentsKey } from './useQuotationDocuments';
 
 export const PROJECTS_KEY = 'projects';
 export const PARTIES_KEY = 'project-parties';
@@ -931,6 +933,12 @@ export function useQuotationMutations(projectId: string) {
 /**
  * Line writes invalidate the lines AND the quotation list: the list carries the version
  * total and the two alert counts, which every line edit can change.
+ *
+ * And the DOCUMENT, because its letterhead carries the grand total across scopes (AC-D2).
+ * That is a different query from the lines, so without this a line edit moved the footer
+ * under the money column and left the total at the top of the page reading the old figure -
+ * two numbers on one screen disagreeing, which is exactly what makes a reader distrust the
+ * arithmetic. Prefix key, so both the document list and the open document refetch.
  */
 export function useQuotationLineMutations(projectId: string, versionId: string) {
   const queryClient = useQueryClient();
@@ -938,6 +946,7 @@ export function useQuotationLineMutations(projectId: string, versionId: string) 
     queryClient.invalidateQueries({ queryKey: linesKey(versionId) });
     queryClient.invalidateQueries({ queryKey: quotationsKey(projectId) });
     queryClient.invalidateQueries({ queryKey: [QUOTATIONS_KEY, 'versions'] });
+    queryClient.invalidateQueries({ queryKey: quotationDocumentsKey(projectId) });
   };
 
   const create = useMutation({
