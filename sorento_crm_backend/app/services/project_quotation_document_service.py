@@ -224,16 +224,21 @@ def add_scope(
 
     body = dict(payload or {})
     body["scope_label"] = scope_label
-    quotation = scope_service.create_quotation(
-        db, project=project, actor_user_id=actor_user_id, payload=body
-    )
 
+    # Tab order is decided BEFORE the insert, because `document_id` is NOT NULL and the row
+    # cannot be written unattached and fixed up afterwards.
     highest = (
         db.query(func.max(ProjectQuotation.sort_order))
         .filter(ProjectQuotation.document_id == document.id)
         .scalar()
     )
-    quotation.document_id = document.id
+    quotation = scope_service.create_quotation(
+        db,
+        project=project,
+        actor_user_id=actor_user_id,
+        payload=body,
+        document_id=document.id,
+    )
     quotation.sort_order = 0 if highest is None else int(highest) + 1
     db.flush()
     return quotation

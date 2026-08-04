@@ -1004,12 +1004,14 @@ class ProjectQuotation(Base, CompanyScopedMixin):
     project_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
-    # Nullable at the ORM level only for the backfill window; the migration sets it after
-    # creating one document per existing quotation.
+    # NOT NULL, matching what migration 327 leaves in Postgres after the backfill. Declared here
+    # too on purpose: while the model said nullable and the column said NOT NULL, a service could
+    # insert an unattached row, pass every test against the model-built test schema, and die on
+    # the real database. That drift is a known way this codebase has broken production before.
     document_id = Column(
         UUID(as_uuid=False),
         ForeignKey("project_quotation_documents.id", ondelete="CASCADE"),
-        nullable=True,
+        nullable=False,
     )
     # Tab order on screen, band order in the printed document.
     sort_order = Column(Integer, nullable=False, server_default="0", default=0)

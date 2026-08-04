@@ -724,3 +724,80 @@ def test_every_new_table_is_company_scoped_and_stamped_on_insert():
         assert issued.company_id == company_id
         rows = _issue_scopes(db, issued.id)
         assert rows and all(row.company_id == company_id for row in rows)
+
+
+# ------------------------------------------------------- regression: NOT NULL document_id
+
+
+def test_a_scope_is_attached_to_its_document_by_the_insert_itself():
+    """Adding a scope died on the real database while every test passed.
+
+    `project_quotations.document_id` is NOT NULL in Postgres after migration 327, but the model
+    left the column nullable, so the test schema built from the model accepted a row the real
+    database refused. The service inserted the scope first and attached the document afterwards,
+    which is fine against a nullable column and a NotNullViolation against the real one.
+
+    The model now declares NOT NULL as well, so this test exercises the same constraint the
+    production database has. It fails against the old insert-then-attach ordering.
+    """
+    from app.services import project_quotation_document_service as qdocs
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+        _quotation_numbering_rule(db, company_id, prefix=f"{MARKER}/Q/", next_value=1)
+        owner = _user(db, f"{MARKER} Baser")
+        project = _project(db, company_id, owner)
+
+        document = qdocs.create_document(db, project=project, actor_user_id=owner)
+        first = qdocs.add_scope(
+            db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=owner
+        )
+        second = qdocs.add_scope(
+            db, document=document, scope_label=f"{MARKER} Guard House", actor_user_id=owner
+        )
+
+        # Attached at insert time, not patched in afterwards.
+        assert first.document_id == document.id
+        assert second.document_id == document.id
+        # And tab order still runs in the order they were added.
+        assert [first.sort_order, second.sort_order] == [0, 1]
+
+        # THE assertion that catches the regression. Insert-then-attach cannot raise any more,
+        # because create_quotation now always attaches a document - so a caller that lets it
+        # create one and then reassigns leaves an orphan letterhead behind per scope, silently.
+        # Two scopes on one document means exactly ONE document exists.
+        from app.models.projects import ProjectQuotationDocument
+
+        assert (
+            db.query(ProjectQuotationDocument)
+            .filter(ProjectQuotationDocument.project_id == project.id)
+            .count()
+            == 1
+        )
+
+
+def test_the_original_per_scope_endpoint_still_works_and_gets_its_own_document():
+    """The pre-document route creates a scope with no document in hand.
+
+    It cannot simply fail now that the column is NOT NULL, and it must not quietly attach the
+    scope to somebody else's letterhead either, so it gets one document per scope - exactly what
+    the backfill did for every row that already existed.
+    """
+    from app.services import project_quotation_service as quotes
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+        _quotation_numbering_rule(db, company_id, prefix=f"{MARKER}/Q/", next_value=1)
+        owner = _user(db, f"{MARKER} Baser")
+        project = _project(db, company_id, owner)
+
+        scope = quotes.create_quotation(
+            db,
+            project=project,
+            actor_user_id=owner,
+            payload={"scope_label": f"{MARKER} Standalone"},
+        )
+
+        assert scope.document_id is not None

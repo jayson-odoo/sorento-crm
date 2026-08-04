@@ -221,11 +221,21 @@ def create_quotation(
     project: Project,
     actor_user_id: str,
     payload: Dict[str, Any],
+    document_id: Optional[str] = None,
 ) -> ProjectQuotation:
     """A scope of the project, with version 1 opened immediately.
 
     Opened rather than deferred: a quotation with no version has nowhere to put a line,
     and every caller would have to remember to create one.
+
+    Every scope belongs to a DOCUMENT, and `document_id` is stamped on the INSERT rather than
+    assigned afterwards: the column is NOT NULL in Postgres, so a two-step "insert then attach"
+    dies on the flush. It read as safe only because the model left the column nullable while the
+    migration made it NOT NULL - the same model-versus-column drift that has bitten this codebase
+    before, and the reason the model now declares it NOT NULL too.
+
+    A caller with no document in hand (the original per-scope endpoint) gets one created for it,
+    one document per scope, exactly as the backfill did for existing rows.
     """
     scope_label = " ".join((payload.get("scope_label") or "").split())
     if not scope_label:
@@ -235,9 +245,17 @@ def create_quotation(
             code="quotation_scope_required",
         )
 
+    if document_id is None:
+        from app.services import project_quotation_document_service as documents
+
+        document_id = documents.create_document(
+            db, project=project, actor_user_id=actor_user_id
+        ).id
+
     quotation = ProjectQuotation(
         company_id=project.company_id,
         project_id=project.id,
+        document_id=document_id,
         scope_label=scope_label,
         series_id=payload.get("series_id"),
         notes=payload.get("notes"),
