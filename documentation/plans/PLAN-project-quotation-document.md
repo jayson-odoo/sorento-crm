@@ -1,6 +1,8 @@
 # PLAN — Quotation as a DOCUMENT (multi-scope, cover letter, issue snapshot)
 
-**Status:** written, not started. Blocked on the client's answers to the UAC's open questions.
+**Status:** written, not started. The UAC's five open questions were answered on 2026-08-04 and
+are folded in: running-number `Our Ref`, both-sides e-sign, free-text bands, one Excel sheet per
+scope, one terms set per company. Ready for the grill.
 **UAC:** `documentation/plans/UAC-project-quotation-document.md`
 **Slug:** project-quotation-document
 
@@ -73,10 +75,24 @@ no second table, so a band cannot orphan itself from its lines).
 **`project_quotation_issue_scopes`** — `issue_id` FK, `quotation_id` FK, `version_id` FK,
 `sort_order`, `scope_total`. Unique `(issue_id, quotation_id)`.
 
+**`quotation_signatures`** — `id`, `owner_kind` (`user` | `customer`), `user_id` FK NULL,
+`image_attachment_id` FK (the rendered PNG - drawn, typed or initials all end as one image),
+`mode` (`draw` | `type` | `initials`), `signed_at`, `ip_address`, `user_agent`, `gps_lat`,
+`gps_lng`. A user's reusable signature is the row with `owner_kind='user'` and no issue binding;
+applying it to an issue COPIES it, so re-drawing later cannot alter a signed document.
+
+**`project_quotation_issues`** also carries `sorento_signature_id` FK (required to issue),
+`customer_signature_id` FK NULL, `accepted_at` NULL, `signed_pdf_attachment_id` NULL,
+`sign_token` (the tokenised counter-sign link) and `sign_token_expires_at`.
+
 **`quotation_templates`** — `id`, `kind` (`cover_letter` | `terms`), `name`, `body_html`,
 `is_active`, `CompanyScopedMixin`. One active per `(company, kind)`, enforced by a partial
 unique index - the `system_settings` lesson: a singleton nothing enforces becomes two rows and
 then reads are non-deterministic.
+
+**Numbering.** No new counter. `document_numbering_rules` gains a `project_quotation` row and
+`NumberingService.get_next_number` claims the number at document create. `Our Ref` on an issue is
+`{document_no} (R{issue_no})`; the document number itself never changes across revisions.
 
 **Totals rule (one place, not three).** `is_rate_only` lines contribute zero. Scope total,
 document grand total and issue `grand_total` all come from one service function; no
@@ -92,11 +108,23 @@ recomputation in a serializer, no arithmetic in the FE.
 | **S2** | Header FE + scope tabs | Document detail page: header block (prefilled, AC-A2), scope tabs, add / rename / reorder / delete scope. Per-tab `PanelDataGrid` with the footer total (AC-D1) and the standard pagination bar (AC-D4). |
 | **S3** | Line columns | `item_label`, brand, technical spec, complete set, `is_rate_only`, band markers. Editor + totals honouring rate-only (AC-C2). Grand total across tabs (AC-D2). |
 | **S4** | Cover letter + terms templates | `quotation_templates`, admin screen under Project Sales Setup, rich-text + merge-field picker, render-on-create into the document's own copy (AC-E2). |
-| **S5** | Issue + PDF | `issue` action: freeze, stamp `R{n}`, snapshot letter/terms/totals/(scope,version) pairs, render PDF in the sample's layout via the existing WeasyPrint pipeline, store as an attachment. Re-download serves the stored file (AC-F3). |
-| **S6** | Excel export | One sheet per scope, sample column set, per-sheet total + grand total. |
+| **S5** | Signature capture | `SignaturePad` component: draw (mouse / touch), type, initials - one PNG out of all three. Saved to the user, reused with one click, re-drawable. Metadata: signed at, IP, user agent, GPS when the browser gives it. **Net-new: the repo has no signature capture today** - `signature` is a declared form field type with no renderer. |
+| **S6** | Issue + PDF | `issue` action: require the owner's signature, freeze, stamp `R{n}`, snapshot letter/terms/totals/(scope,version) pairs, render PDF in the sample's layout via the existing WeasyPrint pipeline, store as an attachment. Re-download serves the stored file (AC-F3). |
+| **S7** | Customer counter-sign | Tokenised public page in the existing `(auth)` portal family: read-only quotation, Sign action, identity confirmation reused. Stores the customer signature + metadata on the issue, stamps `Accepted`, regenerates the PDF with BOTH signatures. |
+| **S8** | Excel export | One sheet per scope, sample column set, per-sheet total, grand total stated on the first sheet. |
 
-S1 and S2 are the ones that answer images 40-41 on screen. S5 is what makes the record match
-what the customer holds.
+S1 and S2 are the ones that answer images 40-41 on screen. S6 is what makes the record match what
+the customer holds; S7 is what makes acceptance a fact rather than an email thread.
+
+### Scope note — the counter-sign flow
+
+The client's reference is the ecohub handover screen (drawn signature, `SIGNED AT` / `IP ADDRESS`
+/ `GPS LOCATION` beside it). S7 does NOT need a new portal: contact-facing tokenised pages already
+live under `(auth)` with an identity confirmation step, and the counter-sign page joins that
+family. What it does need is a decision the UAC flags: **acceptance does not win the scopes**
+(AC-H7). A signed quotation is evidence; the scope is won when the salesperson says so or a PO
+lands. Building it the other way would flip projects to won on a signature and then need unwinding
+when the PO never arrives.
 
 ### Scope note — the template designer
 
@@ -130,5 +158,9 @@ way.
    leave a window where a create fails. Backfill, then set NOT NULL, in one revision.
 2. **Alembic head** — this branch is already at 326. Chain onto the committed head and verify a
    single head before deploy (the dual-head lesson).
-3. **The dev DB is a copy of prod data.** The backfill runs against real quotations; it must be
+3. **A signature is a legal-ish artifact.** The image and its metadata are snapshotted onto the
+   issue, never referenced live from the user's reusable signature - otherwise re-drawing a
+   signature silently rewrites every document already signed with it. Same rule as lines and
+   templates, and the one most likely to be got wrong by "just point at the user's signature".
+4. **The dev DB is a copy of prod data.** The backfill runs against real quotations; it must be
    idempotent and re-runnable, JOIN-based, "set where mismatch" rather than "where NULL".

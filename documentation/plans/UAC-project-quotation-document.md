@@ -1,6 +1,7 @@
 # UAC — Quotation as a DOCUMENT (multi-scope, cover letter, issue snapshot)
 
-**Status:** written, not built. Awaiting the client's grill.
+**Status:** written, not built. Open questions ANSWERED by the client on 2026-08-04 and folded
+in below (Groups A, E, F, H). Awaiting the grill on the answered shape.
 **Slug:** project-quotation-document
 **Source:** client review of the built quotation screens (images 40-41) plus the real
 artifact `Cabana Elmina - nadi cergas R2.xlsx` (Sorento → Nadi Cergas, 2026-02-26,
@@ -74,6 +75,12 @@ CRM record that can answer "what exactly did we quote them, and when".
 
 ## Group A — The document
 
+- **AC-A0** `Our Ref` is a **running number from the existing numbering feature**, not free text
+  and not derived from the project code. A `document_numbering_rules` row with
+  `doc_type = 'project_quotation'` supplies prefix, digit count and reset policy, exactly as
+  purchase requests and sponsorship forms already do, and an admin edits it in Setup without a
+  deploy. The number is claimed by `NumberingService.get_next_number` at document creation and
+  never changes; the ISSUE appends the revision the customer quotes back - `SRT/Q/2026/0141 (R2)`.
 - **AC-A1** A quotation DOCUMENT belongs to a project and carries: `our_ref`, `your_ref`,
   `doc_date`, recipient party, recipient address snapshot, recipient phones snapshot,
   `attn_name`, `subject_title`, `signatory_name`, `signatory_phone`.
@@ -115,8 +122,10 @@ CRM record that can answer "what exactly did we quote them, and when".
   printing `rate only` in the money column and contributing **zero** to every total. The
   sample has five. A system that silently added them would overstate the quote by RM 400+.
 - **AC-C3** A scope can contain **section bands** - a labelled break between groups of lines
-  (`BILL NO 3 PAGE 15/4`, `OPTION`, `OPTIONAL ITEMS FOR OKU TOILET`). A band is a line-level
-  marker, ordered with the lines, not a separate table.
+  (`BILL NO 3 PAGE 15/4`, `OPTION`, `OPTIONAL ITEMS FOR OKU TOILET`). The label is **free text
+  copied off the customer's own BQ**; the CRM does not model bill and page numbers, because the
+  next customer numbers their BQ differently. A band is a line-level marker, ordered with the
+  lines, not a separate table.
 - **AC-C4** A line picked from the catalogue snapshots code, description, brand, image and
   list price at the moment it is added, exactly as today.
 - **AC-C5** Every existing floor / non-standard alert keeps firing per line, unchanged.
@@ -135,9 +144,10 @@ CRM record that can answer "what exactly did we quote them, and when".
 
 ## Group E — Cover letter and terms
 
-- **AC-E1** A **cover letter template** and a **terms template** exist per company, editable
-  by an admin, with merge fields for the facts the letter needs (project title, recipient,
-  attn, our ref, date, grand total, signatory).
+- **AC-E1** A **cover letter template** and a **terms template** exist **per company** - SRT has
+  its set, MOCHA has its own - editable by an admin, with merge fields for the facts the letter
+  needs (project title, recipient, attn, our ref, date, grand total, signatory). One active set
+  per company per kind; not per project type, and not a library chosen per quotation.
 - **AC-E2** A new document renders the active template into its own editable copy. Editing the
   document's letter never touches the template; editing the template never rewrites a document
   already created, and **never** rewrites one already issued (AC-B4).
@@ -154,13 +164,45 @@ CRM record that can answer "what exactly did we quote them, and when".
 - **AC-F1** A document issue renders to **PDF** in the layout of the sample: sender block,
   refs, recipient, attn, subject, then each scope as a banded table with the sample's column
   set, then the grand total, terms, sign-off.
-- **AC-F2** The same issue exports to **Excel** with one sheet per scope (the client's "tabs"),
-  because the customer's QS works in Excel and re-types otherwise.
+- **AC-F2** The same issue exports to **Excel with one sheet per scope** (the client's "tabs"),
+  because the customer's QS works in Excel and re-types otherwise. Each sheet carries its own
+  total; the grand total is stated on the first sheet. Deliberately NOT the sample's single
+  banded sheet: a QS re-pricing the guard house should not have to scroll past the townhouse.
 - **AC-F3** Both are produced from the ISSUE snapshot, not from live rows, so a re-download
   next year is byte-for-byte what was sent.
 - **AC-F4** Product images print in the `PRODUCT IMAGE` column when the line has one, and the
   column collapses when no line in the scope has an image (an empty column of blank cells on
   every page is worse than no column).
+
+## Group H — Signing (both sides)
+
+The client's reference is the ecohub handover screen: a drawn signature on a white canvas, with
+`SIGNED AT`, `IP ADDRESS` and `GPS LOCATION` recorded beside it.
+
+- **AC-H1** The **project owner signs before issuing**, and **an unsigned document cannot be
+  issued**. There is never an unsigned Sorento quotation in circulation to explain.
+- **AC-H2** Three ways to produce a signature, all in one control: **draw** (mouse, trackpad or
+  finger on a touch screen), **type** a name rendered in a signature face, or **initials**. The
+  result is one image either way, so everything downstream has a single shape to render.
+- **AC-H3** A signature is **saved to the user** and reused with one click on the next quotation.
+  It can be re-drawn at any time, and re-drawing does not alter a signature already applied to an
+  issued document (the snapshot rule again).
+- **AC-H4** Applying a signature records `signed_at`, the signer, IP address and user agent. GPS
+  is recorded when the browser gives it and shown as `-` when it does not - the ecohub screen
+  shows `-` rather than hiding the field, and that is the honest rendering.
+- **AC-H5** The **customer counter-signs**. An issue carries a tokenised public link (the same
+  `(auth)` portal family the CRM already uses for contacts, with the existing identity
+  confirmation), showing the quotation read-only and a Sign action. The signature, its metadata
+  and the acceptance timestamp are stored against the ISSUE.
+- **AC-H6** A counter-signed issue is stamped **Accepted**, and the accepted PDF - with BOTH
+  signatures on it - is stored and downloadable. That file is the record of what was agreed.
+- **AC-H7** **Acceptance does NOT set a scope's outcome to won.** A signed quotation is evidence,
+  not revenue; the scope is won when the salesperson decides or a PO lands (AC-A5, and the PO
+  binding that already exists). Acceptance is surfaced loudly on the project instead, as the next
+  action. **[FLAG]** Say so if the intent is the opposite and acceptance should win the scopes.
+- **AC-H8** Nothing about counter-signing is required for the CRM record to be complete: a
+  customer who never signs leaves the issue in `Issued`, which is a legitimate resting state and
+  reads as one, not as an error.
 
 ## Group G — What must not break
 
@@ -175,14 +217,18 @@ CRM record that can answer "what exactly did we quote them, and when".
 
 ---
 
-## Open questions for the client
+## Answered by the client (2026-08-04)
 
-1. **`Our Ref` format.** The sample shows only `(R2)`. Is there a real reference series
-   (e.g. `SRT/Q/2026/0141`) the CRM should generate, or is the ref the project code plus the
-   revision?
-2. **Who signs?** Signatory is on the document in the sample (BASER RAMLI + mobile). Default to
-   the salesperson who owns the project, or a fixed person per company?
-3. **Bands.** Are `BILL NO 3 PAGE 15/4` labels copied from the customer's own BQ (so free
-   text), or should the CRM know the BQ structure?
-4. **Excel export tabs.** One sheet per scope, or one sheet with bands like the sample?
-5. **Terms.** One standard set per company, or per project type?
+| # | Question | Answer |
+|---|---|---|
+| 1 | `Our Ref` format | **Use the existing running-number feature** (`document_numbering_rules`), issue appends the revision (AC-A0) |
+| 2 | Who signs | **Project owner**, and **both sides e-sign** - draw / type / initials, customer counter-signs (Group H) |
+| 3 | Band labels | **Free text off the customer's BQ** (AC-C3) |
+| 4 | Excel export | **One sheet per scope** (AC-F2) |
+| 5 | Terms scope | **One standard set per company** (AC-E1) |
+
+Still to settle, raised BY those answers:
+
+- **AC-H7** - does customer acceptance win the scopes, or stay evidence? Written as evidence.
+- The counter-sign link's identity check: reuse the contact portal's existing confirmation, or
+  let anyone holding the link sign? Written as reuse.
