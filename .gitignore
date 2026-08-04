@@ -19,6 +19,12 @@ sorento_crm_backend/.next/*
 # Playwright MCP scratch (console logs, page snapshots)
 .playwright-mcp/
 
+# Claude-managed dev server logs
+.devlogs/
+
+# Lavish review artifacts (regenerated from the plan docs)
+.lavish/
+
 # OS files
 .DS_Store
 

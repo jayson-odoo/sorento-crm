@@ -164,14 +164,16 @@ export default function ClearanceDeliveryCard({
           <div className="rounded-lg border border-dashed p-6 text-center">
             <p className="text-sm font-medium">No container status imported yet</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              Clearance dates arrive with the Container Status workbook. Upload it and this
+              Clearance dates arrive with the Container Status workbook. Import it and this
               container will fill in automatically, matched on its container number.
             </p>
+            {/* Lands on the upload dialog itself, not just the list - the list page opens
+                it from ?import=container-status. */}
             <Link
-              href="/resource-management/attachment-directories"
+              href="/procurement-management/packing-lists?import=container-status"
               className="mt-3 inline-block text-sm font-medium text-primary hover:underline"
             >
-              Go to Resource Management &rarr; Files
+              Import Container Status workbook
             </Link>
           </div>
         ) : (

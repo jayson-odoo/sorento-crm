@@ -27,8 +27,13 @@ revised ETA, then check CIDB ePermit for inspection and approval dates, then typ
 1. **They keep maintaining the Excel exactly as today.** Deliberate. Phase 1 asks them to change
    nothing about their own process, because a cutover before the data is trusted is how dual
    sources of truth get born.
-2. **They upload the sheet** at **Resource Management -> Files**, attachment type `Container
-   Status`. They fill in nothing else - the file carries every field.
+2. **They import the sheet from Procurement -> Packing Lists**, via the toolbar's
+   **Import Container Status** action. They fill in nothing else - the file carries every
+   field. The upload lives in the domain the data belongs to, NOT in the generic file
+   library: one sheet row is one packing list, so this is the screen they are already on.
+   The workbook is still retained as an attachment behind the scenes so the assistant can
+   hand it back to a contact, but that is storage, not somewhere anyone should navigate to
+   in order to upload.
 3. **A toast confirms the job is queued**, and a notification arrives on completion. Import Job
    Details shows per-row outcomes, including which rows were rejected and why.
 4. **They open Procurement -> Packing Lists** and the containers they already know now carry
@@ -70,9 +75,16 @@ revised ETA, then check CIDB ePermit for inspection and approval dates, then typ
 
 ### A. Capture - upload and import (journey: maintainer 2-4)
 
-- **A1.** A new attachment type `Container Status` exists. Uploading a file of that type at
-  `/resource-management/attachment-directories` enqueues a container-status import on the `imports`
-  RQ queue and returns immediately with a queued toast.
+- **A1.** The import entry point is the **Packing Lists** toolbar (`secondaryActions`, the slot
+  documented for Import actions), NOT the generic file library. Uploading there enqueues a
+  container-status import on the `imports` RQ queue and returns immediately with a queued toast.
+  The file is still stored as a `Container Status` attachment so AC group D can serve it back.
+- **A1a.** A **dry run** is available before committing: it reports rows read, how many
+  containers will be updated, how many created, and which rows are rejected, without writing
+  anything. Against the current workbook that is 411 read / 111 update / 296 create / 4 rejected.
+- **A1b.** The "no container status imported yet" empty state on a packing list links to the
+  import action itself (`?import=container-status` opens the dialog), never to a page where the
+  user has to hunt for the upload.
 - **A2.** The import reads **all 5 tabs**. The tab name is recorded on each row for traceability
   and is **never** used to derive status.
 - **A3.** Rows are matched to `inbound_shipments` on **normalized container number** (uppercase,

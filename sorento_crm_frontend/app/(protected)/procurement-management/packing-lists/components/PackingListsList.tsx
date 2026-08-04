@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import {
   ColumnDef,
@@ -14,7 +14,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Plus, Search, Trash2, X } from 'lucide-react';
+import { ChevronRight, Plus, Search, Trash2, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -33,9 +33,19 @@ import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { formatStatusLabel, getStatusBadgeVariant } from '@/lib/status-badge';
 import PackingListDeleteDialog from './packing-list-delete-dialog';
 import PackingListBulkDeleteDialog from './PackingListBulkDeleteDialog';
+import ContainerStatusImportDialog from './ContainerStatusImportDialog';
 
 export default function PackingListsList() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+
+  // The "no container status imported yet" empty state on a packing list detail page
+  // links back here with ?import=container-status so the CTA lands on the upload
+  // itself rather than dead-ending on the list.
+  useEffect(() => {
+    if (searchParams.get('import') === 'container-status') setImportDialogOpen(true);
+  }, [searchParams]);
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
@@ -340,6 +350,14 @@ export default function PackingListsList() {
                 Create Packing List
               </Button>
             }
+            secondaryActions={[
+              {
+                key: 'import-container-status',
+                label: 'Import Container Status',
+                icon: Upload,
+                onClick: () => setImportDialogOpen(true),
+              },
+            ]}
             bulkActions={[
               {
                 key: 'delete',
@@ -369,6 +387,10 @@ export default function PackingListsList() {
           onSuccess={() => refetch()}
         />
       )}
+      <ContainerStatusImportDialog
+        open={importDialogOpen}
+        onOpenChange={setImportDialogOpen}
+      />
       <PackingListBulkDeleteDialog
         open={bulkDeleteDialogOpen}
         onOpenChange={(open) => {
