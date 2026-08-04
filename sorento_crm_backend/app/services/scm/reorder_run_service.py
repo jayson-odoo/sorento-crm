@@ -271,6 +271,18 @@ def _execute_run(db: Session, run_id: str) -> dict:
         db.add(run)
         db.commit()
 
+        # Freeze the Summary Order Report for this run (S3b, AC-C2.9). AFTER the commit and
+        # BEST-EFFORT: the plan itself is complete and durable at this point, and a failure
+        # here must not flip a finished run to `failed` - the retry would re-plan work that
+        # already succeeded. The report writer is idempotent, so it can be re-run for the
+        # same run id to fill the gap.
+        try:
+            from app.services.scm import summary_order_service
+            frozen = summary_order_service.write_rows(db, run_id)
+            log.info("run_reorder %s: froze %s order-summary rows", run_id, frozen)
+        except Exception:  # noqa: BLE001
+            log.exception("run_reorder %s: failed to freeze the order summary", run_id)
+
         return {"run_id": run_id, "status": "completed", **counts}
     except Exception as exc:  # noqa: BLE001 — record, never crash the worker
         log.exception("run_reorder %s failed", run_id)

@@ -508,3 +508,79 @@ class PriorityPolicy(Base):
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class OrderSummaryRow(Base):
+    """One product's FROZEN Summary Order Report row for a run, plus its decision.
+
+    Frozen because AC-C2.9 requires a past week to be reviewable: what the decider saw has to
+    be recoverable, and the order book moves daily, so a recomputation is a different report
+    wearing the same date.
+
+    The grain is (run, product), NOT (run, product, warehouse). AC-C2.1 makes the report one
+    row per product network wide because a purchase order is raised once for the company,
+    while M8-D5 keeps recommendations per warehouse so each buy is tied to a real location.
+    Both stand, so the product-level decision has no per-warehouse recommendation to hang off
+    and lives here; splitting one chosen quantity across locations is the allocator's job.
+
+    Nullability is load-bearing: `avg_daily_demand` (absent for ~38% of the book) and
+    `unit_volume_cbm` (~84%) are NULL rather than 0, because a zero reads as "already out of
+    stock" and "no space needed" - decisions taken on a figure nobody measured.
+    """
+    __tablename__ = "order_summary_row"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    run_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("scm.reorder_run.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False
+    )
+
+    as_of = Column(Date, nullable=False)
+    on_hand = Column(Numeric, nullable=False, default=0)
+    project_demand = Column(Numeric, nullable=False, default=0)
+    dealer_outstanding = Column(Numeric, nullable=False, default=0)
+    # Separate on purpose (AC-C2.2): their sum drives the balance, the split is what a person
+    # reads, because only the on-order half is still negotiable.
+    qty_on_order = Column(Numeric, nullable=False, default=0)
+    qty_in_transit = Column(Numeric, nullable=False, default=0)
+    # The DATED shortfall (peak deficit), never `on hand + on order - demand`.
+    shortfall = Column(Numeric, nullable=False, default=0)
+    shortfall_at = Column(Date, nullable=True)
+    suggested_qty = Column(Numeric, nullable=False, default=0)
+
+    avg_daily_demand = Column(Numeric, nullable=True)
+    unit_volume_cbm = Column(Numeric, nullable=True)
+    spare_lands_at_warehouse_id = Column(
+        UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
+    )
+
+    project_demand_line_count = Column(Integer, nullable=False, default=0)
+    dealer_outstanding_line_count = Column(Integer, nullable=False, default=0)
+    # NULL when nothing is outstanding, which is not the same as 0 days outstanding.
+    max_days_outstanding = Column(Integer, nullable=True)
+
+    chosen_qty = Column(Numeric, nullable=True)
+    chosen_supplier_id = Column(
+        UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True
+    )
+    decided_by = Column(String, nullable=True)
+    decided_at = Column(DateTime(timezone=False), nullable=True)
+
+    computed_at = Column(DateTime(timezone=False), nullable=False)
+    source_system = Column(String, nullable=True)
+    source_ref = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        # One row per product per run, or the report reads whichever duplicate comes back
+        # first (the `system_settings` singleton lesson).
+        Index(
+            "uq_scm_order_summary_row_run_product", "run_id", "product_id", unique=True
+        ),
+        Index("ix_scm_order_summary_row_run_id", "run_id"),
+        {"schema": "scm"},
+    )

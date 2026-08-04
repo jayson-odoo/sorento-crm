@@ -52,7 +52,7 @@ import type {
 } from '../types/summaryOrder.types';
 
 /** Phase-1 flag. Phase 2 sets this false and deletes the file. */
-export const USE_SUMMARY_ORDER_MOCKS = true;
+export const USE_SUMMARY_ORDER_MOCKS = false;
 
 /** How long the mock takes to "fetch", so the loading skeleton is actually visible. */
 const MOCK_LATENCY_MS = 400;

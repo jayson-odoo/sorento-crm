@@ -16,7 +16,7 @@ import type {
 
 /** Query key for one week's report. Exported so a decision can bust it. */
 export function orderSummaryKey(q: OrderSummaryQuery = {}) {
-  return ['scm', 'reorder', 'order-summary', q.run_id ?? null, q.as_of ?? null] as const;
+  return ['scm', 'reorder', 'order-summary', q.run_id ?? null] as const;
 }
 
 /**

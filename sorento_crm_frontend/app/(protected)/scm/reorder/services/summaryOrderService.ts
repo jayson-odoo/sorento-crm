@@ -22,17 +22,20 @@
  * 1) The report, one row per product, network wide
  *
  *      GET /api/v1/scm/order-summary
- *          ?run_id=<opaque>          optional; omitted = the current run
- *          &as_of=<YYYY-MM-DD>       optional; omitted = today
+ *          ?run_id=<opaque>          optional; omitted = the newest COMPLETED run
  *
  *      -> 200  OrderSummaryReport    (see `types/summaryOrder.types.ts` - that file
  *                                     is the field-for-field contract and is NOT
  *                                     restated here)
  *      Auth: `scm.dashboard.view` (read-only), matching `explainer.py`.
  *
- *    `run_id` + `as_of` together are what make a past week reproducible (AC-C2.9):
- *    the same pair must return what the decider saw, not a recomputation against
- *    today's book.
+ *    `run_id` alone is what makes a past week reproducible (AC-C2.9). The report is
+ *    FROZEN by the run that produced it, so naming the run returns what the decider
+ *    saw rather than a recomputation against today's book - which is why there is no
+ *    `as_of` parameter: the response STATES the date it was frozen for, and a caller
+ *    passing a different one would only mislabel a fixed position. Both `as_of` and
+ *    `generated_at` are null for a run that froze no rows, because inventing today's
+ *    date would label a book that was never built.
  *
  *    The report is returned WHOLE and the client paginates, because the sheet it
  *    replaces is read as one book. If the row count makes that untenable (roughly
@@ -118,10 +121,8 @@ import type {
 
 /** Which report to read. Both are optional; omitted means the current run today. */
 export interface OrderSummaryQuery {
-  /** Opaque run key. Never rendered. */
+  /** Opaque run key. Never rendered. Null reads the newest completed plan. */
   run_id?: string | null;
-  /** ISO date (YYYY-MM-DD) to state the position as of. */
-  as_of?: string | null;
 }
 
 /** The report, one row per product network wide (AC-C2.1). */
@@ -129,7 +130,9 @@ export async function getOrderSummary(q: OrderSummaryQuery = {}): Promise<OrderS
   if (USE_SUMMARY_ORDER_MOCKS) return mockOrderSummary();
   const params = new URLSearchParams();
   if (q.run_id) params.set('run_id', q.run_id);
-  if (q.as_of) params.set('as_of', q.as_of);
+  // No `as_of`: the report STATES the date it was frozen for, and passing a different one
+  // would label a frozen position with a date it does not describe. To read another week,
+  // name its run.
   const qs = params.toString();
   const res = await apiFetch(`/api/v1/scm/order-summary${qs ? `?${qs}` : ''}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the order summary'));

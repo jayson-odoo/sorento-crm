@@ -67,7 +67,7 @@ beforeEach(() => {
 describe('summaryOrderService - Phase-1 mock branch', () => {
   it('serves the report fixture and never touches the network', async () => {
     mockStore.mockOrderSummary.mockResolvedValue({ run_id: 'run-2026-w32', rows: [] });
-    const out = await getOrderSummary({ run_id: 'run-2026-w32', as_of: '2026-08-03' });
+    const out = await getOrderSummary({ run_id: 'run-2026-w32' });
     expect(out.run_id).toBe('run-2026-w32');
     expect(apiFetch).not.toHaveBeenCalled();
   });
@@ -103,15 +103,18 @@ describe('summaryOrderService - Phase-2 real branch', () => {
     mockStore.USE_SUMMARY_ORDER_MOCKS = false;
   });
 
-  it('GETs the flat /scm/order-summary route with run_id and as_of', async () => {
+  it('GETs the flat /scm/order-summary route with run_id and nothing else', async () => {
     apiFetch.mockResolvedValue(ok({ run_id: 'run-2026-w32', rows: [] }));
-    await getOrderSummary({ run_id: 'run-2026-w32', as_of: '2026-08-03' });
+    await getOrderSummary({ run_id: 'run-2026-w32' });
 
     const url = calledUrl();
     // Flat under /scm/, like every other SCM route - no nested reorder/ segment.
     expect(url.pathname).toBe('/api/v1/scm/order-summary');
     expect(url.searchParams.get('run_id')).toBe('run-2026-w32');
-    expect(url.searchParams.get('as_of')).toBe('2026-08-03');
+    // No `as_of` is sent: the report states the date it was FROZEN for, and asking for a
+    // different one would only relabel a fixed position. Naming the run is the whole
+    // mechanism behind AC-C2.9.
+    expect(url.searchParams.get('as_of')).toBeNull();
     // Human codes only: no product/supplier id of any kind is sent.
     expect(url.search).not.toMatch(/product_id|supplier_id|warehouse_id/);
   });
@@ -170,7 +173,9 @@ describe('summaryOrderService - Phase-2 real branch', () => {
 
   it('throws the extracted backend message when the report cannot be built', async () => {
     apiFetch.mockResolvedValue(fail('No run for 2026-07-27'));
-    await expect(getOrderSummary({ as_of: '2026-07-27' })).rejects.toThrow('No run for 2026-07-27');
+    await expect(getOrderSummary({ run_id: 'run-2026-w30' })).rejects.toThrow(
+      'No run for 2026-07-27',
+    );
   });
 
   it('throws the extracted message when the decision is refused', async () => {

@@ -62,14 +62,14 @@ const NO_COLUMN_PERSISTENCE = '';
 const numMeta = { headerClassName: 'text-right', cellClassName: 'text-right tabular-nums' };
 
 export interface SummaryOrderReportViewProps {
-  /** Opaque run key. Null reads the current run. Never rendered. */
+  /** Opaque run key. Null reads the newest completed plan. Never rendered. */
   runId?: string | null;
-  /** ISO date the report is stated as of. Null means today. */
-  asOf?: string | null;
 }
 
-export function SummaryOrderReportView({ runId = null, asOf = null }: SummaryOrderReportViewProps) {
-  const query = { run_id: runId, as_of: asOf };
+export function SummaryOrderReportView({ runId = null }: SummaryOrderReportViewProps) {
+  // No `as_of`: the report states the date it was frozen for. Asking for a different one
+  // would relabel a fixed position, so the only way to read another week is to name its run.
+  const query = { run_id: runId };
   const { data, isLoading, isError, error, refetch } = useOrderSummary(query);
   const decide = useRecordOrderDecision(query);
 
@@ -333,13 +333,11 @@ export function SummaryOrderReportView({ runId = null, asOf = null }: SummaryOrd
         <div className="min-w-0 break-words">
           <h3 className="text-base font-semibold">Summary order report</h3>
           <p className="text-2xs text-muted-foreground">
-            {data ? (
-              <>
-                As of {dayLabel(data.as_of)} · computed {computedAtLabel(data.generated_at)}
-              </>
-            ) : (
-              'Loading'
-            )}
+            {!data
+              ? 'Loading'
+              : data.as_of
+                ? `As of ${dayLabel(data.as_of)} · computed ${computedAtLabel(data.generated_at)}`
+                : 'No plan has been frozen yet, so there is nothing to state a date for'}
           </p>
         </div>
       </div>

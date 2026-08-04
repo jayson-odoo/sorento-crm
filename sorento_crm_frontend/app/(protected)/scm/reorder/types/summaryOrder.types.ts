@@ -82,10 +82,13 @@ export interface OrderSummaryRow {
 export interface OrderSummaryReport {
   /** Opaque run key. Identifies which week is being read; never rendered. */
   run_id: string;
-  /** ISO date (YYYY-MM-DD) the position is stated as of. */
-  as_of: string;
-  /** Naive Malaysia wall-clock ISO timestamp of the computation. */
-  generated_at: string;
+  /**
+   * ISO date (YYYY-MM-DD) the position was FROZEN for. Null when the run froze no
+   * rows: inventing today's date would label a book that was never built.
+   */
+  as_of: string | null;
+  /** Naive Malaysia wall-clock ISO timestamp of the computation. Null with `as_of`. */
+  generated_at: string | null;
   rows: OrderSummaryRow[];
 }
 
