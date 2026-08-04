@@ -15,6 +15,7 @@ import {
   Plus,
   ReceiptText,
   Redo2,
+  Copy,
   RotateCw,
   Trash2,
   Undo2,
@@ -38,11 +39,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { snapToWall } from '@/lib/dealer-kit/roomSnap';
 import {
-  clampBoxIntoRoom,
   areaSquareMetres,
   boxesOverlap,
   type Point,
 } from '@/lib/dealer-kit/roomGeometry';
+import { packBoxes, resolveDrag } from '@/lib/dealer-kit/roomPacking';
 import { PICKER_PAGE_SIZE, listPickerProducts } from '../../services/productPickerService';
 import {
   createSelection,
@@ -132,7 +133,21 @@ export function RoomDesigner() {
   const queryClient = useQueryClient();
   const [selectionId, setSelectionId] = useState<string | null>(null);
   const [outline, setOutline] = useState<Point[]>(STARTING_ROOM);
+  /*
+    The current room, readable from the rebuild effect without making that
+    effect depend on it. Depending on `outline` would repack every box each time
+    somebody dragged a wall, moving the room's contents out from under them.
+  */
+  const outlineRef = useRef(outline);
+  outlineRef.current = outline;
   const [placed, setPlaced] = useState<PlacedBox[]>([]);
+  /**
+   * Product codes the room could not hold, by name.
+   *
+   * A room that quietly drops two of the seven things somebody chose is worse
+   * than one that says so, and stacking them is worse than either.
+   */
+  const [unplaced, setUnplaced] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [productToAdd, setProductToAdd] = useState('');
   const [dirty, setDirty] = useState(false);
@@ -229,15 +244,34 @@ export function RoomDesigner() {
     if (!selection) return;
     setPlaced((current) => {
       const next = boxesForSelection(selection, current);
+      /*
+        Boxes somebody has already positioned are FIXED - a saved placement or
+        one being dragged right now is a decision, and this is not the place to
+        overrule it. Everything else is arriving without a position, and it used
+        to arrive on a fixed 800mm grid regardless of its real size: a 1,700mm
+        bath was already standing inside its neighbour before the user had
+        touched anything.
+      */
+      const settled = new Set([
+        ...current.map((box) => box.id),
+        ...(selection.room?.placements ?? []).map((placement) => placement.lineId),
+      ]);
+      // From a ref: repacking on every wall drag would move the room's contents
+      // out from under whoever is resizing it.
+      const { boxes, unplaced } = packBoxes(next, outlineRef.current, settled);
+      // Reported, never silently dropped or stacked. The room genuinely cannot
+      // hold them and the person choosing needs to know which.
+      setUnplaced(Array.from(new Set(unplaced.map((box) => box.code))));
+
       if (justAdded.current) {
         // The last copy of that product is the one just added.
-        const added = [...next].reverse().find((box) => box.productId === justAdded.current);
+        const added = [...boxes].reverse().find((box) => box.productId === justAdded.current);
         if (added) {
           setSelectedId(added.id);
           justAdded.current = null;
         }
       }
-      return next;
+      return boxes;
     });
     if (!hydrated.current && selection.room?.outline?.length) {
       setOutline(selection.room.outline);
@@ -338,16 +372,26 @@ export function RoomDesigner() {
   const moveBox = useCallback(
     (boxId: string, x: number, y: number, rotation: number) => {
       setDirty(true);
-      setPlaced((current) =>
-        current.map((box) => {
-          if (box.id !== boxId) return box;
-          // Rotation arrives with the position because backing onto a wall
-          // turns the product: the plan decides orientation, not the user.
-          // Tidy rather than refuse: a drop half through a wall is a clear
-          // intent the system can simply fix (AC-V4).
-          return clampBoxIntoRoom({ ...box, x, y, rotation }, outline) as PlacedBox;
-        }),
-      );
+      setPlaced((current) => {
+        const box = current.find((candidate) => candidate.id === boxId);
+        if (!box) return current;
+
+        /*
+          Rotation arrives with the position because backing onto a wall turns
+          the product: the plan decides orientation, not the user.
+
+          A wall is TIDIED (a drop half through one is a clear intent the system
+          can fix, AC-V4). Another unit is REFUSED. The two are not the same
+          thing: nudging a box off a wall lands it where the user meant, while
+          nudging it off a neighbour would land it somewhere they did not - so
+          an overlapping move is simply never committed, and `resolveDrag`
+          slides along the obstruction instead of stopping dead against it.
+        */
+        const settled = resolveDrag(box, { x, y, rotation }, current, outline);
+        return current.map((candidate) =>
+          candidate.id === boxId ? ({ ...candidate, ...settled } as PlacedBox) : candidate,
+        );
+      });
     },
     [outline],
   );
@@ -657,6 +701,7 @@ export function RoomDesigner() {
 
   const area = areaSquareMetres(outline);
   const selectedOpening = openings.find((opening) => opening.id === selectedOpeningId) ?? null;
+  const selectedBox = placed.find((box) => box.id === selectedId) ?? null;
   const estimated = placed.filter((box) => box.isEstimated);
   const estimatedNames = Array.from(new Set(estimated.map((box) => box.code)));
   const lines = selection?.lines ?? [];
@@ -992,6 +1037,52 @@ export function RoomDesigner() {
                   onSelectOpening={setSelectedOpeningId}
                   onCommit={commit}
                 />
+                {/*
+                  The same three actions the plan puts on the object itself.
+
+                  The 3D view could already SELECT a box - clicking one has
+                  always worked - but nothing you could do with it afterwards
+                  was here, so selecting appeared to do nothing. A bar under the
+                  canvas rather than a toolbar floating over the object: the
+                  plan can put one at a known screen position, and 3D would have
+                  to project the object into screen space every frame to keep it
+                  there.
+                */}
+                {selectedBox && (
+                  <div
+                    className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2"
+                    data-dk-scene-actions
+                  >
+                    <span className="min-w-0 truncate text-xs font-medium" title={selectedBox.label}>
+                      {selectedBox.label}
+                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button variant="outline" size="sm" onClick={rotateSelected}>
+                        <RotateCw className="size-4" />
+                        Rotate
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => duplicateBox(selectedBox.id)}
+                        disabled={busy}
+                      >
+                        <Copy className="size-4" />
+                        Duplicate
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={removeSelected}
+                        disabled={busy}
+                      >
+                        <Trash2 className="size-4 text-destructive" />
+                        Remove
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <Label htmlFor="dk-ceiling-height" className="text-xs text-muted-foreground">
                     Ceiling height
@@ -1135,6 +1226,27 @@ export function RoomDesigner() {
                   Remove
                 </Button>
               </div>
+            )}
+
+            {unplaced.length > 0 && (
+              <Alert variant="warning" appearance="light" data-dk-unplaced>
+                <AlertIcon>
+                  <AlertTriangle />
+                </AlertIcon>
+                <AlertContent>
+                  <AlertTitle className="text-xs">
+                    {unplaced.length === 1 ? 'One item' : `${unplaced.length} items`} did not fit
+                  </AlertTitle>
+                  <AlertDescription className="text-xs">
+                    {/* Named, for the same reason estimated sizes are named: "some
+                        items" leaves the user hunting for which. Two things are
+                        never put in the same space, so the honest answer to a room
+                        that is too small is to say so rather than to stack them. */}
+                    {unplaced.join(', ')} could not be placed without overlapping
+                    something else. Make the room larger, or remove something.
+                  </AlertDescription>
+                </AlertContent>
+              </Alert>
             )}
 
             {estimatedNames.length > 0 && (

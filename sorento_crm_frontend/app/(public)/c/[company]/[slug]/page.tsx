@@ -124,6 +124,11 @@ export default function PublicCataloguePage({
           sections={status.page.doc.sections ?? []}
           resolvedCollections={status.page.collections}
           tileTemplates={status.page.tileTemplates}
+          defaultTileTemplateId={status.page.defaultTileTemplateId}
+          /* The printed flyer this replaces has pages, and a reader who flicks
+             expects to land on one. Published only: the builder needs free
+             scroll, and paper does not scroll at all. */
+          snapSections
           assets={status.page.assets}
         />
       </CataloguePickingProvider>

@@ -184,3 +184,43 @@ describe('CatalogueRenderer section backgrounds', () => {
     expect(sectionElement().style.backgroundImage).not.toContain('url(');
   });
 });
+
+describe('section scroll-snap', () => {
+  const SNAPPABLE = [section({ id: 'sec-1' }), section({ id: 'sec-2' })];
+
+  it('does not snap by default, because the builder must not', () => {
+    const { container } = render(<CatalogueRenderer name="Flyer" sections={SNAPPABLE} />);
+
+    expect(container.querySelector('style')?.textContent).not.toContain('scroll-snap-type');
+  });
+
+  it('settles on a section boundary when the catalogue is published', () => {
+    const { container } = render(
+      <CatalogueRenderer name="Flyer" sections={SNAPPABLE} snapSections />,
+    );
+
+    const css = container.querySelector('style')?.textContent ?? '';
+    expect(css).toContain('scroll-snap-type: y proximity');
+    expect(css).toContain('.dk-section { scroll-snap-align: start; }');
+    // Mandatory would trap a reader inside a section taller than the viewport:
+    // they could never stop between its two ends.
+    expect(css).not.toContain('mandatory');
+  });
+
+  it('turns snapping off for a reader who asked for reduced motion', () => {
+    const { container } = render(
+      <CatalogueRenderer name="Flyer" sections={SNAPPABLE} snapSections />,
+    );
+
+    const css = (container.querySelector('style')?.textContent ?? '').replace(/\s+/g, ' ');
+    expect(css).toContain('@media (prefers-reduced-motion: reduce) { html { scroll-snap-type: none; } }');
+  });
+
+  it('marks every section as a snap target', () => {
+    const { container } = render(
+      <CatalogueRenderer name="Flyer" sections={SNAPPABLE} snapSections />,
+    );
+
+    expect(container.querySelectorAll('.dk-section')).toHaveLength(2);
+  });
+});

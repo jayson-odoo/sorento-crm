@@ -90,6 +90,14 @@ class PageDetail(BaseModel):
     promotion_label: Optional[str] = Field(
         default=None, serialization_alias="promotionLabel"
     )
+    # The page's default tile design. The editor needs both: the id to seed its
+    # control, the name to say which one is in force without printing a uuid.
+    tile_template_id: Optional[str] = Field(
+        default=None, serialization_alias="tileTemplateId"
+    )
+    tile_template_name: Optional[str] = Field(
+        default=None, serialization_alias="tileTemplateName"
+    )
     doc: dict[str, Any]
     versions: list[PageVersionOut] = Field(default_factory=list)
     # assetId -> signed URL for the section backgrounds ``doc`` binds, resolved
@@ -124,6 +132,33 @@ class PagePromotionOut(BaseModel):
     )
 
 
+class PageTileTemplateSet(BaseModel):
+    """The design every collection block on this page uses by default.
+
+    Same one-nullable-field shape as the promotion above, for the same reason:
+    clearing is the same decision as choosing, made in the same control.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    tile_template_id: Optional[str] = Field(
+        default=None, validation_alias="tileTemplateId"
+    )
+
+
+class PageTileTemplateOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    page_id: str = Field(serialization_alias="pageId")
+    tile_template_id: Optional[str] = Field(
+        default=None, serialization_alias="tileTemplateId"
+    )
+    # Its name, resolved server-side so no uuid reaches a screen.
+    tile_template_name: Optional[str] = Field(
+        default=None, serialization_alias="tileTemplateName"
+    )
+
+
 class VersionCreate(BaseModel):
     doc: dict[str, Any]
     commit_message: Optional[str] = Field(
@@ -155,6 +190,13 @@ class PublicPage(BaseModel):
     collections: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
     tile_templates: dict[str, list[str]] = Field(
         default_factory=dict, serialization_alias="tileTemplates"
+    )
+    # The design a collection block uses when it does not name one of its own.
+    # Sent as an id rather than resolved into every block because the document
+    # is the record of what was published and must not be rewritten on its way
+    # to a reader: the block genuinely has no design, the PAGE does.
+    default_tile_template_id: Optional[str] = Field(
+        default=None, serialization_alias="defaultTileTemplateId"
     )
     # assetId -> signed URL, for the artwork sections use as a background. Sent
     # WITH the page rather than fetched per section: the same renderer is

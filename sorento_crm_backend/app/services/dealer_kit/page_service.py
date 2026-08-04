@@ -24,7 +24,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.dealer_kit import Page, PageLabel, PageVersion
-from app.services.dealer_kit import asset_service
+from app.services.dealer_kit import asset_service, public_cache
 from app.services.error_handler import AppException
 
 logger = logging.getLogger(__name__)
@@ -220,6 +220,57 @@ def set_promotion(db: Session, page_id: str, promotion_id: Optional[str]) -> Pag
     db.commit()
     db.refresh(page)
     return page
+
+
+def set_tile_template(db: Session, page_id: str, tile_template_id: Optional[str]) -> Page:
+    """Choose the design this brochure's tiles use, or clear it.
+
+    ONE decision for the whole document. Before this the only control was per
+    collection block, and a brochure seeded from the printed flyer is 341 of
+    them with a design on none - so choosing one changed a single row and read
+    as changing nothing.
+
+    A block that names its own design still wins. This is the default, and
+    clearing it falls back to the renderer's built-in field list, which is a
+    state it already has.
+    """
+    page = _require_page(db, page_id)
+
+    if tile_template_id:
+        _require_tile_template(db, tile_template_id)
+
+    page.tile_template_id = tile_template_id or None
+    db.commit()
+    db.refresh(page)
+
+    # It changes what every tile on the LIVE page looks like, so a reader must
+    # not keep getting the old one for the rest of the window.
+    public_cache.clear()
+    return page
+
+
+def _require_tile_template(db: Session, tile_template_id: str) -> None:
+    """Company scope has already run, so another company's design and one that
+    does not exist are the same answer."""
+    from app.models.dealer_kit import TileTemplate
+
+    exists = (
+        db.query(TileTemplate.id).filter(TileTemplate.id == tile_template_id).first()
+    )
+    if exists is None:
+        raise AppException(status_code=404, message="Tile design not found")
+
+
+def tile_template_name(db: Session, tile_template_id: Optional[str]) -> Optional[str]:
+    """Its name, for a screen. No uuid reaches the UI."""
+    if not tile_template_id:
+        return None
+
+    from app.models.dealer_kit import TileTemplate
+
+    return (
+        db.query(TileTemplate.name).filter(TileTemplate.id == tile_template_id).scalar()
+    )
 
 
 def delete_page(db: Session, page_id: str) -> None:
@@ -478,6 +529,14 @@ def move_label(
 
     db.commit()
     db.refresh(row)
+
+    # The public route caches its payload for a short window. Waiting that
+    # window out after a publish or a rollback is the one case where the delay
+    # is indefensible: somebody pressed the button and expects the live link to
+    # have changed. Dropping the whole cache is fine - it is a handful of
+    # entries and this happens rarely.
+    public_cache.clear()
+
     return row
 
 
@@ -513,4 +572,9 @@ def published_doc(db: Session, slug: str) -> dict:
         # that starts reaches the already-published page immediately. Null is
         # list prices only, which is a normal state (PLAN D6).
         "promotion_id": page.promotion_id,
+        # Same place and the same reasoning: the design a collection block
+        # inherits when it names none of its own. On the page, so choosing one
+        # is one decision about the document rather than one per block - a
+        # seeded brochure is 341 of them.
+        "tile_template_id": page.tile_template_id,
     }

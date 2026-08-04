@@ -38,6 +38,8 @@ interface PrintPayload {
    * default is by definition not the design the brochure on screen is using.
    */
   tileTemplates?: Record<string, TileField[]>;
+  /** The page's design, used by every collection block that names none. */
+  defaultTileTemplateId?: string | null;
   /**
    * assetId -> signed URL for the section backgrounds. Sent with the payload for
    * the same reason as the templates, and with one extra consequence: these
@@ -234,6 +236,7 @@ export default function CataloguePrintPage({
           sections={payload.doc?.sections ?? []}
           resolvedCollections={payload.collections}
           tileTemplates={payload.tileTemplates}
+          defaultTileTemplateId={payload.defaultTileTemplateId}
           assets={payload.assets}
           breakpoint={breakpoint}
         />

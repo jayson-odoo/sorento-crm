@@ -113,6 +113,34 @@ ${placementRules('desktop')}
 `;
 }
 
+/**
+ * Sections behave like the pages of the printed flyer they replace.
+ *
+ * The document this renders IS a brochure, and a reader who knows the A3 flyer
+ * expects a flick to move them a page rather than leave them looking at the
+ * bottom of one section and the top of the next.
+ *
+ * **`proximity`, never `mandatory`.** Mandatory snaps from anywhere, which on a
+ * section taller than the viewport means the reader cannot stop in the middle
+ * of it - they get yanked to one end or the other and can never read the part
+ * between. Proximity engages only near a boundary, so a tall section scrolls
+ * through normally and a short one still clicks into place (AC-R2).
+ *
+ * Applied to the document scroller (`html`) rather than a wrapper, because
+ * making the catalogue its own scroll container costs the reader the mobile
+ * browser's collapsing address bar and the page's own scroll restoration.
+ *
+ * Off entirely under `prefers-reduced-motion`: snapping is motion the reader
+ * did not ask for, and somebody who has said so at the OS level has said so.
+ */
+const SNAP_CSS = `
+html { scroll-snap-type: y proximity; }
+.dk-section { scroll-snap-align: start; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-snap-type: none; }
+}
+`;
+
 /** A placement that is missing at a breakpoint falls back to a full-width row. */
 function placementVars(
   prefix: 'd' | 't' | 'm',
@@ -135,6 +163,16 @@ export interface RenderedCatalogueData {
   collections?: Record<string, ResolvedTile[]>;
   /** tileTemplateId -> the fields that design binds. */
   tileTemplates?: Record<string, TileField[]>;
+  /**
+   * The design a collection block uses when it names none of its own.
+   *
+   * The page carries it, because "how do the tiles look" is one editorial
+   * decision about the document. A brochure seeded from the printed flyer is
+   * 341 collection blocks and the seed binds a design on NONE of them, so
+   * without this fallback choosing one changed a single row and read - fairly -
+   * as doing nothing at all.
+   */
+  defaultTileTemplateId?: string | null;
   /** assetId -> signed URL for the section backgrounds this document binds. */
   assets?: Record<string, string>;
 }
@@ -146,11 +184,13 @@ function bindingFor(block: Block, data: RenderedCatalogueData) {
   const tiles = data.collections?.[props.collectionId];
   if (tiles === undefined) return undefined;
 
+  // The block's own design wins - some rows really are different - and the
+  // page's is the default behind it.
+  const templateId = props.tileTemplateId ?? data.defaultTileTemplateId ?? null;
+
   return {
     tiles,
-    tileFields: props.tileTemplateId
-      ? data.tileTemplates?.[props.tileTemplateId]
-      : undefined,
+    tileFields: templateId ? data.tileTemplates?.[templateId] : undefined,
   };
 }
 
@@ -197,7 +237,7 @@ function RenderedSection({
 
   return (
     <section
-      className={cn('w-full', padding)}
+      className={cn('dk-section w-full', padding)}
       style={sectionSurface(section.style, data.assets)}
       data-dk-section-id={section.id}
       aria-label={section.name}
@@ -226,6 +266,7 @@ export function CatalogueRenderer({
   className,
   resolvedCollections,
   tileTemplates,
+  defaultTileTemplateId,
   assets,
   /**
    * Which breakpoint this rendering IS.
@@ -246,12 +287,15 @@ export function CatalogueRenderer({
    * they did not get.
    */
   breakpoint = 'responsive',
+  snapSections = false,
 }: {
   name: string;
   sections: Section[];
   className?: string;
   resolvedCollections?: Record<string, ResolvedTile[]>;
   tileTemplates?: Record<string, TileField[]>;
+  /** The page's design, used by every collection block that names none. */
+  defaultTileTemplateId?: string | null;
   /**
    * assetId -> signed URL, resolved by the server and sent WITH the document.
    *
@@ -262,6 +306,15 @@ export function CatalogueRenderer({
    */
   assets?: Record<string, string>;
   breakpoint?: Breakpoint | 'responsive';
+  /**
+   * Settle on a section boundary as the reader scrolls, the way a page turn
+   * does.
+   *
+   * On for the published catalogue. OFF for the builder, where a designer is
+   * positioning blocks and needs to stop exactly where they choose, and
+   * pointless for print, which does not scroll.
+   */
+  snapSections?: boolean;
 }) {
   // Responsive placement is chosen per width by CSS, but density is data and
   // cannot be; desktop keeps the screen exactly as it was.
@@ -269,6 +322,7 @@ export function CatalogueRenderer({
   const data: RenderedCatalogueData = {
     collections: resolvedCollections,
     tileTemplates,
+    defaultTileTemplateId,
     assets,
   };
   if (sections.length === 0) {
@@ -286,7 +340,11 @@ export function CatalogueRenderer({
 
   return (
     <div className={cn('w-full', className)} data-dk-catalogue>
-      <style dangerouslySetInnerHTML={{ __html: layoutCss(breakpoint) }} />
+      <style
+        dangerouslySetInnerHTML={{
+          __html: layoutCss(breakpoint) + (snapSections ? SNAP_CSS : ''),
+        }}
+      />
       {sections.map((section) => (
         <RenderedSection
           key={section.id}

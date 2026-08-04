@@ -140,6 +140,12 @@ export interface PageEditorProps {
    */
   assets?: Record<string, string>;
   /**
+   * The page's tile design. Every collection block uses it unless it names one
+   * of its own, so the builder must resolve through it or the editor shows a
+   * different tile from the one it publishes.
+   */
+  defaultTileTemplateId?: string | null;
+  /**
    * Updater, not a value. Layout measurement can settle several blocks in one
    * tick, and each of those must build on the previous result rather than on
    * whatever `doc` this render captured.
@@ -151,7 +157,13 @@ export interface PageEditorProps {
   onDocChange: (updater: (previous: PageDoc) => PageDoc, options?: { silent?: boolean }) => void;
 }
 
-export function PageEditor({ pageId, doc, assets, onDocChange }: PageEditorProps) {
+export function PageEditor({
+  pageId,
+  doc,
+  assets,
+  defaultTileTemplateId,
+  onDocChange,
+}: PageEditorProps) {
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<CanvasMode>('desktop');
   const [focus, setFocus] = useState(false);
@@ -406,9 +418,11 @@ export function PageEditor({ pageId, doc, assets, onDocChange }: PageEditorProps
         const index = boundBlocks.collections.indexOf(props.collectionId);
         const resolved = collectionQueries[index]?.data;
         if (!resolved) return undefined;
-        const template = tileTemplates.find(
-          (candidate) => candidate.id === props.tileTemplateId,
-        );
+        // The block's own design wins, the page's is the default behind it -
+        // the same order the published renderer uses, so the builder cannot
+        // show a tile it will not publish.
+        const templateId = props.tileTemplateId ?? defaultTileTemplateId ?? null;
+        const template = tileTemplates.find((candidate) => candidate.id === templateId);
         return { tiles: resolved.tiles, tileFields: template?.fields };
       }
 
@@ -420,7 +434,7 @@ export function PageEditor({ pageId, doc, assets, onDocChange }: PageEditorProps
 
       return undefined;
     },
-    [boundBlocks, collectionQueries, bundleQueries, tileTemplates],
+    [boundBlocks, collectionQueries, bundleQueries, tileTemplates, defaultTileTemplateId],
   );
 
   /**
@@ -751,6 +765,7 @@ export function PageEditor({ pageId, doc, assets, onDocChange }: PageEditorProps
         <BlockInspector
           block={mode === 'paper' ? null : selectedBlock}
           selection={selectedBlock ? selections[selectedBlock.id] ?? EMPTY_SELECTION : EMPTY_SELECTION}
+          defaultTileTemplateId={defaultTileTemplateId}
           onChangeProps={handleChangeProps}
           onChangeSelection={(next) => {
             if (!selectedBlock) return;

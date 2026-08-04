@@ -87,6 +87,8 @@ interface PageVersionWire {
 }
 
 interface PageDetailWire extends PageSummaryWire {
+  tileTemplateId: string | null;
+  tileTemplateName: string | null;
   doc: PageDoc;
   versions: PageVersionWire[];
   /** assetId -> signed URL for the section backgrounds the document binds. */
@@ -138,6 +140,11 @@ export async function getPage(pageId: string): Promise<Page> {
   const wire: PageDetailWire = await response.json();
   return {
     ...toSummary(wire),
+    // The design every collection block on this page inherits. Both halves:
+    // the id seeds the control, the name says which one is in force without
+    // putting a uuid on a screen.
+    tileTemplateId: wire.tileTemplateId ?? null,
+    tileTemplateName: wire.tileTemplateName ?? null,
     doc: wire.doc,
     versions: (wire.versions ?? []).map(toVersion),
     // Defaulted, never left undefined: the builder reads this map for every
@@ -156,10 +163,18 @@ export async function createPage(name: string, slug: string): Promise<Page> {
   if (!response.ok) throw new Error(await extractApiError(response, 'Could not create the page'));
 
   const wire: PageDetailWire = await response.json();
-  // A page that has just been created binds no artwork, so the map is empty by
-  // construction. Stated rather than left off, because `Page.assets` is not
-  // optional and a caller reading it must never find `undefined`.
-  return { ...toSummary(wire), doc: wire.doc, versions: [], assets: wire.assets ?? {} };
+  // A page that has just been created binds no artwork and no tile design, so
+  // both are empty by construction. Stated rather than left off, because
+  // `Page.assets` is not optional and a caller reading it must never find
+  // `undefined`.
+  return {
+    ...toSummary(wire),
+    tileTemplateId: wire.tileTemplateId ?? null,
+    tileTemplateName: wire.tileTemplateName ?? null,
+    doc: wire.doc,
+    versions: [],
+    assets: wire.assets ?? {},
+  };
 }
 
 export async function deletePage(pageId: string): Promise<void> {
@@ -244,6 +259,48 @@ export async function setPagePromotion(
   return {
     promotionId: wire.promotionId ?? null,
     promotionLabel: wire.promotionLabel ?? null,
+  };
+}
+
+
+export interface PageTileTemplateLink {
+  tileTemplateId: string | null;
+  tileTemplateName: string | null;
+}
+
+/**
+ * Choose the design this brochure's tiles use, or clear it.
+ *
+ * ONE control for the whole document. A collection block that names its own
+ * design still wins, so this is a default rather than an override - and
+ * clearing it falls back to the renderer's built-in field list.
+ *
+ * It exists because the only control used to be per block, and a brochure
+ * seeded from the printed flyer is 341 blocks with a design on none of them:
+ * choosing one changed a single row and looked like it had done nothing.
+ */
+export async function setPageTileTemplate(
+  pageId: string,
+  tileTemplateId: string | null,
+): Promise<PageTileTemplateLink> {
+  const response = await apiFetch(`${BASE}/pages/${encodeURIComponent(pageId)}/tile-template`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tileTemplateId }),
+  });
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(
+        response,
+        tileTemplateId ? 'Could not apply the tile design' : 'Could not clear the tile design',
+      ),
+    );
+  }
+
+  const wire = (await response.json()) as Partial<PageTileTemplateLink>;
+  return {
+    tileTemplateId: wire.tileTemplateId ?? null,
+    tileTemplateName: wire.tileTemplateName ?? null,
   };
 }
 

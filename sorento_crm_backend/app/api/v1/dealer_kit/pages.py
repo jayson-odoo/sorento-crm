@@ -39,6 +39,8 @@ from app.schemas.dealer_kit import (
     PageDetail,
     PagePromotionOut,
     PagePromotionSet,
+    PageTileTemplateOut,
+    PageTileTemplateSet,
     PageSummary,
     PageVersionOut,
     VersionCreate,
@@ -152,6 +154,8 @@ def get_page(page_id: str, db: Session = Depends(get_db), _user: dict = Depends(
         # schema class would never reach the screen.
         promotion_id=page.promotion_id,
         promotion_label=svc.promotion_labels(db, [page.promotion_id]).get(page.promotion_id),
+        tile_template_id=page.tile_template_id,
+        tile_template_name=svc.tile_template_name(db, page.tile_template_id),
         doc=doc,
         versions=versions,
         # The SAME call the public catalogue and the print payload make, on the
@@ -183,6 +187,30 @@ def set_page_promotion(
         page_id=page.id,
         promotion_id=page.promotion_id,
         promotion_label=svc.promotion_labels(db, [page.promotion_id]).get(page.promotion_id),
+    )
+
+
+@router.put("/pages/{page_id}/tile-template", response_model=PageTileTemplateOut)
+def set_page_tile_template(
+    page_id: str,
+    payload: PageTileTemplateSet,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_EDIT),
+):
+    """Choose the design this brochure's tiles use, or clear it.
+
+    One control for the whole document. A collection block that names its own
+    design still wins, so this is a default rather than an override, and
+    clearing it falls back to the renderer's built-in field list.
+
+    ``page.edit``, matching the promotion route: choosing how a catalogue looks
+    is drafting work.
+    """
+    page = svc.set_tile_template(db, page_id, payload.tile_template_id)
+    return PageTileTemplateOut(
+        page_id=page.id,
+        tile_template_id=page.tile_template_id,
+        tile_template_name=svc.tile_template_name(db, page.tile_template_id),
     )
 
 

@@ -93,6 +93,26 @@ class Page(Base, CompanyScopedMixin):
         ForeignKey("promotions.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # The design every collection block on this page uses unless it says
+    # otherwise.
+    #
+    # It lives on the PAGE and not only on the block because a brochure seeded
+    # from the printed flyer is 341 collection blocks, and "choose how a tile
+    # looks" is one editorial decision about the document, not 341 identical
+    # ones. Before this, the only control was per block, the seed bound a design
+    # on none of them, and choosing one therefore appeared to do nothing.
+    #
+    # A block that sets its own `tileTemplateId` still wins - some rows really
+    # are different - so this is a default and not an override.
+    #
+    # SET NULL for the same reason as the promotion above: deleting a design
+    # must not be able to delete a catalogue, and must not be blocked by one.
+    # Falling back to the built-in field list is a state the renderer has.
+    tile_template_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(f"{SCHEMA}.tile_template.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     print_profile = Column(JSONB, nullable=True)
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = _created_at()

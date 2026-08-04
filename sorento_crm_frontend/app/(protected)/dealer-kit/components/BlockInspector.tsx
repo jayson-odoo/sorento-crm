@@ -82,12 +82,19 @@ function Field({
 export function BlockInspector({
   block,
   selection,
+  defaultTileTemplateId,
   onChangeProps,
   onChangeSelection,
 }: {
   block: Block | null;
   /** The page-scoped product selection behind a collection block, if any. */
   selection: ProductSelection;
+  /**
+   * The page's tile design. A block that names none of its own uses it, so the
+   * control has to SAY so - an empty select that silently inherits reads as
+   * unset, which is how "I chose a design and nothing happened" starts.
+   */
+  defaultTileTemplateId?: string | null;
   onChangeProps: (next: BlockProps) => void;
   onChangeSelection: (next: ProductSelection) => void;
 }) {
@@ -111,6 +118,11 @@ export function BlockInspector({
     queryKey: ['dealer-kit', 'tile-templates'],
     queryFn: listTileTemplates,
   });
+
+  // What this block falls back to, by name. Null when the page has chosen
+  // nothing either, which is the renderer's built-in field list.
+  const inheritedName =
+    tileTemplates.find((candidate) => candidate.id === defaultTileTemplateId)?.name ?? null;
 
   if (!block) {
     return (
@@ -270,7 +282,13 @@ export function BlockInspector({
                   value: template.id,
                   label: template.name,
                 }))}
-                placeholder="Pick a tile design"
+                /* Names what this block ACTUALLY uses when it chooses nothing,
+                   rather than inviting a choice it does not need: the page has
+                   already made one, and 341 rows agreeing with it is the point
+                   of the page-level control. */
+                placeholder={
+                  inheritedName ? `Same as the page (${inheritedName})` : 'Standard tile'
+                }
               />
             </Field>
 

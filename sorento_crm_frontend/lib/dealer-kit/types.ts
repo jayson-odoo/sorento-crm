@@ -184,6 +184,16 @@ export interface PageSummary {
 }
 
 export interface Page extends PageSummary {
+  /**
+   * The tile design every collection block on this page inherits.
+   *
+   * On the PAGE because "how do the tiles look" is one editorial decision about
+   * the document. A block may still name its own, which wins. Null falls back
+   * to the renderer's built-in field list, which is a state it has.
+   */
+  tileTemplateId: string | null;
+  /** Its name, resolved server-side. No uuid reaches the screen. */
+  tileTemplateName: string | null;
   doc: PageDoc;
   versions: PageVersion[];
   /**

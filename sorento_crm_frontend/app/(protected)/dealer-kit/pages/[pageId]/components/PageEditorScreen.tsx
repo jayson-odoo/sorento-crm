@@ -30,6 +30,7 @@ import {
 } from '../../../services/dealerKitService';
 import { PageEditor } from '../../../components/PageEditor';
 import { PagePromotionControl } from './PagePromotionControl';
+import { PageTileDesignControl } from './PageTileDesignControl';
 import { VersionHistory } from './VersionHistory';
 import type { PageDoc, PageVersion } from '@/lib/dealer-kit/types';
 
@@ -52,11 +53,20 @@ export function PageEditorScreen({ pageId }: { pageId: string }) {
   const [versions, setVersions] = useState<PageVersion[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [exporting, setExporting] = useState(false);
+  /*
+    Held here rather than read straight off `page` because the page DETAIL query
+    is deliberately never invalidated (refetching it would discard an unsaved
+    layout), so after applying a design the query still reports the old one. The
+    canvas repaints off THIS, which the control updates the moment the backend
+    confirms.
+  */
+  const [tileTemplateId, setTileTemplateId] = useState<string | null>(null);
 
   useEffect(() => {
     if (page) {
       setDoc(page.doc);
       setVersions(page.versions);
+      setTileTemplateId(page.tileTemplateId);
       setDirty(false);
     }
   }, [page]);
@@ -150,6 +160,15 @@ export function PageEditorScreen({ pageId }: { pageId: string }) {
               pageId={pageId}
               promotionId={page.promotionId}
               promotionLabel={page.promotionLabel}
+            />
+            {/* Same reasoning, same row: how the tiles look is a property of
+                the page, saved on its own, and it takes effect on every
+                collection block that does not override it. */}
+            <PageTileDesignControl
+              pageId={pageId}
+              tileTemplateId={tileTemplateId}
+              tileTemplateName={page.tileTemplateName}
+              onApplied={(link) => setTileTemplateId(link.tileTemplateId)}
             />
           </div>
 
@@ -256,6 +275,7 @@ export function PageEditorScreen({ pageId }: { pageId: string }) {
           copy to keep in step for no gain.
         */
         assets={page.assets}
+        defaultTileTemplateId={tileTemplateId}
         onDocChange={(updater, options) => {
           setDoc((previous) => (previous ? updater(previous) : previous));
           if (!options?.silent) setDirty(true);
