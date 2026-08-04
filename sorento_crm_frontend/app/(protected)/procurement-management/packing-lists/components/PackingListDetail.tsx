@@ -243,10 +243,14 @@ export default function PackingListDetail({
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-bold">
+      {/* Header. `flex items-center justify-between` does NOT wrap: at phone width
+          the 305px action group cannot fit beside the title, so it was pushed past
+          the viewport and dragged the whole page into horizontal scroll (measured
+          504px of content in a 360px viewport - the table below is already clipped
+          by its own scroller, so the header was the only real offender). */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 space-y-1">
+          <h1 className="text-2xl font-bold break-words">
             {packingList.shipping_container_number || packingList.shipment_number || `Packing list ${packingList.id.slice(0, 8)}`}
           </h1>
           <p className="text-sm text-muted-foreground">
@@ -257,7 +261,7 @@ export default function PackingListDetail({
               : '-'}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <PackingListNavigation packingListId={packingListId} />
           <Button
             variant="outline"
@@ -475,15 +479,17 @@ export default function PackingListDetail({
       {packingList.shipment_lines &&
         packingList.shipment_lines.length > 0 && (
           <Card>
-            <CardHeader className="flex-row items-center justify-between gap-3">
-              <CardTitle>Shipment Lines</CardTitle>
-              <div className="relative flex items-center gap-2">
+            {/* Same non-wrapping trap as the page header: "Shipment Lines" plus a
+                224px search box does not fit the 286px of card content at 375px. */}
+            <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <CardTitle className="min-w-0 break-words">Shipment Lines</CardTitle>
+              <div className="relative flex w-full items-center gap-2 sm:w-auto">
                 <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <Input
                   placeholder="Search by product code"
                   value={shipmentLinesSearch}
                   onChange={(e) => setShipmentLinesSearch(e.target.value)}
-                  className="ps-9 w-56"
+                  className="ps-9 w-full sm:w-56"
                 />
                 {shipmentLinesSearch && (
                   <Button
