@@ -124,6 +124,20 @@ the same axis as the module decision — not a separate schema axis.
   soft-delete endpoint is **Archive**, never named "delete".
 - **Confirm before every destructive OR detach action** — including Unlink, not just delete. Never
   one-click.
+- **View and Edit are the SAME layout.** Same tabs in the same order, same fields in the same order
+  within each tab; editing swaps a read-only value for an input **in place**. Nothing moves,
+  appears or disappears between the two views. The read view is what teaches the user where things
+  are, so if Edit reshuffles them every edit starts with re-finding the field, and a value that was
+  visible but is now missing reads as data loss. Group a record's concerns into **tabs once** and
+  reuse that tab set on both views. Read-only metadata (Created, Last Updated, ids) goes in the
+  page header or a meta strip, **never inside a tab body**, because it has no edit counterpart and
+  would otherwise force the two views to differ.
+- **Detail pages carry prev/next record navigation** (`components/common/RecordNavigation`).
+  Reviewing records one by one is the normal case; sending the user back to the list between each
+  is what makes a screen feel half-built. Established usage: `user-management/users/[id]`,
+  `order-management/customers`.
+- **An optional select MUST be clearable.** `SearchableSelect` takes `clearable` — set it on every
+  non-required select, or the user can change the value but never unset it.
 - **Responsive** — every surface usable + non-clipped at 375px AND 1280px. Detail headers use
   `flex flex-col gap-3 sm:flex-row ...` (plain `justify-between` overlaps on mobile); modals are
   scrollable (`max-h` + `overflow`) so the submit button is reachable at phone width.

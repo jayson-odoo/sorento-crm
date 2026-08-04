@@ -144,6 +144,33 @@ Mutation hooks: shared `useCreateMutation` / `useUpdateMutation` / `useDeleteMut
 - **Delete = hard delete + confirmation dialog**. Never use the browser's `confirm()`. Use `AlertDialog` from `@/components/ui/alert-dialog` (destructive button: `className="bg-destructive text-destructive-foreground hover:bg-destructive/90"`) or shared `ConfirmDeleteDialog` from `@/components/common/ConfirmDeleteDialog`. Bulk delete copy must include the count. Standard copy: "Confirm delete" / "This action cannot be undone".
 - If retention is needed, add a **separate Archive** action with its own confirmation. Backend `DELETE` must be hard delete; do not name a soft-delete endpoint "delete".
 
+#### View and Edit are the same layout (binding)
+
+A record's **read view and its edit view must present the same structure**. Same tabs, in the
+same order; same fields, in the same order, within each tab. Editing swaps a read-only value
+for an input **in place** - nothing moves, appears, or disappears.
+
+The reason is that the read view is what teaches the user where things are. If Edit reshuffles
+them into a different arrangement, every edit starts with the user re-finding the field they
+came to change, and a value they expected to see missing reads as data loss.
+
+Concretely:
+
+- **Group into tabs once**, and use the same tab set on both views. A record with more than one
+  concern (identity vs configuration, say) gets a tab per concern rather than a long scroll.
+- **Read-only metadata** (Created, Last Updated, ids) lives in the page header or a meta strip,
+  **never inside a tab body**, because it has no edit counterpart and would otherwise make the
+  two views differ.
+- **Detail pages carry prev/next record navigation** via `components/common/RecordNavigation`.
+  Reviewing a list of records one by one is the common case; making the user go back to the list
+  between each is the thing that makes it feel unfinished. See `user-management/users/[id]` and
+  `order-management/customers` for the established usage.
+- **No explanatory prose in the UI.** A field gets a label, and at most a short hint of the form
+  "what happens if I set this". Multi-sentence teaching text belongs in the user guide. This is
+  the existing cursor rule ("No feature explanations inside the UI itself") applied to forms.
+- **An optional select must be clearable.** `SearchableSelect` takes `clearable` - set it on
+  every non-required select, or the user can change the value but never unset it.
+
 ### Cursor rules (apply to all `.ts`/`.tsx`)
 
 - **No UUIDs in the frontend UI.** Resolve to human-readable identifiers.
