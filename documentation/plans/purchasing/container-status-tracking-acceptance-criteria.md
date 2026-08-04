@@ -1,11 +1,13 @@
 # Container status tracking - acceptance criteria
 
 > Status: DRAFT 2026-08-04, written FIRST per methodology, grilled with the user before any code.
-> Source material: `Container Status 2026.xlsx` (5 tabs, **407 real unique containers** across 411
-> container-bearing rows - `Fitting` 20 open, `Ceramic` 57 open, `Arrived` 318 archived,
-> `Arrived - Joint Mocha Container` 16, `Arrived (Mocha) Joint BL` 0 populated; the 4 remaining rows
-> are repeated header rows whose container cell reads literally `CONTAINER`). **No container appears
-> in more than one tab** - verified, so there is no cross-tab precedence problem on import. CIDB
+> Source material: `Container Status 2026.xlsx`. **5 tabs holding 9 header blocks and 407
+> containers**, because several tabs stack more than one titled section, each with its own header
+> row: `Fitting` 17 + 2, `Ceramic` 55 + 0 + 0, `Arrived` 318, `Arrived - Joint Mocha Container`
+> 15 + 0, `Arrived (Mocha) Joint BL` 0. A further 475 numbered rows carry no container number at all
+> (427 of them in `Arrived`) and are blank scaffolding. **All 407 values are distinct and all 407
+> pass ISO 6346** - there are no reject rows. **No container appears in more than one tab** -
+> verified, so there is no cross-tab precedence problem on import. CIDB
 > `Procedures for Importing Construction Products 5th Edition`, live `sorento-consume-main` +
 > `sub-get-results` n8n workflows.
 >
@@ -34,8 +36,9 @@ revised ETA, then check CIDB ePermit for inspection and approval dates, then typ
    The workbook is still retained as an attachment behind the scenes so the assistant can
    hand it back to a contact, but that is storage, not somewhere anyone should navigate to
    in order to upload.
-3. **A toast confirms the job is queued**, and a notification arrives on completion. Import Job
-   Details shows per-row outcomes, including which rows were rejected and why.
+3. **The Upload Activity drawer opens on the queued job** and polls it to completion, the same
+   handoff the SPO allocation and delivery order imports already give. The toast links straight to
+   the job, and Import Job Details shows per-row outcomes including which rows were rejected and why.
 4. **They open Procurement -> Packing Lists** and the containers they already know now carry
    clearance dates, plus the containers that previously existed only in the sheet are present.
 5. **What they hold at the end:** they stop answering "where is my container" by hand, and they can
@@ -75,18 +78,35 @@ revised ETA, then check CIDB ePermit for inspection and approval dates, then typ
 
 ### A. Capture - upload and import (journey: maintainer 2-4)
 
-- **A1.** The import entry point is the **Packing Lists** toolbar (`secondaryActions`, the slot
-  documented for Import actions), NOT the generic file library. Uploading there enqueues a
-  container-status import on the `imports` RQ queue and returns immediately with a queued toast.
-  The file is still stored as a `Container Status` attachment so AC group D can serve it back.
+- **A1.** The import entry point is the **Packing Lists** toolbar "Actions" dropdown
+  (`secondaryActions`, the slot documented for Import actions), NOT the generic file library.
+  Uploading there enqueues a container-status import on the `imports` RQ queue and returns
+  immediately. The file is still stored as a `Container Status` attachment so AC group D can serve
+  it back.
 - **A1a.** A **dry run** is available before committing: it reports rows read, how many
   containers will be updated, how many created, and which rows are rejected, without writing
-  anything. Against the current workbook that is 411 read / 111 update / 296 create / 4 rejected.
+  anything. Against the current workbook that is 407 read / 111 update / 296 create / 0 rejected.
 - **A1b.** The "no container status imported yet" empty state on a packing list links to the
   import action itself (`?import=container-status` opens the dialog), never to a page where the
   user has to hunt for the upload.
+- **A1c.** The queued import is **visible while it runs**, exactly like the SPO allocation and
+  delivery order imports: the upload calls `notifyImportQueued()` so the Upload Activity drawer
+  opens and polls, and the toast offers a direct link to the import job. An import must never be a
+  fire-and-forget toast that leaves the user with nothing to watch.
 - **A2.** The import reads **all 5 tabs**. The tab name is recorded on each row for traceability
   and is **never** used to derive status.
+- **A2a.** Parsing is **header-anchored, never positional**. Each sheet is scanned for rows whose
+  cell text is exactly `CONTAINER`; each such row OPENS a block and that block's columns are
+  resolved from its own header row. The current workbook has 9 such blocks across 5 tabs (`Fitting`
+  rows 2 and 31, `Ceramic` 2, 69 and 75, `Arrived` 2, `Arrived - Joint Mocha` 2 and 22,
+  `Arrived (Mocha) Joint BL` 2), so a repeated header is a section boundary, not a data row. A
+  numbered row with no container number is blank scaffolding and is skipped without an error; there
+  are 475 of them.
+- **A2b.** Header names are matched **by name with an alias table**, because they drift between
+  tabs. Known aliases today: `LINER` <- `RL` (Ceramic, 55 rows), `WAREHOUSE ARRIVALS` <-
+  `W/H ARRIVALS` (Arrived), `CHINA FORWARDING COST (RMB)` <- `CHINA FREIGHT (RMB)` (Arrived),
+  `SST` <- `10% SST` (Joint Mocha), `DEMURRAGE` <- `Demurrange`. Reading Ceramic's column 4 by
+  position would have mislabelled 55 liners. An unrecognised header is reported, not guessed at.
 - **A3.** Rows are matched to `inbound_shipments` on **normalized container number** (uppercase,
   separators stripped) across **every** `shipment_status`, including `fully_received` and
   `completed`. Matched rows are updated in place; unmatched rows create a new shipment.
@@ -95,10 +115,10 @@ revised ETA, then check CIDB ePermit for inspection and approval dates, then typ
   shipments. A second import of the same file changes no row count and no field value.
 - **A5.** A blank cell **never clears** an existing value. Sheet value wins only when non-empty.
 - **A6.** A row whose container number fails ISO 6346 (4 letters + 7 digits) is rejected, not
-  silently skipped, and appears in Import Job Details with a reason. In the current workbook exactly
-  4 rows fail it - the repeated header rows whose container cell reads `CONTAINER` and whose `LINER`
-  reads `LINER` (`Fitting` r31, `Ceramic` r69, `Ceramic` r75, `Arrived - Joint Mocha` r22). No other
-  row fails, so the rule is neither over- nor under-inclusive on real data.
+  silently skipped, and appears in Import Job Details with a reason. In the current workbook
+  **zero rows fail it** - all 407 values match. The 4 rows an earlier draft counted as rejects were
+  the repeated header rows of A2a, which a header-anchored reader consumes as section boundaries and
+  never offers to this rule. A non-zero reject count on this file means the block detection broke.
 - **A6a.** The importer asserts container uniqueness within a single import run and reports any
   collision rather than last-write-wins. Verified today at zero collisions; the assertion is what
   keeps that true if a future workbook changes.
@@ -122,10 +142,10 @@ revised ETA, then check CIDB ePermit for inspection and approval dates, then typ
   `shipment_status` string is retained as a denormalized cache so the existing dedup logic and
   `eta_from`/`eta_to` filters keep working untouched.
 - **B6.** Auto-transitions key on `ETA DELAY <= today` or `W/H ARRIVALS`, **never** on `ATA` -
-  which is populated in 6 of 411 rows because `ETA DELAY` does double duty as the de-facto arrival
+  which is populated in 6 of 407 rows because `ETA DELAY` does double duty as the de-facto arrival
   date.
 - **B7.** `ATA`, `ORI DOC RECEIVED`, `K1 SUBMISSION` and `YARD ARRIVALS` are stored but carry no
-  status node, no alert and no integration. Fill rates are 6, 4, 4 and 4 out of 411.
+  status node, no alert and no integration. Fill rates are 6, 4, 4 and 4 out of 407.
 
 ### C. Answering (journey: contact 1-3)
 

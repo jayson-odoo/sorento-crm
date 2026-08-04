@@ -29,7 +29,7 @@ Measured, not assumed:
 
 | Finding | Number |
 |---|---|
-| Real unique containers in the workbook | **407** (411 container-bearing rows minus 4 repeated header rows reading `CONTAINER`) |
+| Real unique containers in the workbook | **407**, across **9 header blocks in 5 tabs** (several tabs stack more than one titled section). A further 475 numbered rows carry no container number. All 407 distinct, all 407 pass ISO 6346. |
 | Containers appearing in more than one tab | **0** - verified, so no cross-tab import precedence problem |
 | `inbound_shipments` in the DB | 112 |
 | DB containers that appear in the workbook | **111 of 112 (99%)** |
@@ -39,7 +39,7 @@ Measured, not assumed:
 | Distinct liners | **19** (top 5 = 77% of rows, top 8 = 91%) |
 | CMA share of rows (first adapter) | **79 / 407 = 19%**; WHL is the bigger single win at 116 (28%); top 5 reach 77% |
 | Containers sharing each distinct date | 4.2 (ETA) to 5.5 (inspection) |
-| `ATA` / `ORI DOC` / `K1 SUB` / `YARD` fill rate | 6 / 4 / 4 / 4 out of 411 |
+| `ATA` / `ORI DOC` / `K1 SUB` / `YARD` fill rate | 6 / 4 / 4 / 4 out of 407 |
 | Status-engine entities registered in this repo today | **0** |
 
 Two structural facts that shaped everything:
@@ -70,7 +70,9 @@ Two structural facts that shaped everything:
 | D10 | Generated sheet or uploaded sheet? | **Serve the uploaded original** in phase 1. Generation in system format is a later phase. |
 | D11 | `cidb_required` derivation? | **Deferred.** `PRODUCT` in the sheet is opaque (`2406+7547-BL+7547+6047`) and 286 of 408 containers have no lines. Needs `product_categories.cidb_regulated`; lands with the ePermit adapter. |
 | D28 | Where does the upload live? | **On Packing Lists, not Resource Management -> Files.** Corrected after review: the first prototype pointed the empty-state CTA at the generic file library, which is how packing-list *documents* are uploaded today but is wrong for this. One sheet row is one packing list, so the workbook belongs to the domain the maintainer is already in. Uses the toolbar's `secondaryActions` slot, documented for exactly this ("Import, attachment links, templates"). The file is still retained as a `Container Status` attachment so the assistant can serve it back - storage stays in the library, the entry point does not. |
-| D29 | Dry run before committing? | **Yes.** Reuses the shared `TemplateUploadDialog`, whose `onTest` hook already renders errors, warnings and a summary. Against the current workbook: 411 read / 111 update / 296 create / 4 rejected. An import that restates 407 containers deserves a preview. |
+| D29 | Dry run before committing? | **Yes.** Reuses the shared `TemplateUploadDialog`, whose `onTest` hook already renders errors, warnings and a summary. Against the current workbook: 407 read / 111 update / 296 create / 0 rejected. An import that restates 407 containers deserves a preview. |
+| D30 | How is the workbook parsed? | **Header-anchored with an alias table, never positional.** Corrected after review. Each sheet is scanned for rows reading exactly `CONTAINER`; each opens a block whose columns come from its own header row. The file has **9 blocks in 5 tabs**, not 5 flat sheets - `Fitting` stacks a "JOINT MOCHA CONTAINER" section at row 31, `Ceramic` stacks two more at 69 and 75, `Arrived - Joint Mocha` one at 22. Two consequences the first draft got wrong: (1) those 4 repeated headers are section boundaries, so the true ISO 6346 reject count is **0**, not 4; (2) `Ceramic` names its liner column `RL` while every other tab names it `LINER`, so a positional read of column 4 would have mislabelled 55 liners. Other live aliases: `W/H ARRIVALS`, `CHINA FREIGHT (RMB)`, `10% SST`, `Demurrange`. |
+| D31 | Where does the running import show up? | **The Upload Activity drawer, via `notifyImportQueued()`** - the same handoff SPO allocation and delivery order imports use (the hook's own docstring lists stock, DO, GRN, products, warehouses, SPO; container status joins it). The toast also carries a "View job" action to `/system-management/import-jobs/{id}`. A queued import that only toasts leaves the user with nothing to watch for a 407-row job. Consequence: the Packing Lists toolbar now has two secondary actions (Refresh, Import Container Status), so the toolbar collapses them into its "Actions" dropdown exactly as the delivery order list does. |
 | D12 | Daily update mechanism? | **Re-upload the sheet.** Bulk-set via `bulk_update_registry` is the natural next step (dates cluster 4-5.5 containers deep) but is not phase 1. No inline grid. |
 | D13 | Liner acquisition? | ~~Aggregator~~ **REVISED after review: per-carrier scrapers, CMA first** (`cma-cgm.com/ebusiness/tracking`, container-number search, no carrier account needed). The adapter registry survives unchanged - per-carrier adapters become the implementation rather than the fallback, and an aggregator can still slot in as one more adapter. **Consequences accepted:** coverage becomes the sum of adapters built (CMA alone = 79/407 = 19%, not ~92%); there is no push channel, so acquisition is polled via the existing `scheduled_task_service` + RQ; and each carrier's markup is a permanent maintenance surface. |
 | D13a | How does the scraper fetch, given a 403? | **Open - spike required (O1).** Verified: a plain HTTP GET of the CMA tracking URL returns `403 Forbidden`. The backend ships `httpx` only, no HTML parser and no browser, on `python:3.11-slim`. Four candidate answers in O1; do not guess one into the plan. |
@@ -107,7 +109,7 @@ Two structural facts that shaped everything:
   inspection -> approval -> K1 submission is one chain. Staging exists at
   `epermitdev.dagangnet.com.my`. DagangNet sells system-to-system integration, so ask before
   scraping (O4).
-- **`ETA DELAY` does double duty** - revised ETA and de-facto arrival. Explains `ATA` 6/411 and
+- **`ETA DELAY` does double duty** - revised ETA and de-facto arrival. Explains `ATA` 6/407 and
   `actual_arrival_date` 0/112.
 
 ## 5. Hygiene finding, unrelated but real

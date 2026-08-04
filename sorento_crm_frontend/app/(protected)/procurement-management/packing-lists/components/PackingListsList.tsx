@@ -14,7 +14,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Plus, Search, Trash2, Upload, X } from 'lucide-react';
+import { ChevronRight, Plus, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -84,7 +84,7 @@ export default function PackingListsList() {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
-  const { data, isLoading, refetch, isFetching } = usePackingLists({
+  const { data, isLoading, refetch } = usePackingLists({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -338,8 +338,6 @@ export default function PackingListsList() {
               </div>
             }
             exportConfig={{ filename: 'packing_lists_export.xlsx' }}
-            onRefresh={() => void refetch()}
-            isRefreshing={isFetching && !isLoading}
             primaryAction={
               <Button
                 onClick={() =>
@@ -351,6 +349,16 @@ export default function PackingListsList() {
               </Button>
             }
             secondaryActions={[
+              // Two or more secondary actions collapse into the toolbar's "Actions"
+              // dropdown, which is where the delivery order import lives. Refresh
+              // moves in with the import rather than sitting as its own icon button,
+              // so this toolbar matches that page.
+              {
+                key: 'refresh',
+                label: 'Refresh',
+                icon: RefreshCw,
+                onClick: () => void refetch(),
+              },
               {
                 key: 'import-container-status',
                 label: 'Import Container Status',
