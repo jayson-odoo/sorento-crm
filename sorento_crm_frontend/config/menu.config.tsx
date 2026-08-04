@@ -439,6 +439,16 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/complaint-management/complaints',
       },
       {
+        title: 'Dispatch Board',
+        path: '/complaint-management/service-jobs',
+        permission: 'complaint_management.service_jobs.view',
+      },
+      {
+        title: 'Technicians',
+        path: '/complaint-management/technicians',
+        permission: 'complaint_management.service_jobs.view',
+      },
+      {
         title: 'Root Causes',
         path: '/complaint-management/complaint-root-causes',
         permission: 'master_data.complaint_root_causes.view',
@@ -1304,6 +1314,16 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Complaints',
         path: '/complaint-management/complaints',
+      },
+      {
+        title: 'Dispatch Board',
+        path: '/complaint-management/service-jobs',
+        permission: 'complaint_management.service_jobs.view',
+      },
+      {
+        title: 'Technicians',
+        path: '/complaint-management/technicians',
+        permission: 'complaint_management.service_jobs.view',
       },
       {
         title: 'Root Causes',

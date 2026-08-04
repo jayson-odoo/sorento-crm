@@ -23,6 +23,18 @@ const STATUS_PILL_CLASS: Record<string, string> = {
   // Voided = form was cancelled/annulled after creation. Neutral gray (muted),
   // deliberately NOT red — voiding is administrative, not an error/rejection.
   voided: 'bg-gray-200 text-gray-600',
+  // Service jobs (S6). Colours mirror the seeded graph in
+  // app/services/service_job_status_graph.py so the board and the status-graph
+  // editor cannot disagree about what a state looks like.
+  proposed: 'bg-muted text-muted-foreground',
+  confirmed: 'bg-sky-100 text-sky-800',
+  on_the_way: 'bg-indigo-100 text-indigo-800',
+  arrived: 'bg-violet-100 text-violet-800',
+  completed: 'bg-emerald-100 text-emerald-800',
+  verified: 'bg-emerald-200 text-emerald-900',
+  // Same reasoning as `voided`: cancelling a visit is administrative, and red would
+  // read as the technician's fault on every board.
+  cancelled: 'bg-gray-200 text-gray-600',
 };
 
 /** Base classes for the pill chip (shape + sizing); pair with statusPillClass(). */
