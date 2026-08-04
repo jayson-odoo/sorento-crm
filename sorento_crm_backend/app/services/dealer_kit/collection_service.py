@@ -273,46 +273,118 @@ def resolve_tiles(
     price column of its own and does no money arithmetic: it formats what it is
     handed, once, at the edge.
     """
-    members = resolve_members(db, collection, candidates)
-    # One query for the whole grid, for both of these. Resolving per tile turns
-    # a forty-product page into forty round trips.
-    images = product_images.primary_image_urls(db, members, viewer)
-    prices = pricing.resolve_prices(db, members, viewer, promotion_id)
+    return resolve_tiles_bulk(db, [collection], viewer, candidates, promotion_id)[
+        collection.id
+    ]
 
-    tiles = []
-    for product in members:
-        price = prices[product.id]
-        currency = price.currency
-        tiles.append(
-            {
-                "product_id": product.id,
-                "product_code": product.product_code,
-                "product_name": product.product_name,
-                "price": _money(price.list_price, currency),
-                # Reported BESIDE the list price, not instead of it: the tile
-                # strikes the list price through, and a tile handed only the
-                # offer could not show what the reader is saving. None when no
-                # offer applies to THIS reader, which is also how a promotion
-                # they may not see reaches them: not at all (AC-G7). The
-                # promotion's id is deliberately not on the tile - it would name
-                # an offer to somebody who cannot have it, and a uuid has no
-                # business on a screen.
-                "offer_price": _money(price.offer_price, currency),
-                # Absent unless the document says show it AND the viewer may see
-                # it. Both gates are ANDed inside `resolve_prices`, and the
-                # losing case omits the number entirely rather than sending it
-                # to be hidden (AC-G6, AC-G7).
-                "invoice_price": _money(price.invoice_price, currency),
-                # Photos are viewer-gated exactly as prices are: trade imagery
-                # is tagged `dealer` and must not reach a consumer. Absent when
-                # there is no permitted photo, so the tile shows its no-image
-                # state rather than a broken one.
-                "image_url": images.get(product.id),
-                "dimensions": _dimensions(product),
-                "badges": [],
-            }
-        )
-    return tiles
+
+def resolve_tiles_bulk(
+    db: Session,
+    collections: Sequence[Collection],
+    viewer: ViewerContext = ANONYMOUS,
+    candidates: Optional[list[Product]] = None,
+    promotion_id: Optional[str] = None,
+) -> dict[str, list[dict]]:
+    """The same thing for SEVERAL collections, in a fixed number of queries.
+
+    A brochure seeded from the printed flyer carries one collection per printed
+    row - the A3 flyer produces 341 of them - and resolving each on its own cost
+    two round trips for its photos and its prices. That is not a slow query, it
+    is seven hundred fast ones, and it was two thirds of the time a reader spent
+    waiting for the page.
+
+    Members are decided per collection (pure Python once the candidate set is
+    loaded), then the UNION of every member is priced and photographed ONCE and
+    the tiles are assembled from those two maps. Three queries for the whole
+    document, whether it holds one row or four hundred.
+    """
+    if not collections:
+        return {}
+
+    if candidates is None:
+        candidates = _shared_candidates(db, collections)
+
+    members_by_collection = {
+        collection.id: resolve_members(db, collection, candidates)
+        for collection in collections
+    }
+
+    # De-duped, because the same product legitimately appears on several rows.
+    union: list[Product] = []
+    seen: set[str] = set()
+    for members in members_by_collection.values():
+        for product in members:
+            if product.id not in seen:
+                seen.add(product.id)
+                union.append(product)
+
+    images = product_images.primary_image_urls(db, union, viewer)
+    prices = pricing.resolve_prices(db, union, viewer, promotion_id)
+
+    return {
+        collection_id: [_tile(product, prices[product.id], images.get(product.id)) for product in members]
+        for collection_id, members in members_by_collection.items()
+    }
+
+
+def _shared_candidates(db: Session, collections: Sequence[Collection]) -> list[Product]:
+    """One candidate set covering every collection in the batch.
+
+    A rule is a Python evaluator and must see the whole sellable catalogue, so
+    one rule anywhere in the batch means the full load - paid once for all of
+    them, which is the reason this function exists.
+
+    With no rule anywhere, nobody needs it. A seeded brochure is hundreds of
+    hand-picked rows, and loading seventeen thousand products to answer "show
+    these four, four hundred times over" is the expensive mistake `resolve_
+    members` already avoids one collection at a time. The union of the pins is
+    the same answer for a single query instead of one per collection.
+    """
+    if any(
+        bool(collection.conditions_json and collection.conditions_json.get("rules"))
+        for collection in collections
+    ):
+        return _sellable_products(db)
+
+    pinned: list[str] = []
+    seen: set[str] = set()
+    for collection in collections:
+        for product_id in collection.pinned_product_ids or []:
+            if product_id not in seen:
+                seen.add(product_id)
+                pinned.append(product_id)
+
+    return _sellable_by_ids(db, pinned) if pinned else []
+
+
+def _tile(product: Product, price, image_url: Optional[str]) -> dict:
+    currency = price.currency
+    return {
+        "product_id": product.id,
+        "product_code": product.product_code,
+        "product_name": product.product_name,
+        "price": _money(price.list_price, currency),
+        # Reported BESIDE the list price, not instead of it: the tile strikes
+        # the list price through, and a tile handed only the offer could not
+        # show what the reader is saving. None when no offer applies to THIS
+        # reader, which is also how a promotion they may not see reaches them:
+        # not at all (AC-G7). The promotion's id is deliberately not on the tile
+        # - it would name an offer to somebody who cannot have it, and a uuid
+        # has no business on a screen.
+        "offer_price": _money(price.offer_price, currency),
+        # Absent unless the document says show it AND the viewer may see it.
+        # Both gates are ANDed inside `resolve_prices`, and the losing case
+        # omits the number entirely rather than sending it to be hidden
+        # (AC-G6, AC-G7).
+        "invoice_price": _money(price.invoice_price, currency),
+        # Photos are viewer-gated exactly as prices are: trade imagery is tagged
+        # `dealer` and must not reach a consumer. Absent when there is no
+        # permitted photo, so the tile shows its no-image state rather than a
+        # broken one.
+        "image_url": image_url,
+        "dimensions": _dimensions(product),
+        "badges": [],
+    }
 
 
 def _dimensions(product: Product) -> Optional[str]:

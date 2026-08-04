@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+import time
 from typing import Optional, Protocol
 from urllib.parse import unquote, urlparse
 
@@ -159,6 +161,66 @@ def extract_key(file_path: Optional[str]) -> Optional[str]:
     return unquote(raw).lstrip("/") or None
 
 
+"""Signed URLs, memoised for a fraction of their own lifetime.
+
+Signing is not free and it is asked for in BULK. One published catalogue page
+signs a photo for every product on it - 439 on the seeded A3 brochure - and that
+was 3.0 of the 3.2 seconds the whole request took, dwarfing the three database
+queries that produce the content. The same shape shows up in attachment lists
+and product pickers.
+
+The URL for a given key does not depend on who is asking: these are key-pair
+signed CloudFront URLs and R2 presigned URLs, not per-user grants. So the same
+key asked for twice inside a few minutes can safely be answered twice with the
+same string.
+
+**TTL is a fraction of `expires_in`, never equal to it.** A cached URL must
+always have most of its life ahead of it, or a reader could be handed one with
+seconds left and see the image 403 as they scroll to it.
+"""
+
+_MISS = object()
+
+# A sixth of the URL's own lifetime: at the default hour that is ten minutes,
+# and the URL a reader receives always has at least fifty minutes left.
+_SIGNED_TTL_DIVISOR = 6
+# Bounded so a long-running worker touching every attachment cannot grow this
+# without limit. Entries are short strings.
+_SIGNED_CACHE_MAX = 4096
+
+_signed_lock = threading.Lock()
+_signed_cache: dict[tuple[str, str, int], tuple[float, Optional[str]]] = {}
+
+
+def _signed_cache_get(provider: str, key: str, expires_in: int):
+    with _signed_lock:
+        entry = _signed_cache.get((provider, key, expires_in))
+        if entry is None:
+            return _MISS
+        expires_at, value = entry
+        if expires_at <= time.monotonic():
+            _signed_cache.pop((provider, key, expires_in), None)
+            return _MISS
+        return value
+
+
+def _signed_cache_put(provider: str, key: str, expires_in: int, value: Optional[str]) -> None:
+    ttl = max(1, expires_in // _SIGNED_TTL_DIVISOR)
+    with _signed_lock:
+        if len(_signed_cache) >= _SIGNED_CACHE_MAX:
+            # Every entry of a given expires_in shares a TTL, so expiry order is
+            # insertion order and this is the cheapest correct eviction.
+            oldest = min(_signed_cache, key=lambda item: _signed_cache[item][0])
+            _signed_cache.pop(oldest, None)
+        _signed_cache[(provider, key, expires_in)] = (time.monotonic() + ttl, value)
+
+
+def clear_signed_url_cache() -> None:
+    """For tests, and for a caller that has just replaced an object's bytes."""
+    with _signed_lock:
+        _signed_cache.clear()
+
+
 def resolve_signed_url(
     file_path: Optional[str],
     *,
@@ -212,8 +274,13 @@ def resolve_signed_url(
     key = extract_key(raw)
     if not key:
         return None if strict else raw
+
+    cached = _signed_cache_get(chosen, key, expires_in)
+    if cached is not _MISS:
+        return cached if cached is not None else (None if strict else raw)
+
     try:
-        return get_backend(chosen).get_signed_url(key, expires_in=expires_in)
+        signed = get_backend(chosen).get_signed_url(key, expires_in=expires_in)
     except Exception as e:  # noqa: BLE001
         logger.warning(
             "Signed URL generation failed for provider=%s key=%s: %s",
@@ -221,7 +288,14 @@ def resolve_signed_url(
             (key or "")[:80],
             e,
         )
+        # Cached as a failure, not re-attempted per call. A key that cannot be
+        # signed now will not start signing a millisecond later, and the
+        # catalogue asks about hundreds of them in one request.
+        _signed_cache_put(chosen, key, expires_in, None)
         return None if strict else raw
+
+    _signed_cache_put(chosen, key, expires_in, signed)
+    return signed
 
 
 def copy_object_verified(provider: str, old_key: str, new_key: str) -> None:

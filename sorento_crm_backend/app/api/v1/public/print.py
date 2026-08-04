@@ -17,41 +17,16 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.base import company_scope
-from app.models.dealer_kit import Collection, Page
+from app.models.dealer_kit import Page
 from app.services.dealer_kit import (
     asset_service,
-    collection_service,
+    document_bindings,
     export_service,
     render_token,
 )
 from app.services.error_handler import AppException
 
 router = APIRouter()
-
-
-def _tile_templates_for(db, doc) -> dict:
-    """templateId -> field list, for every design the document binds.
-
-    Sent alongside the tiles so the renderer never has to fetch a design of its
-    own: a print page that made its own API calls would be one more thing that
-    can be half-finished when Chromium decides the page is idle.
-    """
-    from app.models.dealer_kit import TileTemplate
-    from app.services.dealer_kit import tile_template_service
-
-    ids = {
-        (block.get("props") or {}).get("tileTemplateId")
-        for section in (doc or {}).get("sections", []) or []
-        for block in (section.get("blocks") or [])
-        if (block.get("props") or {}).get("kind") == "collection"
-    }
-    ids.discard(None)
-    if not ids:
-        return {}
-
-    rows = db.query(TileTemplate).filter(TileTemplate.id.in_(ids)).all()
-    return {row.id: tile_template_service.fields_of(row) for row in rows}
-
 
 
 @router.get("/{download_id}")
@@ -86,44 +61,28 @@ def read_print_payload(
     scope = frozenset({page.company_id}) if page.company_id else None
 
     doc = inputs["doc"] or {}
-    resolved: dict[str, list[dict]] = {}
 
     with company_scope(db, scope):
-        # One candidate load for every collection on the page.
-        candidates = collection_service.sellable_products(db)
-        for section in doc.get("sections", []) or []:
-            for block in section.get("blocks", []) or []:
-                props = block.get("props") or {}
-                if props.get("kind") != "collection":
-                    continue
-                collection_id = props.get("collectionId")
-                if not collection_id or collection_id in resolved:
-                    continue
-                row = (
-                    db.query(Collection).filter(Collection.id == collection_id).first()
-                )
-                resolved[collection_id] = (
-                    collection_service.resolve_tiles(
-                        db,
-                        row,
-                        viewer,
-                        candidates,
-                        # Read from the page NOW rather than snapshotted at
-                        # enqueue, like every other price here: the document
-                        # never stores a figure (AC-G1), so a promotion that
-                        # ended while this sat in the queue must print as list
-                        # prices. What IS pinned is the version, because that is
-                        # the content somebody asked to export.
-                        promotion_id=page.promotion_id,
-                    )
-                    if row is not None
-                    else []
-                )
+        resolved = document_bindings.resolve_bound_collections(
+            db,
+            doc,
+            viewer,
+            # Read from the page NOW rather than snapshotted at enqueue, like
+            # every other price here: the document never stores a figure
+            # (AC-G1), so a promotion that ended while this sat in the queue
+            # must print as list prices. What IS pinned is the version, because
+            # that is the content somebody asked to export.
+            promotion_id=page.promotion_id,
+        )
 
         # Tile designs are company-scoped too, so they must be read inside the
         # pinned scope - outside it this silently returns {} and every tile
-        # falls back to a default field list.
-        templates = _tile_templates_for(db, doc)
+        # falls back to a default field list. The PAGE's default is included:
+        # printing a brochure whose blocks name no design must not print
+        # something that looks nothing like the page on screen.
+        templates = document_bindings.tile_templates_for(
+            db, doc, page.tile_template_id
+        )
         # Section backgrounds, signed for this render. Sent with the payload
         # so the print page never fetches an image of its own: the worker
         # waits on one ready flag, and a background loaded after it prints
@@ -133,6 +92,7 @@ def read_print_payload(
     return {
         "pageName": page.name,
         "tileTemplates": templates,
+        "defaultTileTemplateId": page.tile_template_id,
         "version": inputs["version"],
         "audience": inputs["audience"],
         "doc": doc,
