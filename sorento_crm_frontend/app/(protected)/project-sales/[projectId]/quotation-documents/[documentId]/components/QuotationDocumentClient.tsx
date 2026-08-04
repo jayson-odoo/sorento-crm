@@ -3,7 +3,8 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Download, Plus, Trash2 } from 'lucide-react';
+import { Download, Link2, PenLine, Plus, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,8 +15,10 @@ import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import {
   useQuotationDocument,
   useQuotationDocumentMutations,
+  useQuotationIssues,
 } from '../../../../_shared/hooks/useQuotationDocuments';
 import { useProject, useQuotations } from '../../../../_shared/hooks/useProjects';
+import type { QuotationSignatureRecord } from '../../../../_shared/services/quotationDocumentService';
 import { OutcomePill } from '../../../../_shared/components/OutcomePill';
 import { QuotationOutcomeDialog } from '../../../components/QuotationOutcomeDialog';
 import { QuotationVersionEditor } from '../../../components/QuotationVersionEditor';
@@ -24,6 +27,8 @@ import { QuotationScopeTabs } from './QuotationScopeTabs';
 import { QuotationNameDialog } from './QuotationNameDialog';
 import { QuotationCoverLetterPanel, QuotationTermsPanel } from './QuotationLetterPanels';
 import { QuotationSignatureBlock } from './QuotationSignatureBlock';
+import { QuotationSignDialog } from './QuotationSignDialog';
+import { QuotationSignLinkDialog } from './QuotationSignLinkDialog';
 
 /**
  * One quotation DOCUMENT: the letterhead the customer receives, and the scopes priced under it.
@@ -50,12 +55,26 @@ export function QuotationDocumentClient({
   // quotation list is already cached by the tab the user clicked in from, so resolving the
   // open scope through it costs nothing on the usual path.
   const quotations = useQuotations(projectId);
+  // Newest first, so [0] is the revision the customer currently holds - the one whose PDF and
+  // counter-sign link are the ones worth handing out.
+  const issues = useQuotationIssues(projectId, documentId);
   const mutations = useQuotationDocumentMutations(projectId, documentId);
 
   const [activeScopeId, setActiveScopeId] = React.useState<string | null>(null);
   const [decidingScopeId, setDecidingScopeId] = React.useState<string | null>(null);
   const [addingScope, setAddingScope] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
+  const [signing, setSigning] = React.useState(false);
+  const [linkToShow, setLinkToShow] = React.useState<string | null>(null);
+  /**
+   * The signature captured on this page, held here rather than in the query cache.
+   *
+   * The document GET does not serialize `signatory_signature` yet, so the cache is not a safe home
+   * for it: react-query refetches on window focus and would wipe it the first time the user tabbed
+   * away. Component state lasts as long as the screen does, which is the whole of the sign-then-
+   * issue sequence, and the day the serializer sends the field the line below prefers it.
+   */
+  const [justSigned, setJustSigned] = React.useState<QuotationSignatureRecord | null>(null);
 
   const scopes = document.data?.scopes ?? [];
   const activeScope = scopes.find((scope) => scope.id === activeScopeId) ?? scopes[0] ?? null;
@@ -94,6 +113,73 @@ export function QuotationDocumentClient({
   // R1 on a document nobody has issued, R3 on one that stands at R2. One expression for both:
   // the next revision is always the one after whatever the customer currently holds.
   const nextIssueNo = (record.current_issue_no ?? 0) + 1;
+  const latestIssue = issues.data?.[0] ?? null;
+  const sorentoSignature = record.signatory_signature ?? justSigned;
+  /**
+   * AC-H1: no signature, no issue. The server refuses an unsigned document with 422
+   * `quotation_document_unsigned`, so the CTA says so up front rather than letting somebody
+   * press it and read an error.
+   *
+   * `is_issued` counts as signed because the server could not have issued it otherwise; the
+   * signature itself only reaches this screen through the sign response (see the note on
+   * `QuotationDocument.signatory_signature`).
+   */
+  const isSigned = Boolean(sorentoSignature) || record.is_issued;
+
+  async function openIssuePdf() {
+    if (!latestIssue) return;
+    try {
+      const blob = await mutations.issuePdf.mutateAsync({
+        id: documentId,
+        issueId: latestIssue.id,
+      });
+      const url = URL.createObjectURL(blob);
+      // The backend sends it `inline`, so a tab is the intended destination. A blocked popup
+      // falls back to saving the file, which is never worse than nothing happening.
+      //
+      // Deliberately WITHOUT `noopener`: Chrome returns null for a noopener window whether it
+      // opened or not, so the null check would fire the download every single time and the user
+      // would get a tab AND a file. There is nothing to protect here anyway - a blob: URL has no
+      // remote page to hand a window reference to.
+      const opened = window.open(url, '_blank');
+      if (!opened) {
+        const anchor = window.document.createElement('a');
+        anchor.href = url;
+        anchor.download = `${record.document_no.replace(/\//g, '-')}-R${latestIssue.issue_no}.pdf`;
+        window.document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      }
+      // Revoked on a timer, not immediately: the new tab has to finish reading the blob first.
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch {
+      // The mutation already toasted the reason, including the 503 a host without the native
+      // rendering libraries answers with.
+    }
+  }
+
+  async function copyCounterSignLink() {
+    if (!latestIssue) return;
+    try {
+      const link = await mutations.signLink.mutateAsync({
+        id: documentId,
+        issueId: latestIssue.id,
+      });
+      // The server returns a relative path on purpose; the origin the customer must land on is
+      // whichever one this screen is being used from.
+      const url = `${window.location.origin}${link.path}`;
+      try {
+        await navigator.clipboard.writeText(url);
+        toast.success('Counter-sign link copied');
+      } catch {
+        // Clipboard access refused (plain HTTP, or a browser policy). Show the link instead of
+        // stranding the user with a failure and no way to get at it.
+        setLinkToShow(url);
+      }
+    } catch {
+      // Already toasted by the mutation.
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -114,45 +200,94 @@ export function QuotationDocumentClient({
         </div>
 
         {/* One CTA, then the gear. Issuing is the move; exports and the delete live behind the
-            gear so the header states one intent. */}
-        <div className="flex flex-wrap items-center gap-2">
-          {canEdit && (
-            <Button
-              type="button"
-              size="sm"
-              disabled={mutations.issue.isPending}
-              onClick={() => mutations.issue.mutate(documentId)}
-            >
-              {`Issue R${nextIssueNo}`}
-            </Button>
-          )}
-          <DetailActionsMenu ariaLabel="Quotation actions">
-            {/* Disabled rather than absent: the client asked for both exports, and a menu that
-                simply lacks them reads as "this system cannot do it". */}
-            <DropdownMenuItem disabled>
-              <Download className="size-4" aria-hidden />
-              <span className="min-w-0">
-                Download PDF
-                <span className="block text-xs text-muted-foreground">Not built yet</span>
-              </span>
-            </DropdownMenuItem>
-            <DropdownMenuItem disabled>
-              <Download className="size-4" aria-hidden />
-              <span className="min-w-0">
-                Download Excel
-                <span className="block text-xs text-muted-foreground">Not built yet</span>
-              </span>
-            </DropdownMenuItem>
-            {canEdit && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive" onSelect={() => setConfirmDelete(true)}>
-                  <Trash2 className="size-4" aria-hidden />
-                  Delete quotation
-                </DropdownMenuItem>
-              </>
+            gear so the header states one intent. Sign sits beside it as an outline button only
+            while it is the thing standing in the way. */}
+        <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
+          <div className="flex flex-wrap items-center gap-2">
+            {canEdit && !isSigned && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setSigning(true)}
+              >
+                <PenLine className="size-4" aria-hidden />
+                Sign
+              </Button>
             )}
-          </DetailActionsMenu>
+            {canEdit && (
+              <Button
+                type="button"
+                size="sm"
+                disabled={mutations.issue.isPending || !isSigned}
+                title={isSigned ? undefined : 'Sign it first'}
+                onClick={() => mutations.issue.mutate(documentId)}
+              >
+                {`Issue R${nextIssueNo}`}
+              </Button>
+            )}
+            <DetailActionsMenu ariaLabel="Quotation actions">
+              {canEdit && (
+                <DropdownMenuItem onSelect={() => setSigning(true)}>
+                  <PenLine className="size-4" aria-hidden />
+                  {isSigned ? 'Sign again' : 'Sign quotation'}
+                </DropdownMenuItem>
+              )}
+              {/* Disabled rather than absent: the client asked for both exports, and a menu that
+                  simply lacks them reads as "this system cannot do it". */}
+              <DropdownMenuItem
+                disabled={!record.is_issued || mutations.issuePdf.isPending}
+                onSelect={() => void openIssuePdf()}
+              >
+                <Download className="size-4" aria-hidden />
+                <span className="min-w-0">
+                  Download PDF
+                  {!record.is_issued && (
+                    <span className="block text-xs text-muted-foreground">
+                      Issue it first
+                    </span>
+                  )}
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled>
+                <Download className="size-4" aria-hidden />
+                <span className="min-w-0">
+                  Download Excel
+                  <span className="block text-xs text-muted-foreground">Not built yet</span>
+                </span>
+              </DropdownMenuItem>
+              {canEdit && (
+                <DropdownMenuItem
+                  disabled={!record.is_issued || mutations.signLink.isPending}
+                  onSelect={() => void copyCounterSignLink()}
+                >
+                  <Link2 className="size-4" aria-hidden />
+                  <span className="min-w-0">
+                    Copy counter-sign link
+                    {!record.is_issued && (
+                      <span className="block text-xs text-muted-foreground">
+                        Issue it first
+                      </span>
+                    )}
+                  </span>
+                </DropdownMenuItem>
+              )}
+              {canEdit && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onSelect={() => setConfirmDelete(true)}>
+                    <Trash2 className="size-4" aria-hidden />
+                    Delete quotation
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DetailActionsMenu>
+          </div>
+          {canEdit && !isSigned && (
+            // Visible, not only a tooltip: a disabled button with the reason hidden behind a
+            // hover is unreadable on the phone this page also has to work on.
+            <p className="text-xs text-muted-foreground sm:text-right">Sign it first</p>
+          )}
         </div>
       </header>
 
@@ -251,7 +386,25 @@ export function QuotationDocumentClient({
 
       <QuotationCoverLetterPanel html={record.cover_letter_html} />
       <QuotationTermsPanel html={record.terms_html} />
-      <QuotationSignatureBlock document={record} />
+      <QuotationSignatureBlock document={record} sorentoSignature={sorentoSignature} />
+
+      <QuotationSignDialog
+        open={signing}
+        onOpenChange={setSigning}
+        signatoryName={record.signatory_name}
+        isSaving={mutations.sign.isPending}
+        onSign={async (body) => {
+          try {
+            setJustSigned(await mutations.sign.mutateAsync({ id: documentId, body }));
+            setSigning(false);
+          } catch {
+            // The mutation toasted the reason. The dialog stays open so the signature can be
+            // re-applied without reopening it.
+          }
+        }}
+      />
+
+      <QuotationSignLinkDialog url={linkToShow} onOpenChange={() => setLinkToShow(null)} />
 
       {decidingScopeId && activeQuotation && project.data && (
         <QuotationOutcomeDialog

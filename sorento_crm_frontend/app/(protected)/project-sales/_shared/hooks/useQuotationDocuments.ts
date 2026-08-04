@@ -5,15 +5,19 @@ import { toast } from 'sonner';
 import {
   addQuotationScope,
   createQuotationDocument,
+  createQuotationSignLink,
   deleteQuotationDocument,
+  downloadQuotationIssuePdf,
   getQuotationDocument,
   issueQuotationDocument,
   listQuotationDocuments,
   listQuotationIssues,
+  signQuotationDocument,
   updateQuotationDocument,
   updateQuotationScope,
   type QuotationDocument,
   type QuotationDocumentBody,
+  type QuotationSignatureBody,
 } from '../services/quotationDocumentService';
 
 const DOCUMENTS_KEY = 'project-quotation-documents';
@@ -134,5 +138,50 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { create, update, remove, addScope, renameScope, issue, documentId };
+  /**
+   * Signing the draft. Deliberately does NOT run `invalidate()`.
+   *
+   * Nothing else on the document changed, and the document GET carries no signature, so a refetch
+   * would answer with a record that looks unsigned and the screen would go back to asking for a
+   * signature it had just been given. The caller keeps the returned signature (see
+   * `QuotationDocumentClient`), which is also why it is not written into the query cache: react-
+   * query refetches on window focus, and a cache entry would be silently overwritten the first
+   * time the user tabbed away and back.
+   */
+  const sign = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: QuotationSignatureBody }) =>
+      signQuotationDocument(projectId, id, body),
+    onSuccess: () => toast.success('Quotation signed'),
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  /**
+   * Mint (or reuse) the tokenised counter-sign link for one issue. The server hands back a
+   * RELATIVE path; the caller decides which origin to put in front of it.
+   */
+  const signLink = useMutation({
+    mutationFn: ({ id, issueId }: { id: string; issueId: string }) =>
+      createQuotationSignLink(projectId, id, issueId),
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  /** The issued PDF as bytes. The caller opens or saves it; a hook does not touch the DOM. */
+  const issuePdf = useMutation({
+    mutationFn: ({ id, issueId }: { id: string; issueId: string }) =>
+      downloadQuotationIssuePdf(projectId, id, issueId),
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return {
+    create,
+    update,
+    remove,
+    addScope,
+    renameScope,
+    issue,
+    sign,
+    signLink,
+    issuePdf,
+    documentId,
+  };
 }
