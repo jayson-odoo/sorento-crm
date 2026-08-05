@@ -74,6 +74,8 @@ vi.mock('../../../components/QuotationVersionEditor', () => ({
 
 import { QuotationDocumentClient } from './QuotationDocumentClient';
 import { QuotationDocumentHeader } from './QuotationDocumentHeader';
+import { QuotationScopesTab } from './QuotationScopesTab';
+import { QuotationSignaturesTab } from './QuotationDocumentTabPanels';
 
 function project(overrides: Partial<Project> = {}): Project {
   return {
@@ -138,11 +140,18 @@ function quotationDocument(overrides: Partial<QuotationDocument> = {}): Quotatio
   };
 }
 
-function renderScreen() {
+/**
+ * The screen is a shell with a routed tab inside it, so a test renders the shell around whichever
+ * tab it is making a claim about. The Scopes tab is the default route and therefore the default
+ * here too.
+ */
+function renderScreen(tab: React.ReactNode = <QuotationScopesTab />) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <QuotationDocumentClient projectId="p1" documentId="d1" />
+      <QuotationDocumentClient projectId="p1" documentId="d1">
+        {tab}
+      </QuotationDocumentClient>
     </QueryClientProvider>,
   );
 }
@@ -310,7 +319,9 @@ describe('QuotationDocumentClient signing gate', () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({ signatory_signature: signature() }),
     );
-    renderScreen();
+    // The panel is the Signatures tab's now, so that is the tab this claim is made on. What it
+    // asserts is unchanged: the ink, its metadata, and the customer half stating its own state.
+    renderScreen(<QuotationSignaturesTab />);
 
     await waitFor(() => expect(screen.getByTestId('signature-pad-readonly')).toBeInTheDocument());
     // The pad labels the image from its heading, and the heading is who signed.
