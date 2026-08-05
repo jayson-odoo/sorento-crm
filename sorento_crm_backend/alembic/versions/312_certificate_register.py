@@ -32,8 +32,11 @@ import sqlalchemy as sa
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
-revision = "311_certificate_register"
-down_revision = "310_form_sla_skip_stage"
+revision = "312_certificate_register"
+# Re-chained off 311_split_pr_approve_permission (merged to main as PR #71)
+# rather than 310: both cannot descend from the same parent or alembic has
+# two heads and every upgrade fails with "Multiple heads are present".
+down_revision = "311_split_pr_approve_permission"
 branch_labels = None
 depends_on = None
 

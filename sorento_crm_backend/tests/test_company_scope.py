@@ -291,8 +291,12 @@ def test_every_company_id_table_is_registered():
         f"Tables have a company_id column but are not CompanyScopedMixin subclasses "
         f"(add the mixin or allowlist them): {offenders}"
     )
-    # Foundation slice ships exactly 34 owned tables (PLAN §4.1).
-    assert len(owned) == 34, f"expected 34 owned tables, found {len(owned)}: {sorted(owned)}"
+    # Foundation slice shipped 34 owned tables (PLAN §4.1); the certificate
+    # register added `certificates` as the 35th. Its two child tables
+    # (`certificate_revisions`, `certificate_products`) are deliberately NOT
+    # scoped: they are only ever reached through their certificate, which is
+    # scoped, so a second filter would be redundant surface (SEC-2a).
+    assert len(owned) == 35, f"expected 35 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------
