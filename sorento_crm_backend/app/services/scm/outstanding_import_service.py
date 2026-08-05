@@ -791,6 +791,9 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
     # deliberately ignores drafts, so writing them as drafts would import supply and hide it.
     order_ids: dict[str, str] = {}
     activated: list[str] = []
+    #: Documents another feed created that this extract has taken ownership of. Reported so
+    #: the handover is visible rather than a silent change of who may edit what.
+    adopted: list[str] = []
     for number in diff.scope_documents:
         header = (
             db.query(bind.header)
@@ -806,12 +809,23 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
             })
             db.add(header)
             db.flush()
-        elif number in lift:
-            # The extract is evidence the document has been placed, and AutoCount is the
-            # system of record for that. Left as a draft the lines land and the supply is
-            # invisible, while the response still reports them as added.
-            header.status = bind.write_status
-            activated.append(number)
+        else:
+            if number in lift:
+                # The extract is evidence the document has been placed, and AutoCount is the
+                # system of record for that. Left as a draft the lines land and the supply is
+                # invisible, while the response still reports them as added.
+                header.status = bind.write_status
+                activated.append(number)
+            # ADOPTION. A document another feed created - the Order Inquiry sheet is the one
+            # that does this - is taken over here, because this extract is a statement of the
+            # WHOLE open book and that sheet is one person's working record. Without the
+            # handover the sheet keeps ownership, and its next upload reverts a quantity CS
+            # just corrected. Only a foreign source is claimed: re-uploading this extract
+            # must not churn the rows it already owns.
+            if (header.source_system or "") not in ("", "scm_upload"):
+                header.source_system = "scm_upload"
+                header.source_ref = doc_type
+                adopted.append(number)
         # Header-level values the file states (PO DATE, currency). Written whenever the file
         # supplies one: `scm.receipt_lead_v` measures lead days from `issue_date`, so
         # discarding it costs the module every lead-time observation it could have had.
@@ -944,6 +958,7 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         "applied": applied,
         "scope_documents": list(diff.scope_documents),
         "activated_documents": activated,
+        "adopted_documents": adopted,
         "resolution_issues": [asdict(i) for i in plan.issues],
         "row_problems": [asdict(p) for p in read.problems + plan.problems],
     }
