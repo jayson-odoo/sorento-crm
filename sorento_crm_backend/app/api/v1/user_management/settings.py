@@ -49,6 +49,7 @@ class SystemSettingUpdate(BaseModel):
     notify_system_error_web: Optional[bool] = None
     notify_system_error_role_ids: Optional[list[str]] = None
     complaint_do_delivered_notify_tiers: Optional[str] = None
+    product_discontinued_notify_company_ids: Optional[str] = None
     import_job_rows_retention_days: Optional[int] = Field(None, ge=1, le=3650)
     smtp_host: Optional[str] = None
     smtp_port: Optional[str] = None
@@ -161,6 +162,11 @@ async def get_settings(
                 else None,
                 "complaint_do_delivered_notify_tiers": getattr(
                     settings, "complaint_do_delivered_notify_tiers", "1,2"
+                )
+                if settings
+                else None,
+                "product_discontinued_notify_company_ids": getattr(
+                    settings, "product_discontinued_notify_company_ids", None
                 )
                 if settings
                 else None,

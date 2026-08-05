@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     # set `complaint`) receive the replacement-DO-delivered email/in-app. Comma list,
     # e.g. "1,2" (Tier 1 + Tier 2) or "1" (Tier 1 only). COMPLAINT_DO_DELIVERED_NOTIFY_TIERS
     complaint_do_delivered_notify_tiers: str = "1,2"
+    # Companies whose discontinued products are reported by
+    # `product_discontinued_check`. Blank falls back to Sorento only - see
+    # product_discontinued_notify_service.resolve_notify_company_ids.
+    product_discontinued_notify_company_ids: str = ""
 
     # Respond.io
     respond_api_key: str | None = None

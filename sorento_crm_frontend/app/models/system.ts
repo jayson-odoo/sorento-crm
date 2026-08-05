@@ -81,6 +81,10 @@ export interface SystemSetting {
   // that receive the replacement-DO-delivered notification.
   complaintDoDeliveredNotifyTiers: string;
 
+  // Which companies `product_discontinued_check` reports on. Comma list of company
+  // ids; blank means Sorento only (resolved in the backend, mirrored in the UI).
+  productDiscontinuedNotifyCompanyIds: string;
+
   // Form handling-lock ("I'm handling this"): the source_entity_types the per-form lock
   // is enabled for (e.g. ["complaint", "stock_inquiry"]). Empty = lock off everywhere.
   handlingLockEnabledTypes: string[];
