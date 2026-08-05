@@ -94,6 +94,9 @@ const SOURCE_FILTER_OPTIONS = [
   { value: 'manual', label: 'Manual' },
 ];
 
+/** How many purchase orders to name in the cell before collapsing the rest into a count. */
+const WAITING_ON_LIMIT = 2;
+
 const SOURCE_LABELS: Record<string, string> = {
   inquiry: 'Order inquiry',
   upload: 'Outstanding upload',
@@ -273,10 +276,18 @@ export default function SalesOrdersList() {
             (l) => !l.resolved,
           );
           if (!waiting.length) return <span className="text-muted-foreground">-</span>;
-          const numbers = waiting.map((l) => l.po_number).join(', ');
+          // Capped, because a real order waits on 23 purchase orders and the full list
+          // renders as a wall of text that says less than the first two plus a count. The
+          // whole list is still on the title attribute for anyone who needs it.
+          const numbers = waiting.map((l) => l.po_number);
+          const shown = numbers.slice(0, WAITING_ON_LIMIT).join(', ');
+          const hidden = numbers.length - Math.min(numbers.length, WAITING_ON_LIMIT);
           return (
-            <span className="truncate" title={numbers}>
-              {numbers}
+            <span className="truncate" title={numbers.join(', ')}>
+              {shown}
+              {hidden > 0 ? (
+                <span className="text-muted-foreground"> +{hidden} more</span>
+              ) : null}
             </span>
           );
         },

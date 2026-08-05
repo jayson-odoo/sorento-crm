@@ -157,6 +157,28 @@ describe('SalesOrdersList - location and linkage', () => {
   });
 });
 
+describe('SalesOrdersList - a long wait list stays readable', () => {
+  it('names the first few purchase orders and counts the rest', async () => {
+    // A real order in the live data waits on 23. Printing all of them renders as a wall of
+    // text that says less than the first two plus a count.
+    stub([
+      order({
+        linked_purchase_orders: Array.from({ length: 23 }, (_, i) => ({
+          po_number: `PO-${String(i).padStart(3, '0')}`,
+          item_code: null,
+          resolved: false,
+        })),
+        awaiting_purchase_orders: 23,
+      }),
+    ]);
+    renderList();
+
+    expect(await screen.findByText(/PO-000, PO-001/)).toBeInTheDocument();
+    expect(screen.getByText('+21 more')).toBeInTheDocument();
+    expect(screen.queryByText(/PO-022/)).toBeNull();
+  });
+});
+
 describe('SalesOrdersList - the source filter', () => {
   it('asks the backend for every source by default', async () => {
     stub([order()]);
