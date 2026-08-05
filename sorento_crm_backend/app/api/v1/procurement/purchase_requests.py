@@ -319,10 +319,14 @@ async def update_purchase_request_and_reply(
 @router.post("/{request_id}/set-pending-approval", response_model=PurchaseRequestHeaderResponse)
 async def set_pending_approval(
     request_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission_with_api_key("procurement.purchase_requests.send_for_approval")),
     db: Session = Depends(get_db),
 ):
-    """Set request to pending approval (e.g. from draft or to resend after approved). Clears previous approval data."""
+    """Set request to pending approval (e.g. from draft or to resend after approved). Clears previous approval data.
+
+    Triage action, so it requires `send_for_approval` - the same permission as
+    Reject-at-submitted. It was previously open to any authenticated user, which meant
+    anyone who could view a request could push it into the approval queue."""
     import logging
     logger = logging.getLogger(__name__)
     assert_can_act_on_form(db, request_id, current_user)
@@ -390,7 +394,7 @@ class ApprovalDecisionRequest(BaseModel):
 async def decide_purchase_request_approval(
     request_id: str,
     body: ApprovalDecisionRequest,
-    current_user: dict = Depends(require_permission_with_api_key("procurement.purchase_requests.send_for_approval")),
+    current_user: dict = Depends(require_permission_with_api_key("procurement.purchase_requests.approve")),
     db: Session = Depends(get_db),
 ):
     """Approve or reject a PR / sponsorship form IN-SYSTEM (the form's Approve/Reject

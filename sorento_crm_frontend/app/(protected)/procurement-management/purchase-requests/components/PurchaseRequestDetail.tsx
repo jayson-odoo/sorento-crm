@@ -97,9 +97,13 @@ export default function PurchaseRequestDetail({
   const router = useRouter();
   const isValidId = requestId && requestId !== 'new' && requestId !== 'edit';
   const queryClient = useQueryClient();
+  // Triage a SUBMITTED request: change to pending approval, or reject it.
   const canSendForApproval = useHasPermission(
     'procurement.purchase_requests.send_for_approval',
   );
+  // The approver's decision once a request is PENDING APPROVAL. Deliberately a
+  // separate permission: a sales admin triages without becoming an approver.
+  const canApprove = useHasPermission('procurement.purchase_requests.approve');
   const canProcess = useHasPermission('procurement.purchase_requests.process');
   const canClose = useHasPermission('procurement.purchase_requests.close');
   const canVoid = useHasPermission('procurement.purchase_requests.void');
@@ -337,6 +341,7 @@ export default function PurchaseRequestDetail({
   // been recorded yet. Once rejected, only the salesperson re-submits via the
   // portal - reviewer cannot bypass that loop by moving straight to pending.
   const showPrimaryChangeToPending =
+    canSendForApproval &&
     isSubmittedLifecycle &&
     !isApprovedStatus &&
     !isPendingApproval &&
@@ -414,7 +419,7 @@ export default function PurchaseRequestDetail({
               optional external fallback under the gear ("Copy approval link"). */}
           {/* In-system approver decision — same effect as the emailed approval link,
               so the approver can decide without leaving the system. */}
-          {businessCtasEnabled && isPendingApproval && canSendForApproval && (
+          {businessCtasEnabled && isPendingApproval && canApprove && (
             <>
               <Button
                 data-guide-target="procurement.purchase-requests.approve-button"
