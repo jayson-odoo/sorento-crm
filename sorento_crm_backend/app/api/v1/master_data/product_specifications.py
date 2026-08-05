@@ -13,7 +13,7 @@ when a product person types real phrases and says which results are wrong.
 """
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -23,7 +23,8 @@ from app.dependencies import require_permission_with_api_key
 from app.models.product import Product, ProductCategory
 from app.models.product_spec import ProductSpecException, ProductSpecifications
 from app.schemas.common import MAX_PAGE_LIMIT
-from app.services.error_handler import handle_internal_error
+from app.services.error_handler import handle_internal_error, handle_not_found
+from app.services.product_class_signal import explain_code
 from app.services.product_spec_search import RELEVANCE_FLOOR, search_specs
 
 router = APIRouter()
@@ -123,6 +124,86 @@ async def list_product_specifications(
             "data": data,
             "pagination": {"total": total, "page": page, "limit": limit},
         }
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/by-product/{product_id}")
+async def get_product_specification(
+    product_id: str,
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.view")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Everything derived for one product, plus WHY when nothing was.
+
+    Opened from the product record itself, so it must answer the question actually
+    being asked there — "is this product findable by description, and if not what is
+    stopping it" — rather than only rendering whatever rows happen to exist. A product
+    outside the enabled classes returns an empty spec and a reason, never a blank.
+    """
+    try:
+        product = db.query(Product).filter(Product.id == product_id).first()
+        if not product:
+            raise handle_not_found("Product", product_id)
+
+        category = (
+            db.query(ProductCategory).filter(ProductCategory.id == product.category_id).first()
+            if product.category_id
+            else None
+        )
+        spec = (
+            db.query(ProductSpecifications)
+            .filter(ProductSpecifications.product_id == product.id)
+            .first()
+        )
+        exceptions = (
+            db.query(ProductSpecException)
+            .filter(
+                ProductSpecException.product_code == product.product_code,
+                ProductSpecException.resolved_at.is_(None),
+            )
+            .order_by(ProductSpecException.spec_key)
+            .all()
+        )
+
+        diagnosis = explain_code(category.category_code if category else None)
+        # "Eligible" only describes the category. A product whose class IS enabled but
+        # which still has no row means the derivation job has not covered it yet — a
+        # different problem with a different fix, so it gets its own reason.
+        if spec is None and diagnosis["reason"] == "eligible":
+            diagnosis = {**diagnosis, "reason": "not_yet_derived"}
+
+        return {
+            "product_id": str(product.id),
+            "product_code": product.product_code,
+            "category_code": category.category_code if category else None,
+            "searchable": bool(spec),
+            "diagnosis": diagnosis,
+            "spec": (
+                {
+                    "values": spec.values or {},
+                    "provenance": spec.provenance or {},
+                    "rendered_text": spec.rendered_text,
+                    "status": spec.status,
+                    "derived_at": (spec.updated_at or spec.created_at).isoformat(),
+                }
+                if spec
+                else None
+            ),
+            "exceptions": [
+                {
+                    "id": str(row.id),
+                    "spec_key": row.spec_key,
+                    "reason": row.reason,
+                    "proposed": row.proposed,
+                    "stored": row.stored,
+                }
+                for row in exceptions
+            ],
+            "source_text": product.description or product.product_name or "",
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 

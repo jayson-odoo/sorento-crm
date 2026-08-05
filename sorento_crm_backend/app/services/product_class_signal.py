@@ -54,6 +54,47 @@ CLASS_SYNONYMS: dict[str, list[str]] = {
 NON_SEARCHABLE_CODES: frozenset[str] = frozenset({"MISC", "PROJECT", "SRTPART", "VD"})
 
 
+def explain_code(category_code: str | None) -> dict[str, str | None]:
+    """Why a product is, or is not, eligible for spec derivation.
+
+    Someone troubleshooting an empty result needs to tell four silences apart: the
+    class is deliberately out of pilot scope, the category carries no class meaning at
+    all, the code does not parse, or everything is fine and the job simply has not run.
+    Reporting a bare "no specs" for all four sends them hunting in the ranker for a
+    fault that lives in the scope list.
+    """
+    code = (category_code or "").strip().upper()
+    if not code:
+        return {"reason": "no_category", "class_label": None, "brand_hint": None, "suffix": None}
+    if code in NON_SEARCHABLE_CODES:
+        return {
+            "reason": "category_non_searchable",
+            "class_label": None,
+            "brand_hint": None,
+            "suffix": None,
+        }
+
+    prefix, _, suffix = code.partition("-")
+    if not suffix:
+        return {"reason": "code_unparsed", "class_label": None, "brand_hint": None, "suffix": None}
+
+    brand = BRAND_PREFIXES.get(prefix)
+    class_label = CLASS_SUFFIXES.get(suffix)
+    if class_label is None:
+        return {
+            "reason": "class_not_enabled",
+            "class_label": None,
+            "brand_hint": brand,
+            "suffix": suffix,
+        }
+    return {
+        "reason": "eligible",
+        "class_label": class_label,
+        "brand_hint": brand,
+        "suffix": suffix,
+    }
+
+
 def signal_for_code(category_code: str) -> tuple[str | None, str | None] | None:
     """(class_label, brand_hint) for a category code, or None when it is unmapped.
 

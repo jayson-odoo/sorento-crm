@@ -19,6 +19,7 @@ from app.models.product import ProductCategory
 from app.services.product_class_signal import (
     NON_SEARCHABLE_CODES,
     backfill_category_signals,
+    explain_code,
     resolve_classes_for_term,
 )
 from tests._pg_fixture import blank_session
@@ -156,3 +157,53 @@ def test_resolve_classes_for_term_ignores_non_searchable_categories(db):
     backfill_category_signals(db)
 
     assert resolve_classes_for_term(db, "misc") == []
+
+
+class TestExplainCode:
+    """Four silences, four fixes.
+
+    A product with no derived specs is not one situation. Collapsing them into a bare
+    "no specs" sends whoever is troubleshooting into the ranker looking for a fault
+    that actually lives in the pilot scope list, which is where the first real report
+    from this feature came from.
+    """
+
+    def test_an_enabled_class_is_eligible(self):
+        assert explain_code("SRT-KS") == {
+            "reason": "eligible",
+            "class_label": "Kitchen Sink",
+            "brand_hint": "Sorento",
+            "suffix": "KS",
+        }
+
+    def test_an_out_of_scope_class_names_the_suffix_that_is_off(self):
+        # Taps: 7,120 live products, zero derived. The reason has to say so.
+        result = explain_code("CB-FT")
+        assert result["reason"] == "class_not_enabled"
+        assert result["suffix"] == "FT"
+        assert result["class_label"] is None
+        # The brand half still parsed; only the class is missing.
+        assert result["brand_hint"] == "Cabana"
+
+    def test_a_meaningless_category_is_distinguished_from_an_unknown_one(self):
+        for code in NON_SEARCHABLE_CODES:
+            assert explain_code(code)["reason"] == "category_non_searchable"
+        assert explain_code("NOTACODE")["reason"] == "code_unparsed"
+
+    def test_a_missing_category_is_its_own_reason(self):
+        assert explain_code(None)["reason"] == "no_category"
+        assert explain_code("   ")["reason"] == "no_category"
+
+    def test_every_reason_is_one_the_ui_can_render(self):
+        # A reason the tab has no copy for renders as a blank, which is the exact
+        # failure this function exists to prevent.
+        rendered = {
+            "eligible",
+            "not_yet_derived",
+            "class_not_enabled",
+            "category_non_searchable",
+            "code_unparsed",
+            "no_category",
+        }
+        for code in ("SRT-KS", "CB-FT", "MISC", "NOTACODE", None, "", "ZZ-QQ"):
+            assert explain_code(code)["reason"] in rendered

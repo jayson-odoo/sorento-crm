@@ -1,6 +1,7 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type {
+  ProductSpecDetail,
   ProductSpecRow,
   SpecException,
   SpecPreviewResult,
@@ -48,6 +49,20 @@ export async function getSpecExceptions(params: {
   );
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to load spec exceptions'));
+  }
+  return response.json();
+}
+
+/**
+ * One product's derived specs, or the reason there are none. Used by the
+ * Specifications tab on the product record.
+ */
+export async function getProductSpecDetail(productId: string): Promise<ProductSpecDetail> {
+  const response = await apiFetch(
+    `/api/v1/master-data/product-specifications/by-product/${productId}`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load derived specifications'));
   }
   return response.json();
 }

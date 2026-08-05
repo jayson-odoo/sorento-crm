@@ -16,6 +16,7 @@ import ProductStockTab from './ProductStockTab';
 import ProductSuppliersTab from './ProductSuppliersTab';
 import ProductPromotionsTab from './ProductPromotionsTab';
 import ProductVariantsTab from './ProductVariantsTab';
+import ProductSpecificationsTab from './ProductSpecificationsTab';
 import { useProductAttachmentsByProduct } from '../../../product-attachments/hooks/useProductAttachments';
 import { getPromotionsByProductId } from '@/app/(protected)/marketing-management/promotions/services/promotionService';
 import ProductDeleteDialog from '../../components/product-delete-dialog';
@@ -186,6 +187,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
               <TabsTrigger value="variants">
                 Variants{variantsCount ? ` (${variantsCount})` : ''}
               </TabsTrigger>
+              <TabsTrigger value="specifications">Specifications</TabsTrigger>
               <TabsTrigger value="audit">Audit Trail</TabsTrigger>
             </TabsList>
 
@@ -380,6 +382,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                 variants={product.variants}
                 variantLinkManual={product.variant_link_manual}
               />
+            </TabsContent>
+
+            {/* Tab: Specifications — what spec-search derived from this product */}
+            <TabsContent value="specifications">
+              <ProductSpecificationsTab productId={productId} />
             </TabsContent>
 
             {/* Tab: Audit Trail */}
