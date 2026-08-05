@@ -158,9 +158,18 @@ revised ETA, then check CIDB ePermit for inspection and approval dates, then typ
   `audit_logs` row with `old_values`/`new_values`. There is no revision table (decision D5).
 - **B4.** `REMARKS 1/2/3` become `activity_events` rows with `kind='user_update'` - the shared
   feed, **not** `internal_notes` (which is private to its author and would hide them).
-- **B5.** `inbound_shipments` is registered as a status entity and carries `status_id`. The legacy
-  `shipment_status` string is retained as a denormalized cache so the existing dedup logic and
-  `eta_from`/`eta_to` filters keep working untouched.
+- **B5.** `inbound_shipment` is registered as a status entity, but as a **timeline of independent
+  checkpoints** - it does NOT carry `status_id` and has no `status_transitions` (decision D33). A
+  container reaches whichever checkpoints its dates say it reached, in any combination, because the
+  real workbook has containers with a gatepass and no inspection. `shipment_status` is untouched.
+- **B5a.** The checkpoint list is **configuration, not code**: eleven `statuses` rows whose `key` is
+  the date column and whose `label`, caption, group, order, colour and visibility are edited in
+  System Management -> Status Graphs. `key` is frozen server-side, so renaming a checkpoint can never
+  break its link to a column. Verified live: renaming "Gatepass" to "Released from port" and
+  deactivating "ETC" changed the timeline from 11 checkpoints to 10 with no deploy.
+- **B5b.** Deleting a checkpoint that containers have already reached is blocked by `count_records`;
+  `migrate_records` is a no-op, because moving every container's gatepass onto its inspection date
+  would be corruption rather than a migration.
 - **B6.** Auto-transitions key on `ETA DELAY <= today` or `W/H ARRIVALS`, **never** on `ATA` -
   which is populated in 6 of 407 rows because `ETA DELAY` does double duty as the de-facto arrival
   date.

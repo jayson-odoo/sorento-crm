@@ -28,6 +28,53 @@ class BulkDeletePackingListsRequest(BaseModel):
     ids: list[str]
 
 
+@router.get("/clearance-checkpoints")
+async def list_clearance_checkpoints(
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """The configurable checkpoint definitions the clearance timeline renders.
+
+    A timeline of independent checkpoints, NOT a single-position status graph: the
+    real workbook has containers with a gatepass and no inspection, so a container
+    reaches whichever checkpoints its dates say it reached, in any combination.
+
+    Definitions live in `statuses` under entity_type `inbound_shipment` and are
+    admin-editable in System Management -> Status Graphs. `key` is the
+    `inbound_shipments` date column the checkpoint reads and is frozen on update,
+    so renaming a checkpoint never breaks the link to its column.
+
+    Deactivated checkpoints are omitted, which is how an admin hides one.
+    """
+    from app.models.status import Status
+    from app.status_engine.entities.inbound_shipment import ENTITY_TYPE
+
+    rows = (
+        db.query(Status)
+        .filter(
+            Status.entity_type == ENTITY_TYPE,
+            Status.is_active.is_(True),
+            Status.is_archived.is_(False),
+        )
+        .order_by(Status.sort_order.asc(), Status.label.asc())
+        .all()
+    )
+    return {
+        "checkpoints": [
+            {
+                # The date column on the packing list payload this reads.
+                "field": row.key,
+                "label": row.label,
+                "caption": row.description,
+                "group": row.category,
+                "color": row.color_hex,
+                "sort_order": row.sort_order,
+            }
+            for row in rows
+        ]
+    }
+
+
 @router.post("/container-status-import", status_code=status.HTTP_202_ACCEPTED)
 async def import_container_status(
     file: UploadFile = File(..., description="Container Status workbook (.xlsx / .xls / .xlsm)."),

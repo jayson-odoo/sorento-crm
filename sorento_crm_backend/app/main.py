@@ -196,6 +196,15 @@ async def startup_event():
         logging.info("Embedding change listeners registered")
     except Exception as e:
         logging.error(f"Failed to register embedding change listeners: {str(e)}", exc_info=True)
+    try:
+        # The status engine ships with an empty registry; every entity arrives from
+        # a module. `inbound_shipment` is the first adopter in this repo, and it
+        # registers a CHECKPOINT TIMELINE rather than a single-status graph - see
+        # the module docstring for why there is no `status_id` column.
+        from app.status_engine.entities.inbound_shipment import register as register_inbound_shipment_status
+        register_inbound_shipment_status()
+    except Exception as e:
+        logging.error(f"Failed to register status entities: {str(e)}", exc_info=True)
     # Register task handlers unconditionally so manual "run now" works on API
     # containers even when scheduler ticks are gated to the worker container.
     try:

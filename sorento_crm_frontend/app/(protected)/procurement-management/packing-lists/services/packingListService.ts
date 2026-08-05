@@ -203,3 +203,38 @@ export async function importContainerStatus(
   }
   return response.json();
 }
+
+/**
+ * Clearance checkpoint definitions for the timeline.
+ *
+ * Configuration, not data: which checkpoints exist, their labels, captions,
+ * grouping, order and colour all live in `statuses` under entity_type
+ * `inbound_shipment` and are admin-editable in
+ * System Management -> Status Graphs. `field` is the date column on the packing
+ * list payload the checkpoint reads, and is frozen server-side so renaming a
+ * checkpoint can never break the link to its column.
+ *
+ *   GET /api/v1/procurement/packing-lists/clearance-checkpoints
+ *   200 { checkpoints: [{ field, label, caption, group, color, sort_order }] }
+ */
+export interface ClearanceCheckpoint {
+  field: string;
+  label: string;
+  caption: string | null;
+  group: string | null;
+  color: string | null;
+  sort_order: number;
+}
+
+export async function getClearanceCheckpoints(): Promise<ClearanceCheckpoint[]> {
+  const response = await apiFetch(
+    '/api/v1/procurement/packing-lists/clearance-checkpoints',
+  );
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Could not load the clearance checkpoints'),
+    );
+  }
+  const body = await response.json();
+  return body.checkpoints ?? [];
+}
