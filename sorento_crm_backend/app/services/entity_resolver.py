@@ -481,6 +481,13 @@ class ResolvedEntity:
     match_field: str = ""  # which column matched (e.g. "product_code", "product_name")
     match_tier: str = "exact"  # "exact" | "prefix" | "substring" | "embedding"
     similarity: Optional[float] = None  # cosine similarity for embedding-tier matches
+    # Owning company, when the entity type is company-scoped (NULL for a shared row
+    # and absent entirely for a global type like attachment_type). Emitted so a
+    # caller holding a multi-company scope can tell a REAL ambiguity ("two different
+    # products") from a bookkeeping one ("the same code in each company") and only
+    # prompt for the former. See `_attach_company_info`.
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
 
 
 @dataclass
@@ -613,6 +620,8 @@ class ResolutionResult:
                             "match_field": m.match_field,
                             "match_tier": m.match_tier,
                             "similarity": m.similarity,
+                            "company_id": m.company_id,
+                            "company_name": m.company_name,
                             "display": m.display,
                         }
                         for m in tr.matches
@@ -625,6 +634,8 @@ class ResolutionResult:
                             "match_field": a.match_field,
                             "match_tier": a.match_tier,
                             "similarity": a.similarity,
+                            "company_id": a.company_id,
+                            "company_name": a.company_name,
                             "display": a.display,
                         }
                         for a in tr.alternatives
@@ -3131,6 +3142,8 @@ class IntersectionResolutionResult:
                 "uuid": m.uuid,
                 "match_field": m.match_field,
                 "match_tier": m.match_tier,
+                "company_id": m.company_id,
+                "company_name": m.company_name,
                 "display": m.display,
             })
         return {
@@ -3144,6 +3157,8 @@ class IntersectionResolutionResult:
                     "uuid": m.uuid,
                     "match_field": m.match_field,
                     "match_tier": m.match_tier,
+                    "company_id": m.company_id,
+                    "company_name": m.company_name,
                     "display": m.display,
                 }
                 for m in self.intersection
@@ -3159,6 +3174,8 @@ class IntersectionResolutionResult:
                     "match_field": a.match_field,
                     "match_tier": a.match_tier,
                     "similarity": a.similarity,
+                    "company_id": a.company_id,
+                    "company_name": a.company_name,
                     "display": a.display,
                 }
                 for a in self.alternatives
@@ -3244,6 +3261,8 @@ def resolve_references_intersection(
         alternatives.sort(key=lambda e: (bool(e.display.get("is_variant")), e.similarity or 0.0), reverse=True)
         alternatives = alternatives[:_ALTERNATIVES_CAP]
 
+    _attach_company_info(db, list(hits) + list(alternatives))
+
     elapsed = (time.perf_counter() - t0) * 1000.0
     return IntersectionResolutionResult(
         tokens=clean_tokens,
@@ -3251,6 +3270,112 @@ def resolve_references_intersection(
         elapsed_ms=elapsed,
         alternatives=alternatives,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Company attribution
+# --------------------------------------------------------------------------- #
+# Resolver entity types whose rows carry a company. `attachment_type` is global
+# and is deliberately absent; `attachment` is company-SHARED, so its company_id
+# is legitimately NULL for form/entity files. Types not listed here simply come
+# back with company_id=None, which a caller reads as "not company-partitioned".
+def _company_scoped_models() -> dict[str, Any]:
+    """entity_type -> model, for the company-scoped types the resolver can emit.
+
+    Imported lazily (module import order) and rebuilt cheaply; the caller does at
+    most one query per entity type actually present in a result.
+    """
+    from app.models.inventory import Warehouse
+    from app.models.marketing import Promotion
+    from app.models.order import Customer, Order, Transporter
+    from app.models.procurement import InboundShipment, SPOAllocation, Supplier
+    from app.models.product import Product
+    from app.models.resources import Attachment
+
+    return {
+        "product": Product,
+        "customer_order": Order,
+        "customer": Customer,
+        "transporter": Transporter,
+        "supplier": Supplier,
+        "inbound_shipment": InboundShipment,
+        "spo_allocation": SPOAllocation,
+        "warehouse": Warehouse,
+        "promotion": Promotion,
+        "attachment": Attachment,
+    }
+
+
+def _attach_company_info(db: Session, matches: list[ResolvedEntity]) -> None:
+    """Stamp ``company_id`` / ``company_name`` onto every company-scoped match.
+
+    Done as a post-pass rather than inside each of the ~20 per-entity resolvers:
+    those select explicit column tuples, so threading a company column through
+    each one would be twenty chances to miss one and silently emit a match with
+    no attribution.
+
+    Why callers need it: with a multi-company scope, a code that exists in BOTH
+    companies (on this database that is *every* Mocha product code) produces two
+    exact matches and the resolver correctly reports ``ambiguous: true``. Without
+    company attribution the caller can only offer the user two identical-looking
+    options. With it, the caller can tell a real ambiguity from a cross-company
+    duplicate and skip the prompt when every candidate is the same entity in a
+    different company.
+
+    Best-effort: attribution is additive, so a failed lookup must never take down
+    a resolution that otherwise succeeded.
+    """
+    if not matches:
+        return
+
+    by_type: dict[str, list[ResolvedEntity]] = {}
+    for m in matches:
+        if m.uuid:
+            by_type.setdefault(m.entity_type, []).append(m)
+    if not by_type:
+        return
+
+    models = _company_scoped_models()
+    company_ids: set[str] = set()
+    pending: list[tuple[ResolvedEntity, str]] = []
+
+    for entity_type, group in by_type.items():
+        model = models.get(entity_type)
+        if model is None:
+            continue  # global / unpartitioned type — leave company_id None
+        try:
+            rows = (
+                db.query(model.id, model.company_id)
+                .filter(model.id.in_([m.uuid for m in group]))
+                .all()
+            )
+        except Exception:  # noqa: BLE001 — attribution is additive, never fatal
+            logger.exception("company attribution lookup failed for %s", entity_type)
+            continue
+        owner = {str(rid): (str(cid) if cid else None) for rid, cid in rows}
+        for m in group:
+            cid = owner.get(str(m.uuid))
+            if cid:
+                m.company_id = cid
+                company_ids.add(cid)
+                pending.append((m, cid))
+
+    if not company_ids:
+        return
+    try:
+        from app.models.company import Company
+
+        names = {
+            str(cid): name
+            for cid, name in db.query(Company.id, Company.name)
+            .filter(Company.id.in_(company_ids))
+            .all()
+        }
+    except Exception:  # noqa: BLE001 — an id with no name is still actionable
+        logger.exception("company name lookup failed")
+        return
+    for match, cid in pending:
+        match.company_name = names.get(cid)
 
 
 # --------------------------------------------------------------------------- #
@@ -3542,6 +3667,12 @@ def resolve_references(
             logger.exception("resolve alternatives trgm lookup failed for token=%s", tr.token)
             hits = []
         tr.alternatives = [h for h in hits if (h.similarity or 0.0) >= SUGGEST_FLOOR][:_ALTERNATIVES_CAP]
+
+    _attach_company_info(
+        db,
+        [m for tr in resolutions for m in tr.matches]
+        + [a for tr in resolutions for a in tr.alternatives],
+    )
 
     final_tokens = list(tokens) + [r.token for r in freeword_resolutions]
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
