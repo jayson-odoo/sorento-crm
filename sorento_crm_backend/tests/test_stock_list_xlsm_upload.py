@@ -241,3 +241,26 @@ def test_generic_create_attachment_xlsm_without_template_is_422(client):
     )
     assert resp.status_code == 422, resp.text
     assert backend.uploads == []
+
+
+def test_generic_create_attachment_plain_file_still_uploads(client):
+    """A plain (non-xlsm, non-image) file skips every conversion branch — this
+    pins that offloading upload_file/hash/etc onto a thread (fix for the worker
+    -event-loop-blocking incident) didn't change behaviour for the common case."""
+    c, db, backend = client
+
+    raw = b"plain file content, nothing special"
+    resp = c.post(
+        CREATE_URL,
+        data={"attachment_type_id": _TYPE_ID},
+        files={"file": ("notes.txt", raw, "text/plain")},
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["original_filename"] == "notes.txt"
+    assert body["file_size_bytes"] == len(raw)
+
+    assert len(backend.uploads) == 1
+    stored_path, stored_bytes, stored_mime = backend.uploads[0]
+    assert stored_bytes == raw  # byte-identical: no conversion for a plain file
+    assert stored_mime == "text/plain"
