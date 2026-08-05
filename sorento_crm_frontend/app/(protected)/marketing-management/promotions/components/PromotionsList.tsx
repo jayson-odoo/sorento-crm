@@ -518,7 +518,7 @@ export default function PromotionsList() {
                 ? [
                     {
                       key: 'resubmit',
-                      label: 'Resubmit for AI extraction',
+                      label: 'Resubmit',
                       icon: RefreshCw,
                       onClick: () => setBulkResubmitDialogOpen(true),
                     },

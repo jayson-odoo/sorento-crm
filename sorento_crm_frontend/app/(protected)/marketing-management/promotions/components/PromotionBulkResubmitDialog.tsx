@@ -33,7 +33,7 @@ interface ResubmitSplit {
  *
  * n8n receives one webhook per attachment and posts back a payload naming only that
  * attachment, and the external create endpoint rebuilds the promotion from that
- * payload — dropping every existing group AND every existing attachment link before
+ * payload - dropping every existing group AND every existing attachment link before
  * re-adding what the payload carries. On a promotion with two flyers, re-extracting
  * one therefore unlinks the other. Skipping is the honest option until the backend can
  * merge multi-flyer extractions.
@@ -79,14 +79,12 @@ export default function PromotionBulkResubmitDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Resubmit for AI extraction</AlertDialogTitle>
+          <AlertDialogTitle>Resubmit</AlertDialogTitle>
           <AlertDialogDescription asChild>
             <div className="space-y-2">
               <p>
-                Send {eligible.length} flyer{eligible.length !== 1 ? 's' : ''} back through AI
-                extraction? Each promotion&apos;s groups and products are replaced by whatever
-                the new run returns, so a worse run overwrites good data. This cannot be
-                undone.
+                Re-extract {eligible.length} flyer{eligible.length !== 1 ? 's' : ''}? Existing
+                groups and products are replaced. This cannot be undone.
               </p>
               {noAttachment.length > 0 && (
                 <p className="text-muted-foreground">
@@ -116,7 +114,7 @@ export default function PromotionBulkResubmitDialog({
             {resubmitMutation.isPending && (
               <LoaderCircleIcon className="size-4 animate-spin mr-2" />
             )}
-            Resubmit {eligible.length} flyer{eligible.length !== 1 ? 's' : ''}
+            Resubmit {eligible.length}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -40,13 +40,13 @@ describe('splitPromotionsForResubmit', () => {
     expect(split.multiAttachment).toHaveLength(0);
   });
 
-  it('excludes a promotion with no flyer — there is nothing to re-extract', () => {
+  it('excludes a promotion with no flyer - there is nothing to re-extract', () => {
     const split = splitPromotionsForResubmit([promotion('p1', [])]);
     expect(split.eligible).toHaveLength(0);
     expect(split.noAttachment.map((p) => p.id)).toEqual(['p1']);
   });
 
-  it('excludes a multi-flyer promotion — re-extracting one unlinks the others', () => {
+  it('excludes a multi-flyer promotion - re-extracting one unlinks the others', () => {
     const split = splitPromotionsForResubmit([promotion('p1', ['a1', 'a2'])]);
     expect(split.eligible).toHaveLength(0);
     expect(split.multiAttachment.map((p) => p.id)).toEqual(['p1']);
@@ -78,7 +78,7 @@ describe('PromotionBulkResubmitDialog', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /Resubmit 2 flyers/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Resubmit 2$/ }));
 
     expect(mutate).toHaveBeenCalledTimes(1);
     expect(mutate.mock.calls[0][0]).toEqual(['a1', 'a5']);
@@ -103,7 +103,7 @@ describe('PromotionBulkResubmitDialog', () => {
     render(
       <PromotionBulkResubmitDialog open onOpenChange={noop} promotions={[promotion('p1', ['a1'])]} />,
     );
-    expect(screen.getByText(/groups and products are replaced/)).toBeTruthy();
+    expect(screen.getByText(/Existing groups and products are replaced/)).toBeTruthy();
     expect(screen.getByText(/cannot be undone/)).toBeTruthy();
   });
 
@@ -124,7 +124,7 @@ describe('PromotionBulkResubmitDialog', () => {
         onSuccess={onSuccessSpy}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: /Resubmit 1 flyer/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Resubmit 1$/ }));
 
     expect(onOpenChange).not.toHaveBeenCalled();
     expect(onSuccessSpy).not.toHaveBeenCalled();
@@ -145,7 +145,7 @@ describe('PromotionBulkResubmitDialog', () => {
         onSuccess={onSuccessSpy}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: /Resubmit 1 flyer/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Resubmit 1$/ }));
 
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(onSuccessSpy).toHaveBeenCalled();
@@ -159,7 +159,7 @@ describe('PromotionBulkResubmitDialog', () => {
         promotions={[promotion('p1', []), promotion('p2', ['a1', 'a2'])]}
       />,
     );
-    const confirm = screen.getByRole('button', { name: /Resubmit 0 flyers/ });
+    const confirm = screen.getByRole('button', { name: /^Resubmit 0$/ });
     expect(confirm.hasAttribute('disabled')).toBe(true);
     fireEvent.click(confirm);
     expect(mutate).not.toHaveBeenCalled();
