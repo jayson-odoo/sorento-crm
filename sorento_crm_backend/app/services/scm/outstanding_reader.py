@@ -109,24 +109,70 @@ def _clean(value: Any) -> str:
     return "" if value is None else str(value).strip()
 
 
-def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> ReadResult:
-    """Parse the active sheet of an xlsx into lines plus complaints."""
+# The two spreadsheet containers, told apart by their MAGIC BYTES rather than by the
+# filename. A legacy `.xls` is an OLE2 compound document; `.xlsx`/`.xlsm` are zips. Sniffing
+# the content is the honest check: an AutoCount export saved with the wrong extension, or a
+# file renamed on the way through email, still reads as what it actually is - and the
+# alternative is refusing a workbook we can plainly open.
+_ZIP_MAGIC = b"PK\x03\x04"
+_OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+
+def _xls_rows(file_data: bytes):
+    """Rows of a legacy BIFF `.xls`, shaped like openpyxl's `values_only=True`.
+
+    `xlrd` 2.x reads `.xls` and nothing else, which is exactly the half we need: openpyxl
+    covers the zip formats and refuses BIFF outright.
+
+    Dates arrive as floats (an Excel serial) with a cell TYPE that says so, and the type is
+    the only way to tell 43832 the date from 43832 the quantity - so the conversion happens
+    here, where the type is still in scope, rather than downstream where it is guesswork.
+    """
+    import xlrd
+
+    book = xlrd.open_workbook(file_contents=file_data)
+    sheet = book.sheet_by_index(0)
+    for r in range(sheet.nrows):
+        out = []
+        for c in range(sheet.ncols):
+            cell = sheet.cell(r, c)
+            if cell.ctype == xlrd.XL_CELL_DATE:
+                y, mo, d, hh, mm, ss = xlrd.xldate_as_tuple(cell.value, book.datemode)
+                out.append(date(y, mo, d) if not (hh or mm or ss) else datetime(y, mo, d, hh, mm, ss))
+            elif cell.ctype == xlrd.XL_CELL_EMPTY:
+                out.append(None)
+            else:
+                out.append(cell.value)
+        yield tuple(out)
+
+
+def sheet_rows(file_data: bytes):
+    """The first sheet's rows, whatever container the bytes are in.
+
+    One entry point so every caller reads the same formats: the route that accepts an upload
+    and the reader that parses it cannot disagree about what is supported.
+    """
+    if file_data[:8] == _OLE2_MAGIC:
+        return _xls_rows(file_data)
+
     import openpyxl
 
+    wb = openpyxl.load_workbook(BytesIO(file_data), data_only=True, read_only=True)
+    sheet = wb.active
+    if sheet is None:
+        raise ValueError("the workbook has no sheet")
+    return sheet.iter_rows(values_only=True)
+
+
+def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> ReadResult:
+    """Parse the first sheet of an uploaded workbook into lines plus complaints."""
     result = ReadResult(doc_type=doc_type)
     try:
-        wb = openpyxl.load_workbook(BytesIO(file_data), data_only=True, read_only=True)
+        rows = sheet_rows(file_data)
     except Exception as exc:  # noqa: BLE001 - surfaced to the user, never swallowed
         result.problems.append(RowProblem(0, f"could not read the workbook: {exc}"))
         result.missing_columns = list(_REQUIRED_COLUMNS[doc_type])
         return result
-
-    sheet = wb.active
-    if sheet is None:
-        result.missing_columns = list(_REQUIRED_COLUMNS[doc_type])
-        return result
-
-    rows = sheet.iter_rows(values_only=True)
     try:
         header = next(rows)
     except StopIteration:

@@ -150,3 +150,18 @@ export async function applyOutstandingImport(
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to apply the upload'));
   return (await res.json()) as OutstandingApplyResult;
 }
+
+/**
+ * Which spreadsheet formats the server will accept (`SCM_UPLOAD_EXTENSIONS`).
+ *
+ * Asked for rather than hard-coded in the dialog: the accept list belongs to the server,
+ * which is the thing that actually refuses a file. A second copy in the browser is how the
+ * dialog came to reject a legacy `.xls` the reader parses perfectly well.
+ */
+export async function getOutstandingUploadConfig(): Promise<{ allowed_extensions: string[] }> {
+  const res = await apiFetch('/api/v1/scm/outstanding/config');
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, 'Failed to read the upload settings'));
+  }
+  return (await res.json()) as { allowed_extensions: string[] };
+}

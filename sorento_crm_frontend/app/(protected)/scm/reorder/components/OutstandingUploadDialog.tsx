@@ -17,6 +17,7 @@ import { FileDropzone } from '@/components/common/FileDropzone';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import {
   applyOutstandingImport,
+  getOutstandingUploadConfig,
   previewOutstandingImport,
   type OutstandingApplyResult,
   type OutstandingChangeKind,
@@ -45,14 +46,14 @@ import {
 const MAX_SIZE_MB = 25;
 
 /**
- * The formats this importer reads, and the authoritative list: a file with any other
- * extension is refused here rather than sent for the backend to refuse. .xlsm is in
- * because macro workbooks are stripped on the way in.
+ * What to offer before the server has said what it accepts.
+ *
+ * The list is the SERVER's (`SCM_UPLOAD_EXTENSIONS`, served by `/outstanding/config`) - a
+ * second authoritative copy here is exactly how this dialog came to refuse a legacy `.xls`
+ * that the reader parses perfectly well. This constant is only the value used for the
+ * fraction of a second before the real one arrives.
  */
-const ACCEPT = '.xlsx,.xlsm';
-
-/** ".xlsx or .xlsm" - for the rejection message, so it can never drift from ACCEPT. */
-const ACCEPTED_FORMATS = ACCEPT.split(',').join(' or ');
+const FALLBACK_ACCEPT = '.xlsx,.xlsm,.xls';
 
 const TITLES: Record<OutstandingImportKind, string> = {
   'sales-orders': 'Upload outstanding sales orders',
@@ -268,6 +269,27 @@ export function OutstandingUploadDialog({
   const [previewing, setPreviewing] = useState(false);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The server's accept list, asked for once the dialog opens. Falls back to the constant
+  // above rather than blocking the dropzone on a request.
+  const [accept, setAccept] = useState<string>(FALLBACK_ACCEPT);
+  const acceptedFormats = accept.split(',').join(' or ');
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void getOutstandingUploadConfig()
+      .then((cfg) => {
+        if (!cancelled && cfg.allowed_extensions?.length) {
+          setAccept(cfg.allowed_extensions.join(','));
+        }
+      })
+      // A failure here is not worth a banner: the dropzone keeps the fallback list and the
+      // server still refuses anything it does not accept, with its own message.
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   // A second pick while the first preview is still in flight must not have the older
   // response land on top of the newer one.
@@ -316,7 +338,7 @@ export function OutstandingUploadDialog({
     // Uploading it to be told what the extension already said would cost the user a
     // round trip, and forwarding a file the dropzone rejected would make its filter
     // mean nothing.
-    setError(`${rejected.name} is not a ${ACCEPTED_FORMATS} file.`);
+    setError(`${rejected.name} is not a ${acceptedFormats} file.`);
   };
 
   const applyUpload = async () => {
@@ -392,7 +414,7 @@ export function OutstandingUploadDialog({
                 files={file ? [file] : []}
                 onFilesChange={(next) => void choose(next[0] ?? null)}
                 onReject={reject}
-                accept={ACCEPT}
+                accept={accept}
                 maxSizeMb={MAX_SIZE_MB}
                 disabled={previewing || applying}
                 aria-label="Outstanding orders file"

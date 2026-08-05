@@ -15,6 +15,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app.dependencies import require_permission
 from app.services.scm import outstanding_import_service as svc
@@ -72,17 +73,50 @@ def _assert_writable(kind: str, doc_type: str) -> None:
     )
 
 
+def allowed_extensions() -> tuple[str, ...]:
+    """The spreadsheet extensions this channel accepts, from `SCM_UPLOAD_EXTENSIONS`.
+
+    Configurable because the format belongs to the CUSTOMER, not to us: AutoCount's own
+    "Purchase Order Listing With Detail" export is legacy `.xls`, and hard-coding the pair we
+    happened to start with means telling somebody to re-save 13 MB of order history by hand
+    before the system will look at it. Read here AND served to the browser (see
+    `/outstanding/config`) so the dialog cannot offer a type the server then refuses.
+    """
+    raw = (settings.scm_upload_extensions or "").split(",")
+    return tuple(f".{e.strip().lstrip('.').lower()}" for e in raw if e.strip())
+
+
 async def _read_upload(file: UploadFile) -> bytes:
     name = (file.filename or "").lower()
-    if not name.endswith((".xlsx", ".xlsm")):
+    allowed = allowed_extensions()
+    if not name.endswith(allowed):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid file type: {file.filename or 'unknown'}. Upload .xlsx.",
+            detail=(
+                f"Invalid file type: {file.filename or 'unknown'}. "
+                f"Upload {', '.join(allowed)}."
+            ),
         )
     from app.services.excel_macro_stripper import maybe_strip
 
-    data, _ = maybe_strip(await file.read(), file.filename or "upload.xlsx")
+    data = await file.read()
+    # The macro stripper rewrites through openpyxl, which cannot open legacy BIFF at all, so
+    # a `.xls` is passed through untouched. It carries no macro sheet in the `.xlsm` sense,
+    # and the reader opens it read-only.
+    if name.endswith(".xls"):
+        return data
+    data, _ = maybe_strip(data, file.filename or "upload.xlsx")
     return data
+
+
+@router.get("/outstanding/config")
+def get_outstanding_upload_config(_user: dict = Depends(_WRITE)):
+    """What the upload dialog may offer, so the browser and the server agree.
+
+    The dialog used to hard-code its own accept list, which is how it came to refuse a file
+    the reader can parse perfectly well.
+    """
+    return {"allowed_extensions": list(allowed_extensions())}
 
 
 @router.post("/outstanding/{kind}/preview")
