@@ -1,6 +1,7 @@
 'use client';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ContainerSizesPanel } from './ContainerSizesPanel';
 import { ClassificationThresholdsPanel } from './ClassificationThresholdsPanel';
 import { ReorderPolicyGrid } from './ReorderPolicyGrid';
 import { ResolutionPreviewCard } from './ResolutionPreviewCard';
@@ -18,6 +19,7 @@ export function PolicyConfigView() {
         <TabsTrigger value="reorder">Reorder policies</TabsTrigger>
         <TabsTrigger value="classification">Classification thresholds</TabsTrigger>
         <TabsTrigger value="supplier">Supplier scoring</TabsTrigger>
+        <TabsTrigger value="containers">Container sizes</TabsTrigger>
         <TabsTrigger value="preview">Resolution preview</TabsTrigger>
       </TabsList>
 
@@ -31,6 +33,10 @@ export function PolicyConfigView() {
 
       <TabsContent value="supplier" className="mt-0 max-w-3xl focus-visible:outline-none">
         <SupplierScoringPanel />
+      </TabsContent>
+
+      <TabsContent value="containers" className="mt-0 max-w-3xl focus-visible:outline-none">
+        <ContainerSizesPanel />
       </TabsContent>
 
       <TabsContent value="preview" className="mt-0 max-w-4xl focus-visible:outline-none">

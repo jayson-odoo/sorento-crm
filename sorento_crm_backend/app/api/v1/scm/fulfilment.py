@@ -10,15 +10,17 @@ this system.
 """
 from __future__ import annotations
 
+import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission
-from app.models.scm import LoadingPlan
+from app.models.scm import ContainerSize, LoadingPlan
 from app.services.scm import loading_plan_service, supplier_inventory_service
 from app.services.scm.upload_intake import read_upload
 
@@ -148,6 +150,102 @@ def get_container_sizes(
 ):
     """Configured container volumes (AC-E3)."""
     return {"sizes": loading_plan_service.container_sizes(db)}
+
+
+class ContainerSizeWrite(BaseModel):
+    code: str = Field(..., min_length=1, max_length=30)
+    label: Optional[str] = None
+    #: Internal LOADABLE volume, not the nominal external size. A 40HQ is sold as 76 cbm and
+    #: packs about 68, and planning to the brochure figure is how a container arrives short.
+    cbm: float = Field(..., gt=0)
+    is_default: bool = False
+    is_active: bool = True
+
+
+def _size_or_404(db: Session, size_id: str) -> ContainerSize:
+    row = db.query(ContainerSize).filter(ContainerSize.id == size_id).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Container size not found"
+        )
+    return row
+
+
+def _clear_other_defaults(db: Session, keep_id: Optional[str]) -> None:
+    """Exactly one default, or `_resolve_container` picks whichever row comes back first."""
+    q = db.query(ContainerSize).filter(ContainerSize.is_default.is_(True))
+    if keep_id:
+        q = q.filter(ContainerSize.id != keep_id)
+    q.update({"is_default": False}, synchronize_session=False)
+
+
+@router.post("/container-sizes", status_code=status.HTTP_201_CREATED)
+def create_container_size(
+    body: ContainerSizeWrite,
+    _user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    row = ContainerSize(
+        id=str(uuid.uuid4()),
+        code=body.code.strip(),
+        label=body.label,
+        cbm=body.cbm,
+        is_default=body.is_default,
+        is_active=body.is_active,
+    )
+    db.add(row)
+    if body.is_default:
+        _clear_other_defaults(db, row.id)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A container size called {body.code} already exists.",
+        )
+    return {"sizes": loading_plan_service.container_sizes(db)}
+
+
+@router.put("/container-sizes/{size_id}")
+def update_container_size(
+    size_id: str,
+    body: ContainerSizeWrite,
+    _user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    row = _size_or_404(db, size_id)
+    row.code = body.code.strip()
+    row.label = body.label
+    row.cbm = body.cbm
+    row.is_default = body.is_default
+    row.is_active = body.is_active
+    if body.is_default:
+        _clear_other_defaults(db, size_id)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A container size called {body.code} already exists.",
+        )
+    return {"sizes": loading_plan_service.container_sizes(db)}
+
+
+@router.delete("/container-sizes/{size_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_container_size(
+    size_id: str,
+    _user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Hard delete, per the CRUD standard.
+
+    Plans already built keep their own `container_cbm`, so deleting a size does not rewrite
+    history - it only removes an option from the next plan.
+    """
+    db.delete(_size_or_404(db, size_id))
+    db.commit()
 
 
 class LoadingPlanRequest(BaseModel):

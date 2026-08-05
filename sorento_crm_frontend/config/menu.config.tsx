@@ -374,6 +374,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'scm.reorder.run',
       },
       {
+        title: 'Loading Plan',
+        path: '/scm/loading-plan',
+        permission: 'scm.reorder.run',
+      },
+      {
         title: 'Policies',
         path: '/scm/policies',
         permission: 'scm.policy.manage',

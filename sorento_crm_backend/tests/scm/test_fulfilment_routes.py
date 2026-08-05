@@ -359,3 +359,98 @@ def test_a_plan_with_no_containers_is_rejected_by_validation(scm_app):
     )
 
     assert r.status_code == 422, r.text
+
+
+# --------------------------------------------------------------------------- #
+# container sizes are configuration (AC-E3)
+# --------------------------------------------------------------------------- #
+
+
+def test_a_container_size_can_be_added_and_becomes_plannable(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    supplier_id, code = _seed(db)
+    client = TestClient(app)
+    client.post(
+        "/api/v1/scm/supplier-inventory/apply",
+        files={"file": ("stock.xlsx", _workbook([[code, "a", 10, 0, 1.0, ""]]), _XLSX)},
+        data={"supplier_id": supplier_id},
+    )
+    size_code = f"{MARKER}{uuid.uuid4().hex[:4]}".upper()
+
+    created = client.post(
+        "/api/v1/scm/container-sizes",
+        json={"code": size_code, "label": "test box", "cbm": 4, "is_default": False},
+    )
+
+    assert created.status_code == 201, created.text
+    plan = client.post(
+        "/api/v1/scm/loading-plans",
+        json={"supplier_id": supplier_id, "container_count": 1, "container_type": size_code},
+    )
+    assert plan.status_code == 201, plan.text
+    assert plan.json()["capacity_cbm"] == 4
+
+
+def test_two_sizes_cannot_share_a_code(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    client = TestClient(app)
+    size_code = f"{MARKER}{uuid.uuid4().hex[:4]}".upper()
+    client.post("/api/v1/scm/container-sizes", json={"code": size_code, "cbm": 4})
+
+    again = client.post("/api/v1/scm/container-sizes", json={"code": size_code, "cbm": 9})
+
+    assert again.status_code == 409, again.text
+
+
+def test_only_one_size_is_the_default(scm_app):
+    # Two defaults and `_resolve_container` picks whichever row comes back first, so a plan
+    # built with no explicit size would silently change volume between runs.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    _seed_container_sizes(db)
+    client = TestClient(app)
+
+    client.post(
+        "/api/v1/scm/container-sizes",
+        json={"code": f"{MARKER}{uuid.uuid4().hex[:4]}".upper(), "cbm": 4, "is_default": True},
+    )
+
+    sizes = client.get("/api/v1/scm/container-sizes").json()["sizes"]
+    assert sum(1 for s in sizes if s["is_default"]) == 1
+
+
+def test_a_size_is_hard_deleted_and_the_plans_built_from_it_keep_their_volume(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    supplier_id, code = _seed(db)
+    client = TestClient(app)
+    client.post(
+        "/api/v1/scm/supplier-inventory/apply",
+        files={"file": ("stock.xlsx", _workbook([[code, "a", 10, 0, 1.0, ""]]), _XLSX)},
+        data={"supplier_id": supplier_id},
+    )
+    size_code = f"{MARKER}{uuid.uuid4().hex[:4]}".upper()
+    size = client.post(
+        "/api/v1/scm/container-sizes", json={"code": size_code, "cbm": 4}
+    ).json()["sizes"]
+    size_id = next(s["id"] for s in size if s["code"] == size_code)
+    plan = client.post(
+        "/api/v1/scm/loading-plans",
+        json={"supplier_id": supplier_id, "container_count": 1, "container_type": size_code},
+    ).json()
+
+    assert client.delete(f"/api/v1/scm/container-sizes/{size_id}").status_code == 204
+
+    still = client.get(f"/api/v1/scm/loading-plans/{plan['id']}").json()
+    assert still["capacity_cbm"] == 4
+
+
+def test_editing_a_size_requires_the_operator_permission(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_user(app, gcu, gcuk, seed_user(db, None))
+
+    r = TestClient(app).post("/api/v1/scm/container-sizes", json={"code": "ZZX", "cbm": 4})
+
+    assert r.status_code == 403, r.text

@@ -144,15 +144,37 @@ def test_migration_downgrade_upgrade_isolated(conn):
         # rollback restores them) before exercising 273's down/up.
         for _v in ("net_position_v", "on_order_v", "committed_v", "consumption_v", "receipt_lead_v"):
             conn.execute(text(f"DROP VIEW IF EXISTS scm.{_v} CASCADE"))
-        # Same reasoning one step further on. Migration 311 adds
-        # `spo_allocations.po_line_id` referencing `purchase_order_lines`, which 273's
-        # downgrade drops. In the real chain 311 downgrades first and removes the FK, so
-        # this only bites because the test deliberately runs 273 out of order. Dropped
-        # inside the savepoint, exactly like the views above, and restored by the rollback.
-        conn.execute(text(
-            "ALTER TABLE IF EXISTS spo_allocations "
-            "DROP CONSTRAINT IF EXISTS fk_spo_allocations_po_line_id"
-        ))
+        # Same reasoning one step further on, and now generic. 273's downgrade drops the four
+        # public SO/PO tables and the whole `scm` schema, and everything built since points at
+        # them: `spo_allocations.po_line_id` (311), every scm table added after 311, and
+        # project-sales' `project_sales_orders.so_id`. In the real chain each of those
+        # migrations downgrades first and takes its constraints with it; this test deliberately
+        # runs 273 out of order, so it has to detach them itself.
+        #
+        # Enumerated from the catalogue rather than listed by name, because a list is a thing
+        # somebody has to remember to update and the failure it produces ("cannot drop table
+        # purchase_order_lines") accuses 273, which is innocent. Everything happens inside the
+        # savepoint, so the constraints come back on rollback.
+        _DROPPED_BY_273 = (
+            "sales_orders", "sales_order_lines", "purchase_orders", "purchase_order_lines",
+        )
+        for schema_name, table_name, constraint in conn.execute(text(
+            """
+            SELECT n.nspname, c.relname, con.conname
+              FROM pg_constraint con
+              JOIN pg_class c ON c.oid = con.conrelid
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+              JOIN pg_class rc ON rc.oid = con.confrelid
+              JOIN pg_namespace rn ON rn.oid = rc.relnamespace
+             WHERE con.contype = 'f'
+               AND (rn.nspname = 'scm' OR rc.relname = ANY(:dropped))
+               AND NOT (n.nspname = 'scm' AND rn.nspname = 'scm')
+            """
+        ), {"dropped": list(_DROPPED_BY_273)}).fetchall():
+            conn.execute(text(
+                f'ALTER TABLE IF EXISTS "{schema_name}"."{table_name}" '
+                f'DROP CONSTRAINT IF EXISTS "{constraint}"'
+            ))
         ctx = MigrationContext.configure(conn)
         # Operations.context(ctx) installs the module-level `op` proxy the migration uses
         with Operations.context(ctx):

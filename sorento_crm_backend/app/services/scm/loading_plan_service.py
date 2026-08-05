@@ -82,6 +82,7 @@ def container_sizes(db: Session) -> list[dict]:
     )
     return [
         {
+            "id": str(r.id),
             "code": r.code,
             "label": r.label,
             "cbm": float(r.cbm),

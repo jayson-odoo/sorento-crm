@@ -1,11 +1,13 @@
 # PLAN - SCM Purchasing and Fulfilment
 
-> Status: **IN BUILD 2026-08-04** on `feat/scm-purchasing-base` (worktree `.claude/worktrees/scm-base`,
+> Status: **IN BUILD 2026-08-05** on `feat/scm-purchasing-base` (worktree `.claude/worktrees/scm-base`,
 > unpushed). Done and committed: **S0** shared base, **S2** dated Coverage Timeline plus pooled
-> netting wired into the planner, **S1** the outstanding SO/PO upload channel, and the warehouse
-> screen exposing pool + planning availability. Remaining: **S3/S3b/S4** planning UI on the existing
-> `/scm/reorder` page, **S5** plan exceptions, **S7-S9** fulfilment (loading plan, supplier notice,
-> SPO allocation).
+> netting wired into the planner, **S1** the outstanding SO/PO upload channel, the warehouse
+> screen exposing pool + planning availability, **S3/S3b/S4** the planning UI on `/scm/reorder`,
+> **S5** plan exceptions, the two curation feeds (purchase history and the Order Inquiry sheet,
+> which now CREATES sales orders), and **S7** the supplier stock list plus the container Loading
+> Plan on `/scm/loading-plan` (migration 336). Remaining: **S8** supplier notice, **S9** packing
+> list and SPO allocation, and the transfer-proposal accept endpoint that belongs with them.
 >
 > Verified against a database bootstrapped from EMPTY the way CI builds one, not against the
 > prod-copy. Zero new test failures versus `origin/main`; 62 previously-failing tests now pass
