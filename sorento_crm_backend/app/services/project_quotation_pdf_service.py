@@ -482,11 +482,11 @@ def _signature_img(signature: Optional[QuotationSignature]) -> str:
 
 
 def _signature_place_html(signature: Optional[QuotationSignature]) -> str:
-    """Where the signer stood, as a place a reader recognises plus the exact coordinates.
+    """Where the signer stood, as a place a reader recognises.
 
     `3.03927, 101.80660` on its own means nothing to whoever opens this document, so it prints as
-    `near Kajang, Selangor (3.03927, 101.80660)`. The numbers stay: they are the evidence, and the
-    name is only there to save the reader a map.
+    `near Kajang, Selangor`. The exact figures are not on this line (client decision, 2026-08-05:
+    they read as noise here) - they stay on the stored signature row for whoever needs them.
 
     Resolved through ``geo_places``, the same offline table the CRM screen's answer comes from, so
     the document and the screen cannot disagree about where somebody signed. Offline because this

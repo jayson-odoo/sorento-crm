@@ -34,7 +34,10 @@ export function useNearestPlace(
     const { lat, lng } = coords;
     getNearestPlace(lat, lng, controller.signal)
       .then((answer) => {
-        if (alive) setPlace({ lat, lng, name: answer.description });
+        // `place` is the bare label ("Kajang, Selangor"), not `description` (which still carries
+        // the coordinates for the server-rendered PDF). The pad shows only the readable name;
+        // the exact figures live on the stored signature row, not on this label.
+        if (alive && answer.place) setPlace({ lat, lng, name: answer.place });
       })
       .catch(() => {
         // A failed lookup is not an error worth showing: the coordinates already on screen are

@@ -369,6 +369,11 @@ describe('SignaturePad metadata', () => {
  * been SAVED and the person actually signing saw bare numbers. The client read that as a service
  * nobody had switched on. The table still stays on the server - one definition, shared with the
  * PDF - and the browser asks.
+ *
+ * The place REPLACES the coordinates once one is known (client decision, 2026-08-05, overruling
+ * the earlier "beside, never instead" reading): the numbers alone are noise to whoever reads the
+ * pad, and the exact figures are still captured onto the signature record regardless of what
+ * this label shows.
  */
 describe('SignaturePad place name while capturing', () => {
   it('names the place once the lookup answers, without waiting for a save', async () => {
@@ -386,15 +391,17 @@ describe('SignaturePad place name while capturing', () => {
 
     render(<SignaturePad onChange={vi.fn()} />);
 
-    // The numbers first, because they are what the browser knows on its own.
+    // The numbers first, because they are what the browser knows on its own, before the lookup
+    // has answered.
     expect(screen.getByText('3.13901, 101.68685')).toBeInTheDocument();
     // Asked with the fix the browser granted, and only with it.
     expect(getNearestPlace).toHaveBeenCalledWith(3.13901, 101.68685, expect.anything());
 
-    // The place NEVER replaces the coordinates: a reader settles a dispute on the numbers.
+    // Once the place resolves, it REPLACES the bare numbers on screen.
     expect(
-      await screen.findByText('near Kuala Lumpur, Wilayah Persekutuan (3.13901, 101.68685)'),
+      await screen.findByText('near Kuala Lumpur, Wilayah Persekutuan'),
     ).toBeInTheDocument();
+    expect(screen.queryByText('3.13901, 101.68685')).not.toBeInTheDocument();
   });
 
   it('never asks without a fix', () => {
@@ -444,7 +451,8 @@ describe('SignaturePad place name while capturing', () => {
     // The stored `gps_place` is the record's own answer. Asking again could only produce a
     // second opinion about a place somebody already signed at.
     expect(getNearestPlace).not.toHaveBeenCalled();
-    expect(screen.getByText('near Kajang, Selangor (3.03927, 101.80660)')).toBeInTheDocument();
+    expect(screen.getByText('near Kajang, Selangor')).toBeInTheDocument();
+    expect(screen.queryByText(/3\.03927/)).not.toBeInTheDocument();
   });
 });
 
@@ -488,10 +496,11 @@ describe('SignaturePad read-only', () => {
     expect(screen.getAllByText('-').length).toBeGreaterThan(0);
   });
 
-  it('names the place beside the coordinates, never instead of them', () => {
-    // Bare numbers tell the reader nothing. The place makes them readable; the numbers stay,
-    // because they are the evidence and the name is only the convenience. The name is resolved
-    // by the BACKEND (one offline table, shared with the PDF) and consumed here as-is.
+  it('names the place and drops the raw numbers once one is known', () => {
+    // Bare numbers tell the reader nothing. The place replaces them (client decision,
+    // 2026-08-05); the exact figures remain on the stored row, just not on this label. The
+    // name is resolved by the BACKEND (one offline table, shared with the PDF) and consumed
+    // here as-is.
     render(
       <SignaturePad
         readOnly
@@ -505,7 +514,8 @@ describe('SignaturePad read-only', () => {
       />,
     );
 
-    expect(screen.getByText('near Kajang, Selangor (3.03927, 101.80660)')).toBeInTheDocument();
+    expect(screen.getByText('near Kajang, Selangor')).toBeInTheDocument();
+    expect(screen.queryByText(/3\.03927/)).not.toBeInTheDocument();
   });
 
   it('falls back to the raw coordinates when nothing known is near enough to name', () => {

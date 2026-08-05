@@ -109,12 +109,14 @@ def test_the_signature_in_the_dev_database_resolves_to_the_town_it_is_in():
     assert geo_places.place_label(*REAL_SIGNATURE) == "Kajang, Selangor"
 
 
-def test_the_rendered_line_keeps_the_exact_coordinates():
-    """The place name is the convenience. The numbers are the evidence, so they stay on the page."""
+def test_the_rendered_line_names_the_place_and_drops_the_raw_numbers():
+    """Client decision, 2026-08-05: `3.03927, 101.80660` printed beside a signature read as
+    noise to the person holding the document, not evidence. The exact figures are not lost -
+    they stay on the stored signature row - they are simply not part of this label. "near",
+    never an address: the table knows towns, not streets."""
     described = geo_places.describe_coordinates(*REAL_SIGNATURE)
-    assert described == f"near Kajang, Selangor ({REAL_SIGNATURE_TEXT})"
-    assert REAL_SIGNATURE_TEXT in described
-    # "near", never an address: the table knows towns, not streets.
+    assert described == "near Kajang, Selangor"
+    assert REAL_SIGNATURE_TEXT not in described
     assert described.startswith("near ")
 
 

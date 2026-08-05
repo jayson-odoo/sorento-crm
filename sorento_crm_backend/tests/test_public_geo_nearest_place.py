@@ -37,7 +37,10 @@ def test_a_real_signature_gets_the_town_it_was_signed_in(client):
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["description"] == "near Kajang, Selangor (3.03927, 101.80660)"
+    # `description` no longer carries the coordinates (client decision, 2026-08-05): they read as
+    # noise on a customer-facing label. `coordinates` still returns the exact figures on their
+    # own field, for a caller that genuinely needs the evidence rather than the readable label.
+    assert body["description"] == "near Kajang, Selangor"
     assert body["place"] == "Kajang, Selangor"
     assert body["place_name"] == "Kajang"
     assert body["state"] == "Selangor"

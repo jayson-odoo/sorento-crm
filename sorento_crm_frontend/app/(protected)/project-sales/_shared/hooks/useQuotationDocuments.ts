@@ -140,19 +140,20 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
   });
 
   /**
-   * Signing the draft. Deliberately does NOT run `invalidate()`.
-   *
-   * Nothing else on the document changed, and the document GET carries no signature, so a refetch
-   * would answer with a record that looks unsigned and the screen would go back to asking for a
-   * signature it had just been given. The caller keeps the returned signature (see
-   * `QuotationDocumentClient`), which is also why it is not written into the query cache: react-
-   * query refetches on window focus, and a cache entry would be silently overwritten the first
-   * time the user tabbed away and back.
+   * Signing the draft. The document GET now serializes `signatory_signature` / `is_signed`
+   * (see `serialize_document`), so invalidating is what makes every reader of that query -
+   * the Signatures tab included - pick up the new ink without a manual refresh. This used to
+   * skip `invalidate()` and hand the caller the raw response to hold in local state instead;
+   * that was working around a server gap that no longer exists, and the local copy was the
+   * reason re-signing on the Scopes tab did not show up on the Signatures tab until reloaded.
    */
   const sign = useMutation({
     mutationFn: ({ id, body }: { id: string; body: QuotationSignatureBody }) =>
       signQuotationDocument(projectId, id, body),
-    onSuccess: () => toast.success('Quotation signed'),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Quotation signed');
+    },
     onError: (error: Error) => toast.error(error.message),
   });
 

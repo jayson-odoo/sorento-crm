@@ -122,11 +122,13 @@ function deriveInitials(name: string): string {
 }
 
 /**
- * `near Kajang, Selangor (3.03927, 101.80660)`, or the numbers alone.
+ * `near Kajang, Selangor`, falling back to the bare coordinates only when no place is known.
  *
- * The place NEVER replaces the coordinates. A reader settles a dispute on the numbers; the name
- * is there so they do not need a map to read the record. "near", never an address: the lookup
- * behind `place` knows towns, not streets.
+ * Client decision, 2026-08-05, overruling the earlier "never drop the coordinates" reading: a
+ * customer or salesperson reading `3.03927, 101.80660` gets nothing readable out of it, and the
+ * exact figures still exist on the row (`gps_lat`/`gps_lng`) for anyone who needs the evidence,
+ * not on this label. "near", never an address: the lookup behind `place` knows towns, not
+ * streets.
  */
 function formatCoordinate(
   lat: number | null,
@@ -134,8 +136,8 @@ function formatCoordinate(
   place?: string | null,
 ): string {
   if (lat == null || lng == null) return '-';
-  const coordinates = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-  return place?.trim() ? `near ${place.trim()} (${coordinates})` : coordinates;
+  if (place?.trim()) return `near ${place.trim()}`;
+  return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
 }
 
 /** One row of the ecohub-style metadata block: the label is always there, the value may be `-`. */
@@ -524,7 +526,9 @@ export function SignaturePad({
         <MetaRow
           label="GPS location"
           value={
-            nearestPlace ?? formatCoordinate(coords?.lat ?? null, coords?.lng ?? null)
+            nearestPlace
+              ? `near ${nearestPlace}`
+              : formatCoordinate(coords?.lat ?? null, coords?.lng ?? null)
           }
         />
       </CardContent>

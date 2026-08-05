@@ -39,7 +39,6 @@ import {
   stagedScopeTotal,
   unfinishedStagedLines,
 } from '../../../components/QuotationVersionEditor';
-import type { QuotationSignatureRecord } from '../../../../_shared/services/quotationDocumentService';
 import { QuotationDocumentHeader } from './QuotationDocumentHeader';
 import { QuotationDocumentProvider } from './QuotationDocumentContext';
 import { QuotationDocumentTabs } from './QuotationDocumentTabs';
@@ -100,16 +99,6 @@ export function QuotationDocumentClient({
   const [revisePrompt, setRevisePrompt] = React.useState(false);
   const [confirmRemovals, setConfirmRemovals] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
-  /**
-   * The signature captured on this page, held here rather than in the query cache.
-   *
-   * The document GET does not serialize `signatory_signature` yet, so the cache is not a safe home
-   * for it: react-query refetches on window focus and would wipe it the first time the user tabbed
-   * away. Shell state lasts as long as the screen does, tab switches included, which is the whole
-   * of the sign-then-issue sequence, and the day the serializer sends the field the line below
-   * prefers it.
-   */
-  const [justSigned, setJustSigned] = React.useState<QuotationSignatureRecord | null>(null);
 
   const selectScope = React.useCallback((scopeId: string) => setActiveScopeId(scopeId), []);
 
@@ -217,7 +206,7 @@ export function QuotationDocumentClient({
   // the next revision is always the one after whatever the customer currently holds.
   const nextIssueNo = (record.current_issue_no ?? 0) + 1;
   const latestIssue = issues.data?.[0] ?? null;
-  const sorentoSignature = record.signatory_signature ?? justSigned;
+  const sorentoSignature = record.signatory_signature ?? null;
   /**
    * AC-H1: no signature, no issue. The server refuses an unsigned document with 422
    * `quotation_document_unsigned`, so the CTA says so up front rather than letting somebody
@@ -591,7 +580,7 @@ export function QuotationDocumentClient({
         isSaving={mutations.sign.isPending}
         onSign={async (body) => {
           try {
-            setJustSigned(await mutations.sign.mutateAsync({ id: documentId, body }));
+            await mutations.sign.mutateAsync({ id: documentId, body });
             setSigning(false);
           } catch {
             // The mutation toasted the reason. The dialog stays open so the signature can be

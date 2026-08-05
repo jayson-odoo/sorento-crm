@@ -720,11 +720,13 @@ def test_the_counter_signature_prints_only_once_the_customer_has_accepted():
         assert customer_signature in html
 
 
-def test_where_the_customer_signed_prints_as_a_place_and_keeps_the_numbers():
-    """Client feedback: `3.03927, 101.80660` on a signed quotation means nothing to whoever reads
-    it. It prints as the place, with the coordinates still on the page - the numbers are the
-    evidence and the name is only the convenience. The lookup is the shared offline table in
-    `geo_places`, so this line and the CRM screen cannot disagree about where somebody stood."""
+def test_where_the_customer_signed_prints_as_a_place_not_bare_numbers():
+    """Client feedback, then revised: `3.03927, 101.80660` on a signed quotation meant nothing to
+    whoever read it, so it prints as the place. The follow-up decision (2026-08-05) dropped the
+    coordinates from the label entirely - they read as noise, not evidence, to the person holding
+    the document - so this pins the CURRENT contract: the place, and nothing after it. The lookup
+    is the shared offline table in `geo_places`, so this line and the CRM screen cannot disagree
+    about where somebody stood."""
     from app.services import project_quotation_document_service as qdocs
     from app.services import project_quotation_pdf_service as qpdf
     from app.services import project_quotation_service as quotes
@@ -762,9 +764,10 @@ def test_where_the_customer_signed_prints_as_a_place_and_keeps_the_numbers():
         html = qpdf.build_issue_html(db, issued)
 
         assert "near Kajang, Selangor" in html
-        assert "3.03927, 101.80660" in html
-        # "near", never an address: a table of towns cannot know a street.
-        assert "near Kajang, Selangor (3.03927, 101.80660)" in html
+        # The exact figures are gone from the label. They are not gone from the record: they
+        # are still on the stored signature row, just not printed here.
+        assert "3.03927" not in html
+        assert "101.80660" not in html
 
 
 # ------------------------------------------------------------------- the actual bytes

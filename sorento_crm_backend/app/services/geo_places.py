@@ -322,13 +322,17 @@ def format_coordinates(lat: Any, lng: Any) -> Optional[str]:
 
 
 def describe_coordinates(lat: Any, lng: Any) -> Optional[str]:
-    """What a person reads: `"near Kajang, Selangor (3.03927, 101.80660)"`.
+    """What a person reads: `"near Kajang, Selangor"`, or the bare coordinates when nothing is
+    close enough to name.
 
-    The coordinates are never dropped, whether or not a place was found. They are the evidence;
-    the name is only there to save the reader a map.
+    Client decision, 2026-08-05, overruling this function's earlier "never drop the coordinates"
+    behaviour: `3.03927, 101.80660` printed on a customer-facing quotation reads as noise, not
+    evidence, to the person holding it. The exact figures are not lost - they stay on the
+    signature row (`gps_lat`/`gps_lng`) for whoever needs them - they are simply not part of the
+    label everybody else reads. Falls back to the coordinates only because that is the only thing
+    left to say once no place is known.
     """
-    coordinates = format_coordinates(lat, lng)
-    if coordinates is None:
-        return None
     label = place_label(lat, lng)
-    return f"near {label} ({coordinates})" if label else coordinates
+    if label:
+        return f"near {label}"
+    return format_coordinates(lat, lng)

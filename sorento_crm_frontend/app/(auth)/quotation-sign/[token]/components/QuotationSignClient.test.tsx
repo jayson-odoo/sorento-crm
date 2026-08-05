@@ -299,7 +299,7 @@ describe('QuotationSignClient signing form', () => {
 });
 
 describe('QuotationSignClient signature provenance', () => {
-  it('reads the signing location as a place, with the coordinates still on the page', async () => {
+  it('reads the signing location as a place, and drops the raw numbers', async () => {
     getQuotationSignPage.mockResolvedValue(
       page({
         is_accepted: true,
@@ -320,9 +320,8 @@ describe('QuotationSignClient signature provenance', () => {
     );
     renderPage();
 
-    expect(
-      await screen.findByText('near Kajang, Selangor (3.03927, 101.80660)'),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('near Kajang, Selangor')).toBeInTheDocument();
+    expect(screen.queryByText(/3\.03927/)).not.toBeInTheDocument();
   });
 });
 
