@@ -48,8 +48,9 @@ const COPY: Record<
 > = {
   'purchase-history': {
     title: 'Upload purchase history',
-    // What it does to the plan, in one line. Not a description of the file format.
-    description: 'Past orders, for supplier lead time and cost. Never counted as incoming stock.',
+    // What it does to the plan, in one line. Not a description of the file format, and not
+    // lead time: that is measured to the goods receipt and this file carries none.
+    description: 'Past orders, for last cost and slow movers. Never counted as incoming stock.',
     dropzoneLabel: 'Purchase Order Listing file',
   },
   'order-inquiry': {

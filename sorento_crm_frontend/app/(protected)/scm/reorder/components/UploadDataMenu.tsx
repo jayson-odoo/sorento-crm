@@ -44,7 +44,7 @@ const OUTSTANDING: ReadonlyArray<readonly [OutstandingImportKind, string, string
 ] as const;
 
 const CURATION: ReadonlyArray<readonly [HistoryImportKind, string, string]> = [
-  ['purchase-history', 'Purchase history', 'Past orders, for lead time and cost'],
+  ['purchase-history', 'Purchase history', 'Past orders, for last cost and slow movers'],
   ['order-inquiry', 'Order inquiry sheet', 'Stock locations and purchase-order links'],
 ] as const;
 
