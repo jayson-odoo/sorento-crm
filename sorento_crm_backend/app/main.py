@@ -244,9 +244,9 @@ async def startup_event():
         logging.error(f"Failed to sync MCP tool catalog at startup: {str(e)}", exc_info=True)
 
     try:
-        # Seeds the container_status_enquiries access agent so an admin has
-        # something to grant. A gate keyed on a permission nobody can hold is
-        # indistinguishable from a broken feature.
+        # Seeds a denied agent_field_access row per gated field, so an admin opens
+        # the screen to a complete checklist. A gate whose fields never appear
+        # anywhere to tick is indistinguishable from a broken feature.
         from app.database import SessionLocal
         from app.services import container_status_bootstrap
         _db = SessionLocal()

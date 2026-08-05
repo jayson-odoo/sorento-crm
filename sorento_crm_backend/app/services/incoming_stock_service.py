@@ -43,7 +43,13 @@ from app.models.procurement import (
 )
 from app.models.product import Product
 from app.models.resources import Attachment
-from app.services.clearance_entitlement import CLEARANCE_KEYS
+from app.services.field_access import GATED_FIELDS
+
+#: The gated columns, selected unconditionally - the route strips whatever this
+#: caller may not see. Leaving one out here reads as None on the row and would be
+#: served to an ENTITLED caller as "not reached yet": a silent wrong answer rather
+#: than a crash. That bug shipped for one build.
+CLEARANCE_KEYS = tuple(GATED_FIELDS["incoming_stock"])
 from app.services.identifier_resolver import resolve_identifier
 from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
 

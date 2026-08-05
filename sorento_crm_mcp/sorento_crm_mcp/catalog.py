@@ -524,11 +524,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "results to that contact's company/companies; omit both for all-company results.\n\n"
             "CLEARANCE DATES (eta_delay_date, inspection_date, approval_date, gatepass_date, "
             "loading/etc/etd, liner_code, forwarders, consignee, free_days_available, coa_permit_no) "
-            "are ENTITLEMENT-GATED server-side. They appear only when the caller may see them: for a "
-            "contact question, pass `contact_id` and the contact must hold the "
-            "`container_status_enquiries` grant. When not entitled the keys are ABSENT from the "
+            "are ENTITLEMENT-GATED server-side, FIELD BY FIELD. They appear only when the caller may "
+            "see them: for a contact question, pass `contact_id`; the contact must hold the "
+            "`incoming_stock_enquiries` agent AND have that specific field allowed on it. Holding "
+            "the agent does NOT mean every field. When not permitted the keys are ABSENT from the "
             "response - absent means 'not permitted', it does NOT mean 'not reached yet'. Never tell "
-            "a user a date is unknown or pending because a key is missing; say you cannot share it."
+            "a user a date is unknown or pending because a key is missing; say you cannot share it. "
+            "A `field_access.denied` block lists what was withheld and why."
         ),
         "/api/v1/incoming-stock/list",
         (),

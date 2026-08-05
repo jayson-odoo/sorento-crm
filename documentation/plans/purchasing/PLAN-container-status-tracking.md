@@ -79,7 +79,7 @@ Two structural facts that shaped everything:
 | D35 | Group the checkpoints into ORIGIN / SEA / CLEARANCE / DELIVERY? | **No. One flat ordered list.** The four group names were a hardcoded map in the React component: an admin adding a twelfth checkpoint had nowhere to put it, and renaming a group meant a release - which defeats the point of making the list configurable at all. `statuses.category` is left NULL. Order alone carries the same meaning. |
 | D36 | Show unreached checkpoints? | **No. Only what happened.** A container does not walk a straight line, so an unreached checkpoint is not "pending", it is simply unrecorded. Eleven rows where six read "Not reached" bury the five that matter; the header count ("6 of 11 checkpoints reached") is what tells you the rest exist. |
 | D37 | Detail page layout? | **Tabs** (Timeline / Details / Documents / Shipment Lines), matching the users form, replacing four stacked cards. The timeline was previously below the fold on a page you had to scroll past to reach the lines. `?tab=` keeps a tab linkable and survives a refresh, written with `replace()` so switching does not fill the back button. |
-| D38 | What decides entitlement, and what does an unentitled caller get? | **The contact's grant when a `contact_id` is supplied, the staff permission otherwise - and the keys are ABSENT, never null.** Two halves. (1) n8n calls with a privileged act-as user; if that decided it, every contact would be entitled the moment n8n asked on their behalf, so a contact-scoped question is answered with the CONTACT's `container_status_enquiries` grant and the API key's own privileges do not apply. Staff use `procurement.packing_lists.view_clearance`. (2) Absent means "you may not see this"; null means "not reached yet". An LLM reading a null narrates it as the second, so an unentitled caller must get a payload **byte-identical to today's** rather than one full of nulls - which is exactly what the regression test asserts. Fails closed on an unresolvable caller, inactive agent, expired grant, or a lookup that raises. `estimated_arrival_date` is deliberately NOT gated: it is today's public ETA and the reason those agents exist, so "strip anything ending in _date" would have broken them. |
+| D38-revised | What decides entitlement, and what does a denied caller get? | **Field-level access as data, keyed on the agent, with an optional per-contact override - and the keys are ABSENT, never null.** Three parts. (1) The agent stays the FUNCTION: a contact asking about a container is already routed to `incoming_stock_enquiries` (53 hold it), so gating on a second agent meant 53 re-grants, an agent n8n never routes to, and a new agent per future sensitive field. `agent_field_access (agent_code, resource, field_key, contact_id NULL-able, is_allowed)` moves the granularity down one level; `contact_id IS NULL` is the agent-wide default and a row naming a contact overrides it in either direction. Only fields in the code registry `GATED_FIELDS` are consulted, so existing responses are unchanged; absence of a row means DENY, so a newly added sensitive column is invisible until an admin ticks it rather than exposed to all 53 on deploy day. (2) n8n calls with a privileged act-as user; if that decided it, every contact would be entitled the moment n8n asked on their behalf, so a contact-scoped question is answered with the CONTACT's grants and the API key's own privileges do not apply. Staff use `procurement.packing_lists.view_clearance`. (3) A denial reports WHICH of two things is wrong - `agent_not_assigned` or `field_not_allowed` - because they need different admin actions and a bare `false` sends someone to the wrong screen. The reason rides in a sibling `field_access.denied` block; the DATA ROWS stay byte-identical to today's, which is what the regression test asserts. Absent means "you may not see this"; null means "not reached yet", and an LLM narrates a null as the second. Fails closed on an unresolvable contact, inactive agent, expired grant, or a lookup that raises. `estimated_arrival_date` is deliberately NOT gated: it is today's public ETA and the reason those agents exist. Superseded the first cut's `container_status_enquiries` agent, dropped by migration 313. |
 | D12 | Daily update mechanism? | **Re-upload the sheet.** Bulk-set via `bulk_update_registry` is the natural next step (dates cluster 4-5.5 containers deep) but is not phase 1. No inline grid. |
 | D13 | Liner acquisition? | ~~Aggregator~~ **REVISED after review: per-carrier scrapers, CMA first** (`cma-cgm.com/ebusiness/tracking`, container-number search, no carrier account needed). The adapter registry survives unchanged - per-carrier adapters become the implementation rather than the fallback, and an aggregator can still slot in as one more adapter. **Consequences accepted:** coverage becomes the sum of adapters built (CMA alone = 79/407 = 19%, not ~92%); there is no push channel, so acquisition is polled via the existing `scheduled_task_service` + RQ; and each carrier's markup is a permanent maintenance surface. |
 | D13a | How does the scraper fetch, given a 403? | **Open - spike required (O1).** Verified: a plain HTTP GET of the CMA tracking URL returns `403 Forbidden`. The backend ships `httpx` only, no HTML parser and no browser, on `python:3.11-slim`. Four candidate answers in O1; do not guess one into the plan. |
@@ -174,13 +174,16 @@ assertion (0 collisions today; the assertion is what keeps that true). `import_s
 retention. Idempotency test: import twice, assert zero diff. Golden test against the real workbook
 asserting **111 updated / 296 skipped / 112 total, unchanged**.
 
-**S4 - extend the existing query tool + gate fields. DONE.** Add the clearance fields to
-`/api/v1/incoming-stock/list` and `crm_incoming_stock_list`. **No new tool, no new domain.** The
-substance here is the server-side entitlement gate (D16): resolve the caller (contact access types /
-staff permissions) and **omit** the clearance keys entirely when unentitled. Regression test that an
-unentitled caller's response is byte-identical to today's. Agent `container_status_enquiries` seeded
-and `agent_mcp_tools` wired **by the startup hook**, not left to an admin. Restart the MCP process so
-FastMCP re-registers. `view=answer` projection deferred - n8n narrows.
+**S4 - extend the existing query tool + gate fields. DONE (redesigned, see D38-revised).** Add the
+clearance fields to `/api/v1/incoming-stock/list` and `crm_incoming_stock_list`. **No new tool, no new
+domain, and - after the redesign - no new agent either.** The substance is the server-side gate (D16):
+resolve the caller and **omit** the gated keys entirely when they may not see them. Regression test
+that an unentitled caller's DATA rows are byte-identical to today's. `view=answer` projection
+deferred - n8n narrows.
+
+This slice shipped twice. The first cut minted a `container_status_enquiries` agent whose only job was
+to unlock a hardcoded field list; it was replaced before merge by the field-level model in
+D38-revised, which brings D20 forward from S5. Migration 313 drops the dead agent.
 
 **S5 - sheet retrieval, and the access model that makes it scale.** **No new endpoint and no new
 tool** (D17-revised). Instead:
@@ -190,8 +193,9 @@ tool** (D17-revised). Instead:
 - **Narrow-never-widen enforcement** in a shared helper (D19): when `contact_id`/`space_id` is
   supplied, resolve the contact's codes and intersect with the caller's `access_levels`. Fixes a
   pre-existing gap affecting every promotion, catalogue and stock-list file.
-- `resource_field_access` table + serializer hook (D20) so field visibility is data. Unmapped fields
-  stay visible - a test must prove existing responses are unchanged.
+- ~~`resource_field_access` table + serializer hook (D20)~~ **delivered early in S4** as
+  `agent_field_access`, keyed on the agent rather than on access levels (D38-revised). Unmapped
+  fields stay visible, proven by test.
 - Container status rows get `access_levels = ["sorento_office"]`; every upload retained, newest
   served (D18).
 

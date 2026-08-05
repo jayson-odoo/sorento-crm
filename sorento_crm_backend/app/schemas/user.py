@@ -378,6 +378,21 @@ class AgentTeamsUpdate(BaseModel):
     assignments: list[AgentTeamAssignment] | None = None
 
 
+class AgentFieldAccessEntry(BaseModel):
+    """One tick on the "which fields may this agent reveal" checklist."""
+
+    resource: str
+    field_key: str
+    is_allowed: bool = True
+    #: Set to write a per-contact exception instead of the agent-wide default.
+    #: Everyone holding the agent follows the default unless overridden here.
+    contact_id: Optional[str] = None
+
+
+class AgentFieldAccessUpdate(BaseModel):
+    fields: list[AgentFieldAccessEntry] | None = None
+
+
 # Contact access type catalog (admin CRUD)
 class ContactAccessTypeBase(BaseModel):
     code: str

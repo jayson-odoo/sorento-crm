@@ -23,6 +23,7 @@ import { useAccessAgent, useAgentTeams, useTeams } from '../hooks/useAccessAgent
 import { formatDate } from '@/lib/helpers';
 import AccessAgentDeleteDialog from './access-agent-delete-dialog';
 import ContactAccessAgentsTable from './ContactAccessAgentsTable';
+import AgentFieldAccessCard from './AgentFieldAccessCard';
 import AccessAgentNavigation from './AccessAgentNavigation';
 import MemberMarketSegmentEditor from './MemberMarketSegmentEditor';
 import type { AgentTeamMemberInfo, AgentTeamAssignment } from '../services/accessAgentService';
@@ -443,6 +444,11 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
         </CardContent>
       </Card>
 
+
+      {/* What the agent may reveal, above WHO holds it: the ticks apply to every
+          contact in the table below, so reading them in that order matches how the
+          two combine. */}
+      <AgentFieldAccessCard agentId={accessAgentId} />
 
       {/* Contact Access Agents Table */}
       <Card>

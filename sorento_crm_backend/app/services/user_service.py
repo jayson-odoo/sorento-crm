@@ -1,6 +1,7 @@
 """User management service for business logic."""
 import html as html_module
 import secrets
+from fastapi import HTTPException
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, func
 from sqlalchemy import inspect as sa_inspect
@@ -1963,6 +1964,138 @@ class AccessAgentService:
                 agent_id,
                 [(str(t), str(aid), str(c), int(tr)) for t, aid, c, tr in reused] + local_reuse,
             )
+
+    # ------------------------------------------------ field-level access
+
+    def list_field_access(self, agent_id: str) -> dict:
+        """The complete tick-list of fields this agent may reveal.
+
+        Built from the CODE registry, not from whatever rows happen to exist, so a
+        field added after the migration ran still appears (unticked) instead of
+        being invisible and therefore ungrantable.
+        """
+        from app.models.access import AccessAgent, AgentFieldAccess, RespondContact
+        from app.services.field_access import GATED_FIELDS, field_label
+
+        agent = self.db.query(AccessAgent).filter(AccessAgent.id == agent_id).one_or_none()
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Access agent not found")
+
+        rows = (
+            self.db.query(AgentFieldAccess)
+            .filter(AgentFieldAccess.agent_code == agent.code)
+            .all()
+        )
+        defaults = {
+            (r.resource, r.field_key): bool(r.is_allowed)
+            for r in rows
+            if r.contact_id is None
+        }
+
+        fields = [
+            {
+                "resource": resource,
+                "field_key": field_key,
+                "label": field_label(field_key),
+                # No row means denied, so the tick is empty rather than absent.
+                "is_allowed": defaults.get((resource, field_key), False),
+            }
+            for resource, owned in GATED_FIELDS.items()
+            for field_key, owner_code in owned.items()
+            if owner_code == agent.code
+        ]
+
+        override_rows = [r for r in rows if r.contact_id is not None]
+        names = {}
+        if override_rows:
+            names = dict(
+                self.db.query(RespondContact.id, RespondContact.name)
+                .filter(RespondContact.id.in_({r.contact_id for r in override_rows}))
+                .all()
+            )
+        overrides = [
+            {
+                "resource": r.resource,
+                "field_key": r.field_key,
+                "label": field_label(r.field_key),
+                "contact_id": r.contact_id,
+                "contact_name": names.get(r.contact_id),
+                "is_allowed": bool(r.is_allowed),
+            }
+            for r in override_rows
+        ]
+
+        return {"agent_code": agent.code, "fields": fields, "overrides": overrides}
+
+    def set_field_access(
+        self, agent_id: str, entries: list[dict], actor: str | None = None
+    ) -> None:
+        """Upsert the given ticks. Entries not sent are left alone.
+
+        Deliberately not a replace-all: the screen may be showing one resource
+        while another admin edits a second, and a blanket delete would silently
+        revoke fields nobody touched.
+        """
+        import uuid as _uuid
+
+        from app.models.access import AccessAgent, AgentFieldAccess
+        from app.services.field_access import GATED_FIELDS
+
+        agent = self.db.query(AccessAgent).filter(AccessAgent.id == agent_id).one_or_none()
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Access agent not found")
+
+        for entry in entries or []:
+            resource = entry.get("resource")
+            field_key = entry.get("field_key")
+            owner = GATED_FIELDS.get(resource, {}).get(field_key)
+            if owner is None:
+                # An unregistered field gates nothing, so a row for it would be a
+                # tick that silently does not work. Reject rather than store it.
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{resource}.{field_key} is not a gated field",
+                )
+            if owner != agent.code:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{resource}.{field_key} belongs to agent '{owner}', not '{agent.code}'",
+                )
+
+            contact_id = entry.get("contact_id") or None
+            existing = (
+                self.db.query(AgentFieldAccess)
+                .filter(
+                    AgentFieldAccess.agent_code == agent.code,
+                    AgentFieldAccess.resource == resource,
+                    AgentFieldAccess.field_key == field_key,
+                    AgentFieldAccess.contact_id.is_(None)
+                    if contact_id is None
+                    else AgentFieldAccess.contact_id == contact_id,
+                )
+                .one_or_none()
+            )
+            if existing is not None:
+                existing.is_allowed = bool(entry.get("is_allowed", True))
+                # Attribution goes on updated_by, not created_by: the bootstrap
+                # pre-seeds every row denied, so this branch is the one a real
+                # grant takes and created_by would be NULL forever.
+                existing.updated_by = actor
+            else:
+                self.db.add(
+                    AgentFieldAccess(
+                        id=str(_uuid.uuid4()),
+                        agent_code=agent.code,
+                        resource=resource,
+                        field_key=field_key,
+                        contact_id=contact_id,
+                        is_allowed=bool(entry.get("is_allowed", True)),
+                        created_by=actor,
+                        updated_by=actor,
+                    )
+                )
+
+        self.db.commit()
 
     def set_agent_teams(self, agent_id: str, assignments: list[dict]) -> None:
         """Replace agent's team links with the given assignments [{code, team_id, tier?}...]."""

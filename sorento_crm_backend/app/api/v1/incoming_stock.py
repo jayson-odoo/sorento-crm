@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
-from app.services.clearance_entitlement import apply_clearance_gate
+from app.services.field_access import CLEARANCE_PERMISSION, apply_field_access
 from app.services.error_handler import handle_internal_error
 from app.services.incoming_stock_service import IncomingStockService
 from app.services.uuid_list_param import parse_uuid_list
@@ -208,10 +208,11 @@ def get_incoming_list(
     contact_id: Optional[str] = Query(
         None,
         description=(
-            "The respond_contacts.id this question is being asked ON BEHALF OF. "
-            "When set, clearance dates are returned only if that contact holds the "
-            "container_status_enquiries grant - the API key's own privileges do not "
-            "apply to a contact's question."
+            "The contact this question is being asked ON BEHALF OF - either the "
+            "respond_contacts.id or the Respond.io id. When set, clearance dates "
+            "are returned only for the fields allowed on that contact's own agent "
+            "grants; the API key's privileges do not apply to a contact's question. "
+            "Denied fields are absent, and the reason is in `field_access.denied`."
         ),
     ),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -252,9 +253,16 @@ def get_incoming_list(
         )
         # Clearance dates are OMITTED, not nulled, for an unentitled caller: absent
         # means "you may not see this", null would mean "not reached yet", and an
-        # LLM reading the response will narrate a null as the latter.
-        return apply_clearance_gate(
-            db, result, current_user=current_user, contact_id=contact_id
+        # LLM reading the response will narrate a null as the latter. The reason
+        # rides along in a `field_access` block so the answer can say "I can't
+        # share that" instead of inventing a status.
+        return apply_field_access(
+            db,
+            result,
+            resource="incoming_stock",
+            current_user=current_user,
+            contact_id=contact_id,
+            staff_permission=CLEARANCE_PERMISSION,
         )
     except Exception as e:
         raise handle_internal_error(str(e))

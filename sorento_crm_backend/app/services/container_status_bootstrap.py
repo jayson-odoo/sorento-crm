@@ -1,67 +1,72 @@
 """Container-status startup bootstrap.
 
-Seeds the ``container_status_enquiries`` access agent so an admin has something to
-grant on the day this ships. Without it the entitlement gate is a permission
-nobody can hold, which is indistinguishable from a broken feature - and the
-implementer, not the admin, owns getting it there.
+Keeps `agent_field_access` in step with the code registry: every field in
+`field_access.GATED_FIELDS` gets a row on the agent that owns it, so an admin
+opens the screen to a complete checklist rather than a list that silently omits
+whatever was added after migration 313 ran.
 
-Deliberately seeded **inactive-by-default in effect**: the agent row exists and is
-active, but NO contact holds it. Nothing becomes visible until an admin grants it
-per contact, which is the point of the gate.
+**Seeded DENIED.** A field nobody has reviewed must not be readable, and the 53
+contacts holding `incoming_stock_enquiries` must not gain ETA delay and CIDB
+dates the moment this deploys. The row exists so the field is visible and
+tickable; the tick is the admin's.
 
-No `agent_mcp_tools` wiring is needed here. `crm_incoming_stock_list` is an
-existing tool that existing agents already own; this slice adds fields to its
-response and gates them server-side, rather than adding a new tool that would need
-assigning. See `app.services.clearance_entitlement`.
+Existing rows are never touched - this only ever inserts what is missing, so a
+restart cannot undo a deliberate grant or a per-contact override.
 
-Idempotent: an existing row is left exactly as the admin last edited it.
+Idempotent, and a failure here must not stop startup: a missing row means one
+field is invisible until the next boot, which is the safe direction.
 """
 from __future__ import annotations
 
 import logging
 import uuid
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.models.access import AccessAgent
-from app.services.clearance_entitlement import CONTAINER_STATUS_AGENT_CODE
+from app.services.field_access import GATED_FIELDS
 
 logger = logging.getLogger(__name__)
 
-AGENT_NAME = "Container status enquiries"
-AGENT_DESCRIPTION = (
-    "Lets a contact be told container clearance dates - ETA delay, CIDB "
-    "inspection and approval, gatepass. Without this grant those fields are "
-    "absent from the answer entirely, not blank."
-)
-
 
 def run(db: Session) -> dict:
-    summary = {"agent_seeded": False}
+    summary = {"field_rows_seeded": 0}
     try:
-        existing = (
-            db.query(AccessAgent)
-            .filter(AccessAgent.code == CONTAINER_STATUS_AGENT_CODE)
-            .one_or_none()
-        )
-        if existing is not None:
-            return summary
+        for resource, fields in GATED_FIELDS.items():
+            for field_key, agent_code in fields.items():
+                # The owning agent may not exist yet on a fresh install, and the FK
+                # would reject the row. Skip rather than fail: the next boot after
+                # the agent is seeded picks it up.
+                agent_exists = db.execute(
+                    text("SELECT 1 FROM access_agents WHERE code = :code"),
+                    {"code": agent_code},
+                ).scalar()
+                if not agent_exists:
+                    continue
 
-        db.add(
-            AccessAgent(
-                id=str(uuid.uuid4()),
-                code=CONTAINER_STATUS_AGENT_CODE,
-                name=AGENT_NAME,
-                description=AGENT_DESCRIPTION,
-                is_active=True,
-                # NOT auto-assigned to new internal contacts. Clearance dates are
-                # opt-in per contact; a default-on grant would defeat the gate.
-                assign_to_new_internal_contacts=False,
-            )
-        )
+                inserted = db.execute(
+                    text(
+                        """
+                        INSERT INTO agent_field_access
+                            (id, agent_code, resource, field_key, contact_id, is_allowed)
+                        VALUES (:id, :agent, :resource, :field, NULL, false)
+                        ON CONFLICT DO NOTHING
+                        """
+                    ),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "agent": agent_code,
+                        "resource": resource,
+                        "field": field_key,
+                    },
+                ).rowcount
+                summary["field_rows_seeded"] += inserted or 0
+
         db.commit()
-        summary["agent_seeded"] = True
-        logger.info("Seeded access agent %s", CONTAINER_STATUS_AGENT_CODE)
+        if summary["field_rows_seeded"]:
+            logger.info(
+                "Seeded %s denied field-access rows", summary["field_rows_seeded"]
+            )
     except Exception:  # noqa: BLE001 - a failed bootstrap must not stop startup
         db.rollback()
         logger.exception("Container status bootstrap failed; will retry next startup")
