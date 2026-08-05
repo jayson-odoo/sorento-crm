@@ -221,6 +221,30 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
 }
 
 /**
+ * The page's own width, because the (auth) shell hands this route the raw viewport.
+ *
+ * A quotation is a WIDE document: nine columns of line items that the reader has to compare
+ * before signing. Framed in the branded card's fixed column it sat between two empty margins on a
+ * desktop screen while the table scrolled inside it, so the width goes to the table instead.
+ * Capped all the same - a line of text run across an ultrawide monitor is its own kind of
+ * unreadable - and `min-w-0` so the table scrolls in its own gutter rather than dragging the page
+ * sideways at 375px.
+ */
+function PageShell({ children, testId }: { children: React.ReactNode; testId: string }) {
+  return (
+    <div
+      data-testid={testId}
+      // `overflow-x-clip` rather than `-hidden`: clip stops a stray wide child dragging the page
+      // sideways WITHOUT turning this div into a scroll container (hidden forces overflow-y to
+      // auto, which would nest a second vertical scrollbar inside the shell's own).
+      className="mx-auto min-w-0 w-full max-w-[1600px] space-y-4 overflow-x-clip px-4 py-6 sm:px-6"
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
  * The whole counter-sign page, driven by one public GET.
  *
  * No app chrome: the reader is a stranger on a phone who arrived from a WhatsApp link, and the
@@ -231,11 +255,11 @@ export function QuotationSignClient({ token }: { token: string }) {
 
   if (query.isLoading) {
     return (
-      <div className="space-y-4" data-testid="quotation-sign-loading">
+      <PageShell testId="quotation-sign-loading">
         <Skeleton className="h-32 w-full" />
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-64 w-full" />
-      </div>
+      </PageShell>
     );
   }
 
@@ -244,38 +268,40 @@ export function QuotationSignClient({ token }: { token: string }) {
     // A dead link is the expected end of an expired invitation, so it reads as a plain fact with
     // the one action that helps. Anything else is a fault the reader can retry out of.
     return (
-      <Card data-testid="quotation-sign-unavailable">
-        <CardContent className="px-4 py-10 text-center sm:px-6">
-          <Link2Off className="mx-auto size-6 text-muted-foreground" aria-hidden />
-          <h1 className="mt-3 text-base font-semibold">
-            {dead ? 'This link is no longer valid' : 'This quotation could not be loaded'}
-          </h1>
-          <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-            {dead
-              ? 'Ask your contact at Sorento to resend it.'
-              : query.error instanceof Error
-                ? query.error.message
-                : 'Please try again in a moment.'}
-          </p>
-          {!dead && (
-            <Button
-              type="button"
-              variant="outline"
-              className="mt-4"
-              onClick={() => void query.refetch()}
-            >
-              Try again
-            </Button>
-          )}
-        </CardContent>
-      </Card>
+      <PageShell testId="quotation-sign-unavailable">
+        <Card>
+          <CardContent className="px-4 py-10 text-center sm:px-6">
+            <Link2Off className="mx-auto size-6 text-muted-foreground" aria-hidden />
+            <h1 className="mt-3 text-base font-semibold">
+              {dead ? 'This link is no longer valid' : 'This quotation could not be loaded'}
+            </h1>
+            <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+              {dead
+                ? 'Ask your contact at Sorento to resend it.'
+                : query.error instanceof Error
+                  ? query.error.message
+                  : 'Please try again in a moment.'}
+            </p>
+            {!dead && (
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-4"
+                onClick={() => void query.refetch()}
+              >
+                Try again
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+      </PageShell>
     );
   }
 
   const page = query.data;
 
   return (
-    <div className="min-w-0 space-y-4">
+    <PageShell testId="quotation-sign-page">
       <Letterhead page={page} />
 
       <ProsePanel
@@ -307,6 +333,6 @@ export function QuotationSignClient({ token }: { token: string }) {
       </Card>
 
       <CustomerSignature page={page} token={token} />
-    </div>
+    </PageShell>
   );
 }

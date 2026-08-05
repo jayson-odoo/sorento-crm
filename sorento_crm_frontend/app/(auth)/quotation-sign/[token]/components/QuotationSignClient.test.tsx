@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuotationSignPage } from '../../services/quotationSignService';
 
@@ -201,6 +201,28 @@ describe('QuotationSignClient reading the quotation', () => {
   });
 });
 
+describe('QuotationSignClient page width', () => {
+  it('takes the viewport width while the wide table scrolls inside its own gutter', async () => {
+    getQuotationSignPage.mockResolvedValue(page());
+    renderPage();
+
+    // The page owns its width now that the (auth) shell hands this route the raw viewport: the
+    // branded card's fixed column left empty margins either side of a nine-column quotation.
+    const shell = await screen.findByTestId('quotation-sign-page');
+    expect(shell.className).toContain('w-full');
+    expect(shell.className).toContain('mx-auto');
+    // min-w-0 + clip: whatever a scope's table does, the PAGE never drags sideways at 375px.
+    expect(shell.className).toContain('min-w-0');
+    expect(shell.className).toContain('overflow-x-clip');
+
+    // And the table keeps its OWN gutter, so a phone still scrolls the columns rather than
+    // having them clipped off the edge.
+    const gutter = screen.getByRole('table').parentElement;
+    expect(gutter?.className).toContain('overflow-x-auto');
+    expect(gutter?.className).toContain('min-w-0');
+  });
+});
+
 describe('QuotationSignClient once accepted', () => {
   const accepted = page({
     is_accepted: true,
@@ -239,6 +261,68 @@ describe('QuotationSignClient once accepted', () => {
       'src',
       'data:image/png;base64,SORENTO',
     );
+  });
+});
+
+describe('QuotationSignClient signing form', () => {
+  it('fills the Initials tab from the name the customer types above the pad', async () => {
+    // Client feedback: the name field reads "Jayson" while the Initials tab still shows its
+    // placeholder. Nothing derivable from what the signer already gave us should be asked for
+    // a second time.
+    getQuotationSignPage.mockResolvedValue(page({ attn_name: null }));
+    renderPage();
+
+    const nameField = await screen.findByRole('textbox', { name: 'Your name' });
+    fireEvent.change(nameField, { target: { value: 'Jayson' } });
+
+    // Radix activates a tab on mousedown, not click.
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Initials' }), { button: 0 });
+
+    expect(screen.getByRole('textbox', { name: 'Initials' })).toHaveValue('J.');
+  });
+
+  it('keeps initials the customer edited when they then correct their name', async () => {
+    getQuotationSignPage.mockResolvedValue(page({ attn_name: null }));
+    renderPage();
+
+    const nameField = await screen.findByRole('textbox', { name: 'Your name' });
+    fireEvent.change(nameField, { target: { value: 'Jayson' } });
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Initials' }), { button: 0 });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Initials' }), {
+      target: { value: 'JT' },
+    });
+
+    fireEvent.change(nameField, { target: { value: 'Jayson Tan' } });
+
+    expect(screen.getByRole('textbox', { name: 'Initials' })).toHaveValue('JT');
+  });
+});
+
+describe('QuotationSignClient signature provenance', () => {
+  it('reads the signing location as a place, with the coordinates still on the page', async () => {
+    getQuotationSignPage.mockResolvedValue(
+      page({
+        is_accepted: true,
+        accepted_at: '2026-08-04T02:15:00',
+        customer_signature: {
+          id: 's3',
+          signer_name: 'Kelly Tan',
+          mode: 'draw',
+          image_data_uri: 'data:image/png;base64,CUSTOMER',
+          signed_at: '2026-08-04T02:15:00',
+          ip_address: '203.0.113.20',
+          gps_lat: '3.0392672',
+          gps_lng: '101.8066021',
+          // Resolved by the backend, from the same offline table the PDF renders from.
+          gps_place: 'Kajang, Selangor',
+        },
+      }),
+    );
+    renderPage();
+
+    expect(
+      await screen.findByText('near Kajang, Selangor (3.03927, 101.80660)'),
+    ).toBeInTheDocument();
   });
 });
 

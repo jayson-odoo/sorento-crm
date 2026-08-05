@@ -21,6 +21,7 @@ database this runs against holds a copy of production data.
 from __future__ import annotations
 
 import base64
+import re
 import uuid
 from decimal import Decimal
 
@@ -719,6 +720,53 @@ def test_the_counter_signature_prints_only_once_the_customer_has_accepted():
         assert customer_signature in html
 
 
+def test_where_the_customer_signed_prints_as_a_place_and_keeps_the_numbers():
+    """Client feedback: `3.03927, 101.80660` on a signed quotation means nothing to whoever reads
+    it. It prints as the place, with the coordinates still on the page - the numbers are the
+    evidence and the name is only the convenience. The lookup is the shared offline table in
+    `geo_places`, so this line and the CRM screen cannot disagree about where somebody stood."""
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_pdf_service as qpdf
+    from app.services import project_quotation_service as quotes
+
+    with blank_session() as db:
+        env = _setup(db)
+        owner = env["owner"]
+        product = _product(db, env["category"].id, env["uom"], description=f"{MARKER} WC")
+
+        document = qdocs.create_document(db, project=env["project"], actor_user_id=owner)
+        scope = qdocs.add_scope(
+            db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=owner
+        )
+        quotes.upsert_line(
+            db,
+            version=quotes.current_version(db, scope.id),
+            actor_user_id=owner,
+            payload={"product_id": product.id, "unit_price": PRICED_RATE, "quantity": 1},
+        )
+        issued = _issue(db, document, owner)
+
+        # The Sorento half was signed with no location at all: the browser refusing the prompt is
+        # a normal answer, and a customer-facing document must not carry a "GPS: -" row for it.
+        assert "GPS" not in qpdf.build_issue_html(db, issued)
+
+        qdocs.accept_issue(
+            db,
+            record=issued,
+            signer_name=f"{MARKER} Kelly Tan",
+            mode="draw",
+            image_data_uri=f"data:image/png;base64,{PNG_1X1}",
+            gps_lat="3.0392672",
+            gps_lng="101.8066021",
+        )
+        html = qpdf.build_issue_html(db, issued)
+
+        assert "near Kajang, Selangor" in html
+        assert "3.03927, 101.80660" in html
+        # "near", never an address: a table of towns cannot know a street.
+        assert "near Kajang, Selangor (3.03927, 101.80660)" in html
+
+
 # ------------------------------------------------------------------- the actual bytes
 
 
@@ -826,3 +874,95 @@ def test_a_component_of_a_set_prints_no_money_rather_than_zero():
         assert "305.55" in html
         assert "273,161.70" in html
         assert issued.grand_total == Decimal("273161.70")
+
+
+# ----------------------------------------------------------- item numbers (S9)
+
+
+def test_the_item_column_numbers_the_lines_continuously_through_the_sections():
+    """The ITEM column is the number the customer reads back down the phone, so it has to be on
+    the page whether or not anybody typed one.
+
+    The editor stopped storing a hand-typed letter (client decision: "just show the number which
+    supposed to be auto generated"), which leaves the renderers with nothing to print unless they
+    DERIVE it. Left as-is the column would show a mix of stale letters on old lines and blanks on
+    new ones, which is worse than either.
+
+    Continuous through a section heading, per the client: a section is a heading over the same
+    running list, not a restart. Asserted across TWO bands precisely because restarting at each one
+    is the easy thing to write by accident, and it would give two different lines the number 1."""
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_pdf_service as qpdf
+    from app.services import project_quotation_service as quotes
+
+    with blank_session() as db:
+        env = _setup(db)
+        owner = env["owner"]
+        product = _product(db, env["category"].id, env["uom"], description=f"{MARKER} WC suite")
+
+        document = qdocs.create_document(db, project=env["project"], actor_user_id=owner)
+        scope = qdocs.add_scope(
+            db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=owner
+        )
+        version = quotes.current_version(db, scope.id)
+        # Two bands, two lines each, and NO item_label anywhere: exactly what the editor now sends.
+        for band, price in (
+            (f"{MARKER} BILL NO 3", "250.00"),
+            (f"{MARKER} BILL NO 3", "120.00"),
+            (f"{MARKER} BILL NO 4", "300.00"),
+            (f"{MARKER} BILL NO 4", "90.00"),
+        ):
+            quotes.upsert_line(
+                db,
+                version=version,
+                actor_user_id=owner,
+                payload={
+                    "product_id": product.id,
+                    "unit_price": price,
+                    "quantity": "1",
+                    "band_label": band,
+                },
+            )
+
+        issued = _issue(db, document, owner)
+        html = qpdf.build_issue_html(db, issued)
+
+        numbers = re.findall(r'<td class="item">([^<]*)</td>', html)
+        assert numbers == ["1", "2", "3", "4"]
+
+
+def test_a_line_that_still_carries_a_typed_letter_keeps_it():
+    """Lines priced before the change still hold their letter, and a quotation already sent to a
+    customer must not silently renumber itself under them. So a stored label wins; the derived
+    number only fills the gap where there is none."""
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_pdf_service as qpdf
+    from app.services import project_quotation_service as quotes
+
+    with blank_session() as db:
+        env = _setup(db)
+        owner = env["owner"]
+        product = _product(db, env["category"].id, env["uom"], description=f"{MARKER} WC suite")
+
+        document = qdocs.create_document(db, project=env["project"], actor_user_id=owner)
+        scope = qdocs.add_scope(
+            db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=owner
+        )
+        version = quotes.current_version(db, scope.id)
+        for label in ("A", None):
+            quotes.upsert_line(
+                db,
+                version=version,
+                actor_user_id=owner,
+                payload={
+                    "product_id": product.id,
+                    "unit_price": "250.00",
+                    "quantity": "1",
+                    "item_label": label,
+                },
+            )
+
+        issued = _issue(db, document, owner)
+        html = qpdf.build_issue_html(db, issued)
+
+        assert re.findall(r'<td class="item">([^<]*)</td>', html) == ["A", "2"]

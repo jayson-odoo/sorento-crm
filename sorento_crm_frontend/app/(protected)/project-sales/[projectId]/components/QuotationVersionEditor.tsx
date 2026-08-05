@@ -6,10 +6,11 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-// The shared products `/select` mapper. Its name says "variant" because that screen
-// needed it first; the endpoint and the shape are the generic ones.
 import { useUOMSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query';
-import { getProductsForVariantSelect } from '@/app/(protected)/master-data-management/products/services/productService';
+import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
+// The shared products `/select` mapper, keeping the fields a picked product decides.
+import { getProductsForLineSelect } from '@/app/(protected)/master-data-management/products/services/productService';
+import type { ProductLineRef } from '@/app/(protected)/master-data-management/products/types/product.types';
 import {
   useQuotationLineMutations,
   useQuotationLines,
@@ -57,9 +58,19 @@ const UNIT_TYPE_OPTIONS: { value: UnitType; label: string; description: string }
 export function QuotationVersionEditor({
   project,
   quotation,
+  onTotalChange,
 }: {
   project: Project;
   quotation: ProjectQuotation;
+  /**
+   * The scope's live quoted total, as a decimal STRING (`"9000.00"`), whenever it moves.
+   *
+   * For a header that sits outside this editor and must not disagree with the footer inside
+   * it. Fired off the same drafts the footer sums, so the two cannot drift: rate-only lines
+   * contribute nothing, and an uncommitted keystroke counts. Unformatted on purpose - the
+   * header decides how to print it.
+   */
+  onTotalChange?: (total: string) => void;
 }) {
   const versions = useQuotationVersions(quotation.id);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
@@ -101,9 +112,22 @@ export function QuotationVersionEditor({
       })),
     [uoms.data],
   );
+  // The line snapshots the brand as TEXT (what was quoted, not who owns the SKU today), so the
+  // product's brand_id has to be resolved to a name before it can go on a row. Same cached
+  // master-data hook the rest of the app uses; no UUID reaches the cell.
+  const brands = useBrandSelectQuery();
+
+  /**
+   * The products the picker has shown, by id.
+   *
+   * The dropdown already holds the whole record when somebody chooses one, so the fill reads it
+   * from here instead of asking the server again for a row it just rendered.
+   */
+  const productsById = React.useRef(new Map<string, ProductLineRef>());
 
   const fetchProducts = React.useCallback(async (query: string) => {
-    const products = await getProductsForVariantSelect(query || undefined);
+    const products = await getProductsForLineSelect(query || undefined);
+    products.forEach((product) => productsById.current.set(product.id, product));
     return products.map((product) => ({
       value: product.id,
       label: product.product_code,
@@ -111,18 +135,63 @@ export function QuotationVersionEditor({
     }));
   }, []);
 
+  /**
+   * What picking a product decides for the rest of its line.
+   *
+   * Every one of these fields is the product's, so a line quoting SRT-WC-01 reads the same
+   * whoever typed it. The shared table applies this AS STATED, over hand-typed text included
+   * (the client's call: one product, one set of fields, every time), so this returns a key even
+   * when the product has nothing for it - that is how the previous product's wording is cleared.
+   *
+   * `list_price` has no column: it is the annotation under the unit price, and it must follow
+   * the product from the moment it is picked rather than waiting for the save to come back.
+   *
+   * NOT filled, both deliberately:
+   * - `technical_spec`. The client asked for it, and the products table has no such column -
+   *   only the quotation line does. Nothing to copy, so the cell is left for the salesperson
+   *   rather than filled with a guess, and returning it blank would wipe what they wrote.
+   * - `unit_price`. It is the QUOTED price, not the product's, and under an always-overwrite
+   *   fill a re-pick would throw away a negotiated figure. The list price is shown beside it
+   *   so the discount is visible; the number that gets charged stays a decision.
+   */
+  const fillFromProduct = React.useCallback(
+    (option: { value: string } | null): InlineDraft => {
+      if (!option) return {};
+      const product = productsById.current.get(option.value);
+      if (!product) return {};
+      const brand = (brands.data ?? []).find((row) => row.id === product.brand_id);
+      const unit = (uoms.data ?? []).find((row) => row.id === product.base_uom_id);
+      return {
+        // The rule the backend snapshots by, so what shows now is what gets stored.
+        description: product.description || product.product_name || '',
+        brand_snapshot: brand?.brand_name ?? '',
+        uom: unit?.uom_code ?? '',
+        list_price: product.list_price ?? '',
+      };
+    },
+    [brands.data, uoms.data],
+  );
+
   // The order the printed quotation uses, so a line is entered reading left to right the way
-  // the customer will read it back: item letter, what it is, how much, then what it comes to.
+  // the customer will read it back: item number, what it is, how much, then what it comes to.
   const columns = React.useMemo<InlineLineColumn<QuotationLine>[]>(
     () => [
       {
-        key: 'item_label',
+        key: 'item_no',
         header: 'Item',
         width: 70,
-        kind: 'text',
-        placeholder: 'A',
-        // The server caps it at 8, and a cap the field enforces beats a 422 on save.
-        maxLength: 8,
+        /**
+         * The row's position, not a box to type in.
+         *
+         * It was free text ("Item A"), which asked the salesperson to number 52 lines by hand
+         * and to renumber all of them after every insert, and let two lines claim the same
+         * letter. It counts CONTINUOUSLY through the scope - 1, 2 under the first heading and
+         * 3, 4 under the second - because that is how the customer's own bill of quantities
+         * reads (the client's decision); a section is a heading over the sequence, not a
+         * restart of it.
+         */
+        kind: 'derived',
+        derive: (_draft, index) => index + 1,
       },
       {
         key: 'product_id',
@@ -131,6 +200,9 @@ export function QuotationVersionEditor({
         kind: 'searchable-select',
         placeholder: 'Off-catalog line',
         fetchOptions: fetchProducts,
+        // One decision fills the row: the description, brand, unit and list price all come off
+        // the product record rather than being retyped beside it.
+        onOptionSelected: (option) => fillFromProduct(option),
         // Async mode fetches a page at a time, so the line's own product has to be handed
         // in or a saved row would read as empty until somebody searched for it.
         resolveSelected: (line) =>
@@ -199,12 +271,17 @@ export function QuotationVersionEditor({
         validate: (value) =>
           value.trim() === '' || isDecimalString(value) ? null : 'Must be a number',
         formatReadOnly: (value) => formatMyr(value),
-        annotate: (line) =>
-          line?.list_price ? (
+        // The DRAFT's list price first: picking a product must show its price at once, and
+        // reading the saved row instead is what left "List RM 0.00" beside a real product
+        // until the save came back.
+        annotate: (line, draft) => {
+          const listPrice = draft.list_price || line?.list_price;
+          return listPrice ? (
             <span className="mt-0.5 block text-end text-xs text-muted-foreground">
-              {`List ${formatMyr(line.list_price)}`}
+              {`List ${formatMyr(listPrice)}`}
             </span>
-          ) : null,
+          ) : null;
+        },
       },
       {
         key: 'complete_set',
@@ -258,25 +335,23 @@ export function QuotationVersionEditor({
          * beside "Issued by" and "Opened", where it read as one more fact about the version
          * rather than as the sum of the numbers directly above it.
          *
-         * Summed from the SAVED rows: a half-typed line is not money yet, and the per-row
-         * `derive` above already shows what the line in hand will come to. Off the STRINGS,
-         * to the cent, and skipping rate-only lines exactly as the backend's `line_amount`
-         * does, so this footer and the document's grand total cannot drift apart.
+         * Summed from the LIVE drafts, so it moves with the numbers above it. Reading the saved
+         * rows instead left the footer stating last save's answer while the cells said something
+         * else, and the first thing anybody does after changing a quantity is look down here.
+         * Off the STRINGS, to the cent, and skipping rate-only lines exactly as the backend's
+         * total does, so this footer and the document's grand total cannot drift apart.
          */
-        footer: (rows) => {
-          const total = sumMoney(
-            rows.filter((line) => !line.is_rate_only).map((line) => line.line_total),
-          );
+        footer: (drafts) => {
+          const total = totalFromDrafts(drafts);
           return total === null ? '-' : formatMyrExact(total);
         },
       },
     ],
-    [fetchProducts, uomOptions],
+    [fetchProducts, fillFromProduct, uomOptions],
   );
 
   const toDraft = React.useCallback(
     (line: QuotationLine): InlineDraft => ({
-      item_label: line.item_label ?? '',
       product_id: line.product_id ?? '',
       description: line.description ?? '',
       technical_spec: line.technical_spec ?? '',
@@ -291,13 +366,15 @@ export function QuotationVersionEditor({
       is_rate_only: line.is_rate_only ? INLINE_CHECKED : '',
       band_label: line.band_label ?? '',
       notes: line.notes ?? '',
+      // No column of its own: read under the unit price, and never sent back (the server
+      // snapshots it from the product it belongs to).
+      list_price: line.list_price ?? '',
     }),
     [],
   );
 
   const emptyDraft = React.useCallback(
     (): InlineDraft => ({
-      item_label: '',
       product_id: '',
       description: '',
       technical_spec: '',
@@ -310,8 +387,30 @@ export function QuotationVersionEditor({
       is_rate_only: '',
       band_label: '',
       notes: '',
+      list_price: '',
     }),
     [],
+  );
+
+  /**
+   * The same sum the footer shows, pushed to whoever asked for it.
+   *
+   * A ref rather than state: this fires on every keystroke that moves a number, and the editor
+   * itself has nothing to re-render over a figure it is not drawing. The guard also keeps a
+   * parent from re-rendering when a description changes and the money did not.
+   */
+  const lastTotal = React.useRef<string | null>(null);
+  const handleDraftsChange = React.useCallback(
+    (drafts: InlineDraft[]) => {
+      // Lines that exist but have not been turned into drafts yet are not "nothing quoted":
+      // announcing RM 0.00 on the way in would flash a wrong figure in whatever is showing it.
+      if (drafts.length === 0 && sortedLines.length > 0) return;
+      const total = totalFromDrafts(drafts);
+      if (total === null || total === lastTotal.current) return;
+      lastTotal.current = total;
+      onTotalChange?.(total);
+    },
+    [onTotalChange, sortedLines.length],
   );
 
   if (versions.isLoading) return <Skeleton className="h-24 w-full" />;
@@ -397,6 +496,8 @@ export function QuotationVersionEditor({
         readOnly={!editable}
         isLoading={lines.isLoading}
         addLabel="Add a line"
+        addSectionLabel="Add a section"
+        onDraftsChange={handleDraftsChange}
         emptyHint={
           editable
             ? 'Nothing quoted yet. Add a line and pick a product to freeze its code, description and list price onto it.'
@@ -504,11 +605,30 @@ function LineFlags({ line }: { line: QuotationLine }) {
 }
 
 /**
+ * The scope's money, off the LIVE drafts.
+ *
+ * Rate-only lines contribute nothing, the same rule the PDF and the backend total apply: the
+ * customer is being shown a rate, and adding the sample quotation's five alternates would have
+ * overstated it by RM 235,000. A cell that is not a number yet counts as zero rather than
+ * blanking the whole total, so the figure survives a half-typed price.
+ */
+function totalFromDrafts(drafts: InlineDraft[]): string | null {
+  return sumMoney(
+    drafts
+      .filter((draft) => !isInlineChecked(draft.is_rate_only))
+      .map((draft) => multiplyMoney(draft.quantity, draft.unit_price) ?? '0'),
+  );
+}
+
+/**
  * Draft to the body the per-line endpoint takes.
  *
  * `brand_snapshot` is the request's name for the field the response calls `brand`. The
  * asymmetry is the API's and is deliberate (the column snapshots the brand at the moment the
  * line was priced), so it is honoured here rather than smoothed over.
+ *
+ * `item_label` is NOT sent any more: the ITEM column is the row's position now, so a stored
+ * label could only ever disagree with what is on screen.
  */
 function toBody(draft: InlineDraft) {
   return {
@@ -519,7 +639,6 @@ function toBody(draft: InlineDraft) {
     uom: draft.uom.trim() || null,
     unit_type: (draft.unit_type || null) as UnitType | null,
     notes: draft.notes.trim() || null,
-    item_label: draft.item_label.trim() || null,
     brand_snapshot: draft.brand_snapshot.trim() || null,
     technical_spec: draft.technical_spec.trim() || null,
     complete_set: draft.complete_set.trim() || null,

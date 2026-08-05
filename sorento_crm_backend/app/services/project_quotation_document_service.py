@@ -101,6 +101,13 @@ def document_total(db: Session, document: ProjectQuotationDocument) -> Decimal:
     return sum((scope_total(db, scope) for scope in list_scopes(db, document)), ZERO)
 
 
+def _item_number(line: ProjectQuotationLine, position: int) -> str:
+    """The ITEM cell, defined once for every surface that prints a quotation."""
+    from app.services.project_quotation_pdf_service import item_number
+
+    return item_number(line, position)
+
+
 # ------------------------------------------------------------------ create
 
 
@@ -878,7 +885,13 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
                 "scope_total": Decimal(pair.scope_total or 0),
                 "lines": [
                     {
-                        "item_label": line.item_label,
+                        # Same definition the PDF and the workbook use. The customer signing this
+                        # page and the customer reading the PDF must see the same item numbers.
+                        # Same definition the PDF and the workbook use, imported INSIDE the
+                        # function on purpose: the pdf module pulls in WeasyPrint's neighbours and
+                        # storage, and importing that at module scope changes what is loaded before
+                        # the test fixtures build their schema.
+                        "item_label": _item_number(line, position),
                         "description": line.description_snapshot,
                         "technical_spec": line.technical_spec,
                         "brand": line.brand_snapshot,
@@ -891,7 +904,7 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
                         # None, not zero: the page prints "rate only" and a zero would read as free.
                         "amount": None if line.is_rate_only else Decimal(line.line_total or 0),
                     }
-                    for line in lines
+                    for position, line in enumerate(lines, start=1)
                 ],
             }
         )

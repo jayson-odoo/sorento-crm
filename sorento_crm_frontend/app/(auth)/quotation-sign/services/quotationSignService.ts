@@ -70,6 +70,12 @@ export type QuotationSignSignature = {
   /** Decimal strings, or null when the browser refused. Rendered as `-`, never guessed. */
   gps_lat: string | null;
   gps_lng: string | null;
+  /**
+   * The nearest known town to those coordinates, e.g. "Kajang, Selangor". Resolved by the backend
+   * from one offline table it shares with the PDF renderer, so the screen and the printed
+   * document cannot disagree. Null when nothing known is near enough to name.
+   */
+  gps_place?: string | null;
 };
 
 export type QuotationSignLine = {

@@ -180,6 +180,63 @@ describe('SignaturePad modes', () => {
   });
 });
 
+describe('SignaturePad initials follow the name', () => {
+  it('fills the Initials tab from a name that arrives after the pad mounted', () => {
+    // The counter-sign page asks for the name in a field ABOVE the pad and feeds it down as
+    // `typedNameDefault`, so the name almost never exists at mount. Seeding once left the
+    // signer looking at an empty Initials tab while their name sat on screen.
+    const { rerender } = render(<SignaturePad onChange={vi.fn()} typedNameDefault="" />);
+
+    switchTo('Initials');
+    expect(initialsField()).toHaveValue('');
+
+    rerender(<SignaturePad onChange={vi.fn()} typedNameDefault="Jayson" />);
+
+    expect(initialsField()).toHaveValue('J.');
+    switchTo('Type');
+    expect(nameField()).toHaveValue('Jayson');
+  });
+
+  it('never overwrites initials the signer typed themselves', () => {
+    const { rerender } = render(<SignaturePad onChange={vi.fn()} typedNameDefault="Jayson" />);
+
+    switchTo('Initials');
+    expect(initialsField()).toHaveValue('J.');
+
+    fireEvent.change(initialsField(), { target: { value: 'JCT' } });
+    // The name keeps changing underneath. Auto-fill is a convenience, not a correction: once the
+    // signer has typed their own initials they own the field.
+    rerender(<SignaturePad onChange={vi.fn()} typedNameDefault="Jayson Chan" />);
+
+    expect(initialsField()).toHaveValue('JCT');
+  });
+
+  it('leaves a name the signer typed in the pad alone when the caller sends another', () => {
+    const { rerender } = render(<SignaturePad onChange={vi.fn()} typedNameDefault="Kelly" />);
+
+    switchTo('Type');
+    fireEvent.change(nameField(), { target: { value: 'Kelly Tan a/p Lim' } });
+    rerender(<SignaturePad onChange={vi.fn()} typedNameDefault="Kelly Tan" />);
+
+    expect(nameField()).toHaveValue('Kelly Tan a/p Lim');
+  });
+
+  it.each([
+    ['Jayson', 'J.'],
+    ['  Ahmad   Faizal  ', 'A.F.'],
+    ['Ahmad Faizal bin Hassan Ismail', 'A.F.B.'],
+    ['tan wei ming', 'T.W.M.'],
+    ['陈大文', '陈.'],
+    ['نور هدى', 'ن.ه.'],
+    ['   ', ''],
+  ])('derives initials from %s', (name, expected) => {
+    render(<SignaturePad onChange={vi.fn()} typedNameDefault={name} />);
+
+    switchTo('Initials');
+    expect(initialsField()).toHaveValue(expected);
+  });
+});
+
 describe('SignaturePad commit discipline', () => {
   it('stays silent until the signer presses Apply', () => {
     const onChange = vi.fn();
@@ -328,6 +385,34 @@ describe('SignaturePad read-only', () => {
     expect(screen.getByText('Not signed yet')).toBeInTheDocument();
     expect(screen.getByText('GPS location')).toBeInTheDocument();
     expect(screen.getAllByText('-').length).toBeGreaterThan(0);
+  });
+
+  it('names the place beside the coordinates, never instead of them', () => {
+    // Bare numbers tell the reader nothing. The place makes them readable; the numbers stay,
+    // because they are the evidence and the name is only the convenience. The name is resolved
+    // by the BACKEND (one offline table, shared with the PDF) and consumed here as-is.
+    render(
+      <SignaturePad
+        readOnly
+        onChange={vi.fn()}
+        value={{
+          ...signed,
+          gpsLat: 3.03927,
+          gpsLng: 101.8066,
+          gpsPlace: 'Kajang, Selangor',
+        }}
+      />,
+    );
+
+    expect(screen.getByText('near Kajang, Selangor (3.03927, 101.80660)')).toBeInTheDocument();
+  });
+
+  it('falls back to the raw coordinates when nothing known is near enough to name', () => {
+    render(<SignaturePad readOnly onChange={vi.fn()} value={{ ...signed, gpsPlace: null }} />);
+
+    expect(screen.getByText('3.13901, 101.68685')).toBeInTheDocument();
+    // Naming somewhere hundreds of kilometres away would be a confident lie on a signed record.
+    expect(screen.queryByText(/near/i)).not.toBeInTheDocument();
   });
 
   it('asks for no location fix in read-only', () => {

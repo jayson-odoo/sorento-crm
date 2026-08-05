@@ -16,6 +16,12 @@ export type StoredSignature = {
   /** Decimal strings on the wire. Coordinates, not money, so Number() is safe here. */
   gps_lat?: string | number | null;
   gps_lng?: string | number | null;
+  /**
+   * The nearest known town, resolved server-side ("Kajang, Selangor"). Null when nothing is close
+   * enough to name honestly. Optional here because this adapter is the generic one: a backend
+   * that has not resolved a place still produces a renderable signature, showing the coordinates.
+   */
+  gps_place?: string | null;
 };
 
 const MODES: readonly SignatureMode[] = ['draw', 'type', 'initials'];
@@ -40,5 +46,6 @@ export function signatureValueFrom(
     signedAt: record.signed_at ?? null,
     gpsLat: coordinate(record.gps_lat),
     gpsLng: coordinate(record.gps_lng),
+    gpsPlace: record.gps_place ?? null,
   };
 }

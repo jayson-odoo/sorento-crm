@@ -279,7 +279,11 @@ export function SearchableMultiSelect({
       <PopoverContent className={cn(
             // Cap to the space Radix measured, or a long list makes the menu taller than
             // the viewport and the search box gets pushed off-screen on short windows.
-            'w-(--radix-popper-anchor-width) max-h-(--radix-popper-available-height) flex flex-col p-0',
+            //
+            // Same floor as SearchableSelect: the menu follows its trigger but never goes
+            // below 16rem, so a narrow cell cannot squeeze the list to one word per line.
+            // The two halves of this standard are kept identical on purpose.
+            'w-[max(var(--radix-popper-anchor-width),16rem)] max-w-(--radix-popper-available-width) max-h-(--radix-popper-available-height) flex flex-col p-0',
             className,
           )} align="start">
         <Command shouldFilter={false} className="max-h-full min-h-0 flex flex-col">

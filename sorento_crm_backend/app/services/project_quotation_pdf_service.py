@@ -48,6 +48,7 @@ from app.models.projects import (
 )
 from app.models.resources import Attachment
 from app.models.user import SystemSetting
+from app.services import geo_places
 from app.services.complaint_pdf_service import PDFRenderingUnavailable
 from app.services.error_handler import AppException
 from app.services.storage_router import extract_key, get_backend, normalize_provider
@@ -92,6 +93,21 @@ def _money(value: Any) -> str:
     except (InvalidOperation, TypeError, ValueError):
         return ""
     return f"{amount.quantize(ZERO):,.2f}"
+
+
+def item_number(line: Any, position: int) -> str:
+    """The ITEM cell: the stored label if a human typed one, otherwise the row's own number.
+
+    The editor no longer asks for a letter (client decision: the number is generated), so almost
+    every new line arrives with nothing here and the column would print blank. A stored label still
+    WINS, because lines priced before that change carry one and a quotation already in a customer's
+    inbox must not renumber itself underneath them.
+
+    ``position`` counts continuously through the scope and does NOT restart at a section heading: a
+    section is a heading over one running list, and restarting would give two lines the number 1.
+    """
+    label = (getattr(line, "item_label", None) or "").strip()
+    return label or str(position)
 
 
 def _line_money(value: Any) -> str:
@@ -370,7 +386,7 @@ def _scope_html(
 
     body: List[str] = []
     current_band: Optional[str] = None
-    for line in lines:
+    for position, line in enumerate(lines, start=1):
         band = (line.band_label or "").strip()
         # Printed once, above the line that opens the band. Repeating the same label on the next
         # line is a data quirk rather than a new section, and printing it twice would leave a QS
@@ -398,7 +414,7 @@ def _scope_html(
         )
         body.append(
             "<tr>"
-            f'<td class="item">{_cell(line.item_label)}</td>'
+            f'<td class="item">{_cell(item_number(line, position))}</td>'
             f"{image_cell}"
             f'<td class="spec">{_cell(line.technical_spec)}</td>'
             f'<td class="desc">{_cell(line.description_snapshot)}</td>'
@@ -465,6 +481,29 @@ def _signature_img(signature: Optional[QuotationSignature]) -> str:
     return f'<img class="sig" src="{escape(str(signature.image_data_uri))}"/>'
 
 
+def _signature_place_html(signature: Optional[QuotationSignature]) -> str:
+    """Where the signer stood, as a place a reader recognises plus the exact coordinates.
+
+    `3.03927, 101.80660` on its own means nothing to whoever opens this document, so it prints as
+    `near Kajang, Selangor (3.03927, 101.80660)`. The numbers stay: they are the evidence, and the
+    name is only there to save the reader a map.
+
+    Resolved through ``geo_places``, the same offline table the CRM screen's answer comes from, so
+    the document and the screen cannot disagree about where somebody signed. Offline because this
+    render must not depend on an outside service being reachable, must not leak the customer's
+    position to one, and must say the same thing when this issue is re-downloaded years later.
+
+    Omitted entirely when the browser gave no fix. A `GPS: -` row on a customer-facing quotation is
+    noise about a normal state, not a fact worth printing.
+    """
+    if signature is None:
+        return ""
+    described = geo_places.describe_coordinates(signature.gps_lat, signature.gps_lng)
+    if not described:
+        return ""
+    return f'<div class="sig-gps">GPS location: {escape(described)}</div>'
+
+
 def _sign_off_html(
     db: Session, document: ProjectQuotationDocument, issue: ProjectQuotationIssue
 ) -> str:
@@ -487,6 +526,7 @@ def _sign_off_html(
         bits.append(f'<div class="signatory">{_cell(document.signatory_name)}</div>')
     if document.signatory_phone:
         bits.append(f'<div class="signatory-phone">{_cell(document.signatory_phone)}</div>')
+    bits.append(_signature_place_html(sorento))
     signoff = f'<div class="signoff">{"".join(bits)}</div>'
 
     customer = _signature(db, issue.customer_signature_id)
@@ -500,6 +540,7 @@ def _sign_off_html(
     ]
     if issue.accepted_at:
         accepted.append(f'<div>Date: {_date(issue.accepted_at)}</div>')
+    accepted.append(_signature_place_html(customer))
     return f'{signoff}<div class="accepted">{"".join(accepted)}</div>'
 
 
@@ -546,6 +587,9 @@ _STYLE = """
   .signoff { margin-top: 14px; line-height: 1.5; break-inside: avoid; }
   .signatory { font-weight: 700; }
   .sig-box { margin-top: 10px; }
+  /* Provenance, not the sign-off itself: quieter than the name it sits under, and never big
+     enough to compete with the money above it. */
+  .sig-gps { margin-top: 2px; font-size: 8px; color: #444; }
   img.sig { height: 44px; max-width: 180px; }
   .accepted { margin-top: 16px; border-top: 1px solid #ccc; padding-top: 6px;
               break-inside: avoid; }

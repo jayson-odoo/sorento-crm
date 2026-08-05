@@ -33,6 +33,15 @@ export type SearchableSelectOption = {
 export type SearchableSelectProps = {
   value: string;
   onChange: (value: string) => void;
+  /**
+   * The whole option that was just chosen, alongside `onChange`, and `null` when the selection
+   * is cleared.
+   *
+   * For callers whose next step needs more than the id: an inline line table fills the rest of
+   * the row from the picked product, and re-fetching a record it has just been handed would be
+   * a round trip for data already on screen.
+   */
+  onOptionChange?: (option: SearchableSelectOption | null) => void;
   /** Static mode: full option set, filtered client-side. Mutually exclusive with `fetchOptions`. */
   options?: SearchableSelectOption[];
   /**
@@ -94,6 +103,7 @@ export type SearchableSelectProps = {
 export function SearchableSelect({
   value,
   onChange,
+  onOptionChange,
   options,
   fetchOptions,
   selectedOption,
@@ -229,8 +239,9 @@ export function SearchableSelect({
   const isDisabled = disabled || misconfigured;
   const showClear = clearable && !!value && !isDisabled;
 
-  const select = (v: string) => {
-    onChange(v);
+  const select = (opt: SearchableSelectOption) => {
+    onChange(opt.value);
+    onOptionChange?.(opt);
     setOpen(false);
   };
 
@@ -273,6 +284,7 @@ export function SearchableSelect({
                 e.preventDefault();
                 e.stopPropagation();
                 onChange('');
+                onOptionChange?.(null);
               }}
             >
               <X className="size-4" />
@@ -289,7 +301,12 @@ export function SearchableSelect({
         className={cn(
             // Cap to the space Radix measured, or a long list makes the menu taller than
             // the viewport and the search box gets pushed off-screen on short windows.
-            'w-(--radix-popper-anchor-width) max-h-(--radix-popper-available-height) flex flex-col p-0',
+            //
+            // The menu follows its trigger's width but never goes below 16rem: a narrow cell
+            // (a UOM column is 110px) made a legible list unreadable, one squeezed word per
+            // line, and the column cannot be widened to suit its dropdown. Capped at the space
+            // Radix measured so widening it can never push the menu off a 375px screen.
+            'w-[max(var(--radix-popper-anchor-width),16rem)] max-w-(--radix-popper-available-width) max-h-(--radix-popper-available-height) flex flex-col p-0',
             className,
           )}
         align="start"
@@ -311,7 +328,7 @@ export function SearchableSelect({
                     key={opt.value}
                     value={opt.searchText ?? `${opt.label} ${opt.description ?? ''}`}
                     disabled={opt.disabled}
-                    onSelect={() => select(opt.value)}
+                    onSelect={() => select(opt)}
                     className="flex items-start gap-2"
                   >
                     <Check

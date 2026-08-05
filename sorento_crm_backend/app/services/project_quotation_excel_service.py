@@ -356,7 +356,7 @@ def _write_scope(
     row = header_row + 1
 
     current_band: Optional[str] = None
-    for line in lines:
+    for position, line in enumerate(lines, start=1):
         band = _text(line.band_label)
         # Once, above the line that opens the band. Repeated down every row it is noise a QS reads
         # past; in the item row's own cells it cannot be told apart from a description.
@@ -368,7 +368,15 @@ def _write_scope(
             )
             row += 1
 
-        _put(sheet, row, positions["ITEM"], _text(line.item_label), alignment=_CENTER)
+        # Through pdf, deliberately: the workbook and the document are the same quotation, so
+        # one definition of the item number keeps them from disagreeing about it.
+        _put(
+            sheet,
+            row,
+            positions["ITEM"],
+            pdf.item_number(line, position),
+            alignment=_CENTER,
+        )
         if show_image:
             _put(
                 sheet,

@@ -37,7 +37,10 @@ export function QuotationSignDialog({
     // Null is Clear, which is a local act on the pad and nothing to send.
     if (!value) return;
     onSign({
-      signer_name: value.typedText ?? signatoryName,
+      // Only TYPE mode's text is a name. In Initials mode `typedText` holds "A.F.", and filing the
+      // signature under that would put the initials where the signatory's name belongs, including
+      // on the printed quotation. Draw mode has no text at all.
+      signer_name: (value.mode === 'type' ? value.typedText : null) || signatoryName,
       mode: value.mode,
       image_data_uri: value.dataUrl,
       // Strings, not JSON numbers: the column is NUMERIC(10,7).

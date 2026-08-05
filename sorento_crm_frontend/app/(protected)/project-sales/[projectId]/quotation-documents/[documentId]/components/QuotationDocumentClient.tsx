@@ -18,6 +18,7 @@ import {
   useQuotationIssues,
 } from '../../../../_shared/hooks/useQuotationDocuments';
 import { useProject, useQuotations } from '../../../../_shared/hooks/useProjects';
+import { sumMoney } from '../../../components/POIntakeMoney';
 import type { QuotationSignatureRecord } from '../../../../_shared/services/quotationDocumentService';
 import { OutcomePill } from '../../../../_shared/components/OutcomePill';
 import { QuotationOutcomeDialog } from '../../../components/QuotationOutcomeDialog';
@@ -75,11 +76,57 @@ export function QuotationDocumentClient({
    * issue sequence, and the day the serializer sends the field the line below prefers it.
    */
   const [justSigned, setJustSigned] = React.useState<QuotationSignatureRecord | null>(null);
+  /**
+   * The open scope's total as the line editor currently has it, including edits the user has
+   * typed but not yet saved.
+   *
+   * Kept per scope, never as a bare figure: a total reported by the townhouse tab must not be
+   * spent on the guard house's row when the reader switches tabs.
+   */
+  const [liveScopeTotal, setLiveScopeTotal] = React.useState<{
+    scopeId: string;
+    total: string;
+  } | null>(null);
 
   const scopes = document.data?.scopes ?? [];
   const activeScope = scopes.find((scope) => scope.id === activeScopeId) ?? scopes[0] ?? null;
   const activeQuotation =
     (quotations.data ?? []).find((row) => row.id === activeScope?.id) ?? null;
+
+  /**
+   * What the line editor calls (as its `onTotalChange`) when the open scope's uncommitted total
+   * moves, and `null` when there is nothing live to report.
+   *
+   * The editor fires it off the same drafts its own footer sums, so the header and the footer
+   * cannot drift apart.
+   */
+  const reportScopeTotal = React.useCallback((scopeId: string, total: string | null) => {
+    setLiveScopeTotal(total === null ? null : { scopeId, total });
+  }, []);
+
+  function selectScope(scopeId: string) {
+    // The figure belonged to the tab being left, so it dies with the switch rather than being
+    // carried into another scope's arithmetic.
+    reportScopeTotal(scopeId, null);
+    setActiveScopeId(scopeId);
+  }
+
+  /**
+   * The document total with the open scope's live figure substituted for the saved one.
+   *
+   * Summed with the repo's decimal-exact helper over STRINGS - `parseFloat` on 52 two-decimal
+   * values drifts, and a cent of drift on a quotation total is the kind of disagreement the
+   * customer notices. `null` (the helper's answer to anything that is not a plain decimal) falls
+   * the header back to the server's own `grand_total`.
+   */
+  const liveGrandTotal =
+    liveScopeTotal && scopes.some((scope) => scope.id === liveScopeTotal.scopeId)
+      ? sumMoney(
+          scopes.map((scope) =>
+            scope.id === liveScopeTotal.scopeId ? liveScopeTotal.total : scope.scope_total,
+          ),
+        )
+      : null;
 
   if (document.isLoading || project.isLoading) {
     return (
@@ -320,42 +367,39 @@ export function QuotationDocumentClient({
         </div>
       </header>
 
-      <QuotationDocumentHeader document={record} />
+      <QuotationDocumentHeader document={record} liveGrandTotal={liveGrandTotal} />
 
       {scopes.length === 0 ? (
         // Rendered, never hidden: a quotation with no scopes is a real state on the way to a
-        // priced one. The way in stays TOP-RIGHT with the other one, so a reader learns one
-        // place for it rather than a centred button that exists only while the list is empty.
-        <>
-          {canEdit && (
-            <div className="flex justify-end">
+        // priced one. The way in is the empty state's own CTA now that adding lives at the end of
+        // the tab strip - with no strip on screen there is nowhere else for it to be.
+        <Card>
+          <CardContent className="px-6 py-10 text-center">
+            <h3 className="text-sm font-semibold">No scopes on this quotation yet</h3>
+            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+              A scope is a part of the development priced on its own - the townhouses, the guard
+              house, the reception.
+            </p>
+            {canEdit && (
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
+                className="mt-4"
                 onClick={() => setAddingScope(true)}
               >
                 <Plus className="size-4" aria-hidden />
                 Add a scope
               </Button>
-            </div>
-          )}
-          <Card>
-            <CardContent className="px-6 py-10 text-center">
-              <h3 className="text-sm font-semibold">No scopes on this quotation yet</h3>
-              <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                A scope is a part of the development priced on its own - the townhouses, the
-                guard house, the reception.
-              </p>
-            </CardContent>
-          </Card>
-        </>
+            )}
+          </CardContent>
+        </Card>
       ) : (
         <>
           <QuotationScopeTabs
             scopes={scopes}
             activeScopeId={activeScope?.id ?? ''}
-            onSelect={setActiveScopeId}
+            onSelect={selectScope}
             canEdit={canEdit}
             onAddScope={() => setAddingScope(true)}
           />
@@ -395,7 +439,16 @@ export function QuotationDocumentClient({
                   table then stretched this Card and the whole PAGE scrolled sideways at phone
                   width, instead of the table scrolling inside its own gutter. */}
               <CardContent className="min-w-0 py-5">
-                <QuotationVersionEditor project={project.data} quotation={activeQuotation} />
+                {/* Keyed by scope so switching tabs gives the editor a clean instance rather
+                    than one still holding the previous scope's selected version and its
+                    last-reported total. Nothing refetches: the versions and lines are already
+                    in the query cache. */}
+                <QuotationVersionEditor
+                  key={activeQuotation.id}
+                  project={project.data}
+                  quotation={activeQuotation}
+                  onTotalChange={(total) => reportScopeTotal(activeQuotation.id, total)}
+                />
               </CardContent>
             </Card>
           ) : quotations.isLoading ? (
@@ -469,7 +522,7 @@ export function QuotationDocumentClient({
             });
             setAddingScope(false);
             // Land on what was just added rather than on whichever tab was open before.
-            setActiveScopeId(scope.id);
+            selectScope(scope.id);
           } catch {
             // The mutation already toasted the reason. The dialog stays open holding the typed
             // name, so a rejected label can be corrected rather than retyped.

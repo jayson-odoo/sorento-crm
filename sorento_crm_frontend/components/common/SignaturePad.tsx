@@ -35,6 +35,18 @@ export type SignatureValue = {
   /** Null when the browser refused, has no sensor, or answered too late. Never guessed. */
   gpsLat: number | null;
   gpsLng: number | null;
+  /**
+   * The nearest known town to those coordinates, e.g. `Kajang, Selangor`, as resolved BY THE
+   * BACKEND (`gps_place` on every serialized signature) from one offline table it shares with the
+   * PDF renderer. The browser never derives it: a second copy of that table here would drift from
+   * the server's, and then the screen and the printed document would disagree about where
+   * somebody signed.
+   *
+   * Absent on a signature the browser has only just captured - nothing is recorded yet, so there
+   * is no server answer to show - and null when nothing known is close enough to name honestly.
+   * Either way the coordinates are still rendered: they are the evidence, this is the convenience.
+   */
+  gpsPlace?: string | null;
 };
 
 export interface SignaturePadProps {
@@ -96,17 +108,33 @@ type Point = { x: number; y: number };
 /** "Ahmad Faizal bin Hassan" -> "A.F.B." Capped at three, past which initials stop reading as initials. */
 function deriveInitials(name: string): string {
   const letters = name
+    .trim()
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 3)
-    .map((word) => word[0]?.toUpperCase() ?? '')
+    // `Array.from` walks CODE POINTS, not UTF-16 units: `word[0]` on a name written in a script
+    // outside the basic plane hands back half a surrogate pair, which renders as a replacement
+    // box. `toUpperCase` is simply a no-op for scripts without case, which is the right answer.
+    .map((word) => Array.from(word)[0]?.toUpperCase() ?? '')
     .filter(Boolean);
   return letters.length ? `${letters.join('.')}.` : '';
 }
 
-function formatCoordinate(lat: number | null, lng: number | null): string {
+/**
+ * `near Kajang, Selangor (3.03927, 101.80660)`, or the numbers alone.
+ *
+ * The place NEVER replaces the coordinates. A reader settles a dispute on the numbers; the name
+ * is there so they do not need a map to read the record. "near", never an address: the lookup
+ * behind `place` knows towns, not streets.
+ */
+function formatCoordinate(
+  lat: number | null,
+  lng: number | null,
+  place?: string | null,
+): string {
   if (lat == null || lng == null) return '-';
-  return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  const coordinates = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  return place?.trim() ? `near ${place.trim()} (${coordinates})` : coordinates;
 }
 
 /** One row of the ecohub-style metadata block: the label is always there, the value may be `-`. */
@@ -156,11 +184,20 @@ export function SignaturePad({
 
   const [mode, setMode] = React.useState<SignatureMode>('draw');
   const [hasInk, setHasInk] = React.useState(false);
-  const [name, setName] = React.useState(typedNameDefault);
+  /**
+   * Null means "still following `typedNameDefault`"; a string means the user typed their own.
+   *
+   * Seeding state once at mount was the bug the client reported: the counter-sign page asks for
+   * the name in a field ABOVE the pad, so it is empty at mount and arrives keystroke by keystroke
+   * afterwards, and the pad never saw any of it. Tracking the prop is the same idea the initials
+   * already used, applied one level up, rather than a second mechanism bolted on beside it.
+   */
+  const [nameOverride, setNameOverride] = React.useState<string | null>(null);
   /** Null means "still derived from the name"; a string means the user typed their own. */
   const [initialsOverride, setInitialsOverride] = React.useState<string | null>(null);
   const [coords, setCoords] = React.useState<{ lat: number; lng: number } | null>(null);
 
+  const name = nameOverride ?? typedNameDefault;
   const initials = initialsOverride ?? deriveInitials(name);
   const activeText = mode === 'initials' ? initials : name;
   const hasContent = mode === 'draw' ? hasInk : activeText.trim().length > 0;
@@ -318,7 +355,9 @@ export function SignaturePad({
     strokesRef.current = [];
     activePointerRef.current = null;
     setHasInk(false);
-    if (mode === 'type') setName('');
+    // An EMPTY override, not a reset to null: clearing has to leave the field empty, and a null
+    // override would spring straight back to whatever name the caller is still passing down.
+    if (mode === 'type') setNameOverride('');
     if (mode === 'initials') setInitialsOverride('');
     // Strokes live in a ref, so clearing a drawing changes nothing `paint` depends on and the
     // layout effect will not fire. Repaint by hand.
@@ -343,7 +382,10 @@ export function SignaturePad({
   const metadata = (
     <div className="grid gap-3 sm:grid-cols-2">
       <MetaRow label="Signed at" value={value?.signedAt ? formatDateTimeInMalaysia(value.signedAt) : null} />
-      <MetaRow label="GPS location" value={formatCoordinate(value?.gpsLat ?? null, value?.gpsLng ?? null)} />
+      <MetaRow
+        label="GPS location"
+        value={formatCoordinate(value?.gpsLat ?? null, value?.gpsLng ?? null, value?.gpsPlace)}
+      />
       {extraMetadata?.map((row) => (
         <MetaRow key={row.label} label={row.label} value={row.value} />
       ))}
@@ -424,7 +466,9 @@ export function SignaturePad({
               disabled={disabled}
               autoComplete="name"
               placeholder="As it should read on the document"
-              onChange={(event) => setName(event.target.value)}
+              // Follows the caller's name until the signer types here, and their version then
+              // survives a later change to the prop rather than being silently overwritten.
+              onChange={(event) => setNameOverride(event.target.value)}
             />
           </TabsContent>
 
@@ -463,7 +507,12 @@ export function SignaturePad({
           onPointerCancel={endStroke}
         />
 
-        <MetaRow label="GPS location" value={formatCoordinate(coords?.lat ?? null, coords?.lng ?? null)} />
+        {/* Coordinates only while capturing: nothing is recorded yet, so there is no server-
+            resolved place to show, and the browser must not invent one from a table of its own. */}
+        <MetaRow
+          label="GPS location"
+          value={formatCoordinate(coords?.lat ?? null, coords?.lng ?? null)}
+        />
       </CardContent>
 
       <CardFooter className="justify-end gap-2.5 py-3">

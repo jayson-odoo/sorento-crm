@@ -35,7 +35,19 @@ function addressLines(address: string | null): string[] {
     .filter((line) => line.length > 0);
 }
 
-export function QuotationDocumentHeader({ document }: { document: QuotationDocument }) {
+export function QuotationDocumentHeader({
+  document,
+  liveGrandTotal = null,
+}: {
+  document: QuotationDocument;
+  /**
+   * The total as the screen currently stands, including line edits the user has typed but not
+   * yet saved. Optional and null by default: `document.grand_total` is the server's figure, and
+   * it only moves on a refetch, so a header reading it alone sits still while the table under it
+   * changes - the number the user is watching disagrees with the number they are editing.
+   */
+  liveGrandTotal?: string | null;
+}) {
   const lines = addressLines(document.recipient_address_snapshot);
   // `formatDateInMalaysia` answers '' on anything it cannot read, and a blank where a date
   // belongs reads as a rendering fault rather than as "no date yet".
@@ -75,11 +87,14 @@ export function QuotationDocumentHeader({ document }: { document: QuotationDocum
           <Field label="Date" value={docDate || '-'} />
           {/* The total belongs with the refs, not beside the buttons in the page header. It is a
               FACT about the document, the same kind as its date, and the client asked for it here.
-              Up in the header it competed with the primary action for the eye. */}
+              Up in the header it competed with the primary action for the eye.
+
+              The live figure wins whenever there is one: what the reader is owed is the total of
+              what is ON THE SCREEN, not the total of what was last saved. */}
           <div className="flex gap-2 border-t border-border pt-2 text-sm">
             <span className="w-20 shrink-0 text-muted-foreground">Total</span>
             <span className="font-semibold tabular-nums">
-              {formatMyrExact(document.grand_total)}
+              {formatMyrExact(liveGrandTotal ?? document.grand_total)}
             </span>
           </div>
         </div>

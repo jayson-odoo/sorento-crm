@@ -49,6 +49,13 @@ export type QuotationSignatureRecord = {
   /** Decimal strings, or null when the browser refused. Shown as `-`, never guessed. */
   gps_lat: string | null;
   gps_lng: string | null;
+  /**
+   * The nearest known town to those coordinates, e.g. "Kajang, Selangor". Resolved by the backend
+   * from one offline table it shares with the PDF renderer, so this screen and the printed
+   * document cannot disagree about where somebody signed. Null when nothing known is near enough
+   * to name honestly, in which case the coordinates are shown alone.
+   */
+  gps_place?: string | null;
 };
 
 export type QuotationDocument = {

@@ -13,6 +13,7 @@ import type {
   ProductApiResponse,
   ProductDetail,
   ProductVariantRef,
+  ProductLineRef,
   PriceHistory,
 } from '../types/product.types';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
@@ -241,6 +242,54 @@ export async function resetVariantAuto(productId: string): Promise<ProductDetail
   }
 
   return response.json();
+}
+
+/**
+ * The same `/select` rows, keeping the fields a picked product decides for the line it lands on.
+ *
+ * `getProductsForVariantSelect` below narrows every row to a code and a name, which is all a
+ * variant picker needs. A quotation line needs the record itself: choosing a product there has
+ * to answer the description, the brand, the unit and the list price beside it, and a second
+ * round trip per pick to fetch what the dropdown was already holding would be latency for
+ * nothing. The endpoint returns the whole product row, so this mapper simply keeps more of it.
+ */
+export async function getProductsForLineSelect(
+  query?: string,
+): Promise<ProductLineRef[]> {
+  const queryParams = new URLSearchParams(query ? { query } : {});
+  const response = await apiFetch(
+    `/api/v1/master-data/products/select?${queryParams.toString()}`,
+    {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to fetch products'));
+  }
+
+  const body = await response.json();
+  const rows: Array<{
+    id: string;
+    product_code: string;
+    product_name: string;
+    description?: string | null;
+    brand_id?: string | null;
+    base_uom_id?: string | null;
+    list_price?: number | string | null;
+  }> = body?.data ?? [];
+  return rows.map((p) => ({
+    id: p.id,
+    product_code: p.product_code,
+    product_name: p.product_name,
+    description: p.description ?? null,
+    brand_id: p.brand_id ?? null,
+    base_uom_id: p.base_uom_id ?? null,
+    // Left as the STRING the API sent. A price that becomes a number here comes back out of
+    // `String(...)` as `1250` or `392.85000000000002`, and the line endpoints take decimals.
+    list_price: p.list_price === null || p.list_price === undefined ? null : String(p.list_price),
+  }));
 }
 
 /**

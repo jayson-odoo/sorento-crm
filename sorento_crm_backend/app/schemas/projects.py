@@ -10,7 +10,11 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
+
+# A pure, dependency-free lookup table (no DB, no network), so a schema importing it introduces
+# no cycle. It lives in services because the PDF renderer needs the same answer.
+from app.services import geo_places
 
 # --------------------------------------------------------------------- parties
 
@@ -1578,6 +1582,22 @@ class QuotationSignatureResponse(BaseModel):
     # Null when the browser refused. The screen shows "-" rather than hiding the field.
     gps_lat: Optional[Decimal] = None
     gps_lng: Optional[Decimal] = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def gps_place(self) -> Optional[str]:
+        """`"Kajang, Selangor"`: the nearest known town to the coordinates, or None.
+
+        Derived here rather than stored, so it is one offline lookup shared by every surface. The
+        PDF calls ``geo_places`` directly and the frontend consumes this field; giving the browser
+        its own copy of the place table would let the screen and the document drift apart on where
+        somebody signed. Null whenever nothing known is close enough to name honestly, in which
+        case the screen shows the coordinates alone.
+
+        The coordinates themselves are never replaced by this. They are the evidence; this is the
+        convenience.
+        """
+        return geo_places.place_label(self.gps_lat, self.gps_lng)
 
 
 # Both refer to the signature above by name, so they cannot be built until here.

@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   Project,
@@ -47,10 +47,40 @@ vi.mock('../../_shared/services/projectService', async (importOriginal) => {
   };
 });
 
-// The product picker hits the shared products `/select` endpoint when it opens. These tests
-// do not exercise the dropdown, so the fetch is stubbed rather than the component replaced.
+// The product picker hits the shared products `/select` endpoint when it opens. The rows it
+// returns are the ones a pick has to fill the line from, so the fetch is stubbed rather than
+// the component replaced.
+const PRODUCTS = [
+  {
+    id: 'p9',
+    product_code: 'SRT-BASIN-02',
+    product_name: 'Counter basin',
+    description: 'Vitreous china counter basin',
+    brand_id: 'b1',
+    base_uom_id: 'u1',
+    list_price: '560.00',
+  },
+];
+const getProductsForLineSelect = vi.fn(async () => PRODUCTS);
+
 vi.mock('@/app/(protected)/master-data-management/products/services/productService', () => ({
+  getProductsForLineSelect: () => getProductsForLineSelect(),
   getProductsForVariantSelect: vi.fn(async () => []),
+}));
+
+// Master data behind the fill: the line snapshots a brand NAME and a unit CODE, so both ids
+// have to resolve before anything lands on a row. Both hooks are cached-forever queries in
+// real life; here they are answered outright so a fill is deterministic.
+vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query', () => ({
+  useBrandSelectQuery: () => ({ data: [{ id: 'b1', brand_name: 'SORENTO' }] }),
+}));
+vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query', () => ({
+  useUOMSelectQuery: () => ({
+    data: [
+      { id: 'u1', uom_code: 'PCS', uom_name: 'Pieces' },
+      { id: 'u2', uom_code: 'SET', uom_name: 'Sets' },
+    ],
+  }),
 }));
 
 import { QuotationVersionEditor } from './QuotationVersionEditor';
@@ -119,15 +149,34 @@ const VERSIONS = [
   version({ id: 'v2', version_no: 2, is_current: true, total_amount: '9000.00' }),
 ];
 
-function renderEditor(overrides: Partial<Project> = {}) {
+function renderEditor(
+  overrides: Partial<Project> = {},
+  onTotalChange?: (total: string) => void,
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <QuotationVersionEditor project={project(overrides)} quotation={QUOTATION} />
+      <QuotationVersionEditor
+        project={project(overrides)}
+        quotation={QUOTATION}
+        onTotalChange={onTotalChange}
+      />
     </QueryClientProvider>,
   );
+}
+
+/** What the table's footer says right now, add buttons and all. */
+function footerText(): string {
+  return screen.getByRole('table').querySelector('tfoot')?.textContent ?? '';
+}
+
+/** The ITEM cell of every LINE row, skipping the section headings that span the table. */
+function itemNumbers(): (string | null | undefined)[] {
+  return Array.from(screen.getByRole('table').querySelectorAll('tbody tr'))
+    .filter((tr) => !tr.querySelector('td[colspan]'))
+    .map((tr) => tr.querySelector('td')?.textContent);
 }
 
 beforeEach(() => {
@@ -255,7 +304,6 @@ describe('QuotationVersionEditor', () => {
   it('holds the printed columns as cells, and sends every one of them back', async () => {
     listQuotationLines.mockResolvedValue([
       line({
-        item_label: 'A',
         brand: 'SORENTO',
         technical_spec: 'Rimless, 4/2.6L dual flush',
         complete_set: 'c/w seat cover',
@@ -265,8 +313,9 @@ describe('QuotationVersionEditor', () => {
     renderEditor();
 
     // What the server sent is on screen, under the name the RESPONSE uses for it.
-    expect(await screen.findByRole('textbox', { name: 'Item on SRT-WC-01' })).toHaveValue('A');
-    expect(screen.getByRole('textbox', { name: 'Brand on SRT-WC-01' })).toHaveValue('SORENTO');
+    expect(
+      await screen.findByRole('textbox', { name: 'Brand on SRT-WC-01' }),
+    ).toHaveValue('SORENTO');
     expect(screen.getByRole('textbox', { name: 'Tech spec on SRT-WC-01' })).toHaveValue(
       'Rimless, 4/2.6L dual flush',
     );
@@ -283,11 +332,13 @@ describe('QuotationVersionEditor', () => {
     // The REQUEST calls the brand `brand_snapshot` while the response calls it `brand`. The
     // asymmetry is the API's, and the editor honours it rather than sending its own name.
     expect(updateQuotationLine.mock.calls[0][2]).toMatchObject({
-      item_label: 'A',
       brand_snapshot: 'MOCHA',
       technical_spec: 'Rimless, 4/2.6L dual flush',
       complete_set: 'c/w seat cover',
     });
+    // The item number is the row's position, so there is nothing to send: a stored label
+    // could only ever disagree with what is printed.
+    expect(updateQuotationLine.mock.calls[0][2]).not.toHaveProperty('item_label');
   });
 
   it('prints the words on a rate-only line, and leaves it out of the footer sum', async () => {
@@ -360,21 +411,29 @@ describe('QuotationVersionEditor', () => {
     expect(bandRow?.nextElementSibling).toBe(lineRow);
   });
 
-  it('starts a band on a line that had none', async () => {
+  it('opens a section from the footer, beside adding a line', async () => {
     renderEditor();
 
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Section heading on SRT-WC-01' }),
-    );
-    const heading = await screen.findByRole('textbox', {
-      name: 'Section heading on SRT-WC-01',
-    });
-    fireEvent.change(heading, { target: { value: 'OPTIONAL ITEMS FOR OKU TOILET' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save SRT-WC-01' }));
+    // Two buttons, side by side, where "Add a line" already was. The per-row icon that used to
+    // turn a line into a heading is gone: the client called it counterintuitive.
+    expect(await screen.findByRole('button', { name: 'Add a line' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Add a section' }));
 
-    await waitFor(() => expect(updateQuotationLine).toHaveBeenCalledTimes(1));
-    expect(updateQuotationLine.mock.calls[0][2]).toMatchObject({
+    const heading = await screen.findByRole('textbox', {
+      name: 'Section heading on line 2',
+    });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    fireEvent.change(heading, { target: { value: 'OPTIONAL ITEMS FOR OKU TOILET' } });
+    // The line under the heading is ready to fill in: a section IS a line.
+    fireEvent.change(screen.getByRole('textbox', { name: 'Description on line 2' }), {
+      target: { value: 'Grab bar' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save line 2' }));
+
+    await waitFor(() => expect(createQuotationLine).toHaveBeenCalledTimes(1));
+    expect(createQuotationLine.mock.calls[0][1]).toMatchObject({
       band_label: 'OPTIONAL ITEMS FOR OKU TOILET',
+      description_snapshot: 'Grab bar',
     });
   });
 
@@ -420,7 +479,10 @@ describe('QuotationVersionEditor', () => {
     const qty = await screen.findByRole('textbox', { name: 'Qty on SRT-WC-01' });
     fireEvent.change(qty, { target: { value: '3' } });
 
-    expect(screen.getByText('RM 2,700.00')).toBeInTheDocument();
+    // In the ROW's own Total cell. The footer says the same figure now that it tracks the
+    // drafts too, so this pins where the number is rather than that it exists somewhere.
+    const body = screen.getByRole('table').querySelector('tbody') as HTMLElement;
+    expect(within(body).getByText('RM 2,700.00')).toBeInTheDocument();
     expect(updateQuotationLine).not.toHaveBeenCalled();
   });
 
@@ -442,7 +504,6 @@ describe('QuotationVersionEditor', () => {
       notes: null,
       // Every printed column travels with the save, whether or not it was typed into: a body
       // that omitted them would leave the document's own fields behind on an unrelated edit.
-      item_label: null,
       brand_snapshot: null,
       technical_spec: null,
       complete_set: null,
@@ -473,7 +534,6 @@ describe('QuotationVersionEditor', () => {
       uom: null,
       unit_type: null,
       notes: null,
-      item_label: null,
       brand_snapshot: null,
       technical_spec: null,
       complete_set: null,
@@ -501,6 +561,117 @@ describe('QuotationVersionEditor', () => {
     expect(await screen.findByText('Needed on an off-catalog line')).toBeInTheDocument();
     expect(description).toHaveAttribute('aria-invalid', 'true');
     expect(createQuotationLine).not.toHaveBeenCalled();
+  });
+
+  it('fills the line from the product that was picked', async () => {
+    renderEditor();
+
+    fireEvent.click(await screen.findByRole('combobox', { name: 'Product on SRT-WC-01' }));
+    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+
+    // One decision answers the rest of the row, off the product record rather than off memory.
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: 'Description on SRT-WC-01' })).toHaveValue(
+        'Vitreous china counter basin',
+      ),
+    );
+    expect(screen.getByRole('textbox', { name: 'Brand on SRT-WC-01' })).toHaveValue('SORENTO');
+    expect(screen.getByRole('combobox', { name: 'UOM on SRT-WC-01' })).toHaveTextContent('PCS');
+    // And the list price beside the unit price is the picked product's, at once: reading the
+    // saved row instead is what left "List RM 0.00" next to a real product.
+    expect(screen.getByText('List RM 560.00')).toBeInTheDocument();
+    // Nothing was saved by picking: it is a draft edit like any other.
+    expect(updateQuotationLine).not.toHaveBeenCalled();
+  });
+
+  it('lets the picked product overwrite a description somebody typed', async () => {
+    // The client chose predictability: one product means one set of fields, every time,
+    // including over an edit made before the re-pick. The cost was stated and accepted.
+    renderEditor();
+
+    const description = await screen.findByRole('textbox', {
+      name: 'Description on SRT-WC-01',
+    });
+    fireEvent.change(description, { target: { value: 'Wording agreed with the QS' } });
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Product on SRT-WC-01' }));
+    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: 'Description on SRT-WC-01' })).toHaveValue(
+        'Vitreous china counter basin',
+      ),
+    );
+  });
+
+  it('numbers the items 1, 2, 3, 4 straight through the sections', async () => {
+    // Continuous within the SCOPE, not restarted per heading: that is how the customer's own
+    // bill of quantities reads, and a per-section restart is the easy thing to write by
+    // accident. Two sections of two lines read 1, 2 then 3, 4.
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', band_label: 'BILL NO 3', sort_order: 0 }),
+      line({ id: 'l2', product_code: 'A-2', sort_order: 10 }),
+      line({ id: 'l3', product_code: 'B-1', band_label: 'OPTIONAL ITEMS', sort_order: 20 }),
+      line({ id: 'l4', product_code: 'B-2', sort_order: 30 }),
+    ]);
+
+    renderEditor();
+
+    await screen.findByRole('textbox', { name: 'Description on A-1' });
+    expect(itemNumbers()).toEqual(['1', '2', '3', '4']);
+    // Nothing to type into: the number is the row's position, not a field.
+    expect(screen.queryByRole('textbox', { name: 'Item on A-1' })).toBeNull();
+  });
+
+  it('moves the footer total while a quantity is typed, before anything is saved', async () => {
+    renderEditor();
+
+    const qty = await screen.findByRole('textbox', { name: 'Qty on SRT-WC-01' });
+    expect(footerText()).toContain('RM 9,000.00');
+
+    fireEvent.change(qty, { target: { value: '3' } });
+
+    // The bottom line follows the cells above it. Off the STRINGS, to the cent.
+    expect(footerText()).toContain('RM 2,700.00');
+    expect(updateQuotationLine).not.toHaveBeenCalled();
+  });
+
+  it('drops a line out of the live total the moment it is marked rate only', async () => {
+    listQuotationLines.mockResolvedValue([
+      line(),
+      line({
+        id: 'l2',
+        product_code: 'SRT-BIDET-09',
+        unit_price: '500.00',
+        quantity: '1.00',
+        line_total: '500.00',
+      }),
+    ]);
+
+    renderEditor();
+
+    await screen.findByRole('textbox', { name: 'Qty on SRT-BIDET-09' });
+    expect(footerText()).toContain('RM 9,500.00');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Rate only on SRT-BIDET-09' }));
+
+    // The customer is still shown the rate; nobody adds it up. Same rule as the PDF.
+    expect(footerText()).toContain('RM 9,000.00');
+    expect(updateQuotationLine).not.toHaveBeenCalled();
+  });
+
+  it('hands the same live total to a header outside the editor', async () => {
+    const onTotalChange = vi.fn();
+    renderEditor({}, onTotalChange);
+
+    const qty = await screen.findByRole('textbox', { name: 'Qty on SRT-WC-01' });
+    await waitFor(() => expect(onTotalChange).toHaveBeenCalledWith('9000.00'));
+
+    fireEvent.change(qty, { target: { value: '3' } });
+
+    // A decimal string, unformatted: the header decides how to print it, and the two totals
+    // cannot disagree because they are the same sum of the same drafts.
+    await waitFor(() => expect(onTotalChange).toHaveBeenLastCalledWith('2700.00'));
   });
 
   it('offers no write affordance to a reader', async () => {

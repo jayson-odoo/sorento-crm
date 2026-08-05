@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Check, Heading, Plus, StickyNote, Trash2 } from 'lucide-react';
+import { Check, Plus, StickyNote, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -65,13 +65,33 @@ export interface InlineLineColumn<TRow> {
    */
   resolveSelected?: (row: TRow | null, draft: InlineDraft) => SearchableSelectOption | undefined;
   /**
+   * `select` / `searchable-select`: the OTHER draft fields this option decides.
+   *
+   * Picking a catalogue item is one decision that answers five cells (its description, its
+   * brand, its unit, its list price), and re-typing them by hand is both work and a chance to
+   * disagree with the record. The column says what the option means; the table applies it
+   * (see `applyOptionFill`), so the rule is one rule rather than one per screen.
+   *
+   * Return every key the option speaks for, INCLUDING the ones it leaves blank: a key returned
+   * empty is how the previous choice's leftovers get cleared. Return `{}` (e.g. for a cleared
+   * selection) to leave the row exactly as it is.
+   */
+  onOptionSelected?: (
+    option: SearchableSelectOption | null,
+    draft: InlineDraft,
+  ) => InlineDraft;
+  /**
    * `derived`: recomputed from the live draft on every keystroke, never stored.
    *
    * A node rather than a string so a cell can say something that is not a number - a
    * rate-only line prints the words `rate only` where its total would be, and both a blank
    * and `RM 0.00` would be read as a fault rather than as a deliberate exclusion.
+   *
+   * `index` is the row's position in the table, so a column can BE the position: an item
+   * number is the row it sits on, not a string somebody types and has to renumber by hand
+   * after every insert.
    */
-  derive?: (draft: InlineDraft) => React.ReactNode;
+  derive?: (draft: InlineDraft, index: number) => React.ReactNode;
   /** Caps what can be typed, so a column with a server length limit cannot 422. */
   maxLength?: number;
   /** Per-cell shape check. A message marks the cell; it does not raise a toast. */
@@ -84,8 +104,12 @@ export interface InlineLineColumn<TRow> {
    * Same rule the shared DataGrid follows: a total belongs under the column it sums. Put beside
    * the version chips instead - "RM 1,805,907.02  Issued by ...  Opened ..." - it reads as one
    * more fact in a row of metadata, and nothing says WHICH column it totals.
+   *
+   * Handed the LIVE drafts, in row order, rather than the saved rows: a total that only moves
+   * after a save contradicts the cells above it while somebody is typing, and the first thing
+   * a person does with a quantity is check what it did to the bottom line.
    */
-  footer?: (rows: TRow[]) => React.ReactNode;
+  footer?: (drafts: InlineDraft[]) => React.ReactNode;
   /**
    * How the raw value reads when the table cannot be edited. An input must hold the
    * string the API wants (`900.00`), but a frozen version should still say `RM 900.00`.
@@ -108,6 +132,9 @@ export interface InlineRowDetail {
  * list, so a band cannot drift away from the lines it introduces: reorder, filter or
  * paginate the lines and the heading travels with the one that owns it. That is also why
  * the label lives on the line and not in a table of its own.
+ *
+ * Started from "Add a section" in the footer, beside "Add a line": a section IS a line that
+ * carries a heading, so both buttons do the same thing and only the caret lands differently.
  */
 export interface InlineBandRow {
   /** Draft field holding the heading. Non-empty means this line opens a section. */
@@ -142,9 +169,19 @@ export interface InlineLineTableProps<TRow> {
   readOnly?: boolean;
   isLoading?: boolean;
   addLabel?: string;
+  /** Only rendered when the table has a `band`. */
+  addSectionLabel?: string;
   /** Shown in place of rows when there are none. The header and the add row stay put. */
   emptyHint?: string;
   deleteDescription?: (row: TRow, index: number) => string;
+  /**
+   * Every row's live draft, in row order, whenever one of them changes.
+   *
+   * For a total that lives OUTSIDE the table (a document header, say). The table owns the
+   * drafts, so anything summing them has to be handed them - reading the server rows instead
+   * is what made the header disagree with the footer directly under it.
+   */
+  onDraftsChange?: (drafts: InlineDraft[]) => void;
 }
 
 interface RowState {
@@ -215,8 +252,10 @@ export function InlineLineTable<TRow>({
   readOnly = false,
   isLoading = false,
   addLabel = 'Add a line',
+  addSectionLabel = 'Add a section',
   emptyHint,
   deleteDescription,
+  onDraftsChange,
 }: InlineLineTableProps<TRow>) {
   const [states, setStates] = React.useState<Record<string, RowState>>({});
   const [newRowKeys, setNewRowKeys] = React.useState<string[]>([]);
@@ -226,8 +265,8 @@ export function InlineLineTable<TRow>({
   /**
    * Rows whose band editor is open although the heading is still empty.
    *
-   * A band cannot be started by typing into a row that has no heading yet, so the control
-   * beside the row opens an empty one. Left empty, it closes again when the caret leaves the
+   * A band cannot be started by typing into a row that has no heading yet, so "Add a section"
+   * appends a row with an empty one open. Left empty, it closes again when the caret leaves the
    * row: a mis-click should not strand a blank heading above a line.
    */
   const [bandOpen, setBandOpen] = React.useState<string[]>([]);
@@ -294,6 +333,19 @@ export function InlineLineTable<TRow>({
     });
   }, [getRowId, rows, toDraft]);
 
+  /** The rows as they are RIGHT NOW, in the order they are drawn. What a total must sum. */
+  const orderedDrafts = React.useMemo(
+    () =>
+      rowKeys
+        .map((key) => states[key]?.draft)
+        .filter((draft): draft is InlineDraft => Boolean(draft)),
+    [rowKeys, states],
+  );
+
+  React.useEffect(() => {
+    onDraftsChange?.(orderedDrafts);
+  }, [onDraftsChange, orderedDrafts]);
+
   const cellId = (rowKey: string, columnKey: string) => `${rowKey}::${columnKey}`;
 
   const focusCell = React.useCallback((rowKey: string, columnKey: string) => {
@@ -308,18 +360,43 @@ export function InlineLineTable<TRow>({
     return true;
   }, []);
 
+  /** Several fields of one row in one write, so a fill is one render and one undo step. */
+  const setDraftValues = React.useCallback((rowKey: string, patch: InlineDraft) => {
+    if (Object.keys(patch).length === 0) return;
+    setStates((previous) => {
+      const held = previous[rowKey];
+      if (!held) return previous;
+      return { ...previous, [rowKey]: { ...held, draft: { ...held.draft, ...patch } } };
+    });
+  }, []);
+
   const setDraftValue = React.useCallback(
     (rowKey: string, columnKey: string, value: string) => {
-      setStates((previous) => {
-        const held = previous[rowKey];
-        if (!held) return previous;
-        return {
-          ...previous,
-          [rowKey]: { ...held, draft: { ...held.draft, [columnKey]: value } },
-        };
-      });
+      setDraftValues(rowKey, { [columnKey]: value });
     },
-    [],
+    [setDraftValues],
+  );
+
+  /**
+   * What a picked option means for the rest of its row, applied as the option states it.
+   *
+   * THE RULE, decided by the client and deliberately blunt: the option WINS, every time. A
+   * re-pick resets every field it speaks for, over a hand-typed value included, and a key it
+   * returns empty is cleared. The alternative (keep what looks hand-edited) was put to them
+   * with its cost - one product means one set of fields, and picking it twice gives the same
+   * row both times - and they chose predictability over protecting an edit. The tradeoff is
+   * known and accepted: an edit made BEFORE a re-pick is lost. Do not quietly add a
+   * "preserve my edits" exception here; it would make the fill unexplainable at the desk.
+   */
+  const applyOptionFill = React.useCallback(
+    (rowKey: string, column: InlineLineColumn<TRow>, option: SearchableSelectOption | null) => {
+      const decide = column.onOptionSelected;
+      if (!decide) return;
+      const held = statesRef.current[rowKey];
+      if (!held) return;
+      setDraftValues(rowKey, decide(option, held.draft));
+    },
+    [setDraftValues],
   );
 
   /** Folds an empty band editor away once the caret has left the row that opened it. */
@@ -420,25 +497,41 @@ export function InlineLineTable<TRow>({
     [collectErrors, dropRow, emptyDraft, onCreate, onUpdate, rowByKey],
   );
 
-  const addRow = React.useCallback(() => {
-    const pending = activeRowKey.current;
-    if (pending) void commitRow(pending);
+  /**
+   * A new row at the bottom, with the caret in it.
+   *
+   * `withBand` is the ONLY difference between "Add a line" and "Add a section": a section is a
+   * line that carries a heading, so it is the same append with the heading editor open and the
+   * caret in it, and the line's own cells waiting underneath. Two buttons side by side beat the
+   * per-row control this replaced, which asked people to add a line first and then work out
+   * which icon on it turned that line into a heading.
+   */
+  const addRow = React.useCallback(
+    (options?: { withBand?: boolean }) => {
+      const pending = activeRowKey.current;
+      if (pending) void commitRow(pending);
 
-    nextNewId.current += 1;
-    const key = `${NEW_ROW_PREFIX}${nextNewId.current}`;
-    const draft = emptyDraft();
-    setStates((previous) => ({ ...previous, [key]: { draft, committed: draft } }));
-    setNewRowKeys((keys) => [...keys, key]);
+      nextNewId.current += 1;
+      const key = `${NEW_ROW_PREFIX}${nextNewId.current}`;
+      const draft = emptyDraft();
+      setStates((previous) => ({ ...previous, [key]: { draft, committed: draft } }));
+      setNewRowKeys((keys) => [...keys, key]);
 
-    // The caret belongs in the new row, not on the button that made it.
-    const first = editableColumns[0];
-    if (first) {
-      window.setTimeout(() => {
-        activeRowKey.current = key;
-        focusCell(key, first.key);
-      }, 0);
-    }
-  }, [commitRow, editableColumns, emptyDraft, focusCell]);
+      const openBand = Boolean(options?.withBand && band);
+      if (openBand) setBandOpen((keys) => [...keys, key]);
+
+      // The caret belongs in the new row, not on the button that made it: on the heading when
+      // that is what was asked for, otherwise on the row's first cell.
+      const target = openBand && band ? band.key : editableColumns[0]?.key;
+      if (target) {
+        window.setTimeout(() => {
+          activeRowKey.current = key;
+          focusCell(key, target);
+        }, 0);
+      }
+    },
+    [band, commitRow, editableColumns, emptyDraft, focusCell],
+  );
 
   /**
    * A row saves when focus lands on a DIFFERENT row, or leaves the table for good.
@@ -555,9 +648,9 @@ export function InlineLineTable<TRow>({
     setPendingDelete({ rowKey, row, index });
   };
 
-  // Sized for the buttons that actually render (remove, the save tick, and a note or a band
-  // control when the call site asks for one), or four icons would spill past a fixed 132.
-  const actionsWidth = 88 + (rowDetail ? 36 : 0) + (band ? 36 : 0);
+  // Sized for the buttons that actually render (remove, the save tick, and a note when the
+  // call site asks for one), or three icons would spill past a fixed 88.
+  const actionsWidth = 88 + (rowDetail ? 36 : 0);
   const totalWidth =
     columns.reduce((sum, column) => sum + column.width, 0) + (readOnly ? 0 : actionsWidth);
 
@@ -711,6 +804,7 @@ export function InlineLineTable<TRow>({
                               column={column}
                               row={row}
                               draft={held.draft}
+                              rowIndex={rowIndex}
                               cellId={cellId(rowKey, column.key)}
                               value={value}
                               invalid={Boolean(message)}
@@ -718,6 +812,9 @@ export function InlineLineTable<TRow>({
                               label={`${column.header} on ${label}`}
                               readOnly={readOnly}
                               onChange={(next) => setDraftValue(rowKey, column.key, next)}
+                              onOptionChange={(option) =>
+                                applyOptionFill(rowKey, column, option)
+                              }
                             />
                             {column.annotate?.(row, held.draft)}
                             {message && (
@@ -736,33 +833,6 @@ export function InlineLineTable<TRow>({
                     {!readOnly && (
                       <td className="px-2 py-1.5">
                         <div className="flex items-center justify-end gap-0.5">
-                          {band && (
-                            <Button
-                              type="button"
-                              mode="icon"
-                              variant="ghost"
-                              size="sm"
-                              aria-label={`${band.label} on ${label}`}
-                              aria-pressed={showBand}
-                              onClick={() => {
-                                setBandOpen((keys) =>
-                                  keys.includes(rowKey) ? keys : [...keys, rowKey],
-                                );
-                                // The heading row mounts in the same commit, so the caret can
-                                // only be put in it once it exists.
-                                window.setTimeout(() => {
-                                  activeRowKey.current = rowKey;
-                                  focusCell(rowKey, band.key);
-                                }, 0);
-                              }}
-                            >
-                              <Heading
-                                className={`size-3.5 ${
-                                  bandValue.trim() ? 'text-primary' : 'text-muted-foreground'
-                                }`}
-                              />
-                            </Button>
-                          )}
                           {rowDetail && (
                             <RowDetailPopover
                               detail={rowDetail}
@@ -821,7 +891,7 @@ export function InlineLineTable<TRow>({
                       style={{ width: column.width, minWidth: column.width }}
                       className={`px-2 py-2 ${column.align === 'end' ? 'text-end' : 'text-start'}`}
                     >
-                      {column.footer ? column.footer(rows) : null}
+                      {column.footer ? column.footer(orderedDrafts) : null}
                     </td>
                   ))}
                   {!readOnly && <td className="px-2 py-2" />}
@@ -830,16 +900,31 @@ export function InlineLineTable<TRow>({
               {!readOnly && (
                 <tr className="border-t border-border">
                   <td colSpan={columns.length + 1} className="px-2 py-1.5">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="text-primary hover:text-primary"
-                      onClick={addRow}
-                    >
-                      <Plus className="size-4" aria-hidden />
-                      {addLabel}
-                    </Button>
+                    {/* Side by side, and wrapping rather than overflowing at 375px. */}
+                    <div className="flex flex-wrap items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="text-primary hover:text-primary"
+                        onClick={() => addRow()}
+                      >
+                        <Plus className="size-4" aria-hidden />
+                        {addLabel}
+                      </Button>
+                      {band && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="text-primary hover:text-primary"
+                          onClick={() => addRow({ withBand: true })}
+                        >
+                          <Plus className="size-4" aria-hidden />
+                          {addSectionLabel}
+                        </Button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               )}
@@ -876,6 +961,7 @@ function InlineCell<TRow>({
   column,
   row,
   draft,
+  rowIndex,
   cellId,
   value,
   invalid,
@@ -883,10 +969,12 @@ function InlineCell<TRow>({
   label,
   readOnly,
   onChange,
+  onOptionChange,
 }: {
   column: InlineLineColumn<TRow>;
   row: TRow | null;
   draft: InlineDraft;
+  rowIndex: number;
   cellId: string;
   value: string;
   invalid: boolean;
@@ -894,13 +982,14 @@ function InlineCell<TRow>({
   label: string;
   readOnly: boolean;
   onChange: (value: string) => void;
+  onOptionChange: (option: SearchableSelectOption | null) => void;
 }) {
   const alignment = column.align === 'end' ? 'text-end tabular-nums' : '';
 
   if (column.kind === 'derived') {
     return (
       <span className={`block text-sm font-medium ${alignment}`}>
-        {column.derive?.(draft) ?? ''}
+        {column.derive?.(draft, rowIndex) ?? ''}
       </span>
     );
   }
@@ -938,6 +1027,7 @@ function InlineCell<TRow>({
           clearable
           value={value}
           onChange={onChange}
+          onOptionChange={onOptionChange}
           options={column.kind === 'select' ? column.options : undefined}
           fetchOptions={
             column.kind === 'searchable-select' ? column.fetchOptions : undefined

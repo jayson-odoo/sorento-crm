@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   QuotationDocument,
@@ -59,7 +59,21 @@ vi.mock('../../../../_shared/services/projectService', async (importOriginal) =>
   };
 });
 
+/**
+ * Stubbed so this file tests the WIRING and not the line editor, which owns its own suite. The
+ * stub does the one thing the wiring depends on: report a scope total the way the real editor
+ * does, off a button a test can press.
+ */
+vi.mock('../../../components/QuotationVersionEditor', () => ({
+  QuotationVersionEditor: ({ onTotalChange }: { onTotalChange?: (total: string) => void }) => (
+    <button type="button" onClick={() => onTotalChange?.('9000.00')}>
+      report a live total
+    </button>
+  ),
+}));
+
 import { QuotationDocumentClient } from './QuotationDocumentClient';
+import { QuotationDocumentHeader } from './QuotationDocumentHeader';
 
 function project(overrides: Partial<Project> = {}): Project {
   return {
@@ -138,6 +152,97 @@ beforeEach(() => {
   getProject.mockResolvedValue(project());
   listQuotations.mockResolvedValue([]);
   listQuotationIssues.mockResolvedValue([]);
+});
+
+/**
+ * The header total has the same defect the in-table total had: read straight off the server it
+ * sits still while the user edits a line, so the figure they are watching disagrees with the
+ * figure they are typing. It takes the live one whenever the screen has one.
+ */
+describe('QuotationDocumentClient header total', () => {
+  it('prefers the live total over the server one', () => {
+    render(
+      <QuotationDocumentHeader
+        document={quotationDocument({ grand_total: '235000.00' })}
+        liveGrandTotal="253420.50"
+      />,
+    );
+
+    expect(screen.getByText('RM 253,420.50')).toBeInTheDocument();
+    expect(screen.queryByText('RM 235,000.00')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the saved total when nothing live is on offer', () => {
+    render(<QuotationDocumentHeader document={quotationDocument({ grand_total: '235000.00' })} />);
+
+    expect(screen.getByText('RM 235,000.00')).toBeInTheDocument();
+  });
+
+  it('takes the figure the line editor reports and keeps the other scopes saved', async () => {
+    // Two scopes, only one of them open. The live figure replaces ITS saved total and nothing
+    // else, so the header reads 9,000.00 + 18,420.50 rather than the server's 253,420.50.
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        grand_total: '253420.50',
+        scopes: [
+          {
+            id: 'q1',
+            scope_label: 'Townhouse',
+            sort_order: 1,
+            outcome: 'open',
+            current_version_id: 'v1',
+            current_version_no: 1,
+            line_count: 2,
+            scope_total: '235000.00',
+          },
+          {
+            id: 'q2',
+            scope_label: 'Guard house',
+            sort_order: 2,
+            outcome: 'open',
+            current_version_id: 'v2',
+            current_version_no: 1,
+            line_count: 1,
+            scope_total: '18420.50',
+          },
+        ],
+      }),
+    );
+    listQuotations.mockResolvedValue([
+      {
+        id: 'q1',
+        project_id: 'p1',
+        scope_label: 'Townhouse',
+        outcome: 'open',
+        version_count: 1,
+        below_floor_count: 0,
+        non_standard_count: 0,
+        line_count: 2,
+      },
+    ]);
+    renderScreen();
+
+    // The server's own total until anything moves.
+    expect(await screen.findByText('RM 253,420.50')).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'report a live total' }));
+
+    await waitFor(() => expect(screen.getByText('RM 27,420.50')).toBeInTheDocument());
+    expect(screen.queryByText('RM 253,420.50')).not.toBeInTheDocument();
+  });
+
+  it('renders every field of the letterhead, with a dash where there is no value', () => {
+    // Never a hidden section: a document with no Your Ref is a normal document, not a fault.
+    render(
+      <QuotationDocumentHeader
+        document={quotationDocument({ your_ref: null, attn_name: null, grand_total: '0.00' })}
+      />,
+    );
+
+    expect(screen.getByText('Your Ref')).toBeInTheDocument();
+    expect(screen.getByText('Attn:')).toBeInTheDocument();
+    expect(screen.getByText('RM 0.00')).toBeInTheDocument();
+  });
 });
 
 describe('QuotationDocumentClient signing gate', () => {

@@ -4,8 +4,8 @@
  * What is pinned here is the BEHAVIOUR the client asked for, not the markup: a row is added
  * inline and takes the caret, a cell is edited where it sits, Tab walks and rolls onto the
  * next row, Enter drops down, Escape puts one cell back, the total moves while a quantity is
- * typed, a row that cannot be saved marks the cell at fault instead of vanishing, and
- * removing a row asks first.
+ * typed, picking an option fills the rest of the row, a row that cannot be saved marks the
+ * cell at fault instead of vanishing, and removing a row asks first.
  *
  * Values stay STRINGS end to end: what is typed is what the caller is handed.
  */
@@ -519,16 +519,55 @@ describe('InlineLineTable', () => {
     );
   });
 
-  it('carries the band heading to the server with the line that owns it', async () => {
-    renderTable({ band: { key: 'band_label', label: 'Section heading' } });
+  it('re-titles a section by typing in the heading it already shows', async () => {
+    // Editing a section is clicking its heading, which is a cell like any other. There is no
+    // control to find first: the heading IS the affordance.
+    renderTable({
+      toDraft: (item) => ({ ...toDraft(item), band_label: 'BILL NO 3' }),
+      band: { key: 'band_label', label: 'Section heading' },
+    });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Section heading on pcs' }));
-    const heading = await screen.findByRole('textbox', { name: 'Section heading on pcs' });
+    const heading = screen.getByRole('textbox', { name: 'Section heading on pcs' });
     fireEvent.change(heading, { target: { value: 'OPTION' } });
 
     fireEvent.click(screen.getByRole('button', { name: 'Save pcs' }));
     await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(1));
     expect(onUpdate.mock.calls[0][1]).toMatchObject({ band_label: 'OPTION' });
+  });
+
+  it('offers adding a line and adding a section side by side', () => {
+    renderTable({ band: { key: 'band_label', label: 'Section heading' } });
+
+    const add = screen.getByRole('button', { name: 'Add a line' });
+    const addSection = screen.getByRole('button', { name: 'Add a section' });
+    // The per-row icon that used to turn a line into a heading is gone: the client called it
+    // counterintuitive, and a row cannot advertise what it might become.
+    expect(screen.queryByRole('button', { name: 'Section heading on pcs' })).toBeNull();
+    expect(add.parentElement).toBe(addSection.parentElement);
+  });
+
+  it('adds a section as a line with its heading open and holding the caret', async () => {
+    renderTable({ band: { key: 'band_label', label: 'Section heading' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add a section' }));
+
+    const heading = await screen.findByRole('textbox', { name: 'Section heading on line 2' });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    // The line underneath is ready too: a section is a line that carries a heading, not a
+    // record of its own.
+    expect(screen.getByRole('textbox', { name: 'Description on line 2' })).toBeInTheDocument();
+
+    fireEvent.change(heading, { target: { value: 'OPTIONAL ITEMS' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Description on line 2' }), {
+      target: { value: 'Grab bar' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save line 2' }));
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+    expect(onCreate.mock.calls[0][0]).toMatchObject({
+      band_label: 'OPTIONAL ITEMS',
+      description: 'Grab bar',
+    });
   });
 
   it('folds an empty band editor away when the caret leaves the row', async () => {
@@ -537,14 +576,140 @@ describe('InlineLineTable', () => {
       band: { key: 'band_label', label: 'Section heading' },
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Section heading on pcs' }));
-    await screen.findByRole('textbox', { name: 'Section heading on pcs' });
+    fireEvent.click(screen.getByRole('button', { name: 'Add a section' }));
+    await screen.findByRole('textbox', { name: 'Section heading on line 3' });
 
     // A mis-click should not strand a blank heading above a line for the rest of the session.
     cell('Qty on set').focus();
     await waitFor(() =>
-      expect(screen.queryByRole('textbox', { name: 'Section heading on pcs' })).toBeNull(),
+      expect(screen.queryByRole('textbox', { name: 'Section heading on line 3' })).toBeNull(),
     );
+  });
+
+  it('fills the rest of the row from the option that was picked', async () => {
+    // One decision, five cells. The column says what the option means; the table writes it.
+    renderTable({
+      columns: columns().map((column) =>
+        column.key === 'code'
+          ? {
+              ...column,
+              onOptionSelected: (option): InlineDraft =>
+                option
+                  ? { description: `Sold in ${option.label}`, unit_price: '42.00' }
+                  : {},
+            }
+          : column,
+      ),
+    });
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Unit on pcs' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Sets' }));
+
+    await waitFor(() =>
+      expect(cell('Description on pcs')).toHaveValue('Sold in Sets'),
+    );
+    expect(cell('Unit price on pcs')).toHaveValue('42.00');
+    // Nothing was saved: the fill is a draft edit like any other keystroke.
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
+  it('lets a picked option overwrite what somebody typed, which is the client\'s rule', async () => {
+    // The tradeoff was put to the client and chosen: one product means one set of fields, and
+    // picking it twice gives the same row both times. An edit made before a re-pick is lost.
+    renderTable({
+      columns: columns().map((column) =>
+        column.key === 'code'
+          ? {
+              ...column,
+              onOptionSelected: (option): InlineDraft =>
+                option ? { description: `Sold in ${option.label}` } : {},
+            }
+          : column,
+      ),
+    });
+
+    fireEvent.change(cell('Description on pcs'), { target: { value: 'Hand-written wording' } });
+    fireEvent.click(screen.getByRole('combobox', { name: 'Unit on pcs' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Sets' }));
+
+    await waitFor(() => expect(cell('Description on pcs')).toHaveValue('Sold in Sets'));
+  });
+
+  it('numbers a derived column by its position, and closes the gap after a delete', () => {
+    // An item number IS the row it sits on. Nobody renumbers 52 lines by hand after an insert.
+    const numbered: InlineLineColumn<Row>[] = [
+      { key: 'no', header: 'Item', width: 60, kind: 'derived', derive: (_d, index) => index + 1 },
+      ...columns(),
+    ];
+    const three = [row(), row({ id: 'r2', code: 'set' }), row({ id: 'r3', code: 'set' })];
+    const { rerender } = renderTable({ rows: three, columns: numbered });
+
+    const numbersInColumn = () =>
+      Array.from(screen.getByRole('table').querySelectorAll('tbody tr')).map(
+        (tr) => tr.querySelector('td')?.textContent,
+      );
+
+    expect(numbersInColumn()).toEqual(['1', '2', '3']);
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    rerender(
+      <QueryClientProvider client={client}>
+        <InlineLineTable<Row>
+          rows={[three[0], three[2]]}
+          getRowId={(item) => item.id}
+          columns={numbered}
+          toDraft={toDraft}
+          emptyDraft={emptyDraft}
+          onCreate={onCreate}
+          onUpdate={onUpdate}
+          onDelete={onDelete}
+          describeRow={(item, index) => item?.code ?? `line ${index + 1}`}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(numbersInColumn()).toEqual(['1', '2']);
+  });
+
+  it('sums its footer from the live drafts, not from the saved rows', () => {
+    const withFooter = columns().map((column) =>
+      column.key === 'total'
+        ? {
+            ...column,
+            footer: (drafts: InlineDraft[]) =>
+              `RM ${drafts
+                .reduce(
+                  (sum, draft) =>
+                    sum + Number(draft.quantity || 0) * Number(draft.unit_price || 0),
+                  0,
+                )
+                .toFixed(2)}`,
+          }
+        : column,
+    );
+    renderTable({ columns: withFooter });
+
+    const foot = () => screen.getByRole('table').querySelector('tfoot')?.textContent ?? '';
+    expect(foot()).toContain('RM 1800.00');
+
+    fireEvent.change(cell('Qty on pcs'), { target: { value: '3' } });
+
+    // Nothing was saved and nothing was refetched: the bottom line follows the cells above it.
+    expect(foot()).toContain('RM 2700.00');
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
+  it('hands the live drafts to a total that lives outside the table', () => {
+    const onDraftsChange = vi.fn();
+    renderTable({ onDraftsChange });
+
+    fireEvent.change(cell('Qty on pcs'), { target: { value: '7' } });
+
+    const last = onDraftsChange.mock.calls.at(-1)?.[0] as InlineDraft[];
+    expect(last).toHaveLength(1);
+    expect(last[0]).toMatchObject({ quantity: '7', unit_price: '900.00' });
   });
 
   it('offers nothing to type into when it cannot be edited', () => {
