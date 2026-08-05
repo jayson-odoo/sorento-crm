@@ -43,6 +43,7 @@ from app.models.procurement import (
 )
 from app.models.product import Product
 from app.models.resources import Attachment
+from app.services.clearance_entitlement import CLEARANCE_KEYS
 from app.services.identifier_resolver import resolve_identifier
 from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
 
@@ -564,6 +565,11 @@ class IncomingStockService:
                 InboundShipment.shipment_number,
                 InboundShipment.shipping_container_number,
                 InboundShipment.estimated_arrival_date,
+                # Clearance columns are selected explicitly. This query returns
+                # column tuples, not ORM instances, so a getattr on a column that
+                # was not selected reads as None - which the entitlement gate would
+                # then happily pass through as "not reached yet".
+                *(getattr(InboundShipment, key) for key in CLEARANCE_KEYS),
             )
             .join(
                 InboundShipmentLine,
@@ -657,6 +663,10 @@ class IncomingStockService:
                 "shipment_number": s.shipment_number,
                 "shipping_container_number": s.shipping_container_number,
                 "estimated_arrival_date": s.estimated_arrival_date,
+                # Container clearance. Present for every caller HERE and stripped
+                # by the entitlement gate at the route, so the gate has exactly one
+                # implementation instead of one per query path.
+                **{key: getattr(s, key, None) for key in CLEARANCE_KEYS},
                 "attachment": attachment_map.get(str(s.id)),
                 "lines": lines_by_ship.get(str(s.id), []),
             }

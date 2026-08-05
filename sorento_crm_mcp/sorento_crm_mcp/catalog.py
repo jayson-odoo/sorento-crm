@@ -521,7 +521,14 @@ CATALOG: tuple[ToolSpec, ...] = (
             "SPO numbers, or internal IDs. REQUIRED: at least ONE narrowing filter (product_ids / "
             "shipment_ids / supplier_ids / eta_from / eta_to) or the tool returns an empty page.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
-            "results to that contact's company/companies; omit both for all-company results."
+            "results to that contact's company/companies; omit both for all-company results.\n\n"
+            "CLEARANCE DATES (eta_delay_date, inspection_date, approval_date, gatepass_date, "
+            "loading/etc/etd, liner_code, forwarders, consignee, free_days_available, coa_permit_no) "
+            "are ENTITLEMENT-GATED server-side. They appear only when the caller may see them: for a "
+            "contact question, pass `contact_id` and the contact must hold the "
+            "`container_status_enquiries` grant. When not entitled the keys are ABSENT from the "
+            "response - absent means 'not permitted', it does NOT mean 'not reached yet'. Never tell "
+            "a user a date is unknown or pending because a key is missing; say you cannot share it."
         ),
         "/api/v1/incoming-stock/list",
         (),

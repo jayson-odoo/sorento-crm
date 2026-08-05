@@ -187,6 +187,21 @@ revised ETA, then check CIDB ePermit for inspection and approval dates, then typ
 
 ### C. Answering (journey: contact 1-3)
 
+- **C0.** Clearance fields are served by the EXISTING `/api/v1/incoming-stock/list` and
+  `crm_incoming_stock_list`. No new endpoint, no new tool, no new domain.
+- **C1.** Entitlement is decided **server-side** (decision D38). With a `contact_id`, the contact
+  must hold the `container_status_enquiries` grant; without one, the staff user's role must hold
+  `procurement.packing_lists.view_clearance`. The API key's own privileges never launder a contact's
+  question into a privileged answer.
+- **C2.** An unentitled caller's response is **byte-identical to today's** - the clearance keys are
+  absent, not null. Asserted by a regression test, because null reads as "not reached yet" to
+  anything consuming the response, an LLM included.
+- **C3.** `estimated_arrival_date` is NOT gated: it is the public ETA those agents already read.
+- **C4.** Fails closed on an unresolvable caller, an inactive agent, a revoked or expired grant, or a
+  lookup that raises.
+- **C5.** The `container_status_enquiries` agent is seeded by a startup bootstrap, active but held by
+  nobody, so an admin has something to grant on day one without a manual insert.
+
 **Division of labour (decision D15-revised): the CRM is the answer provider, n8n is the
 orchestrator.** The CRM exposes every field the caller is entitled to see and enforces who may see
 what. n8n knows which attribute was asked for and decides what to say. Narrowing is n8n's job;

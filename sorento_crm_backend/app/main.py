@@ -244,6 +244,20 @@ async def startup_event():
         logging.error(f"Failed to sync MCP tool catalog at startup: {str(e)}", exc_info=True)
 
     try:
+        # Seeds the container_status_enquiries access agent so an admin has
+        # something to grant. A gate keyed on a permission nobody can hold is
+        # indistinguishable from a broken feature.
+        from app.database import SessionLocal
+        from app.services import container_status_bootstrap
+        _db = SessionLocal()
+        try:
+            container_status_bootstrap.run(_db)
+        finally:
+            _db.close()
+    except Exception as e:
+        logging.error(f"Container status bootstrap failed: {str(e)}", exc_info=True)
+
+    try:
         from app.database import SessionLocal
         from app.rbac.permission_registry import sync_permissions
         _db = SessionLocal()

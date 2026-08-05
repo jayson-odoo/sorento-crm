@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
+from app.services.clearance_entitlement import apply_clearance_gate
 from app.services.error_handler import handle_internal_error
 from app.services.incoming_stock_service import IncomingStockService
 from app.services.uuid_list_param import parse_uuid_list
@@ -204,6 +205,15 @@ def get_incoming_list(
     eta_to: Optional[date] = Query(None, description="Include shipments with ETA on/before this date (YYYY-MM-DD)."),
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=50),
+    contact_id: Optional[str] = Query(
+        None,
+        description=(
+            "The respond_contacts.id this question is being asked ON BEHALF OF. "
+            "When set, clearance dates are returned only if that contact holds the "
+            "container_status_enquiries grant - the API key's own privileges do not "
+            "apply to a contact's question."
+        ),
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -230,7 +240,7 @@ def get_incoming_list(
         svc = IncomingStockService(db)
         # product_ids may be UUIDs or product_codes; the service resolves both, so
         # pass through raw rather than via parse_uuid_list (which rejects codes).
-        return svc.incoming_list(
+        result = svc.incoming_list(
             product_ids=flat_product_ids or None,
             shipment_ids=parse_uuid_list(shipment_ids, param_name="shipment_ids"),
             supplier_ids=parse_uuid_list(supplier_ids, param_name="supplier_ids"),
@@ -239,6 +249,12 @@ def get_incoming_list(
             eta_to=eta_to,
             page=page,
             limit=limit,
+        )
+        # Clearance dates are OMITTED, not nulled, for an unentitled caller: absent
+        # means "you may not see this", null would mean "not reached yet", and an
+        # LLM reading the response will narrate a null as the latter.
+        return apply_clearance_gate(
+            db, result, current_user=current_user, contact_id=contact_id
         )
     except Exception as e:
         raise handle_internal_error(str(e))
