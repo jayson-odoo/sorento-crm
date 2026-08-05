@@ -292,6 +292,15 @@ SPEC_REGISTRY_SEED: list[dict] = [
         "label": "Number of bowls",
         "data_type": "numeric",
         "applies_when": {"class": ["Kitchen Sink"]},
+        # A numeric key with synonyms, because customers say the number in words.
+        # Without these "double bowl kitchen sink" only earned a substring hit on the
+        # rendered sentence, so a SINGLE bowl sink scored the same and was never
+        # demoted - the one distinction the customer actually cared about.
+        "synonyms": {
+            "1": ["single bowl", "one bowl", "1 bowl", "single sink"],
+            "2": ["double bowl", "two bowl", "2 bowl", "twin bowl", "double sink"],
+            "3": ["triple bowl", "three bowl", "3 bowl"],
+        },
         # 106 of 1,148 kitchen sinks state this. Low coverage is not low value: someone
         # asking for a double bowl will reject every single bowl, so where the catalog
         # says it, it decides the answer. Weighted accordingly, and NULL elsewhere.

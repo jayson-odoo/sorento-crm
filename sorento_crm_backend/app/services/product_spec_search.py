@@ -103,11 +103,20 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
         if key not in best or length > best[key][0]:
             best[key] = (length, value)
 
-    resolved = [{"key": key, "value": value} for key, (_, value) in best.items()]
-    # Booleans are stored as real booleans; the registry spells the synonym key "true".
-    for entry in resolved:
-        if entry["value"] == "true":
-            entry["value"] = True
+    types = {row.spec_key: row.data_type for row in active_registry(db)}
+    resolved: list[dict] = []
+    for key, (_, value) in best.items():
+        # The synonym map is JSON, so every key arrives as a string. Coerce back to the
+        # type the value is STORED as, or the comparison silently never matches: "2" is
+        # not 2, and a mismatch that cannot match also cannot be penalised.
+        if types.get(key) == "boolean":
+            value = value == "true"
+        elif types.get(key) == "numeric":
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                continue
+        resolved.append({"key": key, "value": value})
     return resolved
 
 

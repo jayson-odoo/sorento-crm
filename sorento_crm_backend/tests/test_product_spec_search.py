@@ -35,17 +35,26 @@ def db():
     with blank_session() as s:
         cat = ProductCategory(id=str(uuid.uuid4()), category_code="SRT-KS", category_name="SRT-KS")
         wc = ProductCategory(id=str(uuid.uuid4()), category_code="SRT-WC", category_name="SRT-WC")
+        # Taps, showers and basins: the classes the first user report was actually
+        # about. The ranker has to be exercised across all of them, not only sinks.
+        ft = ProductCategory(id=str(uuid.uuid4()), category_code="SRT-FT", category_name="SRT-FT")
+        sh = ProductCategory(id=str(uuid.uuid4()), category_code="SRT-SH", category_name="SRT-SH")
+        wb = ProductCategory(id=str(uuid.uuid4()), category_code="SRT-WB", category_name="SRT-WB")
         uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code="ZZT-PCS", uom_name="Piece")
-        s.add_all([cat, wc, uom])
+        s.add_all([cat, wc, ft, sh, wb, uom])
         s.flush()
         backfill_category_signals(s)
-        # SRT-WC is not in the pilot map, so give it a class by hand: the ranker must
-        # be exercised across more than one class.
-        wc.class_label = "Water Closet"
-        wc.brand_hint = "Sorento"
-        s.flush()
         seed_spec_registry(s)
-        _REFS.update({"cat": cat.id, "wc": wc.id, "uom": uom.id})
+        _REFS.update(
+            {
+                "cat": cat.id,
+                "wc": wc.id,
+                "ft": ft.id,
+                "sh": sh.id,
+                "wb": wb.id,
+                "uom": uom.id,
+            }
+        )
         yield s
 
 
@@ -72,12 +81,24 @@ def _codes(results) -> list[str]:
 
 
 def _catalog(db):
-    """A small catalog with the shapes that matter: real sinks, an accessory, a WC."""
+    """A small catalog with the shapes that matter, across every class in the baseline.
+
+    Each row exists because a baseline case needs something real to hit. Wording is
+    copied from live descriptions so the derivation is exercised the way it will be.
+    """
     _product(db, "ZZT-SINK-A", "SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)")
     _product(db, "ZZT-SINK-B", "SORENTO S/STEEL KITCHEN SINK (800X450X200MM)")
     _product(db, "ZZT-SINK-C", "CABANA CERAMIC KITCHEN SINK (1000X500X140MM)")
     _product(db, "ZZT-BASKET", "CABANA KITCHEN SINK TRIANGLE BASKET")
     _product(db, "ZZT-WC-A", "SORENTO CERAMIC WALL HUNG WATER CLOSET", category="wc")
+    _product(db, "ZZT-SINK-1B", "SORENTO S/STEEL SINGLE BOWL SINK 860X500X200MM")
+    _product(db, "ZZT-SINK-2B", "MOCHA KITCHEN SINK (DOUBLE BOWL)")
+    _product(db, "ZZT-TAP-W", "SORENTO WALL MOUNTED KITCHEN TAP", category="ft")
+    _product(db, "ZZT-TAP-P", "SORENTO PILLAR MOUNTED KITCHEN TAP", category="ft")
+    _product(db, "ZZT-TAP-F", "SORENTO WALL MOUNTED FLEXIBLE HEAD KITCHEN TAP", category="ft")
+    _product(db, "ZZT-AV", "BRAVAT ANGLE VALVE", category="ft")
+    _product(db, "ZZT-SH-RAIN", "SORENTO RAIN SHOWER SET", category="sh")
+    _product(db, "ZZT-WB-CT", "SORENTO COUNTER TOP WASH BASIN", category="wb")
 
 
 # --------------------------------------------------------------------------- #
@@ -480,7 +501,6 @@ def test_a_phrase_resolves_onto_the_spec_key_that_holds_the_answer(db):
     holding the answer was never scored at all.
     """
     _catalog(db)
-    _product(db, "ZZT-AV", "BRAVAT ANGLE VALVE", category="wc")
 
     result = search_specs(db, specs=[], free_terms=["angle valve", "angle", "valve"])
 
@@ -527,3 +547,22 @@ def test_a_caller_supplied_spec_outranks_the_word_resolver(db):
         free_terms=["stainless steel kitchen sink"],
     )
     assert _codes(result)[0] == "ZZT-SINK-C"
+
+
+def test_a_spoken_number_resolves_onto_a_numeric_key(db):
+    """Customers say the number in words, and the synonym map is JSON.
+
+    Without coercion "2" never equalled 2, and a comparison that cannot match also
+    cannot be penalised: a SINGLE bowl sink scored identically to a double for "double
+    bowl kitchen sink", which is the one distinction the customer cared about.
+    """
+    _product(db, "ZZT-1B", "CABANA SINGLE BOWL KITCHEN SINK")
+    _product(db, "ZZT-2B", "CABANA DOUBLE BOWL KITCHEN SINK")
+
+    result = search_specs(db, specs=[], free_terms=["double bowl kitchen sink"])
+    codes = _codes(result)
+
+    assert codes[0] == "ZZT-2B"
+    assert "bowl_count" in result["candidates"][0]["matched_specs"]
+    # Demoted for stating the other number, not removed.
+    assert codes.index("ZZT-1B") > 0
