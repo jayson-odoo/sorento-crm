@@ -157,15 +157,28 @@ SPEC_REGISTRY_SEED: list[dict] = [
         "spec_key": "mounting",
         "label": "Mounting",
         "data_type": "enum",
-        "allowed_values": ["wall_hung", "floor_standing", "pedestal", "concealed", "counter_top"],
+        "allowed_values": [
+            "wall_hung",
+            "floor_standing",
+            "pedestal",
+            "concealed",
+            "counter_top",
+            "under_counter",
+            "pillar_mounted",
+        ],
         "synonyms": {
             "wall_hung": ["wall hung", "wall mounted", "wall mount", "hang on wall"],
             "floor_standing": ["floor standing", "floor mounted", "free standing"],
             "pedestal": ["pedestal", "with pedestal"],
             "concealed": ["concealed", "hidden", "in wall"],
-            "counter_top": ["counter top", "countertop", "above counter", "on counter"],
+            "counter_top": ["counter top", "countertop", "above counter", "on counter", "top mount"],
+            "under_counter": ["under counter", "undermount", "under mount", "below counter"],
+            # 383 taps say PILLAR MOUNTED and 220 more just say PILLAR. In this catalog
+            # the word always describes where the tap is fixed, which is why it moved
+            # out of control_type.
+            "pillar_mounted": ["pillar mounted", "pillar mount", "pillar tap", "pillar"],
         },
-        "measured_coverage": 1539,
+        "measured_coverage": 3289,
         "rank_weight": 2.0,
     },
     {

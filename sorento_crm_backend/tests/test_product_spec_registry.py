@@ -278,3 +278,47 @@ def test_synonyms_map_customer_language_onto_values(db):
 
     mounting = _keys(db)["mounting"].synonyms
     assert "wall mounted" in [s.lower() for s in mounting["wall_hung"]]
+
+
+def test_every_derived_enum_value_exists_in_the_registry(db):
+    """The registry's vocabulary must cover what derivation actually writes.
+
+    Caught in the browser: `pillar_mounted` and `under_counter` were added to the
+    derivation tables and not to the registry, so 603 pillar-mounted taps stored a
+    value that the enum dropdown could not offer and no customer phrase could resolve.
+    The spec was derived, stored, rendered — and unreachable.
+    """
+    from app.services.product_spec_derivation import (
+        CONTROL_TOKENS,
+        MATERIAL_TOKENS,
+        MOUNTING_TOKENS,
+        PRODUCT_TYPE_TOKENS,
+        SHAPE_TOKENS,
+        SPOUT_TOKENS,
+        TRAP_TOKENS,
+    )
+
+    seed_spec_registry(db)
+    rows = _keys(db)
+    for key, table in (
+        ("material", MATERIAL_TOKENS),
+        ("mounting", MOUNTING_TOKENS),
+        ("control_type", CONTROL_TOKENS),
+        ("product_type", PRODUCT_TYPE_TOKENS),
+        ("spout_type", SPOUT_TOKENS),
+        ("trap_type", TRAP_TOKENS),
+        ("shape", SHAPE_TOKENS),
+    ):
+        allowed = set(rows[key].allowed_values or [])
+        derived = {value for _, value in table}
+        assert derived <= allowed, f"{key} derives values the registry does not list: {derived - allowed}"
+
+
+def test_every_enum_value_can_be_reached_by_a_customer_phrase(db):
+    """An allowed value with no synonym is a value nobody can ask for."""
+    seed_spec_registry(db)
+    for key, row in _keys(db).items():
+        if row.data_type != "enum" or not row.allowed_values:
+            continue
+        missing = [v for v in row.allowed_values if not (row.synonyms or {}).get(v)]
+        assert missing == [], f"{key} values with no synonym: {missing}"
