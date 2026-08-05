@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session
 
 from app.models.product import Product, ProductCategory
 from app.models.product_spec import ProductSpecException, ProductSpecifications
+from app.services.product_spec_rendering import render_spec_sentence
 
 # --------------------------------------------------------------------------- #
 # vocabulary, mirroring the Spec Registry's allowed_values
@@ -388,6 +389,9 @@ def derive_for_code(db: Session, product_code: str, *, commit: bool = False) -> 
 
         spec.values = {**result.values, **kept_values}
         spec.provenance = {**result.provenance, **kept_provenance}
+        # The only text spec search may match. Rendered here so it can never drift
+        # from the values it describes.
+        spec.rendered_text = render_spec_sentence(spec.values)
         spec.derived_hash = fingerprint
         spec.status = "needs_review" if result.exceptions else "derived"
         written += 1

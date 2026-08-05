@@ -55,6 +55,36 @@ def _collect(session: Session, target: Product) -> None:
     session.info.setdefault(_PENDING_KEY, set()).add(target.product_code)
 
 
+def enqueue_spec_embedding(db: Session, product_id: str) -> None:
+    """Queue a `product_spec` re-embed for one product. Best-effort, never raises.
+
+    Guarded on there being something to embed: an empty sentence embeds to a vector
+    that sits near everything, so the product would surface for every query. The
+    canonicaliser refuses one too, but the cheaper place to stop it is here.
+    """
+    try:
+        from app.models.product_spec import ProductSpecifications
+        from app.services.embedding_service import EmbeddingEventService
+
+        spec = (
+            db.query(ProductSpecifications)
+            .filter(ProductSpecifications.product_id == product_id)
+            .first()
+        )
+        if spec is None or not (spec.rendered_text or "").strip():
+            return
+
+        EmbeddingEventService(db).queue_event(
+            source_type="product_spec",
+            source_id=str(product_id),
+            event_type="product_spec.updated",
+            source_updated_at=spec.updated_at or spec.created_at,
+            triggered_by="spec_derivation",
+        )
+    except Exception:  # pragma: no cover - defensive by design
+        logger.warning("spec embedding enqueue failed for %s", product_id, exc_info=True)
+
+
 def rederive_codes(codes: set[str]) -> None:
     """Re-derive in a fresh session, all-companies scope. Never raises."""
     if not codes:
