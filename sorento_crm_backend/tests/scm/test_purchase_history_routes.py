@@ -277,3 +277,94 @@ def test_a_user_without_the_operator_permission_is_denied(scm_app):
     ):
         assert client.post(url, files=files).status_code == 403, url
     assert client.get("/api/v1/scm/order-links/open").status_code == 403
+
+
+# --------------------------------------------------------------------------- #
+# the Test function, as a standard
+# --------------------------------------------------------------------------- #
+
+def test_testing_the_book_writes_nothing_and_returns_the_standard_verdict(scm_app):
+    """`?validate_only=true` is the same Test the order-tracking and GRN imports have.
+
+    Same query parameter, same `{valid, errors, warnings, summary}` shape, so a Test means
+    the same thing wherever somebody presses it. The SCM uploads were the odd ones out.
+    """
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    _seed_products(db, PO_ITEMS)
+
+    before = _orders(db)
+    r = TestClient(app).post(
+        "/api/v1/scm/purchase-history/apply",
+        params={"validate_only": "true"},
+        files=_po_file(),
+    )
+    assert _orders(db) == before, "a Test that writes is not a test"
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert set(body) >= {"valid", "errors", "warnings", "summary"}
+    assert body["valid"] is True
+    assert body["errors"] == []
+    assert body["summary"]["would_create"] >= 1
+
+
+def test_a_warning_names_what_it_is_about_and_does_not_block(scm_app):
+    """The charge lines and the unknown item codes are warnings, not errors.
+
+    Refusing 1,586 orders because two product codes are missing would be the wrong call to
+    force on the operator - and a warning they read before pressing Confirm is a decision
+    rather than an accident. It has to NAME the codes, though: a bare count tells them there
+    is a problem without telling them which.
+    """
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    # No products seeded on purpose: every stock code in the file is unknown.
+
+    r = TestClient(app).post(
+        "/api/v1/scm/purchase-history/apply",
+        params={"validate_only": "true"},
+        files=_po_file(),
+    )
+    body = r.json()
+
+    assert body["valid"] is True, "an unknown item does not make the file unusable"
+    assert body["warnings"], "the operator must be told the lines will be skipped"
+    joined = " ".join(body["warnings"])
+    assert "item code" in joined and "skipped" in joined
+    assert any(ch.isdigit() for ch in joined), "the warning names codes, not just a count"
+
+
+def test_an_unreadable_file_tests_as_invalid_with_the_reason(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+
+    r = TestClient(app).post(
+        "/api/v1/scm/purchase-history/apply",
+        params={"validate_only": "true"},
+        files={"file": ("nonsense.xlsx", b"PK\x03\x04not-a-workbook", _XLSX)},
+    )
+    assert r.status_code == 200, "a verdict, not an exception - the screen renders it"
+    body = r.json()
+    assert body["valid"] is False
+    assert body["errors"], "an invalid verdict with no reason is useless"
+
+
+def test_the_inquiry_sheet_tests_the_same_way(scm_app):
+    """One contract across the feeds, or the button means something different per screen."""
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    _seed_products(db, INQUIRY_ITEMS)
+
+    before = db.execute(text("SELECT count(*) FROM scm.order_link_claim")).scalar()
+    r = TestClient(app).post(
+        "/api/v1/scm/order-inquiry/apply",
+        params={"validate_only": "true"},
+        files=_inquiry_file(),
+    )
+    assert db.execute(text("SELECT count(*) FROM scm.order_link_claim")).scalar() == before
+
+    body = r.json()
+    assert set(body) >= {"valid", "errors", "warnings", "summary"}
+    assert body["valid"] is True
+    assert body["summary"]["total_rows"] >= 1

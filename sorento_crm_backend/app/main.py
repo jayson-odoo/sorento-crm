@@ -105,7 +105,36 @@ async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content=content,
+        headers=_cors_headers_for(request),
     )
+
+
+def _cors_headers_for(request: Request) -> dict:
+    """The CORS headers this response would have got if it had come back normally.
+
+    Starlette runs `Exception` handlers in `ServerErrorMiddleware`, which sits OUTSIDE the
+    user middleware stack - so `CORSMiddleware` never sees a 500 raised from a route and the
+    response goes back with no `Access-Control-Allow-Origin`. The browser then refuses to
+    read it and reports `TypeError: Failed to fetch`, which looks like the network died.
+
+    The cost is not cosmetic: a real, logged, diagnosable 500 (a unique-constraint violation
+    on an upload) reached the user as "Failed to fetch", with the actual cause visible only
+    in the server log. Whoever is looking at the screen deserves the status code at least.
+
+    Echoes the request's own origin, and only when it is on the configured allow-list, so
+    this cannot become a wildcard that leaks a credentialed response to any origin.
+    """
+    origin = request.headers.get("origin")
+    if not origin:
+        return {}
+    allowed = settings.cors_origins_list
+    if origin not in allowed and "*" not in allowed:
+        return {}
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Credentials": "true",
+        "Vary": "Origin",
+    }
 
 # Validation error handler to see detailed errors
 @app.exception_handler(RequestValidationError)

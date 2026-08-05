@@ -32,6 +32,7 @@
  */
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import type { UploadTestResult } from '../components/UploadTestVerdict';
 
 /** Which of the two feeds a dialog is driving. */
 export type HistoryImportKind = 'purchase-history' | 'order-inquiry';
@@ -117,6 +118,25 @@ async function post<T>(path: string, file: File, fallback: string): Promise<T> {
 /** What this order book WOULD write. Writes nothing. */
 export function previewPurchaseHistory(file: File): Promise<PurchaseHistoryPreview> {
   return post('/api/v1/scm/purchase-history/preview', file, 'Failed to read the file');
+}
+
+/**
+ * Test the order book: writes nothing, returns `{valid, errors, warnings, summary}`.
+ *
+ * Same `?validate_only=true` parameter and same shape as `import-tracking` and the GRN
+ * import, so a Test means the same thing wherever somebody presses it.
+ */
+export function testPurchaseHistory(file: File): Promise<UploadTestResult> {
+  return post(
+    '/api/v1/scm/purchase-history/apply?validate_only=true', file, 'Failed to test the file',
+  );
+}
+
+/** Test the inquiry sheet. Writes nothing. */
+export function testOrderInquiry(file: File): Promise<UploadTestResult> {
+  return post(
+    '/api/v1/scm/order-inquiry/apply?validate_only=true', file, 'Failed to test the file',
+  );
 }
 
 /** Write the order book. Idempotent on the document number, so a re-upload is safe. */

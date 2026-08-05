@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { getOutstandingUploadConfig } from '../services/outstandingImportService';
+import type { UploadTestResult } from '../components/UploadTestVerdict';
 
 /**
  * SCM - the preview-then-confirm upload flow, shared by every SCM upload dialog.
@@ -43,6 +44,8 @@ export interface UseTwoStepUploadOptions<TPreview extends TwoStepPreview, TResul
   open: boolean;
   preview: (file: File) => Promise<TPreview>;
   apply: (file: File) => Promise<TResult>;
+  /** Optional: when given, the dialog offers a Test button. Writes nothing. */
+  test?: (file: File) => Promise<UploadTestResult>;
   onApplied?: (result: TResult) => void;
 }
 
@@ -60,8 +63,13 @@ export interface TwoStepUpload<TPreview extends TwoStepPreview, TResult> {
   choose: (next: File | null) => Promise<void>;
   reject: (rejected: File, reason: 'type' | 'size' | 'extra') => void;
   confirm: () => Promise<void>;
-  /** True when a file is picked, readable, and neither request is in flight. */
+  /** True when a file is picked, readable, and no request is in flight. */
   canConfirm: boolean;
+  /** The Test verdict, once run. Null until then; cleared on a new file. */
+  testResult: UploadTestResult | null;
+  testing: boolean;
+  /** Undefined when this channel has no test, so the dialog can hide the button. */
+  runTest?: () => Promise<void>;
 }
 
 function messageOf(error: unknown, fallback: string): string {
@@ -72,6 +80,7 @@ export function useTwoStepUpload<TPreview extends TwoStepPreview, TResult>({
   open,
   preview: previewFn,
   apply: applyFn,
+  test: testFn,
   onApplied,
 }: UseTwoStepUploadOptions<TPreview, TResult>): TwoStepUpload<TPreview, TResult> {
   const [file, setFile] = useState<File | null>(null);
@@ -80,6 +89,8 @@ export function useTwoStepUpload<TPreview extends TwoStepPreview, TResult>({
   const [previewing, setPreviewing] = useState(false);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<UploadTestResult | null>(null);
+  const [testing, setTesting] = useState(false);
   const [accept, setAccept] = useState<string>(FALLBACK_ACCEPT);
   const acceptedFormats = accept.split(',').join(' or ');
 
@@ -112,6 +123,8 @@ export function useTwoStepUpload<TPreview extends TwoStepPreview, TResult>({
     setResult(null);
     setPreviewing(false);
     setApplying(false);
+    setTesting(false);
+    setTestResult(null);
     setError(null);
   }, [open]);
 
@@ -120,6 +133,9 @@ export function useTwoStepUpload<TPreview extends TwoStepPreview, TResult>({
     setFile(next);
     setPreview(null);
     setResult(null);
+    // A verdict belongs to the file it was run against. Carrying it onto the next pick is
+    // how somebody uploads a bad file on the strength of a green tick for a different one.
+    setTestResult(null);
     setError(null);
     if (!next) return;
 
@@ -149,6 +165,19 @@ export function useTwoStepUpload<TPreview extends TwoStepPreview, TResult>({
     setError(`${rejected.name} is not a ${acceptedFormats} file.`);
   };
 
+  const runTest = async () => {
+    if (!file || !testFn) return;
+    setTesting(true);
+    setError(null);
+    try {
+      setTestResult(await testFn(file));
+    } catch (e) {
+      setError(messageOf(e, 'Failed to test the file.'));
+    } finally {
+      setTesting(false);
+    }
+  };
+
   const confirm = async () => {
     if (!file) return;
     setApplying(true);
@@ -176,6 +205,11 @@ export function useTwoStepUpload<TPreview extends TwoStepPreview, TResult>({
     choose,
     reject,
     confirm,
-    canConfirm: !!file && !!preview && preview.ok && !previewing && !applying,
+    // Testing is never mandatory - the preview already read the file, and forcing a Test
+    // before every upload would make it ceremony rather than a tool.
+    canConfirm: !!file && !!preview && preview.ok && !previewing && !applying && !testing,
+    testResult,
+    testing,
+    runTest: testFn ? runTest : undefined,
   };
 }

@@ -33,11 +33,15 @@ const previewPurchaseHistory = vi.fn();
 const applyPurchaseHistory = vi.fn();
 const previewOrderInquiry = vi.fn();
 const applyOrderInquiry = vi.fn();
+const testPurchaseHistory = vi.fn();
+const testOrderInquiry = vi.fn();
 vi.mock('../services/purchaseHistoryService', () => ({
   previewPurchaseHistory: (...a: unknown[]) => previewPurchaseHistory(...a),
   applyPurchaseHistory: (...a: unknown[]) => applyPurchaseHistory(...a),
   previewOrderInquiry: (...a: unknown[]) => previewOrderInquiry(...a),
   applyOrderInquiry: (...a: unknown[]) => applyOrderInquiry(...a),
+  testPurchaseHistory: (...a: unknown[]) => testPurchaseHistory(...a),
+  testOrderInquiry: (...a: unknown[]) => testOrderInquiry(...a),
 }));
 
 // The accept list is the server's, asked for as soon as the dialog opens. Mocked here for
@@ -50,6 +54,7 @@ vi.mock('../services/outstandingImportService', () => ({
 }));
 
 import { HistoryUploadDialog } from './HistoryUploadDialog';
+import type { UploadTestResult } from './UploadTestVerdict';
 import type {
   OrderInquiryPreview,
   OrderInquiryResult,
@@ -143,6 +148,20 @@ function tile(label: string): HTMLElement {
   return node as HTMLElement;
 }
 
+function verdict(over: Partial<UploadTestResult> = {}): UploadTestResult {
+  return {
+    valid: true,
+    errors: [],
+    warnings: [],
+    summary: { total_rows: 13458, would_create: 1586, would_update: 0, error_count: 0 },
+    ...over,
+  };
+}
+
+function testButton(): HTMLButtonElement {
+  return screen.getByRole('button', { name: /^Test$/i }) as HTMLButtonElement;
+}
+
 function renderDialog(kind: 'purchase-history' | 'order-inquiry', onApplied = vi.fn()) {
   return render(
     <HistoryUploadDialog open kind={kind} onOpenChange={vi.fn()} onApplied={onApplied} />,
@@ -157,6 +176,84 @@ beforeEach(() => {
   getOutstandingUploadConfig
     .mockReset()
     .mockResolvedValue({ allowed_extensions: ['.xlsx', '.xlsm', '.xls'] });
+  testPurchaseHistory.mockReset().mockResolvedValue(verdict());
+  testOrderInquiry.mockReset().mockResolvedValue(verdict());
+});
+
+// ── 5. the Test function, which every other importer in this system has ─────
+
+describe('HistoryUploadDialog - Test', () => {
+  it('is offered once a file is chosen, and writes nothing', async () => {
+    renderDialog('purchase-history');
+    expect(testButton()).toBeDisabled();
+
+    await choose();
+    await waitFor(() => expect(testButton()).toBeEnabled());
+
+    fireEvent.click(testButton());
+    await waitFor(() => expect(testPurchaseHistory).toHaveBeenCalledTimes(1));
+    expect(applyPurchaseHistory).not.toHaveBeenCalled();
+  });
+
+  it('shows the green verdict when there is nothing to fix', async () => {
+    renderDialog('purchase-history');
+    await choose();
+    fireEvent.click(testButton());
+
+    expect(await screen.findByText('No errors')).toBeInTheDocument();
+  });
+
+  it('shows errors and warnings separately, because only one of them blocks', async () => {
+    testPurchaseHistory.mockResolvedValue(
+      verdict({
+        valid: false,
+        errors: ['No order block found in this file.'],
+        warnings: ['2 item codes we do not hold, so those lines are skipped: A, B'],
+      }),
+    );
+    renderDialog('purchase-history');
+    await choose();
+    fireEvent.click(testButton());
+
+    expect(await screen.findByText('Errors (1)')).toBeInTheDocument();
+    expect(screen.getByText('Warnings (1)')).toBeInTheDocument();
+    expect(screen.queryByText('No errors')).toBeNull();
+  });
+
+  it('warns on a file that is still perfectly loadable', async () => {
+    // The distinction the button exists for: a warning is information, not a refusal.
+    testPurchaseHistory.mockResolvedValue(
+      verdict({ warnings: ['534 charge lines carry cost but no product'] }),
+    );
+    renderDialog('purchase-history');
+    await choose();
+    fireEvent.click(testButton());
+
+    expect(await screen.findByText('No errors')).toBeInTheDocument();
+    expect(screen.getByText('Warnings (1)')).toBeInTheDocument();
+    expect(confirmButton()).toBeEnabled();
+  });
+
+  it('does not force a Test before Confirm', async () => {
+    // Testing is a tool, not ceremony. The preview already read the file.
+    renderDialog('purchase-history');
+    await choose();
+
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
+    expect(testPurchaseHistory).not.toHaveBeenCalled();
+  });
+
+  it('drops the verdict when a different file is chosen', async () => {
+    // A green tick for the previous file, still on screen above a new one, is how somebody
+    // uploads a bad file believing it was tested.
+    renderDialog('purchase-history');
+    await choose('first.xls');
+    fireEvent.click(testButton());
+    expect(await screen.findByText('No errors')).toBeInTheDocument();
+
+    await choose('second.xls');
+    await waitFor(() => expect(screen.queryByText('No errors')).toBeNull());
+  });
 });
 
 // ── 1. nothing is written from a single click ───────────────────────────────

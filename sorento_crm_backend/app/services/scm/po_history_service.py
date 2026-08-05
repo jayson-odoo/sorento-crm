@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Product
 from app.models.scm import OrderLinkClaim
+from app.services.scm import upload_validation as val
 from app.services.scm.po_listing_reader import PoListingResult, read_po_listing
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 
@@ -113,6 +114,40 @@ def preview(db: Session, file_data: bytes) -> dict:
     out["date_from"] = out["date_from"].isoformat() if out["date_from"] else None
     out["date_to"] = out["date_to"].isoformat() if out["date_to"] else None
     return out
+
+
+def validate(db: Session, file_data: bytes) -> dict:
+    """The Test verdict: `{valid, errors, warnings, summary}`. Writes nothing.
+
+    Only an unreadable file is an ERROR here. Everything else this book can carry - unknown
+    items, charge lines, documents we already hold - is a warning, because the rest of the
+    file is still worth loading and refusing 1,586 orders over two missing product codes
+    would be the wrong call for the operator to be forced into.
+    """
+    out = preview(db, file_data)
+    warnings = [
+        val.named(
+            out["unmatched_items"], out["unmatched_item_codes"],
+            one="item code we do not hold, so its line is skipped",
+            many="item codes we do not hold, so those lines are skipped",
+        ),
+        (f"{out['orders_existing']:,} of these orders are already held - they will be "
+         f"refreshed, not duplicated") if out["orders_existing"] else None,
+        (f"{out['charge_lines']:,} charge lines (handling, misc) carry cost but no product, "
+         f"so they are counted on the order and not as stock") if out["charge_lines"] else None,
+    ]
+    return val.envelope(
+        ok=out["ok"], problems=out["problems"], warnings=warnings,
+        summary={
+            "total_rows": out["lines"],
+            "would_create": out["orders_new"],
+            "would_update": out["orders_existing"],
+            "error_count": 0 if out["ok"] else len(out["problems"]),
+            "orders": out["orders"],
+            "date_from": out["date_from"],
+            "date_to": out["date_to"],
+        },
+    )
 
 
 def apply(db: Session, file_data: bytes, actor: Optional[str] = None) -> dict:

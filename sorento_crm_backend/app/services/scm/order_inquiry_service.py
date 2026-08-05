@@ -33,6 +33,7 @@ from app.models.inventory import Warehouse
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.product import Product
 from app.models.scm import OrderLinkClaim
+from app.services.scm import upload_validation as val
 from app.services.scm.order_inquiry_reader import OrderInquiryResult, read_order_inquiry
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 
@@ -111,6 +112,38 @@ def _summarise(db: Session, parsed: OrderInquiryResult) -> dict:
 def preview(db: Session, file_data: bytes) -> dict:
     """What this sheet would write. Writes nothing."""
     return _summarise(db, read_order_inquiry(file_data))
+
+
+def validate(db: Session, file_data: bytes) -> dict:
+    """The Test verdict: `{valid, errors, warnings, summary}`. Writes nothing.
+
+    Only an unreadable sheet is an ERROR. A row naming an item we do not hold is a warning
+    rather than a blocker, even though that row can never become demand: `product_id` is NOT
+    NULL, so the alternative to skipping it is inventing a product, and refusing the whole
+    sheet over it would throw away every row that IS resolvable.
+    """
+    out = preview(db, file_data)
+    warnings = [
+        val.named(
+            len(out["unknown_locations"]), out["unknown_locations"],
+            one="stock location we do not recognise",
+            many="stock locations we do not recognise",
+        ),
+        (f"{out['not_ordered']:,} rows are marked ORDER - nothing has been placed for them "
+         f"yet, so they carry no purchase-order link") if out["not_ordered"] else None,
+        (f"{len(out['sheets_skipped']):,} sheets had no header row and were skipped: "
+         f"{', '.join(out['sheets_skipped'][:12])}") if out["sheets_skipped"] else None,
+    ]
+    return val.envelope(
+        ok=out["ok"], problems=out["problems"], warnings=warnings,
+        summary={
+            "total_rows": out["rows"],
+            "would_update": out["lines_matched"],
+            "error_count": 0 if out["ok"] else len(out["problems"]),
+            "sheets_read": len(out["sheets_read"]),
+            "po_links": out["po_claims"],
+        },
+    )
 
 
 def apply(db: Session, file_data: bytes, actor: Optional[str] = None) -> dict:

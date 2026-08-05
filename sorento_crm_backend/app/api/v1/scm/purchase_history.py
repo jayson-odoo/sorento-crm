@@ -14,7 +14,7 @@ upload happens to complete the pair - which is the point of the claim table.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -61,11 +61,24 @@ async def preview_purchase_history(
 @router.post("/purchase-history/apply")
 async def apply_purchase_history(
     file: UploadFile = File(..., description="The same file the preview was taken from"),
+    validate_only: bool = Query(
+        False,
+        description="Test the file and write nothing. Returns {valid, errors, warnings, summary}.",
+    ),
     current_user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
-    """Write the order book. Idempotent on the document number."""
-    out = po_history_service.apply(db, await read_upload(file), actor=current_user.get("id"))
+    """Write the order book. Idempotent on the document number.
+
+    `?validate_only=true` is the Test the rest of this system's importers already have
+    (`import-tracking`, the GRN import). Same query parameter, same response shape, so a Test
+    means the same thing wherever somebody presses it - and the verdict is derived from the
+    same read `apply` performs, so the two cannot disagree.
+    """
+    data = await read_upload(file)
+    if validate_only:
+        return po_history_service.validate(db, data)
+    out = po_history_service.apply(db, data, actor=current_user.get("id"))
     _reject_unreadable(out)
     # The notes in this file name sales orders, so an upload can complete a pairing the other
     # side claimed months ago.
@@ -87,13 +100,18 @@ async def preview_order_inquiry(
 @router.post("/order-inquiry/apply")
 async def apply_order_inquiry(
     file: UploadFile = File(..., description="The same file the preview was taken from"),
+    validate_only: bool = Query(
+        False,
+        description="Test the file and write nothing. Returns {valid, errors, warnings, summary}.",
+    ),
     current_user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
     """Write the stock locations and claim the purchase-order links."""
-    out = order_inquiry_service.apply(
-        db, await read_upload(file), actor=current_user.get("id")
-    )
+    data = await read_upload(file)
+    if validate_only:
+        return order_inquiry_service.validate(db, data)
+    out = order_inquiry_service.apply(db, data, actor=current_user.get("id"))
     _reject_unreadable(out)
     out["links"] = order_link_service.resolve(db)
     db.commit()

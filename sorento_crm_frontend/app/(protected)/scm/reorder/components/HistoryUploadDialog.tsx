@@ -1,6 +1,6 @@
 'use client';
 
-import { LoaderCircle } from 'lucide-react';
+import { LoaderCircle, TestTube } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -20,6 +20,8 @@ import {
   applyPurchaseHistory,
   previewOrderInquiry,
   previewPurchaseHistory,
+  testOrderInquiry,
+  testPurchaseHistory,
   type HistoryImportKind,
   type OrderInquiryPreview,
   type OrderInquiryResult,
@@ -28,6 +30,7 @@ import {
   type PurchaseHistoryResult,
 } from '../services/purchaseHistoryService';
 import { CountTile } from './UploadCountTile';
+import { UploadTestVerdict } from './UploadTestVerdict';
 
 /**
  * SCM - the two curation feeds: purchase history, and the Order Inquiry sheet.
@@ -257,6 +260,7 @@ export function HistoryUploadDialog({
     open,
     preview: (file) => (isHistory ? previewPurchaseHistory(file) : previewOrderInquiry(file)),
     apply: (file) => (isHistory ? applyPurchaseHistory(file) : applyOrderInquiry(file)),
+    test: (file) => (isHistory ? testPurchaseHistory(file) : testOrderInquiry(file)),
     onApplied,
   });
 
@@ -303,6 +307,8 @@ export function HistoryUploadDialog({
             </>
           ) : null}
 
+          {upload.testResult ? <UploadTestVerdict result={upload.testResult} /> : null}
+
           {shown && !shown.ok ? <Problems problems={shown.problems} /> : null}
 
           {shown && shown.ok ? (
@@ -331,6 +337,21 @@ export function HistoryUploadDialog({
               <Button variant="outline" onClick={() => onOpenChange(false)} disabled={applying}>
                 Cancel
               </Button>
+              {upload.runTest ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void upload.runTest?.()}
+                  disabled={!file || previewing || applying || upload.testing}
+                >
+                  {upload.testing ? (
+                    <LoaderCircle className="size-4 animate-spin" aria-hidden />
+                  ) : (
+                    <TestTube className="size-4" aria-hidden />
+                  )}
+                  Test
+                </Button>
+              ) : null}
               <Button onClick={() => void upload.confirm()} disabled={!upload.canConfirm}>
                 {applying ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : null}
                 Confirm upload
