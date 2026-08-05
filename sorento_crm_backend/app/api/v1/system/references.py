@@ -1062,6 +1062,37 @@ class ResolveReferenceRequest(BaseModel):
             "Omit / null = no cap (current default behaviour)."
         ),
     )
+    spec_fallback: bool = Field(
+        default=False,
+        description=(
+            "Opt in to spec search. When true AND the normal (code-only) product "
+            "probes return zero matches, the resolver additionally ranks the catalog "
+            "against `extracted_specs` + `free_terms` and returns `spec_candidates` "
+            "plus `floor_missed`, leaving `resolutions` untouched. Absent or false "
+            "means the response is byte-identical to today, so the feature is inert "
+            "for every existing caller. It is a FALLBACK: it never runs when the "
+            "normal probes already resolved something."
+        ),
+    )
+    extracted_specs: list[dict] | None = Field(
+        default=None,
+        description=(
+            "Specs the parser read out of the customer message, as "
+            "[{key, value, evidence}]. Keys and values must come from the Spec "
+            "Registry (`GET /api/v1/master-data/spec-registry`). Every spec is a "
+            "scoring BOOST, never a filter, so an over-extracted one cannot empty the "
+            "picker. Only used when `spec_fallback` is true."
+        ),
+    )
+    free_terms: list[str] | None = Field(
+        default=None,
+        description=(
+            "Leftover customer words that did not map onto a registry key, e.g. "
+            "['kitchen sink']. Matched against the rendered spec sentence and the "
+            "class synonyms, NEVER against products.description. Only used when "
+            "`spec_fallback` is true."
+        ),
+    )
     domain_hint: str | None = Field(
         default=None,
         validation_alias=AliasChoices("domain_hint", "domain"),
@@ -1479,7 +1510,7 @@ def resolve_reference_post(
     db: Session = Depends(get_db),
 ):
     """POST variant for external callers that send JSON body (e.g. n8n HTTP node)."""
-    return _resolve_input(
+    result = _resolve_input(
         db,
         payload.query,
         payload.tokens,
@@ -1490,3 +1521,21 @@ def resolve_reference_post(
         domain_hint=payload.domain_hint,
         limit=payload.limit,
     )
+
+    # Spec search is a FALLBACK, never a parallel path. It runs only when the caller
+    # asked for it AND the normal (code-only) product probes found nothing, so the
+    # response stays byte-identical for every existing caller and for every request
+    # that resolves normally. The product probes themselves are untouched: see
+    # _and_probe_product's "CODE-ONLY by design" note.
+    if payload.spec_fallback and _result_has_zero_matches(result):
+        from app.services.product_spec_search import search_specs
+
+        found = search_specs(
+            db,
+            specs=payload.extracted_specs or [],
+            free_terms=payload.free_terms or [],
+        )
+        result["spec_candidates"] = found["candidates"]
+        result["floor_missed"] = found["floor_missed"]
+
+    return result

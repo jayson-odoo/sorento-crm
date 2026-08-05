@@ -131,6 +131,12 @@ ACCESSORY_NOUNS = (
 )
 ACCESSORY_CATEGORY_CODES = {"SRTPART", "MISC"}
 
+# No sanitaryware product is five metres in any direction. Real catalog data carries
+# separator typos ("540X440180MM" parses as 540 x 440180), and a dimension that absurd
+# would otherwise be indexed and ranked on. Out-of-range values are dropped and flagged
+# rather than silently stored.
+MAX_PLAUSIBLE_MM = 5000
+
 # 2 to 4 numbers separated by x / X / *, with optional spaces and an optional unit.
 _DIM_RE = re.compile(
     r"(\d+(?:\.\d+)?)\s*[xX*]\s*(\d+(?:\.\d+)?)"
@@ -264,6 +270,9 @@ def derive(product: Product, category: ProductCategory | None) -> _Derivation:
         if parsed:
             numbers, evidence = parsed
             for key, number in zip(("dim_length", "dim_width", "dim_height"), numbers):
+                if number > MAX_PLAUSIBLE_MM:
+                    out.flag(key, "implausible_dimension", proposed={"value": number, "evidence": evidence})
+                    continue
                 described[key] = number
             if len(numbers) > 3:
                 out.set("thickness", numbers[3], evidence, unit="mm")

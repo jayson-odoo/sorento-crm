@@ -1,0 +1,67 @@
+{
+  "_about": "Spec-search eval baseline, modelled on eval_assistant_routing.baseline.json. Phrases a customer might send, with what the ranker should do. The NEGATIVE cases matter as much as the positive ones: a soft ranker is never empty, so without them a regression that drops the relevance floor looks like an improvement in hit rate.",
+  "_scope": "T0 tracer: Kitchen Sink only (SRT-KS + CB-KS). Widen with the registry in T1 and the classes in T2.",
+  "_tuning": "weights and the floor live in app/services/product_spec_search.py. Change them here first, measure, then keep.",
+  "cases": [
+    {
+      "phrase": "stainless steel kitchen sink",
+      "specs": [{"key": "class", "value": "Kitchen Sink"}, {"key": "material", "value": "stainless_steel"}],
+      "free_terms": ["kitchen sink"],
+      "expect": "hit",
+      "must_all_match": {"class": "Kitchen Sink", "material": "stainless_steel"},
+      "note": "the canonical query. Every candidate must genuinely be a steel sink."
+    },
+    {
+      "phrase": "black kitchen sink",
+      "specs": [{"key": "class", "value": "Kitchen Sink"}, {"key": "finish", "value": "black"}],
+      "free_terms": ["sink"],
+      "expect": "hit",
+      "must_all_match": {"finish": "black"}
+    },
+    {
+      "phrase": "1000mm kitchen sink",
+      "specs": [{"key": "class", "value": "Kitchen Sink"}, {"key": "dim_length", "value": 1000}],
+      "free_terms": ["kitchen sink"],
+      "expect": "hit",
+      "note": "numeric closeness. 1000 exactly should lead."
+    },
+    {
+      "phrase": "sink",
+      "specs": [],
+      "free_terms": ["sink"],
+      "expect": "hit",
+      "note": "a bare class synonym. This is the single most common descriptive shape in the corpus, and it scored below the floor until free terms were resolved to a class."
+    },
+    {
+      "phrase": "suggest me a kitchen sink",
+      "specs": [{"key": "class", "value": "Kitchen Sink"}],
+      "free_terms": ["kitchen sink"],
+      "expect": "hit"
+    },
+    {
+      "phrase": "ceramic kitchen sink",
+      "specs": [{"key": "class", "value": "Kitchen Sink"}, {"key": "material", "value": "ceramic"}],
+      "free_terms": ["kitchen sink"],
+      "expect": "hit",
+      "note": "a material with far thinner coverage than steel. Must still clear the floor rather than falling through."
+    },
+    {
+      "phrase": "wall mounted kitchen sink",
+      "specs": [{"key": "class", "value": "Kitchen Sink"}, {"key": "mounting", "value": "wall_hung"}],
+      "free_terms": ["kitchen sink"],
+      "expect": "hit",
+      "note": "an over-extracted spec: almost no kitchen sink is wall_hung. A WHERE filter would empty the picker; a boost must not."
+    },
+
+    {"phrase": "flux capacitor", "specs": [], "free_terms": ["flux capacitor"], "expect": "miss"},
+    {"phrase": "helicopter blade", "specs": [], "free_terms": ["helicopter blade"], "expect": "miss"},
+    {"phrase": "ferrari exhaust", "specs": [], "free_terms": ["ferrari exhaust"], "expect": "miss"},
+    {"phrase": "quantum toaster", "specs": [], "free_terms": ["quantum toaster"], "expect": "miss"},
+    {"phrase": "birthday cake", "specs": [], "free_terms": ["birthday cake"], "expect": "miss"},
+    {"phrase": "laptop charger", "specs": [], "free_terms": ["laptop charger"], "expect": "miss"},
+    {"phrase": "car tyre", "specs": [], "free_terms": ["car tyre"], "expect": "miss"},
+    {"phrase": "office chair", "specs": [], "free_terms": ["office chair"], "expect": "miss"},
+    {"phrase": "garden hose reel", "specs": [], "free_terms": ["garden hose reel"], "expect": "miss"},
+    {"phrase": "mobile phone case", "specs": [], "free_terms": ["mobile phone case"], "expect": "miss"}
+  ]
+}
