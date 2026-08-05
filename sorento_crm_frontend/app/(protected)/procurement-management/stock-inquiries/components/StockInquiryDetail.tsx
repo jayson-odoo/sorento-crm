@@ -153,30 +153,26 @@ export default function StockInquiryDetail({
     }
   };
 
+  /**
+   * Only the purchasing wording. The preamble and the contact link are composed
+   * server-side by `StockInquiryService.compose_stock_inquiry_reply_message`, which
+   * resolves the interactive portal link and puts it last on its own line.
+   *
+   * Composing here previously sent the read-only `/view/...?token=` page built on the
+   * staff browser's own origin, with a ':' glued to the URL — WhatsApp pulled the colon
+   * into the href and the contact got an invalid link.
+   */
   const buildPurchasingRespondMessage = useCallback(
-    async (purchasingResponseText: string) => {
-      let viewUrl = '';
-      if (publicViewLinksEnabled) {
-        try {
-          const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-          const res = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
-          viewUrl = res.view_url ?? '';
-        } catch {
-          // continue without view link
-        }
-      }
-      const body = (purchasingResponseText ?? '').trim();
-      const linkPart = viewUrl ? ` ${viewUrl}` : '';
-      const fullMessage = `There is a response to your stock inquiry${linkPart}: ${body}`;
-      return { body, fullMessage };
-    },
-    [inquiryId, publicViewLinksEnabled],
+    async (purchasingResponseText: string) => ({
+      body: (purchasingResponseText ?? '').trim(),
+    }),
+    [],
   );
 
-  /** Persists short purchasing response when `skipSaveShort` is false, then sends the composed message via Respond.io */
+  /** Persists the purchasing response when `skipSaveShort` is false, then sends it via Respond.io */
   const sendPurchasingUpdateAndReplyViaRespond = useCallback(
     async (purchasingResponseText: string, options?: { skipSaveShort?: boolean }) => {
-      const { body, fullMessage } = await buildPurchasingRespondMessage(purchasingResponseText);
+      const { body } = await buildPurchasingRespondMessage(purchasingResponseText);
       if (!body) {
         toast.error('Enter a purchasing response before sending.');
         return;
@@ -189,7 +185,7 @@ export default function StockInquiryDetail({
       }
       await updateAndReplyMutation.mutateAsync({
         id: inquiryId,
-        data: { purchasing_response: fullMessage },
+        data: { purchasing_response: body },
       });
     },
     [
