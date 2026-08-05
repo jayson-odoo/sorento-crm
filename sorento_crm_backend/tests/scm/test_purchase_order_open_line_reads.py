@@ -7,6 +7,8 @@ both are the kind of thing a narrowing predicate breaks by accident:
 * the closed line is still LISTED, carrying its `line_status`, so the screen can show it as
   closed. Dropping it from `lines` would be the other silent lie - the operator would see a
   quantity ordered with no line explaining it;
+* the two figures stay apart: `open_qty` / `open_line_count` are supply, `total_qty` /
+  `line_count` are what the order says. Collapsing them either way puts a lie on a screen;
 * a goods receipt still receives the OPEN lines. `create_gr` gaining a "skip closed" branch
   must not become "skip everything", which the defect test alone cannot tell apart: it only
   asserts that the cancelled line was left alone.
@@ -77,8 +79,12 @@ def test_a_closed_line_is_still_listed_and_says_so(order, db):
     assert set(by_status) == {"open", "closed"}, \
         "every line must be listed, each carrying its own status"
     assert by_status["closed"]["qty_ordered"] == 60.0
-    # ... and it contributes to neither figure the plan reads.
-    assert (view["total_qty"], view["line_count"]) == (5.0, 1)
+    # ... and it contributes to neither figure the PLAN reads.
+    assert (view["open_qty"], view["open_line_count"]) == (5.0, 1)
+    # It DOES contribute to what the order says, which is a different question and needs a
+    # different figure: "Total qty" reading 5 on an order for 65 is the label lying, and on a
+    # fully-received or historical order it would read 0.
+    assert (view["total_qty"], view["line_count"]) == (65.0, 2)
     assert view["is_on_order"] is True, "the open line is still incoming"
 
 

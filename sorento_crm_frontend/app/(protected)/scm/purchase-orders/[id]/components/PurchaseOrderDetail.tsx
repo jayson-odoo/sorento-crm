@@ -39,6 +39,14 @@ const STATUS_BADGE: Partial<Record<PurchaseOrderStatus, BadgeDef>> = {
 const statusBadge = (s: string): BadgeDef =>
   STATUS_BADGE[s as PurchaseOrderStatus] ?? { variant: 'secondary', label: titleCase(s) };
 
+/** Where the order came from. `import` is its own answer because "Manual" would claim
+ *  somebody keyed a 2020 order by hand. */
+const SOURCE_LABELS: Record<NonNullable<PurchaseOrder['source']>, string> = {
+  recommendation: 'Reorder recommendation',
+  import: 'Imported history',
+  manual: 'Manual',
+};
+
 const isDraft = (s: string) => s === 'draft_recommendation' || s === 'draft';
 const countsAsOnOrder = (po: PurchaseOrder) =>
   po.is_on_order ?? (!isDraft(po.status) && po.status !== 'cancelled');
@@ -175,9 +183,13 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
           <Field label="Expected date">{fmtDate(po.expected_date)}</Field>
           <Field label="Total qty">{fmtInt(po.total_qty)}</Field>
           <Field label="Lines">{fmtInt(po.line_count)}</Field>
-          <Field label="Source">
-            {po.source === 'recommendation' ? 'Reorder recommendation' : 'Manual'}
-          </Field>
+          {/* What is still coming, shown only when it differs from what the order says -
+              on a fully open order the two are equal and a second identical figure is
+              noise, while on a part-received or historical order the gap is the answer. */}
+          {po.open_qty != null && po.open_qty !== po.total_qty ? (
+            <Field label="Still incoming">{fmtInt(po.open_qty)}</Field>
+          ) : null}
+          <Field label="Source">{SOURCE_LABELS[po.source ?? 'manual']}</Field>
           <Field label="On order">{onOrder ? 'Yes' : 'No'}</Field>
         </div>
       </Card>

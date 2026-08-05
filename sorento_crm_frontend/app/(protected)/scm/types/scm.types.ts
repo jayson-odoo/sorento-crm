@@ -337,16 +337,22 @@ export interface PurchaseOrder {
   order_date: string;
   /** Expected delivery / ETA; null when not committed yet. */
   expected_date: string | null;
+  /** What the ORDER says: every line of it. Not what is still coming - see `open_qty`. */
   total_qty: number;
   line_count: number;
+  /** What the PO still contributes as incoming supply. Zero on a received or historical
+   *  order, which is why it is a separate figure rather than a narrowing of `total_qty`. */
+  open_qty?: number;
+  open_line_count?: number;
   lines: PurchaseOrderLine[];
   created_at: string;
   /** True when this PO counts as incoming supply (on-order) — false for a draft
    *  or cancelled PO. Mirrors `scm.on_order_v`'s status filter (M4-D5/D6). */
   is_on_order?: boolean;
   /** How the PO originated — `recommendation` = drafted from an accepted reorder
-   *  recommendation (Slice B); `manual` = created directly. */
-  source?: 'recommendation' | 'manual';
+   *  recommendation (Slice B); `import` = arrived through the purchase-history upload;
+   *  `manual` = created directly. */
+  source?: 'recommendation' | 'import' | 'manual';
   /** Goods-receipt reference once a GR has been created from this PO (M4-D6). */
   gr_reference?: string | null;
 }

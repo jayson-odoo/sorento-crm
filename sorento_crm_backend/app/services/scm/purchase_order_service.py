@@ -41,6 +41,18 @@ _ON_ORDER_STATUSES = {"active", "received", "partial", "closed"}
 _OPEN_LINE_STATUS = "open"
 _DRAFT_STATUS = "draft_recommendation"
 _REC_SOURCE = "scm_recommendation"
+#: Orders that arrived through the purchase-history upload. Reported as `import` rather than
+#: folded into `manual`: nobody keyed 1,586 orders by hand, and a buyer asking where a 2020
+#: order came from is owed the real answer.
+_IMPORT_SOURCES = ("scm_po_history",)
+
+
+def _source_label(source_system: Optional[str]) -> str:
+    if source_system == _REC_SOURCE:
+        return "recommendation"
+    if source_system in _IMPORT_SOURCES:
+        return "import"
+    return "manual"
 
 
 def _is_open_line(line) -> bool:
@@ -67,15 +79,25 @@ class PurchaseOrderService:
         wh_code = None
         wh_name = None
         total_qty = 0.0
+        open_qty = 0.0
         open_lines = 0
         lines = []
         for ln in po.lines:
-            # ``total_qty`` / ``line_count`` are what the PO contributes as supply, so they
-            # count OPEN lines only, exactly as ``scm.on_order_v`` does. Every line is still
-            # listed, each carrying its ``line_status``, so the screen can show a closed line
-            # as closed instead of rendering it as one still coming.
+            # TWO figures, because there are two questions and one number cannot answer both.
+            #
+            # ``total_qty`` / ``line_count`` are what the ORDER SAYS - every line of it. The
+            # columns are labelled "Total qty" and "Lines", and a 2020 order for 450 units
+            # reading 0 because its lines are closed is the label lying about the row. That
+            # is what the imported purchase history made visible: 1,586 orders, every one of
+            # them showing an empty order.
+            #
+            # ``open_qty`` / ``open_line_count`` are what the PO contributes as SUPPLY, and
+            # count open lines only, exactly as ``scm.on_order_v`` does. Every line is listed
+            # either way, each carrying its ``line_status``, so the screen can show a closed
+            # line as closed instead of rendering it as one still coming.
+            total_qty += float(ln.qty_ordered or 0)
             if _is_open_line(ln):
-                total_qty += float(ln.qty_ordered or 0)
+                open_qty += float(ln.qty_ordered or 0)
                 open_lines += 1
             if wh_code is None and ln.warehouse is not None:
                 wh_code = ln.warehouse.warehouse_code
@@ -102,11 +124,13 @@ class PurchaseOrderService:
             ),
             "expected_date": po.expected_date.isoformat() if po.expected_date else None,
             "total_qty": total_qty,
-            "line_count": open_lines,
+            "line_count": len(po.lines),
+            "open_qty": open_qty,
+            "open_line_count": open_lines,
             "lines": lines,
             "created_at": po.created_at.isoformat() if po.created_at else "",
             "is_on_order": self._is_on_order(po),
-            "source": "recommendation" if po.source_system == _REC_SOURCE else "manual",
+            "source": _source_label(po.source_system),
             "gr_reference": gr_reference,
         }
 

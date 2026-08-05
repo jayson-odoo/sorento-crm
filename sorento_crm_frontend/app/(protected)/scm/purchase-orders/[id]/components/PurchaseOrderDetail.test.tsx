@@ -119,6 +119,44 @@ describe('PurchaseOrderDetail (AC-M4.6)', () => {
     expect(screen.getByText('GR-2026/07-0003')).toBeInTheDocument();
   });
 
+  it('reads an imported historical order as bought, not as incoming', () => {
+    // The 1,586 orders the purchase-history upload writes. Two things were wrong when the
+    // real file first went in: "Total qty" counted open lines only, so every historical
+    // order rendered empty, and the source said "Manual" for something nobody keyed.
+    usePurchaseOrder.mockReturnValue({
+      data: po({
+        po_number: '202001-S0001',
+        status: 'closed',
+        total_qty: 450,
+        line_count: 1,
+        open_qty: 0,
+        open_line_count: 0,
+        is_on_order: false,
+        source: 'import',
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<PurchaseOrderDetail id="po-1" />);
+
+    expect(screen.getByText('450')).toBeInTheDocument();
+    expect(screen.getByText('Imported history')).toBeInTheDocument();
+    // The gap between ordered and still-coming IS the answer on this row, so it is shown.
+    expect(screen.getByText('Still incoming')).toBeInTheDocument();
+  });
+
+  it('does not repeat the quantity as "still incoming" on a fully open order', () => {
+    // Equal figures, so a second identical number is noise rather than information.
+    usePurchaseOrder.mockReturnValue({
+      data: po({ total_qty: 320, open_qty: 320 }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<PurchaseOrderDetail id="po-1" />);
+
+    expect(screen.queryByText('Still incoming')).toBeNull();
+  });
+
   it('renders the empty-lines state when the PO has no lines', () => {
     usePurchaseOrder.mockReturnValue({
       data: po({ lines: [], line_count: 0 }),

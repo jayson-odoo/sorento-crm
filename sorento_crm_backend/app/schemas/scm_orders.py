@@ -102,11 +102,15 @@ class PurchaseOrder(BaseModel):
     expected_date: Optional[str] = None
     total_qty: float
     line_count: int
+    #: What the PO still contributes as incoming supply, as distinct from what the order
+    #: says. Zero on a fully-received or historical order, which is the point.
+    open_qty: float = 0.0
+    open_line_count: int = 0
     lines: List[PurchaseOrderLine]
     created_at: str
     # M4 Slice B — draft→confirm→GR flow
     is_on_order: bool = False
-    source: str = "manual"           # recommendation | manual
+    source: str = "manual"           # recommendation | import | manual
     gr_reference: Optional[str] = None
 
 

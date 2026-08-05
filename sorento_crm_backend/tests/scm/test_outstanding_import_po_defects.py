@@ -370,10 +370,16 @@ def test_every_reader_agrees_a_closed_po_line_is_not_incoming(db, seeded):
     assert set(incoming.values()) == {False}, \
         f"the readers disagree about a closed line being incoming: {incoming}"
 
-    # The document's own totals must exclude it too: 5 outstanding on one open line.
+    # The document's own SUPPLY figures must exclude it too: 5 outstanding on one open line.
+    # `open_qty` / `open_line_count` are the figures the plan reads. `total_qty` /
+    # `line_count` are what the order SAYS and deliberately still include the closed line -
+    # a column labelled "Total qty" reading 0 on a fully-received order is the label lying,
+    # which is how a year of imported purchase history rendered as empty orders.
     view = PurchaseOrderService(db).get_one(str(_header(db, seeded.main_po)["id"]))
-    assert (view["total_qty"], view["line_count"]) == (5.0, 1), \
-        "the purchase order still counts a closed line in its total and line count"
+    assert (view["open_qty"], view["open_line_count"]) == (5.0, 1), \
+        "the purchase order still counts a closed line as incoming supply"
+    assert (view["total_qty"], view["line_count"]) == (65.0, 2), \
+        "the order says 65 over two lines, and the detail page must be able to say so"
 
     # And a purchase order whose ONLY line is closed is not on order at all. Seeded directly
     # with the exact row `apply()` writes when a line leaves the book (asserted above), because
