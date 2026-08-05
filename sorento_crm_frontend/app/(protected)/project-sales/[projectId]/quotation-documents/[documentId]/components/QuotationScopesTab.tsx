@@ -9,7 +9,10 @@ import { useQuotationDocumentMutations } from '../../../../_shared/hooks/useQuot
 import { useQuotations } from '../../../../_shared/hooks/useProjects';
 import { OutcomePill } from '../../../../_shared/components/OutcomePill';
 import { QuotationOutcomeDialog } from '../../../components/QuotationOutcomeDialog';
-import { QuotationVersionEditor } from '../../../components/QuotationVersionEditor';
+import {
+  QuotationVersionEditor,
+  type QuotationScopeEditing,
+} from '../../../components/QuotationVersionEditor';
 import { useQuotationDocumentScreen } from './QuotationDocumentContext';
 import { QuotationNameDialog } from './QuotationNameDialog';
 import { QuotationScopeTabs } from './QuotationScopeTabs';
@@ -34,8 +37,7 @@ export function QuotationScopesTab() {
     canEdit,
     activeScopeId,
     selectScope,
-    reportScopeTotal,
-    clearScopeTotal,
+    edit,
   } = useQuotationDocumentScreen();
   // A scope IS a quotation row, and the line editor takes the full record. The project's quotation
   // list is already cached by the tab the user clicked in from, so resolving the open scope through
@@ -52,10 +54,26 @@ export function QuotationScopesTab() {
     (quotations.data ?? []).find((row) => row.id === activeScope?.id) ?? null;
 
   /**
-   * The live total belongs to a MOUNTED editor. Leaving this tab unmounts it, so the header goes
-   * back to the server's saved figure rather than reporting a number nothing on screen can show.
+   * The open scope's edit handles, bound to its id.
+   *
+   * Nothing is held here. The staged lines live in the shell, because this panel unmounts the
+   * moment the reader opens the terms tab and the work has to still be there when they come back.
    */
-  React.useEffect(() => () => clearScopeTotal(), [clearScopeTotal]);
+  const { isEditing, scopes: stagedScopes, seedScope, stageScope, toggleRemoved } = edit;
+  const activeScopeIdForEdit = activeScope?.id ?? null;
+  // Off the session's individual pieces rather than off the session object, which is rebuilt on
+  // every render of the shell: an identity that churns per render would push a new `staging` into
+  // the line table on every keystroke anywhere on the page.
+  const scopeEditing = React.useMemo<QuotationScopeEditing | null>(() => {
+    if (!isEditing || !activeScopeIdForEdit) return null;
+    const scopeId = activeScopeIdForEdit;
+    return {
+      staged: stagedScopes[scopeId]?.lines ?? null,
+      seed: (versionId, lines) => seedScope(scopeId, versionId, lines),
+      stage: (lines) => stageScope(scopeId, lines),
+      toggleRemoved: (key) => toggleRemoved(scopeId, key),
+    };
+  }, [activeScopeIdForEdit, isEditing, seedScope, stageScope, stagedScopes, toggleRemoved]);
 
   if (scopes.length === 0) {
     // Rendered, never hidden: a quotation with no scopes is a real state on the way to a priced
@@ -148,13 +166,14 @@ export function QuotationScopesTab() {
               of the table scrolling inside its own gutter. */}
           <CardContent className="min-w-0 py-5">
             {/* Keyed by scope so switching tabs gives the editor a clean instance rather than one
-                still holding the previous scope's selected version and its last-reported total.
-                Nothing refetches: the versions and lines are already in the query cache. */}
+                still holding the previous scope's selected version. Nothing refetches: the
+                versions and lines are already in the query cache, and the staged edits live in
+                the shell, so a remount costs nothing and loses nothing. */}
             <QuotationVersionEditor
               key={activeQuotation.id}
               project={project}
               quotation={activeQuotation}
-              onTotalChange={(total) => reportScopeTotal(activeQuotation.id, total)}
+              edit={scopeEditing}
             />
           </CardContent>
         </Card>

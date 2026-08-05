@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { useNearestPlace } from '@/hooks/useNearestPlace';
 import { cn } from '@/lib/utils';
 
 export type SignatureMode = 'draw' | 'type' | 'initials';
@@ -196,6 +197,16 @@ export function SignaturePad({
   /** Null means "still derived from the name"; a string means the user typed their own. */
   const [initialsOverride, setInitialsOverride] = React.useState<string | null>(null);
   const [coords, setCoords] = React.useState<{ lat: number; lng: number } | null>(null);
+  /**
+   * The place name for the fix currently held, WHILE capturing.
+   *
+   * The lookup was server-only until now, so nothing was resolved until a signature had been
+   * saved and the pad showed bare numbers to the person actually signing. The client read that
+   * as a service nobody had switched on. It is one small public call, against the same table the
+   * PDF renders from, so the screen and the printed document still cannot disagree - and it never
+   * holds anything up: no answer simply means the coordinates already on screen stay.
+   */
+  const nearestPlace = useNearestPlace(coords);
 
   const name = nameOverride ?? typedNameDefault;
   const initials = initialsOverride ?? deriveInitials(name);
@@ -507,11 +518,14 @@ export function SignaturePad({
           onPointerCancel={endStroke}
         />
 
-        {/* Coordinates only while capturing: nothing is recorded yet, so there is no server-
-            resolved place to show, and the browser must not invent one from a table of its own. */}
+        {/* The place name once it resolves, the coordinates until then, and the coordinates for
+            good if the lookup fails. The browser never derives the name itself: it asks the same
+            table the PDF renders from, so the two cannot describe different places. */}
         <MetaRow
           label="GPS location"
-          value={formatCoordinate(coords?.lat ?? null, coords?.lng ?? null)}
+          value={
+            nearestPlace ?? formatCoordinate(coords?.lat ?? null, coords?.lng ?? null)
+          }
         />
       </CardContent>
 

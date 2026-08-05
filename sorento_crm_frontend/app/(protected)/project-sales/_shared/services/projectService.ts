@@ -40,6 +40,7 @@ import type {
   ProjectSeriesBody,
   QuotationLine,
   QuotationLineBody,
+  QuotationLineBulkItem,
   QuotationOutcomeBody,
   QuotationVersion,
   ProjectTemplateTask,
@@ -781,6 +782,29 @@ export async function createQuotationLine(
   });
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to add the line'));
   return response.json();
+}
+
+/**
+ * The version's WHOLE line set, in one request (S10).
+ *
+ * Whole-set semantics, and the sharp edge is worth stating at the call site: **a stored line
+ * whose id is missing from `lines` is DELETED**. Send everything on screen, never only what
+ * changed. Position in the array is the order, so `sort_order` is not sent at all.
+ *
+ * A frozen or issued version is refused with the same `quotation_version_issued` 422 the
+ * per-row routes raise, before anything is written.
+ */
+export async function replaceQuotationLines(
+  versionId: string,
+  lines: QuotationLineBulkItem[],
+): Promise<QuotationLine[]> {
+  const response = await apiFetch(`${BASE}/quotation-versions/${versionId}/lines`, {
+    method: 'PUT',
+    body: JSON.stringify({ lines }),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the lines'));
+  const body: ListEnvelope<QuotationLine> = await response.json();
+  return body.data;
 }
 
 export async function updateQuotationLine(

@@ -677,6 +677,37 @@ export interface QuotationLineBody {
   is_rate_only?: boolean;
 }
 
+/**
+ * One line inside a WHOLE-SET write (S10).
+ *
+ * `id` is the only thing that tells an existing line from a new one: a line already stored
+ * carries the id the API gave it, a new one leaves the field out entirely. `sort_order` is not
+ * sent at all - array position is the order.
+ */
+export interface QuotationLineBulkItem extends Omit<QuotationLineBody, 'sort_order'> {
+  id?: string;
+}
+
+/**
+ * One line as the quotation edit view holds it, before anything has been written.
+ *
+ * Shared between the line editor that draws it and the document shell that owns it, which is why
+ * it is a domain type rather than one component's local shape. `id` is what tells the bulk write
+ * an existing line from a new one; a stored line whose id never reaches the request is deleted.
+ */
+export interface StagedQuotationLine {
+  /** The stored line's id, or null for one added in this session. */
+  id: string | null;
+  /** The row's identity for as long as the session lasts. Minted by the line table. */
+  key: string;
+  /** The stored line it came from, for the flags and codes only the server can decide. */
+  line: QuotationLine | null;
+  /** Every field as a string, the way the line table holds a row. */
+  draft: Record<string, string>;
+  /** Staged for removal: struck through on screen, and gone only once Save runs. */
+  removed: boolean;
+}
+
 export interface QuotationOutcomeBody {
   outcome: QuotationOutcome;
   loss_reason?: string | null;

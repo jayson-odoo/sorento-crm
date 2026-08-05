@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Check, Plus, StickyNote, Trash2 } from 'lucide-react';
+import { Check, Plus, StickyNote, Trash2, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -144,6 +144,36 @@ export interface InlineBandRow {
   maxLength?: number;
 }
 
+/** One row as it currently stands, identified by the key the table draws it under. */
+export interface InlineStagedRow {
+  /** The row's id when it came from `rows`, or the table's own key for one added here. */
+  rowKey: string;
+  draft: InlineDraft;
+}
+
+/**
+ * Edit-view mode: the SCREEN owns the changes, and the table writes nothing.
+ *
+ * Per-row saving is right for a table that is the whole feature, and wrong for one section of a
+ * document with a single Save over all of it: the client's words were "every addition of line
+ * doesn't trigger a save, cause now i delete each line, then you ask me to confirm, then when i
+ * add line, you also trigger save, very annoying". So with `staging` set the table stops
+ * committing on blur, drops the per-row tick and the "Unsaved" pill, and reports every change at
+ * once instead. `onCreate` / `onUpdate` / `onDelete` are never called.
+ *
+ * Removal stages too: the row stays on screen struck-through and restorable, and the
+ * confirm-before-delete rule is honoured at the screen's Save, which is where something is
+ * actually destroyed. See `PLAN-quotation-edit-view.md`.
+ */
+export interface InlineStaging<TRow> {
+  /** Every row's key and draft, in display order, whenever any of them changes. */
+  onChange: (rows: InlineStagedRow[]) => void;
+  /** Staged for removal: struck through, not editable, and gone only once the screen saves. */
+  isRemoved: (row: TRow) => boolean;
+  /** Stage or unstage a removal. Deliberately no dialog: Save is the commit point. */
+  toggleRemove: (rowKey: string, row: TRow | null) => void;
+}
+
 export interface InlineLineTableProps<TRow> {
   rows: TRow[];
   getRowId: (row: TRow) => string;
@@ -156,10 +186,14 @@ export interface InlineLineTableProps<TRow> {
    * The three writes. The table hands over a draft and nothing else: shaping the payload
    * stays at the call site, so the request that leaves the browser is the same one the
    * dialog used to send.
+   *
+   * Required unless `staging` is set, which replaces all three with one report upwards.
    */
-  onCreate: (draft: InlineDraft) => Promise<void>;
-  onUpdate: (row: TRow, draft: InlineDraft) => Promise<void>;
-  onDelete: (row: TRow) => Promise<void>;
+  onCreate?: (draft: InlineDraft) => Promise<void>;
+  onUpdate?: (row: TRow, draft: InlineDraft) => Promise<void>;
+  onDelete?: (row: TRow) => Promise<void>;
+  /** Set to hand the changes to the screen instead of writing them. See `InlineStaging`. */
+  staging?: InlineStaging<TRow>;
   /** Cross-field rules. Keys are column keys, so a message lands on the cell at fault. */
   validateRow?: (draft: InlineDraft) => Record<string, string>;
   rowDetail?: InlineRowDetail;
@@ -245,6 +279,7 @@ export function InlineLineTable<TRow>({
   onCreate,
   onUpdate,
   onDelete,
+  staging,
   validateRow,
   rowDetail,
   band,
@@ -271,7 +306,23 @@ export function InlineLineTable<TRow>({
    */
   const [bandOpen, setBandOpen] = React.useState<string[]>([]);
 
+  /**
+   * Whether the screen owns the changes instead of this table writing them.
+   *
+   * Read once, near the top, because it decides three separate behaviours further down (no
+   * commit, no delete dialog, no per-row save affordances) and they have to agree.
+   */
+  const isStaged = Boolean(staging);
+
   const nextNewId = React.useRef(0);
+  /**
+   * A per-MOUNT prefix on the keys of rows added here.
+   *
+   * In staged mode the screen hands those rows straight back through `rows`, so after a tab
+   * switch this table remounts holding keys it minted last time. Restarting the counter at 1
+   * would hand a freshly added row the key an existing one already answers to.
+   */
+  const instanceKey = React.useId();
   const activeRowKey = React.useRef<string | null>(null);
   const cellHosts = React.useRef(new Map<string, HTMLElement | null>());
   // Read by handlers that fire before React has re-rendered with the newest state.
@@ -290,15 +341,21 @@ export function InlineLineTable<TRow>({
     () => columns.filter((column) => column.kind !== 'derived'),
     [columns],
   );
-  const rowKeys = React.useMemo(
-    () => [...rows.map(getRowId), ...newRowKeys],
-    [getRowId, newRowKeys, rows],
-  );
   const rowByKey = React.useMemo(() => {
     const map = new Map<string, TRow>();
     rows.forEach((row) => map.set(getRowId(row), row));
     return map;
   }, [getRowId, rows]);
+  const rowKeys = React.useMemo(
+    () => [
+      ...rows.map(getRowId),
+      // Filtered, because in staged mode the screen echoes an added row back through `rows`
+      // while this table is still tracking it. Without this the row is drawn twice, under one
+      // key, and every keystroke lands in both copies.
+      ...newRowKeys.filter((key) => !rowByKey.has(key)),
+    ],
+    [getRowId, newRowKeys, rowByKey, rows],
+  );
 
   /**
    * Re-seed a saved row from the server, unless the person is mid-edit on it. Without the
@@ -333,18 +390,54 @@ export function InlineLineTable<TRow>({
     });
   }, [getRowId, rows, toDraft]);
 
-  /** The rows as they are RIGHT NOW, in the order they are drawn. What a total must sum. */
-  const orderedDrafts = React.useMemo(
+  /**
+   * The rows as they are RIGHT NOW, in the order they are drawn, each with the key it is drawn
+   * under. A total sums the drafts; a staged save needs the keys as well, because they are what
+   * tells an existing line from one added a moment ago.
+   */
+  const orderedRows = React.useMemo(
     () =>
       rowKeys
-        .map((key) => states[key]?.draft)
-        .filter((draft): draft is InlineDraft => Boolean(draft)),
+        .map((rowKey) => ({ rowKey, draft: states[rowKey]?.draft }))
+        .filter((entry): entry is InlineStagedRow => Boolean(entry.draft)),
     [rowKeys, states],
   );
+  /**
+   * What a total must sum: the rows that will still be there afterwards.
+   *
+   * A row staged for removal is deliberately left out. It is on its way off the quotation, and
+   * a footer that still counted it would state a figure nobody is ever going to be charged.
+   */
+  const orderedDrafts = React.useMemo(
+    () =>
+      orderedRows
+        .filter((entry) => {
+          const row = rowByKey.get(entry.rowKey);
+          return !(row && staging?.isRemoved(row));
+        })
+        .map((entry) => entry.draft),
+    [orderedRows, rowByKey, staging],
+  );
+
+  /**
+   * Has every row been turned into a draft yet?
+   *
+   * On the first render after `rows` arrives, the seeding effect has not run, so there are rows
+   * on screen and no drafts behind them. Reporting THAT would tell the screen the table is empty,
+   * and a screen that stores what it is told would wipe the very rows it just handed down.
+   */
+  const isSeeded = orderedRows.length === rowKeys.length;
 
   React.useEffect(() => {
+    if (!isSeeded) return;
     onDraftsChange?.(orderedDrafts);
-  }, [onDraftsChange, orderedDrafts]);
+  }, [isSeeded, onDraftsChange, orderedDrafts]);
+
+  const reportStaged = staging?.onChange;
+  React.useEffect(() => {
+    if (!isSeeded) return;
+    reportStaged?.(orderedRows);
+  }, [isSeeded, orderedRows, reportStaged]);
 
   const cellId = (rowKey: string, columnKey: string) => `${rowKey}::${columnKey}`;
 
@@ -442,6 +535,9 @@ export function InlineLineTable<TRow>({
 
   const commitRow = React.useCallback(
     async (rowKey: string) => {
+      // Nothing is written in staged mode: the screen already has every change, and the one
+      // Save it offers is the only thing that reaches the server.
+      if (isStaged) return;
       const held = statesRef.current[rowKey];
       if (!held) return;
       if (inFlight.current.has(rowKey)) return;
@@ -473,10 +569,10 @@ export function InlineLineTable<TRow>({
       setSaving((previous) => [...previous, rowKey]);
       try {
         if (isNew) {
-          await onCreate(held.draft);
+          await onCreate?.(held.draft);
           dropRow(rowKey);
         } else if (row) {
-          await onUpdate(row, held.draft);
+          await onUpdate?.(row, held.draft);
           setStates((previous) => {
             const current = previous[rowKey];
             if (!current) return previous;
@@ -494,7 +590,7 @@ export function InlineLineTable<TRow>({
         setSaving((previous) => previous.filter((key) => key !== rowKey));
       }
     },
-    [collectErrors, dropRow, emptyDraft, onCreate, onUpdate, rowByKey],
+    [collectErrors, dropRow, emptyDraft, isStaged, onCreate, onUpdate, rowByKey],
   );
 
   /**
@@ -512,7 +608,7 @@ export function InlineLineTable<TRow>({
       if (pending) void commitRow(pending);
 
       nextNewId.current += 1;
-      const key = `${NEW_ROW_PREFIX}${nextNewId.current}`;
+      const key = `${NEW_ROW_PREFIX}${instanceKey}:${nextNewId.current}`;
       const draft = emptyDraft();
       setStates((previous) => ({ ...previous, [key]: { draft, committed: draft } }));
       setNewRowKeys((keys) => [...keys, key]);
@@ -530,7 +626,7 @@ export function InlineLineTable<TRow>({
         }, 0);
       }
     },
-    [band, commitRow, editableColumns, emptyDraft, focusCell],
+    [band, commitRow, editableColumns, emptyDraft, focusCell, instanceKey],
   );
 
   /**
@@ -638,6 +734,12 @@ export function InlineLineTable<TRow>({
   };
 
   const requestDelete = (rowKey: string, row: TRow | null, index: number) => {
+    // Staged mode destroys nothing here, so there is nothing to confirm: the row is marked,
+    // stays on screen struck through, and the screen's Save asks once for all of them.
+    if (staging) {
+      staging.toggleRemove(rowKey, row);
+      return;
+    }
     const held = statesRef.current[rowKey];
     // An untouched added row destroys nothing, so it goes without a question. A row that
     // was typed into gets the same confirmation a saved line gets.
@@ -720,7 +822,14 @@ export function InlineLineTable<TRow>({
               if (!held) return null;
               // Once a row has been challenged, its marks track what is typed, so fixing
               // the cell clears the mark instead of leaving it red until the next save.
-              const challenged = Object.keys(errors[rowKey] ?? {}).length > 0;
+              //
+              // In staged mode there is no per-row save to be challenged BY, and a person who
+              // only finds out at Save that line 34 needs a description has to hunt for it. So
+              // a row that holds anything at all is marked live - but an added row nobody has
+              // typed into yet is not, because it is not wrong, it is empty.
+              const challenged = isStaged
+                ? !sameDraft(held.draft, emptyDraft())
+                : Object.keys(errors[rowKey] ?? {}).length > 0;
               const rowErrors = challenged ? collectErrors(held.draft) : {};
               const dirty = rowKey.startsWith(NEW_ROW_PREFIX)
                 ? true
@@ -729,6 +838,10 @@ export function InlineLineTable<TRow>({
               const bandValue = band ? (held.draft[band.key] ?? '') : '';
               const showBand =
                 Boolean(band) && (bandValue.trim() !== '' || bandOpen.includes(rowKey));
+              // Staged for removal: still drawn, so the removal can be seen and taken back,
+              // but not typed into - editing a line on its way out is meaningless.
+              const removed = Boolean(row && staging?.isRemoved(row));
+              const cellsReadOnly = readOnly || removed;
               let editableIndex = -1;
 
               return (
@@ -739,7 +852,7 @@ export function InlineLineTable<TRow>({
                     // commit mid-edit and the heading would never be saved with its line.
                     <tr data-row-key={rowKey} className="border-b border-border/60 bg-muted/40">
                       <td colSpan={columns.length + (readOnly ? 0 : 1)} className="px-2 py-1.5">
-                        {readOnly ? (
+                        {cellsReadOnly ? (
                           <span
                             className="block truncate text-sm font-semibold"
                             title={bandValue}
@@ -771,7 +884,9 @@ export function InlineLineTable<TRow>({
                   )}
                   <tr
                     data-row-key={rowKey}
-                    className="border-b border-border/60 align-top last:border-b-0"
+                    className={`border-b border-border/60 align-top last:border-b-0 ${
+                      removed ? 'text-muted-foreground line-through opacity-70' : ''
+                    }`}
                   >
                     {columns.map((column) => {
                       if (column.kind !== 'derived') editableIndex += 1;
@@ -794,7 +909,7 @@ export function InlineLineTable<TRow>({
                             }}
                             className="min-w-0"
                             onKeyDown={
-                              column.kind === 'derived' || readOnly
+                              column.kind === 'derived' || cellsReadOnly
                                 ? undefined
                                 : (event) =>
                                     handleCellKeyDown(event, rowKey, column, columnIndex)
@@ -810,7 +925,7 @@ export function InlineLineTable<TRow>({
                               invalid={Boolean(message)}
                               describedBy={describedBy}
                               label={`${column.header} on ${label}`}
-                              readOnly={readOnly}
+                              readOnly={cellsReadOnly}
                               onChange={(next) => setDraftValue(rowKey, column.key, next)}
                               onOptionChange={(option) =>
                                 applyOptionFill(rowKey, column, option)
@@ -831,9 +946,9 @@ export function InlineLineTable<TRow>({
                     })}
 
                     {!readOnly && (
-                      <td className="px-2 py-1.5">
+                      <td className="px-2 py-1.5 no-underline">
                         <div className="flex items-center justify-end gap-0.5">
-                          {rowDetail && (
+                          {rowDetail && !removed && (
                             <RowDetailPopover
                               detail={rowDetail}
                               label={label}
@@ -844,7 +959,10 @@ export function InlineLineTable<TRow>({
                               onClosed={() => void commitRow(rowKey)}
                             />
                           )}
-                          {dirty && (
+                          {/* The tick and the "Unsaved" pill belong to per-row saving. In
+                              staged mode every row is unsaved until the screen's one Save, so
+                              saying it per row says nothing. */}
+                          {dirty && !isStaged && (
                             <Button
                               type="button"
                               mode="icon"
@@ -857,20 +975,38 @@ export function InlineLineTable<TRow>({
                               <Check className="size-3.5 text-primary" />
                             </Button>
                           )}
-                          <Button
-                            type="button"
-                            mode="icon"
-                            variant="ghost"
-                            size="sm"
-                            aria-label={`Remove ${label}`}
-                            onClick={() => requestDelete(rowKey, row, rowIndex)}
-                          >
-                            <Trash2 className="size-3.5 text-destructive" />
-                          </Button>
+                          {removed ? (
+                            <Button
+                              type="button"
+                              mode="icon"
+                              variant="ghost"
+                              size="sm"
+                              aria-label={`Restore ${label}`}
+                              onClick={() => staging?.toggleRemove(rowKey, row)}
+                            >
+                              <Undo2 className="size-3.5 text-primary" />
+                            </Button>
+                          ) : (
+                            <Button
+                              type="button"
+                              mode="icon"
+                              variant="ghost"
+                              size="sm"
+                              aria-label={`Remove ${label}`}
+                              onClick={() => requestDelete(rowKey, row, rowIndex)}
+                            >
+                              <Trash2 className="size-3.5 text-destructive" />
+                            </Button>
+                          )}
                         </div>
-                        {dirty && (
+                        {dirty && !isStaged && (
                           <p className="mt-0.5 text-end text-[11px] text-muted-foreground">
                             Unsaved
+                          </p>
+                        )}
+                        {removed && (
+                          <p className="mt-0.5 text-end text-[11px] text-muted-foreground">
+                            Removed on save
                           </p>
                         )}
                       </td>
@@ -947,7 +1083,7 @@ export function InlineLineTable<TRow>({
         }
         onDelete={async () => {
           if (!pendingDelete) return;
-          if (pendingDelete.row) await onDelete(pendingDelete.row);
+          if (pendingDelete.row) await onDelete?.(pendingDelete.row);
           else dropRow(pendingDelete.rowKey);
         }}
         onSuccess={() => setPendingDelete(null)}

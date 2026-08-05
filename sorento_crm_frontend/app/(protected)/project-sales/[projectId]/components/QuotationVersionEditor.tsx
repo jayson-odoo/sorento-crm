@@ -11,15 +11,13 @@ import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/sh
 // The shared products `/select` mapper, keeping the fields a picked product decides.
 import { getProductsForLineSelect } from '@/app/(protected)/master-data-management/products/services/productService';
 import type { ProductLineRef } from '@/app/(protected)/master-data-management/products/types/product.types';
-import {
-  useQuotationLineMutations,
-  useQuotationLines,
-  useQuotationVersions,
-} from '../../_shared/hooks/useProjects';
+import { useQuotationLines, useQuotationVersions } from '../../_shared/hooks/useProjects';
 import type {
   Project,
   ProjectQuotation,
   QuotationLine,
+  QuotationLineBulkItem,
+  StagedQuotationLine,
   UnitType,
 } from '../../_shared/types/project.types';
 import {
@@ -28,6 +26,7 @@ import {
   isInlineChecked,
   type InlineDraft,
   type InlineLineColumn,
+  type InlineStaging,
 } from '../../_shared/components/InlineLineTable';
 import { ReviseQuotationDialog } from './ReviseQuotationDialog';
 import { formatMyr } from './QuotationsPanel';
@@ -48,29 +47,134 @@ const UNIT_TYPE_OPTIONS: { value: UnitType; label: string; description: string }
 ];
 
 /**
+ * A row of the line table: the stored line, or a stand-in for one added in this edit session.
+ *
+ * `id` is the row's identity - the line's own id when it has one, the staged key when it does
+ * not - so one set of columns serves both the read and the edit.
+ */
+type LineRow = { id: string; line: QuotationLine | null };
+
+/** A stored line as an editable draft. Every field the bulk write sends has to be in here. */
+function serverToDraft(line: QuotationLine): InlineDraft {
+  return {
+    product_id: line.product_id ?? '',
+    description: line.description ?? '',
+    technical_spec: line.technical_spec ?? '',
+    // The response names this one `brand`, the request `brand_snapshot`. The draft holds the
+    // request's name so the payload stays a copy rather than a translation.
+    brand_snapshot: line.brand ?? '',
+    quantity: line.quantity ?? '1',
+    uom: line.uom ?? '',
+    unit_price: line.unit_price ?? '',
+    complete_set: line.complete_set ?? '',
+    unit_type: line.unit_type ?? '',
+    is_rate_only: line.is_rate_only ? INLINE_CHECKED : '',
+    band_label: line.band_label ?? '',
+    notes: line.notes ?? '',
+    // No column of its own: read under the unit price, and never sent back (the server
+    // snapshots it from the product it belongs to).
+    list_price: line.list_price ?? '',
+  };
+}
+
+/** A brand-new row's starting draft. Also the table's "untouched" comparison. */
+function emptyDraft(): InlineDraft {
+  return {
+    product_id: '',
+    description: '',
+    technical_spec: '',
+    brand_snapshot: '',
+    quantity: '1',
+    uom: '',
+    unit_price: '',
+    complete_set: '',
+    unit_type: '',
+    is_rate_only: '',
+    band_label: '',
+    notes: '',
+    list_price: '',
+  };
+}
+
+/**
+ * The one rule a quotation line has to satisfy before it can be stored.
+ *
+ * Off-catalog lines carry the description the customer reads, so it is the one thing that cannot
+ * be left out. Written once and used twice - to mark the cell at fault, and to stop a Save that
+ * would only come back as a 422 - so the desk and the button cannot disagree about what is wrong.
+ */
+function lineErrors(draft: InlineDraft): Record<string, string> {
+  return !draft.product_id && !draft.description.trim()
+    ? { description: 'Needed on an off-catalog line' }
+    : {};
+}
+
+/** Staged lines that are not ready to be written. Counted so a refusal can say how many. */
+export function unfinishedStagedLines(lines: StagedQuotationLine[]): number {
+  return lines.filter(
+    (line) => !line.removed && Object.keys(lineErrors(line.draft)).length > 0,
+  ).length;
+}
+
+/**
+ * A staged set as the body of the whole-set write.
+ *
+ * Removed lines are simply left out, which is exactly how the endpoint deletes them, and a line
+ * added in this session carries no `id` so the server reads it as new. Order is array position;
+ * `sort_order` is not sent at all. Exported because the SAVE lives on the document screen: one
+ * button covers every scope, so it cannot live inside one scope's editor.
+ */
+export function stagedLinesToBody(lines: StagedQuotationLine[]): QuotationLineBulkItem[] {
+  return lines
+    .filter((line) => !line.removed)
+    .map((line) => (line.id ? { id: line.id, ...toBody(line.draft) } : toBody(line.draft)));
+}
+
+/**
+ * What the scope comes to, off the staged drafts, by the same rule the footer and the backend
+ * both apply. Exported so the document header can sum the scopes itself rather than being told a
+ * figure by whichever editor happens to be mounted.
+ */
+export function stagedScopeTotal(lines: StagedQuotationLine[]): string | null {
+  return totalFromDrafts(lines.filter((line) => !line.removed).map((line) => line.draft));
+}
+
+/**
+ * What the document screen hands down so one scope can be edited without writing anything.
+ *
+ * Its presence IS edit mode for this scope. Absent, the table is a clean read: no inputs, no
+ * per-row saves, nothing to press by accident. That was the client's complaint in one sentence -
+ * "every addition of line doesn't trigger a save ... very annoying" - and the answer is a view
+ * that is a view, plus an Edit that puts the whole document into one staged session.
+ */
+export type QuotationScopeEditing = {
+  /** The scope's staged lines, or null until it has been seeded from the server's rows. */
+  staged: StagedQuotationLine[] | null;
+  seed: (versionId: string, lines: StagedQuotationLine[]) => void;
+  stage: (lines: StagedQuotationLine[]) => void;
+  toggleRemoved: (key: string) => void;
+};
+
+/**
  * The versions of one scope, and the lines of whichever version is being looked at.
  *
  * Only the newest version is editable, and the editor works that out from the server's
  * `is_current` rather than from a local guess. Everything below it is history the
  * customer already holds (AC-E3), so an older version renders read-only with the reason
  * stated, not merely with its buttons missing.
+ *
+ * With no `edit` it is a READ. Every field is text, there is nothing to add and nothing to save,
+ * because a screen that saves on blur cannot also be the screen somebody reads a quotation on.
  */
 export function QuotationVersionEditor({
   project,
   quotation,
-  onTotalChange,
+  edit,
 }: {
   project: Project;
   quotation: ProjectQuotation;
-  /**
-   * The scope's live quoted total, as a decimal STRING (`"9000.00"`), whenever it moves.
-   *
-   * For a header that sits outside this editor and must not disagree with the footer inside
-   * it. Fired off the same drafts the footer sums, so the two cannot drift: rate-only lines
-   * contribute nothing, and an uncommitted keystroke counts. Unformatted on purpose - the
-   * header decides how to print it.
-   */
-  onTotalChange?: (total: string) => void;
+  /** Set by the document screen while its edit session is open. See `QuotationScopeEditing`. */
+  edit?: QuotationScopeEditing | null;
 }) {
   const versions = useQuotationVersions(quotation.id);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
@@ -84,7 +188,6 @@ export function QuotationVersionEditor({
   const selected = rows.find((version) => version.id === selectedId) ?? current;
 
   const lines = useQuotationLines(selected?.id);
-  const lineMutations = useQuotationLineMutations(project.id, selected?.id ?? '');
 
   // `is_editable` from the server, NOT `is_current`. An issued version is still the highest
   // version until somebody revises, so gating on `is_current` left the fields open on a
@@ -95,10 +198,6 @@ export function QuotationVersionEditor({
     () => [...(lines.data ?? [])].sort((a, b) => a.sort_order - b.sort_order),
     [lines.data],
   );
-  const nextSortOrder =
-    sortedLines.length === 0
-      ? 0
-      : Math.max(...sortedLines.map((line) => line.sort_order)) + 10;
 
   // The line stores the CODE, not the id, so the option value is the code. Cached with an
   // infinite staleTime by the shared hook, so opening five versions costs one request.
@@ -174,7 +273,7 @@ export function QuotationVersionEditor({
 
   // The order the printed quotation uses, so a line is entered reading left to right the way
   // the customer will read it back: item number, what it is, how much, then what it comes to.
-  const columns = React.useMemo<InlineLineColumn<QuotationLine>[]>(
+  const columns = React.useMemo<InlineLineColumn<LineRow>[]>(
     () => [
       {
         key: 'item_no',
@@ -203,17 +302,38 @@ export function QuotationVersionEditor({
         // One decision fills the row: the description, brand, unit and list price all come off
         // the product record rather than being retyped beside it.
         onOptionSelected: (option) => fillFromProduct(option),
-        // Async mode fetches a page at a time, so the line's own product has to be handed
-        // in or a saved row would read as empty until somebody searched for it.
-        resolveSelected: (line) =>
-          line?.product_id
-            ? {
-                value: line.product_id,
-                label: line.product_code ?? 'Selected product',
-                description: line.description ?? undefined,
-              }
-            : undefined,
-        annotate: (line) => (line ? <LineFlags line={line} /> : null),
+        /**
+         * Async mode fetches a page at a time, so the row's own product has to be handed in or
+         * a saved row would read as empty until somebody searched for it.
+         *
+         * Read off the DRAFT, not off the stored line. Under the old save-per-row the two could
+         * not disagree for long, because a refetch followed every pick. Nothing refetches during
+         * an edit session, so resolving from the stored line would leave the trigger naming the
+         * product that was there before the pick, right up until Save.
+         */
+        resolveSelected: (row, draft) => {
+          const productId = draft.product_id;
+          if (!productId) return undefined;
+          const picked = productsById.current.get(productId);
+          if (picked) {
+            return {
+              value: productId,
+              label: picked.product_code,
+              description: picked.product_name ?? undefined,
+            };
+          }
+          const stored = row?.line;
+          return {
+            value: productId,
+            label:
+              stored?.product_id === productId
+                ? (stored.product_code ?? 'Selected product')
+                : 'Selected product',
+            description:
+              stored?.product_id === productId ? (stored.description ?? undefined) : undefined,
+          };
+        },
+        annotate: (row) => (row?.line ? <LineFlags line={row.line} /> : null),
       },
       {
         key: 'description',
@@ -274,8 +394,8 @@ export function QuotationVersionEditor({
         // The DRAFT's list price first: picking a product must show its price at once, and
         // reading the saved row instead is what left "List RM 0.00" beside a real product
         // until the save came back.
-        annotate: (line, draft) => {
-          const listPrice = draft.list_price || line?.list_price;
+        annotate: (row, draft) => {
+          const listPrice = draft.list_price || row?.line?.list_price;
           return listPrice ? (
             <span className="mt-0.5 block text-end text-xs text-muted-foreground">
               {`List ${formatMyr(listPrice)}`}
@@ -350,68 +470,86 @@ export function QuotationVersionEditor({
     [fetchProducts, fillFromProduct, uomOptions],
   );
 
-  const toDraft = React.useCallback(
-    (line: QuotationLine): InlineDraft => ({
-      product_id: line.product_id ?? '',
-      description: line.description ?? '',
-      technical_spec: line.technical_spec ?? '',
-      // The response names this one `brand`, the request `brand_snapshot`. The draft holds the
-      // request's name so the payload stays a copy rather than a translation.
-      brand_snapshot: line.brand ?? '',
-      quantity: line.quantity ?? '1',
-      uom: line.uom ?? '',
-      unit_price: line.unit_price ?? '',
-      complete_set: line.complete_set ?? '',
-      unit_type: line.unit_type ?? '',
-      is_rate_only: line.is_rate_only ? INLINE_CHECKED : '',
-      band_label: line.band_label ?? '',
-      notes: line.notes ?? '',
-      // No column of its own: read under the unit price, and never sent back (the server
-      // snapshots it from the product it belongs to).
-      list_price: line.list_price ?? '',
-    }),
-    [],
-  );
-
-  const emptyDraft = React.useCallback(
-    (): InlineDraft => ({
-      product_id: '',
-      description: '',
-      technical_spec: '',
-      brand_snapshot: '',
-      quantity: '1',
-      uom: '',
-      unit_price: '',
-      complete_set: '',
-      unit_type: '',
-      is_rate_only: '',
-      band_label: '',
-      notes: '',
-      list_price: '',
-    }),
-    [],
-  );
+  /**
+   * Edit mode for THIS scope: the screen asked for it, and the server still allows it.
+   *
+   * Both halves matter. A frozen version stays a read even inside an open edit session - the
+   * customer holds it, and the way to change it is a revision, which the shell offers.
+   */
+  const isEditing = Boolean(edit) && editable;
+  const staged = edit?.staged ?? null;
 
   /**
-   * The same sum the footer shows, pushed to whoever asked for it.
-   *
-   * A ref rather than state: this fires on every keystroke that moves a number, and the editor
-   * itself has nothing to re-render over a figure it is not drawing. The guard also keeps a
-   * parent from re-rendering when a description changes and the money did not.
+   * The scope's starting point, taken from the server's rows the first time it is opened for
+   * editing. Seeded through the shell, never held here: this component unmounts on a tab switch
+   * and on a scope switch, and the staged work has to survive both.
    */
-  const lastTotal = React.useRef<string | null>(null);
-  const handleDraftsChange = React.useCallback(
-    (drafts: InlineDraft[]) => {
-      // Lines that exist but have not been turned into drafts yet are not "nothing quoted":
-      // announcing RM 0.00 on the way in would flash a wrong figure in whatever is showing it.
-      if (drafts.length === 0 && sortedLines.length > 0) return;
-      const total = totalFromDrafts(drafts);
-      if (total === null || total === lastTotal.current) return;
-      lastTotal.current = total;
-      onTotalChange?.(total);
-    },
-    [onTotalChange, sortedLines.length],
+  const seedScope = edit?.seed;
+  React.useEffect(() => {
+    if (!seedScope || !isEditing || staged !== null || !selected || lines.isLoading) return;
+    seedScope(
+      selected.id,
+      sortedLines.map((line) => ({
+        id: line.id,
+        key: line.id,
+        line,
+        draft: serverToDraft(line),
+        removed: false,
+      })),
+    );
+  }, [isEditing, lines.isLoading, seedScope, selected, sortedLines, staged]);
+
+  /**
+   * What the table draws, in display order: the staged set while editing, the server's rows
+   * otherwise. One row type either way, so there is one set of columns rather than two that can
+   * drift apart.
+   */
+  const lineRows = React.useMemo<LineRow[]>(
+    () =>
+      isEditing && staged
+        ? staged.map((line) => ({ id: line.key, line: line.line }))
+        : sortedLines.map((line) => ({ id: line.id, line })),
+    [isEditing, sortedLines, staged],
   );
+
+  const stagedByKey = React.useMemo(() => {
+    const map = new Map<string, StagedQuotationLine>();
+    (staged ?? []).forEach((line) => map.set(line.key, line));
+    return map;
+  }, [staged]);
+
+  const toDraft = React.useCallback(
+    (row: LineRow): InlineDraft =>
+      // The staged draft when there is one, so an edit made before a tab switch is what comes
+      // back afterwards rather than the server's untouched row.
+      stagedByKey.get(row.id)?.draft ?? (row.line ? serverToDraft(row.line) : emptyDraft()),
+    [stagedByKey],
+  );
+
+  const stageLines = edit?.stage;
+  const toggleRemoved = edit?.toggleRemoved;
+  const staging = React.useMemo<InlineStaging<LineRow> | undefined>(() => {
+    if (!isEditing || !stageLines || !toggleRemoved) return undefined;
+    return {
+      onChange: (reported) =>
+        stageLines(
+          reported.map(({ rowKey, draft }) => {
+            // A key the shell has not seen is a row the table has just added: no id, no stored
+            // line, and the bulk write will read it as new.
+            const held = stagedByKey.get(rowKey);
+            return {
+              id: held?.id ?? null,
+              key: rowKey,
+              line: held?.line ?? null,
+              draft,
+              removed: held?.removed ?? false,
+            };
+          }),
+        ),
+      isRemoved: (row) => stagedByKey.get(row.id)?.removed ?? false,
+      toggleRemove: (rowKey) => toggleRemoved(rowKey),
+    };
+  }, [isEditing, stageLines, stagedByKey, toggleRemoved]);
 
   if (versions.isLoading) return <Skeleton className="h-24 w-full" />;
 
@@ -472,12 +610,13 @@ export function QuotationVersionEditor({
         </div>
       )}
 
-      {/* Why this version is read only, in one line. The reasoning behind freezing a
-          version was a paragraph and is now simply the consequence. */}
-      {selected && selected.is_issued && (
+      {/* Why this version cannot be edited, and the way out, in one sentence. The old copy
+          ("The customer holds this version, so its lines cannot be changed. Open a revision to
+          re-price it.") described a state and offered no move, which is exactly what the client
+          read and still could not act on. Edit up in the document header is the move now. */}
+      {selected?.is_issued && selected.is_current && (
         <p className="text-xs text-muted-foreground">
-          The customer holds this version, so its lines cannot be changed. Open a revision to
-          re-price it.
+          {`The customer holds v${selected.version_no}. Edit opens v${selected.version_no + 1} and leaves what was sent untouched.`}
         </p>
       )}
 
@@ -487,24 +626,37 @@ export function QuotationVersionEditor({
         </p>
       )}
 
-      <InlineLineTable<QuotationLine>
-        rows={sortedLines}
-        getRowId={(line) => line.id}
+      <InlineLineTable<LineRow>
+        /**
+         * A fresh table when the session opens and again when it closes.
+         *
+         * The table keeps its own drafts and deliberately refuses to overwrite a dirty row from
+         * `rows` - that is what stops a neighbour's refetch wiping what somebody is typing. It
+         * also means Cancel could not put a row back: the staged set disappears and the table
+         * carries on showing the edit. Remounting is the honest reset.
+         */
+        key={isEditing ? 'editing' : 'reading'}
+        rows={lineRows}
+        getRowId={(row) => row.id}
         columns={columns}
         toDraft={toDraft}
         emptyDraft={emptyDraft}
-        readOnly={!editable}
+        // A view is a view: outside an edit session there is nothing to type into, nothing to
+        // add and nothing that can be saved by moving the caret.
+        readOnly={!isEditing}
         isLoading={lines.isLoading}
         addLabel="Add a line"
         addSectionLabel="Add a section"
-        onDraftsChange={handleDraftsChange}
+        staging={staging}
         emptyHint={
-          editable
+          isEditing
             ? 'Nothing quoted yet. Add a line and pick a product to freeze its code, description and list price onto it.'
-            : 'This version was frozen without any lines.'
+            : editable
+              ? 'Nothing quoted yet. Press Edit to price this scope.'
+              : 'This version was frozen without any lines.'
         }
-        describeRow={(line, index) =>
-          line?.product_code ?? line?.description ?? `line ${index + 1}`
+        describeRow={(row, index) =>
+          row?.line?.product_code ?? row?.line?.description ?? `line ${index + 1}`
         }
         rowDetail={{
           key: 'notes',
@@ -519,28 +671,7 @@ export function QuotationVersionEditor({
           placeholder: 'e.g. BILL NO 3 PAGE 15/4, OPTIONAL ITEMS',
           maxLength: 150,
         }}
-        // Off-catalog lines carry the description the customer reads, so it is the one
-        // thing that cannot be left out.
-        validateRow={(draft): Record<string, string> =>
-          !draft.product_id && !draft.description.trim()
-            ? { description: 'Needed on an off-catalog line' }
-            : {}
-        }
-        onCreate={async (draft) => {
-          await lineMutations.create.mutateAsync({
-            ...toBody(draft),
-            sort_order: nextSortOrder,
-          });
-        }}
-        onUpdate={async (line, draft) => {
-          await lineMutations.update.mutateAsync({ id: line.id, body: toBody(draft) });
-        }}
-        onDelete={async (line) => {
-          await lineMutations.remove.mutateAsync(line.id);
-        }}
-        deleteDescription={(line) =>
-          `Remove "${line.product_code ?? line.description}" from v${selected?.version_no}? This action cannot be undone.`
-        }
+        validateRow={lineErrors}
       />
 
       {revising && current && (

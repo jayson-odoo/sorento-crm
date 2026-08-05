@@ -17,12 +17,14 @@ import { act, render } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const updateQuotationLine = vi.fn();
+const replaceQuotationLines = vi.fn();
 
 vi.mock('../services/projectService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../services/projectService')>();
   return {
     ...actual,
     updateQuotationLine: (...args: unknown[]) => updateQuotationLine(...args),
+    replaceQuotationLines: (...args: unknown[]) => replaceQuotationLines(...args),
   };
 });
 
@@ -30,7 +32,7 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
 
-import { useQuotationLineMutations } from './useProjects';
+import { useQuotationBulkLineMutation, useQuotationLineMutations } from './useProjects';
 import { quotationDocumentsKey } from './useQuotationDocuments';
 
 const PROJECT_ID = 'p1';
@@ -96,6 +98,61 @@ describe('useQuotationLineMutations', () => {
     // The lines of the version being edited.
     expect(flattened.some((key) => key.includes(VERSION_ID))).toBe(true);
     // The scope list, which carries each scope's current total.
+    expect(flattened.some((key) => key.includes(PROJECT_ID))).toBe(true);
+  });
+});
+
+/**
+ * The same invariant, on the path the edit view actually takes.
+ *
+ * The edit view's Save writes a whole version at once, so this is where the letterhead now goes
+ * stale if the cache wiring is wrong. One assertion per hook, because the bug is per hook.
+ */
+describe('useQuotationBulkLineMutation', () => {
+  async function saveTheWholeSet() {
+    let mutation: ReturnType<typeof useQuotationBulkLineMutation> | null = null;
+    function BulkHarness({
+      onReady,
+    }: {
+      onReady: (api: ReturnType<typeof useQuotationBulkLineMutation>) => void;
+    }) {
+      const api = useQuotationBulkLineMutation(PROJECT_ID);
+      React.useEffect(() => {
+        onReady(api);
+      }, [api, onReady]);
+      return null;
+    }
+    render(
+      <QueryClientProvider client={client}>
+        <BulkHarness onReady={(value) => (mutation = value)} />
+      </QueryClientProvider>,
+    );
+    await act(async () => {
+      await mutation!.mutateAsync({
+        versionId: VERSION_ID,
+        lines: [{ id: 'l1', description_snapshot: 'Wall-hung WC' }],
+      });
+    });
+  }
+
+  it('refreshes the document behind the letterhead, not only the lines', async () => {
+    replaceQuotationLines.mockResolvedValue([]);
+
+    await saveTheWholeSet();
+
+    const documentKey = quotationDocumentsKey(PROJECT_ID);
+    expect(invalidated).toEqual(
+      expect.arrayContaining([expect.arrayContaining([documentKey[0]])]),
+    );
+  });
+
+  it('refreshes the lines of the version it wrote, and the scope list', async () => {
+    replaceQuotationLines.mockResolvedValue([]);
+
+    await saveTheWholeSet();
+
+    const flattened = invalidated.map((key) => JSON.stringify(key));
+    expect(flattened.some((key) => key.includes(VERSION_ID))).toBe(true);
     expect(flattened.some((key) => key.includes(PROJECT_ID))).toBe(true);
   });
 });

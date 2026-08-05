@@ -13,13 +13,31 @@ import { useQuotationDocumentScreen } from './QuotationDocumentContext';
  * past fifty priced lines to reach the terms, not for the terms to read differently.
  */
 export function QuotationCoverLetterTab() {
-  const { document } = useQuotationDocumentScreen();
-  return <QuotationCoverLetterPanel html={document.cover_letter_html} />;
+  const { document, canEdit, edit } = useQuotationDocumentScreen();
+  const staged = edit.documentDraft.cover_letter_html;
+  const editing = canEdit && edit.isEditing;
+  return (
+    <QuotationCoverLetterPanel
+      // The staged copy while one exists, so leaving for the scopes tab and coming back shows
+      // what was typed rather than what the server still holds.
+      html={staged !== undefined ? staged : document.cover_letter_html}
+      onChange={
+        editing ? (html) => edit.stageDocument({ cover_letter_html: html }) : undefined
+      }
+    />
+  );
 }
 
 export function QuotationTermsTab() {
-  const { document } = useQuotationDocumentScreen();
-  return <QuotationTermsPanel html={document.terms_html} />;
+  const { document, canEdit, edit } = useQuotationDocumentScreen();
+  const staged = edit.documentDraft.terms_html;
+  const editing = canEdit && edit.isEditing;
+  return (
+    <QuotationTermsPanel
+      html={staged !== undefined ? staged : document.terms_html}
+      onChange={editing ? (html) => edit.stageDocument({ terms_html: html }) : undefined}
+    />
+  );
 }
 
 export function QuotationSignaturesTab() {

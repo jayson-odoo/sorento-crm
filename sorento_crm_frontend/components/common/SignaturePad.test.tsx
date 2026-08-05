@@ -1,5 +1,16 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+
+/**
+ * The place lookup is one small PUBLIC call to the backend, against the same table the PDF
+ * renders from. Stubbed here because what these specs are about is the pad's behaviour around it:
+ * ask only with a fix, never block on the answer, never keep it against different coordinates.
+ */
+const getNearestPlace = vi.fn();
+vi.mock('@/services/geoPlaceService', () => ({
+  getNearestPlace: (...args: unknown[]) => getNearestPlace(...args),
+}));
+
 import { SignaturePad, type SignatureValue } from './SignaturePad';
 
 const STUB_PNG = 'data:image/png;base64,STUB';
@@ -97,6 +108,10 @@ function stubGeolocation(behaviour: 'granted' | 'denied' | 'absent') {
 
 beforeEach(() => {
   stubGeolocation('absent');
+  getNearestPlace.mockReset();
+  // Never resolves by default, so every existing spec sees exactly what it saw before: the
+  // coordinates alone, with the place name still outstanding.
+  getNearestPlace.mockReturnValue(new Promise(() => {}));
 });
 
 afterEach(() => {
@@ -344,6 +359,92 @@ describe('SignaturePad metadata', () => {
     render(<SignaturePad onChange={vi.fn()} requestGeolocation={false} />);
 
     expect(navigator.geolocation.getCurrentPosition).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * S13 - the place name WHILE capturing.
+ *
+ * The lookup used to be backend-only, so `near Kajang, Selangor` appeared once a signature had
+ * been SAVED and the person actually signing saw bare numbers. The client read that as a service
+ * nobody had switched on. The table still stays on the server - one definition, shared with the
+ * PDF - and the browser asks.
+ */
+describe('SignaturePad place name while capturing', () => {
+  it('names the place once the lookup answers, without waiting for a save', async () => {
+    stubGeolocation('granted');
+    getNearestPlace.mockResolvedValue({
+      lat: 3.13901,
+      lng: 101.68685,
+      coordinates: '3.13901, 101.68685',
+      description: 'near Kuala Lumpur, Wilayah Persekutuan (3.13901, 101.68685)',
+      place: 'Kuala Lumpur, Wilayah Persekutuan',
+      place_name: 'Kuala Lumpur',
+      state: 'Wilayah Persekutuan',
+      distance_km: 1.2,
+    });
+
+    render(<SignaturePad onChange={vi.fn()} />);
+
+    // The numbers first, because they are what the browser knows on its own.
+    expect(screen.getByText('3.13901, 101.68685')).toBeInTheDocument();
+    // Asked with the fix the browser granted, and only with it.
+    expect(getNearestPlace).toHaveBeenCalledWith(3.13901, 101.68685, expect.anything());
+
+    // The place NEVER replaces the coordinates: a reader settles a dispute on the numbers.
+    expect(
+      await screen.findByText('near Kuala Lumpur, Wilayah Persekutuan (3.13901, 101.68685)'),
+    ).toBeInTheDocument();
+  });
+
+  it('never asks without a fix', () => {
+    stubGeolocation('denied');
+    render(<SignaturePad onChange={vi.fn()} />);
+
+    expect(getNearestPlace).not.toHaveBeenCalled();
+    expect(screen.getByText('GPS location')).toBeInTheDocument();
+  });
+
+  it('signs on the coordinates alone when the lookup fails', async () => {
+    stubGeolocation('granted');
+    getNearestPlace.mockRejectedValue(new Error('offline'));
+    const onChange = vi.fn();
+
+    render(<SignaturePad onChange={onChange} />);
+
+    drawAStroke();
+    fireEvent.click(applyButton());
+
+    // A place name is a convenience. Nothing about it may hold up somebody putting their name
+    // to a document, and nothing about it reaches the record either.
+    expect(onChange.mock.calls[0][0]).toMatchObject({ gpsLat: 3.13901, gpsLng: 101.68685 });
+    await waitFor(() =>
+      expect(screen.getByText('3.13901, 101.68685')).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/near/i)).toBeNull();
+  });
+
+  it('asks for no place name in read-only, where the server already answered', () => {
+    render(
+      <SignaturePad
+        readOnly
+        onChange={vi.fn()}
+        value={{
+          dataUrl: STUB_PNG,
+          mode: 'draw',
+          typedText: null,
+          signedAt: '2026-08-04T02:15:00Z',
+          gpsLat: 3.03927,
+          gpsLng: 101.8066,
+          gpsPlace: 'Kajang, Selangor',
+        }}
+      />,
+    );
+
+    // The stored `gps_place` is the record's own answer. Asking again could only produce a
+    // second opinion about a place somebody already signed at.
+    expect(getNearestPlace).not.toHaveBeenCalled();
+    expect(screen.getByText('near Kajang, Selangor (3.03927, 101.80660)')).toBeInTheDocument();
   });
 });
 

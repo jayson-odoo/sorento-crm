@@ -3,12 +3,22 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Download, Link2, PenLine, Trash2 } from 'lucide-react';
+import { Download, Link2, PenLine, SquarePen, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import {
@@ -16,14 +26,27 @@ import {
   useQuotationDocumentMutations,
   useQuotationIssues,
 } from '../../../../_shared/hooks/useQuotationDocuments';
-import { useProject } from '../../../../_shared/hooks/useProjects';
+import {
+  useProject,
+  useProjectQuotationVersions,
+  useQuotationBulkLineMutation,
+  useQuotationMutations,
+  useQuotations,
+} from '../../../../_shared/hooks/useProjects';
 import { sumMoney } from '../../../components/POIntakeMoney';
+import {
+  stagedLinesToBody,
+  stagedScopeTotal,
+  unfinishedStagedLines,
+} from '../../../components/QuotationVersionEditor';
 import type { QuotationSignatureRecord } from '../../../../_shared/services/quotationDocumentService';
 import { QuotationDocumentHeader } from './QuotationDocumentHeader';
 import { QuotationDocumentProvider } from './QuotationDocumentContext';
 import { QuotationDocumentTabs } from './QuotationDocumentTabs';
 import { QuotationSignDialog } from './QuotationSignDialog';
 import { QuotationSignLinkDialog } from './QuotationSignLinkDialog';
+import { ReviseToEditDialog } from './ReviseToEditDialog';
+import { useQuotationEditSession } from './useQuotationEditSession';
 
 /**
  * One quotation DOCUMENT: the letterhead the customer receives, and the tabs it is read through.
@@ -57,11 +80,26 @@ export function QuotationDocumentClient({
   // counter-sign link are the ones worth handing out.
   const issues = useQuotationIssues(projectId, documentId);
   const mutations = useQuotationDocumentMutations(projectId, documentId);
+  /**
+   * Which scopes are still open for editing, straight from the server's own `is_editable`.
+   *
+   * Read here rather than inside the Scopes panel because Edit sits in this header and is on
+   * screen from every tab. Both queries are the ones the Scopes panel and the line editor already
+   * use, so react-query answers them from cache on the usual path.
+   */
+  const quotations = useQuotations(projectId);
+  const scopeVersions = useProjectQuotationVersions(quotations.data);
+  const quotationMutations = useQuotationMutations(projectId);
+  const bulkLines = useQuotationBulkLineMutation(projectId);
+  const edit = useQuotationEditSession();
 
   const [activeScopeId, setActiveScopeId] = React.useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [signing, setSigning] = React.useState(false);
   const [linkToShow, setLinkToShow] = React.useState<string | null>(null);
+  const [revisePrompt, setRevisePrompt] = React.useState(false);
+  const [confirmRemovals, setConfirmRemovals] = React.useState(false);
+  const [isSaving, setIsSaving] = React.useState(false);
   /**
    * The signature captured on this page, held here rather than in the query cache.
    *
@@ -72,59 +110,79 @@ export function QuotationDocumentClient({
    * prefers it.
    */
   const [justSigned, setJustSigned] = React.useState<QuotationSignatureRecord | null>(null);
+
+  const selectScope = React.useCallback((scopeId: string) => setActiveScopeId(scopeId), []);
+
+  // Memoised because the total below is: `?? []` mints a new array whenever the document has no
+  // scopes, which would re-sum the header on every render of the page.
+  const documentScopes = document.data?.scopes;
+  const scopes = React.useMemo(() => documentScopes ?? [], [documentScopes]);
+
   /**
-   * The open scope's total as the line editor currently has it, including edits the user has typed
-   * but not yet saved.
+   * The document total with every staged scope's own figure in place of its saved one.
    *
-   * Kept per scope, never as a bare figure: a total reported by the townhouse tab must not be
-   * spent on the guard house's row when the reader switches tabs.
-   */
-  const [liveScopeTotal, setLiveScopeTotal] = React.useState<{
-    scopeId: string;
-    total: string;
-  } | null>(null);
-
-  /**
-   * What the line editor calls (as its `onTotalChange`) when the open scope's uncommitted total
-   * moves, and `null` when there is nothing live to report.
-   *
-   * The editor fires it off the same drafts its own footer sums, so the header and the footer
-   * cannot drift apart.
-   */
-  const reportScopeTotal = React.useCallback((scopeId: string, total: string | null) => {
-    setLiveScopeTotal(total === null ? null : { scopeId, total });
-  }, []);
-
-  const clearScopeTotal = React.useCallback(() => setLiveScopeTotal(null), []);
-
-  const selectScope = React.useCallback(
-    (scopeId: string) => {
-      // The figure belonged to the tab being left, so it dies with the switch rather than being
-      // carried into another scope's arithmetic.
-      clearScopeTotal();
-      setActiveScopeId(scopeId);
-    },
-    [clearScopeTotal],
-  );
-
-  const scopes = document.data?.scopes ?? [];
-
-  /**
-   * The document total with the open scope's live figure substituted for the saved one.
+   * Derived HERE, from the staged drafts the shell already holds, rather than being reported
+   * upwards by whichever editor happens to be mounted. That report needed a matching cleanup on
+   * unmount, which is two mechanisms for one number and the reason a tab switch used to snap the
+   * header back to a figure the screen no longer agreed with.
    *
    * Summed with the repo's decimal-exact helper over STRINGS - `parseFloat` on 52 two-decimal
    * values drifts, and a cent of drift on a quotation total is the kind of disagreement the
    * customer notices. `null` (the helper's answer to anything that is not a plain decimal) falls
    * the header back to the server's own `grand_total`.
    */
-  const liveGrandTotal =
-    liveScopeTotal && scopes.some((scope) => scope.id === liveScopeTotal.scopeId)
-      ? sumMoney(
-          scopes.map((scope) =>
-            scope.id === liveScopeTotal.scopeId ? liveScopeTotal.total : scope.scope_total,
-          ),
-        )
-      : null;
+  const stagedScopes = edit.scopes;
+  const liveGrandTotal = React.useMemo(() => {
+    if (Object.keys(stagedScopes).length === 0) return null;
+    return sumMoney(
+      scopes.map(
+        (scope) =>
+          (stagedScopes[scope.id] ? stagedScopeTotal(stagedScopes[scope.id].lines) : null) ??
+          scope.scope_total,
+      ),
+    );
+  }, [scopes, stagedScopes]);
+
+  /**
+   * Every scope whose current version is frozen, so Edit knows whether it is about to change
+   * this quotation or to open the next one.
+   *
+   * `is_editable` from the server, never `is_current`: an issued version is still the highest
+   * one until somebody revises. And never the document's `is_issued` either, which stays true
+   * for good and would keep offering a revision to somebody who has already opened one.
+   */
+  const lockedScopes = React.useMemo(() => {
+    // Only THIS document's scopes. `quotations.data` is every scope in the PROJECT, across every
+    // quotation document, so counting it told a clean single-scope draft that four scopes were
+    // with the customer and offered a revision nobody needed.
+    const mine = new Set(scopes.map((scope) => scope.id));
+    return (quotations.data ?? [])
+      .filter((quotation) => mine.has(quotation.id))
+      .map((quotation) => ({
+        quotation,
+        current: scopeVersions.rows.find(
+          (row) => row.quotation.id === quotation.id && row.version.is_current,
+        )?.version,
+      }))
+      .filter((pair) => pair.current && !(pair.current.is_editable ?? pair.current.is_current));
+  }, [quotations.data, scopeVersions.rows, scopes]);
+
+  /**
+   * Warn before the browser throws the staged work away.
+   *
+   * Only covers leaving the SITE (a refresh, a closed tab, an external link). Moving between this
+   * document's own tabs keeps the session, which is the whole reason it lives in the shell.
+   */
+  const isDirty = edit.isDirty;
+  React.useEffect(() => {
+    if (!isDirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [isDirty]);
 
   if (document.isLoading || project.isLoading) {
     return (
@@ -170,6 +228,109 @@ export function QuotationDocumentClient({
    * server refuses it.
    */
   const isSigned = Boolean(sorentoSignature);
+
+  /**
+   * What the header says about the state it is in, reason and next action together.
+   *
+   * The screen used to state a fact and stop there ("The customer holds this version, so its
+   * lines cannot be changed"), and the client read it and still asked why they could not edit.
+   * Every line here names the way forward as well as the reason.
+   */
+  const headerHints: string[] = [];
+  if (edit.isEditing) {
+    headerHints.push('Nothing is written until you press Save.');
+  } else {
+    if (!canEdit) {
+      headerHints.push('You can read this quotation but not change it.');
+    } else if (lockedScopes.length > 0) {
+      headerHints.push('The customer holds this version. Edit opens the next one.');
+    }
+    if (canEdit && !isSigned) headerHints.push('Sign it first');
+  }
+
+  /**
+   * Edit. On a quotation the customer holds it asks first, because the answer is a revision.
+   */
+  function startEditing() {
+    if (lockedScopes.length > 0) {
+      setRevisePrompt(true);
+      return;
+    }
+    edit.begin();
+  }
+
+  async function reviseThenEdit() {
+    try {
+      // Sequentially, not in parallel: each revise reads and freezes the scope's current
+      // version, and the failure of one must not leave the rest half-opened behind a spinner.
+      for (const pair of lockedScopes) {
+        await quotationMutations.revise.mutateAsync(pair.quotation.id);
+      }
+      setRevisePrompt(false);
+      edit.begin();
+    } catch {
+      // The mutation toasted the reason. The dialog stays open so it can be tried again.
+    }
+  }
+
+  /**
+   * The whole quotation in one write: the lines of every scope that was touched, then the
+   * letterhead prose.
+   *
+   * ONE request per scope, not one per line. That is the client's complaint answered - "every
+   * addition of line doesn't trigger a save" - and it also makes a Save atomic per scope: either
+   * the arrangement they made is what is stored, or nothing moved.
+   */
+  async function runSave() {
+    setIsSaving(true);
+    try {
+      for (const scope of edit.changedScopes) {
+        await bulkLines.mutateAsync({
+          versionId: scope.versionId,
+          lines: stagedLinesToBody(scope.lines),
+        });
+      }
+
+      const wroteDocument = Object.keys(edit.documentDraft).length > 0;
+      if (wroteDocument) {
+        await mutations.update.mutateAsync({ id: documentId, body: edit.documentDraft });
+      }
+
+      edit.cancel();
+      // The document PATCH raises its own "Quotation saved". Two notifications for one button
+      // press is the same noise the per-line toasts were removed for.
+      if (!wroteDocument) toast.success('Quotation saved');
+    } catch {
+      // Every mutation already toasted the reason, and the session is deliberately left open:
+      // what was typed is still on screen and still saveable.
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function requestSave() {
+    // A line the server would refuse is caught here rather than half-way through a save that
+    // has already rewritten another scope. The cell is already marked; this says how many.
+    const unfinished = edit.changedScopes.reduce(
+      (total, scope) => total + unfinishedStagedLines(scope.lines),
+      0,
+    );
+    if (unfinished > 0) {
+      toast.error(
+        unfinished === 1
+          ? 'One line still needs a product or a description.'
+          : `${unfinished} lines still need a product or a description.`,
+      );
+      return;
+    }
+    // The one confirmation of the whole edit view. Staging a removal destroyed nothing, so it
+    // asked nothing; this is the moment lines actually leave the quotation.
+    if (edit.removedCount > 0) {
+      setConfirmRemovals(true);
+      return;
+    }
+    void runSave();
+  }
 
   async function openIssuePdf() {
     if (!latestIssue) return;
@@ -268,10 +429,41 @@ export function QuotationDocumentClient({
 
         {/* One CTA, then the gear. Issuing is the move; exports and the delete live behind the
             gear so the header states one intent. Sign sits beside it as an outline button only
-            while it is the thing standing in the way. */}
+            while it is the thing standing in the way.
+
+            In an edit session the header states ONE intent too, and it is a different one: Save
+            and Cancel, with signing and issuing out of the way until the changes have landed. */}
         <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
           <div className="flex flex-wrap items-center gap-2">
-            {canEdit && !isSigned && (
+            {canEdit && edit.isEditing && (
+              <>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={isSaving}
+                  onClick={() => edit.cancel()}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={isSaving || !edit.isDirty}
+                  title={edit.isDirty ? undefined : 'Nothing has changed yet'}
+                  onClick={requestSave}
+                >
+                  {isSaving ? 'Saving...' : 'Save'}
+                </Button>
+              </>
+            )}
+            {canEdit && !edit.isEditing && (
+              <Button type="button" size="sm" variant="outline" onClick={startEditing}>
+                <SquarePen className="size-4" aria-hidden />
+                Edit
+              </Button>
+            )}
+            {canEdit && !edit.isEditing && !isSigned && (
               <Button
                 type="button"
                 size="sm"
@@ -282,7 +474,7 @@ export function QuotationDocumentClient({
                 Sign
               </Button>
             )}
-            {canEdit && (
+            {canEdit && !edit.isEditing && (
               <Button
                 type="button"
                 size="sm"
@@ -357,11 +549,17 @@ export function QuotationDocumentClient({
               )}
             </DetailActionsMenu>
           </div>
-          {canEdit && !isSigned && (
-            // Visible, not only a tooltip: a disabled button with the reason hidden behind a
-            // hover is unreadable on the phone this page also has to work on.
-            <p className="text-xs text-muted-foreground sm:text-right">Sign it first</p>
-          )}
+          {/* Why the screen is in the state it is in, and what to do about it, in one sentence.
+              The old copy stated a fact and offered no move, which is what the client read and
+              still could not act on: "i don't know when can i edit and when i cannot ... this
+              line is confusing". Reason and next action, always together. */}
+          {/* Visible, not only a tooltip: a disabled button with the reason hidden behind a
+              hover is unreadable on the phone this page also has to work on. */}
+          {headerHints.map((hint) => (
+            <p key={hint} className="text-xs text-muted-foreground sm:text-right">
+              {hint}
+            </p>
+          ))}
         </div>
       </header>
 
@@ -380,8 +578,7 @@ export function QuotationDocumentClient({
           sorentoSignature,
           activeScopeId,
           selectScope,
-          reportScopeTotal,
-          clearScopeTotal,
+          edit,
         }}
       >
         {children}
@@ -404,6 +601,51 @@ export function QuotationDocumentClient({
       />
 
       <QuotationSignLinkDialog url={linkToShow} onOpenChange={() => setLinkToShow(null)} />
+
+      <ReviseToEditDialog
+        open={revisePrompt}
+        onOpenChange={setRevisePrompt}
+        scopeLabels={lockedScopes.map((pair) => pair.quotation.scope_label)}
+        nextVersionLabel={
+          lockedScopes.length === 1 && lockedScopes[0].current
+            ? `v${lockedScopes[0].current.version_no + 1}`
+            : null
+        }
+        isRevising={quotationMutations.revise.isPending}
+        onConfirm={reviseThenEdit}
+      />
+
+      {/* The edit view's ONE destructive confirmation. Staging a removal destroys nothing and so
+          asks nothing; this is the moment the lines actually leave, and it names how many. */}
+      <AlertDialog open={confirmRemovals} onOpenChange={setConfirmRemovals}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm delete</AlertDialogTitle>
+            <AlertDialogDescription>
+              {`Saving removes ${edit.removedCount} ${
+                edit.removedCount === 1 ? 'line' : 'lines'
+              } from this quotation. This action cannot be undone.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isSaving}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={isSaving}
+              onClick={(event) => {
+                // Held open by hand: the dialog closes itself on the click, and the save that
+                // follows would then have no place to report a failure back to.
+                event.preventDefault();
+                void runSave().then(() => setConfirmRemovals(false));
+              }}
+            >
+              {`Save and remove ${edit.removedCount} ${
+                edit.removedCount === 1 ? 'line' : 'lines'
+              }`}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <ConfirmDeleteDialog
         open={confirmDelete}

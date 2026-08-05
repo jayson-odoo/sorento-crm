@@ -33,6 +33,7 @@ import {
   reviseQuotation,
   setQuotationOutcome,
   updateQuotation,
+  replaceQuotationLines,
   updateQuotationLine,
   updateSeries,
   upsertPriceFloor,
@@ -104,6 +105,7 @@ import type {
   ProjectQuotationBody,
   ProjectSeriesBody,
   QuotationLineBody,
+  QuotationLineBulkItem,
   QuotationOutcomeBody,
   LeadQualifyBody,
   ProjectLeadBody,
@@ -987,6 +989,32 @@ export function useQuotationLineMutations(projectId: string, versionId: string) 
   });
 
   return { create, update, remove };
+}
+
+/**
+ * The whole line set of one version in a single write, for the edit view's Save (S10/S11).
+ *
+ * Separate from `useQuotationLineMutations` because the version is a PAYLOAD field here, not a
+ * binding: one Save can cover several scopes, and a hook bound to one version cannot answer for
+ * the others. The invalidations are the same set for the same reason - the quotation list carries
+ * the version total, and the document's letterhead carries the grand total across scopes.
+ */
+export function useQuotationBulkLineMutation(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ versionId, lines }: { versionId: string; lines: QuotationLineBulkItem[] }) =>
+      replaceQuotationLines(versionId, lines),
+    onSuccess: (_lines, { versionId }) => {
+      queryClient.invalidateQueries({ queryKey: linesKey(versionId) });
+      queryClient.invalidateQueries({ queryKey: quotationsKey(projectId) });
+      queryClient.invalidateQueries({ queryKey: [QUOTATIONS_KEY, 'versions'] });
+      queryClient.invalidateQueries({ queryKey: quotationDocumentsKey(projectId) });
+    },
+    // No toast: the screen raises ONE for the whole Save, and a quotation with four scopes
+    // would otherwise stack four notifications for a single button press.
+    onError: (error: Error) => toast.error(error.message),
+  });
 }
 
 export function useSeriesMutations() {

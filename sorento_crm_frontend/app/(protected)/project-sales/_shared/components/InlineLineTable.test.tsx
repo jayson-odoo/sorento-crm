@@ -27,6 +27,7 @@ import {
   InlineLineTable,
   type InlineDraft,
   type InlineLineColumn,
+  type InlineStagedRow,
 } from './InlineLineTable';
 
 if (!window.matchMedia) {
@@ -720,5 +721,210 @@ describe('InlineLineTable', () => {
     expect(screen.queryByRole('textbox')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add a line' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Remove pcs' })).toBeNull();
+  });
+});
+
+/**
+ * Staged mode: the screen owns the changes, and this table writes nothing.
+ *
+ * Everything above still holds for a table that IS the feature. What changes here is a table
+ * that is one section of a document with a single Save over all of it - the client's "every
+ * addition of line doesn't trigger a save, cause now i delete each line, then you ask me to
+ * confirm, then when i add line, you also trigger save, very annoying".
+ */
+describe('InlineLineTable staged mode', () => {
+  /** A reported row as this harness stores it, so an unchanged report can be recognised. */
+  function toRow({ rowKey, draft }: InlineStagedRow): Row {
+    return {
+      id: rowKey,
+      code: draft.code,
+      description: draft.description,
+      quantity: draft.quantity,
+      unit_price: draft.unit_price,
+      notes: draft.notes,
+    };
+  }
+
+  function sameRows(a: Row[], b: Row[]): boolean {
+    return a.length === b.length && a.every((item, index) => {
+      const other = b[index];
+      return (Object.keys(item) as (keyof Row)[]).every((key) => item[key] === other[key]);
+    });
+  }
+
+  /**
+   * The screen, reduced to the part the table talks to: it holds the rows and the marks.
+   *
+   * The identity guard is not test scaffolding, it is the contract. The table reports on every
+   * render, so a screen that stored a fresh array each time would hand back new rows, provoke
+   * another report, and spin. The real session guards the same way.
+   */
+  function StagedHarness({ initial }: { initial: Row[] }) {
+    const [rows, setRows] = React.useState(initial);
+    const [removed, setRemoved] = React.useState<string[]>([]);
+
+    return (
+      <InlineLineTable<Row>
+        rows={rows}
+        getRowId={(item) => item.id}
+        columns={columns()}
+        toDraft={toDraft}
+        emptyDraft={emptyDraft}
+        describeRow={(item, index) => item?.code || `line ${index + 1}`}
+        staging={{
+          onChange: (reported) => {
+            lastStaged = reported;
+            const next = reported.map(toRow);
+            setRows((previous) => (sameRows(previous, next) ? previous : next));
+          },
+          isRemoved: (item) => removed.includes(item.id),
+          toggleRemove: (rowKey) =>
+            setRemoved((previous) =>
+              previous.includes(rowKey)
+                ? previous.filter((key) => key !== rowKey)
+                : [...previous, rowKey],
+            ),
+        }}
+      />
+    );
+  }
+
+  let lastStaged: InlineStagedRow[] = [];
+
+  function renderStaged(initial: Row[] = [row()]) {
+    lastStaged = [];
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    return render(
+      <QueryClientProvider client={client}>
+        <StagedHarness initial={initial} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('reports every change at once and never calls a write', async () => {
+    renderStaged();
+
+    fireEvent.change(cell('Qty on pcs'), { target: { value: '12' } });
+
+    await waitFor(() => expect(lastStaged[0]?.draft.quantity).toBe('12'));
+    // The key travels with the draft. Without it the screen cannot tell an existing line from
+    // one added a moment ago, and a whole-set write would insert duplicates and delete originals.
+    expect(lastStaged[0]?.rowKey).toBe('r1');
+    expect(onUpdate).not.toHaveBeenCalled();
+    expect(onCreate).not.toHaveBeenCalled();
+  });
+
+  it('does not save when the caret moves off the row', async () => {
+    renderStaged([row(), row({ id: 'r2', code: 'set' })]);
+
+    const first = cell('Qty on pcs');
+    first.focus();
+    fireEvent.change(first, { target: { value: '12' } });
+    cell('Qty on set').focus();
+
+    await waitFor(() => expect(lastStaged[0]?.draft.quantity).toBe('12'));
+    // The blur-save is the whole complaint. It is not a save any more, it is a report.
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
+  it('drops the per-row tick and the Unsaved pill, since one Save covers the lot', () => {
+    renderStaged();
+
+    fireEvent.change(cell('Qty on pcs'), { target: { value: '12' } });
+
+    expect(screen.queryByRole('button', { name: 'Save pcs' })).toBeNull();
+    expect(screen.queryByText('Unsaved')).toBeNull();
+  });
+
+  it('strikes a removed row through without asking, and restores it', async () => {
+    renderStaged();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove pcs' }));
+
+    // Nothing was destroyed, so there is nothing to confirm. The confirmation moves to Save,
+    // which is where lines actually leave the record.
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(await screen.findByText('Removed on save')).toBeInTheDocument();
+    // Still on screen, and no longer editable: a removal nobody can see cannot be taken back.
+    expect(screen.getByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Description on pcs' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restore pcs' }));
+
+    expect(
+      await screen.findByRole('textbox', { name: 'Description on pcs' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Removed on save')).toBeNull();
+  });
+
+  it('leaves a row staged for removal out of the totals', async () => {
+    const withFooter = columns().map((column) =>
+      column.key === 'total'
+        ? {
+            ...column,
+            footer: (drafts: InlineDraft[]) =>
+              `RM ${drafts
+                .reduce(
+                  (sum, draft) =>
+                    sum + Number(draft.quantity || 0) * Number(draft.unit_price || 0),
+                  0,
+                )
+                .toFixed(2)}`,
+          }
+        : column,
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    function Harness() {
+      const [removed, setRemoved] = React.useState<string[]>([]);
+      return (
+        <InlineLineTable<Row>
+          rows={[row(), row({ id: 'r2', code: 'set' })]}
+          getRowId={(item) => item.id}
+          columns={withFooter}
+          toDraft={toDraft}
+          emptyDraft={emptyDraft}
+          describeRow={(item, index) => item?.code || `line ${index + 1}`}
+          staging={{
+            onChange: () => {},
+            isRemoved: (item) => removed.includes(item.id),
+            toggleRemove: (rowKey) => setRemoved((previous) => [...previous, rowKey]),
+          }}
+        />
+      );
+    }
+    render(
+      <QueryClientProvider client={client}>
+        <Harness />
+      </QueryClientProvider>,
+    );
+
+    const foot = () => screen.getByRole('table').querySelector('tfoot')?.textContent ?? '';
+    expect(foot()).toContain('RM 3600.00');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove pcs' }));
+
+    // The figure has to be what will actually be charged. Counting a line on its way off the
+    // quotation states a total nobody is ever going to pay.
+    await waitFor(() => expect(foot()).toContain('RM 1800.00'));
+  });
+
+  it('draws an added row once, even after the screen hands it back', async () => {
+    // The screen echoes the reported rows straight back through `rows`, so the table is holding
+    // the same new row twice for one render. Drawn twice under one key, every keystroke would
+    // land in both copies.
+    renderStaged([]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
+    await screen.findByRole('textbox', { name: 'Description on line 1' });
+
+    await waitFor(() =>
+      expect(screen.getAllByRole('textbox', { name: 'Description on line 1' })).toHaveLength(1),
+    );
+    expect(lastStaged).toHaveLength(1);
+    expect(lastStaged[0].rowKey.startsWith('new:')).toBe(true);
+    expect(onCreate).not.toHaveBeenCalled();
   });
 });
