@@ -29,8 +29,10 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from sqlalchemy import func
+
 from app.models.inventory import Warehouse
-from app.models.order import SalesOrder, SalesOrderLine
+from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product
 from app.models.scm import OrderLinkClaim
 from app.services.scm import upload_validation as val
@@ -40,6 +42,11 @@ from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 logger = logging.getLogger(__name__)
 
 SOURCE = "order_inquiry"
+
+#: Stamped on every sales order and line this feed CREATES. It is the ownership marker the
+#: whole precedence rule turns on: the sheet may refresh what it wrote, and must not touch
+#: what anybody else wrote.
+SOURCE_SYSTEM = "scm_order_inquiry"
 
 
 def _now() -> datetime:
@@ -146,20 +153,186 @@ def validate(db: Session, file_data: bytes) -> dict:
     )
 
 
+def _products_by_code(db: Session, codes: set[str]) -> dict[str, str]:
+    if not codes:
+        return {}
+    rows = (
+        db.query(Product.product_code, Product.id)
+        .filter(Product.product_code.in_(list(codes)))
+        .all()
+    )
+    return {str(code): str(pid) for code, pid in rows}
+
+
+def _orders_by_number(db: Session, numbers: set[str]) -> dict[str, SalesOrder]:
+    if not numbers:
+        return {}
+    rows = db.query(SalesOrder).filter(SalesOrder.so_number.in_(list(numbers))).all()
+    return {str(o.so_number): o for o in rows}
+
+
+def _customers_by_name(db: Session, names: set[str]) -> dict[str, str]:
+    """Existing customers only, matched case-insensitively on the exact name.
+
+    Deliberately does NOT create. `customers` requires a `customer_code` and enforces
+    uniqueness on `(lower(code), lower(name))`, so creating one from a project label means
+    inventing a debtor code in a table Sales owns - where a guess either collides with a real
+    account or silently duplicates it. Unmatched names are kept as text on the order instead.
+    """
+    if not names:
+        return {}
+    rows = (
+        db.query(Customer.customer_name, Customer.id)
+        .filter(func.lower(Customer.customer_name).in_([n.lower() for n in names]))
+        .all()
+    )
+    return {str(name).lower(): str(cid) for name, cid in rows}
+
+
+def _create_orders(db: Session, parsed, now: datetime) -> dict:
+    """Turn the sheet's rows into sales orders, under the ownership rule.
+
+    The rule, in one place because it is the whole design:
+
+    * no such order -> create it, header and lines, stamped with this feed.
+    * an order THIS feed created -> refresh its lines, keyed by (order, item).
+    * an order anybody else created -> leave every figure alone. The caller still writes the
+      stock location and the purchase-order claim, which is all this sheet did before.
+
+    "Last writer wins" across two feeds with different refresh rhythms is how a quantity
+    silently reverts, so the owner is recorded rather than inferred.
+    """
+    by_number: dict[str, list] = {}
+    for row in parsed.rows:
+        by_number.setdefault(row.so_number, []).append(row)
+
+    existing = _orders_by_number(db, set(by_number))
+    products = _products_by_code(db, {r.item_code for r in parsed.rows if r.item_code})
+    warehouses = _warehouses_by_code(db, {r.location for r in parsed.rows if r.location})
+    customers = _customers_by_name(db, {r.project for r in parsed.rows if r.project})
+
+    orders_created = lines_created = lines_refreshed = 0
+    orders_owned_elsewhere = 0
+    unmatched_items: set[str] = set()
+
+    for number, rows in by_number.items():
+        order = existing.get(number)
+        if order is not None and (order.source_system or "") != SOURCE_SYSTEM:
+            # Somebody else's order. The caller still annotates it; nothing here touches it.
+            orders_owned_elsewhere += 1
+            continue
+
+        buildable = [r for r in rows if r.item_code and r.item_code in products]
+        unmatched_items.update(r.item_code for r in rows if r.item_code not in products)
+        if order is None and not buildable:
+            # An order with no line we can build is not an order. Creating an empty header
+            # would put a phantom sales order in the list that no plan can ever read.
+            continue
+
+        if order is None:
+            project = next((r.project for r in rows if r.project), "")
+            dates = [r.delivery_date for r in rows if r.delivery_date]
+            order = SalesOrder(
+                so_number=number,
+                customer_id=customers.get(project.lower()) if project else None,
+                # The project stays legible even when no customer matches it.
+                internal_note=f"Order Inquiry project: {project}" if (
+                    project and not customers.get(project.lower())
+                ) else None,
+                order_date=next((r.so_date for r in rows if r.so_date), None),
+                requested_delivery_date=min(dates) if dates else None,
+                order_type="project" if project else None,
+                demand_class="project" if project else None,
+                status="open",
+                source_system=SOURCE_SYSTEM,
+                source_ref=SOURCE,
+            )
+            db.add(order)
+            db.flush()
+            existing[number] = order
+            orders_created += 1
+            current: dict[str, SalesOrderLine] = {}
+        else:
+            current = {
+                str(pc): ln
+                for pc, ln in db.query(Product.product_code, SalesOrderLine)
+                .join(SalesOrderLine, SalesOrderLine.product_id == Product.id)
+                .filter(SalesOrderLine.sales_order_id == str(order.id))
+                .all()
+            }
+
+        for row in buildable:
+            line = current.get(row.item_code)
+            qty = float(row.qty or 0)
+            warehouse_id = warehouses.get(row.location) if row.location else None
+            if line is None:
+                db.add(SalesOrderLine(
+                    sales_order_id=str(order.id),
+                    product_id=products[row.item_code],
+                    warehouse_id=warehouse_id,
+                    qty_ordered=qty,
+                    qty_delivered=0,
+                    line_status="open",
+                    required_date=row.delivery_date,
+                    source_system=SOURCE_SYSTEM,
+                    source_ref=SOURCE,
+                ))
+                lines_created += 1
+            else:
+                # Its own line, so the file is the truth for it: a quantity corrected in the
+                # sheet has to reach the plan, and the alternative is a second line.
+                line.qty_ordered = qty
+                line.required_date = row.delivery_date or line.required_date
+                if warehouse_id:
+                    line.warehouse_id = warehouse_id
+                lines_refreshed += 1
+
+    db.flush()
+    return {
+        "orders_created": orders_created,
+        "lines_created": lines_created,
+        "lines_refreshed": lines_refreshed,
+        "orders_owned_elsewhere": orders_owned_elsewhere,
+        "unmatched_item_codes": sorted(unmatched_items)[:200],
+        "unmatched_items": len(unmatched_items),
+    }
+
+
 def apply(db: Session, file_data: bytes, actor: Optional[str] = None) -> dict:
-    """Write the locations and claim the purchase-order links."""
+    """Create the demand the sheet carries, then write locations and claim the PO links."""
     parsed = read_order_inquiry(file_data)
     summary = _summarise(db, parsed)
     summary["locations_written"] = 0
     summary["claims_written"] = 0
+    summary["orders_created"] = 0
+    summary["lines_created"] = 0
+    summary["lines_refreshed"] = 0
+    summary["orders_owned_elsewhere"] = 0
     if not parsed.ok:
         return summary
+
+    now = _now()
+    # Create first: the annotate loop below reads sales-order lines, and the ones this call
+    # just wrote are exactly the ones the sheet has a location for.
+    created = _create_orders(db, parsed, now)
+    summary.update(created)
 
     known_lines = _so_lines(db, {r.so_number for r in parsed.rows})
     warehouses = _warehouses_by_code(
         db, {r.location for r in parsed.rows if r.location}
     )
-    now = _now()
+    # Re-derived AFTER creating, because `_summarise` ran against the state before this
+    # upload: it counted 15,787 rows as "sales order not found" and the very next step
+    # created most of those orders. Reporting the earlier figure would have the result
+    # contradict itself on the same screen.
+    matched_now = sum(
+        1 for r in parsed.rows if (r.so_number, r.item_code) in known_lines
+    )
+    summary["lines_matched"] = matched_now
+    summary["lines_unmatched"] = len(parsed.rows) - matched_now
+    summary["sales_orders_not_found"] = sorted({
+        r.so_number for r in parsed.rows if (r.so_number, r.item_code) not in known_lines
+    })[:200]
     locations_written = 0
     claims_written = 0
     seen_claims: set[tuple[str, str, str]] = set()

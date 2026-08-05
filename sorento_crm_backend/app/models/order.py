@@ -301,6 +301,12 @@ class SalesOrder(Base, CompanyScopedMixin):
     status = Column(String(50), default="open", nullable=False)
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
+    # The document number in the system this order came from, and free text carried with it.
+    # Both columns already existed on the table and were simply not mapped, so every read
+    # through the ORM silently dropped them - the Order Inquiry feed needs `internal_note` to
+    # keep a project name it cannot resolve to a customer.
+    source_doc_no = Column(String, nullable=True)
+    internal_note = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 

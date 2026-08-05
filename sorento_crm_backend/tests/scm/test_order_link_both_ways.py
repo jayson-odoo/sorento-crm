@@ -12,7 +12,7 @@ state. A design that only works one way passes one of them and looks fine.
 from __future__ import annotations
 
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -132,6 +132,19 @@ def _make_purchase_order(db, world, po_number: str) -> PurchaseOrder:
     return po
 
 
+def _order_level_claim(db, po_number: str) -> OrderLinkClaim:
+    """A claim with no item: what the purchase-history notes produce."""
+    return (
+        db.query(OrderLinkClaim)
+        .filter(
+            OrderLinkClaim.so_number == SO_NUMBER,
+            OrderLinkClaim.po_number == po_number,
+            OrderLinkClaim.item_code.is_(None),
+        )
+        .one()
+    )
+
+
 def _claim(db, item_code: str, po_number: str) -> OrderLinkClaim:
     return (
         db.query(OrderLinkClaim)
@@ -149,13 +162,25 @@ def _claim(db, item_code: str, po_number: str) -> OrderLinkClaim:
 # --------------------------------------------------------------------------- #
 
 def test_purchase_order_uploaded_before_the_sales_order(db, world):
-    """The order the user called out: the SO does not exist when the claim is made."""
+    """The order the user called out: the SO does not exist when the claim is made.
+
+    Carried by a PO-HISTORY claim rather than an inquiry one. The inquiry sheet now creates
+    the sales order itself, so its own claims resolve in the same pass - which is the feature,
+    and is pinned next door. The purchase-history notes cannot: they name a sales order and
+    carry no item, quantity or date, so there is nothing to build an order out of. That is the
+    case where a claim genuinely has to outlive a missing document, and it is the one worth
+    proving here.
+    """
     _make_purchase_order(db, world, LINKED[1])
-    inquiry.apply(db, FIXTURE.read_bytes())
+    db.add(OrderLinkClaim(
+        id=_u(), so_number=SO_NUMBER, po_number=LINKED[1], item_code=None,
+        source="po_history", claimed_at=datetime(2026, 8, 5, 12, 0, 0),
+    ))
+    db.flush()
 
     # Nothing to link to yet - and the claim survives, which is the whole point.
     first = links.resolve(db)
-    claim = _claim(db, *LINKED)
+    claim = _order_level_claim(db, LINKED[1])
     assert claim.po_line_id is not None, "the purchase side was there and should be pinned"
     assert claim.so_line_id is None
     assert claim.resolved_at is None
@@ -164,10 +189,26 @@ def test_purchase_order_uploaded_before_the_sales_order(db, world):
     _make_sales_order(db, world)
     second = links.resolve(db)
 
-    claim = _claim(db, *LINKED)
+    claim = _order_level_claim(db, LINKED[1])
     assert claim.so_line_id is not None
     assert claim.resolved_at is not None
     assert second["resolved"] >= 1
+
+
+def test_the_inquiry_sheet_resolves_its_own_sales_order_side_immediately(db, world):
+    """Because it now CREATES the sales order, rather than waiting for CS to upload it.
+
+    This is the whole point of promoting the sheet to a demand feed: the pairing is complete
+    the moment the purchase order is there, with nobody else in the loop.
+    """
+    _make_purchase_order(db, world, LINKED[1])
+    inquiry.apply(db, FIXTURE.read_bytes())
+    links.resolve(db)
+
+    claim = _claim(db, *LINKED)
+    assert claim.so_line_id is not None, "the sheet created the order, so the side exists"
+    assert claim.po_line_id is not None
+    assert claim.resolved_at is not None
 
 
 def test_sales_order_uploaded_before_the_purchase_order(db, world):
@@ -253,15 +294,25 @@ def test_the_stock_location_is_written_onto_the_sales_order_line(db, world):
     assert str(written.warehouse_id) == str(world["warehouse"].id)
 
 
-def test_a_sales_order_that_has_not_been_uploaded_is_named_not_silently_skipped(db, world):
-    """A location can only be written onto a line that exists.
+def test_every_resolvable_row_now_lands_because_the_sheet_creates_the_order(db, world):
+    """The limit this test used to pin is gone, and that IS the feature.
 
-    That limit is real, so it is counted AND the sales orders are named - re-uploading the
-    sheet after the SO book lands applies them, and somebody has to be able to see which.
+    It read: "a location can only be written onto a line that exists", counted the rows whose
+    sales order we did not hold, and named them so somebody could go and ask CS for the SO
+    book. The sheet now creates those orders itself, so for every row whose item is in the
+    catalogue there is a line by the time the counts are taken.
+
+    What survives is the limit that cannot be removed: a row naming an item we do not hold
+    still becomes nothing, because `product_id` is NOT NULL and the alternative is inventing
+    a product. That half is pinned in `test_order_inquiry_creates_demand.py`.
     """
     out = inquiry.apply(db, FIXTURE.read_bytes())
-    assert out["lines_unmatched"] >= 1
-    assert SO_NUMBER in out["sales_orders_not_found"]
+
+    assert out["orders_created"] >= 1, "the sheet is a demand feed now, not an annotation"
+    assert out["lines_unmatched"] == 0, "every resolvable row has a line"
+    assert out["sales_orders_not_found"] == []
+    # And the counts agree with themselves: nothing is reported missing that was just created.
+    assert out["lines_matched"] == out["rows"]
 
 
 def test_open_claims_are_reportable(db, world):
