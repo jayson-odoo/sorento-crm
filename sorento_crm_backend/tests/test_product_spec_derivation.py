@@ -314,16 +314,103 @@ def test_mounting_is_read_from_the_description(db, description, expected):
 @pytest.mark.parametrize(
     "description,expected",
     [
-        ("SORENTO BASIN MIXER TAP", "mixer"),
-        ("SORENTO PILLAR TAP", "pillar"),
-        ("CABANA HOSE BIB TAP", "bib"),
         ("SORENTO SINGLE LEVER BASIN TAP", "single_lever"),
+        ("CABANA TWO WAY TAP", "two_way"),
+        ("SORENTO SELF CLOSING BASIN TAP", "self_closing"),
+        ("SORENTO WALL HUNG URINAL C/W SENSOR", "sensor"),
     ],
 )
 def test_control_type_is_read_from_the_description(db, description, expected):
     _product(db, "ZZT-CTRL", description)
     derive_for_code(db, "ZZT-CTRL")
     assert _value(db, "ZZT-CTRL", "control_type") == expected
+
+
+@pytest.mark.parametrize(
+    "description,key,expected",
+    [
+        # These three used to be control types. They are not: two name the product and
+        # one names where it is fixed. Holding them under `control_type` let a single
+        # product score the same fact twice, on two different legs of the ranker.
+        ("SORENTO BASIN MIXER TAP", "product_type", "mixer_tap"),
+        ("CABANA HOSE BIB TAP", "product_type", "bib_tap"),
+        ("SORENTO PILLAR TAP", "mounting", "pillar_mounted"),
+    ],
+)
+def test_product_nouns_and_mounting_are_not_control_types(db, description, key, expected):
+    _product(db, "ZZT-CTRL2", description)
+    derive_for_code(db, "ZZT-CTRL2")
+    assert _value(db, "ZZT-CTRL2", key) == expected
+    assert _value(db, "ZZT-CTRL2", "control_type") is None
+
+
+# --------------------------------------------------------------------------- #
+# what the first real user report asked for: bowls, taps, features
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "description,expected",
+    [
+        ("SORENTO S/STEEL SINGLE BOWL WITH DRAINER SINK 860X500X200MM", 1),
+        ("MOCHA KITCHEN SINK (DOUBLE BOWL). MKS8644", 2),
+        ("CABANA KITCHEN SINK CKS1050 -1 BOWL 1 DRAINER-", 1),
+        ("CABANA KITCHEN SINK -2 BOWLS-", 2),
+        ("SORENTO TRIPLE BOWL SINK", 3),
+    ],
+)
+def test_bowl_count_is_read_where_the_description_states_it(db, description, expected):
+    _product(db, "ZZT-BOWL", description)
+    derive_for_code(db, "ZZT-BOWL")
+    assert _value(db, "ZZT-BOWL", "bowl_count") == expected
+
+
+def test_bowl_count_is_never_guessed_from_a_length(db):
+    """The 90% case. A 1000 mm sink is not evidence of two bowls.
+
+    Inferring it would put single-bowl sinks in front of a customer who asked for a
+    double, which is worse than returning nothing: they can see a wrong answer but not
+    a missing one.
+    """
+    _product(db, "ZZT-NOBOWL", "CABANA KITCHEN SINK (SIZE : 1000 X 500 X 140MM)")
+    derive_for_code(db, "ZZT-NOBOWL")
+    assert _value(db, "ZZT-NOBOWL", "bowl_count") is None
+
+
+def test_a_sink_with_a_drainer_is_not_a_drainer(db):
+    """`DRAINER` as a feature sets has_drainer; as the head noun it means accessory."""
+    _product(db, "ZZT-DRN1", "CABANA KITCHEN SINK CKS1050 -1 BOWL 1 DRAINER-")
+    derive_for_code(db, "ZZT-DRN1")
+    assert _value(db, "ZZT-DRN1", "has_drainer") is True
+    assert _value(db, "ZZT-DRN1", "is_accessory") is False
+
+    _product(db, "ZZT-DRN2", "S/STEEL KITCHEN SINK DRAINER (440x200x100MM)")
+    derive_for_code(db, "ZZT-DRN2")
+    assert _value(db, "ZZT-DRN2", "is_accessory") is True
+    # The part IS the drainer; claiming it has one would be nonsense.
+    assert _value(db, "ZZT-DRN2", "has_drainer") is None
+
+
+@pytest.mark.parametrize(
+    "description,key,expected",
+    [
+        # The three phrases the first user report said returned nothing useful.
+        ("SORENTO WALL MOUNTED FLEXIBLE HEAD + S/STEEL SPOUT KITCHEN TAP", "mounting", "wall_hung"),
+        ("SORENTO WALL MOUNTED FLEXIBLE HEAD + S/STEEL SPOUT KITCHEN TAP", "spout_type", "flexible"),
+        (
+            "SORENTO WALL MOUNTED FLEXIBLE HEAD + S/STEEL SPOUT KITCHEN TAP",
+            "material",
+            "stainless_steel",
+        ),
+        ("CABANA PILLAR MOUNTED KITCHEN TAP", "mounting", "pillar_mounted"),
+        ("CABANA PILLAR MOUNTED FLEXIBLE KITCHEN TAP", "spout_type", "flexible"),
+        ("BRAVAT ANGLE VALVE P6605C", "product_type", "angle_valve"),
+        ("SORENTO CLOSE-COUPLED WATER CLOSET (S-TRAP)", "trap_type", "s_trap"),
+        ("SORENTO CLOSE COUPLED PEDESTAL ONLY (P-TRAP)", "trap_type", "p_trap"),
+    ],
+)
+def test_tap_vocabulary_is_read_from_the_description(db, description, key, expected):
+    _product(db, "ZZT-TAPV", description)
+    derive_for_code(db, "ZZT-TAPV")
+    assert _value(db, "ZZT-TAPV", key) == expected
 
 
 # --------------------------------------------------------------------------- #
@@ -569,3 +656,23 @@ def test_derive_all_reports_counts(db):
 
     assert result["written"] == 2
     assert result["codes"] == 2
+
+
+def test_a_rule_change_invalidates_a_cached_derivation(db, monkeypatch):
+    """The skip-if-unchanged cache must key on the RULES, not only on the product.
+
+    Caught in production data: adding `bowl_count` re-derived every tap (their category
+    had just gained a class, so their hash moved) and silently skipped all 1,148 kitchen
+    sinks, whose inputs were untouched. They kept their old values and the run reported
+    success, because "skipped" is also what a correct no-op looks like.
+    """
+    import app.services.product_spec_derivation as derivation
+
+    _product(db, "ZZT-VER", "CABANA KITCHEN SINK (DOUBLE BOWL)")
+    derive_for_code(db, "ZZT-VER")
+    first = derive_for_code(db, "ZZT-VER")
+    assert first["skipped"] and not first["written"], "same rules + same product = no work"
+
+    monkeypatch.setattr(derivation, "DERIVATION_VERSION", "test-bump")
+    after = derive_for_code(db, "ZZT-VER")
+    assert after["written"] and not after["skipped"], "a rule change must re-derive"

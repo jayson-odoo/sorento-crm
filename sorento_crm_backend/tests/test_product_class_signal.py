@@ -177,10 +177,12 @@ class TestExplainCode:
         }
 
     def test_an_out_of_scope_class_names_the_suffix_that_is_off(self):
-        # Taps: 7,120 live products, zero derived. The reason has to say so.
-        result = explain_code("CB-FT")
+        # CB-CB holds ceramic art basins AND lab sinks, so it stays deliberately
+        # unmapped: a wrong class is the most damaging value the ranker can be handed.
+        # The reason must name the suffix, or nobody can tell "unmapped" from "broken".
+        result = explain_code("CB-CB")
         assert result["reason"] == "class_not_enabled"
-        assert result["suffix"] == "FT"
+        assert result["suffix"] == "CB"
         assert result["class_label"] is None
         # The brand half still parsed; only the class is missing.
         assert result["brand_hint"] == "Cabana"
@@ -207,3 +209,19 @@ class TestExplainCode:
         }
         for code in ("SRT-KS", "CB-FT", "MISC", "NOTACODE", None, "", "ZZ-QQ"):
             assert explain_code(code)["reason"] in rendered
+
+    def test_the_classes_the_first_user_report_asked_for_are_enabled(self):
+        # Taps, basins, showers, water closets: 14,000+ products that returned nothing
+        # because the class was switched off, not because the ranker was wrong.
+        assert explain_code("CB-FT")["class_label"] == "Tap"
+        assert explain_code("SRT-WB")["class_label"] == "Wash Basin"
+        assert explain_code("BRT-SH")["class_label"] == "Shower"
+        assert explain_code("SRT-WC")["class_label"] == "Water Closet"
+        # A granite sink is a kitchen sink filed under a different suffix.
+        assert explain_code("SRT-GNS")["class_label"] == "Kitchen Sink"
+
+    def test_a_bucket_suffix_is_not_a_class(self):
+        # ACC is the catalog's own accessory marker and 006 is a retention sum. Reading
+        # either as a product class would boost them for genuine product queries.
+        assert explain_code("CB-ACC")["reason"] == "category_non_searchable"
+        assert explain_code("RET-006")["reason"] == "category_non_searchable"

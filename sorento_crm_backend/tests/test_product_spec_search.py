@@ -466,3 +466,64 @@ def test_the_eval_baseline_positive_cases_all_hit(db):
             missed.append(case["phrase"])
 
     assert missed == [], f"these should have returned candidates: {missed}"
+
+
+# --------------------------------------------------------------------------- #
+# customer words -> registry values, and contradictions
+# --------------------------------------------------------------------------- #
+def test_a_phrase_resolves_onto_the_spec_key_that_holds_the_answer(db):
+    """The registry's synonyms were carried and never consulted.
+
+    "angle valve" fell below the relevance floor while 338 angle valves sat in the
+    catalog with `product_type=angle_valve` stored, because the only thing a free term
+    could earn was a weak substring hit against the rendered sentence, and the key
+    holding the answer was never scored at all.
+    """
+    _catalog(db)
+    _product(db, "ZZT-AV", "BRAVAT ANGLE VALVE", category="wc")
+
+    result = search_specs(db, specs=[], free_terms=["angle valve", "angle", "valve"])
+
+    assert not result["floor_missed"]
+    assert _codes(result)[0] == "ZZT-AV"
+    assert "product_type" in result["candidates"][0]["matched_specs"]
+
+
+def test_a_longer_phrase_beats_a_generic_one_inside_it(db):
+    _product(db, "ZZT-HAND", "SORENTO HAND SHOWER", category="wc")
+    _product(db, "ZZT-RAIN", "SORENTO RAIN SHOWER", category="wc")
+
+    result = search_specs(db, specs=[], free_terms=["hand shower", "hand", "shower"])
+    assert _codes(result)[0] == "ZZT-HAND"
+
+
+def test_a_contradicting_product_ranks_below_a_matching_one(db):
+    """Stated, stored, and different is not the same as unstated.
+
+    "black wall hung toilet bowl" returned a FLOOR STANDING water closet at the top
+    while a wall-hung one existed: a mismatch scored zero, so the class and finish
+    boosts alone decided the order. Silence stays neutral; a contradiction does not.
+    """
+    _product(db, "ZZT-WH", "SORENTO WALL HUNG WATER CLOSET", category="wc")
+    _product(db, "ZZT-FS", "SORENTO FLOOR STANDING WATER CLOSET", category="wc")
+    _product(db, "ZZT-QUIET", "SORENTO WATER CLOSET", category="wc")
+
+    result = search_specs(db, specs=[], free_terms=["wall hung water closet"])
+    codes = _codes(result)
+
+    assert codes[0] == "ZZT-WH"
+    # Demoted, not removed: the parser is the thing most likely to be wrong, so a
+    # contradicting product stays available as a did-you-mean.
+    assert "ZZT-FS" in codes
+    assert codes.index("ZZT-QUIET") < codes.index("ZZT-FS")
+
+
+def test_a_caller_supplied_spec_outranks_the_word_resolver(db):
+    """The caller's parser saw a sentence; this resolver sees a bag of words."""
+    _catalog(db)
+    result = search_specs(
+        db,
+        specs=[{"key": "material", "value": "ceramic"}],
+        free_terms=["stainless steel kitchen sink"],
+    )
+    assert _codes(result)[0] == "ZZT-SINK-C"

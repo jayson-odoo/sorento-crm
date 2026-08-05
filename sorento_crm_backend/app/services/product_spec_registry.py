@@ -201,14 +201,118 @@ SPEC_REGISTRY_SEED: list[dict] = [
         "spec_key": "control_type",
         "label": "Control type",
         "data_type": "enum",
-        "allowed_values": ["mixer", "pillar", "bib", "single_lever"],
+        # `mixer`, `pillar` and `bib` moved to product_type / mounting: they name the
+        # product or where it is fixed, not how the water is controlled, and holding
+        # them here let one product score the same fact twice.
+        "allowed_values": ["single_lever", "two_way", "self_closing", "sensor"],
         "synonyms": {
-            "mixer": ["mixer", "mixer tap"],
-            "pillar": ["pillar", "pillar tap"],
-            "bib": ["bib", "bib tap", "hose bib"],
             "single_lever": ["single lever", "single handle", "one lever"],
+            "two_way": ["two way", "2 way", "dual"],
+            "self_closing": ["self closing", "self-closing", "push", "delay action"],
+            "sensor": ["sensor", "automatic", "auto", "touchless"],
         },
-        "measured_coverage": 1804,
+        "measured_coverage": 201,
+        "rank_weight": 1.5,
+    },
+    {
+        "spec_key": "product_type",
+        "label": "Type",
+        "data_type": "enum",
+        # The noun a customer says inside a class. Sits below `class` in weight because
+        # it is narrower and less complete, but above the free-text leg: someone asking
+        # for a "bib tap" means something specific that a generic tap does not satisfy.
+        "allowed_values": [
+            "angle_valve",
+            "bib_tap",
+            "basin_tap",
+            "kitchen_tap",
+            "shower_tap",
+            "mixer_tap",
+            "hand_shower",
+            "rain_shower",
+            "shower_set",
+            "shower_head",
+            "close_coupled",
+            "one_piece",
+            "art_basin",
+            "mirror_cabinet",
+        ],
+        "synonyms": {
+            "angle_valve": ["angle valve", "stop valve", "corner valve"],
+            "bib_tap": ["bib tap", "hose bib", "bib", "garden tap"],
+            "basin_tap": ["basin tap", "basin mixer", "wash basin tap"],
+            "kitchen_tap": ["kitchen tap", "sink tap", "kitchen sink tap", "paip dapur"],
+            "shower_tap": ["shower tap", "shower mixer"],
+            "mixer_tap": ["mixer", "mixer tap", "hot and cold tap"],
+            "hand_shower": ["hand shower", "handheld shower", "hand held shower"],
+            "rain_shower": ["rain shower", "rainfall shower", "overhead shower"],
+            "shower_set": ["shower set", "shower kit", "complete shower"],
+            "shower_head": ["shower head", "showerhead"],
+            "close_coupled": ["close coupled", "close-coupled", "two piece", "coupled"],
+            "one_piece": ["one piece", "one-piece", "single piece"],
+            "art_basin": ["art basin", "vessel basin", "designer basin"],
+            "mirror_cabinet": ["mirror cabinet", "cabinet mirror"],
+        },
+        "measured_coverage": 5075,
+        "rank_weight": 3.0,
+    },
+    {
+        "spec_key": "spout_type",
+        "label": "Spout",
+        "data_type": "enum",
+        "allowed_values": ["flexible", "double_flexible", "pull_out", "swivel", "gooseneck"],
+        "synonyms": {
+            "flexible": ["flexible", "flexible head", "flexi", "bendable", "hose spout"],
+            "double_flexible": ["double flexible", "double spout"],
+            "pull_out": ["pull out", "pull-out", "extendable", "pull down"],
+            "swivel": ["swivel", "rotating", "turnable"],
+            "gooseneck": ["gooseneck", "goose neck", "high arc"],
+        },
+        "measured_coverage": 641,
+        "rank_weight": 2.0,
+    },
+    {
+        "spec_key": "trap_type",
+        "label": "Trap",
+        "data_type": "enum",
+        # The one spec where being wrong means a toilet that cannot be installed: the
+        # outlet is either in the floor (S) or the wall (P). Read ONLY where the
+        # description says so; the `-P` code-suffix rule needs class gating and is not
+        # in this release.
+        "allowed_values": ["s_trap", "p_trap"],
+        "synonyms": {
+            "s_trap": ["s trap", "s-trap", "floor outlet", "floor waste"],
+            "p_trap": ["p trap", "p-trap", "wall outlet", "wall waste"],
+        },
+        "measured_coverage": 1027,
+        "rank_weight": 3.0,
+    },
+    {
+        "spec_key": "bowl_count",
+        "label": "Number of bowls",
+        "data_type": "numeric",
+        "applies_when": {"class": ["Kitchen Sink"]},
+        # 106 of 1,148 kitchen sinks state this. Low coverage is not low value: someone
+        # asking for a double bowl will reject every single bowl, so where the catalog
+        # says it, it decides the answer. Weighted accordingly, and NULL elsewhere.
+        "measured_coverage": 106,
+        "rank_weight": 3.0,
+    },
+    {
+        "spec_key": "has_drainer",
+        "label": "Has a drainer board",
+        "data_type": "boolean",
+        "applies_when": {"class": ["Kitchen Sink"]},
+        "synonyms": {"true": ["drainer", "with drainer", "drainer board", "drain board"]},
+        "measured_coverage": 18,
+        "rank_weight": 1.5,
+    },
+    {
+        "spec_key": "has_overflow",
+        "label": "Has an overflow",
+        "data_type": "boolean",
+        "synonyms": {"true": ["overflow", "with overflow", "c/w overflow"]},
+        "measured_coverage": 23,
         "rank_weight": 1.5,
     },
 ]

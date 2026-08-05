@@ -62,6 +62,11 @@ MATERIAL_TOKENS: list[tuple[str, str]] = [
     ("PVC", "pvc"),
 ]
 
+# Measured on the live catalog: WALL MOUNT* 513 taps, PILLAR MOUNT* 383, bare PILLAR a
+# further 220, UNDER COUNTER 47 basins, UNDERMOUNT 14 sinks. "PILLAR" was previously a
+# control type, which was wrong twice over: in this catalog it always describes where
+# the tap is fixed, and holding it in two tables let one product score the same fact on
+# two legs of the ranker.
 MOUNTING_TOKENS: list[tuple[str, str]] = [
     ("WALL HUNG", "wall_hung"),
     ("WALL MOUNTED", "wall_hung"),
@@ -69,20 +74,89 @@ MOUNTING_TOKENS: list[tuple[str, str]] = [
     ("FLOOR STANDING", "floor_standing"),
     ("FLOOR MOUNTED", "floor_standing"),
     ("FREE STANDING", "floor_standing"),
+    ("UNDER COUNTER", "under_counter"),
+    ("UNDERMOUNT", "under_counter"),
+    ("UNDER MOUNT", "under_counter"),
     ("COUNTER TOP", "counter_top"),
     ("COUNTERTOP", "counter_top"),
     ("ABOVE COUNTER", "counter_top"),
+    ("TOP MOUNT", "counter_top"),
+    ("PILLAR MOUNTED", "pillar_mounted"),
+    ("PILLAR MOUNT", "pillar_mounted"),
+    ("PILLAR", "pillar_mounted"),
     ("CONCEALED", "concealed"),
     ("PEDESTAL", "pedestal"),
 ]
 
+# How the water is controlled. Deliberately NOT the product noun: "mixer" and "bib"
+# moved to `product_type`, which is what a customer actually says.
 CONTROL_TOKENS: list[tuple[str, str]] = [
     ("SINGLE LEVER", "single_lever"),
     ("SINGLE HANDLE", "single_lever"),
-    ("PILLAR", "pillar"),
-    ("MIXER", "mixer"),
-    ("BIB", "bib"),
+    ("SELF CLOSING", "self_closing"),
+    ("SELF-CLOSING", "self_closing"),
+    ("SENSOR", "sensor"),
+    ("TWO WAY", "two_way"),
+    ("2 WAY", "two_way"),
 ]
+
+# The noun the customer uses inside a class. Longest first: "BIB TAP" must beat "TAP",
+# and "HAND SHOWER" must beat "SHOWER". Counts are live measurements.
+PRODUCT_TYPE_TOKENS: list[tuple[str, str]] = [
+    ("ANGLE VALVE", "angle_valve"),  # 338
+    ("HOSE BIB TAP", "bib_tap"),
+    ("BIB TAP", "bib_tap"),  # 476
+    ("BASIN TAP", "basin_tap"),  # 220
+    ("SINK TAP", "kitchen_tap"),  # part of 1,101 with KITCHEN TAP
+    ("KITCHEN TAP", "kitchen_tap"),
+    ("SHOWER TAP", "shower_tap"),
+    ("MIXER TAP", "mixer_tap"),
+    ("MIXER", "mixer_tap"),  # 1,770
+    ("HAND SHOWER", "hand_shower"),  # 487
+    ("RAIN SHOWER", "rain_shower"),  # 12
+    ("SHOWER SET", "shower_set"),  # 550
+    ("SHOWER HEAD", "shower_head"),  # 616
+    ("CLOSE-COUPLED", "close_coupled"),  # 342 with CLOSE COUPLED
+    ("CLOSE COUPLED", "close_coupled"),
+    ("ONE PIECE", "one_piece"),  # 745
+    ("ONE-PIECE", "one_piece"),
+    ("ART BASIN", "art_basin"),  # 294
+    ("MIRROR CABINET", "mirror_cabinet"),
+]
+
+# The waste-outlet rule the user named: `-P` is a P-trap and the bare twin is an S-trap.
+# Only the LITERAL statement is read here. The code-suffix pairing is a separate rule
+# with its own gating (`CB5105-P` is a bib tap, not a trap), and is not in this release.
+TRAP_TOKENS: list[tuple[str, str]] = [
+    ("P-TRAP", "p_trap"),  # 291
+    ("P TRAP", "p_trap"),
+    ("S-TRAP", "s_trap"),  # 736
+    ("S TRAP", "s_trap"),
+]
+
+# How the spout behaves. `FLEXIBLE` alone is the catalog's own phrasing for a flexible
+# hose spout: 518 taps carry it, which is why "flexible kitchen tap" was a reasonable
+# thing for a customer to type and get nothing back.
+SPOUT_TOKENS: list[tuple[str, str]] = [
+    ("DOUBLE FLEXIBLE SPOUT", "double_flexible"),
+    ("FLEXIBLE HEAD", "flexible"),
+    ("FLEXIBLE HOSE", "flexible"),
+    ("FLEXIBLE", "flexible"),  # 518
+    ("PULL OUT", "pull_out"),  # 123 incl. PULL-OUT
+    ("PULL-OUT", "pull_out"),
+    ("SWIVEL", "swivel"),
+    ("GOOSENECK", "gooseneck"),
+]
+
+# Spelled-out bowl counts. `<digit> BOWL` is handled separately by regex.
+BOWL_WORDS: dict[str, int] = {
+    "SINGLE": 1,
+    "DOUBLE": 2,
+    "TRIPLE": 3,
+    "ONE": 1,
+    "TWO": 2,
+    "THREE": 3,
+}
 
 SHAPE_TOKENS: list[tuple[str, str]] = [
     ("RECTANGULAR", "rectangular"),
@@ -144,6 +218,11 @@ _DIM_RE = re.compile(
     r"(?:\s*[xX*]\s*(\d+(?:\.\d+)?))?",
 )
 
+# "1 BOWL", "2BOWL", and the spelled-out "SINGLE BOWL" / "DOUBLE BOWL (...)". Only a
+# count immediately preceding the word is read; nothing is inferred from a length.
+_BOWL_DIGIT_RE = re.compile(r"(?<!\d)(\d)\s*BOWLS?\b")
+_BOWL_WORD_RE = re.compile(rf"\b({'|'.join(BOWL_WORDS)})\s+BOWLS?\b")
+
 
 def _find_token(haystack: str, table: list[tuple[str, str]]) -> tuple[str, str] | None:
     """First (value, evidence) whose token appears literally. Order is precedence."""
@@ -166,6 +245,24 @@ def _accessory_noun_evidence(description: str) -> str | None:
             if re.search(r"(\d\s*$)|((?:C\s*/\s*W|WITH|AND)\s*$)", preceding):
                 continue  # a feature of the product, not the product itself
             return noun
+    return None
+
+
+def _bowl_count(description: str) -> tuple[int, str] | None:
+    """(count, evidence) when the description states a bowl count, else None.
+
+    Both forms occur in the catalog and neither is dominant: `SINGLE BOWL` 42 rows,
+    `DOUBLE BOWL` 64, `<digit> BOWL` 8, out of 1,148 kitchen sinks. The other ~90% say
+    nothing about bowls at all. Returning None for those is the whole point - a double
+    bowl is not derivable from a 1000 mm length, and guessing it would put wrong
+    products in front of a customer who asked for a specific one.
+    """
+    match = _BOWL_WORD_RE.search(description)
+    if match:
+        return BOWL_WORDS[match.group(1)], match.group(0)
+    match = _BOWL_DIGIT_RE.search(description)
+    if match:
+        return int(match.group(1)), match.group(0)
     return None
 
 
@@ -307,11 +404,30 @@ def derive(product: Product, category: ProductCategory | None) -> _Derivation:
         ("material", MATERIAL_TOKENS),
         ("mounting", MOUNTING_TOKENS),
         ("control_type", CONTROL_TOKENS),
+        ("product_type", PRODUCT_TYPE_TOKENS),
+        ("spout_type", SPOUT_TOKENS),
+        ("trap_type", TRAP_TOKENS),
     ):
         hit = _find_token(description, table)
         if hit:
             value, evidence = hit
             out.set(key, value, evidence)
+
+    # 5b. features stated in words. Read only where the description says so: 106 of
+    #     1,148 kitchen sinks name a bowl count and the rest say nothing, so the
+    #     remainder get NULL rather than a count guessed from their length.
+    bowls = _bowl_count(description)
+    if bowls:
+        count, evidence = bowls
+        out.set("bowl_count", count, evidence)
+
+    # A drainer or an overflow is a FEATURE here, never the product: the accessory rule
+    # above has already separated "KITCHEN SINK DRAINER" (a part) from a sink that has
+    # one. Asserted only when present - absence of the word is not evidence of absence.
+    for key, token in (("has_drainer", "DRAINER"), ("has_overflow", "OVERFLOW")):
+        match = re.search(rf"(?<![A-Z]){token}(?![A-Z])", description)
+        if match and not (key == "has_drainer" and accessory_evidence == "DRAINER"):
+            out.set(key, True, token)
 
     # 6. finish, from the trailing code segment
     if "-" in code:
@@ -323,8 +439,21 @@ def derive(product: Product, category: ProductCategory | None) -> _Derivation:
     return out
 
 
+# Bump whenever the RULES above change: new key, new token, changed precedence.
+#
+# `derived_hash` skips a re-derive when nothing about the product changed, which is what
+# makes a catalog-wide run cheap. But the product is only half the input - the rules are
+# the other half. Without this, adding `bowl_count` re-derived every tap (their category
+# gained a class, so their hash moved) and silently skipped all 1,148 kitchen sinks,
+# which kept their old values and reported a successful run. The failure is invisible:
+# the job says "skipped", which is exactly what it says when there is genuinely nothing
+# to do.
+DERIVATION_VERSION = "2"
+
+
 def _input_hash(product: Product, category: ProductCategory | None) -> str:
     parts = [
+        DERIVATION_VERSION,
         product.product_code or "",
         product.description or "",
         (category.category_code if category else "") or "",

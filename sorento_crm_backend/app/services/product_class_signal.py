@@ -33,25 +33,65 @@ BRAND_PREFIXES: dict[str, str] = {
     "CB": "Cabana",
     "M": "Mocha",
     "BRT": "Bravat",
+    "IDC": "IDC",
+    "IB": "Iborn",
 }
 
-# The `-<CLASS>` half. PILOT SCOPE: kitchen sink only. Every other suffix in the live
-# catalog (FT, BA, WB, SH, FC, WC, JC, ...) is intentionally absent, so T0 runs against
-# 1,016 codes and the remaining 173 categories are reported as unmapped rather than
-# silently half-classified. T2 widens this map.
+# The `-<CLASS>` half. Product counts are live measurements, kept on the line because
+# they are the argument for the entry existing.
+#
+# Absent on purpose, and each for its own reason:
+#   CB    (57)  ceramic art basins AND lab sinks in one category - the majority are
+#               basins but a lab sink is not one, and a wrong class is the single most
+#               damaging value the ranker can be handed.
+#   KA    (6)   sink drainers and bottle traps; `is_accessory` already carries them.
+#   TINA / ALAN / LJM / NF / M / WT   (<25 each)  one-off Elpine and spare-part buckets.
 CLASS_SUFFIXES: dict[str, str] = {
-    "KS": "Kitchen Sink",
+    "FT": "Tap",  # 7,120
+    "BA": "Bathroom Accessory",  # 3,570
+    "SH": "Shower",  # 2,112
+    "WB": "Wash Basin",  # 2,076
+    "FC": "Bathroom Furniture",  # 1,973
+    "WC": "Water Closet",  # 1,655
+    "KS": "Kitchen Sink",  # 1,148
+    "JC": "Bathtub and Jacuzzi",  # 646
+    "CH": "Cloth Hanger",  # 98
+    "UB": "Urinal",  # 58
+    "FH": "Flexible Hose",  # 22
+    "GNS": "Kitchen Sink",  # 4 - granite sinks are kitchen sinks
 }
 
 # Customer language is not catalog language. Matched case-insensitively alongside the
 # class label itself. Malay terms included because the corpus is bilingual.
 CLASS_SYNONYMS: dict[str, list[str]] = {
     "Kitchen Sink": ["kitchen sink", "sink", "sinki", "dapur"],
+    "Tap": ["tap", "faucet", "mixer", "paip", "kepala paip"],
+    "Wash Basin": ["wash basin", "basin", "washbasin", "sink basin", "besen"],
+    "Water Closet": ["water closet", "wc", "toilet", "toilet bowl", "closet", "tandas"],
+    "Shower": ["shower", "shower head", "rain shower", "hand shower", "pancuran"],
+    "Bathroom Furniture": ["cabinet", "mirror", "vanity", "bathroom cabinet", "kabinet"],
+    "Bathtub and Jacuzzi": ["bathtub", "bath tub", "jacuzzi", "tub", "shower screen"],
+    "Bathroom Accessory": [
+        "bathroom accessory",
+        "towel rail",
+        "towel bar",
+        "soap holder",
+        "paper holder",
+        "robe hook",
+    ],
+    "Cloth Hanger": ["cloth hanger", "clothes hanger", "hanger", "penyidai"],
+    "Urinal": ["urinal", "urinary"],
+    "Flexible Hose": ["flexible hose", "hose", "shower tube", "hos"],
 }
 
 # Categories that carry no class meaning at all. Flagged non-searchable so they cannot
 # masquerade as a class once the ranker starts trusting `class_label`.
 NON_SEARCHABLE_CODES: frozenset[str] = frozenset({"MISC", "PROJECT", "SRTPART", "VD"})
+
+# Same idea, one level down: a `<BRAND>-<SUFFIX>` whose suffix is a bucket rather than
+# a product class. ACC is the catalog's own accessory marker, and the other three hold
+# retention sums and rows whose description literally reads "NOT USE THIS CODE".
+NON_SEARCHABLE_SUFFIXES: frozenset[str] = frozenset({"ACC", "AT", "GJ", "006"})
 
 
 def explain_code(category_code: str | None) -> dict[str, str | None]:
@@ -77,6 +117,13 @@ def explain_code(category_code: str | None) -> dict[str, str | None]:
     prefix, _, suffix = code.partition("-")
     if not suffix:
         return {"reason": "code_unparsed", "class_label": None, "brand_hint": None, "suffix": None}
+    if suffix in NON_SEARCHABLE_SUFFIXES:
+        return {
+            "reason": "category_non_searchable",
+            "class_label": None,
+            "brand_hint": None,
+            "suffix": suffix,
+        }
 
     brand = BRAND_PREFIXES.get(prefix)
     class_label = CLASS_SUFFIXES.get(suffix)
@@ -111,6 +158,8 @@ def signal_for_code(category_code: str) -> tuple[str | None, str | None] | None:
     prefix, _, suffix = code.partition("-")
     if not suffix:
         return None
+    if suffix in NON_SEARCHABLE_SUFFIXES:
+        return (None, None)
 
     brand = BRAND_PREFIXES.get(prefix)
     class_label = CLASS_SUFFIXES.get(suffix)

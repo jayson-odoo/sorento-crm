@@ -99,10 +99,20 @@ def test_every_seeded_key_is_active_and_typed(db):
         assert row.label, key
 
 
-def test_numeric_keys_carry_a_unit(db):
+def test_measured_numeric_keys_carry_a_unit(db):
+    """Anything measured is in millimetres. A count is not measured, so it has no unit.
+
+    Rendering "2 mm" for a double bowl sink would be worse than wrong: it would embed a
+    dimension phrase into a sentence the ranker compares against real dimensions.
+    """
+    counts = {"bowl_count"}
     seed_spec_registry(db)
     for key, row in _keys(db).items():
-        if row.data_type == "numeric":
+        if row.data_type != "numeric":
+            continue
+        if key in counts:
+            assert row.unit is None, key
+        else:
             assert row.unit == "mm", key
 
 

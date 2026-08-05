@@ -37,6 +37,12 @@ CLASS_BOOST = 5.0
 FREE_TERM_BOOST = 1.2
 NUMERIC_BOOST = 2.0
 ACCESSORY_PENALTY = 6.0
+# A stated spec the product CONTRADICTS. Someone who says "wall hung" is not helped by
+# a floor-standing model ranked above a wall-hung one, which is what happened while a
+# mismatch merely scored zero. Deliberately smaller than the match it opposes: this
+# demotes a contradicting product, it does not remove it, because the parser is the
+# thing most likely to be wrong.
+MISMATCH_PENALTY = 2.5
 # +/- 5mm reads as exact, matching the hedge convention already used for dimensions
 # elsewhere in the CRM.
 NUMERIC_EXACT_TOLERANCE = 5.0
@@ -64,6 +70,47 @@ def _summarise(values: dict, rendered: str | None) -> str:
     return rendered or ""
 
 
+def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
+    """Turn customer words into registry spec values, longest phrase first.
+
+    The registry has carried the synonyms all along and nothing consulted them, so a
+    phrase only ever earned a weak substring boost against the rendered sentence. That
+    is why "angle valve" fell below the floor while 338 angle valves sat in the catalog
+    with `product_type=angle_valve` stored: the words appeared nowhere in the sentence
+    the ranker could see, and the key that held the answer was never scored.
+
+    Longest-first matters: "single bowl" must not resolve as "single lever" losing to
+    "bowl", and "hand shower" must beat "shower".
+    """
+    haystack = " ".join(t.lower() for t in free_terms if t)
+    if not haystack:
+        return []
+
+    candidates: list[tuple[int, str, str]] = []
+    for row in active_registry(db):
+        for value, synonyms in (row.synonyms or {}).items():
+            for synonym in synonyms:
+                phrase = str(synonym).lower().strip()
+                if not phrase:
+                    continue
+                if re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", haystack):
+                    candidates.append((len(phrase), row.spec_key, value))
+
+    # One value per key: the longest phrase that matched wins, so a specific reading
+    # beats a generic one that happens to be a substring of the same words.
+    best: dict[str, tuple[int, str]] = {}
+    for length, key, value in candidates:
+        if key not in best or length > best[key][0]:
+            best[key] = (length, value)
+
+    resolved = [{"key": key, "value": value} for key, (_, value) in best.items()]
+    # Booleans are stored as real booleans; the registry spells the synonym key "true".
+    for entry in resolved:
+        if entry["value"] == "true":
+            entry["value"] = True
+    return resolved
+
+
 def search_specs(
     db: Session,
     *,
@@ -82,6 +129,12 @@ def search_specs(
     free_terms = [t for t in (free_terms or []) if t and t.strip()]
 
     weights = {row.spec_key: float(row.rank_weight or 1.0) for row in active_registry(db)}
+
+    # Words the caller did not map onto a key are mapped here. An explicitly-passed
+    # spec always wins: the caller's parser saw the whole sentence, this sees a bag of
+    # words.
+    stated = {str(entry.get("key")) for entry in specs if entry.get("key")}
+    specs = specs + [e for e in resolve_terms_to_specs(db, free_terms) if e["key"] not in stated]
 
     # A free term that names a class IS a class match, and class is the strongest
     # signal we have. Without this, "sink" scored one weak text hit and fell below the
@@ -108,6 +161,9 @@ def search_specs(
     for spec_row, product, category in rows:
         values = spec_row.values or {}
         score = 0.0
+        # Penalties are accumulated apart from the boosts so that "did this product
+        # match anything at all" stays answerable after they are applied.
+        penalty = 0.0
         matched: list[str] = []
 
         for entry in specs:
@@ -135,6 +191,12 @@ def search_specs(
             elif str(actual).lower() == str(target).lower():
                 score += weight
                 matched.append(key)
+            else:
+                # Stated, stored, and different. Not the same thing as unstated: a
+                # product with NO mounting is merely unknown and stays neutral, but one
+                # that is explicitly floor standing contradicts "wall hung" and must not
+                # outrank a product that matches it.
+                penalty += MISMATCH_PENALTY
 
         # A free term naming this product's class counts as a class match.
         class_value = str((values.get("class") or {}).get("value") or "").lower()
@@ -157,9 +219,17 @@ def search_specs(
 
         is_accessory = bool((values.get("is_accessory") or {}).get("value"))
         if is_accessory and not include_accessories:
-            score -= ACCESSORY_PENALTY
+            penalty += ACCESSORY_PENALTY
 
-        if score <= 0:
+        positive = score
+        score -= penalty
+
+        # Dropped for having NO positive evidence, never for scoring badly. A penalty
+        # that can delete a row is a filter wearing a boost's clothes, and this file's
+        # first rule is that one over-extracted spec must not empty the shortlist: a
+        # floor-standing WC still answers "wall hung water closet" better than silence,
+        # it just answers it last.
+        if positive <= 0:
             continue
 
         scored.append(

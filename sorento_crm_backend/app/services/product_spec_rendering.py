@@ -45,12 +45,41 @@ _PHRASES: dict[str, dict[str, str]] = {
         "pedestal": "With pedestal",
         "concealed": "Concealed",
         "counter_top": "Counter top",
+        "under_counter": "Under counter",
+        "pillar_mounted": "Pillar mounted",
     },
     "control_type": {
-        "mixer": "Mixer",
-        "pillar": "Pillar tap",
-        "bib": "Bib tap",
         "single_lever": "Single lever",
+        "two_way": "Two way",
+        "self_closing": "Self closing",
+        "sensor": "Sensor operated",
+    },
+    "product_type": {
+        "angle_valve": "Angle valve",
+        "bib_tap": "Bib tap",
+        "basin_tap": "Basin tap",
+        "kitchen_tap": "Kitchen tap",
+        "shower_tap": "Shower tap",
+        "mixer_tap": "Mixer tap",
+        "hand_shower": "Hand shower",
+        "rain_shower": "Rain shower",
+        "shower_set": "Shower set",
+        "shower_head": "Shower head",
+        "close_coupled": "Close coupled",
+        "one_piece": "One piece",
+        "art_basin": "Art basin",
+        "mirror_cabinet": "Mirror cabinet",
+    },
+    "spout_type": {
+        "flexible": "Flexible spout",
+        "double_flexible": "Double flexible spout",
+        "pull_out": "Pull out spout",
+        "swivel": "Swivel spout",
+        "gooseneck": "Gooseneck spout",
+    },
+    "trap_type": {
+        "s_trap": "S-trap, floor outlet",
+        "p_trap": "P-trap, wall outlet",
     },
     "shape": {
         "round": "Round",
@@ -116,10 +145,23 @@ def render_spec_sentence(values: dict) -> str | None:
     elif brand:
         parts.append(str(brand))
 
-    for key in ("material", "shape", "mounting", "control_type", "finish"):
+    # The bowl count leads the features: it is the one a customer states first and
+    # rejects on. "Double bowl" reads as language; "bowl count 2" does not.
+    bowls = read("bowl_count")
+    if bowls is not None:
+        word = {1: "Single bowl", 2: "Double bowl", 3: "Triple bowl"}.get(int(bowls))
+        parts.append(word or f"{_number(bowls)} bowls")
+
+    for key in ("product_type", "material", "shape", "mounting", "spout_type",
+                "control_type", "trap_type", "finish"):
         value = read(key)
         if value is not None:
             parts.append(_phrase(key, value))
+
+    if read("has_drainer") is True:
+        parts.append("With drainer board")
+    if read("has_overflow") is True:
+        parts.append("With overflow")
 
     # Dimensions, shape-aware. A round product has a diameter, and rendering it as
     # "407 x 120" would put a diameter in the width slot of the index.
