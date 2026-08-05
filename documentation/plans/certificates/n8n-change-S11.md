@@ -1,3 +1,37 @@
+# S11 - the n8n change
+
+**Status: SUPERSEDED. Built on a fork; not promoted.**
+
+This file described a *prompt edit to the shared product-extraction node*. That
+approach was dropped: Certification shares `analyze-product-document` with
+Technical Specifications and Product Photos, so widening that prompt would ask
+951 spec sheets for a certificate number (a hallucination source, and tokens
+spent for nothing) and would put the certificate prompt one edit away from
+regressing the product path.
+
+**What was built instead:** a dedicated certificate branch on a fork of the
+workflow, leaving the product path byte-identical.
+
+| | |
+|---|---|
+| Live workflow | `_NbFU3cCoEQwPSbvn14vV` (ACTIVE, 49 nodes) - untouched |
+| Fork | `OsLg5BgN908UsmqK` (INACTIVE, 53 nodes, fresh webhook path) |
+| Full plan, prompt, parser, verification and promotion checklist | `sorento_crm_n8n/plans/PLAN-certificate-extraction-branch.md` |
+
+Two corrections this file got wrong, both now fixed on the fork:
+
+1. **`title` was missing** from the extraction JSON, so an AI-filed certificate
+   could never carry one. The backend now accepts it and the fork's prompt asks
+   for it.
+2. **The shared parser appends the FILE NAME to `products`.** For a certificate
+   named `PPS - IKRAM 04424FC - EXP 23 DEC 2026` that lands the whole file name
+   in `unmatched_products` and flags every certificate for review. The
+   certificate parser deliberately does not do this.
+
+The original prompt-edit write-up is kept below for provenance.
+
+---
+
 # S11 - the n8n change, prepared but NOT applied
 
 **Status:** ready to apply, awaiting explicit go.
