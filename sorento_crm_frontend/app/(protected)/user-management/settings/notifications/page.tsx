@@ -13,7 +13,6 @@ import {
 } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
-import DiscontinuedNotifyCompaniesCard from './DiscontinuedNotifyCompaniesCard';
 import { apiFetch } from '@/lib/api';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -171,23 +170,7 @@ const NotificationSettingsPage = () => {
 
   const isProcessing = mutation.status === 'pending';
 
-  // The companies card renders outside the form below (its buttons must not submit
-  // it), so it gets its own toast in the same house style.
-  const cardToast = (variant: 'success' | 'destructive', message: string) =>
-    toast.custom(
-      () => (
-        <Alert variant="mono" icon={variant}>
-          <AlertIcon>
-            {variant === 'success' ? <RiCheckboxCircleFill /> : <RiErrorWarningFill />}
-          </AlertIcon>
-          <AlertTitle>{message}</AlertTitle>
-        </Alert>
-      ),
-      { position: 'top-center' },
-    );
-
   return (
-    <div className="space-y-5">
     <form onSubmit={form.handleSubmit(handleSubmit)}>
       <Form {...form}>
         <Card>
@@ -357,8 +340,6 @@ const NotificationSettingsPage = () => {
         </Card>
       </Form>
     </form>
-    <DiscontinuedNotifyCompaniesCard toast={cardToast} />
-    </div>
   );
 };
 

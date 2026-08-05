@@ -245,11 +245,6 @@ class SystemSetting(Base):
         String(20), nullable=False, server_default="1,2", default="1,2"
     )
 
-    # Which companies `product_discontinued_check` reports on. Comma list of
-    # company ids; blank means the Sorento default. A second company's catalogue
-    # must be opted IN, never picked up silently when its products land.
-    product_discontinued_notify_company_ids = Column(String(500), nullable=True)
-
     # SMTP for notification emails (password not returned in read APIs)
     smtp_host = Column(String(255), nullable=True)
     smtp_port = Column(String(10), nullable=True)

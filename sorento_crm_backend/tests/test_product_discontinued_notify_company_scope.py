@@ -1,4 +1,4 @@
-"""The discontinued-product check reports per company, and only opted-in companies.
+"""The discontinued-product check batches per company, within the task scope.
 
 The failure this guards against is not subtle: the job reads `products` with the
 scheduler's company scope set to all companies, so before this change a second
@@ -20,7 +20,7 @@ import pytest
 from app.models.company import Company
 from app.models.notification import Notification
 from app.models.product import Product, ProductCategory, UnitOfMeasure
-from app.models.user import SystemSetting, User
+from app.models.user import User
 from app.models.base import set_company_scope
 from app.services.company_scope import DEFAULT_COMPANY_ID
 import app.services.product_discontinued_notify_service as svc
@@ -88,52 +88,37 @@ def _subscriber(db):
     return u
 
 
-def _configure(db, company_ids: str | None):
-    row = db.query(SystemSetting).first()
-    if row is None:
-        row = SystemSetting(id=str(uuid.uuid4()))
-        db.add(row)
-    row.product_discontinued_notify_company_ids = company_ids
-    db.flush()
-    return row
+def _scope(db, company_ids):
+    """Apply the scope the scheduler would apply for a task carrying these ids.
+
+    The job no longer reads any configuration of its own - the scheduler narrows the
+    session from the task's ``metadata.company_ids`` before calling it - so the tests
+    set the same thing the scheduler would.
+    """
+    set_company_scope(db, frozenset(company_ids) if company_ids else None)
 
 
 def _by_code(db, code: str) -> Product:
     return db.query(Product).filter(Product.product_code == code).one()
 
 
-# --- resolution ------------------------------------------------------------- #
-
-def test_unconfigured_resolves_to_sorento_only(db):
-    """The default must not be "every company" - that is the bug being fixed."""
-    assert svc.resolve_notify_company_ids(db) == [DEFAULT_COMPANY_ID]
-
-
-def test_blank_setting_still_falls_back_to_sorento(db):
-    _configure(db, "   ")
-    assert svc.resolve_notify_company_ids(db) == [DEFAULT_COMPANY_ID]
-
-
-def test_configured_ids_are_used_in_order_and_deduped(db):
-    mocha = _second_company(db)
-    _configure(db, f" {mocha}, {DEFAULT_COMPANY_ID} ,{mocha} ")
-    assert svc.resolve_notify_company_ids(db) == [mocha, DEFAULT_COMPANY_ID]
-
-
 # --- reporting -------------------------------------------------------------- #
 
-def test_a_company_that_is_not_opted_in_is_left_completely_alone(db):
+def test_a_company_outside_the_task_scope_is_left_completely_alone(db):
+    """The narrowing case: task metadata.company_ids = [Sorento]."""
     mocha = _second_company(db)
     _product(db, code="SRT-1", company_id=DEFAULT_COMPANY_ID)
     _product(db, code="MCH-1", company_id=mocha)
     _subscriber(db)
     db.commit()
+    _scope(db, [DEFAULT_COMPANY_ID])
 
     out = svc.run_product_discontinued_check(db)
 
     assert out["pending"] == 1, "only Sorento's product should have been reported"
-    # The un-opted-in company keeps its NULL stamp: stamping it here would silence
-    # its genuine first report on the day someone does opt it in.
+    # Mocha keeps its NULL stamp. Stamping a company the task cannot see would
+    # silence its genuine first report on the day someone widens the scope.
+    _scope(db, None)
     assert _by_code(db, "MCH-1").discontinued_notified_at is None
     assert _by_code(db, "SRT-1").discontinued_notified_at is not None
 
@@ -144,8 +129,8 @@ def test_each_company_gets_its_own_batch(db):
     _product(db, code="MCH-1", company_id=mocha)
     _product(db, code="MCH-2", company_id=mocha)
     _subscriber(db)
-    _configure(db, f"{DEFAULT_COMPANY_ID},{mocha}")
     db.commit()
+    _scope(db, None)  # task unconfigured = every company
 
     out = svc.run_product_discontinued_check(db)
 
@@ -167,8 +152,8 @@ def test_counts_are_per_company_not_summed_in_the_message(db):
     _product(db, code="MCH-1", company_id=mocha)
     _product(db, code="MCH-2", company_id=mocha)
     _subscriber(db)
-    _configure(db, f"{DEFAULT_COMPANY_ID},{mocha}")
     db.commit()
+    _scope(db, None)  # task unconfigured = every company
 
     svc.run_product_discontinued_check(db)
 
@@ -178,17 +163,22 @@ def test_counts_are_per_company_not_summed_in_the_message(db):
     assert any("2 products" in t for t in titles)
 
 
-def test_the_company_is_named_when_more_than_one_is_configured(db):
+def test_the_company_is_named_when_the_run_spans_more_than_one(db):
+    """Both companies need pending rows: the label exists to disambiguate two
+    notifications arriving together, so a run covering one company never earns it."""
     mocha = _second_company(db)
+    _product(db, code="SRT-1", company_id=DEFAULT_COMPANY_ID)
     _product(db, code="MCH-1", company_id=mocha)
     _subscriber(db)
-    _configure(db, f"{DEFAULT_COMPANY_ID},{mocha}")
     db.commit()
+    _scope(db, None)  # task unconfigured = every company
 
     svc.run_product_discontinued_check(db)
 
-    note = db.query(Notification).one()
-    assert note.title.startswith("Mocha: "), note.title
+    titles = sorted(n.title for n in db.query(Notification).all())
+    assert len(titles) == 2, titles
+    assert any(t.startswith("Mocha: ") for t in titles), titles
+    assert any(t.startswith("Sorento: ") for t in titles), titles
 
 
 def test_the_single_company_install_keeps_its_existing_copy(db):
@@ -196,6 +186,7 @@ def test_the_single_company_install_keeps_its_existing_copy(db):
     _product(db, code="SRT-1", company_id=DEFAULT_COMPANY_ID)
     _subscriber(db)
     db.commit()
+    _scope(db, None)
 
     svc.run_product_discontinued_check(db)
 
@@ -206,8 +197,8 @@ def test_the_single_company_install_keeps_its_existing_copy(db):
 def test_nothing_pending_anywhere_is_a_quiet_no_op(db):
     mocha = _second_company(db)
     _subscriber(db)
-    _configure(db, f"{DEFAULT_COMPANY_ID},{mocha}")
     db.commit()
+    _scope(db, None)  # task unconfigured = every company
 
     out = svc.run_product_discontinued_check(db)
 
@@ -217,12 +208,12 @@ def test_nothing_pending_anywhere_is_a_quiet_no_op(db):
 
 
 def test_one_company_pending_still_reports_its_batch_id(db):
-    """Single reporting company keeps the flat batch_id the task log has always had."""
+    """A run that reports a single company keeps the flat batch_id the log always had."""
     mocha = _second_company(db)
     _product(db, code="MCH-1", company_id=mocha)
     _subscriber(db)
-    _configure(db, f"{DEFAULT_COMPANY_ID},{mocha}")
     db.commit()
+    _scope(db, None)  # task unconfigured = every company
 
     out = svc.run_product_discontinued_check(db)
 

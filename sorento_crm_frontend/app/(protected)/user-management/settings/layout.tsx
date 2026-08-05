@@ -68,8 +68,6 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
       (raw.n8n_stock_inquiry_revise_webhook_url as string | null) ?? null,
     complaintDoDeliveredNotifyTiers:
       (raw.complaint_do_delivered_notify_tiers as string) ?? '1,2',
-    productDiscontinuedNotifyCompanyIds:
-      (raw.product_discontinued_notify_company_ids as string | null) ?? '',
     handlingLockEnabledTypes: Array.isArray(raw.handling_lock_enabled_types)
       ? (raw.handling_lock_enabled_types as string[])
       : [],
@@ -164,7 +162,6 @@ function createDefaultSettings(): SystemSetting {
     notifySystemErrorWeb: false,
     notifySystemErrorRoleIds: [],
     complaintDoDeliveredNotifyTiers: '1,2',
-    productDiscontinuedNotifyCompanyIds: '',
     handlingLockEnabledTypes: [],
     healthDigestEnabled: false,
     healthAlertsEnabled: false,

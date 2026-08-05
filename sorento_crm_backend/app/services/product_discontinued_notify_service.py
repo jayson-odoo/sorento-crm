@@ -55,106 +55,68 @@ def _plural(n: int) -> str:
     return "" if n == 1 else "s"
 
 
-def resolve_notify_company_ids(db: Session) -> list[str]:
-    """Companies whose discontinued products are reported.
-
-    Resolution order: DB (``system_settings.product_discontinued_notify_company_ids``,
-    admin-editable in Settings) -> env PRODUCT_DISCONTINUED_NOTIFY_COMPANY_IDS ->
-    default Sorento only.
-
-    Defaulting to Sorento rather than "every company" is deliberate. The job is
-    company-blind by nature - it reads ``products`` with the scheduler's scope set to
-    all companies - so the moment a second company's catalogue is loaded, its entire
-    discontinued history would land in one notification aimed at staff who do not
-    handle it. Opting a company IN is a decision someone makes; opting it out by
-    accident is not.
-    """
-    from app.config import settings as app_settings
-    from app.models.user import SystemSetting
-    from app.services.company_scope import DEFAULT_COMPANY_ID
-
-    raw = None
-    try:
-        row = db.query(SystemSetting).first()
-        if row is not None:
-            raw = getattr(row, "product_discontinued_notify_company_ids", None)
-    except Exception:  # noqa: BLE001 - settings must never break the tick
-        raw = None
-    if not (raw and str(raw).strip()):
-        raw = getattr(app_settings, "product_discontinued_notify_company_ids", "") or ""
-
-    ids: list[str] = []
-    for part in str(raw).split(","):
-        part = part.strip()
-        if part and part not in ids:
-            ids.append(part)
-    return ids or [DEFAULT_COMPANY_ID]
-
-
 def run_product_discontinued_check(db: Session, task: Any = None) -> dict:
     """Scheduled-task entry point (PLAN Q12/A: stamp-first, best-effort).
 
-    One batch per configured company. Never one batch spanning companies: the count
-    and the deep link are the whole message, and both are meaningless if they mix two
-    catalogues that different people are responsible for.
+    WHICH companies this reports on is not decided here: the scheduler applies the
+    task's own ``metadata.company_ids`` scope to the session, so the query below only
+    ever sees the companies that task is allowed to touch (all of them when unset).
+    Configuring it lives with every other per-task setting instead of in a bespoke
+    column, and the same knob works for any scheduled job.
+
+    What IS decided here is the batching: one batch PER company, never one spanning
+    them. The count and the deep link are the whole message, and both are meaningless
+    if they mix two catalogues that different people are responsible for.
     """
     from app.models.company import Company
 
-    company_ids = resolve_notify_company_ids(db)
-    names = {
-        c.id: c.name
-        for c in db.query(Company).filter(Company.id.in_(company_ids)).all()
-    }
-    # Label batches with the company only when more than one is configured, so the
-    # single-company install (today's production) keeps its existing copy.
-    label_with_company = len(company_ids) > 1
+    # Level-triggered on current state: a product discontinued then reverted before
+    # this tick has is_discontinued=False and drops out on its own, no event log.
+    pending = (
+        db.query(Product)
+        .filter(
+            Product.is_discontinued.is_(True),
+            Product.discontinued_notified_at.is_(None),
+        )
+        .all()
+    )
+    by_company: dict[Optional[str], list[Product]] = {}
+    for p in pending:
+        by_company.setdefault(getattr(p, "company_id", None), []).append(p)
+
+    names = {}
+    if by_company:
+        ids = [c for c in by_company if c]
+        if ids:
+            names = {c.id: c.name for c in db.query(Company).filter(Company.id.in_(ids)).all()}
+    # Name the company in the copy only when this run actually spans more than one,
+    # so the single-company install keeps its existing wording.
+    label_with_company = len(by_company) > 1
 
     runs = [
-        _run_for_company(db, cid, names.get(cid), label_with_company)
-        for cid in company_ids
+        _run_for_company(db, cid, names.get(cid), label_with_company, rows)
+        for cid, rows in by_company.items()
     ]
-    reported = [r for r in runs if r["pending"]]
+    if not runs:
+        return {"pending": 0, "subscribers": 0, "notified_users": 0, "batch_id": None, "companies": []}
     return {
         # Top-level keys stay aggregate so existing task-run logs keep their shape.
         "pending": sum(r["pending"] for r in runs),
         "subscribers": max((r["subscribers"] for r in runs), default=0),
         "notified_users": sum(r["notified_users"] for r in runs),
-        "batch_id": reported[0]["batch_id"] if len(reported) == 1 else None,
+        "batch_id": runs[0]["batch_id"] if len(runs) == 1 else None,
         "companies": runs,
     }
 
 
 def _run_for_company(
     db: Session,
-    company_id: str,
+    company_id: Optional[str],
     company_name: Optional[str],
     label_with_company: bool,
+    pending: list,
 ) -> dict:
     now = datetime.utcnow()
-    # Pending = currently discontinued AND not yet reported. A product reverted
-    # before this tick has is_discontinued=False, so it is excluded automatically —
-    # no event log needed (level-triggered on current state).
-    #
-    # company_id is filtered EXPLICITLY rather than leaning on the ORM scope filter:
-    # the scheduler runs with scope=None (all companies) so the automatic predicate
-    # is absent here by design.
-    pending = (
-        db.query(Product)
-        .filter(
-            Product.is_discontinued.is_(True),
-            Product.discontinued_notified_at.is_(None),
-            Product.company_id == company_id,
-        )
-        .all()
-    )
-    if not pending:
-        return {
-            "company_id": company_id,
-            "pending": 0,
-            "subscribers": 0,
-            "notified_users": 0,
-            "batch_id": None,
-        }
 
     batch_id = str(uuid.uuid4())
     count = len(pending)
