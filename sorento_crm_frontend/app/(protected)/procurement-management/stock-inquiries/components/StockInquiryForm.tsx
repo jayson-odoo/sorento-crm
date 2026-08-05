@@ -118,7 +118,7 @@ export default function StockInquiryForm({
   }, [inquiryId]);
 
   /**
-   * The dialog edits the technician's wording only. The preamble and the contact's
+   * The dialog edits the purchasing wording only. The preamble and the contact's
    * portal link are composed server-side and appended when the message is sent, so
    * there is no link to fetch here — see
    * `StockInquiryService.compose_stock_inquiry_reply_message`.

@@ -3775,7 +3775,7 @@ class StockInquiryService:
     @staticmethod
     def _bare_stock_inquiry_reply(raw: Optional[str]) -> str:
         """Strip a LEGACY "There is a response to your stock inquiry {link}: "
-        preamble, keeping ONLY the technician's wording for the lean ``update``
+        preamble, keeping ONLY the purchasing wording for the lean ``update``
         template var.
 
         The frontend no longer composes that string — it posts the bare wording and
@@ -3876,7 +3876,7 @@ class StockInquiryService:
         attachment_sentence = compose_response_attachment_sentence(
             count_staff_attachments(self.db, "stock_inquiry", str(inquiry.id))
         )
-        # The FE now posts only the technician's wording, so the strip is a no-op;
+        # The FE now posts only the purchasing wording, so the strip is a no-op;
         # it still runs so a legacy client (or a re-sent stored row) carrying the old
         # "{preamble} {view_url}: {body}" shape is normalised instead of stacking a
         # second preamble and re-sending the stale read-only view link.

@@ -76,7 +76,7 @@ def test_a_legacy_frontend_composed_string_is_normalised_not_doubled():
 
 
 def test_bare_text_from_the_new_frontend_passes_through_untouched():
-    """The new FE sends only the technician's wording, so stripping is a no-op."""
+    """The new FE sends only the purchasing wording, so stripping is a no-op."""
     assert StockInquiryService._bare_stock_inquiry_reply(BODY) == BODY
 
 

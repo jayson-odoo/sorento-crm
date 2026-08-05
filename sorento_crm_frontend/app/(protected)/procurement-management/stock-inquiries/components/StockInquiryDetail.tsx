@@ -154,7 +154,7 @@ export default function StockInquiryDetail({
   };
 
   /**
-   * Only the technician's wording. The preamble and the contact link are composed
+   * Only the purchasing wording. The preamble and the contact link are composed
    * server-side by `StockInquiryService.compose_stock_inquiry_reply_message`, which
    * resolves the interactive portal link and puts it last on its own line.
    *
