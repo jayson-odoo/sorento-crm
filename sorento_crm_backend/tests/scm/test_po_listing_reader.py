@@ -167,3 +167,28 @@ def test_the_sales_order_link_is_order_level_not_line_level(result):
     assert hasattr(order, "so_numbers")
     for line in order.lines:
         assert not hasattr(line, "so_number")
+
+
+def test_a_charge_is_recognised_however_it_is_spelled():
+    """The real export contains `CURRENCY ROUNDING DIFFERENCE` three ways.
+
+    `ROUDING` and `DIFERRENCE` are typed by hand, so an exact list rots on the next typo -
+    and each miss becomes an item code reported as an unmatched product on every upload,
+    for ever. Matching on a stem PAIR is deliberately narrow: both stems must be present,
+    and no product could satisfy either pair. Across the customer's whole 2020 file this
+    classifies 7 distinct codes, all of them genuine charges, and leaves 0 unmatched.
+    """
+    from app.services.scm.po_listing_reader import _is_charge_code
+
+    assert _is_charge_code("CURRENCY ROUNDING DIFFERENCE")
+    assert _is_charge_code("CURRENCY ROUDING DIFFERENCE")
+    assert _is_charge_code("CURRENCY ROUNDING DIFERRENCE")
+    assert _is_charge_code("HANDLING CHARGES")
+    assert _is_charge_code("  misc  ")
+
+    # And nothing that could be stock. `CBM1030` is a mirror, `SRTSCBD290A` a bidet seat.
+    assert not _is_charge_code("CBM1030")
+    assert not _is_charge_code("SRTSCBD290A")
+    assert not _is_charge_code("MWCX7604-S")
+    # A product whose name merely contains a charge word is still a product.
+    assert not _is_charge_code("MISCELLANEOUS-TAP-500")

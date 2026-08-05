@@ -301,7 +301,8 @@ def test_every_company_id_table_is_registered():
     # S5 then added the exception batch and its rows: a batch is a company's decision QUEUE
     # produced by that company's upload, and neither derives a location it could be filtered
     # through (an exception's warehouse is nullable, because supply in transit names none).
-    assert len(owned) == 43, f"expected 43 owned tables, found {len(owned)}: {sorted(owned)}"
+    # And the SO<->PO link claim: a company's pairing between its own two order books.
+    assert len(owned) == 44, f"expected 44 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------

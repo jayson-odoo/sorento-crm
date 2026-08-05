@@ -56,8 +56,8 @@ _DOC_NUMBER = re.compile(r"^(?:[A-Z]{2,4}-)?\d{4}[-/]?\d{0,2}[-/]?[A-Z]?\d{3,4}$
 # consistent enough to parse for meaning.
 _SO_NOTE = re.compile(r"S\s*/?\s*O\s*[:#]?\s*(\d{4,})", re.I)
 
-# Item codes that are charges rather than products. Matched on the WHOLE code, never as a
-# substring: a real product whose code happens to contain "MISC" is a product.
+# Item codes that are charges rather than products, matched on the WHOLE code: a real
+# product whose code merely contains "MISC" is a product.
 _NON_STOCK_CODES = {
     "MISC",
     "MISCELLANEOUS",
@@ -74,6 +74,26 @@ _NON_STOCK_CODES = {
     "DISCOUNT",
     "ROUNDING",
 }
+
+# Token pairs that make a code a charge however it is spelled. The real export contains
+# `CURRENCY ROUNDING DIFFERENCE` three ways - `ROUDING`, `DIFERRENCE` - because they are typed
+# by hand, so an exact list rots on the next typo. Matching on a stem PAIR is deliberately
+# narrow: both stems must be present, and neither pair describes anything that could be a
+# product. A code this misses is REPORTED as unmatched, never dropped, so the cost of a miss
+# is a line on a list rather than lost supply.
+_CHARGE_STEM_PAIRS = (
+    ("CURRENC", "ROU"),      # currency rounding, however "rounding" is spelled
+    ("ROU", "DIF"),          # rounding difference, ditto
+    ("EXCHANGE", "DIF"),     # exchange difference
+)
+
+
+def _is_charge_code(code: str) -> bool:
+    """Whether an item code names a charge rather than a product."""
+    normalised = " ".join(code.upper().split())
+    if normalised in _NON_STOCK_CODES:
+        return True
+    return any(all(stem in normalised for stem in pair) for pair in _CHARGE_STEM_PAIRS)
 
 
 @dataclass
@@ -319,7 +339,7 @@ def read_po_listing(file_data: bytes) -> PoListingResult:
                 unit_price=_number(values.get("Unit Price")),
                 amount=amounts[0] if amounts else None,
                 local_amount=amounts[1] if len(amounts) > 1 else None,
-                is_stock_item=item_code.strip().upper() not in _NON_STOCK_CODES,
+                is_stock_item=not _is_charge_code(item_code),
                 source_row=row_number,
             )
         )

@@ -714,3 +714,53 @@ class PlanException(Base, CompanyScopedMixin):
         ),
         {"schema": "scm"},
     )
+
+
+class OrderLinkClaim(Base, CompanyScopedMixin):
+    """A claimed SO<->PO pairing, resolved when both documents exist.
+
+    A purchase order can be uploaded before its sales order and a sales order before its
+    purchase order, and neither order may lose the pairing. A nullable FK on the PO line
+    cannot express that: a claim made before the other side exists has nowhere to live, so it
+    is dropped and the linkage silently depends on which file somebody opened first.
+
+    So the numbers are held as TEXT, exactly as the source spelled them, and `so_line_id` /
+    `po_line_id` are filled in later by the resolver. An unresolved claim is a number the
+    upload result reports - "34 orders name a purchase order we have not seen" is how
+    somebody finds out the PO book is a month behind.
+
+    `item_code` is nullable because the two feeds know different things. The Order Inquiry
+    sheet states the item, so its claims are per line. The `**SO:174830**` notes inside the PO
+    export do not - a note sits between lines and nothing says which side it describes - so
+    those claims are order-level. Guessing a line there would assign one customer's stock to
+    another customer's order.
+    """
+    __tablename__ = "order_link_claim"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    so_number = Column(String(100), nullable=False)
+    po_number = Column(String(100), nullable=False)
+    item_code = Column(String(100), nullable=True)
+    source = Column(String(30), nullable=False)
+
+    claimed_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    resolved_at = Column(DateTime(timezone=False), nullable=True)
+    so_line_id = Column(
+        UUID(as_uuid=False), ForeignKey("sales_order_lines.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    po_line_id = Column(
+        UUID(as_uuid=False), ForeignKey("purchase_order_lines.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_scm_order_link_claim_so", "so_number"),
+        Index("ix_scm_order_link_claim_po", "po_number"),
+        CheckConstraint(
+            "source IN ('po_history', 'order_inquiry', 'so_upload', 'po_upload', 'manual')",
+            name="ck_scm_order_link_claim_source",
+        ),
+        {"schema": "scm"},
+    )
