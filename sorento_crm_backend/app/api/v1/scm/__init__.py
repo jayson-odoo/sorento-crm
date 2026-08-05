@@ -13,6 +13,7 @@ from app.api.v1.scm import (
     dashboard,
     decisions,
     explainer,
+    fulfilment,
     market,
     order_summary,
     plan_exceptions,
@@ -40,3 +41,4 @@ router.include_router(coverage.router)
 router.include_router(order_summary.router)
 router.include_router(plan_exceptions.router)
 router.include_router(purchase_history.router)
+router.include_router(fulfilment.router)

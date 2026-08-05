@@ -764,3 +764,219 @@ class OrderLinkClaim(Base, CompanyScopedMixin):
         ),
         {"schema": "scm"},
     )
+
+
+#: Coalesce target for company-scoped unique indexes. `company_id` is nullable on legacy
+#: rows and Postgres treats NULLs as distinct, so an unstamped row would slip past the lock.
+_NIL_COMPANY = "00000000-0000-0000-0000-000000000000"
+
+
+class ContainerSize(Base):
+    """How many cubic metres a container holds, per tenant (AC-E3).
+
+    A table rather than a constant because the loadable volume of a 40HQ is a commercial
+    fact that differs by packing practice, and a client who ships in something else should
+    edit a row, not wait for a release.
+    """
+    __tablename__ = "container_size"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    company_id = Column(UUID(as_uuid=False), nullable=True)
+    code = Column(String(30), nullable=False)
+    label = Column(String(100), nullable=True)
+    cbm = Column(Numeric, nullable=False)
+    is_default = Column(Boolean, nullable=False, server_default=text("false"))
+    is_active = Column(Boolean, nullable=False, server_default=text("true"))
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint("cbm > 0", name="ck_scm_container_size_cbm"),
+        Index(
+            "uq_scm_container_size_code",
+            text("coalesce(company_id, '%s'::uuid)" % _NIL_COMPANY),
+            text("upper(code)"),
+            unique=True,
+        ),
+        {"schema": "scm"},
+    )
+
+
+class SupplierInventory(Base, CompanyScopedMixin):
+    """What one supplier is holding for us right now: packed, unfinished, and how big it is.
+
+    A SNAPSHOT, not a ledger. The supplier sends their stock list; the next list they send
+    replaces it wholesale for that supplier, because an item the new file no longer mentions
+    is stock they no longer hold, and keeping the old row would offer Ms Tee a container of
+    something that is not there. History of what a supplier once held is not a question
+    anybody asks; "can I load it this week" is.
+
+    Two quantities because they answer different questions (AC-E1, AC-E2). `qty_packed` is
+    loadable today. `qty_unfinished` is 空瓷 - the body exists, the finishing does not - and
+    it is loadable only after the supplier produces it, so it is listed as something to ask
+    for, never fed to the allocator.
+
+    `cbm_per_unit` is nullable, and nullable is load-bearing: a missing volume must reach the
+    allocator as `unmeasured` rather than as zero, or an item nobody measured looks like an
+    item that takes no space and gets loaded ahead of everything real.
+
+    `product_id` is nullable because the supplier writes their own model numbers. An
+    unmatched row is still shown (it is stock we might want) but it cannot join a loading
+    plan, whose lines hang off our purchase orders.
+    """
+    __tablename__ = "supplier_inventory"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    supplier_id = Column(
+        UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False
+    )
+    item_code = Column(String(100), nullable=False)
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
+    )
+
+    qty_packed = Column(Numeric, nullable=False, server_default=text("0"))
+    qty_unfinished = Column(Numeric, nullable=False, server_default=text("0"))
+    cbm_per_unit = Column(Numeric, nullable=True)
+
+    product_name = Column(String, nullable=True)
+    brand = Column(String, nullable=True)
+    spec = Column(String, nullable=True)
+    remark = Column(Text, nullable=True)
+
+    as_of = Column(Date, nullable=False)
+    uploaded_by = Column(String, nullable=True)
+    source_system = Column(String, nullable=True)
+    source_ref = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_scm_supplier_inventory_supplier", "supplier_id"),
+        Index("ix_scm_supplier_inventory_product", "product_id"),
+        # Declared on the MODEL as well as in migration 336, because a CI database is built
+        # with `create_all` and never runs a migration body: without it the guard against a
+        # doubled packed quantity exists in production and nowhere else.
+        Index(
+            "uq_scm_supplier_inventory_identity",
+            text("coalesce(company_id, '%s'::uuid)" % _NIL_COMPANY),
+            "supplier_id",
+            "item_code",
+            unique=True,
+        ),
+        {"schema": "scm"},
+    )
+
+
+class LoadingPlan(Base, CompanyScopedMixin):
+    """One attempt at filling containers at one supplier, on one day.
+
+    Kept as a row rather than computed on demand because the container count is a DECISION
+    (AC-E6: change it and the plan re-runs), and because what Ms Tee sent the supplier has to
+    still be readable after the order book moves underneath it.
+
+    Capacity is `container_count * container_cbm` and both halves are stored, not just the
+    product: "three 40HQ" is the sentence a person says, and a plan that only remembers
+    "196.5 cbm" cannot be re-read or re-run.
+    """
+    __tablename__ = "loading_plan"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    supplier_id = Column(
+        UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False
+    )
+    container_type = Column(String(30), nullable=True)
+    container_count = Column(Integer, nullable=False, server_default=text("1"))
+    container_cbm = Column(Numeric, nullable=False)
+    capacity_cbm = Column(Numeric, nullable=False)
+
+    policy_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.priority_policy.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    inventory_as_of = Column(Date, nullable=True)
+
+    planned_cbm = Column(Numeric, nullable=False, server_default=text("0"))
+    line_count = Column(Integer, nullable=False, server_default=text("0"))
+    deferred_count = Column(Integer, nullable=False, server_default=text("0"))
+    unmeasured_count = Column(Integer, nullable=False, server_default=text("0"))
+
+    created_by = Column(String, nullable=True)
+    computed_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    lines = relationship(
+        "LoadingPlanLine", back_populates="plan", cascade="all, delete-orphan",
+        order_by="LoadingPlanLine.rank",
+    )
+
+    __table_args__ = (
+        CheckConstraint("container_count > 0", name="ck_scm_loading_plan_containers"),
+        CheckConstraint("container_cbm > 0", name="ck_scm_loading_plan_container_cbm"),
+        Index("ix_scm_loading_plan_supplier", "supplier_id"),
+        {"schema": "scm"},
+    )
+
+
+class LoadingPlanLine(Base, CompanyScopedMixin):
+    """One outstanding purchase-order line's outcome on a loading plan.
+
+    Every candidate line is written, INCLUDING the ones that did not make it, because
+    "why is this not on the container" is the question Ms Tee actually asks (AC-E5) and a
+    plan that only lists winners cannot answer it.
+
+    `factors_json` holds the ranking factors and their contributions for this line (AC-E7):
+    a rank a planner cannot decompose is a number they have to take on faith, and the first
+    time it disagrees with them they stop using the screen.
+    """
+    __tablename__ = "loading_plan_line"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    plan_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.loading_plan.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    po_line_id = Column(
+        UUID(as_uuid=False), ForeignKey("purchase_order_lines.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
+    )
+
+    po_number = Column(String(100), nullable=True)
+    item_code = Column(String(100), nullable=True)
+    qty_outstanding = Column(Numeric, nullable=False, server_default=text("0"))
+    qty_packed_available = Column(Numeric, nullable=True)
+    qty_planned = Column(Numeric, nullable=False, server_default=text("0"))
+    cbm_per_unit = Column(Numeric, nullable=True)
+    cbm_planned = Column(Numeric, nullable=True)
+    volume_basis = Column(String(20), nullable=True)
+
+    rank = Column(Integer, nullable=True)
+    rank_score = Column(Numeric, nullable=True)
+    factors_json = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+
+    status = Column(String(20), nullable=False, server_default=text("'deferred'"))
+    deferral_reason = Column(String(40), nullable=True)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    plan = relationship("LoadingPlan", back_populates="lines")
+
+    __table_args__ = (
+        Index("ix_scm_loading_plan_line_plan", "plan_id"),
+        Index("uq_scm_loading_plan_line_identity", "plan_id", "po_line_id", unique=True),
+        CheckConstraint(
+            "status IN ('allocated', 'partial', 'deferred', 'unmeasured')",
+            name="ck_scm_loading_plan_line_status",
+        ),
+        {"schema": "scm"},
+    )
