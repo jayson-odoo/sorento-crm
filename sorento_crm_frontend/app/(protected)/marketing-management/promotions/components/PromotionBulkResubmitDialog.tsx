@@ -83,8 +83,8 @@ export default function PromotionBulkResubmitDialog({
           <AlertDialogDescription asChild>
             <div className="space-y-2">
               <p>
-                Re-extract {eligible.length} flyer{eligible.length !== 1 ? 's' : ''}? Existing
-                groups and products are replaced. This cannot be undone.
+                Re-extract {eligible.length} promotion{eligible.length !== 1 ? 's' : ''}?
+                Existing groups and products are replaced. This cannot be undone.
               </p>
               {noAttachment.length > 0 && (
                 <p className="text-muted-foreground">
