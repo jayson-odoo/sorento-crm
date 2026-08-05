@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
   ColumnDef,
   PaginationState,
@@ -384,12 +385,28 @@ export default function SalesOrdersList() {
   const filtersActive =
     (statusFilter ? 1 : 0) + (priorityFilter ? 1 : 0) + (sourceFilter ? 1 : 0);
 
+  // An empty book and an over-filtered one look identical in the grid, so they say different
+  // things: one is a dead end the user can clear, the other is the step they have not done yet.
+  const emptyMessage =
+    filtersActive || searchQuery ? (
+      'No sales order matches this search and filter.'
+    ) : (
+      <span>
+        No sales orders yet. Upload the Order Inquiry sheet from{' '}
+        <Link href="/scm/reorder" className="text-primary underline underline-offset-2">
+          Reorder planning
+        </Link>{' '}
+        to create them, or add one with Add sales order.
+      </span>
+    );
+
   return (
     <>
       <DataGrid
         table={table}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
+        emptyMessage={emptyMessage}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       >
         <Card>

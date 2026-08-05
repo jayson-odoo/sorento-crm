@@ -12,7 +12,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 if (!window.matchMedia) {
@@ -176,6 +176,37 @@ describe('SalesOrdersList - a long wait list stays readable', () => {
     expect(await screen.findByText(/PO-000, PO-001/)).toBeInTheDocument();
     expect(screen.getByText('+21 more')).toBeInTheDocument();
     expect(screen.queryByText(/PO-022/)).toBeNull();
+  });
+});
+
+describe('SalesOrdersList - the empty book', () => {
+  it('names the step that fills it rather than saying no data', async () => {
+    // An order book is empty because nobody has uploaded the sheet yet, and "No data
+    // available" leaves the user to guess that.
+    stub([]);
+    renderList();
+
+    expect(await screen.findByText(/Upload the Order Inquiry sheet/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Reorder planning' })).toHaveAttribute(
+      'href',
+      '/scm/reorder',
+    );
+  });
+
+  it('blames the filter when one is on, not the missing upload', async () => {
+    // Telling a user to go upload when their own filter hid the rows sends them to the
+    // wrong screen.
+    stub([]);
+    renderList();
+
+    fireEvent.change(screen.getByPlaceholderText('Search SO or customer...'), {
+      target: { value: 'SO999999' },
+    });
+
+    expect(
+      await screen.findByText('No sales order matches this search and filter.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Upload the Order Inquiry sheet/)).toBeNull();
   });
 });
 
