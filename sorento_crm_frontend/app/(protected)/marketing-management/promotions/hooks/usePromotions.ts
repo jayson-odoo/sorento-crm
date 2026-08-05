@@ -25,6 +25,7 @@ import {
   PROMOTION_NEIGHBOURS_PATH,
   type PromotionsListParams,
 } from '../services/promotionService';
+import { resubmitAttachmentWebhook } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import type { PromotionFormData } from '../types/promotion.types';
 
 /**
@@ -90,6 +91,44 @@ export function useCompilePromotionsPdf() {
       toast.success('Preparing PDF… it will appear in My Downloads.');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to start PDF export'),
+  });
+}
+
+/**
+ * Re-run AI extraction on promotion flyers by resubmitting their attachment webhooks.
+ *
+ * Sequential on purpose: every resubmit starts a Gemini extraction on the n8n side,
+ * and firing a whole page of selections at once would stampede that workflow. One
+ * failure does not abort the rest — the caller reports the tally.
+ */
+export function useResubmitPromotionFlyers() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (attachmentIds: string[]) => {
+      let succeeded = 0;
+      const failures: string[] = [];
+      for (const attachmentId of attachmentIds) {
+        try {
+          await resubmitAttachmentWebhook(attachmentId);
+          succeeded += 1;
+        } catch (error) {
+          failures.push(error instanceof Error ? error.message : 'Unknown error');
+        }
+      }
+      return { succeeded, failures };
+    },
+    onSuccess: ({ succeeded, failures }) => {
+      if (succeeded > 0) {
+        queryClient.invalidateQueries({ queryKey: ['promotions'] });
+        toast.success(
+          `${succeeded} flyer(s) sent for re-extraction. Products update once n8n finishes.`,
+        );
+      }
+      if (failures.length > 0) {
+        toast.error(`${failures.length} flyer(s) could not be resubmitted: ${failures[0]}`);
+      }
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to resubmit flyers'),
   });
 }
 
