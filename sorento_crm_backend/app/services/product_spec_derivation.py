@@ -148,6 +148,22 @@ SPOUT_TOKENS: list[tuple[str, str]] = [
     ("GOOSENECK", "gooseneck"),
 ]
 
+# How a water closet flushes. Order is precedence: SIPHONIC first because it is the
+# rarer, more specific term (14 rows) and 6 of those also say WASH DOWN in the same
+# sentence ("(SIPHONIC) WASH DOWN WC") — real plumbing marketing copy is not always
+# a clean taxonomy, so the more specific word wins. TWISTER is a branded flush name
+# (188 rows, "TWISTER FLUSH WC") checked before the generic WASHDOWN family (498).
+FLUSH_TOKENS: list[tuple[str, str]] = [
+    ("SIPHONIC", "siphonic"),
+    ("SYPHONIC", "siphonic"),
+    ("TWISTER FLUSHING", "twister"),
+    ("TWISTER FLUSH", "twister"),
+    ("TWISTER", "twister"),
+    ("WASH-DOWN", "washdown"),
+    ("WASH DOWN", "washdown"),
+    ("WASHDOWN", "washdown"),
+]
+
 # Spelled-out bowl counts. `<digit> BOWL` is handled separately by regex.
 BOWL_WORDS: dict[str, int] = {
     "SINGLE": 1,
@@ -202,8 +218,24 @@ ACCESSORY_NOUNS = (
     "HOSE",
     "HOLDER",
     "COVER",
+    "SCREW",
 )
 ACCESSORY_CATEGORY_CODES = {"SRTPART", "MISC"}
+
+# A basin sold "C/W BASIN SCREW" has a fixing screw; "WALL HUNG BASIN SCREW (10 X 140)"
+# IS the screw set. Both set is_accessory correctly via ACCESSORY_NOUNS; this key only
+# fires for the former, mirroring how has_drainer excludes a drainer sold as itself.
+_FIXING_SCREW_NOUN = "SCREW"
+
+# "S-TRAP 300MM" / "S-TRAP:250MM" / "( S- TRAP 250MM )" — the catalog is inconsistent
+# about the separator, so all three are matched. Independent of TRAP_TOKENS: a customer
+# who says "150mm S-trap" wants a specific pan, not just any S-trap.
+_TRAP_LENGTH_RE = re.compile(r"[SP]\s*-?\s*TRAP\s*[:,]?\s*(\d+(?:\.\d+)?)\s*MM")
+
+# All three phrasings describe the same thing: an automated, sensor/app-driven toilet.
+# "AUTO INDUCTION" appears without the word INTELLIGENT on 6 rows, so it is checked on
+# its own rather than folded into the INTELLIGENT-only case.
+_SMART_WC_RE = re.compile(r"INTELLIGENT|AUTO\s*INDUCTION|SMART\s*(?:TOILET|WC)")
 
 # No sanitaryware product is five metres in any direction. Real catalog data carries
 # separator typos ("540X440180MM" parses as 540 x 440180), and a dimension that absurd
@@ -238,11 +270,17 @@ def _accessory_noun_evidence(description: str) -> str | None:
     A noun reads as a FEATURE (so the product is not an accessory) when it follows a
     quantity or a "with": "1 DRAINER", "C/W BASKET", "WITH WASTE". Otherwise the noun
     heads the phrase and the product really is a part: "KITCHEN SINK DRAINER".
+
+    One descriptive word is allowed between the "with" and the noun ("C/W BASIN
+    SCREW"), because the catalog names the part it's attached to before naming the
+    part itself. Without this a basin sold WITH a fixing screw was indistinguishable
+    from a basin screw sold on its own, which would have wrongly deboosted every
+    genuine basin carrying the phrase.
     """
     for noun in ACCESSORY_NOUNS:
         for match in re.finditer(rf"(?<![A-Z]){re.escape(noun)}(?![A-Z])", description):
-            preceding = description[max(0, match.start() - 14) : match.start()]
-            if re.search(r"(\d\s*$)|((?:C\s*/\s*W|WITH|AND)\s*$)", preceding):
+            preceding = description[max(0, match.start() - 24) : match.start()]
+            if re.search(r"(\d\s*$)|((?:C\s*/\s*W|WITH|AND)\s+(?:[A-Z]+\s+)?$)", preceding):
                 continue  # a feature of the product, not the product itself
             return noun
     return None
@@ -407,6 +445,7 @@ def derive(product: Product, category: ProductCategory | None) -> _Derivation:
         ("product_type", PRODUCT_TYPE_TOKENS),
         ("spout_type", SPOUT_TOKENS),
         ("trap_type", TRAP_TOKENS),
+        ("flush_type", FLUSH_TOKENS),
     ):
         hit = _find_token(description, table)
         if hit:
@@ -421,13 +460,27 @@ def derive(product: Product, category: ProductCategory | None) -> _Derivation:
         count, evidence = bowls
         out.set("bowl_count", count, evidence)
 
-    # A drainer or an overflow is a FEATURE here, never the product: the accessory rule
-    # above has already separated "KITCHEN SINK DRAINER" (a part) from a sink that has
-    # one. Asserted only when present - absence of the word is not evidence of absence.
-    for key, token in (("has_drainer", "DRAINER"), ("has_overflow", "OVERFLOW")):
-        match = re.search(rf"(?<![A-Z]){token}(?![A-Z])", description)
-        if match and not (key == "has_drainer" and accessory_evidence == "DRAINER"):
-            out.set(key, True, token)
+    trap_length_match = _TRAP_LENGTH_RE.search(description)
+    if trap_length_match:
+        out.set("trap_length", _number(trap_length_match.group(1)), trap_length_match.group(0), unit="mm")
+
+    smart_match = _SMART_WC_RE.search(description)
+    if smart_match:
+        out.set("is_smart", True, smart_match.group(0))
+
+    # A drainer, an overflow or a fixing screw is a FEATURE here, never the product:
+    # the accessory rule above has already separated "KITCHEN SINK DRAINER" (a part)
+    # from a sink that has one. Each is asserted only when present - absence of the
+    # word is not evidence of absence. "OVER FLOW" (split) occurs on 5 rows alongside
+    # 137 "OVERFLOW" (joined); both must match the same key.
+    for key, pattern, exclude_noun in (
+        ("has_drainer", "DRAINER", "DRAINER"),
+        ("has_overflow", r"OVER\s*FLOW", None),
+        ("has_fixing_screw", _FIXING_SCREW_NOUN, _FIXING_SCREW_NOUN),
+    ):
+        match = re.search(rf"(?<![A-Z]){pattern}(?![A-Z])", description)
+        if match and not (exclude_noun and accessory_evidence == exclude_noun):
+            out.set(key, True, match.group(0))
 
     # 6. finish, from the trailing code segment
     if "-" in code:
@@ -448,7 +501,7 @@ def derive(product: Product, category: ProductCategory | None) -> _Derivation:
 # which kept their old values and reported a successful run. The failure is invisible:
 # the job says "skipped", which is exactly what it says when there is genuinely nothing
 # to do.
-DERIVATION_VERSION = "2"
+DERIVATION_VERSION = "3"
 
 
 def _input_hash(product: Product, category: ProductCategory | None) -> str:

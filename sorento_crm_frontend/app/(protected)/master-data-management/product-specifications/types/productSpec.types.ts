@@ -102,4 +102,5 @@ export interface SpecRegistryKey {
   synonyms: Record<string, string[]>;
   applies_when: Record<string, string[]>;
   rank_weight: number | null;
+  measured_coverage: number | null;
 }

@@ -32,6 +32,7 @@ def _serialise(row) -> dict:
         "applies_to_classes": row.applies_to_classes or [],
         "applies_when": row.applies_when or {},
         "rank_weight": float(row.rank_weight) if row.rank_weight is not None else None,
+        "measured_coverage": row.measured_coverage,
     }
 
 

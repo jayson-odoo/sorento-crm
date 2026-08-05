@@ -29,6 +29,15 @@ from app.services.product_spec_search import RELEVANCE_FLOOR, search_specs
 
 router = APIRouter()
 
+# `is_accessory` is derived and stored on every product for the ranker's deboost, but
+# it is not a thing a customer states — it has no registry row (see
+# product_spec_registry.py) and must not appear as a "spec" in either display surface.
+_INTERNAL_ONLY_VALUE_KEYS = {"is_accessory"}
+
+
+def _display_values(values: dict) -> dict:
+    return {k: v for k, v in values.items() if k not in _INTERNAL_ONLY_VALUE_KEYS}
+
 
 class SpecPreviewRequest(BaseModel):
     """A phrase as the ranker sees it, once the parser has done its half."""
@@ -109,14 +118,16 @@ async def list_product_specifications(
                     "class_label": (values.get("class") or {}).get("value")
                     or (category.class_label if category else None),
                     "brand_hint": (values.get("brand") or {}).get("value"),
-                    "spec_count": len([k for k in values if k not in ("class", "brand")]),
+                    "spec_count": len(
+                        [k for k in values if k not in ("class", "brand", "is_accessory")]
+                    ),
                     "rendered_text": spec.rendered_text,
                     "status": spec.status,
                     "is_accessory": bool((values.get("is_accessory") or {}).get("value")),
                     "is_discontinued": bool(product.is_discontinued),
                     "open_exceptions": exception_counts.get(product.product_code, 0),
-                    "values": values,
-                    "provenance": spec.provenance or {},
+                    "values": _display_values(values),
+                    "provenance": _display_values(spec.provenance or {}),
                 }
             )
 
@@ -181,8 +192,8 @@ async def get_product_specification(
             "diagnosis": diagnosis,
             "spec": (
                 {
-                    "values": spec.values or {},
-                    "provenance": spec.provenance or {},
+                    "values": _display_values(spec.values or {}),
+                    "provenance": _display_values(spec.provenance or {}),
                     "rendered_text": spec.rendered_text,
                     "status": spec.status,
                     "derived_at": (spec.updated_at or spec.created_at).isoformat(),

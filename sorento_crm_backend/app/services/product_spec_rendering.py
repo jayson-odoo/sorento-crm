@@ -81,6 +81,11 @@ _PHRASES: dict[str, dict[str, str]] = {
         "s_trap": "S-trap, floor outlet",
         "p_trap": "P-trap, wall outlet",
     },
+    "flush_type": {
+        "washdown": "Washdown flush",
+        "siphonic": "Siphonic flush",
+        "twister": "Twister flush",
+    },
     "shape": {
         "round": "Round",
         "square": "Square",
@@ -145,23 +150,32 @@ def render_spec_sentence(values: dict) -> str | None:
     elif brand:
         parts.append(str(brand))
 
-    # The bowl count leads the features: it is the one a customer states first and
-    # rejects on. "Double bowl" reads as language; "bowl count 2" does not.
+    # The bowl count and "intelligent" lead the features: both are decisive, rejecting
+    # ones a customer states first rather than a nice-to-have they'd compromise on.
     bowls = read("bowl_count")
     if bowls is not None:
         word = {1: "Single bowl", 2: "Double bowl", 3: "Triple bowl"}.get(int(bowls))
         parts.append(word or f"{_number(bowls)} bowls")
 
+    if read("is_smart") is True:
+        parts.append("Intelligent toilet")
+
     for key in ("product_type", "material", "shape", "mounting", "spout_type",
-                "control_type", "trap_type", "finish"):
+                "control_type", "trap_type", "flush_type", "finish"):
         value = read(key)
         if value is not None:
             parts.append(_phrase(key, value))
+
+    trap_length = read("trap_length")
+    if trap_length is not None:
+        parts.append(f"{_number(trap_length)} mm trap")
 
     if read("has_drainer") is True:
         parts.append("With drainer board")
     if read("has_overflow") is True:
         parts.append("With overflow")
+    if read("has_fixing_screw") is True:
+        parts.append("With fixing screw")
 
     # Dimensions, shape-aware. A round product has a diameter, and rendering it as
     # "407 x 120" would put a diameter in the width slot of the index.

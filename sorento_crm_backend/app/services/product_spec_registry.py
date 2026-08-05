@@ -58,15 +58,13 @@ SPEC_REGISTRY_SEED: list[dict] = [
         # Rankable, never a filter: every brand in the master is Sorento-sellable.
         "rank_weight": 1.5,
     },
-    {
-        "spec_key": "is_accessory",
-        "label": "Is an accessory or spare part",
-        "data_type": "boolean",
-        "measured_coverage": 2302,
-        # Zero because this is not a match boost. The ranker applies it as a heavy
-        # DEBOOST, so that "kitchen sink" cannot return a sink drainer or a tail pipe.
-        "rank_weight": 0.0,
-    },
+    # `is_accessory` is deliberately NOT a registry row. It is derived and stored on
+    # every product (product_spec_derivation.derive) and read directly by the ranker's
+    # accessory deboost (product_spec_search.py) — neither of those goes through this
+    # registry. A row here would only invite the n8n parser to try extracting "is the
+    # customer asking about an accessory" as a spec, which is not a thing a customer
+    # states, and it showed up as a bare "is accessory: true" row in the product-facing
+    # Specifications tab with no way to explain it. Keep it internal.
     {
         "spec_key": "shape",
         "label": "Shape",
@@ -301,6 +299,33 @@ SPEC_REGISTRY_SEED: list[dict] = [
         "rank_weight": 3.0,
     },
     {
+        "spec_key": "trap_length",
+        "label": "Trap outlet length",
+        "data_type": "numeric",
+        "unit": "mm",
+        # Independent of trap_type: "150mm S-trap" and "300mm S-trap" are different
+        # products a customer must not be shown interchangeably. The catalog spells the
+        # separator three ways ("S-TRAP 300MM", "S-TRAP:250MM", "S- TRAP 250MM").
+        "measured_coverage": 738,
+        "rank_weight": 2.0,
+    },
+    {
+        "spec_key": "flush_type",
+        "label": "Flush type",
+        "data_type": "enum",
+        "allowed_values": ["washdown", "siphonic", "twister"],
+        "synonyms": {
+            "washdown": ["washdown", "wash down", "wash-down"],
+            "siphonic": ["siphonic", "syphonic"],
+            # TWISTER is Sorento's own branded flush name, not generic language, but a
+            # customer repeating a salesperson's or a poster's term still deserves it.
+            "twister": ["twister flush", "twister flushing", "twister"],
+        },
+        "applies_when": {"class": ["Water Closet"]},
+        "measured_coverage": 622,
+        "rank_weight": 2.0,
+    },
+    {
         "spec_key": "bowl_count",
         "label": "Number of bowls",
         "data_type": "numeric",
@@ -333,9 +358,31 @@ SPEC_REGISTRY_SEED: list[dict] = [
         "spec_key": "has_overflow",
         "label": "Has an overflow",
         "data_type": "boolean",
-        "synonyms": {"true": ["overflow", "with overflow", "c/w overflow"]},
-        "measured_coverage": 23,
+        "synonyms": {"true": ["overflow", "with overflow", "c/w overflow", "overflow hole"]},
+        # 137 write it joined, 5 split ("OVER FLOW") — both read by the same rule.
+        "measured_coverage": 142,
         "rank_weight": 1.5,
+    },
+    {
+        "spec_key": "has_fixing_screw",
+        "label": "Comes with a fixing screw",
+        "data_type": "boolean",
+        "synonyms": {"true": ["basin screw", "fixing screw", "c/w screw", "with screw"]},
+        "measured_coverage": 29,
+        "rank_weight": 1.0,
+    },
+    {
+        "spec_key": "is_smart",
+        "label": "Intelligent / smart toilet",
+        "data_type": "boolean",
+        "applies_when": {"class": ["Water Closet"]},
+        "synonyms": {
+            "true": ["intelligent toilet", "intelligent", "smart toilet", "smart wc", "auto induction"]
+        },
+        # Rare (76 of 1,655 WCs) but decisive: a customer asking for one rejects every
+        # ordinary WC, so where the catalog states it, it should dominate the result.
+        "measured_coverage": 76,
+        "rank_weight": 3.0,
     },
 ]
 

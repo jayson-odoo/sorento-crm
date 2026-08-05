@@ -676,3 +676,89 @@ def test_a_rule_change_invalidates_a_cached_derivation(db, monkeypatch):
     monkeypatch.setattr(derivation, "DERIVATION_VERSION", "test-bump")
     after = derive_for_code(db, "ZZT-VER")
     assert after["written"] and not after["skipped"], "a rule change must re-derive"
+
+
+# --------------------------------------------------------------------------- #
+# the second real user report: WC flush type, trap length, basin overflow/screw
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "description,expected",
+    [
+        ("SORENTO ONE PIECE (SIPHONIC) WASH DOWN WC (S-TRAP:300MM)", "siphonic"),
+        ("SORENTO ONE PIECE TWISTER FLUSH WC (S-TRAP 300MM)", "twister"),
+        ("SORENTO ONE PIECE TWISTER  FLUSHING  WC (S-TRAP:250MM)", "twister"),
+        ("CABANA CLOSE COUPLED WC - CISTERN WASH-DOWN FLUSHING", "washdown"),
+        ("SORENTO ONE PIECE WASH DOWN WC (P-TRAP 180MM)", "washdown"),
+    ],
+)
+def test_flush_type_is_read_from_the_description(db, description, expected):
+    # flush_type is not class-gated in derivation itself (only advisory in the
+    # registry's applies_when), so any category exercises the token match.
+    _product(db, "ZZT-FLUSH", description)
+    derive_for_code(db, "ZZT-FLUSH")
+    assert _value(db, "ZZT-FLUSH", "flush_type") == expected
+
+
+@pytest.mark.parametrize(
+    "description,expected",
+    [
+        ("SORENTO ONE PIECE PEDESTAL TWISTER FLUSH WC (S-TRAP 300MM)", 300),
+        ("SORENTO ONE PIECE TWISTER FLUSHING WC (S-TRAP:250MM)", 250),
+        ("SORENTO ONE PIECE WASH DOWN WC (P-TRAP 180MM)", 180),
+        ("SORENTO CERAMIC AUTO INDUCTION INTELLIGENT TOILET ( S- TRAP 250MM )", 250),
+    ],
+)
+def test_trap_length_is_read_independently_of_trap_type(db, description, expected):
+    _product(db, "ZZT-TLEN", description)
+    derive_for_code(db, "ZZT-TLEN")
+    assert _value(db, "ZZT-TLEN", "trap_length") == expected
+
+
+def test_overflow_is_read_whether_the_word_is_split_or_joined(db):
+    """"OVER FLOW" (5 catalog rows) and "OVERFLOW" (137) must set the same key."""
+    _product(db, "ZZT-OF1", "SORENTO UNDER COUNTER BASIN (560X375X175MM) C/W RECTANGULAR SHAPE OVER FLOW")
+    derive_for_code(db, "ZZT-OF1")
+    assert _value(db, "ZZT-OF1", "has_overflow") is True
+
+    _product(db, "ZZT-OF2", "SORENTO WASH BASIN C/W OVERFLOW")
+    derive_for_code(db, "ZZT-OF2")
+    assert _value(db, "ZZT-OF2", "has_overflow") is True
+
+
+def test_a_basin_with_a_fixing_screw_is_not_a_screw(db):
+    """"C/W BASIN SCREW" is a feature; "BASIN SCREW (10 X 140)" IS the screw set."""
+    _product(db, "ZZT-SCR1", "SORENTO WALL HUNG BASIN (510X420X200MM) C/W BASIN SCREW.")
+    derive_for_code(db, "ZZT-SCR1")
+    assert _value(db, "ZZT-SCR1", "has_fixing_screw") is True
+    assert _value(db, "ZZT-SCR1", "is_accessory") is False
+
+    _product(db, "ZZT-SCR2", "CABANA WALL HUNG BASIN SCREW (10 X 140)")
+    derive_for_code(db, "ZZT-SCR2")
+    assert _value(db, "ZZT-SCR2", "is_accessory") is True
+    assert _value(db, "ZZT-SCR2", "has_fixing_screw") is None
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "SORENTO CERAMIC AUTO INDUCTION INTELLIGENT TOILET (300MM)",
+        "SORENTO CERAMIC AUTO INDUCTION INTELLIGENT TOILET SRTWC018AF",
+    ],
+)
+def test_intelligent_toilets_are_flagged_smart(db, description):
+    _product(db, "ZZT-SMART", description)
+    derive_for_code(db, "ZZT-SMART")
+    assert _value(db, "ZZT-SMART", "is_smart") is True
+
+
+def test_auto_induction_alone_is_still_smart(db):
+    # 6 catalog rows say AUTO INDUCTION without the word INTELLIGENT.
+    _product(db, "ZZT-AUTOI", "SORENTO CERAMIC AUTO INDUCTION TOILET SRTWC999")
+    derive_for_code(db, "ZZT-AUTOI")
+    assert _value(db, "ZZT-AUTOI", "is_smart") is True
+
+
+def test_an_ordinary_wc_is_not_flagged_smart(db):
+    _product(db, "ZZT-PLAIN", "SORENTO ONE PIECE WASH DOWN WC (P-TRAP 180MM)")
+    derive_for_code(db, "ZZT-PLAIN")
+    assert _value(db, "ZZT-PLAIN", "is_smart") is None

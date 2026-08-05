@@ -15,6 +15,7 @@ import {
   ToolbarTitle,
 } from '@/components/common/toolbar';
 import ProductSpecsList from './components/ProductSpecsList';
+import SpecRegistryTable from './components/SpecRegistryTable';
 import SpecSearchPreview from './components/SpecSearchPreview';
 
 export const metadata: Metadata = {
@@ -48,6 +49,7 @@ export default async function ProductSpecificationsPage() {
       <Container>
         <div className="flex flex-col gap-5">
           <SpecSearchPreview />
+          <SpecRegistryTable />
           <ProductSpecsList />
         </div>
       </Container>
