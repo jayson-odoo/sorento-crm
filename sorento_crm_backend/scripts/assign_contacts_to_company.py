@@ -33,6 +33,8 @@ import uuid
 # Allow `from app.*` imports when invoked from the backend directory.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from sqlalchemy import or_  # noqa: E402
+
 from app.database import SessionLocal  # noqa: E402
 from app.models.access import RespondContact  # noqa: E402
 from app.models.company import Company, RespondContactCompany  # noqa: E402
@@ -40,13 +42,24 @@ from app.models.base import set_company_scope  # noqa: E402
 
 
 def _resolve_company(db, ref: str) -> Company:
-    """Accept a company code (SRT), a name (Sorento) or an id."""
+    """Accept a company code (SRT), a name (Sorento) or an id.
+
+    ``companies.id`` is a uuid column, so it can only be compared against a value
+    Postgres can cast. Including it unconditionally made the DEFAULT invocation
+    (``--company Sorento``) fail before it read anything:
+    ``invalid input syntax for type uuid: "Sorento"``. Match on the id only when
+    the reference actually parses as one - a code/name lookup never needs it.
+    """
     ref = (ref or "").strip()
-    row = (
-        db.query(Company)
-        .filter((Company.code == ref) | (Company.name == ref) | (Company.id == ref))
-        .first()
-    )
+    predicates = [Company.code == ref, Company.name == ref]
+    try:
+        uuid.UUID(ref)
+    except (ValueError, AttributeError, TypeError):
+        pass
+    else:
+        predicates.append(Company.id == ref)
+
+    row = db.query(Company).filter(or_(*predicates)).first()
     if row is None:
         available = ", ".join(f"{c.code} ({c.name})" for c in db.query(Company).all())
         raise SystemExit(f"No company matches {ref!r}. Available: {available}")
