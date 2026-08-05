@@ -19,11 +19,28 @@ from app.models.inventory import Stock, Warehouse
 from app.models.lookup import LookupOption
 from app.models.order import Customer, Order, OrderLine, SalesOrder, SalesOrderLine
 from app.models.product import Product, UnitOfMeasure
+from app.models.scm import OrderLinkClaim
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 
 # Upper bound on suffix retries when reserving a unique DO number under contention.
 _DO_NUMBER_MAX_TRIES = 50
+
+
+#: Where a sales order came from, as one word a buyer can filter on. `inquiry` is separate
+#: from `upload` because an order the Order Inquiry sheet created is one CS has never seen.
+_SOURCE_SYSTEMS = {
+    "inquiry": ("scm_order_inquiry",),
+    "upload": ("scm_upload",),
+}
+
+
+def _source_label(source_system: Optional[str]) -> str:
+    if source_system == "scm_order_inquiry":
+        return "inquiry"
+    if source_system == "scm_upload":
+        return "upload"
+    return "manual"
 
 
 class SalesOrderService:
@@ -125,8 +142,53 @@ class SalesOrderService:
             "total_qty": total_qty,
             "committed_qty": committed,
             "lines": lines,
+            # Where the order came from. `inquiry` is its own answer because an order Joey's
+            # sheet created is one CS has never seen, and a buyer looking at the list is
+            # entitled to know which of the two he is reading.
+            "source": _source_label(so.source_system),
+            # The project the sheet named when no customer of that name existed. Kept so the
+            # order is not anonymous just because it could not be linked.
+            "internal_note": so.internal_note or None,
+            # Every distinct stock location its lines ship from. Plural because one order can
+            # land in two, and collapsing that to the first would be a quiet lie.
+            "stock_locations": sorted({
+                ln.warehouse.warehouse_code
+                for ln in so.lines
+                if ln.warehouse is not None and ln.warehouse.warehouse_code
+            }),
             "created_at": so.created_at.isoformat() if so.created_at else "",
         }
+
+    def with_links(self, rows: list[dict]) -> list[dict]:
+        """Attach each order's purchase-order claims, in ONE query for the whole page.
+
+        Per-row would be an N+1 across a 15,000-order list. The claim carries whether it has
+        been resolved, which is the difference between "waiting on PO 202605-S0042" and
+        "matched to it" - and the waiting ones are the reason this column exists at all.
+        """
+        numbers = [r["so_number"] for r in rows]
+        if not numbers:
+            return rows
+        claims = (
+            self.db.query(OrderLinkClaim)
+            .filter(OrderLinkClaim.so_number.in_(numbers))
+            .all()
+        )
+        by_number: dict[str, list[dict]] = {}
+        for c in claims:
+            by_number.setdefault(str(c.so_number), []).append({
+                "po_number": c.po_number,
+                "item_code": c.item_code,
+                "resolved": c.resolved_at is not None,
+            })
+        for row in rows:
+            linked = sorted(
+                by_number.get(row["so_number"], []),
+                key=lambda l: (l["po_number"], l["item_code"] or ""),
+            )
+            row["linked_purchase_orders"] = linked
+            row["awaiting_purchase_orders"] = sum(1 for l in linked if not l["resolved"])
+        return rows
 
     def _get_or_404(self, so_id: str) -> SalesOrder:
         so = (
@@ -146,11 +208,30 @@ class SalesOrderService:
         return self.serialize(self._get_or_404(so_id))
 
     def list(self, page: int, limit: int, sort: Optional[str], direction: str,
-             query: Optional[str], status: Optional[str], priority: Optional[str]) -> dict:
+             query: Optional[str], status: Optional[str], priority: Optional[str],
+             source: Optional[str] = None) -> dict:
         q = self.db.query(SalesOrder).options(
             joinedload(SalesOrder.lines).joinedload(SalesOrderLine.product),
+            joinedload(SalesOrder.lines).joinedload(SalesOrderLine.warehouse),
             joinedload(SalesOrder.customer),
         )
+        # "Show me the orders the Order Inquiry sheet created" is a filter on this list, not a
+        # second screen: a separate list of the same entity is how two screens start
+        # disagreeing about the same order.
+        if source:
+            if source == "manual":
+                # Everything neither feed wrote: keyed in, or from a system we have no name
+                # for. NULL has to be spelled out because `NOT IN` never matches it.
+                known = [v for vs in _SOURCE_SYSTEMS.values() for v in vs]
+                q = q.filter(
+                    (SalesOrder.source_system.is_(None))
+                    | (~SalesOrder.source_system.in_(known))
+                )
+            else:
+                # An unrecognised value matches NOTHING rather than being ignored. A filter
+                # that quietly drops the value it did not understand shows the whole book
+                # under a heading claiming it is narrowed - the worst of the three options.
+                q = q.filter(SalesOrder.source_system.in_(_SOURCE_SYSTEMS.get(source, ())))
         if status:
             q = q.filter(SalesOrder.status == status)
         if priority:

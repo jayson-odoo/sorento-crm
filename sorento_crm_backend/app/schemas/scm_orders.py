@@ -38,7 +38,26 @@ class SalesOrder(BaseModel):
     total_qty: float
     committed_qty: float
     lines: List[SalesOrderLine]
+    #: Where the order came from: `inquiry` (the Order Inquiry sheet created it), `upload`
+    #: (CS's outstanding extract), or `manual`. It decides who may edit the figures.
+    source: str = "manual"
+    #: The project the sheet named when no customer of that name existed.
+    internal_note: Optional[str] = None
+    #: Every distinct location its lines ship from. Plural: one order can land in two.
+    stock_locations: List[str] = Field(default_factory=list)
+    #: The purchase orders its lines wait on, each with whether the pairing is resolved.
+    #: Present on the LIST (attached in one query per page); absent on a single read.
+    linked_purchase_orders: List[LinkedPurchaseOrder] = Field(default_factory=list)
+    awaiting_purchase_orders: int = 0
     created_at: str
+
+
+class LinkedPurchaseOrder(BaseModel):
+    """A pairing this sales order's lines claim, and whether both sides are present."""
+
+    po_number: str
+    item_code: Optional[str] = None
+    resolved: bool = False
 
 
 class SalesOrderLineInput(BaseModel):

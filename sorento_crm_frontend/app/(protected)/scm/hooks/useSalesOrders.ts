@@ -17,6 +17,8 @@ interface UseSalesOrdersParams {
   searchQuery: string;
   status: string | null;
   priority: string | null;
+  /** Where the order came from: 'inquiry' | 'upload' | 'manual'. Null for all. */
+  source?: string | null;
 }
 
 export function useSalesOrders(params: UseSalesOrdersParams) {
@@ -31,6 +33,7 @@ export function useSalesOrders(params: UseSalesOrdersParams) {
         searchQuery: params.searchQuery,
         status: params.status,
         priority: params.priority,
+        source: params.source ?? null,
       }),
     staleTime: 10_000,
     refetchOnWindowFocus: false,

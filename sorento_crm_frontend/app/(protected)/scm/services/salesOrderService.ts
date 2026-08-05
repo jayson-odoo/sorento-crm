@@ -32,6 +32,8 @@ export interface SalesOrderListQuery {
   searchQuery?: string;
   status?: string | null;
   priority?: string | null;
+  /** Where the order came from: 'inquiry' | 'upload' | 'manual'. Omit for all. */
+  source?: string | null;
 }
 
 /** Strip the display-only `uom` from each line — the BE derives it. */
@@ -58,7 +60,11 @@ export async function getSalesOrders(
       sorting,
       searchQuery: params.searchQuery,
     },
-    { status: params.status ?? undefined, priority: params.priority ?? undefined },
+    {
+      status: params.status ?? undefined,
+      priority: params.priority ?? undefined,
+      source: params.source ?? undefined,
+    },
   );
   const res = await apiFetch(`${BASE}?${sp.toString()}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load sales orders'));

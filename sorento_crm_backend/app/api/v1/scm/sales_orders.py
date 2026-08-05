@@ -36,10 +36,23 @@ def list_sales_orders(
     query: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     priority: Optional[str] = Query(None),
+    source: Optional[str] = Query(
+        None,
+        description="Where the order came from: inquiry | upload. Omit for all.",
+    ),
     db: Session = Depends(get_db),
     _user: dict = Depends(_READ),
 ):
-    return SalesOrderService(db).list(page, limit, sort, dir, query, status, priority)
+    """The sales-order list.
+
+    `source=inquiry` answers "show me the orders the Order Inquiry sheet created" - a filter
+    on this list rather than a screen of its own, because a second list of the same entity is
+    how two screens start disagreeing about the same order.
+    """
+    svc = SalesOrderService(db)
+    out = svc.list(page, limit, sort, dir, query, status, priority, source)
+    out["data"] = svc.with_links(out["data"])
+    return out
 
 
 @router.get("/sales-orders/{so_id}", response_model=SalesOrder)

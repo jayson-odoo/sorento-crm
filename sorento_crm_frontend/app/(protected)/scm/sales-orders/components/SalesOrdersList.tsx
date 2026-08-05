@@ -85,6 +85,21 @@ const STATUS_FILTER_OPTIONS = [
   { value: 'cancelled', label: 'Cancelled' },
 ];
 
+/** Who wrote the order. `Order inquiry` is separate from `Outstanding upload` because an
+ *  order Joey's sheet created is one CS has never seen, and it decides who may edit it. */
+const SOURCE_FILTER_OPTIONS = [
+  { value: '', label: 'All sources' },
+  { value: 'inquiry', label: 'Order inquiry' },
+  { value: 'upload', label: 'Outstanding upload' },
+  { value: 'manual', label: 'Manual' },
+];
+
+const SOURCE_LABELS: Record<string, string> = {
+  inquiry: 'Order inquiry',
+  upload: 'Outstanding upload',
+  manual: 'Manual',
+};
+
 const PRIORITY_FILTER_OPTIONS = [
   { value: '', label: 'All priorities' },
   { value: 'urgent', label: 'Urgent' },
@@ -100,6 +115,10 @@ export default function SalesOrdersList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('');
+  // "Show me the orders the Order Inquiry sheet created" is a filter on this list rather
+  // than a screen of its own: a second list of the same entity is how two screens start
+  // disagreeing about the same order.
+  const [sourceFilter, setSourceFilter] = useState('');
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<SalesOrder | null>(null);
@@ -113,6 +132,7 @@ export default function SalesOrdersList() {
     searchQuery,
     status: statusFilter || null,
     priority: priorityFilter || null,
+    source: sourceFilter || null,
   });
 
   const createMut = useCreateSalesOrder();
@@ -122,7 +142,7 @@ export default function SalesOrdersList() {
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [searchQuery, statusFilter, priorityFilter]);
+  }, [searchQuery, statusFilter, priorityFilter, sourceFilter]);
 
   const rows = useMemo<SalesOrder[]>(() => data?.data ?? [], [data]);
 
@@ -225,6 +245,58 @@ export default function SalesOrdersList() {
         meta: { headerTitle: 'Requested delivery' },
       },
       {
+        accessorKey: 'stock_locations',
+        header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
+        cell: ({ row }) => {
+          // Plural, because one order can land in two and showing the first would be a
+          // quiet lie about where the stock is going.
+          const codes = row.original.stock_locations ?? [];
+          if (!codes.length) return <span className="text-muted-foreground">-</span>;
+          return (
+            <span className="truncate" title={codes.join(', ')}>
+              {codes.join(', ')}
+            </span>
+          );
+        },
+        size: 130,
+        enableSorting: false,
+        meta: { headerTitle: 'Location' },
+      },
+      {
+        accessorKey: 'linked_purchase_orders',
+        header: ({ column }) => <DataGridColumnHeader title="Waiting on" column={column} />,
+        cell: ({ row }) => {
+          // The UNRESOLVED ones only. "Which of my orders is stuck behind a purchase order
+          // we have not received" is the question this column exists to answer, and listing
+          // the matched ones alongside would bury it.
+          const waiting = (row.original.linked_purchase_orders ?? []).filter(
+            (l) => !l.resolved,
+          );
+          if (!waiting.length) return <span className="text-muted-foreground">-</span>;
+          const numbers = waiting.map((l) => l.po_number).join(', ');
+          return (
+            <span className="truncate" title={numbers}>
+              {numbers}
+            </span>
+          );
+        },
+        size: 170,
+        enableSorting: false,
+        meta: { headerTitle: 'Waiting on' },
+      },
+      {
+        accessorKey: 'source',
+        header: ({ column }) => <DataGridColumnHeader title="Source" column={column} />,
+        cell: ({ row }) => (
+          <Badge variant={row.original.source === 'inquiry' ? 'primary' : 'secondary'} appearance="light">
+            {SOURCE_LABELS[row.original.source ?? 'manual'] ?? 'Manual'}
+          </Badge>
+        ),
+        size: 150,
+        enableSorting: false,
+        meta: { headerTitle: 'Source' },
+      },
+      {
         id: 'actions',
         header: '',
         cell: ({ row }) => {
@@ -298,7 +370,8 @@ export default function SalesOrdersList() {
     enableColumnResizing: true,
   });
 
-  const filtersActive = (statusFilter ? 1 : 0) + (priorityFilter ? 1 : 0);
+  const filtersActive =
+    (statusFilter ? 1 : 0) + (priorityFilter ? 1 : 0) + (sourceFilter ? 1 : 0);
 
   return (
     <>
@@ -357,6 +430,16 @@ export default function SalesOrdersList() {
                         placeholder="All priorities"
                       />
                     </div>
+                    <div>
+                      <Label className="mb-1 block">Source</Label>
+                      <SearchableSelect
+                        value={sourceFilter}
+                        onChange={setSourceFilter}
+                        options={SOURCE_FILTER_OPTIONS}
+                        placeholder="All sources"
+                        clearable
+                      />
+                    </div>
                     {filtersActive > 0 ? (
                       <div className="flex justify-end">
                         <Button
@@ -365,6 +448,7 @@ export default function SalesOrdersList() {
                           onClick={() => {
                             setStatusFilter('');
                             setPriorityFilter('');
+                            setSourceFilter('');
                           }}
                         >
                           Clear filters

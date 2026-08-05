@@ -284,7 +284,26 @@ export interface SalesOrder {
   /** Undelivered qty = committed demand contributed to the dashboard. */
   committed_qty: number;
   lines: SalesOrderLine[];
+  /** Where the order came from - it decides who may edit its figures. `inquiry` = the Order
+   *  Inquiry sheet created it, `upload` = CS's outstanding extract, `manual` = keyed in. */
+  source?: SalesOrderSource;
+  /** The project the Order Inquiry sheet named when no customer of that name existed. */
+  internal_note?: string | null;
+  /** Every distinct location its lines ship from. Plural: one order can land in two. */
+  stock_locations?: string[];
+  /** The purchase orders its lines wait on. Present on the LIST, absent on a single read. */
+  linked_purchase_orders?: LinkedPurchaseOrder[];
+  awaiting_purchase_orders?: number;
   created_at: string;
+}
+
+export type SalesOrderSource = 'inquiry' | 'upload' | 'manual';
+
+/** A pairing this order's lines claim, and whether both sides are present. */
+export interface LinkedPurchaseOrder {
+  po_number: string;
+  item_code: string | null;
+  resolved: boolean;
 }
 
 export interface SalesOrderFormData {
