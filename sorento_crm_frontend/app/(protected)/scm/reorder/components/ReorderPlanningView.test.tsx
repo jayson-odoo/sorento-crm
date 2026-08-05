@@ -10,7 +10,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { TodayRun } from '../services/reorderRunService';
 
@@ -36,10 +36,9 @@ vi.mock('./PlanAssistant', () => ({ PlanAssistant: () => <div>plan-assistant</di
 vi.mock('./DispositionResultsGrid', () => ({ DispositionResultsGrid: () => <div>disposition-grid</div> }));
 vi.mock('./RunHistoryPanel', () => ({ RunHistoryPanel: () => <div>run-history</div> }));
 vi.mock('./RunPlanningModal', () => ({ RunPlanningModal: ({ open }: { open: boolean }) => (open ? <div>manual-plan-modal</div> : null) }));
-vi.mock('./OutstandingUploadDialog', () => ({
-  OutstandingUploadDialog: ({ open, kind }: { open: boolean; kind: string }) =>
-    open ? <div>{`outstanding-upload:${kind}`}</div> : null,
-}));
+// Its own channels and dialogs are UploadDataMenu.test.tsx's subject. What this file
+// checks is that the page OFFERS it, in both the populated and the empty state.
+vi.mock('./UploadDataMenu', () => ({ UploadDataMenu: () => <div>upload-data-menu</div> }));
 
 import { ReorderPlanningView } from './ReorderPlanningView';
 
@@ -113,27 +112,23 @@ describe('ReorderPlanningView — loading + error', () => {
   });
 });
 
-describe('ReorderPlanningView — upload the order book', () => {
-  // The plan is computed from the outstanding order book, so loading that book is a
-  // planning action and belongs on this screen. Nothing opens the dialog unless the
-  // toolbar carries an entry for it.
-  it('opens the outstanding sales-order upload from the toolbar', () => {
+describe('ReorderPlanningView — the upload channels', () => {
+  // The plan is computed from these files, so loading them is a planning action and
+  // belongs on this screen.
+  it('offers the upload menu from the toolbar', () => {
     stubToday(todayRun());
     renderView();
-    expect(screen.queryByText(/^outstanding-upload:/)).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: /Upload order book/i }));
-    expect(screen.getByText('outstanding-upload:sales-orders')).toBeInTheDocument();
+    expect(screen.getByText('upload-data-menu')).toBeInTheDocument();
   });
 
-  it('offers the same upload from the no-plan empty state', () => {
+  it('offers the same menu from the no-plan empty state', () => {
     // A fresh install has no plan AND no book - the upload has to be reachable from
     // the state the user actually lands in, not only from a populated plan.
     stubToday(null);
     renderView();
 
-    fireEvent.click(screen.getByRole('button', { name: /Upload order book/i }));
-    expect(screen.getByText('outstanding-upload:sales-orders')).toBeInTheDocument();
+    expect(screen.getByText('upload-data-menu')).toBeInTheDocument();
   });
 });
 

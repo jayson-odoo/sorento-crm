@@ -26,6 +26,7 @@ from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.scm import OrderLinkClaim
 from app.services.scm import po_history_service as svc
+from app.services.scm.po_listing_reader import read_po_listing
 from tests._pg_fixture import pg_session
 
 MARKER = "ZZTPOH"
@@ -76,6 +77,36 @@ def catalogue(db):
             db.flush()
         made[code] = existing
     return made
+
+
+@pytest.fixture()
+def blank_book(db):
+    """Remove any of THIS FIXTURE's documents the database already holds.
+
+    The fixture is a real slice of the customer's export, so its document numbers are real
+    and fixed - and once the same file has been uploaded through the screen against this
+    database, they are present before the test starts. "The first apply created some orders"
+    then reads 0 and the test fails for a reason that has nothing to do with the code.
+
+    Scoped to the numbers this fixture names, and inside the rolled-back session, so it
+    removes exactly the documents under test and puts them back on teardown. The same
+    trap in the other direction is the CI one: never assume a row IS there either.
+    """
+    numbers = [o.po_number for o in read_po_listing(FIXTURE.read_bytes()).orders]
+    if numbers:
+        db.execute(
+            text(
+                "DELETE FROM purchase_order_lines WHERE purchase_order_id IN "
+                "(SELECT id FROM purchase_orders WHERE po_number = ANY(:nums))"
+            ),
+            {"nums": numbers},
+        )
+        db.execute(
+            text("DELETE FROM purchase_orders WHERE po_number = ANY(:nums)"),
+            {"nums": numbers},
+        )
+        db.flush()
+    return numbers
 
 
 @pytest.fixture()
@@ -207,7 +238,7 @@ def test_the_import_never_creates_a_product(db, catalogue):
 # re-uploading the same book
 # --------------------------------------------------------------------------- #
 
-def test_a_second_upload_of_the_same_file_changes_nothing(db, catalogue):
+def test_a_second_upload_of_the_same_file_changes_nothing(db, catalogue, blank_book):
     """History is re-uploaded whenever somebody re-exports a wider date range.
 
     Not idempotent, the second upload doubles every historical quantity - and because the

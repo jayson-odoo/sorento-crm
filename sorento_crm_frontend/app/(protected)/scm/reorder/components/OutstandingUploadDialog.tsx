@@ -1,6 +1,5 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -15,9 +14,9 @@ import {
 } from '@/components/ui/dialog';
 import { FileDropzone } from '@/components/common/FileDropzone';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { MAX_SIZE_MB, useTwoStepUpload } from '../hooks/useTwoStepUpload';
 import {
   applyOutstandingImport,
-  getOutstandingUploadConfig,
   previewOutstandingImport,
   type OutstandingApplyResult,
   type OutstandingChangeKind,
@@ -28,6 +27,7 @@ import {
   type OutstandingRowProblem,
   type OutstandingSampleRow,
 } from '../services/outstandingImportService';
+import { CountTile } from './UploadCountTile';
 
 /**
  * SCM - the upload channel for the open order book, until AutoCount is integrated.
@@ -42,18 +42,6 @@ import {
  * could not read or match. None of those problems blocks a file that is otherwise
  * usable - only a header missing required columns does.
  */
-
-const MAX_SIZE_MB = 25;
-
-/**
- * What to offer before the server has said what it accepts.
- *
- * The list is the SERVER's (`SCM_UPLOAD_EXTENSIONS`, served by `/outstanding/config`) - a
- * second authoritative copy here is exactly how this dialog came to refuse a legacy `.xls`
- * that the reader parses perfectly well. This constant is only the value used for the
- * fraction of a second before the real one arrives.
- */
-const FALLBACK_ACCEPT = '.xlsx,.xlsm,.xls';
 
 const TITLES: Record<OutstandingImportKind, string> = {
   'sales-orders': 'Upload outstanding sales orders',
@@ -105,22 +93,7 @@ function plural(n: number, one: string, many: string): string {
   return n === 1 ? one : many;
 }
 
-function messageOf(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback;
-}
-
 // ── pieces ──────────────────────────────────────────────────────────────────
-
-function CountTile({ label, value }: { label: string; value: number }) {
-  return (
-    <div data-slot="count-tile" className="rounded-lg border border-border px-3 py-2">
-      <div className="text-lg font-semibold tabular-nums leading-tight">
-        {value.toLocaleString()}
-      </div>
-      <div className="text-2xs text-muted-foreground">{label}</div>
-    </div>
-  );
-}
 
 function SampleTable({ rows }: { rows: OutstandingSampleRow[] }) {
   return (
@@ -263,102 +236,18 @@ export function OutstandingUploadDialog({
   kind,
   onApplied,
 }: OutstandingUploadDialogProps) {
-  const [file, setFile] = useState<File | null>(null);
-  const [preview, setPreview] = useState<OutstandingPreview | null>(null);
-  const [result, setResult] = useState<OutstandingApplyResult | null>(null);
-  const [previewing, setPreviewing] = useState(false);
-  const [applying, setApplying] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // The server's accept list, asked for once the dialog opens. Falls back to the constant
-  // above rather than blocking the dropzone on a request.
-  const [accept, setAccept] = useState<string>(FALLBACK_ACCEPT);
-  const acceptedFormats = accept.split(',').join(' or ');
+  const upload = useTwoStepUpload<OutstandingPreview, OutstandingApplyResult>({
+    open,
+    preview: (f) => previewOutstandingImport(kind, f),
+    apply: (f) => applyOutstandingImport(kind, f),
+    onApplied,
+  });
+  const { file, preview, result, previewing, applying, error } = upload;
 
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    void getOutstandingUploadConfig()
-      .then((cfg) => {
-        if (!cancelled && cfg.allowed_extensions?.length) {
-          setAccept(cfg.allowed_extensions.join(','));
-        }
-      })
-      // A failure here is not worth a banner: the dropzone keeps the fallback list and the
-      // server still refuses anything it does not accept, with its own message.
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [open]);
-
-  // A second pick while the first preview is still in flight must not have the older
-  // response land on top of the newer one.
-  const seq = useRef(0);
-
-  useEffect(() => {
-    if (!open) return;
-    seq.current += 1;
-    setFile(null);
-    setPreview(null);
-    setResult(null);
-    setPreviewing(false);
-    setApplying(false);
-    setError(null);
-  }, [open]);
-
-  const choose = async (next: File | null) => {
-    const token = ++seq.current;
-    setFile(next);
-    setPreview(null);
-    setResult(null);
-    setError(null);
-    if (!next) return;
-
-    setPreviewing(true);
-    try {
-      const previewed = await previewOutstandingImport(kind, next);
-      if (seq.current !== token) return;
-      setPreview(previewed);
-    } catch (e) {
-      if (seq.current !== token) return;
-      setError(messageOf(e, 'Failed to read the file.'));
-    } finally {
-      if (seq.current === token) setPreviewing(false);
-    }
-  };
-
-  const reject = (rejected: File, reason: 'type' | 'size' | 'extra') => {
-    // Single-file zone: the first file is already previewing, the rest are noise.
-    if (reason === 'extra') return;
-    if (reason === 'size') {
-      setError(`${rejected.name} is larger than ${MAX_SIZE_MB} MB.`);
-      return;
-    }
-    // 'type': ACCEPT is this importer's authoritative format list, so refuse it now.
-    // Uploading it to be told what the extension already said would cost the user a
-    // round trip, and forwarding a file the dropzone rejected would make its filter
-    // mean nothing.
-    setError(`${rejected.name} is not a ${acceptedFormats} file.`);
-  };
-
-  const applyUpload = async () => {
-    if (!file) return;
-    setApplying(true);
-    setError(null);
-    try {
-      const applied = await applyOutstandingImport(kind, file);
-      setResult(applied);
-      onApplied?.(applied);
-    } catch (e) {
-      setError(messageOf(e, 'Failed to apply the upload.'));
-    } finally {
-      setApplying(false);
-    }
-  };
-
-  const usable = !!preview && preview.ok;
   const hasChanges = !!preview && ACTIONABLE_KINDS.some((k) => countOf(preview.counts, k) > 0);
-  const canConfirm = !!file && usable && hasChanges && !previewing && !applying;
+  // A file that reads fine but changes nothing is not worth writing, so the shared
+  // "picked, readable, idle" test is narrowed here rather than in the hook.
+  const canConfirm = upload.canConfirm && hasChanges;
 
   const sampleGroups = preview
     ? CHANGE_LABELS.map(([key, label]) => ({
@@ -412,9 +301,9 @@ export function OutstandingUploadDialog({
             <>
               <FileDropzone
                 files={file ? [file] : []}
-                onFilesChange={(next) => void choose(next[0] ?? null)}
-                onReject={reject}
-                accept={accept}
+                onFilesChange={(next) => void upload.choose(next[0] ?? null)}
+                onReject={upload.reject}
+                accept={upload.accept}
                 maxSizeMb={MAX_SIZE_MB}
                 disabled={previewing || applying}
                 aria-label="Outstanding orders file"
@@ -523,7 +412,7 @@ export function OutstandingUploadDialog({
               >
                 Cancel
               </Button>
-              <Button onClick={() => void applyUpload()} disabled={!canConfirm}>
+              <Button onClick={() => void upload.confirm()} disabled={!canConfirm}>
                 {applying ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : null}
                 Confirm upload
               </Button>

@@ -10,7 +10,6 @@ import {
   History,
   PlayCircle,
   RotateCcw,
-  Upload,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -36,7 +35,11 @@ import type { ReorderRunHistoryItem } from '../services/reorderRunService';
 import type { OutstandingApplyResult } from '../services/outstandingImportService';
 import { CashCopilotResults } from './CashCopilotResults';
 import { DispositionResultsGrid } from './DispositionResultsGrid';
-import { OutstandingUploadDialog } from './OutstandingUploadDialog';
+import { UploadDataMenu } from './UploadDataMenu';
+import type {
+  OrderInquiryResult,
+  PurchaseHistoryResult,
+} from '../services/purchaseHistoryService';
 import { PlanAssistant } from './PlanAssistant';
 import { PlanMethodologySheet } from './PlanMethodologySheet';
 import { ReorderStatTiles, type ReorderPlanView } from './ReorderStatTiles';
@@ -77,9 +80,6 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(autoOpenRun);
   const [view, setView] = useState<ReorderPlanView>('buy');
-  // The outstanding order book the plan is computed from is uploaded here, because
-  // loading it IS a planning action (until AutoCount is integrated).
-  const [uploadOpen, setUploadOpen] = useState(false);
   // A history-selected run overrides today's; null = show today's default run.
   const [selectedRun, setSelectedRun] = useState<ReorderRunHistoryItem | null>(null);
 
@@ -133,7 +133,8 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
     () => (dispositionQuery.data ?? []).map(recToDispositionRow),
     [dispositionQuery.data],
   );
-  const { actionable: actionableDispositions, hold: holdDispositions } = useMemo(
+  // Only the actionable half is read here - the grid does its own splitting for display.
+  const { actionable: actionableDispositions } = useMemo(
     () => splitDispositionRows(dispositionRows),
     [dispositionRows],
   );
@@ -194,6 +195,32 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
     const changed = result.applied.added + result.applied.updated + result.applied.closed;
     toast.success(
       `Order book updated - ${changed} line${changed === 1 ? '' : 's'} changed. Generate a plan to use it.`,
+    );
+  };
+
+  /**
+   * Purchase history and the order inquiry sheet.
+   *
+   * Neither changes what is on order - history lands closed and fully received - but both
+   * change what the NEXT plan reads: last cost and the ageing signal from the history, stock
+   * locations and the purchase-order pairing from the inquiry sheet. (Not supplier lead time:
+   * that is measured to the goods receipt, and the history file carries none.)
+   *
+   * The pairing is reported because it is the half nothing else would say: an upload can
+   * complete a claim made by a file somebody else uploaded weeks ago.
+   */
+  const curationApplied = (result: PurchaseHistoryResult | OrderInquiryResult) => {
+    void queryClient.invalidateQueries({ queryKey: todayRunKey });
+    void queryClient.invalidateQueries({ queryKey: runHistoryKey });
+    const written =
+      'orders_created' in result
+        ? `${result.orders_created} order${result.orders_created === 1 ? '' : 's'} imported`
+        : `${result.locations_written} location${result.locations_written === 1 ? '' : 's'} written`;
+    const linked = result.links.resolved;
+    toast.success(
+      linked
+        ? `${written}, ${linked} order link${linked === 1 ? '' : 's'} resolved.`
+        : `${written}.`,
     );
   };
 
@@ -280,10 +307,10 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
             a single warehouse.
           </p>
           <div className="flex flex-wrap items-center justify-center gap-2">
-            <Button variant="outline" onClick={() => setUploadOpen(true)}>
-              <Upload className="size-4" />
-              Upload order book
-            </Button>
+            <UploadDataMenu
+              onOutstandingApplied={bookApplied}
+              onHistoryApplied={curationApplied}
+            />
             <Button onClick={() => setModalOpen(true)}>
               <PlayCircle className="size-4" />
               Manual plan
@@ -295,12 +322,6 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
           onOpenChange={setModalOpen}
           onSubmit={launch}
           isSubmitting={manual.isRunning || pendingManual.current}
-        />
-        <OutstandingUploadDialog
-          open={uploadOpen}
-          onOpenChange={setUploadOpen}
-          kind="sales-orders"
-          onApplied={bookApplied}
         />
       </>
     );
@@ -341,10 +362,10 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
               <RotateCcw className="size-3.5" aria-hidden />
             </button>
           ) : null}
-          <Button variant="outline" onClick={() => setUploadOpen(true)}>
-            <Upload className="size-4" />
-            Upload order book
-          </Button>
+          <UploadDataMenu
+            onOutstandingApplied={bookApplied}
+            onHistoryApplied={curationApplied}
+          />
           <Button onClick={() => setModalOpen(true)}>
             <PlayCircle className="size-4" />
             Manual plan
@@ -456,13 +477,6 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         onOpenChange={setModalOpen}
         onSubmit={launch}
         isSubmitting={manual.isRunning || pendingManual.current}
-      />
-
-      <OutstandingUploadDialog
-        open={uploadOpen}
-        onOpenChange={setUploadOpen}
-        kind="sales-orders"
-        onApplied={bookApplied}
       />
     </div>
   );

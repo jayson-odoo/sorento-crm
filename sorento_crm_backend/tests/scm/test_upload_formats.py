@@ -19,7 +19,7 @@ import io
 import pytest
 from openpyxl import Workbook
 
-from app.api.v1.scm.outstanding_import import allowed_extensions
+from app.services.scm.upload_intake import allowed_extensions
 from app.services.scm.outstanding_reader import sheet_rows
 
 

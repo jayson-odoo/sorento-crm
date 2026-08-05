@@ -18,6 +18,7 @@ from app.api.v1.scm import (
     plan_exceptions,
     outstanding_import,
     policies,
+    purchase_history,
     purchase_orders,
     reorder_runs,
     sales_orders,
@@ -38,3 +39,4 @@ router.include_router(market.router)
 router.include_router(coverage.router)
 router.include_router(order_summary.router)
 router.include_router(plan_exceptions.router)
+router.include_router(purchase_history.router)

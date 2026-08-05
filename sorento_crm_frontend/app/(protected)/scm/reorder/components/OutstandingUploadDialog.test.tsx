@@ -60,9 +60,15 @@ vi.mock('sonner', () => ({
 
 const previewOutstandingImport = vi.fn();
 const applyOutstandingImport = vi.fn();
+// Mocked too, and not optional: the dialog asks the server what it accepts as soon as it
+// opens. Leaving it out of the factory makes the import `undefined`, which throws inside the
+// effect and fails every test in the file for a reason that has nothing to do with the
+// assertion - which is exactly what happened when the config call was added.
+const getOutstandingUploadConfig = vi.fn();
 vi.mock('../services/outstandingImportService', () => ({
   previewOutstandingImport: (...a: unknown[]) => previewOutstandingImport(...a),
   applyOutstandingImport: (...a: unknown[]) => applyOutstandingImport(...a),
+  getOutstandingUploadConfig: (...a: unknown[]) => getOutstandingUploadConfig(...a),
 }));
 
 import { OutstandingUploadDialog } from './OutstandingUploadDialog';
@@ -230,6 +236,9 @@ async function chooseFile(file = xlsx()) {
 beforeEach(() => {
   previewOutstandingImport.mockReset().mockResolvedValue(preview());
   applyOutstandingImport.mockReset().mockResolvedValue(APPLY_RESULT);
+  getOutstandingUploadConfig
+    .mockReset()
+    .mockResolvedValue({ allowed_extensions: ['.xlsx', '.xlsm', '.xls'] });
 });
 
 // ── 1. empty state ──────────────────────────────────────────────────────────

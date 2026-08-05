@@ -15,11 +15,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.database import get_db
 from app.dependencies import require_permission
 from app.services.scm import outstanding_import_service as svc
 from app.services.scm.outstanding_reader import PO, SO
+from app.services.scm.upload_intake import allowed_extensions, read_upload
 
 router = APIRouter()
 
@@ -73,42 +73,6 @@ def _assert_writable(kind: str, doc_type: str) -> None:
     )
 
 
-def allowed_extensions() -> tuple[str, ...]:
-    """The spreadsheet extensions this channel accepts, from `SCM_UPLOAD_EXTENSIONS`.
-
-    Configurable because the format belongs to the CUSTOMER, not to us: AutoCount's own
-    "Purchase Order Listing With Detail" export is legacy `.xls`, and hard-coding the pair we
-    happened to start with means telling somebody to re-save 13 MB of order history by hand
-    before the system will look at it. Read here AND served to the browser (see
-    `/outstanding/config`) so the dialog cannot offer a type the server then refuses.
-    """
-    raw = (settings.scm_upload_extensions or "").split(",")
-    return tuple(f".{e.strip().lstrip('.').lower()}" for e in raw if e.strip())
-
-
-async def _read_upload(file: UploadFile) -> bytes:
-    name = (file.filename or "").lower()
-    allowed = allowed_extensions()
-    if not name.endswith(allowed):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Invalid file type: {file.filename or 'unknown'}. "
-                f"Upload {', '.join(allowed)}."
-            ),
-        )
-    from app.services.excel_macro_stripper import maybe_strip
-
-    data = await file.read()
-    # The macro stripper rewrites through openpyxl, which cannot open legacy BIFF at all, so
-    # a `.xls` is passed through untouched. It carries no macro sheet in the `.xlsm` sense,
-    # and the reader opens it read-only.
-    if name.endswith(".xls"):
-        return data
-    data, _ = maybe_strip(data, file.filename or "upload.xlsx")
-    return data
-
-
 @router.get("/outstanding/config")
 def get_outstanding_upload_config(_user: dict = Depends(_WRITE)):
     """What the upload dialog may offer, so the browser and the server agree.
@@ -128,7 +92,7 @@ async def preview_outstanding_import(
 ):
     """What this file would change. Writes nothing."""
     doc_type = _doc_type(kind)
-    result = svc.preview(db, await _read_upload(file), doc_type)
+    result = svc.preview(db, await read_upload(file), doc_type)
     # A file whose header cannot answer the question is a 200 carrying `ok: false`, not an
     # error: the screen needs to render WHICH columns are missing so the export can be
     # fixed, and an exception body would lose that.
@@ -145,7 +109,7 @@ async def apply_outstanding_import(
     """Write the upload. Returns the same counts the preview showed."""
     doc_type = _doc_type(kind)
     _assert_writable(kind, doc_type)
-    out = svc.apply(db, await _read_upload(file), doc_type,
+    out = svc.apply(db, await read_upload(file), doc_type,
                     actor=current_user.get("id"))
     if not out.get("ok"):
         raise HTTPException(
