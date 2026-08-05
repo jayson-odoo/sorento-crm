@@ -1046,6 +1046,39 @@ class ProjectQuotationLineUpdate(BaseModel):
     is_rate_only: Optional[bool] = None
 
 
+class ProjectQuotationLineBulkItem(ProjectQuotationLineBase):
+    """One line in a whole-set save (S10).
+
+    ``id`` is what tells an existing line from a new one: a line already stored carries the
+    id the API gave it, a new one arrives without one. ``sort_order`` is inherited from the
+    base for shape compatibility but is IGNORED - position in the array is the order.
+    """
+
+    id: Optional[str] = Field(
+        None,
+        description=(
+            "The id of a line already on this version. Omit it for a new line. An id that "
+            "is not on this version is refused, never treated as new."
+        ),
+    )
+
+
+class ProjectQuotationLineBulkWrite(BaseModel):
+    """The FULL desired line set for one version, in display order.
+
+    Whole-set semantics: a stored line whose id is absent from ``lines`` is DELETED, so a
+    client must send every line it is showing, not only the ones it changed.
+    """
+
+    lines: List[ProjectQuotationLineBulkItem] = Field(
+        default_factory=list,
+        description=(
+            "Every line the version should end up with, in display order. An empty array "
+            "clears the version."
+        ),
+    )
+
+
 class ProjectQuotationLineResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

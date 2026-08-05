@@ -246,6 +246,16 @@ def _pair(lat: Any, lng: Any) -> Optional[Tuple[float, float]]:
     return latitude, longitude
 
 
+def coordinate_pair(lat: Any, lng: Any) -> Optional[Tuple[float, float]]:
+    """The public form of the pair parser.
+
+    Callers that must REFUSE a bad position before answering (the public endpoint) need the same
+    validation the rendering helpers apply silently, and reaching into a private name to get it
+    is how two definitions of "is this a position" appear.
+    """
+    return _pair(lat, lng)
+
+
 def distance_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     """Great-circle distance, haversine on a sphere.
 

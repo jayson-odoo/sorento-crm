@@ -28,6 +28,7 @@ from app.schemas.projects import (
     PriceFloorRuleResponse,
     PriceFloorRuleUpsert,
     ProjectQuotationCreate,
+    ProjectQuotationLineBulkWrite,
     ProjectQuotationLineCreate,
     ProjectQuotationLineResponse,
     ProjectQuotationLineUpdate,
@@ -343,6 +344,52 @@ async def create_line(
         db.commit()
         db.refresh(line)
         return svc.serialize_lines(db, [line])[0]
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.put(
+    "/quotation-versions/{version_id}/lines",
+    response_model=ListResponse[ProjectQuotationLineResponse],
+)
+async def replace_lines(
+    version_id: str,
+    payload: ProjectQuotationLineBulkWrite,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Write the WHOLE line set of one version in a single transaction (S10).
+
+    **Why this exists.** The editor writes per row today, so building a ten-line scope is ten
+    writes and a half-failed sequence leaves a quotation in a state nobody typed. One request
+    makes a Save atomic: either the arrangement the user made is what is stored, or nothing
+    moved.
+
+    **The body is the full desired set, in display order.** A line already stored carries its
+    ``id``; a new one arrives without one. **Anything stored whose id is absent from the body
+    is DELETED** - a client that omits the lines it did not touch will silently wipe them, so
+    it must always send everything it is showing. ``sort_order`` comes from array position, so
+    reordering is just sending a different order.
+
+    A FROZEN or ISSUED version is refused with the same 422 the per-row routes raise, before
+    anything is written.
+
+    Answers the same envelope as ``GET .../lines``, so the client reads one shape.
+    """
+    try:
+        validate_uuid_path(version_id, resource="Quotation version")
+        version, _quotation = _version_for_edit(db, version_id, current_user)
+        lines = svc.replace_lines(
+            db,
+            version=version,
+            actor_user_id=current_user["id"],
+            lines=[item.model_dump(exclude_unset=True) for item in payload.lines],
+        )
+        for line in lines:
+            _notify_breaches(db, line, current_user["id"])
+        db.commit()
+        return _envelope(svc.serialize_lines(db, svc.list_lines(db, version_id)))
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

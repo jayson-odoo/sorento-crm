@@ -546,21 +546,7 @@ def pop_breach_events(line: ProjectQuotationLine) -> List[Dict[str, Any]]:
     return events
 
 
-def upsert_line(
-    db: Session,
-    *,
-    version: ProjectQuotationVersion,
-    actor_user_id: str,
-    payload: Dict[str, Any],
-    line: Optional[ProjectQuotationLine] = None,
-) -> ProjectQuotationLine:
-    """Add or edit one line on the CURRENT version, in place (AC-E2).
-
-    Both alerts are recomputed here rather than on read, so the values stored on the
-    line are the ones that were true when it was priced (AC-E7).
-    """
-    assert_editable(db, version)
-
+def _quotation_of(db: Session, version: ProjectQuotationVersion) -> ProjectQuotation:
     quotation = (
         db.query(ProjectQuotation)
         .filter(ProjectQuotation.id == version.quotation_id)
@@ -570,7 +556,23 @@ def upsert_line(
         raise AppException(
             status_code=404, message="Quotation not found.", code="quotation_not_found"
         )
+    return quotation
 
+
+def _write_line(
+    db: Session,
+    *,
+    version: ProjectQuotationVersion,
+    quotation: ProjectQuotation,
+    payload: Dict[str, Any],
+    line: Optional[ProjectQuotationLine] = None,
+) -> ProjectQuotationLine:
+    """One line written, with NO editability check and NO total recomputed.
+
+    Split out of ``upsert_line`` so the bulk write (S10) can apply a whole set through the
+    same coercion, snapshotting and guardrails and then recompute the total ONCE. Both
+    callers share this body, so the two ways of saving a line cannot drift apart.
+    """
     unit_type = payload.get("unit_type")
     if unit_type and unit_type not in UNIT_TYPES:
         raise AppException(
@@ -626,8 +628,110 @@ def upsert_line(
     setattr(line, _BREACH_ATTR, [event] if event else [])
 
     db.flush()
+    return line
+
+
+def upsert_line(
+    db: Session,
+    *,
+    version: ProjectQuotationVersion,
+    actor_user_id: str,
+    payload: Dict[str, Any],
+    line: Optional[ProjectQuotationLine] = None,
+) -> ProjectQuotationLine:
+    """Add or edit one line on the CURRENT version, in place (AC-E2).
+
+    Both alerts are recomputed here rather than on read, so the values stored on the
+    line are the ones that were true when it was priced (AC-E7).
+    """
+    assert_editable(db, version)
+    quotation = _quotation_of(db, version)
+    line = _write_line(
+        db, version=version, quotation=quotation, payload=payload, line=line
+    )
     _recalculate_total(db, version)
     return line
+
+
+def replace_lines(
+    db: Session,
+    *,
+    version: ProjectQuotationVersion,
+    actor_user_id: str,
+    lines: Sequence[Dict[str, Any]],
+) -> List[ProjectQuotationLine]:
+    """The whole desired line set for one version, written in ONE transaction (S10).
+
+    **Why this exists.** The editor used to write per row, so building a ten-line scope was
+    ten requests, and a sequence that half-failed left a quotation in a state nobody typed:
+    three saved prices, a deletion that did not land, and a total that matched neither. One
+    request makes a Save atomic - either the set the user arranged is what is stored, or
+    nothing moved at all.
+
+    **This is a REPLACE, not a merge.** ``lines`` is the full desired set. A stored line
+    whose id is absent from it is DELETED. A client that sends only the rows it happened to
+    touch will therefore wipe every row it left out, silently and completely, so the caller
+    must always send the whole set it is showing the user.
+
+    **Identity.** A line already stored carries its ``id``; a new one arrives without one.
+    An ``id`` that is not on this version is refused rather than treated as new, because
+    treating it as new would duplicate the row the client meant to move.
+
+    **Order.** ``sort_order`` is the array position, so reordering is just sending a
+    different order, and any ``sort_order`` in the payload is ignored. The client never has
+    to compute one.
+
+    The total is recomputed exactly once at the end, through the same helper the per-row
+    path uses, so rate-only lines keep contributing nothing without that rule being restated
+    here.
+    """
+    # Before anything is touched: a frozen or issued version refuses the whole request, and
+    # the refusal must not be reached halfway through a set of writes.
+    assert_editable(db, version)
+    quotation = _quotation_of(db, version)
+
+    stored = {row.id: row for row in list_lines(db, version.id)}
+    kept: Set[str] = set()
+    written: List[ProjectQuotationLine] = []
+
+    for index, incoming in enumerate(lines):
+        payload = dict(incoming)
+        line_id = payload.pop("id", None)
+        target: Optional[ProjectQuotationLine] = None
+        if line_id:
+            line_id = str(line_id)
+            if line_id in kept:
+                raise AppException(
+                    status_code=422,
+                    message="The same line appears twice in this save.",
+                    code="quotation_line_duplicate",
+                )
+            target = stored.get(line_id)
+            if target is None:
+                raise AppException(
+                    status_code=404,
+                    message="One of these lines is not on this version.",
+                    code="quotation_line_not_found",
+                )
+            kept.add(line_id)
+        payload["sort_order"] = index
+        written.append(
+            _write_line(
+                db,
+                version=version,
+                quotation=quotation,
+                payload=payload,
+                line=target,
+            )
+        )
+
+    for line_id, row in stored.items():
+        if line_id not in kept:
+            db.delete(row)
+
+    db.flush()
+    _recalculate_total(db, version)
+    return written
 
 
 def delete_line(
