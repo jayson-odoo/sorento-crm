@@ -26,6 +26,12 @@ export function mapFormToUpdateBody(
 
   const metadata: Record<string, unknown> = {};
 
+  // Companies this task may touch. Empty means every company, and null is the
+  // backend's delete sentinel - persisting an empty ARRAY instead would leave a key
+  // the scheduler has to special-case forever, so clear it properly.
+  const companyIds = values.company_ids ?? [];
+  metadata.company_ids = companyIds.length > 0 ? companyIds : null;
+
   if (task.key === 'user_sla_daily_summary') {
     metadata.send_in_app = values.send_in_app !== false;
     metadata.send_email = values.send_email !== false;

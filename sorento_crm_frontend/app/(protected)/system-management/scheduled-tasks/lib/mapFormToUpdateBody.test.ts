@@ -41,7 +41,10 @@ const values: FormValues = {
 describe('mapFormToUpdateBody — grace override', () => {
   it('sends the numeric override when one is set', () => {
     const body = mapFormToUpdateBody({ ...values, grace_percent: 50 }, task);
-    expect(body.metadata).toEqual({ grace_percent: 50 });
+    // toMatchObject, not toEqual: metadata gained an additive company_ids key and
+    // these assertions are about the grace override, not about metadata being
+    // exhaustive. Pinning the whole shape makes every new key look like a break.
+    expect(body.metadata).toMatchObject({ grace_percent: 50 });
   });
 
   it('sends null (not an omitted key) when the field is cleared', () => {
@@ -59,7 +62,10 @@ describe('mapFormToUpdateBody — grace override', () => {
 
   it('accepts 0 as a real value rather than treating it as blank', () => {
     const body = mapFormToUpdateBody({ ...values, grace_percent: 0 }, task);
-    expect(body.metadata).toEqual({ grace_percent: 0 });
+    // toMatchObject, not toEqual: metadata gained an additive company_ids key and
+    // these assertions are about the grace override, not about metadata being
+    // exhaustive. Pinning the whole shape makes every new key look like a break.
+    expect(body.metadata).toMatchObject({ grace_percent: 0 });
   });
 
   it('carries the sla digest channel keys alongside grace for that task', () => {
@@ -68,7 +74,10 @@ describe('mapFormToUpdateBody — grace override', () => {
       { ...values, grace_percent: 30, send_in_app: false, send_email: true },
       slaTask,
     );
-    expect(body.metadata).toEqual({
+    // toMatchObject, not toEqual: metadata gained an additive company_ids key and
+    // these assertions are about the grace override, not about metadata being
+    // exhaustive. Pinning the whole shape makes every new key look like a break.
+    expect(body.metadata).toMatchObject({
       send_in_app: false,
       send_email: true,
       grace_percent: 30,
@@ -81,5 +90,32 @@ describe('mapFormToUpdateBody — grace override', () => {
     expect(body.interval_unit).toBe('minutes');
     expect(body.enabled).toBe(true);
     expect(body.start_at).toBeNull();
+  });
+});
+
+describe('mapFormToUpdateBody - company scope', () => {
+  it('clears company_ids with null when none are selected', () => {
+    // null is the delete sentinel; an empty array would persist a key the scheduler
+    // then has to treat as "all companies" forever.
+    const body = mapFormToUpdateBody({ ...values, company_ids: [] }, task);
+    expect(body.metadata?.company_ids).toBeNull();
+  });
+
+  it('omitting the field entirely is still "all companies"', () => {
+    const body = mapFormToUpdateBody(values, task);
+    expect(body.metadata?.company_ids).toBeNull();
+  });
+
+  it('sends the selected company ids', () => {
+    const body = mapFormToUpdateBody({ ...values, company_ids: ['co-a', 'co-b'] }, task);
+    expect(body.metadata?.company_ids).toEqual(['co-a', 'co-b']);
+  });
+
+  it('does not disturb the other metadata keys', () => {
+    const body = mapFormToUpdateBody(
+      { ...values, company_ids: ['co-a'], grace_percent: 50 },
+      task,
+    );
+    expect(body.metadata).toMatchObject({ company_ids: ['co-a'], grace_percent: 50 });
   });
 });
