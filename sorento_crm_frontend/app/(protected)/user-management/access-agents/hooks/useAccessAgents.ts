@@ -199,7 +199,7 @@ export function useSetAgentFieldAccess() {
       fields,
     }: {
       agentId: string;
-      fields: { resource: string; field_key: string; is_allowed: boolean; contact_id?: string | null }[];
+      fields: { resource: string; field_key: string; is_allowed: boolean | null; contact_id?: string | null }[];
     }) => setAgentFieldAccess(agentId, fields),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['agent-field-access', variables.agentId] });

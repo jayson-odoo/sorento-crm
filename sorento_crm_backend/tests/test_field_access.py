@@ -582,3 +582,99 @@ def test_every_gated_field_is_a_real_column():
 
     for field in GATED_FIELDS[RESOURCE]:
         assert hasattr(InboundShipment, field), f"{field} is not a column"
+
+
+# ------------------------------------------------------ workspace disambiguation
+
+
+def _workspace(db, space_id: str):
+    from app.models.respond_workspace import RespondWorkspace
+
+    ws = RespondWorkspace(
+        id=str(uuid.uuid4()),
+        space_id=space_id,
+        name=f"ZZT {space_id}",
+        api_key_ciphertext="zzt-not-a-real-key",
+    )
+    db.add(ws)
+    db.flush()
+    return ws
+
+
+def test_the_same_respond_io_id_in_two_workspaces_needs_the_space_id(db):
+    """n8n sends contact_id + space_id. Resolving the Respond.io id without the
+    workspace could land on a stranger in another workspace and answer with THEIR
+    grants."""
+    ws_a, ws_b = _workspace(db, "space-A"), _workspace(db, "space-B")
+
+    a = _contact(db, respond_io_id="shared-io-id")
+    a.workspace_id = ws_a.id
+    b = _contact(db, respond_io_id="shared-io-id")
+    b.workspace_id = ws_b.id
+    db.flush()
+
+    assert resolve_contact_id(db, "shared-io-id", "space-A") == a.id
+    assert resolve_contact_id(db, "shared-io-id", "space-B") == b.id
+
+
+def test_an_ambiguous_respond_io_id_resolves_to_nothing_rather_than_a_coin_flip(db):
+    ws_a, ws_b = _workspace(db, "space-A"), _workspace(db, "space-B")
+    a = _contact(db, respond_io_id="shared-io-id")
+    a.workspace_id = ws_a.id
+    b = _contact(db, respond_io_id="shared-io-id")
+    b.workspace_id = ws_b.id
+    db.flush()
+
+    assert resolve_contact_id(db, "shared-io-id") is None
+
+
+def test_an_internal_id_wins_before_any_workspace_lookup(db):
+    """A caller who already resolved the contact must not be second-guessed by a
+    space_id that happens to be wrong or absent."""
+    contact = _contact(db)
+    assert resolve_contact_id(db, contact.id, "space-that-does-not-exist") == contact.id
+
+
+def test_the_wrong_space_id_denies_rather_than_falling_back(db):
+    """Falling back to "any workspace" would make space_id decorative, and the
+    ambiguous case would silently start picking one."""
+    ws = _workspace(db, "space-A")
+    contact = _contact(db, respond_io_id="only-in-a")
+    contact.workspace_id = ws.id
+    db.flush()
+
+    assert resolve_contact_id(db, "only-in-a", "space-B") is None
+
+
+def test_space_id_reaches_the_decision(db):
+    """The route threads it through decide() - without that the disambiguation
+    exists but nothing uses it."""
+    ws = _workspace(db, "space-A")
+    contact = _contact(db, respond_io_id="io-1")
+    contact.workspace_id = ws.id
+    db.flush()
+    agent = _agent(db)
+    _grant(db, contact, agent)
+    _field(db, "eta_date")
+
+    (ok,) = decide(
+        db, resource=RESOURCE, fields=["eta_date"], contact_id="io-1", space_id="space-A"
+    )
+    assert ok.outcome == ALLOWED
+
+    (denied,) = decide(
+        db, resource=RESOURCE, fields=["eta_date"], contact_id="io-1", space_id="space-B"
+    )
+    assert denied.outcome == AGENT_NOT_ASSIGNED
+
+
+def test_the_route_passes_space_id_to_the_gate():
+    """A param the route accepts but drops is worse than not having it: n8n would
+    believe it was disambiguating."""
+    import inspect
+
+    from app.api.v1 import incoming_stock
+
+    source = inspect.getsource(incoming_stock.get_incoming_list)
+    assert "space_id" in source
+    assert "space_id=space_id" in source

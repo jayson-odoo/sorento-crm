@@ -214,6 +214,13 @@ async def set_agent_teams(
 @router.get("/{agent_id}/field-access")
 async def get_agent_field_access(
     agent_id: str,
+    contact_id: Optional[str] = Query(
+        None,
+        description=(
+            "Scope to one contact. Each field then also carries `override` "
+            "(null = follows the agent) and `effective`."
+        ),
+    ),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -228,7 +235,7 @@ async def get_agent_field_access(
     """
     try:
         validate_uuid_path(agent_id, resource="Access Agent")
-        return AccessAgentService(db).list_field_access(agent_id)
+        return AccessAgentService(db).list_field_access(agent_id, contact_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -239,6 +246,9 @@ async def get_agent_field_access(
 async def set_agent_field_access(
     agent_id: str,
     body: AgentFieldAccessUpdate,
+    contact_id: Optional[str] = Query(
+        None, description="Echoed back on the response so the caller re-reads the same scope."
+    ),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -257,7 +267,7 @@ async def set_agent_field_access(
             [f.model_dump() for f in (body.fields or [])],
             actor=(current_user or {}).get("email") or (current_user or {}).get("id"),
         )
-        return service.list_field_access(agent_id)
+        return service.list_field_access(agent_id, contact_id)
     except HTTPException:
         raise
     except Exception as e:

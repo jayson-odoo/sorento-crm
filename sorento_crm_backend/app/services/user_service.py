@@ -1967,12 +1967,18 @@ class AccessAgentService:
 
     # ------------------------------------------------ field-level access
 
-    def list_field_access(self, agent_id: str) -> dict:
+    def list_field_access(self, agent_id: str, contact_id: str | None = None) -> dict:
         """The complete tick-list of fields this agent may reveal.
 
         Built from the CODE registry, not from whatever rows happen to exist, so a
         field added after the migration ran still appears (unticked) instead of
         being invisible and therefore ungrantable.
+
+        With `contact_id`, each field also carries what THIS contact actually gets:
+        `override` (None = follows the agent) and `effective`. An admin deciding
+        "should this dealer see the gatepass" needs to see the inherited value in
+        the same row, or they cannot tell an explicit deny from an untouched
+        default - and those are different intentions.
         """
         from app.models.access import AccessAgent, AgentFieldAccess, RespondContact
         from app.services.field_access import GATED_FIELDS, field_label
@@ -1992,18 +1998,30 @@ class AccessAgentService:
             if r.contact_id is None
         }
 
-        fields = [
-            {
-                "resource": resource,
-                "field_key": field_key,
-                "label": field_label(field_key),
+        overrides_for_contact = {
+            (r.resource, r.field_key): bool(r.is_allowed)
+            for r in rows
+            if contact_id and r.contact_id == str(contact_id)
+        }
+
+        fields = []
+        for resource, owned in GATED_FIELDS.items():
+            for field_key, owner_code in owned.items():
+                if owner_code != agent.code:
+                    continue
                 # No row means denied, so the tick is empty rather than absent.
-                "is_allowed": defaults.get((resource, field_key), False),
-            }
-            for resource, owned in GATED_FIELDS.items()
-            for field_key, owner_code in owned.items()
-            if owner_code == agent.code
-        ]
+                default = defaults.get((resource, field_key), False)
+                entry = {
+                    "resource": resource,
+                    "field_key": field_key,
+                    "label": field_label(field_key),
+                    "is_allowed": default,
+                }
+                if contact_id:
+                    override = overrides_for_contact.get((resource, field_key))
+                    entry["override"] = override
+                    entry["effective"] = default if override is None else override
+                fields.append(entry)
 
         override_rows = [r for r in rows if r.contact_id is not None]
         names = {}
@@ -2075,8 +2093,22 @@ class AccessAgentService:
                 )
                 .one_or_none()
             )
+            wanted = entry.get("is_allowed", True)
+            if wanted is None:
+                # Clear the override: this contact goes back to following the agent.
+                # Only meaningful per-contact - a null agent-wide would mean "deny
+                # by absence", which is what is_allowed=False already says.
+                if contact_id is None:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="is_allowed=null only clears a per-contact override",
+                    )
+                if existing is not None:
+                    self.db.delete(existing)
+                continue
+
             if existing is not None:
-                existing.is_allowed = bool(entry.get("is_allowed", True))
+                existing.is_allowed = bool(wanted)
                 # Attribution goes on updated_by, not created_by: the bootstrap
                 # pre-seeds every row denied, so this branch is the one a real
                 # grant takes and created_by would be NULL forever.
@@ -2089,7 +2121,7 @@ class AccessAgentService:
                         resource=resource,
                         field_key=field_key,
                         contact_id=contact_id,
-                        is_allowed=bool(entry.get("is_allowed", True)),
+                        is_allowed=bool(wanted),
                         created_by=actor,
                         updated_by=actor,
                     )

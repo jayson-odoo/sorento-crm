@@ -164,26 +164,46 @@ _REASONS = {
 # ------------------------------------------------------------------- resolution
 
 
-def resolve_contact_id(db: Session, contact_id: str) -> Optional[str]:
+def resolve_contact_id(
+    db: Session, contact_id: str, space_id: Optional[str] = None
+) -> Optional[str]:
     """Accept either id space and return the internal `respond_contacts.id`.
 
     Grants key on the internal id, but n8n thinks in Respond.io ids and different
     callers reach here having resolved a different amount. Guessing wrong denies a
     contact who is in fact entitled, which reads as a broken feature rather than a
     lookup mismatch, so try both.
+
+    `space_id` disambiguates the Respond.io branch: the same `respond_io_id` can
+    exist in two workspaces, and resolving to the wrong one would answer with a
+    stranger's grants. Without it, an ambiguous id resolves to nothing rather than
+    to a coin flip.
     """
     try:
         from app.models.access import RespondContact
+        from app.models.respond_workspace import RespondWorkspace
 
         key = str(contact_id)
         if db.query(RespondContact.id).filter(RespondContact.id == key).first():
             return key
-        row = (
-            db.query(RespondContact.id)
-            .filter(RespondContact.respond_io_id == key)
-            .first()
-        )
-        return row[0] if row else None
+
+        q = db.query(RespondContact.id).filter(RespondContact.respond_io_id == key)
+        if space_id:
+            q = q.join(
+                RespondWorkspace, RespondWorkspace.id == RespondContact.workspace_id
+            ).filter(RespondWorkspace.space_id == str(space_id))
+
+        rows = q.limit(2).all()
+        if len(rows) != 1:
+            if len(rows) > 1:
+                logger.warning(
+                    "respond_io_id %s matches %s contacts and no space_id was given; "
+                    "denying rather than picking one",
+                    key,
+                    len(rows),
+                )
+            return None
+        return rows[0][0]
     except Exception:  # noqa: BLE001 - fail closed
         logger.warning("Contact resolution failed for %s", contact_id, exc_info=True)
         return None
@@ -275,6 +295,7 @@ def decide(
     resource: str,
     fields: Iterable[str],
     contact_id: Optional[str],
+    space_id: Optional[str] = None,
 ) -> list[FieldDecision]:
     """One decision per requested field, each carrying WHY."""
     registry = GATED_FIELDS.get(resource, {})
@@ -288,7 +309,7 @@ def decide(
             for f in requested
         ]
 
-    resolved = resolve_contact_id(db, contact_id)
+    resolved = resolve_contact_id(db, contact_id, space_id)
     if resolved is None:
         # An unknown contact holds nothing. Same shape as holding no agent, which
         # is also the right advice: assign the agent (to a contact that exists).
@@ -317,14 +338,25 @@ def decide(
 
 
 def check_attributes(
-    db: Session, *, resource: str, attributes: Iterable[str], contact_id: Optional[str]
+    db: Session,
+    *,
+    resource: str,
+    attributes: Iterable[str],
+    contact_id: Optional[str],
+    space_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Answer "may this contact be told X?" without returning any data.
 
     For n8n, so it can refuse in words rather than fetch and find a hole. This is a
     convenience: the data endpoint enforces the same rules independently.
     """
-    decisions = decide(db, resource=resource, fields=attributes, contact_id=contact_id)
+    decisions = decide(
+        db,
+        resource=resource,
+        fields=attributes,
+        contact_id=contact_id,
+        space_id=space_id,
+    )
     return {
         "contact_id": contact_id,
         "resource": resource,
@@ -350,6 +382,7 @@ def apply_field_access(
     *,
     resource: str,
     contact_id: Optional[str] = None,
+    space_id: Optional[str] = None,
     current_user: Optional[Mapping[str, Any]] = None,
     staff_permission: Optional[str] = None,
 ) -> Any:
@@ -366,7 +399,11 @@ def apply_field_access(
 
     if contact_id:
         decisions = decide(
-            db, resource=resource, fields=registry.keys(), contact_id=contact_id
+            db,
+            resource=resource,
+            fields=registry.keys(),
+            contact_id=contact_id,
+            space_id=space_id,
         )
     else:
         # A staff caller (a session, or the API key with no contact in play) is

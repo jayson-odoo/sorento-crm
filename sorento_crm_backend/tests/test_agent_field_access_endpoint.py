@@ -259,3 +259,134 @@ def test_a_per_contact_override_is_reported_separately(client, agent, db):
             "is_allowed": False,
         }
     ]
+
+
+# ------------------------------------------------- per-contact exceptions
+
+
+def _contact(db, name="Ah Seng Hardware", cid="zzt-contact-1"):
+    from app.models.access import RespondContact
+
+    row = RespondContact(id=cid, phone_number=f"+6012{abs(hash(cid)) % 10**7:07d}", name=name)
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_scoping_to_a_contact_shows_the_inherited_value_alongside_the_override(client, agent, db):
+    """An admin deciding "should this dealer see the gatepass" cannot tell an
+    explicit deny from an untouched default unless both are on the row."""
+    contact = _contact(db)
+    client.put(
+        _url(agent),
+        json={"fields": [{"resource": "incoming_stock", "field_key": "eta_date", "is_allowed": True}]},
+    )
+
+    body = client.get(f"{_url(agent)}?contact_id={contact.id}").json()
+    by_key = {f["field_key"]: f for f in body["fields"]}
+
+    assert by_key["eta_date"]["is_allowed"] is True, "the agent-wide default"
+    assert by_key["eta_date"]["override"] is None, "this contact has no exception"
+    assert by_key["eta_date"]["effective"] is True, "so it inherits the default"
+
+
+def test_an_override_can_grant_a_contact_more_than_the_agent(client, agent, db):
+    """The question this whole surface answers: allow ONE contact a field the other
+    52 do not get."""
+    contact = _contact(db)
+
+    body = client.put(
+        f"{_url(agent)}?contact_id={contact.id}",
+        json={
+            "fields": [
+                {
+                    "resource": "incoming_stock",
+                    "field_key": "gatepass_date",
+                    "is_allowed": True,
+                    "contact_id": contact.id,
+                }
+            ]
+        },
+    ).json()
+
+    row = {f["field_key"]: f for f in body["fields"]}["gatepass_date"]
+    assert row["is_allowed"] is False, "the agent still denies it to everyone else"
+    assert row["override"] is True
+    assert row["effective"] is True
+
+
+def test_clearing_an_override_returns_the_contact_to_following_the_agent(client, agent, db):
+    """"Explicitly denied" and "inherits a denial" are different intentions, so
+    undoing the first must not leave the second pretending to be explicit."""
+    contact = _contact(db)
+    client.put(
+        _url(agent),
+        json={"fields": [{"resource": "incoming_stock", "field_key": "eta_date", "is_allowed": True}]},
+    )
+    client.put(
+        f"{_url(agent)}?contact_id={contact.id}",
+        json={
+            "fields": [
+                {
+                    "resource": "incoming_stock",
+                    "field_key": "eta_date",
+                    "is_allowed": False,
+                    "contact_id": contact.id,
+                }
+            ]
+        },
+    )
+
+    body = client.put(
+        f"{_url(agent)}?contact_id={contact.id}",
+        json={
+            "fields": [
+                {
+                    "resource": "incoming_stock",
+                    "field_key": "eta_date",
+                    "is_allowed": None,
+                    "contact_id": contact.id,
+                }
+            ]
+        },
+    ).json()
+
+    row = {f["field_key"]: f for f in body["fields"]}["eta_date"]
+    assert row["override"] is None, "the exception is gone, not flipped"
+    assert row["effective"] is True, "so it follows the agent again"
+    assert body["overrides"] == []
+
+
+def test_clearing_without_a_contact_is_rejected(client, agent):
+    """A null agent-wide would mean "deny by absence", which is_allowed=False
+    already says - accepting it would give two spellings of one state."""
+    response = client.put(
+        _url(agent),
+        json={"fields": [{"resource": "incoming_stock", "field_key": "eta_date", "is_allowed": None}]},
+    )
+    assert response.status_code == 422
+    assert "per-contact override" in response.text
+
+
+def test_the_unscoped_view_does_not_leak_override_keys(client, agent, db):
+    """The agent-level screen shows agent-level truth; adding `effective` there
+    would silently mean "effective for nobody in particular"."""
+    contact = _contact(db)
+    client.put(
+        f"{_url(agent)}?contact_id={contact.id}",
+        json={
+            "fields": [
+                {
+                    "resource": "incoming_stock",
+                    "field_key": "eta_date",
+                    "is_allowed": True,
+                    "contact_id": contact.id,
+                }
+            ]
+        },
+    )
+
+    body = client.get(_url(agent)).json()
+    assert all("override" not in f and "effective" not in f for f in body["fields"])
+    # ...but the exception is still visible on that screen, as an override.
+    assert len(body["overrides"]) == 1

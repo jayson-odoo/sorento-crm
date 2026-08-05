@@ -92,6 +92,11 @@ _PASSTHROUGH_KEYS = (
     "fallback_used",
     "alternatives",
     "relaxed_axis",
+    # Which fields were withheld from this caller and why. Without it, `render`
+    # drops a denied field silently and the agent cannot tell "you may not see
+    # this" from "it has not happened yet" - so it guesses, and it guesses the
+    # second one out loud.
+    "field_access",
 )
 
 
@@ -297,6 +302,38 @@ def _orders_by_product(rows: list[dict], b: _Builder) -> None:
         )
 
 
+#: Clearance fields, in the order a person narrates a container's journey, paired
+#: with the label to render. Every one is gated server-side per contact, so the key
+#: is simply ABSENT when this caller may not see it - and `b.item` drops empty
+#: pairs, so a denied field renders as nothing rather than as a blank row.
+#:
+#: These sit AFTER the identity/quantity pairs above them, which are never gated:
+#: product, container, shipment, ETA and quantity are the answer itself, and a
+#: contact who may not see a gatepass date must still be told what is arriving.
+_CLEARANCE_PAIRS = (
+    ("eta_date", "ETA"),
+    ("eta_delay_date", "ETA Delay"),
+    ("inspection_date", "CIDB Inspection"),
+    ("approval_date", "CIDB Approval"),
+    ("gatepass_date", "Gatepass"),
+    ("warehouse_arrival_date", "Warehouse Arrival"),
+    ("informed_collection_date", "Collection Informed"),
+    ("collection_date", "Collection"),
+    ("loading_date", "Loading"),
+    ("etc_date", "ETC"),
+    ("etd_date", "ETD"),
+    ("liner_code", "Liner"),
+    ("china_forwarder", "China Forwarder"),
+    ("malaysia_forwarder", "Malaysia Forwarder"),
+    ("consignee", "Consignee"),
+    ("delivery_warehouse", "Delivery Warehouse"),
+    ("free_days_available", "Free Days Available"),
+    ("loc", "Location"),
+    ("stacked", "Stacked"),
+    ("coa_permit_no", "COA Permit No."),
+)
+
+
 def _incoming_list(rows: list[dict], b: _Builder) -> None:
     for s in rows:
         for l in s.get("lines") or []:
@@ -313,6 +350,7 @@ def _incoming_list(rows: list[dict], b: _Builder) -> None:
                     ("Incoming Quantity", l.get("remaining_incoming_quantity")),
                     ("Warehouse Allocations", _wh_alloc(l.get("warehouse_allocations"))),
                     ("Unallocated Quantity", gap),
+                    *((label, s.get(key)) for key, label in _CLEARANCE_PAIRS),
                 ],
                 unallocated=unallocated,
                 partially_allocated=partial,

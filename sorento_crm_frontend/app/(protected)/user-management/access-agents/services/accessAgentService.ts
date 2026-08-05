@@ -169,7 +169,12 @@ export interface AgentFieldAccessRow {
   resource: string;
   field_key: string;
   label: string;
+  /** The agent-wide default. */
   is_allowed: boolean;
+  /** Present only when scoped to a contact. null = that contact follows the agent. */
+  override?: boolean | null;
+  /** Present only when scoped to a contact: what this contact actually gets. */
+  effective?: boolean;
 }
 
 export interface AgentFieldOverride extends AgentFieldAccessRow {
@@ -183,17 +188,29 @@ export interface AgentFieldAccessResponse {
   overrides: AgentFieldOverride[];
 }
 
-export async function getAgentFieldAccess(agentId: string): Promise<AgentFieldAccessResponse> {
-  const response = await apiFetch(`/api/user-management/access-agents/${agentId}/field-access`);
+export async function getAgentFieldAccess(
+  agentId: string,
+  contactId?: string,
+): Promise<AgentFieldAccessResponse> {
+  const qs = contactId ? `?contact_id=${encodeURIComponent(contactId)}` : '';
+  const response = await apiFetch(`/api/user-management/access-agents/${agentId}/field-access${qs}`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to fetch field access'));
   return response.json();
 }
 
 export async function setAgentFieldAccess(
   agentId: string,
-  fields: { resource: string; field_key: string; is_allowed: boolean; contact_id?: string | null }[],
+  // is_allowed null WITH a contact_id clears that contact's override.
+  fields: {
+    resource: string;
+    field_key: string;
+    is_allowed: boolean | null;
+    contact_id?: string | null;
+  }[],
+  contactId?: string,
 ): Promise<AgentFieldAccessResponse> {
-  const response = await apiFetch(`/api/user-management/access-agents/${agentId}/field-access`, {
+  const qs = contactId ? `?contact_id=${encodeURIComponent(contactId)}` : '';
+  const response = await apiFetch(`/api/user-management/access-agents/${agentId}/field-access${qs}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ fields }),

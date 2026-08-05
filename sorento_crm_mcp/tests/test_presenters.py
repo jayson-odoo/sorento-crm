@@ -325,3 +325,97 @@ def test_empty_result_envelope():
 
 def test_invalid_json_returns_raw_unchanged():
     assert present_response("crm_master_products_list", "not json") == "not json"
+
+
+# ---------------------------------------------------------------- field access
+
+
+def _incoming_row(**clearance):
+    """One shipment row as `/incoming-stock/list` returns it, plus whatever
+    clearance fields this caller was permitted."""
+    return {
+        "shipment_number": "SHP-1",
+        "shipping_container_number": "SEGU4008631",
+        "estimated_arrival_date": "2026-07-08",
+        "lines": [
+            {
+                "product_code": "SRTWB7109",
+                "product_name": "Basin Mixer",
+                "batch_number": "B-1",
+                "remaining_incoming_quantity": 12,
+                "warehouse_allocations": [
+                    {"warehouse_code": "BRW", "allocated_quantity": 12}
+                ],
+            }
+        ],
+        **clearance,
+    }
+
+
+def test_render_shows_the_clearance_fields_a_caller_may_see():
+    """The render view had a hardcoded field list that never included any of them,
+    so an entitled contact still got nothing."""
+    out = env("crm_incoming_stock_list", {
+        "data": [_incoming_row(eta_date="2026-07-08", eta_delay_date="2026-07-12", liner_code="CMA")],
+    })
+
+    fields = {f["label"]: f["value"] for f in out["items"][0]["fields"]}
+    assert fields["ETA"] == "2026-07-08"
+    assert fields["ETA Delay"] == "2026-07-12"
+    assert fields["Liner"] == "CMA"
+
+
+def test_render_omits_a_field_the_caller_may_not_see():
+    """The backend strips denied keys, so they simply are not in the row. Render
+    must not invent a blank line for them - a labelled empty value reads as "not
+    reached yet"."""
+    out = env("crm_incoming_stock_list", {"data": [_incoming_row(eta_date="2026-07-08")]})
+
+    labels = {f["label"] for f in out["items"][0]["fields"]}
+    assert "ETA" in labels
+    assert "Gatepass" not in labels
+    assert "ETA Delay" not in labels
+
+
+def test_render_never_gates_the_answer_itself():
+    """Product, container, shipment, ETA and quantity are what the contact asked
+    about. A contact who may not see a gatepass date must still be told what is
+    arriving, so none of these may ever be stripped."""
+    out = env("crm_incoming_stock_list", {"data": [_incoming_row()]})
+
+    fields = {f["label"]: f["value"] for f in out["items"][0]["fields"]}
+    assert fields["Product Code"] == "SRTWB7109"
+    assert fields["Product Name"] == "Basin Mixer"
+    assert fields["Shipment"] == "SHP-1"
+    assert fields["Container"] == "SEGU4008631"
+    assert fields["Estimated Arrival Date"] == "2026-07-08"
+    assert fields["Incoming Quantity"] == 12
+    assert "BRW" in str(fields["Warehouse Allocations"])
+    assert out["has_result"] is True
+
+
+def test_render_carries_the_denial_reason_through():
+    """Without it the agent cannot tell "you may not see this" from "it has not
+    happened yet", so it guesses - and it guesses the second one out loud."""
+    out = env("crm_incoming_stock_list", {
+        "data": [_incoming_row(eta_date="2026-07-08")],
+        "field_access": {
+            "denied": [
+                {
+                    "field": "gatepass_date",
+                    "agent_code": "incoming_stock_enquiries",
+                    "outcome": "field_not_allowed",
+                    "reason": "This contact holds the agent, but this field is not allowed on it.",
+                }
+            ],
+            "note": "Absent does NOT mean the value is unknown or not yet reached.",
+        },
+    })
+
+    assert out["field_access"]["denied"][0]["outcome"] == "field_not_allowed"
+    assert "not yet reached" in out["field_access"]["note"]
+
+
+def test_render_omits_field_access_when_nothing_was_denied():
+    out = env("crm_incoming_stock_list", {"data": [_incoming_row(eta_date="2026-07-08")]})
+    assert "field_access" not in out

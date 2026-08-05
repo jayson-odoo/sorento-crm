@@ -54,6 +54,7 @@ def check_agent_access(
             resource=payload.resource or "incoming_stock",
             attributes=payload.attributes,
             contact_id=payload.contact_id,
+            space_id=payload.space_id,
         )
         attributes = [AttributeAccess(**item) for item in checked["attributes"]]
         all_allowed = checked["all_allowed"]

@@ -215,6 +215,14 @@ def get_incoming_list(
             "Denied fields are absent, and the reason is in `field_access.denied`."
         ),
     ),
+    space_id: Optional[str] = Query(
+        None,
+        description=(
+            "Respond.io workspace id. Only used to disambiguate `contact_id` when "
+            "it is a Respond.io id: the same id can exist in two workspaces, and "
+            "resolving to the wrong one would answer with a stranger's grants."
+        ),
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -262,6 +270,7 @@ def get_incoming_list(
             resource="incoming_stock",
             current_user=current_user,
             contact_id=contact_id,
+            space_id=space_id,
             staff_permission=CLEARANCE_PERMISSION,
         )
     except Exception as e:
