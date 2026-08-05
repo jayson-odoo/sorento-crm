@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Popover as PopoverPrimitive } from 'radix-ui';
 import {
@@ -616,15 +616,42 @@ function DispositionExplanation({ rec }: { rec: ReorderRecommendation }) {
 }
 
 /**
- * M5 semantic layer — the LLM narrator that sits ON TOP of the deterministic
- * derivation above. A generated one-sentence explanation (clearly badged "AI" so
- * it's never mistaken for the frozen arithmetic below it) plus an optional market
- * advisory. Buy / exception recs only — disposition rows don't get a buy
- * narrative. Speaks only the rec's frozen numbers (M5 boundary).
+ * M5 semantic layer — the LLM narrator that sits ON TOP of the deterministic derivation
+ * below. Clearly badged "AI" so it is never mistaken for the frozen arithmetic.
+ *
+ * ON DEMAND, not on open. It used to fire two model calls (explanation + market advisory)
+ * every single time somebody opened a row, and the drawer is opened to READ THE NUMBERS -
+ * stepping through 230 recommendations spent 460 calls on a sentence that restates the
+ * figures printed underneath it. The button costs one click and nothing until then.
  */
 function AiSummaryBlock({ rec, enabled }: { rec: ReorderRecommendation; enabled: boolean }) {
-  const explanation = useRecommendationExplanation(rec, enabled);
-  const advisory = useRecommendationAdvisory(rec, enabled);
+  const [asked, setAsked] = useState(false);
+  // `enabled` still gates on the dialog being open, so closing it cannot leave a request
+  // running; `asked` is what actually authorises the spend.
+  const active = enabled && asked;
+  const explanation = useRecommendationExplanation(rec, active);
+  const advisory = useRecommendationAdvisory(rec, active);
+
+  // A new rec means a new question: stepping to the next row must not show the previous
+  // row's sentence, and must not silently re-buy an explanation nobody asked for.
+  useEffect(() => {
+    setAsked(false);
+  }, [rec.id]);
+
+  if (!asked) {
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        className="gap-1.5"
+        onClick={() => setAsked(true)}
+        data-testid="explain-in-words"
+      >
+        <Sparkles className="size-3.5 text-primary" aria-hidden />
+        Explain in plain language
+      </Button>
+    );
+  }
 
   return (
     <div className="space-y-2">

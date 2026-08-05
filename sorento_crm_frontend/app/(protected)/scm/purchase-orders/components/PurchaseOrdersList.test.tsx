@@ -158,7 +158,11 @@ describe('PurchaseOrdersList — draft + active rows (AC-M4.6)', () => {
     mockList([po({ id: 'po-abc', po_number: 'PO-DRAFT-0002' })]);
     render(<PurchaseOrdersList />);
     const link = screen.getByRole('link', { name: /PO-DRAFT-0002/ });
-    expect(link).toHaveAttribute('href', '/scm/purchase-orders/po-abc');
+    // The link carries the active list query so the detail page's prev/next pager walks the
+    // SAME filtered, sorted page the user was reading.
+    const href = link.getAttribute('href') ?? '';
+    expect(href.startsWith('/scm/purchase-orders/po-abc')).toBe(true);
+    expect(href).toContain('page=1');
   });
 
   it('shows Create GR only on active POs (not on drafts)', () => {

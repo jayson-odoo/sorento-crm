@@ -10,8 +10,11 @@ setting is visible alongside the numbers it explains); write requires
 from __future__ import annotations
 
 import uuid
+from datetime import date
+from typing import Optional
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -19,6 +22,7 @@ from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.schemas.scm_dashboard import DeadStockDays, DeadStockDaysUpdate
 from app.services.error_handler import AppException
+from app.services.scm import cash_budget_service
 from app.services.scm.reorder_policy import (
     DEFAULT_DEAD_STOCK_DAYS,
     global_policy_row,
@@ -84,3 +88,50 @@ def set_dead_stock_days(
         )
     db.commit()
     return {"dead_stock_days": days}
+
+
+# --------------------------------------------------------------------------- #
+# the company's own cash budget
+# --------------------------------------------------------------------------- #
+
+
+class CashBudgetWrite(BaseModel):
+    #: Null CLEARS the budget, which puts the plan back to showing itself whole.
+    budget_amount: Optional[float] = Field(None, ge=0)
+    currency: Optional[str] = Field(None, max_length=3)
+    period_start: Optional[date] = None
+    period_end: Optional[date] = None
+    note: Optional[str] = None
+
+
+@router.get("/config/cash-budget")
+def get_cash_budget(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """What the company says it can spend, from `scm.purchasing_budget`.
+
+    Read on the dashboard slug because the planning screen shows the figure beside the plan
+    it constrains. `configured: false` means nobody has set one, and the plan then shows
+    itself whole rather than inventing a limit.
+    """
+    return cash_budget_service.get_budget(db)
+
+
+@router.put("/config/cash-budget")
+def put_cash_budget(
+    body: CashBudgetWrite,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(_MANAGE),
+):
+    """Set or clear the global cash budget. Writing requires `scm.config.manage`."""
+    return cash_budget_service.put_budget(
+        db,
+        budget_amount=body.budget_amount,
+        currency=body.currency,
+        period_start=body.period_start,
+        period_end=body.period_end,
+        note=body.note,
+        actor=current_user.get("id"),
+    )
+

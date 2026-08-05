@@ -21,6 +21,8 @@ import { Slider, SliderThumb } from '@/components/ui/slider';
 import { fmtInt, fmtMoney } from '../../lib/format';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import type { M8PlanState } from '../hooks/useReorderPlan';
+import { formatDateInMalaysia } from '@/lib/helpers';
+import { useCashBudget, useSaveCashBudget } from '../hooks/useCashBudget';
 import { m8CashImpact, type M8PlanRow } from '../lib/planRow';
 import { BUDGET_STEP } from '../lib/reorderCashAllocation';
 import type { ReorderRecommendation } from '../types/reorder.types';
@@ -36,6 +38,13 @@ import { ReorderExplanationDialog } from './ReorderExplanationDialog';
  */
 export function CashCopilotResults({ plan }: { plan: M8PlanState }) {
   const { funding, displayRank, decisions, editedIds, poByRow, budget, setBudget, fund, defer, reject, editRow, confirm: runConfirm, isConfirming } = plan;
+  // The standing company figure behind the budget control, so the header can say whose
+  // number it is and let the buyer make theirs the standing one.
+  const cashBudgetQuery = useCashBudget();
+  const cashBudget = cashBudgetQuery.data;
+  const saveBudget = useSaveCashBudget();
+  const onSaveBudget = (amount: number) => saveBudget.mutate({ budget_amount: amount });
+  const savingBudget = saveBudget.isPending;
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [activeRow, setActiveRow] = useState<M8PlanRow | null>(null);
@@ -169,6 +178,32 @@ export function CashCopilotResults({ plan }: { plan: M8PlanState }) {
       >
         <SliderThumb aria-label="Budget amount" />
       </Slider>
+      {/* Where the number CAME from. Without this the budget reads as a fact about the
+          company when it may be nothing of the sort - which is how a plan came to show
+          "Over budget" against a limit nobody had set. */}
+      <div className="flex items-center gap-2 text-2xs text-muted-foreground">
+        {cashBudget?.configured ? (
+          <span>
+            Company budget
+            {cashBudget.period_start && cashBudget.period_end
+              ? ` · ${formatDateInMalaysia(cashBudget.period_start)} to ${formatDateInMalaysia(cashBudget.period_end)}`
+              : ''}
+          </span>
+        ) : (
+          <span>No company budget set, so the whole plan is shown</span>
+        )}
+        {budget > 0 && budget !== (cashBudget?.budget_amount ?? -1) ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-2xs"
+            onClick={() => onSaveBudget(budget)}
+            disabled={savingBudget}
+          >
+            Save as our budget
+          </Button>
+        ) : null}
+      </div>
       <div className="text-right text-2xs leading-tight">
         <div className="tabular-nums">{fmtMoney(funding.committed)} committed</div>
         <div className={funding.free < 0 ? 'text-scm-stockout tabular-nums' : 'text-scm-incoming tabular-nums'}>

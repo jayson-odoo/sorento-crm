@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import {
   ColumnDef,
   PaginationState,
@@ -102,6 +103,17 @@ export default function PurchaseOrdersList() {
 
   const rows = useMemo<PurchaseOrder[]>(() => data?.data ?? [], [data]);
 
+  // Carried into the detail URL so its prev/next pager walks the SAME filtered, sorted page
+  // the user was reading (same param names as the list GET).
+  const detailSearch = useMemo(
+    () =>
+      buildDetailSearch(
+        { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery },
+        { status: statusFilter || undefined },
+      ),
+    [pagination.pageIndex, pagination.pageSize, sorting, searchQuery, statusFilter],
+  );
+
   const columns = useMemo<ColumnDef<PurchaseOrder>[]>(
     () => [
       // Select-all means all rows (the user unticks what they don't want); the Confirm
@@ -113,7 +125,7 @@ export default function PurchaseOrdersList() {
         cell: ({ row }) => (
           <div className="flex flex-col">
             <Link
-              href={`/scm/purchase-orders/${row.original.id}`}
+              href={`/scm/purchase-orders/${row.original.id}${detailSearch ? `?${detailSearch}` : ''}`}
               onClick={(e) => e.stopPropagation()}
               className="font-medium text-primary hover:underline"
               title={`Open ${row.original.po_number}`}
@@ -225,7 +237,7 @@ export default function PurchaseOrdersList() {
         enableSorting: false,
       },
     ],
-    [],
+    [detailSearch],
   );
 
   const table = useReactTable({

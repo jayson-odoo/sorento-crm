@@ -333,6 +333,10 @@ export type PurchaseOrderStatus =
   | 'confirmed'
   | 'partially_received'
   | 'received'
+  // Imported purchase history is written closed and fully received (it is history, not
+  // incoming supply). The union omitted it, so every historical order was typed as
+  // something it is not and only rendered by the title-case fallback.
+  | 'closed'
   | 'cancelled';
 
 export interface PurchaseOrderLine {

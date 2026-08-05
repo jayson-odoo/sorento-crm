@@ -239,9 +239,22 @@ describe('scoreFromFactors — graceful degrade (M4-D14)', () => {
 });
 
 describe('slider bounds derive from the run costed cash', () => {
-  it('sliderMaxFor adds ~10% headroom rounded to RM 1,000; defaultBudgetFor ≈ 60%', () => {
+  it('sliderMaxFor adds ~10% headroom rounded to RM 1,000', () => {
     const recs = [rec('a', 1, 6000), rec('b', 2, 4000), rec('c', 3, null)];
     expect(sliderMaxFor(recs)).toBe(11000); // ceil(10000*1.1/1000)*1000
-    expect(defaultBudgetFor(recs)).toBe(6000); // round(10000*0.6/500)*500
+  });
+
+  it('the default budget is the COMPANY figure when there is one', () => {
+    const recs = [rec('a', 1, 6000), rec('b', 2, 4000), rec('c', 3, null)];
+    expect(defaultBudgetFor(recs, 5_000_000)).toBe(5_000_000);
+  });
+
+  it('with no company figure the default is the whole plan, not a fraction of it', () => {
+    // It used to open at ~60% of the plan's own cost, which invents a limit nobody set and
+    // files the rest under "Over budget".
+    const recs = [rec('a', 1, 6000), rec('b', 2, 4000), rec('c', 3, null)];
+    expect(defaultBudgetFor(recs)).toBe(10000);
+    expect(defaultBudgetFor(recs, null)).toBe(10000);
+    expect(defaultBudgetFor(recs, 0)).toBe(10000);
   });
 });

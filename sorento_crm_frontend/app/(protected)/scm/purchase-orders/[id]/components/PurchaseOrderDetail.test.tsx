@@ -34,6 +34,9 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 const usePurchaseOrder = vi.fn();
 vi.mock('../../../hooks/usePurchaseOrders', () => ({
   usePurchaseOrder: (...a: unknown[]) => usePurchaseOrder(...a),
+  // The header's prev/next pager reads the same list the user came from. One row means no
+  // neighbours, so the pager renders nothing and these tests stay about the record itself.
+  usePurchaseOrders: () => ({ data: { data: [], pagination: { total: 0, page: 1, limit: 25 } } }),
 }));
 
 import { PurchaseOrderDetail } from './PurchaseOrderDetail';
@@ -165,5 +168,32 @@ describe('PurchaseOrderDetail (AC-M4.6)', () => {
     });
     render(<PurchaseOrderDetail id="po-1" />);
     expect(screen.getByText('This purchase order has no lines.')).toBeInTheDocument();
+  });
+});
+
+describe('PurchaseOrderDetail — why a PO is not on order', () => {
+  it('does not call a closed historical order a draft', () => {
+    // An imported 2020 order is closed and fully received. "Not on order (draft)" says
+    // somebody has yet to confirm a purchase that arrived six years ago.
+    usePurchaseOrder.mockReturnValue({
+      data: po({ status: 'closed', source: 'import', is_on_order: false }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<PurchaseOrderDetail id="po-1" />);
+
+    expect(screen.getByText('Not on order (nothing outstanding)')).toBeInTheDocument();
+    expect(screen.queryByText('Not on order (draft)')).toBeNull();
+  });
+
+  it('still calls a draft a draft', () => {
+    usePurchaseOrder.mockReturnValue({
+      data: po({ status: 'draft_recommendation', is_on_order: false }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<PurchaseOrderDetail id="po-1" />);
+
+    expect(screen.getByText('Not on order (draft)')).toBeInTheDocument();
   });
 });

@@ -6,6 +6,7 @@ import { computeFundingM8, defaultBudgetFor, type M8FundingResult } from '../lib
 import { applyBudget } from '../services/reorderRunService';
 import { m8CashImpact, recToPlanRow, type M8PlanRow, type M8ProposalLine } from '../lib/planRow';
 import { useBuyRecommendationsForCash } from './useReorderRun';
+import { useCashBudget } from './useCashBudget';
 import { useDecisionMutations, useRecommendationDecisions } from './useDecisions';
 import type { M8RowDecision } from '../components/CashResultsGrid';
 import type { ReorderRecommendation } from '../types/reorder.types';
@@ -43,6 +44,8 @@ export function useReorderPlan(runId: string | null, enabled: boolean) {
   const mutations = useDecisionMutations(runId);
 
   const recs = useMemo<ReorderRecommendation[]>(() => recsQuery.data ?? [], [recsQuery.data]);
+  // Standing figure, not a property of this run: the same limit constrains every plan.
+  const cashBudget = useCashBudget(enabled);
 
   const [budget, setBudget] = useState(0);
   const [pins, setPins] = useState<Set<string>>(() => new Set());
@@ -54,7 +57,14 @@ export function useReorderPlan(runId: string | null, enabled: boolean) {
   // a DRAG moves exactly one row (no other row reshuffles). The greedy re-splits ONLY
   // when the budget value changes (respecting pins/drags); a drag or a decision never
   // re-runs it. Seeded from the initial greedy once the run loads.
-  const [withinIds, setWithinIds] = useState<Set<string>>(() => new Set());
+  //
+  // `null` means NOT SHAPED YET - no seed has landed and the user has dragged nothing - and
+  // is deliberately distinct from an empty set, which means "the greedy funded nothing at
+  // this budget". Conflating the two is how the screen came to read `Within budget 0` and
+  // `RM 5,923,000 free` at the same time: every input needed to fund 230 lines was on
+  // screen, membership state was empty for an unrelated reason, and the table blamed the
+  // budget. While it is null the view DERIVES the split, so that state cannot be reached.
+  const [withinIds, setWithinIds] = useState<Set<string> | null>(null);
 
   // Adapt recs → grid rows, applying any pending inline edit (qty + supplier swap).
   const rows = useMemo<M8PlanRow[]>(() => {
@@ -83,7 +93,9 @@ export function useReorderPlan(runId: string | null, enabled: boolean) {
   useEffect(() => {
     // Only seed once the decisions query has actually resolved for this run — a
     // disabled query (non-buy view) reports isFetched=false, so we don't seed empty.
-    if (!runId || recs.length === 0 || !decisions.isFetched) return;
+    // Wait for the budget answer too, or the plan seeds itself against a guess and then
+    // jumps when the real figure lands.
+    if (!runId || recs.length === 0 || !decisions.isFetched || !cashBudget.isFetched) return;
     if (seededFor.current === runId) return;
     seededFor.current = runId;
     const nextPins = new Set<string>();
@@ -101,7 +113,8 @@ export function useReorderPlan(runId: string | null, enabled: boolean) {
         };
       }
     }
-    const seededBudget = defaultBudgetFor(recs);
+    // The COMPANY's budget when one is set; otherwise the plan whole. Never a guess.
+    const seededBudget = defaultBudgetFor(recs, cashBudget.data?.budget_amount ?? null);
     setPins(nextPins);
     setRejects(nextRejects);
     setEditedIds(nextEdited);
@@ -126,7 +139,7 @@ export function useReorderPlan(runId: string | null, enabled: boolean) {
     setWithinIds(new Set(split.within.map((r) => r.id)));
     lastGreedyBudget.current = seededBudget;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runId, recs, decisions.isFetched]);
+  }, [runId, recs, decisions.isFetched, cashBudget.data?.budget_amount]);
 
   // Re-run the greedy split ONLY when the budget value actually changes (M8-F): a drag
   // or a decision leaves `lastGreedyBudget` equal to `budget`, so this no-ops and the
@@ -134,18 +147,20 @@ export function useReorderPlan(runId: string | null, enabled: boolean) {
   // pins (force-in) and forcedOver (force-out) so manual drags survive the re-split.
   useEffect(() => {
     if (seededFor.current !== runId || rows.length === 0) return;
-    if (lastGreedyBudget.current === budget) return;
+    if (lastGreedyBudget.current === budget && withinIds !== null) return;
     lastGreedyBudget.current = budget;
     const split = computeFundingM8(rows, budget, { pins, rejects: EMPTY_SET, forcedOver });
     setWithinIds(new Set(split.within.map((r) => r.id)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [budget, rows, runId]);
+  }, [budget, rows, runId, withinIds]);
 
   // Reset the seed guards when the run changes so a run switch re-seeds cleanly.
   useEffect(() => {
     seededFor.current = null;
     lastGreedyBudget.current = null;
-    setWithinIds(new Set());
+    // Back to unshaped, NOT to an empty section: the next render derives the split rather
+    // than claiming nothing is affordable.
+    setWithinIds(null);
   }, [runId]);
 
   // Funding VIEW derived from the STICKY membership (not a fresh greedy) so drags don't
@@ -155,14 +170,22 @@ export function useReorderPlan(runId: string | null, enabled: boolean) {
   const funding = useMemo<M8FundingResult<M8PlanRow>>(() => {
     const needsCost = rows.filter((r) => r.unit_cost === null);
     const costed = rows.filter((r) => r.unit_cost !== null);
-    const within = costed.filter((r) => withinIds.has(r.id)).sort((a, b) => a.rank - b.rank);
-    const over = costed.filter((r) => !withinIds.has(r.id)).sort((a, b) => a.rank - b.rank);
+    // Unshaped membership derives from the budget instead of reading as "nothing funded".
+    const membership =
+      withinIds ??
+      new Set(
+        computeFundingM8(rows, budget, { pins, rejects: EMPTY_SET, forcedOver }).within.map(
+          (r) => r.id,
+        ),
+      );
+    const within = costed.filter((r) => membership.has(r.id)).sort((a, b) => a.rank - b.rank);
+    const over = costed.filter((r) => !membership.has(r.id)).sort((a, b) => a.rank - b.rank);
     let committed = 0;
     for (const r of within) {
       if (!rejects.has(r.id)) committed += m8CashImpact(r) ?? 0;
     }
     return { within, over, needsCost, committed, free: budget - committed };
-  }, [rows, withinIds, rejects, budget]);
+  }, [rows, withinIds, rejects, budget, pins, forcedOver]);
 
   // Sequential 1..N priority label over the COSTED plan (both sections) by rank, so the
   // Rank column reads 1-5 for a 5-buy plan instead of the global engine rank (185, 194);

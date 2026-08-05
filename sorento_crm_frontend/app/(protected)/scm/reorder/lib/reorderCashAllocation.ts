@@ -234,10 +234,26 @@ export function sliderMaxFor(recs: ReorderRecommendation[]): number {
   return Math.ceil((total * 1.1) / 1_000) * 1_000;
 }
 
-/** Default budget — ~60% of the costed total, rounded to a step, so the funded
- *  boundary lands mid-list with a visible funded/deferred split on first render. */
-export function defaultBudgetFor(recs: ReorderRecommendation[]): number {
+/**
+ * The budget the plan opens with.
+ *
+ * The COMPANY's figure when one is configured (`scm.purchasing_budget`, served by
+ * `/scm/config/cash-budget`). Otherwise the plan's own costed total, so nothing is deferred
+ * for a reason nobody gave.
+ *
+ * It used to open at ~60% of the plan's cost, to put a visible cut line mid-list. That
+ * teaches the mechanic at the price of inventing a constraint: a RM 5.9m plan opened with
+ * RM 3.55m "available" and 59 lines under a heading reading Over budget, which is a number
+ * the company never stated presented as if it had. A limit nobody set is not a cautious
+ * default, it is a wrong one - so the plan now shows itself whole and the buyer types the
+ * limit they actually have.
+ */
+export function defaultBudgetFor(
+  recs: ReorderRecommendation[],
+  configuredBudget?: number | null,
+): number {
+  if (configuredBudget != null && configuredBudget > 0) return configuredBudget;
   const total = totalCostedCash(recs);
   if (total <= 0) return 0;
-  return Math.max(BUDGET_STEP, Math.round((total * 0.6) / BUDGET_STEP) * BUDGET_STEP);
+  return Math.ceil(total / BUDGET_STEP) * BUDGET_STEP;
 }
