@@ -347,24 +347,38 @@ def aggregate_network(warehouses: list[dict], *, lead_time_days: float,
 
 def disposition(*, on_hand: float, last_movement_days: Optional[float],
                 dead_stock_days: float, days_of_cover_val: Optional[float],
-                overstock_days: float) -> Optional[dict]:
-    """Dead (an ACTUAL stale movement > dead_stock_days) OR overstock (DoC >
-    overstock_days) → a disposition rec. Dead takes precedence. ``None`` when neither
-    applies.
+                overstock_days: float,
+                last_purchase_days: Optional[float] = None) -> Optional[dict]:
+    """Dead (stale movement, or stock older than the window that has never moved) OR
+    overstock (DoC > overstock_days) → a disposition rec. Dead takes precedence.
+    ``None`` when neither applies.
 
-    A never-moved SKU (``last_movement_days is None``) is NOT dead — no consumption
-    history is not the same as a stale movement, and a stocked-but-idle SKU should not
-    be auto-flagged for discontinuation. It may still be overstock (independent DoC
-    check) when it has demand + high cover.
+    Two ways to be dead, and the rec says WHICH, because they are different evidence and
+    a buyer acts differently on each:
+
+    * ``movement`` - it moved, and the last time was longer ago than the window.
+    * ``ageing`` - it has NEVER moved, and the stock sitting there was bought longer ago
+      than the window. *"If I order from 5 years ago and now still got stock, this is not
+      very hot selling"* - which is a fact about THIS stock rather than a statistic about
+      demand, and is why it is stronger evidence than variance alone.
+
+    The ageing branch is deliberately confined to the never-moved case. Without a purchase
+    date there was no evidence either way there, so the rule abstained ("no consumption
+    history is not the same as a stale movement") and a stocked-but-idle SKU was never
+    flagged. The purchase-history feed supplies exactly that missing evidence, so the
+    abstention is now only correct while the purchase date is ALSO unknown. A SKU that
+    moved recently is not dead however old its last purchase is - that is a slow seller,
+    and slow-but-selling is what the overstock check below is for.
     """
     if not on_hand or float(on_hand) <= 0:
         return None
-    is_dead = (last_movement_days is not None
-               and float(last_movement_days) > float(dead_stock_days))
-    if is_dead:
-        return {"type": "dead", "action": "discontinue_or_promo"}
+    if last_movement_days is not None:
+        if float(last_movement_days) > float(dead_stock_days):
+            return {"type": "dead", "action": "discontinue_or_promo", "basis": "movement"}
+    elif last_purchase_days is not None and float(last_purchase_days) > float(dead_stock_days):
+        return {"type": "dead", "action": "discontinue_or_promo", "basis": "ageing"}
     if days_of_cover_val is not None and float(days_of_cover_val) > float(overstock_days):
-        return {"type": "overstock", "action": "hold_or_promo"}
+        return {"type": "overstock", "action": "hold_or_promo", "basis": "cover"}
     return None
 
 

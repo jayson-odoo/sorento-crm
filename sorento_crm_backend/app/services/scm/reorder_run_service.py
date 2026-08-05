@@ -321,13 +321,17 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
 
         rows = _planning_rows(db, run.warehouse_ids, run.product_ids)
         last_move = _last_movement_map(db, [r["product_id"] for r in rows], run.warehouse_ids)
+        # L5 - how long the stock sitting there has been sitting. Only ever consulted for a
+        # SKU that has never moved, where until now there was no evidence at all.
+        last_buy = _last_purchase_map(db, [r["product_id"] for r in rows])
         wh_meta = {str(r["warehouse_id"]): (r["warehouse_code"], r["warehouse_name"]) for r in rows}
 
         if run.buy_scope == "network":
-            recs = _plan_network(db, run_id, rows, policies, today, last_move, wh_meta)
+            recs = _plan_network(db, run_id, rows, policies, today, last_move, wh_meta,
+                                 last_buy=last_buy)
         else:
             recs = _plan_per_warehouse(db, run_id, rows, policies, today, last_move,
-                                       wh_meta)
+                                       wh_meta, last_buy=last_buy)
 
         # M4 cash stage — compute + FREEZE each buy's rank_score / rank / rank_factors
         # (funded/deferred is computed live at view-time against a budget, not here).
@@ -470,6 +474,34 @@ def _last_movement_map(db: Session, product_ids: list[str],
     return {(str(r[0]), str(r[1])): r[2] for r in rows}
 
 
+def _last_purchase_map(db: Session, product_ids: list[str]) -> dict[str, date]:
+    """``{product_id: last purchase date}``, including the imported history.
+
+    Keyed by PRODUCT, not by (product, warehouse). The purchase-history export names no
+    location at all, so a per-warehouse key would silently drop every historical order and
+    leave the ageing signal reading "never bought" for exactly the stock it exists to judge.
+    Buying is a product-level act here in any case: one order lands and is put away wherever
+    there is room.
+
+    Company-scoped through the joined order, for the same reason as `_last_movement_map`:
+    this is raw SQL, so the ORM isolation filter never sees it.
+    """
+    pids = list({str(p) for p in product_ids})
+    if not pids:
+        return {}
+    co, co_params = company_sql_predicate(db, "po.company_id", param_prefix="clp")
+    rows = db.execute(text(f"""
+        SELECT pol.product_id, MAX(po.issue_date) AS last_day
+        FROM purchase_order_lines pol
+        JOIN purchase_orders po ON po.id = pol.purchase_order_id
+        WHERE pol.product_id::text = ANY(:pids)
+          AND po.issue_date IS NOT NULL
+          {("AND " + co) if co else ""}
+        GROUP BY pol.product_id
+    """), {"pids": pids, **co_params}).fetchall()
+    return {str(r[0]): r[1] for r in rows}
+
+
 # ===========================================================================
 # per-warehouse planning (buy_scope=warehouse)
 # ===========================================================================
@@ -498,7 +530,8 @@ def _pool_map(db: Session, rows: list[dict]) -> dict[str, str]:
 
 def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: list[dict],
                         today: date, last_move: dict,
-                        wh_meta: Optional[dict] = None) -> list[ReorderRecommendation]:
+                        wh_meta: Optional[dict] = None,
+                        last_buy: Optional[dict] = None) -> list[ReorderRecommendation]:
     """Plan each SKU against each fulfilment POOL, not each warehouse.
 
     A shortage in one bin is covered from the shared pool its site draws on before it is
@@ -525,7 +558,7 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
         cands = eng.load_supplier_candidates(db, pid)
         computed: list[dict] = []
         for r in prows:
-            c = _compute_cell(db, r, policies, cands, today, last_move)
+            c = _compute_cell(db, r, policies, cands, today, last_move, last_buy)
             computed.append(c)
         flags = _transfer_flags_for(prows, computed)
 
@@ -628,14 +661,15 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
                                    warehouse_id=str(r["warehouse_id"]),
                                    order_qty=None, rounded=None,
                                    reason_enum=disp["type"],
-                                   reason_label=_disposition_label(disp["type"], cell),
+                                   reason_label=_disposition_label(
+                                       disp["type"], cell, disp.get("basis")),
                                    disposition_action=action,
                                    transfer_flag=flags.get(str(r["warehouse_id"]))))
     return recs
 
 
 def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict],
-                  today: date, last_move: dict) -> dict:
+                  today: date, last_move: dict, last_buy: Optional[dict] = None) -> dict:
     """Run the engine for one SKU×warehouse; returns the frozen decision values."""
     pid = str(row["product_id"])
     wid = str(row["warehouse_id"])
@@ -696,9 +730,14 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
 
     lm = last_move.get((pid, wid))
     lm_days = (today - lm).days if lm else None
+    # Product-keyed: the purchase-history export names no location, so a per-warehouse
+    # lookup would read "never bought" for exactly the stock this signal exists to judge.
+    lb = (last_buy or {}).get(pid)
+    lb_days = (today - lb).days if lb else None
     disp = eng.disposition(
         on_hand=on_hand, last_movement_days=lm_days, dead_stock_days=dead_days,
-        days_of_cover_val=doc, overstock_days=overstock_days)
+        days_of_cover_val=doc, overstock_days=overstock_days,
+        last_purchase_days=lb_days)
 
     demand_adequate = demand_rate > 0 and cv is not None
     supplier_adequate = bool(chosen) and (chosen.get("supplier_confidence") in ("high", "medium"))
@@ -720,6 +759,8 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
         "rop": rop, "oup": oup, "triggered": triggered, "reason_label": reason_label,
         "recommended": recommended, "rounded": rounded, "doc": doc,
         "disposition": disp, "confidence": conf, "sample_size": sample_size,
+        # Carried so the reason can quote the actual age rather than assert one.
+        "last_purchase_days": lb_days,
         "selection": tog["supplier_selection"],
         "overstock": bool(disp and disp["type"] == "overstock"),
         "short": net < rop,
@@ -757,7 +798,7 @@ def _emit_cell(run_id: str, row: dict, c: dict,
     # disposition (dead / overstock)
     if disp:
         action = "discontinue" if disp["type"] == "dead" else "hold"
-        label = _disposition_label(disp["type"], c)
+        label = _disposition_label(disp["type"], c, disp.get("basis"))
         out.append(_build_rec(run_id, "disposition", row, c,
                               warehouse_id=str(row["warehouse_id"]),
                               order_qty=None, rounded=None,
@@ -771,7 +812,8 @@ def _emit_cell(run_id: str, row: dict, c: dict,
 # ===========================================================================
 
 def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dict],
-                  today: date, last_move: dict, wh_meta: dict) -> list[ReorderRecommendation]:
+                  today: date, last_move: dict, wh_meta: dict,
+                  last_buy: Optional[dict] = None) -> list[ReorderRecommendation]:
     recs: list[ReorderRecommendation] = []
     by_product: dict[str, list[dict]] = {}
     for r in rows:
@@ -780,7 +822,8 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
     for pid, prows in by_product.items():
         cands = eng.load_supplier_candidates(db, pid)
         # per-warehouse cells (drive disposition + transfer flags + allocation demand)
-        computed = [_compute_cell(db, r, policies, cands, today, last_move) for r in prows]
+        computed = [_compute_cell(db, r, policies, cands, today, last_move, last_buy)
+                    for r in prows]
         flags = _transfer_flags_for(prows, computed)
 
         # --- aggregate buy on the network ---
@@ -847,7 +890,7 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
             disp = cell["disposition"]
             if disp:
                 action = "discontinue" if disp["type"] == "dead" else "hold"
-                label = _disposition_label(disp["type"], cell)
+                label = _disposition_label(disp["type"], cell, disp.get("basis"))
                 recs.append(_build_rec(run_id, "disposition", r, cell,
                                        warehouse_id=str(r["warehouse_id"]),
                                        order_qty=None, rounded=None,
@@ -1041,8 +1084,15 @@ def _transfer_flags_for(prows: list[dict], computed: list[dict]) -> dict[str, st
     return out
 
 
-def _disposition_label(kind: str, c: dict) -> str:
+def _disposition_label(kind: str, c: dict, basis: Optional[str] = None) -> str:
     if kind == "dead":
+        if basis == "ageing":
+            days = c.get("last_purchase_days")
+            # The age is quoted rather than asserted: "bought 1,876 days ago and has never
+            # moved" is a fact somebody can check, and it is the whole argument for the call.
+            return (f"dead stock: bought {int(days):,} days ago and has never moved"
+                    if days is not None
+                    else "dead stock: bought before the dead-stock window and has never moved")
         return "dead stock: no movement in the dead-stock window"
     doc = c.get("doc")
     return f"overstock: runway of {doc:g} days exceeds the ceiling" if doc is not None \

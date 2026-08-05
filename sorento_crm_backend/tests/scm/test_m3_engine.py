@@ -247,7 +247,10 @@ def test_case_M_disposition_and_transfer():
     d = eng.disposition(on_hand=dead["on_hand"], last_movement_days=dead["last_movement_days"],
                         dead_stock_days=dead["dead_stock_days"], days_of_cover_val=None,
                         overstock_days=120)
-    assert d == {"type": dead["type"], "action": dead["action"]}
+    # A SUBSET check, not equality: the golden set pins the type and the action, which are
+    # what the plan acts on. The engine also reports which evidence fired (`basis`, L5), and
+    # pinning the whole dict here would make every future signal a golden-set change.
+    assert (d["type"], d["action"]) == (dead["type"], dead["action"])
 
     over = g["overstock"]
     doc = eng.days_of_cover(over["on_hand"], over["demand_rate"])
@@ -255,10 +258,12 @@ def test_case_M_disposition_and_transfer():
     o = eng.disposition(on_hand=over["on_hand"], last_movement_days=1,
                         dead_stock_days=180, days_of_cover_val=doc,
                         overstock_days=over["overstock_days"])
-    assert o == {"type": over["type"], "action": over["action"]}
+    assert (o["type"], o["action"]) == (over["type"], over["action"])
 
-    # never-moved with stock is NOT dead (no consumption history != a stale movement).
-    # A stocked-but-idle SKU must not be auto-flagged for discontinuation.
+    # never-moved with stock and NO purchase date is NOT dead (no consumption history != a
+    # stale movement). A stocked-but-idle SKU must not be auto-flagged for discontinuation
+    # on no evidence. L5 narrows this to "no evidence": once the purchase history says the
+    # stock was bought before the window, the same case IS dead - see test_ageing_signal.py.
     assert eng.disposition(on_hand=10, last_movement_days=None, dead_stock_days=180,
                            days_of_cover_val=None, overstock_days=120) is None
     # never-moved BUT overstocked (high cover) -> overstock still applies independently
