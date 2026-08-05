@@ -39,6 +39,10 @@ async def list_clearance_checkpoints(
     real workbook has containers with a gatepass and no inspection, so a container
     reaches whichever checkpoints its dates say it reached, in any combination.
 
+    One flat ordered list, no grouping: group names would have to be a hardcoded
+    map somewhere, which leaves an admin-added checkpoint with nowhere to belong
+    (D35).
+
     Definitions live in `statuses` under entity_type `inbound_shipment` and are
     admin-editable in System Management -> Status Graphs. `key` is the
     `inbound_shipments` date column the checkpoint reads and is frozen on update,
@@ -66,7 +70,6 @@ async def list_clearance_checkpoints(
                 "field": row.key,
                 "label": row.label,
                 "caption": row.description,
-                "group": row.category,
                 "color": row.color_hex,
                 "sort_order": row.sort_order,
             }

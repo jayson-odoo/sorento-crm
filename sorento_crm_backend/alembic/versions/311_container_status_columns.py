@@ -2,13 +2,19 @@
 
 `Container Status 2026.xlsx` is maintained by hand and holds the dates n8n needs to
 answer "what's the ETA delay". One sheet row IS one packing list - the codebase
-already treats the container number as the shipment's identity - so the 25 operational
+already treats the container number as the shipment's identity - so the 21 operational
 fields land as flat columns on `inbound_shipments` rather than in a milestone child
 table (decisions D1, D3). Revision history comes free from `__audit_track__` on the
 model, so there is no revisions table either (D5).
 
 Every column is nullable with no server default, so existing rows are untouched by
 this DDL and nothing existing reads them yet.
+
+`ATA`, `ORI DOC RECEIVED`, `K1 SUBMISSION` and `YARD ARRIVALS` are on the sheet but
+are NOT columns here. They are filled 6 / 4 / 4 / 4 times across 407 containers, no
+status node, alert or integration reads them, and carrying a column nobody
+maintains is worse than not having it - the retained source file preserves them if
+anyone ever needs the history (D34).
 
 `shipment_tracking_observations` is the other half: append-only, integration-only.
 A liner or CIDB adapter records what it SAW, and never writes to the shipment row.
@@ -62,11 +68,6 @@ _DATE_COLUMNS = [
     "warehouse_arrival_date",
     "informed_collection_date",
     "collection_date",
-    # Round-trip only. Fill rates across the 407 real containers: 6 / 4 / 4 / 4.
-    "ata_date",
-    "ori_doc_received_date",
-    "k1_submission_date",
-    "yard_arrival_date",
 ]
 
 

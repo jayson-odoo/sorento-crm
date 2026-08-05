@@ -67,14 +67,10 @@ FIELD_MAP: dict[str, str] = {
     "ETD": "etd_date",
     "ETA": "eta_date",
     "ETA DELAY": "eta_delay_date",
-    "ATA": "ata_date",
     "INSPECTION": "inspection_date",
     "APPROVAL": "approval_date",
-    "ORI DOC RECEIVED DATE": "ori_doc_received_date",
-    "K1 SUBMISSION": "k1_submission_date",
     "GATEPASS": "gatepass_date",
     "DELIVERY WAREHOUSE": "delivery_warehouse",
-    "YARD ARRIVALS": "yard_arrival_date",
     "WAREHOUSE ARRIVALS": "warehouse_arrival_date",
     "INFORMED COLLECTION": "informed_collection_date",
     "COLLECTION": "collection_date",
@@ -91,6 +87,13 @@ IGNORED_HEADERS: frozenset[str] = frozenset(
         "NO",
         "FACTORY",
         "PRODUCT",
+        # Present on every tab, filled 6 / 4 / 4 / 4 times across 407 containers.
+        # Read by nothing, so not imported at all (D34); the retained source file
+        # keeps them.
+        "ATA",
+        "ORI DOC RECEIVED DATE",
+        "K1 SUBMISSION",
+        "YARD ARRIVALS",
         "REMARKS 1",
         "REMARKS 2",
         "REMARKS 3",

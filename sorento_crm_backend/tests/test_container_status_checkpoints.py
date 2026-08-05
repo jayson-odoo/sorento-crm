@@ -64,13 +64,12 @@ def _seed_checkpoints(db) -> None:
     would test the local database instead, and CI's is empty.
     """
     module = _load_migration()
-    for index, (key, label, category, caption, colour) in enumerate(module.CHECKPOINTS):
+    for index, (key, label, caption, colour) in enumerate(module.CHECKPOINTS):
         db.add(
             Status(
                 id=str(uuid.uuid4()),
                 entity_type=ENTITY_TYPE,
                 key=key,
-                category=category,
                 label=label,
                 color_hex=colour,
                 description=caption,
@@ -110,11 +109,10 @@ def test_the_seeded_checkpoints_map_onto_real_shipment_columns():
     columns = InboundShipment.__table__.columns
 
     assert len(module.CHECKPOINTS) == 11
-    for key, label, category, caption, colour in module.CHECKPOINTS:
+    for key, label, caption, colour in module.CHECKPOINTS:
         assert key in columns, f"{key} is not a column on inbound_shipments"
         assert isinstance(columns[key].type, sa.Date), f"{key} must be a date"
         assert label and caption
-        assert category in ("origin", "sea", "clearance", "delivery")
         assert colour.startswith("#")
 
 
@@ -136,10 +134,14 @@ def test_the_seed_order_is_the_real_chain():
     ]
 
 
-def test_the_four_unmaintained_fields_are_not_checkpoints():
-    """ATA, ORI DOC, K1 and YARD are filled 6/4/4/4 times out of 407. They stay on
-    the record for round-tripping, but a timeline of eleven mostly-blank dots would
-    be worse than useless (B7)."""
+def test_the_four_unmaintained_fields_are_gone_from_the_system_entirely(db):
+    """ATA, ORI DOC, K1 and YARD are filled 6/4/4/4 times out of 407 and nothing
+    reads them. They are not checkpoints, not columns, and not parsed - a column
+    nobody maintains is worse than no column (D34). The retained source file keeps
+    the history."""
+    from app.services.container_status_import import FIELD_MAP
+    from app.services.container_status_service import WRITABLE_FIELDS
+
     module = _load_migration()
     keys = {key for key, *_ in module.CHECKPOINTS}
     for dead in (
@@ -149,6 +151,24 @@ def test_the_four_unmaintained_fields_are_not_checkpoints():
         "yard_arrival_date",
     ):
         assert dead not in keys
+        assert dead not in InboundShipment.__table__.columns
+        assert dead not in FIELD_MAP.values()
+        assert dead not in WRITABLE_FIELDS
+
+
+def test_checkpoints_carry_no_grouping():
+    """Grouping was ORIGIN / SEA / CLEARANCE / DELIVERY, but the four names lived in
+    a hardcoded map in the component - an admin-added checkpoint had nowhere to
+    belong and renaming a group meant a release. Order alone carries it (D35)."""
+    module = _load_migration()
+    assert all(len(entry) == 4 for entry in module.CHECKPOINTS)
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "alembic"
+        / "versions"
+        / "312_container_status_checkpoints.py"
+    ).read_text()
+    assert '"category"' not in source
 
 
 def test_no_checkpoint_is_initial_or_terminal_or_system():

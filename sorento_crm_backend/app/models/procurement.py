@@ -141,7 +141,7 @@ class InboundShipment(Base, CompanyScopedMixin):
     etc_date = Column(Date, nullable=True)
     etd_date = Column(Date, nullable=True)
     # First-published ETA. `eta_delay_date` is the revised one and the accurate
-    # one; auto-transitions key off it, never off `ata_date` (B6).
+    # one; auto-transitions key off it, never off ATA (B6, D34).
     eta_date = Column(Date, nullable=True)
     eta_delay_date = Column(Date, nullable=True)
     inspection_date = Column(Date, nullable=True)
@@ -152,13 +152,10 @@ class InboundShipment(Base, CompanyScopedMixin):
     informed_collection_date = Column(Date, nullable=True)
     collection_date = Column(Date, nullable=True)
 
-    # Stored so the sheet round-trips, but dead in practice: fill rates across
-    # the 407 real containers are 6 / 4 / 4 / 4. No status node, no alert and no
-    # integration reads these (B7).
-    ata_date = Column(Date, nullable=True)
-    ori_doc_received_date = Column(Date, nullable=True)
-    k1_submission_date = Column(Date, nullable=True)
-    yard_arrival_date = Column(Date, nullable=True)
+    # ATA / ORI DOC RECEIVED / K1 SUBMISSION / YARD ARRIVALS are deliberately NOT
+    # columns. Filled 6 / 4 / 4 / 4 across 407 containers, read by nothing, and a
+    # column nobody maintains is worse than no column - the retained source file
+    # keeps the history (D34).
 
     coa_permit_no = Column(String(100), nullable=True)
     # Which workbook tab the row came from. Traceability only - it must never

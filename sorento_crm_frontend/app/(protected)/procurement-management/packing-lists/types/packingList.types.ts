@@ -116,15 +116,12 @@ export interface ClearanceFields {
   informed_collection_date?: string | null;
   collection_date?: string | null;
 
-  /**
-   * Dead in practice - kept for round-tripping the sheet only. Fill rates across
-   * 411 rows: ata 6, ori_doc_received 4, k1_submission 4, yard_arrival 4.
-   * No status node, alert or integration keys off these.
+  /*
+   * ATA, ORI DOC RECEIVED, K1 SUBMISSION and YARD ARRIVALS are deliberately absent.
+   * They exist on the sheet but are filled 6 / 4 / 4 / 4 times across 407
+   * containers and nothing reads them, so they are not columns, not imported and
+   * not shown. The retained source file keeps the history (D34).
    */
-  ata_date?: string | null;
-  ori_doc_received_date?: string | null;
-  k1_submission_date?: string | null;
-  yard_arrival_date?: string | null;
 
   coa_permit_no?: string | null;
   /** Which workbook tab the row came from. Traceability only - never derives status. */

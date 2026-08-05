@@ -1,7 +1,7 @@
 """Seed the container clearance checkpoints as configurable `statuses` rows.
 
 The Clearance & Delivery card was a hardcoded array in a React component: eleven
-milestones, their labels, their groups and their captions all literals. Renaming
+milestones, their labels, their groupings and their captions all literals. Renaming
 "Gatepass" to "Released from port", reordering a step, hiding one, or adding a new
 one all meant a code change and a deploy.
 
@@ -11,7 +11,6 @@ new schema:
     key         the `inbound_shipments` date column this checkpoint reads
     label       what the timeline shows
     description the muted caption under it
-    category    the group (origin / sea / clearance / delivery)
     sort_order  timeline order
     color_hex   the dot colour once reached
     is_active   uncheck to hide the checkpoint
@@ -50,63 +49,37 @@ depends_on = None
 
 ENTITY_TYPE = "inbound_shipment"
 
-# (key, label, category, caption, colour). Order here IS the timeline order.
+# (key, label, caption, colour). Order here IS the timeline order.
+#
+# There is deliberately NO grouping column. An earlier version grouped these into
+# ORIGIN / SEA / CLEARANCE / DELIVERY, but those four names were a hardcoded map in
+# the component - an admin adding a checkpoint had nowhere to put it, and renaming a
+# group meant a release. One flat ordered list has no such trap (D35).
+#
 # The captions are the real intervals from the sheet and from CIDB's published
 # procedure, not invented SLAs.
 CHECKPOINTS = [
-    ("loading_date", "Loading", "origin", "2-4 days before ETD", "#94a3b8"),
-    ("etc_date", "ETC", "origin", "China forwarder", "#94a3b8"),
-    ("etd_date", "ETD", "origin", "China forwarder", "#94a3b8"),
-    ("eta_date", "ETA", "sea", "Liner, first published", "#0ea5e9"),
-    (
-        "eta_delay_date",
-        "ETA Delay",
-        "sea",
-        "Liner, revised - the accurate one",
-        "#0284c7",
-    ),
-    (
-        "inspection_date",
-        "Inspection",
-        "clearance",
-        "CIDB officer at port",
-        "#f59e0b",
-    ),
+    ("loading_date", "Loading", "2-4 days before ETD", "#94a3b8"),
+    ("etc_date", "ETC", "China forwarder", "#94a3b8"),
+    ("etd_date", "ETD", "China forwarder", "#94a3b8"),
+    ("eta_date", "ETA", "Liner, first published", "#0ea5e9"),
+    ("eta_delay_date", "ETA Delay", "Liner, revised - the accurate one", "#0284c7"),
+    ("inspection_date", "Inspection", "CIDB officer at port", "#f59e0b"),
     (
         "approval_date",
         "Approval (COA)",
-        "clearance",
         "CIDB, within 3 working days of inspection",
         "#f59e0b",
     ),
     (
         "gatepass_date",
         "Gatepass",
-        "clearance",
         "Malaysia forwarder, same day as duty paid",
         "#f97316",
     ),
-    (
-        "warehouse_arrival_date",
-        "Warehouse Arrival",
-        "delivery",
-        "Yard",
-        "#22c55e",
-    ),
-    (
-        "informed_collection_date",
-        "Informed Collection",
-        "delivery",
-        "48h after gatepass",
-        "#22c55e",
-    ),
-    (
-        "collection_date",
-        "Collection",
-        "delivery",
-        "Within 6 days of exit gate",
-        "#16a34a",
-    ),
+    ("warehouse_arrival_date", "Warehouse Arrival", "Yard", "#22c55e"),
+    ("informed_collection_date", "Informed Collection", "48h after gatepass", "#22c55e"),
+    ("collection_date", "Collection", "Within 6 days of exit gate", "#16a34a"),
 ]
 
 
@@ -120,18 +93,18 @@ def upgrade() -> None:
         )
     }
 
-    for index, (key, label, category, caption, colour) in enumerate(CHECKPOINTS):
+    for index, (key, label, caption, colour) in enumerate(CHECKPOINTS):
         if key in existing:
             continue
         connection.execute(
             sa.text(
                 """
                 INSERT INTO statuses (
-                    id, entity_type, key, category, label, color_hex, description,
+                    id, entity_type, key, label, color_hex, description,
                     sort_order, is_initial, is_terminal, is_active, is_archived,
                     is_default, is_system
                 ) VALUES (
-                    :id, :entity_type, :key, :category, :label, :color_hex, :description,
+                    :id, :entity_type, :key, :label, :color_hex, :description,
                     :sort_order, false, false, true, false, false, false
                 )
                 """
@@ -140,7 +113,6 @@ def upgrade() -> None:
                 "id": str(uuid.uuid4()),
                 "entity_type": ENTITY_TYPE,
                 "key": key,
-                "category": category,
                 "label": label,
                 "color_hex": colour,
                 "description": caption,

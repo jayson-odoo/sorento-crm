@@ -20,7 +20,6 @@ The mapping needs no new schema:
     statuses.key         the `inbound_shipments` date column this checkpoint reads
     statuses.label       what the timeline shows
     statuses.description the muted caption ("48h after gatepass")
-    statuses.category    which group it belongs to (origin / sea / clearance / delivery)
     statuses.sort_order  timeline order
     statuses.color_hex   the dot colour once reached
     statuses.is_active   uncheck to hide a checkpoint entirely
@@ -46,9 +45,6 @@ from app.status_engine.registry import StatusEntity, register_status_entity
 logger = logging.getLogger(__name__)
 
 ENTITY_TYPE = "inbound_shipment"
-
-#: Checkpoint groups, in timeline order. Mirrors the sheet's own chain.
-CATEGORIES = ("origin", "sea", "clearance", "delivery")
 
 
 def _date_column_for(db: Session, status_id: str) -> Optional[str]:

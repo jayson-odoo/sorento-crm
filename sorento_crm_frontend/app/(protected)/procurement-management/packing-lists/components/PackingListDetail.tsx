@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Edit, Trash2, Link as LinkIcon, Search, X, ArrowUpDown, ArrowUp, ArrowDown, Link2, Unlink, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -38,9 +39,24 @@ export default function PackingListDetail({
   packingListId,
 }: PackingListDetailProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: packingList, isLoading } = usePackingList(packingListId);
+
+  // `?tab=` so a tab survives a refresh and can be linked to directly. Written
+  // with replace() so tab switching does not fill the back button with history.
+  const TABS = ['timeline', 'details', 'documents', 'lines'] as const;
+  const requestedTab = searchParams.get('tab');
+  const activeTab = TABS.includes(requestedTab as (typeof TABS)[number])
+    ? (requestedTab as string)
+    : 'timeline';
+  const setActiveTab = (next: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('tab', next);
+    router.replace(`?${params.toString()}`, { scroll: false });
+  };
   const updatePackingListMutation = useUpdatePackingList();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const lineCount = packingList?.shipment_lines?.length ?? 0;
   const [linkAttachmentDialogOpen, setLinkAttachmentDialogOpen] = useState(false);
   const [shipmentLinesSearch, setShipmentLinesSearch] = useState('');
   const [sortField, setSortField] = useState<'product' | 'quantity_shipped' | 'spo_allocated' | 'quantity_received' | 'status'>('product');
@@ -295,10 +311,37 @@ export default function PackingListDetail({
         />
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <ClearanceDeliveryCard packingList={packingList} />
+      {/* Tabs, not stacked sections: four cards down one page meant scrolling past
+          the timeline to reach the lines. `?tab=` keeps a tab linkable and keeps
+          the choice on a refresh. */}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="w-full justify-start overflow-x-auto">
+          <TabsTrigger value="timeline">Timeline</TabsTrigger>
+          <TabsTrigger value="details">Details</TabsTrigger>
+          <TabsTrigger value="documents">Documents</TabsTrigger>
+          <TabsTrigger value="lines">
+            Shipment Lines
+            {lineCount > 0 && (
+              <Badge variant="secondary" className="ms-2">
+                {lineCount}
+              </Badge>
+            )}
+          </TabsTrigger>
+        </TabsList>
 
-        <Card className="lg:col-span-2">
+        <TabsContent value="timeline" className="mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Clearance &amp; Delivery</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ClearanceDeliveryCard packingList={packingList} />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="details" className="mt-6">
+        <Card>
           <CardHeader>
             <CardTitle>Shipment Information</CardTitle>
           </CardHeader>
@@ -377,7 +420,9 @@ export default function PackingListDetail({
             )}
           </CardContent>
         </Card>
+        </TabsContent>
 
+        <TabsContent value="documents" className="mt-6">
         <Card>
           <CardHeader>
             <CardTitle>Related Documents</CardTitle>
@@ -473,11 +518,20 @@ export default function PackingListDetail({
               )}
           </CardContent>
         </Card>
-      </div>
+        </TabsContent>
 
-      {/* Line Items */}
-      {packingList.shipment_lines &&
-        packingList.shipment_lines.length > 0 && (
+        <TabsContent value="lines" className="mt-6">
+        {!packingList.shipment_lines || packingList.shipment_lines.length === 0 ? (
+          <Card>
+            <CardContent className="py-10 text-center">
+              <p className="text-sm font-medium">No shipment lines</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                This packing list has no product lines yet. They arrive with the
+                packing list import, or can be added by editing the packing list.
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
           <Card>
             {/* Same non-wrapping trap as the page header: "Shipment Lines" plus a
                 224px search box does not fit the 286px of card content at 375px. */}
@@ -725,6 +779,8 @@ export default function PackingListDetail({
             </CardContent>
           </Card>
         )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

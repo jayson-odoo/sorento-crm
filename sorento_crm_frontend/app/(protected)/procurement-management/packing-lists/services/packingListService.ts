@@ -215,13 +215,15 @@ export async function importContainerStatus(
  * checkpoint can never break the link to its column.
  *
  *   GET /api/v1/procurement/packing-lists/clearance-checkpoints
- *   200 { checkpoints: [{ field, label, caption, group, color, sort_order }] }
+ *   200 { checkpoints: [{ field, label, caption, color, sort_order }] }
+ *
+ * One flat ordered list - no grouping. Group names would have to be a hardcoded
+ * map here, which leaves an admin-added checkpoint with nowhere to belong (D35).
  */
 export interface ClearanceCheckpoint {
   field: string;
   label: string;
   caption: string | null;
-  group: string | null;
   color: string | null;
   sort_order: number;
 }

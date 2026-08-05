@@ -36,7 +36,7 @@ from app.models.procurement import (
 from tests._pg_fixture import blank_session, unique_code
 
 
-# The 25 fields the sheet contributes. Written out by hand ON PURPOSE: deriving
+# The 21 fields the sheet contributes. Written out by hand ON PURPOSE: deriving
 # this list from the model or the migration would make the parity tests below
 # tautological.
 CLEARANCE_COLUMNS = {
@@ -59,10 +59,6 @@ CLEARANCE_COLUMNS = {
     "warehouse_arrival_date",
     "informed_collection_date",
     "collection_date",
-    "ata_date",
-    "ori_doc_received_date",
-    "k1_submission_date",
-    "yard_arrival_date",
     "coa_permit_no",
     "source_sheet",
 }

@@ -173,8 +173,17 @@ revised ETA, then check CIDB ePermit for inspection and approval dates, then typ
 - **B6.** Auto-transitions key on `ETA DELAY <= today` or `W/H ARRIVALS`, **never** on `ATA` -
   which is populated in 6 of 407 rows because `ETA DELAY` does double duty as the de-facto arrival
   date.
-- **B7.** `ATA`, `ORI DOC RECEIVED`, `K1 SUBMISSION` and `YARD ARRIVALS` are stored but carry no
-  status node, no alert and no integration. Fill rates are 6, 4, 4 and 4 out of 407.
+- **B7.** `ATA`, `ORI DOC RECEIVED`, `K1 SUBMISSION` and `YARD ARRIVALS` are **not in the system at
+  all** - not columns, not parsed, not displayed (decision D34). REVISED: they were briefly stored
+  "for round-tripping" behind a muted block, but fill rates of 6 / 4 / 4 / 4 out of 407 with nothing
+  reading them makes that a column nobody maintains plus a UI nobody reads. The retained original
+  file preserves them.
+- **B8.** The clearance timeline shows **only checkpoints that were reached**, as one flat vertical
+  list in configured order (D35, D36). No grouping, because group names would have to be hardcoded
+  somewhere and an admin-added checkpoint would have nowhere to belong. No "Not reached" rows,
+  because an unreached checkpoint is unrecorded rather than pending - the header count carries that.
+- **B9.** The packing list detail page is organised into **tabs** (Timeline / Details / Documents /
+  Shipment Lines), matching the users form, with `?tab=` keeping a tab linkable across a refresh.
 
 ### C. Answering (journey: contact 1-3)
 

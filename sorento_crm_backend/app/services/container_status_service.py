@@ -70,10 +70,6 @@ WRITABLE_FIELDS: tuple[str, ...] = (
     "warehouse_arrival_date",
     "informed_collection_date",
     "collection_date",
-    "ata_date",
-    "ori_doc_received_date",
-    "k1_submission_date",
-    "yard_arrival_date",
     "coa_permit_no",
     "source_sheet",
 )

@@ -185,12 +185,6 @@ class ClearanceFields(BaseModel):
     informed_collection_date: Optional[date] = None
     collection_date: Optional[date] = None
 
-    # Round-trip only; no status node, alert or integration reads these (B7).
-    ata_date: Optional[date] = None
-    ori_doc_received_date: Optional[date] = None
-    k1_submission_date: Optional[date] = None
-    yard_arrival_date: Optional[date] = None
-
     coa_permit_no: Optional[str] = None
     source_sheet: Optional[str] = None
 
