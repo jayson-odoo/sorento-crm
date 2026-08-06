@@ -7,7 +7,7 @@
  * behind the confirmation dialog -> row gone.
  *
  * Acceptance criteria exercised:
- *   FE-3  the list opens validity-scoped (`validity_state=expiring_soon,expired`)
+ *   FE-3  the list opens UNFILTERED (no validity_state, no status)
  *   FE-5  the detail page renders EVERY section, each with its empty state
  *   FE-6  revision history renders as the delivery-tracking timeline
  *   FE-8  create is a modal; delete is AlertDialog-confirmed, never confirm()
@@ -26,10 +26,9 @@
  * isn't blocked. Navigation ALWAYS goes through the sidebar (never a deep URL)
  * so a broken menu gate (moduleKey / permission) fails the test.
  *
- * The certificate is created with an expiry in the PAST so it lands inside the
- * validity-scoped default view - proving FE-3 rather than working around it -
- * and its number is timestamped so a re-run never hits the SCH-2 409 on the
- * normalized identity.
+ * The certificate is created with an expiry in the PAST so the row asserts the
+ * derived `Expired` pill, and its number is timestamped so a re-run never hits
+ * the SCH-2 409 on the normalized identity.
  */
 import { test, expect, Page } from '@playwright/test';
 
@@ -95,9 +94,10 @@ test('certificates: sidebar -> list -> create -> detail -> timeline -> delete', 
   await openCertificatesLeaf(page);
   await page.waitForURL(/\/master-data-management\/certificates$/);
 
-  // FE-3 - the first list call is validity-scoped, not "all".
+  // FE-3 (revised) - the first list call carries NEITHER validity_state NOR
+  // status: the list opens unfiltered so its row count is the whole register.
   await expect
-    .poll(() => seen('GET', /\/master-data\/certificates\/\?.*validity_state=expiring_soon%2Cexpired/), {
+    .poll(() => seen('GET', /\/master-data\/certificates\/\?(?!.*(validity_state|status=))/), {
       timeout: 15_000,
     })
     .toBeTruthy();
@@ -110,7 +110,7 @@ test('certificates: sidebar -> list -> create -> detail -> timeline -> delete', 
   await createDialog.getByLabel('Scheme *').fill(scheme);
   await createDialog.getByLabel('Certificate number *').fill(certNumber);
   await createDialog.getByLabel('Certifying body *').fill('SIRIM QAS International');
-  // An expiry in the past keeps the row inside the validity-scoped default view.
+  // An expiry in the past gives the row a derived `Expired` pill to assert.
   await createDialog.getByLabel('Valid from').fill('2020-01-01');
   await createDialog.getByLabel('Valid until').fill('2021-01-01');
   await createDialog.getByRole('button', { name: /^Create$/ }).click();

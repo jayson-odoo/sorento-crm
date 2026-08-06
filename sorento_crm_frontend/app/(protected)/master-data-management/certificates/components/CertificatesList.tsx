@@ -48,11 +48,14 @@ import type { Certificate } from '../types/certificate.types';
 import CertificateFormDialog from './CertificateFormDialog';
 
 /**
- * FE-3: the list opens validity-scoped, not on "all". A certificate whose
- * reminder email was missed is visible without choosing a filter.
+ * The list opens UNFILTERED. It used to default to "needs attention" + active
+ * (FE-3), which made the row count disagree with the number of certification
+ * files on file and gave no clue that rows were being withheld - the register
+ * has to be countable at a glance before it can be triaged.
+ * "Needs attention" is still one click away in the Filters popover.
  */
-const DEFAULT_VALIDITY = VALIDITY_FILTER_ATTENTION;
-const DEFAULT_STATUS = 'active';
+const DEFAULT_VALIDITY = VALIDITY_FILTER_ALL;
+const DEFAULT_STATUS = 'all';
 
 /** `attention` expands to the two states that need a human. */
 function validityStateParam(filter: string): string | undefined {
@@ -93,9 +96,9 @@ export default function CertificatesList() {
     needs_review: needsReviewFilter === 'true' ? true : undefined,
   });
 
-  // Counted against "unfiltered", not against the default, so the validity-scoped
-  // default view announces itself on the Filters button instead of silently
-  // hiding rows.
+  // Counted against "unfiltered", which is now also the default - so the badge
+  // reads 0 on arrival and any non-zero count means the user narrowed the list
+  // themselves.
   const activeFilterCount =
     (validityFilter !== VALIDITY_FILTER_ALL ? 1 : 0) +
     (expiringWithin !== 'any' ? 1 : 0) +
@@ -348,7 +351,7 @@ export default function CertificatesList() {
                       value={statusFilter}
                       onChange={setStatusFilter}
                       options={STATUS_FILTER_OPTIONS}
-                      placeholder="Active"
+                      placeholder="All statuses"
                       triggerClassName="mt-1"
                     />
                   </div>
