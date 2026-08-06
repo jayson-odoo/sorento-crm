@@ -20,10 +20,26 @@ import { useProductCategorySelectQuery } from '@/app/(protected)/master-data-man
 // The shared products `/select` mapper. Its name says "variant" because that screen
 // needed it first; the endpoint and the shape are the generic ones.
 import { getProductsForVariantSelect } from '@/app/(protected)/master-data-management/products/services/productService';
-import { usePriceFloorMutations } from '../../_shared/hooks/useProjects';
-import type { FloorMode, PriceFloorRule } from '../../_shared/types/project.types';
+import { usePriceFloorMutations } from '../hooks/useProjects';
+import type {
+  FloorMode,
+  FloorTargetLevel,
+  PriceFloorRule,
+} from '../types/project.types';
 
 type Level = 'product' | 'category' | 'system';
+
+/**
+ * A target the caller has already chosen: the product whose Pricing tab is open, or the
+ * category being edited. The picker is replaced by its NAME, because there is nothing to
+ * pick and a select showing one option is a decision the user does not have to make.
+ */
+export interface PriceFloorLockedTarget {
+  level: FloorTargetLevel;
+  id: string;
+  /** Product code or category name. Never an id. */
+  label: string;
+}
 
 const LEVELS: { value: Level; label: string; hint: string }[] = [
   {
@@ -55,22 +71,41 @@ const LEVELS: { value: Level; label: string; hint: string }[] = [
  * A percent rule needs a list price to mean anything. Products with no list price fall
  * through to the next level down, which is why an absolute company default is a useful
  * backstop even when the percent rules look complete.
+ *
+ * `lockedTarget` is the same dialog opened from somewhere that already knows the target:
+ * the product's Pricing tab, or the category editor. It is a MODE of this component
+ * rather than a second dialog, so the copy, the percent-versus-fixed toggle and the
+ * over-100% refusal cannot drift between the two places a floor gets set.
  */
 export function PriceFloorDialog({
   rule,
+  lockedTarget,
   onDone,
 }: {
   rule: PriceFloorRule | null;
+  lockedTarget?: PriceFloorLockedTarget;
   onDone: () => void;
 }) {
   const { upsert } = usePriceFloorMutations();
   const categories = useProductCategorySelectQuery();
 
   const [level, setLevel] = React.useState<Level>(
-    rule ? (rule.level === 'product' ? 'product' : rule.level === 'category' ? 'category' : 'system') : 'system',
+    lockedTarget
+      ? lockedTarget.level
+      : rule
+        ? rule.level === 'product'
+          ? 'product'
+          : rule.level === 'category'
+            ? 'category'
+            : 'system'
+        : 'system',
   );
-  const [productId, setProductId] = React.useState(rule?.product_id ?? '');
-  const [categoryId, setCategoryId] = React.useState(rule?.category_id ?? '');
+  const [productId, setProductId] = React.useState(
+    lockedTarget?.level === 'product' ? lockedTarget.id : (rule?.product_id ?? ''),
+  );
+  const [categoryId, setCategoryId] = React.useState(
+    lockedTarget?.level === 'category' ? lockedTarget.id : (rule?.category_id ?? ''),
+  );
   const [mode, setMode] = React.useState<FloorMode>(rule?.mode ?? 'percent');
   const [value, setValue] = React.useState(rule?.value ?? '');
   const [notes, setNotes] = React.useState(rule?.notes ?? '');
@@ -108,7 +143,13 @@ export function PriceFloorDialog({
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="max-h-[92vh] w-full max-w-lg overflow-hidden">
         <DialogHeader>
-          <DialogTitle>{isEdit ? 'Edit price floor' : 'Add a price floor'}</DialogTitle>
+          <DialogTitle>
+            {lockedTarget
+              ? `${isEdit ? 'Change' : 'Set'} the floor for ${lockedTarget.label}`
+              : isEdit
+                ? 'Edit price floor'
+                : 'Add a price floor'}
+          </DialogTitle>
           <DialogDescription>
             {/* This used to end "It is never blocked", which was true until the approval gate
                 landed. Quoting below a floor is still never refused - what is refused is ISSUING
@@ -134,6 +175,21 @@ export function PriceFloorDialog({
           }}
         >
           <DialogBody className="max-h-[65vh] space-y-4 overflow-y-auto">
+            {lockedTarget ? (
+              <div className="space-y-1.5">
+                <Label>Applies to</Label>
+                <div className="rounded-lg border border-border px-3 py-2">
+                  <p className="min-w-0 break-words text-sm font-medium">
+                    {lockedTarget.label}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {lockedTarget.level === 'product'
+                      ? 'This product only. Beats every other rule for it.'
+                      : 'This category, and anything under it that has no rule of its own.'}
+                  </p>
+                </div>
+              </div>
+            ) : (
             <div className="space-y-2">
               <Label>Applies to</Label>
               {LEVELS.map((option) => (
@@ -168,8 +224,9 @@ export function PriceFloorDialog({
                 </p>
               )}
             </div>
+            )}
 
-            {level === 'product' && (
+            {!lockedTarget && level === 'product' && (
               <div className="space-y-1.5">
                 <Label htmlFor="floor-product">
                   Product <span className="text-destructive">*</span>
@@ -187,7 +244,7 @@ export function PriceFloorDialog({
               </div>
             )}
 
-            {level === 'category' && (
+            {!lockedTarget && level === 'category' && (
               <div className="space-y-1.5">
                 <Label htmlFor="floor-category">
                   Category <span className="text-destructive">*</span>

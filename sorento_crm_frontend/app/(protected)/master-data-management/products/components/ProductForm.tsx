@@ -28,6 +28,9 @@ import type { Product, ProductFormData } from '../types/product.types';
 import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-category-select-query';
 import { useBrandSelectQuery } from '../../shared/hooks/use-brand-select-query';
 import { useUOMSelectQuery } from '../../shared/hooks/use-uom-select-query';
+// The floor is project-sales pricing POLICY, not a product column, so the panel and its
+// rules live with the rest of that policy and are only surfaced here.
+import { PriceFloorPanel } from '@/app/(protected)/project-sales/_shared/components/PriceFloorPanel';
 import ProductSuppliersSection from './ProductSuppliersSection';
 import ProductAttachmentsTab from './ProductAttachmentsTab';
 import RecordNavigation from '@/components/common/RecordNavigation';
@@ -556,6 +559,18 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                   )}
                 />
 
+                {/* Saves on its own, deliberately: a floor is a row in price_floor_rules,
+                    not a product column, so folding it into this form's submit would be
+                    one button writing two resources with no honest thing to say when the
+                    second half failed. */}
+                <PriceFloorPanel
+                  target={
+                    isEditMode && productId && product
+                      ? { level: 'product', id: productId, label: product.product_code }
+                      : null
+                  }
+                  disabledReason="Save the product first, then set its floor here."
+                />
               </CardContent>
             </Card>
           </TabsContent>

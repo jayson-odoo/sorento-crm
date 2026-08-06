@@ -331,8 +331,43 @@ function seedOneScope(lines: QuotationLine[] = [line()]) {
   replaceQuotationLines.mockResolvedValue(lines);
 }
 
+/** The gear. Radix opens it on pointerDown, not click. */
+async function openGear() {
+  fireEvent.pointerDown(await screen.findByRole('button', { name: 'Quotation actions' }), {
+    button: 0,
+    ctrlKey: false,
+  });
+  return screen.findByRole('menu');
+}
+
+/**
+ * Start an edit session.
+ *
+ * Two presses, not one: the client's rule for this header is ONE primary CTA with every other
+ * action behind the gear ("edit should be in gear button"), and Issue is the CTA. Only the entry
+ * point moved - once a session is open, Cancel and Save are the header's controls.
+ */
+async function pressEdit() {
+  const menu = await openGear();
+  fireEvent.click(within(menu).getByRole('menuitem', { name: 'Edit quotation' }));
+}
+
+/**
+ * True when the gear currently offers a way into an edit session.
+ *
+ * Closes the menu again before returning: Radix's dropdown is modal, so an open one puts
+ * `aria-hidden` over the rest of the page and every later role query would come back empty.
+ */
+async function gearOffersEdit() {
+  const menu = await openGear();
+  const offered = within(menu).queryByRole('menuitem', { name: 'Edit quotation' }) !== null;
+  fireEvent.keyDown(menu, { key: 'Escape' });
+  await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+  return offered;
+}
+
 async function startEditing() {
-  fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+  await pressEdit();
   return screen.findByRole('textbox', { name: 'Qty on SRT-WC-01' });
 }
 
@@ -564,9 +599,19 @@ describe('QuotationDocumentClient edit view', () => {
     renderScreen();
 
     expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    expect(await gearOffersEdit()).toBe(true);
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
     expect(screen.queryByRole('textbox', { name: 'Qty on SRT-WC-01' })).toBeNull();
+  });
+
+  it('keeps Edit out of the header, where the one CTA lives', async () => {
+    // The client, with the header buttons circled: "edit should be in gear button". Issue is
+    // the move that changes what the customer holds; Edit is a thing you can also do.
+    seedOneScope();
+    renderScreen();
+
+    expect(await screen.findByRole('button', { name: 'Issue R1' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
   });
 
   it(
@@ -647,7 +692,8 @@ describe('QuotationDocumentClient edit view', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     // The server's rows, exactly as they were before Edit, and no request on the way past.
-    expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Save' })).toBeNull());
+    expect(await gearOffersEdit()).toBe(true);
     expect(screen.queryByRole('textbox', { name: 'Qty on SRT-WC-01' })).toBeNull();
     expect(screen.getAllByText('RM 9,000.00').length).toBeGreaterThan(0);
     expect(screen.queryByText('RM 2,700.00')).toBeNull();
@@ -758,7 +804,7 @@ describe('QuotationDocumentClient edit view', () => {
       await screen.findByText(/The customer holds this version\. Edit opens the next one\./i),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    await pressEdit();
 
     // Never a silent branch: a revision that appeared without being asked for is a document the
     // customer was never told about.
@@ -796,7 +842,7 @@ describe('QuotationDocumentClient edit view', () => {
     listQuotationLines.mockResolvedValue([line()]);
     renderScreen();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    await pressEdit();
 
     // Straight into edit mode: no prompt, and nothing revised.
     expect(await screen.findByRole('button', { name: 'Save' })).toBeInTheDocument();
@@ -810,7 +856,9 @@ describe('QuotationDocumentClient edit view', () => {
     renderScreen();
 
     expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    // Not in the header, and not in the gear it moved into either.
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    expect(await gearOffersEdit()).toBe(false);
     expect(
       screen.getByText('You can read this quotation but not change it.'),
     ).toBeInTheDocument();
@@ -829,7 +877,7 @@ describe('QuotationDocumentClient letterhead editing', () => {
   async function editLetterhead(overrides: Partial<QuotationDocument> = {}) {
     getQuotationDocument.mockResolvedValue(quotationDocument(overrides));
     const rendered = renderScreen();
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    await pressEdit();
     return rendered;
   }
 
@@ -847,7 +895,7 @@ describe('QuotationDocumentClient letterhead editing', () => {
     expect(screen.queryByLabelText('Address')).toBeNull();
     expect(screen.queryByLabelText('Date')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    await pressEdit();
 
     expect(await screen.findByLabelText('Your Ref')).toHaveValue('NCSB/2026/117');
     expect(screen.getByLabelText('Attn')).toHaveValue('Kelly');
@@ -933,7 +981,8 @@ describe('QuotationDocumentClient letterhead editing', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Save' })).toBeNull());
+    expect(await gearOffersEdit()).toBe(true);
     expect(screen.queryByLabelText('Your Ref')).toBeNull();
     expect(screen.getByText('NCSB/2026/117')).toBeInTheDocument();
     expect(screen.getByText('Kelly')).toBeInTheDocument();
@@ -986,7 +1035,7 @@ describe('QuotationDocumentClient letterhead editing', () => {
     await waitFor(() =>
       expect(screen.getAllByText('Nadi Cergas Sdn Bhd').length).toBeGreaterThan(0),
     );
-    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    expect(await gearOffersEdit()).toBe(false);
     expect(screen.queryByLabelText('Your Ref')).toBeNull();
   });
 });
@@ -1024,15 +1073,6 @@ describe('QuotationDocumentClient queued exports', () => {
       }),
     );
     listQuotationIssues.mockResolvedValue([issue]);
-  }
-
-  async function openGear() {
-    // pointerDown, not click: Radix's dropdown trigger opens on the pointer event.
-    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Quotation actions' }), {
-      button: 0,
-      ctrlKey: false,
-    });
-    return screen.findByRole('menu');
   }
 
   it('queues the PDF and names where it will land, fetching no bytes', async () => {
@@ -1142,5 +1182,125 @@ describe('QuotationDocumentClient queued exports', () => {
     ).toBeInTheDocument();
     // And it is previewable from there, which is the other half of what the client asked for.
     expect(screen.getByRole('button', { name: /^Preview/ })).toBeInTheDocument();
+  });
+
+  it('borders the chip exactly the way the complaint header does', async () => {
+    // The client: "the download should have border just like complaint, we should use the same
+    // exact element". It always WAS the same component - the complaint header passes
+    // `h-8 border border-border` and this one passed nothing, so it read as unclickable beside
+    // the bordered buttons next to it. Same three classes, same call site shape.
+    seedIssued();
+    renderScreen();
+
+    const chip = await screen.findByTitle('View downloads for SRT/Q/2026/0141 (R1)');
+    expect(chip).toHaveClass('h-8');
+    expect(chip).toHaveClass('border');
+    expect(chip).toHaveClass('border-border');
+  });
+});
+
+/**
+ * S17's other half: the salesperson finding out.
+ *
+ * The client sent a screenshot of their own request on the counter-sign page and asked "when i
+ * request changes, how can i see it from the system?" - which is the question of somebody who
+ * went looking and could not find it. It was on the Signatures tab, and a tab the salesperson has
+ * no reason to open is not where "the customer has asked for something" belongs.
+ *
+ * So the claims are: it is on the document without opening anything, it carries the customer's
+ * OWN WORDS (the words are the whole point), it offers the next move as a click into the EXISTING
+ * revise flow rather than a second one, and acceptance beats it on this surface exactly as it
+ * already does on the counter-sign page and the Signatures badge.
+ */
+describe('QuotationDocumentClient change request', () => {
+  const NOTE = 'can you provide me more discount';
+
+  /** An issued quotation, frozen with the customer, that they have answered. */
+  function seedAnswered(overrides: Partial<QuotationDocument> = {}) {
+    seedOneScope();
+    listQuotationVersions.mockResolvedValue([version({ is_editable: false })]);
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        grand_total: '9000.00',
+        scopes: [scope()],
+        is_issued: true,
+        issue_count: 1,
+        current_issue_no: 1,
+        signatory_signature: signature(),
+        customer_decision: 'changes_requested',
+        changes_requested_at: '2026-08-06T02:15:00',
+        changes_requested_note: NOTE,
+        changes_requested_by_name: 'Kelly',
+        ...overrides,
+      }),
+    );
+  }
+
+  it('says so on the document itself, in the customer own words', async () => {
+    seedAnswered();
+    renderScreen();
+
+    // No tab opened, no gear pressed: it is on the page the salesperson already landed on.
+    expect(await screen.findByText(NOTE)).toBeInTheDocument();
+    // Who said it and when, because "somebody asked for something" is not actionable.
+    expect(screen.getByText(/Kelly asked for changes/i)).toBeInTheDocument();
+    expect(screen.getByText(/06\/08\/2026/)).toBeInTheDocument();
+  });
+
+  it('renders nothing at all on a quotation nobody has answered', async () => {
+    // The ordinary quotation gains no chrome, the same way the price-floor panel behaves.
+    seedAnswered({
+      customer_decision: null,
+      changes_requested_at: null,
+      changes_requested_note: null,
+      changes_requested_by_name: null,
+    });
+    renderScreen();
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByText(NOTE)).toBeNull();
+    expect(screen.queryByText(/asked for changes/i)).toBeNull();
+  });
+
+  it('stands down once the customer signed, even with the words still on record', async () => {
+    // Acceptance wins on EVERY surface. A banner nagging somebody to revise a quotation that is
+    // already won contradicts the counter-sign page the customer is looking at.
+    seedAnswered({ customer_decision: 'accepted', accepted_at: '2026-08-06T04:00:00' });
+    renderScreen();
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByText(NOTE)).toBeNull();
+    expect(screen.queryByText(/asked for changes/i)).toBeNull();
+  });
+
+  it('leads into the EXISTING revise prompt rather than dead-ending', async () => {
+    // Not a second revise control: the button is the same entry point Edit uses, so a revision
+    // is still something the salesperson is asked about rather than something that appears.
+    //
+    // And deliberately not labelled "Revise to v3" - the Scopes tab already carries a per-scope
+    // button by that name, and two identically-worded controls acting on different things is
+    // exactly the confusion the header rules exist to prevent.
+    seedAnswered();
+    renderScreen();
+
+    expect(await screen.findByRole('button', { name: 'Revise this quotation' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Revise this quotation' }));
+
+    expect(await screen.findByText(/This version is with the customer/i)).toBeInTheDocument();
+    expect(reviseQuotation).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open a new version and edit' }));
+
+    await waitFor(() => expect(reviseQuotation).toHaveBeenCalledWith('q1'));
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeInTheDocument();
+  });
+
+  it('gives a reader the words but no way to act on them', async () => {
+    seedAnswered();
+    getProject.mockResolvedValue(project({ can_edit: false }));
+    renderScreen();
+
+    expect(await screen.findByText(NOTE)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Revise/ })).toBeNull();
   });
 });

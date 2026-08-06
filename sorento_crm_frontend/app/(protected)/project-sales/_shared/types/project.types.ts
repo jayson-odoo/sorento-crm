@@ -758,6 +758,42 @@ export interface PriceFloorRuleBody {
   is_active?: boolean;
 }
 
+/** Which single thing a floor is being read or written for. */
+export type FloorTargetLevel = 'product' | 'category';
+
+export interface EffectiveFloorSource {
+  rule_id: string;
+  level: FloorLevel;
+  mode: FloorMode;
+  /** The rule as configured: a percentage, or a ringgit amount. */
+  value: string;
+  /**
+   * The floor in ringgit, when it can be computed. Null for a percentage read against a
+   * category, which has no list price to apply it to.
+   */
+  amount?: string | null;
+  /** Product code, category name, or "Company default". Never an id. */
+  source_label: string;
+}
+
+/**
+ * What governs ONE product or ONE category.
+ *
+ * `own_rule` and `effective` answer different questions and the UI needs both: the first
+ * says whether this target carries a floor of its own (so whether clearing it is even
+ * possible), the second says what actually applies once inheritance is walked. A product
+ * with no rule of its own is still governed by a floor, and showing nothing there would
+ * be a lie by omission.
+ */
+export interface EffectivePriceFloor {
+  target_level: FloorTargetLevel;
+  target_id: string;
+  target_label: string;
+  list_price?: string | null;
+  own_rule?: PriceFloorRule | null;
+  effective?: EffectiveFloorSource | null;
+}
+
 /**
  * S4. A sample binds to a VERSION, a PO binds to the version the contractor was last
  * shown. Both `is_version_current` and the PO's mismatch counts are server-derived --

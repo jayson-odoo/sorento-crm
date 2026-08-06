@@ -186,6 +186,59 @@ describe('QuotationsPanel', () => {
     expect(await screen.findByText('Draft')).toBeInTheDocument();
   });
 
+  /**
+   * S17 on the list. The client asked "when i request changes, how can i see it from the
+   * system?", and a salesperson scanning this tab is the second place that question gets asked:
+   * the row has to say which quotation is waiting on THEM without being opened.
+   *
+   * It rides the Status column rather than a new one, because "the customer asked for changes"
+   * IS where the quotation stands - a second column would be mostly empty and would push the
+   * money off a 375px screen.
+   */
+  it('says Changes requested on the row, so a scan finds the one waiting on you', async () => {
+    listQuotationDocuments.mockResolvedValue([
+      quotationDocument({
+        customer_decision: 'changes_requested',
+        changes_requested_at: '2026-08-06T02:15:00',
+        changes_requested_note: 'can you provide me more discount',
+        changes_requested_by_name: 'Kelly',
+      }),
+    ]);
+
+    renderPanel();
+
+    expect(await screen.findByText('Changes requested')).toBeInTheDocument();
+    // It replaces Issued rather than sitting beside it: an issued quotation the customer has
+    // answered is not still "Issued, awaiting", it is answered.
+    expect(screen.queryByText('Issued')).toBeNull();
+  });
+
+  it('says Accepted, and acceptance wins over an older request', async () => {
+    listQuotationDocuments.mockResolvedValue([
+      quotationDocument({
+        customer_decision: 'accepted',
+        accepted_at: '2026-08-06T04:00:00',
+        changes_requested_at: '2026-08-06T02:15:00',
+        changes_requested_note: 'can you provide me more discount',
+      }),
+    ]);
+
+    renderPanel();
+
+    expect(await screen.findByText('Accepted')).toBeInTheDocument();
+    expect(screen.queryByText('Changes requested')).toBeNull();
+  });
+
+  it('leaves a quotation nobody has answered reading Issued', async () => {
+    listQuotationDocuments.mockResolvedValue([quotationDocument({ customer_decision: null })]);
+
+    renderPanel();
+
+    expect(await screen.findByText('Issued')).toBeInTheDocument();
+    expect(screen.queryByText('Changes requested')).toBeNull();
+    expect(screen.queryByText('Accepted')).toBeNull();
+  });
+
   it('adds up the values of the documents on the page', async () => {
     listQuotationDocuments.mockResolvedValue([
       quotationDocument({ id: 'd1', grand_total: '696923.00' }),

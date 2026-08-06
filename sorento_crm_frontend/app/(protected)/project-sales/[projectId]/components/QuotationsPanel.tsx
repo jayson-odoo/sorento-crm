@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { quotationStanding } from '../../_shared/lib/quotationDecision';
 import { useQuotations } from '../../_shared/hooks/useProjects';
 import {
   useQuotationDocumentMutations,
@@ -98,19 +99,24 @@ export function QuotationsPanel({ project }: { project: Project }) {
         meta: { headerTitle: 'Scopes' },
       },
       {
+        // Draft / Issued, and - once the customer has answered - what they answered.
+        //
+        // The client asked "when i request changes, how can i see it from the system?", and a
+        // salesperson scanning this tab is the second place that question gets asked. It rides
+        // this column rather than a new one because the customer's answer IS where the quotation
+        // stands: a second, mostly-empty column would push the money off a 375px screen.
         id: 'status',
-        accessorFn: (row) => (row.is_issued ? 'Issued' : 'Draft'),
+        accessorFn: (row) => quotationStanding(row).label,
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
-        cell: ({ row }) => (
-          <Badge
-            variant={row.original.is_issued ? 'success' : 'secondary'}
-            appearance="light"
-            className="text-[11px]"
-          >
-            {row.original.is_issued ? 'Issued' : 'Draft'}
-          </Badge>
-        ),
-        size: 120,
+        cell: ({ row }) => {
+          const standing = quotationStanding(row.original);
+          return (
+            <Badge variant={standing.variant} appearance="light" className="text-[11px]">
+              {standing.label}
+            </Badge>
+          );
+        },
+        size: 150,
         meta: { headerTitle: 'Status' },
       },
       {

@@ -384,6 +384,107 @@ def test_both_serializers_carry_the_request():
         assert issue["changes_requested_at"] is not None
 
 
+def test_the_document_serializer_carries_the_decision_on_the_current_revision():
+    """The THIRD manual builder, and the one the salesperson's own two screens read.
+
+    The client's question was "when i request changes, how can i see it from the system?", and the
+    answer could not be "open the Signatures tab": the document banner and the project's quotation
+    list both have to say it, and neither of them reads the issue history. So the decision on the
+    revision the customer currently holds travels on the DOCUMENT, computed once here rather than
+    re-derived per screen.
+    """
+    with blank_session() as db:
+        _project_row, document, _owner, record = _issued(db)
+
+        before = qdocs.serialize_document(db, document)
+        assert before["customer_decision"] is None
+        assert before["changes_requested_at"] is None
+        assert before["changes_requested_note"] is None
+        assert before["changes_requested_by_name"] is None
+        assert before["accepted_at"] is None
+
+        qdocs.request_changes(
+            db, record=record, note=FEEDBACK, requester_name=f"{MARKER} Kelly"
+        )
+        db.flush()
+
+        asked = qdocs.serialize_document(db, document)
+        assert asked["customer_decision"] == "changes_requested"
+        assert asked["changes_requested_note"] == FEEDBACK
+        assert asked["changes_requested_by_name"] == f"{MARKER} Kelly"
+        assert asked["changes_requested_at"] is not None
+
+
+def test_acceptance_wins_on_the_document_too():
+    """One rule, one place. Every other surface already ranks acceptance above a request.
+
+    A customer who asked for changes and then signed has ACCEPTED, and a banner still nagging the
+    salesperson to revise a quotation that is already won is worse than no banner. The words stay
+    on the row as history - they happened - but the decision the document reports is the signature.
+    """
+    with blank_session() as db:
+        _project_row, document, _owner, record = _issued(db)
+        qdocs.request_changes(db, record=record, note=FEEDBACK)
+        qdocs.accept_issue(
+            db,
+            record=record,
+            signer_name=f"{MARKER} Kelly",
+            mode="draw",
+            image_data_uri=A_SIGNATURE,
+        )
+        db.flush()
+
+        payload = qdocs.serialize_document(db, document)
+        assert payload["customer_decision"] == "accepted"
+        assert payload["accepted_at"] is not None
+        # Still on record, so the salesperson can read what was asked before it was signed.
+        assert payload["changes_requested_note"] == FEEDBACK
+
+
+def test_the_next_revision_clears_the_request_the_previous_one_carried():
+    """Revising and re-issuing IS the answer to the request, so the banner has to stop.
+
+    The decision belongs to the revision the customer is holding. Read off the whole history it
+    would keep telling a salesperson to revise a quotation they have already revised.
+    """
+    with blank_session() as db:
+        _project_row, document, owner, record = _issued(db)
+        qdocs.request_changes(db, record=record, note=FEEDBACK)
+        db.flush()
+        assert qdocs.serialize_document(db, document)["customer_decision"] == (
+            "changes_requested"
+        )
+
+        qdocs.issue(db, document=document, actor_user_id=owner)
+        db.flush()
+
+        after = qdocs.serialize_document(db, document)
+        assert after["current_issue_no"] == 2
+        assert after["customer_decision"] is None
+        assert after["changes_requested_note"] is None
+
+
+def test_a_draft_that_was_never_issued_reports_no_decision_rather_than_failing():
+    """No revision, no customer, no decision. The keys are still present, because a screen that
+    has to check for a missing key is a screen that will one day forget to.
+    """
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+        owner = _user(db, f"{MARKER} Draft owner")
+        project = _project(db, company_id, owner)
+        document = qdocs.create_document(db, project=project, actor_user_id=owner)
+        db.flush()
+
+        payload = qdocs.serialize_document(db, document)
+        assert payload["is_issued"] is False
+        assert payload["customer_decision"] is None
+        assert payload["accepted_at"] is None
+        assert payload["changes_requested_at"] is None
+        assert payload["changes_requested_note"] is None
+        assert payload["changes_requested_by_name"] is None
+
+
 # ------------------------------------------------------------------ the public wire
 
 

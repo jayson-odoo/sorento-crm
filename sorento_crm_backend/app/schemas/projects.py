@@ -909,6 +909,49 @@ class PriceFloorRuleResponse(PriceFloorRuleBase):
     )
 
 
+class EffectiveFloorSource(BaseModel):
+    """The floor in force, and the human-readable name of whatever it came from."""
+
+    rule_id: str
+    level: str = Field(
+        description="product | category | category_ancestor | system."
+    )
+    mode: str
+    value: Decimal = Field(description="The rule as configured: a percent, or an amount.")
+    amount: Optional[Decimal] = Field(
+        None,
+        description=(
+            "The floor in ringgit, when it can be computed. Null for a percentage rule "
+            "read against a category, which has no list price to apply it to."
+        ),
+    )
+    source_label: str = Field(
+        description=(
+            "Product code, category name, or 'Company default'. Never an id: the browser "
+            "has no way to resolve one."
+        )
+    )
+
+
+class PriceFloorEffectiveResponse(BaseModel):
+    """What governs ONE product or ONE category, for the master-data editors.
+
+    ``own_rule`` and ``effective`` answer different questions and both are needed: the
+    first says whether this target carries a floor of its own (so whether clearing it is
+    even possible), the second says what actually applies once inheritance is taken into
+    account.
+    """
+
+    target_level: str = Field(description="product | category.")
+    target_id: str
+    target_label: str
+    list_price: Optional[Decimal] = Field(
+        None, description="The product's list price. Null for a category."
+    )
+    own_rule: Optional[PriceFloorRuleResponse] = None
+    effective: Optional[EffectiveFloorSource] = None
+
+
 class ProjectQuotationBase(BaseModel):
     scope_label: str = Field(
         min_length=1, max_length=150, description="e.g. House Units, Common Area, Showroom."
@@ -1547,6 +1590,18 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     issue_count: int = 0
     current_issue_no: Optional[int] = None
     is_issued: bool = False
+
+    # ---- where the customer left the revision they currently hold (S17) ----
+    # Declared here as well as built into `serialize_document`, because a field the response
+    # model does not know about is dropped on the way out however correctly the service computed
+    # it. `customer_decision` is the resolved answer - "accepted" | "changes_requested" | None -
+    # so the document banner and the project's quotation list cannot disagree about which of the
+    # two stamps wins.
+    accepted_at: Optional[datetime] = None
+    changes_requested_at: Optional[datetime] = None
+    changes_requested_note: Optional[str] = None
+    changes_requested_by_name: Optional[str] = None
+    customer_decision: Optional[str] = None
 
     # AC-H1 gates issuing on the signature, so it has to survive a page refresh. Forward-declared
     # because the signature schema is defined further down; resolved by the model_rebuild below.

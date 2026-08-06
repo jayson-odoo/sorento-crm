@@ -21,6 +21,8 @@ import type {
   LeadListParams,
   LeadQualifyBody,
   LeadReasonOption,
+  EffectivePriceFloor,
+  FloorTargetLevel,
   PriceFloorRule,
   PriceFloorRuleBody,
   ProjectDashboard,
@@ -880,6 +882,34 @@ export async function listPriceFloors(): Promise<PriceFloorRule[]> {
     throw new Error(await extractApiError(response, 'Failed to load price floors'));
   const body: ListEnvelope<PriceFloorRule> = await response.json();
   return body.data;
+}
+
+/**
+ * The floor in force for ONE product or ONE category, plus the rule set on it (if any).
+ *
+ * Contract:
+ *   GET /api/v1/project-sales/config/price-floors/effective?product_id=<id>
+ *   GET /api/v1/project-sales/config/price-floors/effective?category_id=<id>
+ *   200 -> EffectivePriceFloor
+ *   404 -> no such product / category
+ *   422 -> neither target named, or both
+ *   403 -> the caller lacks projects.types.view
+ *
+ * Resolution stays on the server. Working out which rule governs a product needs the
+ * category ancestry walk, and a second implementation of that in the browser would be
+ * free to disagree with what a quotation line is actually judged against.
+ */
+export async function getEffectivePriceFloor(target: {
+  level: FloorTargetLevel;
+  id: string;
+}): Promise<EffectivePriceFloor> {
+  const key = target.level === 'product' ? 'product_id' : 'category_id';
+  const response = await apiFetch(
+    `${BASE}/config/price-floors/effective?${key}=${encodeURIComponent(target.id)}`,
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the price floor'));
+  return response.json();
 }
 
 /** Upsert per level: one rule per target, so editing "the Basins floor" means that. */

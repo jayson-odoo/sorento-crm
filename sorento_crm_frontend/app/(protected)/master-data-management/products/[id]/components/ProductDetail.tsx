@@ -18,6 +18,9 @@ import ProductPromotionsTab from './ProductPromotionsTab';
 import ProductVariantsTab from './ProductVariantsTab';
 import { useProductAttachmentsByProduct } from '../../../product-attachments/hooks/useProductAttachments';
 import { getPromotionsByProductId } from '@/app/(protected)/marketing-management/promotions/services/promotionService';
+// The floor is project-sales pricing POLICY, not a product column, so the panel and its
+// rules live with the rest of that policy and are only surfaced here.
+import { PriceFloorPanel } from '@/app/(protected)/project-sales/_shared/components/PriceFloorPanel';
 import ProductDeleteDialog from '../../components/product-delete-dialog';
 import ProductNavigation from './ProductNavigation';
 import AuditTrail from '@/components/audit/AuditTrail';
@@ -249,6 +252,19 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                             : '-'}
                         </p>
                       </div>
+                    </div>
+                    {/* The floor a quotation line for this product is judged against. It
+                        is not a product column - it is project-sales policy that may be
+                        inherited from the category or the company default - so it reads
+                        and writes on its own. */}
+                    <div className="mt-4">
+                      <PriceFloorPanel
+                        target={{
+                          level: 'product',
+                          id: productId,
+                          label: product.product_code,
+                        }}
+                      />
                     </div>
                   </div>
 

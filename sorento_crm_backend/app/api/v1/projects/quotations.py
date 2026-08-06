@@ -25,6 +25,7 @@ from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.common import ListResponse
 from app.schemas.projects import (
+    PriceFloorEffectiveResponse,
     PriceFloorRuleResponse,
     PriceFloorRuleUpsert,
     ProjectQuotationCreate,
@@ -721,6 +722,41 @@ async def list_price_floors(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+@router.get(
+    "/config/price-floors/effective",
+    response_model=PriceFloorEffectiveResponse,
+)
+async def get_effective_price_floor(
+    product_id: Optional[str] = Query(None),
+    category_id: Optional[str] = Query(None),
+    _user: dict = Depends(require_permission(CONFIG_VIEW)),
+    db: Session = Depends(get_db),
+):
+    """What governs ONE product or ONE category.
+
+    Declared before ``/config/price-floors/{rule_id}`` so the literal wins the match: as
+    a rule id it would 404 while looking like empty data.
+
+    This exists because the listing endpoint cannot answer the question. A product with
+    no rule of its own is still governed by one, and finding out which needs the category
+    ancestry walk -- server-side work that the product editor would otherwise have to
+    re-implement in the browser and be free to disagree with.
+    """
+    try:
+        if product_id:
+            validate_uuid_path(product_id, resource="Product")
+        if category_id:
+            validate_uuid_path(category_id, resource="Category")
+        return pricing.effective_floor_view(
+            db,
+            company_id=acting_company_id(db),
+            product_id=product_id or None,
+            category_id=category_id or None,
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 @router.post(
     "/config/price-floors",
     response_model=PriceFloorRuleResponse,
@@ -778,50 +814,6 @@ async def delete_price_floor(
 
 
 def _serialize_floors(db: Session, rules) -> List[dict]:
-    from app.models.product import Product, ProductCategory
-
-    product_ids = {r.product_id for r in rules if r.product_id}
-    category_ids = {r.category_id for r in rules if r.category_id}
-    products = (
-        {
-            row.id: row.product_code
-            for row in db.query(Product).filter(Product.id.in_(product_ids)).all()
-        }
-        if product_ids
-        else {}
-    )
-    categories = (
-        {
-            row.id: row.category_name
-            for row in db.query(ProductCategory)
-            .filter(ProductCategory.id.in_(category_ids))
-            .all()
-        }
-        if category_ids
-        else {}
-    )
-
-    out = []
-    for rule in rules:
-        level = (
-            pricing.LEVEL_PRODUCT
-            if rule.product_id
-            else pricing.LEVEL_CATEGORY
-            if rule.category_id
-            else pricing.LEVEL_SYSTEM
-        )
-        out.append(
-            {
-                "id": rule.id,
-                "product_id": rule.product_id,
-                "product_code": products.get(rule.product_id or ""),
-                "category_id": rule.category_id,
-                "category_name": categories.get(rule.category_id or ""),
-                "mode": rule.mode,
-                "value": rule.value,
-                "notes": rule.notes,
-                "is_active": rule.is_active,
-                "level": level,
-            }
-        )
-    return out
+    """Naming a rule's target is the service's job, so the effective-floor read and this
+    listing cannot drift apart about what a rule is called."""
+    return pricing.serialize_floor_rules(db, rules)

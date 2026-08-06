@@ -46,6 +46,7 @@ import {
   QuotationApprovalPanel,
   isBlockedByApproval,
 } from './QuotationApprovalPanel';
+import { QuotationChangesRequestedPanel } from './QuotationChangesRequestedPanel';
 import { QuotationDocumentHeader } from './QuotationDocumentHeader';
 import { QuotationDocumentProvider } from './QuotationDocumentContext';
 import { QuotationDocumentTabs } from './QuotationDocumentTabs';
@@ -63,7 +64,9 @@ import { useQuotationEditSession } from './useQuotationEditSession';
  *
  * The header follows the system's own rule and nothing else: ONE primary CTA, and every other
  * action behind the gear. Download is not a call to action, it is a thing you can also do;
- * issuing is the move that changes what the customer holds.
+ * issuing is the move that changes what the customer holds. Edit is behind the gear for the same
+ * reason - but only its ENTRY POINT. Once a session is open, Cancel and Save ARE the screen's one
+ * intent, and they belong in the header where a control you are about to press can be seen.
  *
  * The document is fetched HERE, once, and handed to the tabs through context. Fetching it per tab
  * would let two tabs hold two versions of one quotation, and this is also the only place state can
@@ -253,6 +256,25 @@ export function QuotationDocumentClient({
    * the panel under the header, because a disabled button with no way forward is a dead end.
    */
   const needsApproval = isBlockedByApproval(record);
+
+  /** What the next copy of a single frozen scope will be called, e.g. "v3". */
+  const nextVersionLabel =
+    lockedScopes.length === 1 && lockedScopes[0].current
+      ? `v${lockedScopes[0].current.version_no + 1}`
+      : null;
+  /**
+   * What pressing the change-request banner's button will actually do, said in its label.
+   *
+   * Deliberately NOT "Revise to v3": the Scopes tab already carries a per-scope button by that
+   * exact name, and two controls reading the same words a few centimetres apart - one acting on
+   * one scope, one on the whole document - is worse than a vaguer label. This one is the
+   * DOCUMENT's act, and the prompt it opens names the scopes and the version it will mint.
+   *
+   * With no frozen scope left (a revision is already open) the click goes straight into a
+   * session, and the label has to say that rather than promise a version it will not mint.
+   */
+  const reviseLabel =
+    lockedScopes.length === 0 ? 'Edit this quotation' : 'Revise this quotation';
 
   /**
    * What the header says about the state it is in, reason and next action together.
@@ -455,12 +477,6 @@ export function QuotationDocumentClient({
                 </Button>
               </>
             )}
-            {canEdit && !edit.isEditing && (
-              <Button type="button" size="sm" variant="outline" onClick={startEditing}>
-                <SquarePen className="size-4" aria-hidden />
-                Edit
-              </Button>
-            )}
             {canEdit && !edit.isEditing && !isSigned && (
               <Button
                 type="button"
@@ -501,9 +517,23 @@ export function QuotationDocumentClient({
                 entityType="quotation_issue"
                 entityId={latestIssue.id}
                 label={latestIssue.our_ref_text ?? `${record.document_no} R${latestIssue.issue_no}`}
+                // The complaint header's own three classes, verbatim. It was always the same
+                // component; passing no className rendered it borderless beside two bordered
+                // buttons, which is why the client read it as not clickable ("the download
+                // should have border just like complaint").
+                className="h-8 border border-border"
               />
             )}
             <DetailActionsMenu ariaLabel="Quotation actions">
+              {/* Edit's ENTRY POINT lives here, not in the header: one primary CTA, everything
+                  else behind the gear. Only the way IN moved - once a session is open, Cancel
+                  and Save are the header's controls and they stay on screen. */}
+              {canEdit && !edit.isEditing && (
+                <DropdownMenuItem onSelect={startEditing}>
+                  <SquarePen className="size-4" aria-hidden />
+                  Edit quotation
+                </DropdownMenuItem>
+              )}
               {canEdit && (
                 <DropdownMenuItem onSelect={() => setSigning(true)}>
                   <PenLine className="size-4" aria-hidden />
@@ -578,6 +608,21 @@ export function QuotationDocumentClient({
         </div>
       </header>
 
+      {/* What the CUSTOMER said, on the document rather than behind the Signatures tab. Renders
+          nothing unless they have actually asked for something, and stands down the moment they
+          sign - acceptance wins here exactly as it does on their own counter-sign page.
+
+          Above the price-floor gate on purpose: this is somebody waiting on an answer, the gate
+          below is a rule about what may be sent. */}
+      <QuotationChangesRequestedPanel
+        document={record}
+        reviseLabel={reviseLabel}
+        // The SAME entry point Edit uses, so a revision is still something the salesperson is
+        // asked about. Withheld from a reader, and while a session is already open.
+        onRevise={canEdit && !edit.isEditing ? startEditing : undefined}
+        isRevising={quotationMutations.revise.isPending}
+      />
+
       {/* The price-floor gate. Renders nothing at all unless a line on this quotation is
           priced below its floor, so the ordinary quotation gains no chrome and no extra step. */}
       <QuotationApprovalPanel
@@ -647,11 +692,7 @@ export function QuotationDocumentClient({
         open={revisePrompt}
         onOpenChange={setRevisePrompt}
         scopeLabels={lockedScopes.map((pair) => pair.quotation.scope_label)}
-        nextVersionLabel={
-          lockedScopes.length === 1 && lockedScopes[0].current
-            ? `v${lockedScopes[0].current.version_no + 1}`
-            : null
-        }
+        nextVersionLabel={nextVersionLabel}
         isRevising={quotationMutations.revise.isPending}
         onConfirm={reviseThenEdit}
       />

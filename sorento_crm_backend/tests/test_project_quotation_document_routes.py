@@ -315,6 +315,22 @@ def _current_version_id(db, quotation_id: str) -> str:
     return quotes.current_version(db, quotation_id).id
 
 
+def _document_row(db, document_id: str):
+    """The ORM row behind a document the client created over HTTP.
+
+    Needed where the CUSTOMER's own act is being simulated: they reach the issue through a public
+    token route that has its own suite, and re-walking that here would be testing the token
+    rather than what the salesperson's screens are handed back.
+    """
+    from app.models.projects import ProjectQuotationDocument
+
+    return (
+        db.query(ProjectQuotationDocument)
+        .filter(ProjectQuotationDocument.id == document_id)
+        .first()
+    )
+
+
 def _add_priced_line(client, version_id: str, product, *, price: str, qty: str) -> dict:
     response = client.post(
         f"{BASE}/quotation-versions/{version_id}/lines",
@@ -747,6 +763,86 @@ def test_reissuing_stamps_r1_then_r2_which_is_what_the_customer_quotes_back(api)
     assert envelope["pagination"]["total"] == 2
     # R1 still reads as it was sent, at the price it was sent at.
     assert _money(envelope["data"][1]["grand_total"]) == TOWNHOUSE_TOTAL
+
+
+def test_the_customers_answer_reaches_the_wire_on_the_document_and_in_the_list(api):
+    """S17. The salesperson's two screens read this off the DOCUMENT, not the issue history.
+
+    The client asked "when i request changes, how can i see it from the system?", and the answer
+    is a banner on the quotation plus a badge on the project's quotation list - neither of which
+    fetches issues. So the decision has to survive the response model, which is exactly where
+    this codebase has lost a new field before: a manual dict computing it perfectly and a schema
+    that never declared it drops it silently on the way out.
+
+    Three things at the wire: the words arrive, acceptance outranks a request, and re-issuing
+    clears it (the revision the customer holds is the one being reported).
+    """
+    from app.services import project_quotation_document_service as qdocs
+
+    client, db, _company_id, _user_id, project, _party = api
+    uom = _uom(db)
+    category = _category(db, "Sanitary Ware")
+    product = _product(db, category.id, uom, "300.00")
+    db.commit()
+
+    root = f"{BASE}/projects/{project.id}/quotation-documents"
+    document = _create_document(client, project.id)
+    scope = _add_scope(client, project.id, document["id"], f"{MARKER} Townhouse")
+    _add_priced_line(
+        client,
+        _current_version_id(db, scope["id"]),
+        product,
+        price=PRICED_RATE,
+        qty=SAMPLE_QTY,
+    )
+    _sign(client, root, document["id"])
+    issued = client.post(f"{root}/{document['id']}/issue")
+    assert issued.status_code == 201, issued.text
+
+    # Nothing asked yet: the keys are present and empty, never absent.
+    quiet = client.get(f"{root}/{document['id']}").json()
+    assert quiet["customer_decision"] is None
+    assert quiet["changes_requested_note"] is None
+    assert quiet["accepted_at"] is None
+
+    record = qdocs.current_issue(db, _document_row(db, document["id"]))
+    note = f"{MARKER} can you provide me more discount"
+    qdocs.request_changes(db, record=record, note=note, requester_name=f"{MARKER} Kelly")
+    db.commit()
+
+    asked = client.get(f"{root}/{document['id']}").json()
+    assert asked["customer_decision"] == "changes_requested"
+    assert asked["changes_requested_note"] == note
+    assert asked["changes_requested_by_name"] == f"{MARKER} Kelly"
+    assert asked["changes_requested_at"] is not None
+    # And on the list the project tab renders, which is the other screen that has to say it.
+    listed = client.get(root).json()["data"][0]
+    assert listed["customer_decision"] == "changes_requested"
+
+    qdocs.accept_issue(
+        db,
+        record=record,
+        signer_name=f"{MARKER} Kelly",
+        mode="draw",
+        image_data_uri="data:image/png;base64,zzt",
+    )
+    db.commit()
+
+    signed = client.get(f"{root}/{document['id']}").json()
+    assert signed["customer_decision"] == "accepted"
+    assert signed["accepted_at"] is not None
+    # The words stay on record - they happened - but they are no longer the standing answer.
+    assert signed["changes_requested_note"] == note
+
+    # A fresh revision resets it: R2 is what the customer now holds, and nobody has answered it.
+    _sign(client, root, document["id"])
+    reissued = client.post(f"{root}/{document['id']}/issue")
+    assert reissued.status_code == 201, reissued.text
+    fresh = client.get(f"{root}/{document['id']}").json()
+    assert fresh["current_issue_no"] == 2
+    assert fresh["customer_decision"] is None
+    assert fresh["accepted_at"] is None
+    assert fresh["changes_requested_note"] is None
 
 
 # --------------------------------------------------------------------- AC-B4

@@ -136,6 +136,25 @@ export type QuotationDocument = {
   requires_approval?: boolean;
   /** How many such lines, so the block can say how much there is to look at. */
   below_floor_line_count?: number;
+
+  /**
+   * What the customer did with the revision they are CURRENTLY holding (S17).
+   *
+   * Carried on the document, not only on the issue, because the two screens that have to say it
+   * - the banner on this document and the Status column of the project's quotation list - do not
+   * fetch the issue history. Read off the latest issue server-side, so revising and re-issuing
+   * clears it rather than nagging about a request that has already been answered.
+   */
+  accepted_at?: string | null;
+  changes_requested_at?: string | null;
+  changes_requested_note?: string | null;
+  changes_requested_by_name?: string | null;
+  /**
+   * The resolved answer, decided once in the serializer: `accepted` beats `changes_requested`
+   * when both stamps are set. Never re-derive it from the two dates on a screen - that is how
+   * the list ends up disagreeing with the document about a quotation that is already won.
+   */
+  customer_decision?: 'accepted' | 'changes_requested' | null;
 };
 
 export type QuotationIssue = {

@@ -30,7 +30,10 @@ import {
   useSeriesMutations,
 } from '../../_shared/hooks/useProjects';
 import type { PriceFloorRule, ProjectSeries } from '../../_shared/types/project.types';
-import { PriceFloorDialog } from './PriceFloorDialog';
+// Shared, because the product Pricing tab and the category editor open the same dialog
+// with a target already chosen. One dialog, one set of copy.
+import { PriceFloorDialog } from '../../_shared/components/PriceFloorDialog';
+import { describeFloorRule } from '../../_shared/lib/priceFloor';
 import { SeriesDialog } from './SeriesDialog';
 
 const LEVEL_LABELS: Record<string, string> = {
@@ -602,12 +605,4 @@ function RowActions({
       </Tooltip>
     </div>
   );
-}
-
-function describeFloorRule(rule: PriceFloorRule): string {
-  const amount = Number(rule.value);
-  const value = Number.isNaN(amount) ? rule.value : String(amount);
-  return rule.mode === 'percent'
-    ? `At least ${value}% of the list price`
-    : `At least RM ${value}, whatever the list price says`;
 }

@@ -23,6 +23,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { useCreateCategory, useUpdateCategory, useCategory } from '../hooks/useProductCategories';
+// The floor is project-sales pricing POLICY, not a category column, so the panel and its
+// rules live with the rest of that policy and are only surfaced here.
+import { PriceFloorPanel } from '@/app/(protected)/project-sales/_shared/components/PriceFloorPanel';
 import type { CategoryFormData, CategoryTreeItem } from '../types/category.types';
 
 const CategorySchema = z.object({
@@ -200,7 +203,21 @@ export default function CategoryForm({ open, onOpenChange, categoryId, copyFromC
               )}
             />
 
-            <div className="flex justify-end gap-2">
+            {/* Edit only, and it saves on its own: a floor is a row in
+                price_floor_rules, not a category column, so this form's submit has
+                nothing to do with it and could not report a half-failure honestly. A
+                category being CREATED has no id to hang a rule on yet. */}
+            {categoryId && category && (
+              <PriceFloorPanel
+                target={{
+                  level: 'category',
+                  id: categoryId,
+                  label: category.category_name,
+                }}
+              />
+            )}
+
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <Button
                 type="button"
                 variant="outline"

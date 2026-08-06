@@ -40,6 +40,21 @@ _MAX_CATEGORY_DEPTH = 20
 
 
 @dataclass(frozen=True)
+class FloorSource:
+    """The RULE that governs a target, and where it sits relative to that target.
+
+    Distinct from ``ResolvedFloor``, which carries a resolved ringgit amount. A category
+    has no list price, so a percentage rule on it can never become money -- there is a
+    rule in force and no amount to print, and the two facts have to travel separately or
+    the UI ends up inventing a number.
+    """
+
+    rule: PriceFloorRule
+    level: str
+    category_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class ResolvedFloor:
     """The floor in force for one line, and where it came from.
 
@@ -141,14 +156,7 @@ def resolve_floor(
         return None
 
     effective_list = list_price if list_price is not None else product.list_price
-    rules = (
-        db.query(PriceFloorRule)
-        .filter(
-            PriceFloorRule.company_id == company_id,
-            PriceFloorRule.is_active.is_(True),
-        )
-        .all()
-    )
+    rules = _active_rules(db, company_id)
     if not rules:
         return None
 
@@ -183,6 +191,238 @@ def resolve_floor(
             category_id=category_id,
         )
     return None
+
+
+def resolve_category_floor_source(
+    db: Session, *, company_id: str, category_id: Optional[str]
+) -> Optional[FloorSource]:
+    """The rule in force for a CATEGORY: itself, then its ancestors nearest first, then
+    the company default.
+
+    Same precedence as ``resolve_floor``, one level shorter because a category is not a
+    product and there is nothing more specific than itself. There is no percent
+    fall-through here either: that rule exists because a percentage of a missing list
+    price is not a floor, and a category has no list price to miss.
+    """
+    if not category_id:
+        return None
+
+    rules = _active_rules(db, company_id)
+    if not rules:
+        return None
+
+    by_category = {r.category_id: r for r in rules if r.category_id and not r.product_id}
+    for index, ancestor_id in enumerate(category_ancestry(db, category_id)):
+        rule = by_category.get(ancestor_id)
+        if rule:
+            level = LEVEL_CATEGORY if index == 0 else LEVEL_CATEGORY_ANCESTOR
+            return FloorSource(rule=rule, level=level, category_id=ancestor_id)
+
+    system = next((r for r in rules if not r.product_id and not r.category_id), None)
+    return FloorSource(rule=system, level=LEVEL_SYSTEM) if system else None
+
+
+def own_floor_rule(
+    db: Session,
+    *,
+    company_id: str,
+    product_id: Optional[str] = None,
+    category_id: Optional[str] = None,
+) -> Optional[PriceFloorRule]:
+    """The rule set ON this exact target, inherited rules excluded.
+
+    Whether the target owns one decides whether "clear this floor" is even offered, so it
+    is a different question from what governs it, and the answer must not be inferred
+    from the resolved level (a product-level resolution says the product owns a rule; a
+    category-level one does not say whether THAT category is the one carrying it).
+
+    Inactive rules count as owned: an inactive rule is skipped when resolving but still
+    occupies the target's slot, and hiding it would offer "set a floor" for a target that
+    already has one.
+    """
+    if not product_id and not category_id:
+        return None
+    return (
+        db.query(PriceFloorRule)
+        .filter(
+            PriceFloorRule.company_id == company_id,
+            PriceFloorRule.product_id == product_id
+            if product_id
+            else PriceFloorRule.product_id.is_(None),
+            PriceFloorRule.category_id == category_id
+            if category_id
+            else PriceFloorRule.category_id.is_(None),
+        )
+        .first()
+    )
+
+
+SYSTEM_SOURCE_LABEL = "Company default"
+
+
+def serialize_floor_rules(db: Session, rules: Sequence[PriceFloorRule]) -> List[dict]:
+    """Rules with their targets NAMED. One place, so the pricing screen and the
+    master-data editors cannot disagree about what a rule is called."""
+    product_ids = {r.product_id for r in rules if r.product_id}
+    category_ids = {r.category_id for r in rules if r.category_id}
+    products = (
+        {
+            row.id: row.product_code
+            for row in db.query(Product).filter(Product.id.in_(product_ids)).all()
+        }
+        if product_ids
+        else {}
+    )
+    categories = (
+        {
+            row.id: row.category_name
+            for row in db.query(ProductCategory)
+            .filter(ProductCategory.id.in_(category_ids))
+            .all()
+        }
+        if category_ids
+        else {}
+    )
+
+    out = []
+    for rule in rules:
+        level = (
+            LEVEL_PRODUCT
+            if rule.product_id
+            else LEVEL_CATEGORY
+            if rule.category_id
+            else LEVEL_SYSTEM
+        )
+        out.append(
+            {
+                "id": rule.id,
+                "product_id": rule.product_id,
+                "product_code": products.get(rule.product_id or ""),
+                "category_id": rule.category_id,
+                "category_name": categories.get(rule.category_id or ""),
+                "mode": rule.mode,
+                "value": rule.value,
+                "notes": rule.notes,
+                "is_active": rule.is_active,
+                "level": level,
+            }
+        )
+    return out
+
+
+def _category_name(db: Session, category_id: Optional[str]) -> Optional[str]:
+    if not category_id:
+        return None
+    row = (
+        db.query(ProductCategory.category_name)
+        .filter(ProductCategory.id == category_id)
+        .first()
+    )
+    return row[0] if row else None
+
+
+def effective_floor_view(
+    db: Session,
+    *,
+    company_id: str,
+    product_id: Optional[str] = None,
+    category_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """What governs one product or one category, ready to render.
+
+    Two facts, not one. ``own_rule`` is the rule set on this exact target and decides
+    whether clearing is possible; ``effective`` is what actually applies once inheritance
+    has been walked, and names its source so the reader can go and argue with the right
+    policy instead of a bare number.
+    """
+    if bool(product_id) == bool(category_id):
+        raise AppException(
+            status_code=422,
+            message="Name exactly one target: product_id or category_id.",
+            code="floor_target_required",
+        )
+
+    if product_id:
+        product = db.query(Product).filter(Product.id == product_id).first()
+        if not product:
+            raise AppException(
+                status_code=404, message="Product not found.", code="product_not_found"
+            )
+        own = own_floor_rule(db, company_id=company_id, product_id=product.id)
+        # Reuses the golden-set engine rather than re-deriving it: this surface must
+        # agree with what a quotation line is actually judged against.
+        resolved = resolve_floor(db, company_id=company_id, product=product)
+        effective = None
+        if resolved:
+            rule = (
+                db.query(PriceFloorRule)
+                .filter(PriceFloorRule.id == resolved.rule_id)
+                .first()
+            )
+            effective = {
+                "rule_id": resolved.rule_id,
+                "level": resolved.level,
+                "mode": resolved.mode,
+                "value": rule.value if rule else resolved.value,
+                "amount": resolved.value,
+                "source_label": product.product_code
+                if resolved.level == LEVEL_PRODUCT
+                else _category_name(db, resolved.category_id) or SYSTEM_SOURCE_LABEL,
+            }
+        return {
+            "target_level": LEVEL_PRODUCT,
+            "target_id": product.id,
+            "target_label": product.product_code,
+            "list_price": product.list_price,
+            "own_rule": serialize_floor_rules(db, [own])[0] if own else None,
+            "effective": effective,
+        }
+
+    category = (
+        db.query(ProductCategory).filter(ProductCategory.id == category_id).first()
+    )
+    if not category:
+        raise AppException(
+            status_code=404, message="Category not found.", code="category_not_found"
+        )
+    own = own_floor_rule(db, company_id=company_id, category_id=category.id)
+    source = resolve_category_floor_source(
+        db, company_id=company_id, category_id=category.id
+    )
+    effective = None
+    if source:
+        effective = {
+            "rule_id": source.rule.id,
+            "level": source.level,
+            "mode": source.rule.mode,
+            "value": source.rule.value,
+            # A percentage of no list price is not money. Printing one anyway would be
+            # inventing it.
+            "amount": source.rule.value
+            if source.rule.mode == FLOOR_MODE_ABSOLUTE
+            else None,
+            "source_label": _category_name(db, source.category_id)
+            or SYSTEM_SOURCE_LABEL,
+        }
+    return {
+        "target_level": LEVEL_CATEGORY,
+        "target_id": category.id,
+        "target_label": category.category_name,
+        "list_price": None,
+        "own_rule": serialize_floor_rules(db, [own])[0] if own else None,
+        "effective": effective,
+    }
+
+
+def _active_rules(db: Session, company_id: str) -> List[PriceFloorRule]:
+    return (
+        db.query(PriceFloorRule)
+        .filter(
+            PriceFloorRule.company_id == company_id,
+            PriceFloorRule.is_active.is_(True),
+        )
+        .all()
+    )
 
 
 # ------------------------------------------------------------- rule management

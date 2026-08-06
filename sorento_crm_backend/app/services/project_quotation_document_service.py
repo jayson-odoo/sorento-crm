@@ -448,6 +448,23 @@ def _scope_summary(db: Session, scope: ProjectQuotation) -> Dict[str, Any]:
     }
 
 
+def _customer_decision(latest: Optional[ProjectQuotationIssue]) -> Optional[str]:
+    """What the customer did with the revision they hold: accepted, asked, or nothing yet.
+
+    Acceptance is checked FIRST and that ordering is the rule, not a coincidence: a customer who
+    asked for changes and then signed has accepted, the request stays on the row as history, and
+    a screen reporting "changes requested" on a quotation that is already won would be wrong on
+    every one of them.
+    """
+    if latest is None:
+        return None
+    if latest.accepted_at is not None:
+        return "accepted"
+    if latest.changes_requested_at is not None:
+        return "changes_requested"
+    return None
+
+
 def serialize_document(db: Session, document: ProjectQuotationDocument) -> Dict[str, Any]:
     """One document, with its tabs and its money.
 
@@ -503,6 +520,29 @@ def serialize_document(db: Session, document: ProjectQuotationDocument) -> Dict[
         "issue_count": int(issue_count),
         "current_issue_no": latest.issue_no if latest is not None else None,
         "is_issued": latest is not None,
+        # Where the CUSTOMER left the revision they are currently holding, so the salesperson's
+        # own screens can say it without reading the issue history. The client went looking for a
+        # change request and could not find it ("when i request changes, how can i see it from
+        # the system?"), and the answer cannot be a tab: the banner on the document and the badge
+        # on the project's quotation list both need this, and neither fetches issues.
+        #
+        # Read off the LATEST issue alone. Read across the whole history it would keep telling
+        # somebody to revise a quotation they have already revised and re-issued.
+        "accepted_at": latest.accepted_at if latest is not None else None,
+        "changes_requested_at": (
+            latest.changes_requested_at if latest is not None else None
+        ),
+        "changes_requested_note": (
+            latest.changes_requested_note if latest is not None else None
+        ),
+        "changes_requested_by_name": (
+            latest.changes_requested_by_name if latest is not None else None
+        ),
+        # The one place the "acceptance wins" rule is decided. Both fields can be set - somebody
+        # who asked for changes may still sign - and every surface has to reach the same answer,
+        # so it is resolved once here rather than re-expressed on the counter-sign page, the
+        # Signatures badge, the document banner and the list column.
+        "customer_decision": _customer_decision(latest),
         # S15. The screen reads all six of these to decide whether to show the price-floor
         # block at all, so they are present on EVERY document rather than only on a gated one:
         # absent would be as bad as wrong. Spread from one function so this manual dict and the

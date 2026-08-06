@@ -174,3 +174,63 @@ contract the tests pin:
   clock here would clear the badge the moment the customer complains.
 - Recipient is the project's `owner_user_id`, falling back to management only when the project has
   no owner, so the message is never dropped.
+
+## S17b - the salesperson finding out (2026-08-06 client review)
+
+The client's review of S17 was one question with the answer inside it: *"when i request changes,
+how can i see it from the system?"* They had gone looking and could not find it. It WAS recorded -
+on the Signatures tab - and a tab the salesperson has no reason to open is not where "the customer
+is waiting on you" belongs. Two other header items came in the same review.
+
+**1. The change request is on the document, not behind a tab.**
+
+- New `QuotationChangesRequestedPanel.tsx`, the same family as `QuotationApprovalPanel`: a strip
+  directly under the page header that renders NOTHING in the ordinary case, and when it appears
+  names the reason AND offers the next action as a click.
+- It carries the customer's **verbatim words** (newlines kept, never truncated), who said them and
+  when. "They asked for changes" is a notification; what a salesperson acts on is the sentence.
+- The button is the **existing** document-level revise entry point (`startEditing()` ->
+  `ReviseToEditDialog`), not a second one. The system still does not open a revision by itself.
+  Labelled **"Revise this quotation"**, deliberately NOT "Revise to vN": the Scopes tab already
+  carries a per-scope button by that exact name (`QuotationVersionEditor`), and two identically
+  worded controls acting on different things - one scope vs the whole document - is worse than a
+  vaguer label. The dialog that opens names the scopes and the version it will mint.
+- With no frozen scope left (a revision is already open) the label reads "Edit this quotation",
+  because that is what the click will actually do.
+
+**Contract change.** The banner and the list read the decision off the DOCUMENT, so
+`serialize_document` gains five keys and `ProjectQuotationDocumentResponse` declares them:
+`accepted_at`, `changes_requested_at`, `changes_requested_note`, `changes_requested_by_name` and
+`customer_decision` (`"accepted" | "changes_requested" | null`). Read off the **latest issue
+only**, so revising and re-issuing clears it rather than nagging about a request already answered.
+`customer_decision` is where the accepted-beats-requested rule is resolved **once**: the FE reads
+it through `hasOpenChangeRequest` / `quotationStanding` and never re-derives it from the two
+timestamps. That is the third manual builder for this entity (`serialize_document`,
+`serialize_issue`, `serialize_sign_page`), so `test_the_customers_answer_reaches_the_wire...`
+pins it at the HTTP seam, where this codebase has silently dropped a new field before.
+
+**Yes, it belongs on the project's Quotations list too.** It rides the existing Status column
+(Draft / Issued / Changes requested / Accepted) rather than a new one: the customer's answer IS
+where the quotation stands, and a second, mostly-empty column would push the money off a 375px
+screen. The column widened 120 -> 150 for the longest label. No column was added or removed, so
+saved per-user column orders under `projects.projects.view::project-quotation-documents` stay
+valid and the listing key does not need suffixing.
+
+**2. Edit moved into the gear.** Client, with the header buttons circled: *"edit should be in gear
+button"*. The rule was already in this screen's own docblock - ONE primary CTA, every other action
+behind the gear - and Issue is the CTA. Only the **entry point** moved. The edit SESSION controls
+(Cancel, Save) stay in the header where they are: once a session is open they are the active
+controls for the screen. The `ReviseToEditDialog` path works unchanged from its new home.
+
+**3. The downloads chip is bordered.** Client: *"the download should have border just like
+complaint, we should use the same exact element"*. It always WAS the same component
+(`EntityDownloadsButton`); the complaint detail header passes `h-8 border border-border` and the
+quotation header passed nothing, so it rendered borderless beside two bordered buttons and read as
+not clickable. The same three classes are now passed here.
+
+**Decision: the border stays a call-site className, not a component default.** Of the three call
+sites two want it (complaint detail header, quotation header) and one must NOT (the complaints
+DataGrid "Print Count" cell, where a bordered chip would read as a nested button and add chrome to
+every row). Two out of three is not "every call site", and flipping the default would mean editing
+a complaint surface the client did not complain about in order to opt it back out. Revisit if a
+third bordered header appears.

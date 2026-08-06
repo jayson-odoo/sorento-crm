@@ -24,6 +24,7 @@ import {
   deleteQuotation,
   deleteQuotationLine,
   deleteSeries,
+  getEffectivePriceFloor,
   listPriceFloors,
   listQuotationLines,
   listQuotationLossReasons,
@@ -97,6 +98,7 @@ import type {
   ProjectStakeholderBody,
   ProjectTaskBody,
   LeadListParams,
+  FloorTargetLevel,
   PriceFloorRuleBody,
   ProjectSampleBody,
   ProjectPurchaseOrderBody,
@@ -866,6 +868,23 @@ export function useProjectSeries(includeInactive = false) {
 
 export function usePriceFloors() {
   return useQuery({ queryKey: PRICE_FLOORS_KEY, queryFn: () => listPriceFloors() });
+}
+
+/**
+ * The floor in force for one product or one category.
+ *
+ * Keyed UNDER `PRICE_FLOORS_KEY` on purpose: every floor write invalidates that prefix,
+ * so setting a category floor from the category editor also refreshes what a product
+ * under it says it inherits, without either surface having to know about the other.
+ */
+export function useEffectivePriceFloor(
+  target: { level: FloorTargetLevel; id: string } | null,
+) {
+  return useQuery({
+    queryKey: [...PRICE_FLOORS_KEY, 'effective', target?.level, target?.id],
+    queryFn: () => getEffectivePriceFloor(target as { level: FloorTargetLevel; id: string }),
+    enabled: Boolean(target?.id),
+  });
 }
 
 /**
