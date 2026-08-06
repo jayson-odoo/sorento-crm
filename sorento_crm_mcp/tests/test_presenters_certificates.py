@@ -290,3 +290,109 @@ def test_certificates_empty_page_is_a_clean_no_result_envelope():
     assert out["attachments"] == []
     assert out["has_result"] is False
     assert out["intro"] == "No matching results found."
+
+
+# ------------------------------------------- three-state validity surfacing
+# `expired` alone cannot say "renew this soon": a certificate 11 days from
+# lapsing and one with three years left both read `expired: false`. Both tools
+# now emit a human `Validity` line plus a distinct `expiring_soon` flag.
+def test_product_attachment_surfaces_all_three_validity_states():
+    def row(state, until, is_expired):
+        return {
+            "product": {"product_code": "WC8038"},
+            "attachment": {"original_filename": "c.pdf", "file_path": "https://cdn/c.pdf"},
+            "certificate": {
+                "certificate_number": "04424FC",
+                "valid_until": until,
+                "validity_state": state,
+                "is_expired": is_expired,
+            },
+        }
+
+    out = env(PA_TOOL, {"data": [
+        row("valid", "2029-04-05", False),
+        row("expiring_soon", "2026-08-17", False),
+        row("expired", "2016-06-14", True),
+    ]})
+    valid, soon, expired = out["items"]
+
+    assert fields(valid)["Validity"] == "Valid"
+    assert valid["flags"]["expired"] is False
+    assert valid["flags"]["expiring_soon"] is False
+
+    assert fields(soon)["Validity"] == "Expiring soon"
+    # Not expired - a renewal deadline must not read as a dead document.
+    assert soon["flags"]["expired"] is False
+    assert soon["flags"]["expiring_soon"] is True
+
+    assert fields(expired)["Validity"] == "Expired"
+    assert expired["flags"]["expired"] is True
+    assert expired["flags"]["expiring_soon"] is False
+
+
+def test_product_attachment_cert_row_carries_the_certificate_number():
+    out = env(PA_TOOL, {"data": [{
+        "product": {"product_code": "CWC2095"},
+        "attachment": {"original_filename": "WCM PC 000318.pdf", "file_path": "https://cdn/w.pdf"},
+        "certificate": {
+            "certificate_number": "000318",
+            "valid_until": "2026-06-14",
+            "validity_state": "expired",
+            "is_expired": True,
+        },
+    }]})
+    assert fields(out["items"][0])["Certificate Number"] == "000318"
+
+
+def test_non_cert_row_gets_neither_validity_line_nor_either_flag():
+    out = env(PA_TOOL, {"data": [{
+        "product": {"product_code": "SRTWB7109"},
+        "attachment": {"original_filename": "spec.pdf", "file_path": "https://cdn/s.pdf"},
+    }]})
+    item = out["items"][0]
+    assert "Validity" not in fields(item)
+    assert "Certificate Number" not in fields(item)
+    assert item["flags"]["expired"] is False
+    assert item["flags"]["expiring_soon"] is False
+
+
+def test_certificates_tool_humanizes_validity_and_flags_expiring_soon():
+    """The raw code `expiring_soon` used to reach rendered WhatsApp/email text."""
+    out = env(CERT_TOOL, {"data": [{
+        "scheme": "PPS",
+        "certificate_number": "01024FC",
+        "valid_until": "2026-08-17",
+        "validity_state": "expiring_soon",
+        "is_expired": False,
+    }]})
+    item = out["items"][0]
+    assert fields(item)["Validity"] == "Expiring soon"
+    assert item["flags"]["expiring_soon"] is True
+    assert item["flags"]["expired"] is False
+
+
+def test_unknown_validity_code_is_de_slugged_never_dropped():
+    """A state the envelope cannot name still beats silence about validity."""
+    out = env(CERT_TOOL, {"data": [{
+        "scheme": "PPS",
+        "certificate_number": "9999",
+        "valid_until": "2027-01-01",
+        "validity_state": "pending_reissue",
+        "is_expired": False,
+    }]})
+    assert fields(out["items"][0])["Validity"] == "Pending reissue"
+
+
+def test_every_item_carries_the_full_flag_set():
+    """Flags are a fixed shape across tools - a consumer reads keys, not length."""
+    out = env(PA_TOOL, {"data": [{
+        "product": {"product_code": "WC8038"},
+        "attachment": {"original_filename": "b.pdf", "file_path": "https://cdn/b.pdf"},
+    }]})
+    assert set(out["items"][0]["flags"]) == {
+        "discontinued",
+        "expired",
+        "expiring_soon",
+        "unallocated",
+        "partially_allocated",
+    }

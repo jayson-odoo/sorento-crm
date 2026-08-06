@@ -57,6 +57,7 @@ from app.services.certificate_service import (
     VALIDITY_UNKNOWN,
     VALIDITY_VALID,
     CertificateService,
+    derive_validity,
     normalize_identity,
     today_malaysia,
 )
@@ -77,6 +78,71 @@ DEFAULT_SORT_DIR = "asc"
 def _normalize_number(value: Any) -> str:
     """Punctuation- and case-insensitive form of a certificate number."""
     return "".join(ch for ch in str(value or "") if ch.isalnum()).upper()
+
+
+def certificate_validity_for_attachments(
+    db: Session,
+    attachment_ids: Sequence[str],
+) -> dict[str, dict[str, Any]]:
+    """Map ``attachment_id`` -> the validity of the revision that PDF *is*.
+
+    Only attachments filed as a certificate revision appear in the result, so a
+    caller can treat "absent" as "this file is not a certificate" - the ordinary
+    case for brochures and spec sheets, which must stay untouched.
+
+    The window read is the one belonging to THIS document, not the
+    certificate's current revision: a superseded PDF that is still linked to a
+    product genuinely is out of date, and reporting the renewal's dates against
+    the old file would be a lie. ``is_current_revision`` tells the caller
+    whether a newer issue exists.
+
+    Enters through ``Certificate`` (the join), so company scope applies -
+    ``certificate_revisions`` carries no ``company_id`` of its own.
+    """
+    ids = [str(a) for a in attachment_ids if a]
+    if not ids:
+        return {}
+
+    rows = (
+        db.query(
+            CertificateRevision.attachment_id,
+            CertificateRevision.valid_from,
+            CertificateRevision.valid_until,
+            CertificateRevision.is_current,
+            Certificate.id.label("certificate_id"),
+            Certificate.scheme,
+            Certificate.certificate_number,
+            Certificate.certifying_body,
+        )
+        .join(Certificate, Certificate.id == CertificateRevision.certificate_id)
+        .filter(CertificateRevision.attachment_id.in_(ids))
+        .all()
+    )
+
+    today = today_malaysia()
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        state, is_expired, days = derive_validity(
+            r.valid_from, r.valid_until, today=today
+        )
+        key = str(r.attachment_id)
+        entry = {
+            "certificate_id": str(r.certificate_id),
+            "scheme": r.scheme,
+            "certificate_number": r.certificate_number,
+            "certifying_body": r.certifying_body,
+            "valid_from": r.valid_from,
+            "valid_until": r.valid_until,
+            "validity_state": state,
+            "is_expired": is_expired,
+            "days_until_expiry": days,
+            "is_current_revision": bool(r.is_current),
+        }
+        # One file should be filed once, but if a stale row ever pairs the same
+        # attachment with an older revision, the current one decides the answer.
+        if key not in out or entry["is_current_revision"]:
+            out[key] = entry
+    return out
 
 
 class CertificateQueryService:

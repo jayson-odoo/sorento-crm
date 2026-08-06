@@ -358,8 +358,12 @@ mode**, which is the mode the n8n consumer actually uses.
   via `STATUS_PILL_BASE` (`rounded-full px-2 py-0.5 text-xs font-semibold`). No uppercase column headers, no
   hand-rolled font sizes, no local table markup - the certificate list and detail must be visually
   indistinguishable in type and spacing from the existing list and form views.
-- **FE-3 `[FE][E2E]`** The default filter is **validity-scoped** (expiring + expired first), not "all" - so
-  a certificate whose reminder email was missed is still visible without choosing a filter (mitigates REM-7).
+- **FE-3 `[FE][E2E]`** ~~The default filter is **validity-scoped** (expiring + expired first), not "all".~~
+  **Superseded after live use.** The list opens **unfiltered**: its row count must equal the whole register,
+  so it can be reconciled against the certification files on file. The scoped default withheld rows on
+  arrival and made the two counts disagree with nothing on screen to explain it. "Needs attention
+  (expiring + expired)" stays the first option in the Filters popover, one click away, so REM-7 is still
+  mitigated - by a filter the user chooses, not one applied behind their back.
 - **FE-4 `[FE]`** Filters: `validity_state`, `expiring_within_days`, `scheme`, `status`, `needs_review`,
   plus search by number. All dropdowns use the searchable-select standard (`ui/select.tsx` is banned).
 - **FE-5 `[FE][E2E]`** Detail page at `/master-data-management/certificates/{id}` renders **every** section

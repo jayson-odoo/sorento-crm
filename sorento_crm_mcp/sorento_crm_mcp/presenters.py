@@ -9,7 +9,7 @@ generic renderer instead of per-tool field-mapping code:
       "intro": "Here are the orders I found.",
       "items": [
         {"title": "...", "fields": [{"label": "...", "value": "..."}],
-         "flags": {"discontinued": false, "expired": false,
+         "flags": {"discontinued": false, "expired": false, "expiring_soon": false,
                    "unallocated": false, "partially_allocated": false}}
       ],
       "attachments": [{"url","filename","mimeType","attachmentType"}],
@@ -178,6 +178,7 @@ class _Builder:
         *,
         discontinued=False,
         expired=False,
+        expiring_soon=False,
         unallocated=False,
         partially_allocated=False,
     ) -> None:
@@ -191,6 +192,10 @@ class _Builder:
                 "flags": {
                     "discontinued": bool(discontinued),
                     "expired": bool(expired),
+                    # Mutually exclusive with `expired` — a renewal deadline is
+                    # not a dead document, and collapsing the two would have the
+                    # consumer refuse to serve a certificate that is still valid.
+                    "expiring_soon": bool(expiring_soon),
                     "unallocated": bool(unallocated),
                     "partially_allocated": bool(partially_allocated),
                 },
@@ -441,6 +446,7 @@ def _product_attachments(rows: list[dict], b: _Builder) -> None:
         cert = r.get("certificate") or {}
         if not isinstance(cert, dict):
             cert = {}
+        state = cert.get("validity_state")
         b.item(
             prod.get("product_code"),
             [
@@ -450,13 +456,18 @@ def _product_attachments(rows: list[dict], b: _Builder) -> None:
                 ("Dimensions", _dims(prod)),
                 ("Attachment Type", _att_type(att)),
                 ("File Name", att.get("original_filename") or att.get("stored_filename")),
+                ("Certificate Number", cert.get("certificate_number")),
                 ("Valid Until", cert.get("valid_until")),
+                # Says which of the three states this file is in, so the consumer
+                # never has to compare Valid Until against today itself.
+                ("Validity", _validity_label(state)),
             ],
             discontinued=prod.get("is_discontinued") is True,
             # Reuses the envelope's EXISTING flags.expired (same mechanism as
             # _promotions), so the n8n renderer needs no update to say "found
             # but expired" for a lapsed certificate.
             expired=cert.get("is_expired") is True,
+            expiring_soon=state == "expiring_soon",
         )
         b.attach(att)
 
@@ -499,11 +510,35 @@ def _certificate_file(row: dict) -> dict | None:
     return None
 
 
+# The backend's derived validity codes, in the words a person reads. An
+# unmapped code falls through de-slugged rather than being dropped — a state the
+# envelope cannot name is still better than silence about validity.
+_VALIDITY_LABELS = {
+    "valid": "Valid",
+    "expiring_soon": "Expiring soon",
+    "expired": "Expired",
+    "not_yet_valid": "Not yet valid",
+    "unknown": "Unknown",
+}
+
+
+def _validity_label(state: Any) -> str | None:
+    code = str(state or "").strip()
+    if not code:
+        return None
+    known = _VALIDITY_LABELS.get(code)
+    if known:
+        return known
+    words = code.replace("_", " ").replace("-", " ").strip()
+    return words[:1].upper() + words[1:] if words else None
+
+
 def _certificates(rows: list[dict], b: _Builder) -> None:
     for c in rows:
         number = c.get("certificate_number")
         scheme = c.get("scheme")
         title = " ".join(str(x) for x in (scheme, number) if _filled(x)) or number
+        state = c.get("validity_state")
         b.item(
             title,
             [
@@ -511,12 +546,15 @@ def _certificates(rows: list[dict], b: _Builder) -> None:
                 ("Certificate Number", number),
                 ("Certifying Body", c.get("certifying_body")),
                 ("Valid Until", c.get("valid_until")),
-                ("Validity", c.get("validity_state")),
+                # Humanized: the raw code (`expiring_soon`) leaked into rendered
+                # WhatsApp/email output.
+                ("Validity", _validity_label(state)),
                 ("Covered Products", c.get("covered_product_count")),
             ],
-            # Same flag the promotions presenter sets, so an expired certificate
+            # Same flags the promotions presenter sets, so an expired certificate
             # is reported as found-but-expired rather than served as live.
             expired=c.get("is_expired") is True,
+            expiring_soon=state == "expiring_soon",
         )
         current_file = _certificate_file(c)
         if current_file is not None:

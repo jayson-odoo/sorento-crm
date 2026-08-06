@@ -1,8 +1,9 @@
 /**
- * CertificatesList - list states + the validity-scoped default filter.
- *   FE-3 (the list opens validity-scoped: `validity_state=expiring_soon,expired`,
- *     not "all", so a certificate whose reminder email was missed is visible
- *     without choosing a filter; picking "Any validity" drops the param)
+ * CertificatesList - list states + filters.
+ *   The list opens UNFILTERED, so its row count is the whole register and can be
+ *     reconciled against the certification files on file. (This replaces the
+ *     original FE-3 validity-scoped default, which withheld rows on arrival.)
+ *     "Needs attention" is still one click away in the Filters popover.
  *   FE-4 (validity / expiring-within / scheme / status / needs-review filters
  *     feed the query, and the Filters button announces the active count)
  *   FE-8 (bulk delete is AlertDialog-confirmed, count-bearing, "This action
@@ -221,35 +222,33 @@ describe('CertificatesList - states', () => {
   });
 });
 
-describe('CertificatesList - validity-scoped default (FE-3)', () => {
-  it('opens validity-scoped: sends validity_state=expiring_soon,expired', () => {
-    mockList([cert()]);
-    renderList();
-    expect(lastParams().validity_state).toBe('expiring_soon,expired');
-  });
-
-  it('defaults to active certificates and no other narrowing filter', () => {
+describe('CertificatesList - opens unfiltered', () => {
+  it('sends no narrowing param at all', () => {
     mockList([cert()]);
     renderList();
     const params = lastParams();
-    expect(params.status).toBe('active');
+    // Every one of these undefined is the point: the row count on arrival is
+    // the whole register, so it can be reconciled against the certification
+    // files on file. The old default (expiring_soon,expired + active) withheld
+    // rows and made the two counts disagree for no visible reason.
+    expect(params.validity_state).toBeUndefined();
+    expect(params.status).toBeUndefined();
     expect(params.expiring_within_days).toBeUndefined();
     expect(params.scheme).toBeUndefined();
     expect(params.needs_review).toBeUndefined();
   });
 
-  it('announces the scoped default on the Filters button instead of hiding rows', () => {
+  it('shows no active-filter count on the Filters button', () => {
     mockList([cert()]);
     renderList();
-    // 2 = validity (attention) + status (active).
-    expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.queryByText('2')).not.toBeInTheDocument();
   });
 
-  it('choosing "Any validity" drops the validity_state param', async () => {
+  it('"Needs attention" is still one click away and narrows to both states', async () => {
     mockList([cert()]);
     renderList();
-    fireEvent.change(screen.getByLabelText('Validity'), { target: { value: 'all' } });
-    await waitFor(() => expect(lastParams().validity_state).toBeUndefined());
+    fireEvent.change(screen.getByLabelText('Validity'), { target: { value: 'attention' } });
+    await waitFor(() => expect(lastParams().validity_state).toBe('expiring_soon,expired'));
   });
 
   it('choosing a single validity state sends just that state', async () => {
@@ -284,10 +283,12 @@ describe('CertificatesList - filters feed the query (FE-4)', () => {
     await waitFor(() => expect(lastParams().needs_review).toBe(true));
   });
 
-  it('status "all" clears the status param', async () => {
+  it('status narrows, and "All statuses" clears the param again', async () => {
     mockList([cert()]);
     renderList();
-    fireEvent.change(screen.getByLabelText('Active'), { target: { value: 'all' } });
+    fireEvent.change(screen.getByLabelText('All statuses'), { target: { value: 'archived' } });
+    await waitFor(() => expect(lastParams().status).toBe('archived'));
+    fireEvent.change(screen.getByLabelText('All statuses'), { target: { value: 'all' } });
     await waitFor(() => expect(lastParams().status).toBeUndefined());
   });
 
@@ -303,6 +304,10 @@ describe('CertificatesList - filters feed the query (FE-4)', () => {
   it('Clear filters resets every filter to unfiltered', async () => {
     mockList([cert()]);
     renderList();
+    // The button only exists once something IS filtered - the list now opens
+    // clean, so narrow first.
+    fireEvent.change(screen.getByLabelText('Validity'), { target: { value: 'expired' } });
+    await waitFor(() => expect(lastParams().validity_state).toBe('expired'));
     fireEvent.click(screen.getByRole('button', { name: /Clear filters/i }));
     await waitFor(() => {
       const params = lastParams();

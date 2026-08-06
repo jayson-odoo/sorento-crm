@@ -82,13 +82,13 @@ export const SOURCE_LABELS: Record<CertificateSource, string> = {
   manual: 'Confirmed',
 };
 
-/** Filter option values. `attention` is the validity-scoped default (FE-3). */
+/** Filter option values. `all` is the default - the list opens unfiltered. */
 export const VALIDITY_FILTER_ALL = 'all';
 export const VALIDITY_FILTER_ATTENTION = 'attention';
 
 export const VALIDITY_FILTER_OPTIONS = [
-  { value: VALIDITY_FILTER_ATTENTION, label: 'Needs attention (expiring + expired)' },
   { value: VALIDITY_FILTER_ALL, label: 'Any validity' },
+  { value: VALIDITY_FILTER_ATTENTION, label: 'Needs attention (expiring + expired)' },
   { value: 'valid', label: VALIDITY_STATE_LABELS.valid },
   { value: 'expiring_soon', label: VALIDITY_STATE_LABELS.expiring_soon },
   { value: 'expired', label: VALIDITY_STATE_LABELS.expired },
@@ -107,9 +107,9 @@ export const SCHEME_FILTER_OPTIONS = [
 ];
 
 export const STATUS_FILTER_OPTIONS = [
+  { value: 'all', label: 'All statuses' },
   { value: 'active', label: 'Active' },
   { value: 'archived', label: 'Archived' },
-  { value: 'all', label: 'All statuses' },
 ];
 
 export const EXPIRING_WITHIN_OPTIONS = [

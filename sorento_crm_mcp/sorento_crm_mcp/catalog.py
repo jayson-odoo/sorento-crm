@@ -120,6 +120,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "(canonical product UUIDs), `attachment_ids` (canonical attachment UUIDs), and / or "
             "`attachment_type_ids` (canonical AttachmentType UUIDs — narrows to a doc class such as "
             "brochure or spec sheet). All three accept csv / JSON list / repeated query params.\n\n"
+            "CERTIFICATE VALIDITY: a row whose file is a filed certificate carries `certificate` "
+            "with `validity_state` (valid / expiring_soon / expired / not_yet_valid / unknown), "
+            "`valid_until` and `is_current_revision`. NEVER compare dates yourself and never call a "
+            "certificate valid when `certificate` is absent - absent means the file is not a "
+            "certificate at all (a brochure, a spec sheet). Do not hand over a file whose "
+            "`validity_state` is `expired`; say it has lapsed and use crm_certificates_list to find "
+            "whether a renewal has been filed.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
