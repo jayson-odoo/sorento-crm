@@ -8,9 +8,11 @@ lock, audit trail) because the printed sheet gets handed to a driver.
 
 Why this exists at all: the only export was Excel, and a long delivery address
 stretched one cell to an enormous width, making the printed sheet unusable. A
-spreadsheet auto-sizes to its content; a document must not. Hence
-``table-layout: fixed`` plus an explicit break rule — the two things that stop a
-cell widening the page no matter what is in it.
+spreadsheet auto-sizes to its content; a document must not. The items table
+pins that with ``table-layout: fixed``; the label/value tables use auto layout
+(so a value sits beside its label instead of at a fixed offset) and rely on
+``overflow-wrap: anywhere``, which lowers a cell's min-content width so an
+unbroken token wraps instead of widening the table.
 
 One table serves both request types (they share ``purchase_requests``), so every
 label decision here has to read correctly for a Purchase Request AND a
@@ -323,11 +325,17 @@ class PurchaseRequestPDFService:
   /* table-layout:fixed + the break rules are what stop a long delivery address
      widening a column and wrecking the print - the exact failure the Excel
      export had. Without `fixed` the cell grows to its content. */
-  table.fields {{ width: 100%; table-layout: fixed; border-collapse: collapse; }}
-  table.fields td {{ padding: 2.5px 6px 2.5px 0; vertical-align: top;
+  /* `auto` layout, not `fixed`: a label column sized to its widest label puts
+     every value right next to its label instead of at a fixed 22% - the
+     sign-off block used to derive different widths because its first row spans
+     columns, leaving "Tester" stranded far from "Requested by:".
+     `overflow-wrap: anywhere` shrinks a cell's min-content width, so an
+     unbroken delivery address still wraps under auto layout rather than
+     widening the table - the guarantee is kept, by a different mechanism. */
+  table.fields {{ width: 100%; table-layout: auto; border-collapse: collapse; }}
+  table.fields td {{ padding: 2.5px 14px 2.5px 0; vertical-align: top;
                      white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }}
-  table.fields td.lbl {{ width: 22%; white-space: nowrap; }}
-  table.fields td.val {{ width: 28%; }}
+  table.fields td.lbl {{ width: 1%; white-space: nowrap; }}
   table.fields tr.spacer td {{ padding: 0; height: 8px; }}
   .signoff {{ margin-top: 22px; }}
   table.items {{ width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 6px; }}

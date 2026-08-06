@@ -133,8 +133,11 @@ def test_a_long_address_cannot_widen_the_table(db, request_type):
     """AC-9, the actual bug being fixed.
 
     The Excel export blew its column out to the width of the address. The PDF
-    must not: the table is a fixed 100% width and the cell has to break a long
-    unbroken token rather than push the layout wider than the page.
+    must not. Two mechanisms, because the two tables have different jobs: the
+    items table is `table-layout: fixed`, while the label/value tables use auto
+    layout (so a value sits beside its label) and depend on
+    `overflow-wrap: anywhere` - which lowers a cell's min-content width, so an
+    unbroken token wraps instead of forcing the table wider.
     """
     from app.services.purchase_request_pdf_service import PurchaseRequestPDFService
 
@@ -143,11 +146,14 @@ def test_a_long_address_cannot_widen_the_table(db, request_type):
     svc = PurchaseRequestPDFService(db)
     html = svc._html(row)
 
-    assert "table-layout: fixed" in html, "a fixed layout is what stops a cell widening"
-    assert "width: 100%" in html.replace("width:100%", "width: 100%")
-    assert "overflow-wrap: anywhere" in html or "word-break: break-all" in html, (
-        "without a break rule an unbroken token overflows the cell"
+    assert "table.items { width: 100%; table-layout: fixed" in html, (
+        "the items table must stay fixed-layout"
     )
+    assert "overflow-wrap: anywhere" in html, (
+        "auto-layout label/value tables rely on this to keep an unbroken token "
+        "from widening the table"
+    )
+    assert "table.fields td { padding" in html and "overflow-wrap: anywhere" in html
     # And it must actually render at that size.
     pdf_bytes, _ = svc.render_pdf(str(row.id))
     assert pdf_bytes[:4] == b"%PDF"
@@ -319,3 +325,30 @@ def test_pic_is_echoed_back_when_a_draft_is_reopened(db, request_type):
     detail = PortalService(db)._serialize_request_detail(row)
     assert "pic" in detail, "the portal never sends pic back, so a saved draft reopens blank"
     assert detail["pic"] == PIC_VALUE
+
+
+@pytest.mark.parametrize("request_type", BOTH_TYPES)
+def test_every_editable_field_is_sent_back_to_the_portal(db, request_type):
+    """The general form of the PIC bug, which has now bitten twice (`pic`, then
+    `sales_type`).
+
+    A portal field lives in two hand-maintained lists: ``_editable_fields``
+    decides what a submit is allowed to write, ``_serialize_request_detail``
+    decides what a reopened draft is told. A field in the first but not the
+    second saves correctly and then renders blank - which reads as "the save did
+    nothing" even though the column holds the value. Nothing errors, so only an
+    assertion over the whole list catches it.
+    """
+    from app.services.portal_service import PortalService
+
+    row = _make(db, request_type=request_type)
+    db.commit()
+    svc = PortalService(db)
+
+    returned = set(svc._serialize_request_detail(row))
+    writable = set(svc._editable_fields(request_type))
+    missing = sorted(writable - returned)
+    assert not missing, (
+        f"{request_type}: {missing} can be written from the portal but are never "
+        "returned, so a saved draft reopens with those boxes blank"
+    )

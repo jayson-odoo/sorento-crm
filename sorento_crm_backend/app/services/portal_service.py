@@ -1701,6 +1701,7 @@ class PortalService:
                 "pic": getattr(row, "pic", None),
                 "project_title": row.project_title,
                 "purpose": row.purpose,
+                "sales_type": row.sales_type,
                 "delivery_address": row.delivery_address,
                 "total_project_value": str(row.total_project_value) if row.total_project_value is not None else None,
                 "total_project_value_text": row.total_project_value_text,
