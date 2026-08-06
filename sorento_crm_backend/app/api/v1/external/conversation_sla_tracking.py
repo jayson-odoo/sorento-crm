@@ -22,7 +22,7 @@ router = APIRouter()
     response_model=ConversationSLATrackingResponse,
     summary="Get SLA tracking by contact_id or phone_number",
 )
-async def get_conversation_sla_tracking_by_contact(
+def get_conversation_sla_tracking_by_contact(
     contact_id: Optional[str] = Query(
         None,
         description="Respond.io contact id (respond_io_id) or CRM respond_contacts row id.",

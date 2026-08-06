@@ -11,7 +11,7 @@ router = APIRouter()
 
 
 @router.get("/select")
-async def get_products_select(
+def get_products_select(
     query: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)

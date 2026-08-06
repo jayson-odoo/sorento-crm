@@ -10,7 +10,22 @@ class Settings(BaseSettings):
     # Database
     database_url: str
     direct_url: str | None = None
-    
+
+    # Connection pool, per process. The ceiling that matters is Postgres
+    # ``max_connections`` (100 here, 3 superuser-reserved) shared by every API
+    # worker AND the RQ worker AND any psql/admin session — so the budget is
+    # roughly ``workers * (db_pool_size + db_max_overflow) + worker + headroom``.
+    # Overshooting trades 504s for "FATAL: sorry, too many clients already".
+    # Tunable per environment without a code change (WORKERS varies by host).
+    db_pool_size: int = 8
+    db_max_overflow: int = 7
+    # Fail a starved checkout fast and loudly instead of hanging the request for
+    # the SQLAlchemy default (30s), which reads as an unexplained stall.
+    db_pool_timeout: int = 10
+    # Recycle below any upstream idle-connection reaper so a pooled connection is
+    # never handed out already dead.
+    db_pool_recycle: int = 1800
+
     # JWT Authentication
     jwt_secret: str
     jwt_algorithm: str = "HS256"

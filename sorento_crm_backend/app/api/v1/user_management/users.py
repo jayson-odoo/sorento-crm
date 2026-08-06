@@ -46,7 +46,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=ListResponse[UserResponse])
-async def get_users(
+def get_users(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -119,7 +119,7 @@ async def get_users(
 
 
 @router.get("/select", response_model=list[UserSelectResponse])
-async def get_users_select(
+def get_users_select(
     query: Optional[str] = Query(None),
     respond_synced: Optional[str] = Query(None),
     status: Optional[str] = Query(None, description="Filter by status, e.g. ACTIVE for active users only"),
@@ -207,7 +207,7 @@ def _send_invitation_link_for_user(db: Session, user) -> str:
 
 
 @router.post("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_users_action(
+def bulk_users_action(
     body: BulkUsersRequest,
     current_user: dict = Depends(require_any_permission(["user_management.users.edit", "user_management.users.delete"])),
     db: Session = Depends(get_db)
@@ -265,7 +265,7 @@ async def bulk_users_action(
 
 
 @router.post("/{user_id}/force-logout", status_code=status.HTTP_200_OK)
-async def force_logout_user(
+def force_logout_user(
     user_id: str,
     current_user: dict = Depends(require_permission("user_management.users.edit")),
     db: Session = Depends(get_db),
@@ -278,7 +278,7 @@ async def force_logout_user(
 
 
 @router.patch("/{user_id}/daily-sla-summary-subscription", status_code=status.HTTP_200_OK)
-async def update_user_daily_sla_summary_subscription(
+def update_user_daily_sla_summary_subscription(
     user_id: str,
     body: DailySummarySubscriptionUpdateRequest,
     current_user: dict = Depends(require_permission("user_management.users.edit")),
@@ -299,7 +299,7 @@ async def update_user_daily_sla_summary_subscription(
 
 
 @router.get("/respond-users", status_code=status.HTTP_200_OK)
-async def get_respond_users(
+def get_respond_users(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -337,7 +337,7 @@ async def get_respond_users(
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_current_user_profile(
+def get_current_user_profile(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -391,7 +391,7 @@ async def get_current_user_profile(
 
 
 @router.get("/me/permissions")
-async def get_my_permissions(
+def get_my_permissions(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -405,7 +405,7 @@ async def get_my_permissions(
 
 
 @router.get("/{user_id}/roles", response_model=list[UserRoleResponse])
-async def get_user_roles(
+def get_user_roles(
     user_id: str,
     current_user: dict = Depends(require_permission("user_management.users.view")),
     db: Session = Depends(get_db)
@@ -423,7 +423,7 @@ async def get_user_roles(
 
 
 @router.put("/{user_id}/roles", status_code=status.HTTP_200_OK)
-async def set_user_roles(
+def set_user_roles(
     user_id: str,
     body: UserRolesUpdateRequest = Body(...),
     current_user: dict = Depends(require_permission("user_management.users.edit")),
@@ -441,7 +441,7 @@ async def set_user_roles(
 
 
 @router.get("/{user_id}/companies")
-async def get_user_companies(
+def get_user_companies(
     user_id: str,
     current_user: dict = Depends(require_permission("user_management.users.view")),
     db: Session = Depends(get_db)
@@ -458,7 +458,7 @@ async def get_user_companies(
 
 
 @router.put("/{user_id}/companies", status_code=status.HTTP_200_OK)
-async def set_user_companies(
+def set_user_companies(
     user_id: str,
     body: UserCompaniesUpdateRequest = Body(...),
     current_user: dict = Depends(require_permission("user_management.users.edit")),
@@ -476,7 +476,7 @@ async def set_user_companies(
 
 
 @router.get("/{user_id}", response_model=UserResponse)
-async def get_user(
+def get_user(
     user_id: str,
     current_user: dict = Depends(require_permission("user_management.users.view")),
     db: Session = Depends(get_db)
@@ -531,7 +531,7 @@ async def get_user(
 
 
 @router.post("/invite", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def invite_user(
+def invite_user(
     user_data: UserCreate,
     current_user: dict = Depends(require_permission("user_management.users.add")),
     db: Session = Depends(get_db)
@@ -549,7 +549,7 @@ async def invite_user(
 
 
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def create_user(
+def create_user(
     user_data: UserCreate,
     current_user: dict = Depends(require_permission("user_management.users.add")),
     db: Session = Depends(get_db)
@@ -566,7 +566,7 @@ async def create_user(
 
 
 @router.put("/{user_id}", response_model=UserResponse)
-async def update_user(
+def update_user(
     user_id: str,
     user_data: UserUpdate,
     current_user: dict = Depends(require_permission("user_management.users.edit")),
@@ -585,7 +585,7 @@ async def update_user(
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_200_OK)
-async def delete_user(
+def delete_user(
     user_id: str,
     permanent: bool = Query(False, description="If true, permanently delete (only allowed for trashed users)"),
     current_user: dict = Depends(require_permission("user_management.users.delete")),
@@ -607,7 +607,7 @@ async def delete_user(
 
 
 @router.post("/{user_id}/restore", status_code=status.HTTP_200_OK)
-async def restore_user(
+def restore_user(
     user_id: str,
     current_user: dict = Depends(require_permission("user_management.users.edit")),
     db: Session = Depends(get_db)
@@ -625,7 +625,7 @@ async def restore_user(
 
 
 @router.post("/{user_id}/resend-invite", status_code=status.HTTP_200_OK)
-async def resend_invite(
+def resend_invite(
     user_id: str,
     current_user: dict = Depends(require_permission("user_management.users.edit")),
     db: Session = Depends(get_db)
@@ -647,7 +647,7 @@ class SyncRespondRequest(BaseModel):
     respond_user_id: Optional[str] = None
 
 @router.post("/{user_id}/sync-respond", status_code=status.HTTP_200_OK)
-async def sync_respond_user(
+def sync_respond_user(
     user_id: str,
     request_data: Optional[SyncRespondRequest] = Body(None),
     current_user: dict = Depends(get_current_user),

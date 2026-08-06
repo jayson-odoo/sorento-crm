@@ -29,7 +29,7 @@ class BulkDeletePackingListsRequest(BaseModel):
 
 
 @router.get("/", response_model=ListResponse[InboundShipmentListItemResponse])
-async def get_packing_lists(
+def get_packing_lists(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -58,7 +58,7 @@ async def get_packing_lists(
 
 
 @router.get("/neighbours")
-async def get_packing_list_neighbours(
+def get_packing_list_neighbours(
     id: str = Query(..., description="Packing list (inbound shipment) id to resolve neighbours for"),
     query: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
@@ -92,7 +92,7 @@ async def get_packing_list_neighbours(
 
 
 @router.get("/{shipment_id}", response_model=InboundShipmentResponse)
-async def get_packing_list(
+def get_packing_list(
     shipment_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -208,7 +208,7 @@ async def get_packing_list(
 
 
 @router.post("/", response_model=InboundShipmentResponse, status_code=status.HTTP_201_CREATED)
-async def create_packing_list(
+def create_packing_list(
     shipment_data: InboundShipmentCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -230,7 +230,7 @@ async def create_packing_list(
 
 
 @router.put("/{shipment_id}", response_model=InboundShipmentResponse)
-async def update_packing_list(
+def update_packing_list(
     shipment_id: str,
     shipment_data: InboundShipmentUpdate,
     current_user: dict = Depends(get_current_user),
@@ -248,7 +248,7 @@ async def update_packing_list(
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_delete_packing_lists(
+def bulk_delete_packing_lists(
     body: BulkDeletePackingListsRequest = Body(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -264,7 +264,7 @@ async def bulk_delete_packing_lists(
 
 
 @router.delete("/{shipment_id}", status_code=status.HTTP_200_OK)
-async def delete_packing_list(
+def delete_packing_list(
     shipment_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)

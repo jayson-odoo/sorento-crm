@@ -25,7 +25,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=ListResponse)
-async def get_system_logs(
+def get_system_logs(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
@@ -144,7 +144,7 @@ async def get_user_system_logs(
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
-async def create_system_log(
+def create_system_log(
     log_data: SystemLogCreate,
     db: Session = Depends(get_db)
 ):

@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("")
-async def list_integrations(
+def list_integrations(
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("integration.integrations.view")),
 ):
@@ -43,7 +43,7 @@ async def list_integrations(
 
 
 @router.get("/{integration_id}")
-async def get_integration(
+def get_integration(
     integration_id: str = Path(...),
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("integration.integrations.view")),
@@ -54,7 +54,7 @@ async def get_integration(
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_integration(
+def create_integration(
     payload: IntegrationCreate,
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("integration.integrations.add")),
@@ -73,7 +73,7 @@ async def create_integration(
 
 
 @router.patch("/{integration_id}")
-async def update_integration(
+def update_integration(
     payload: IntegrationUpdate,
     integration_id: str = Path(...),
     db: Session = Depends(get_db),
@@ -96,7 +96,7 @@ async def update_integration(
 
 
 @router.delete("/{integration_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_integration(
+def delete_integration(
     integration_id: str = Path(...),
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("integration.integrations.delete")),
@@ -112,7 +112,7 @@ async def delete_integration(
     response_model=IssuedKeyResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def issue_key(
+def issue_key(
     integration_id: str = Path(...),
     db: Session = Depends(get_db),
     _: dict = Depends(require_permission("integration.integrations.manage_keys")),
@@ -126,7 +126,7 @@ async def issue_key(
 
 
 @router.post("/{integration_id}/keys/rotate", response_model=IssuedKeyResponse)
-async def rotate_key(
+def rotate_key(
     payload: RotateKeyRequest | None = None,
     integration_id: str = Path(...),
     db: Session = Depends(get_db),
@@ -146,7 +146,7 @@ async def rotate_key(
 
 
 @router.post("/{integration_id}/keys/{key_id}/revoke", status_code=status.HTTP_204_NO_CONTENT)
-async def revoke_key(
+def revoke_key(
     integration_id: str = Path(...),
     key_id: str = Path(...),
     db: Session = Depends(get_db),

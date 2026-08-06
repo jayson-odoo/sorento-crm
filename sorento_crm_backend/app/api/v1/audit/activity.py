@@ -18,7 +18,7 @@ router = APIRouter()
 
 
 @router.get("/activity")
-async def get_activity(
+def get_activity(
     entity_type: Optional[list[str]] = Query(
         None,
         description="Repeatable or CSV FE entity type(s): complaint, order, user, "

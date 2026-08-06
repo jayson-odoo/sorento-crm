@@ -29,7 +29,7 @@ def _validate_working_hours(start: time, end: time) -> None:
 
 
 @router.get("/work-calendar-config", response_model=WorkCalendarConfigResponse)
-async def get_work_calendar_config(
+def get_work_calendar_config(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -44,7 +44,7 @@ async def get_work_calendar_config(
 
 
 @router.put("/work-calendar-config", response_model=WorkCalendarConfigResponse)
-async def update_work_calendar_config(
+def update_work_calendar_config(
     payload: WorkCalendarConfigUpdate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -71,7 +71,7 @@ async def update_work_calendar_config(
 
 
 @router.get("/public-holidays", response_model=ListResponse[PublicHolidayResponse])
-async def list_public_holidays(
+def list_public_holidays(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     year: Optional[int] = Query(None),
@@ -104,7 +104,7 @@ async def list_public_holidays(
 
 
 @router.post("/public-holidays", response_model=PublicHolidayResponse, status_code=status.HTTP_201_CREATED)
-async def create_public_holiday(
+def create_public_holiday(
     payload: PublicHolidayCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -131,7 +131,7 @@ async def create_public_holiday(
 
 
 @router.put("/public-holidays/{holiday_id}", response_model=PublicHolidayResponse)
-async def update_public_holiday(
+def update_public_holiday(
     holiday_id: str,
     payload: PublicHolidayUpdate,
     current_user: dict = Depends(get_current_user),
@@ -162,7 +162,7 @@ async def update_public_holiday(
 
 
 @router.delete("/public-holidays/{holiday_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_public_holiday(
+def delete_public_holiday(
     holiday_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),

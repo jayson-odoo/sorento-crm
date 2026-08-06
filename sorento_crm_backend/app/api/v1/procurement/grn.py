@@ -22,7 +22,7 @@ class BulkDeleteGRNsRequest(BaseModel):
 
 
 @router.get("/", response_model=ListResponse[PickingHeaderResponse])
-async def get_grns(
+def get_grns(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
@@ -89,7 +89,7 @@ async def get_grns(
 
 
 @router.get("/neighbours")
-async def get_grn_neighbours(
+def get_grn_neighbours(
     id: str = Query(..., description="GRN id (UUID or picking_number) to resolve neighbours for"),
     query: Optional[str] = Query(None),
     entities: Optional[list[str]] = Query(
@@ -256,7 +256,7 @@ async def import_grn_lines(
 
 
 @router.get("/{grn_id}", response_model=PickingHeaderResponse)
-async def get_grn(
+def get_grn(
     grn_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -273,7 +273,7 @@ async def get_grn(
 
 
 @router.post("/", response_model=PickingHeaderResponse, status_code=status.HTTP_201_CREATED)
-async def create_grn(
+def create_grn(
     grn_data: PickingHeaderCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -290,7 +290,7 @@ async def create_grn(
 
 
 @router.put("/{grn_id}", response_model=PickingHeaderResponse)
-async def update_grn(
+def update_grn(
     grn_id: str,
     grn_data: PickingHeaderUpdate,
     current_user: dict = Depends(get_current_user),
@@ -308,7 +308,7 @@ async def update_grn(
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_delete_grns(
+def bulk_delete_grns(
     body: BulkDeleteGRNsRequest = Body(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -324,7 +324,7 @@ async def bulk_delete_grns(
 
 
 @router.delete("/{grn_id}", status_code=status.HTTP_200_OK)
-async def delete_grn(
+def delete_grn(
     grn_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)

@@ -64,7 +64,7 @@ def _serialize(config: FormSLAConfig) -> dict:
 
 
 @router.get("", response_model=list[FormSLAConfigResponse])
-async def list_form_sla_configs(
+def list_form_sla_configs(
     source_entity_type: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
     current_user: dict = Depends(
@@ -91,7 +91,7 @@ async def list_form_sla_configs(
 
 
 @router.get("/{config_id}", response_model=FormSLAConfigResponse)
-async def get_form_sla_config(
+def get_form_sla_config(
     config_id: str,
     current_user: dict = Depends(
         require_permission("sla_management.form_sla_config.view")
@@ -122,7 +122,7 @@ def _validate_next(db: Session, next_id: Optional[str], self_id: Optional[str]) 
 
 
 @router.post("", response_model=FormSLAConfigResponse, status_code=201)
-async def create_form_sla_config(
+def create_form_sla_config(
     payload: FormSLAConfigCreate,
     current_user: dict = Depends(
         require_permission("sla_management.form_sla_config.manage")
@@ -160,7 +160,7 @@ async def create_form_sla_config(
 
 
 @router.put("/{config_id}", response_model=FormSLAConfigResponse)
-async def update_form_sla_config(
+def update_form_sla_config(
     config_id: str,
     payload: FormSLAConfigUpdate,
     current_user: dict = Depends(
@@ -212,7 +212,7 @@ async def update_form_sla_config(
 
 
 @router.delete("/{config_id}")
-async def delete_form_sla_config(
+def delete_form_sla_config(
     config_id: str,
     current_user: dict = Depends(
         require_permission("sla_management.form_sla_config.manage")

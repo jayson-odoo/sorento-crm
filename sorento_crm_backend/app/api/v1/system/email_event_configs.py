@@ -28,7 +28,7 @@ def _to_response(row: EmailEventConfig) -> EmailEventConfigResponse:
 
 
 @router.get("/email-event-configs", response_model=list[EmailEventConfigResponse])
-async def list_email_event_configs(
+def list_email_event_configs(
     current_user: dict = Depends(require_permission("system.email_event_configs.view")),
     db: Session = Depends(get_db),
 ):
@@ -43,7 +43,7 @@ async def list_email_event_configs(
 
 
 @router.put("/email-event-configs/{event_key}", response_model=EmailEventConfigResponse)
-async def update_email_event_config(
+def update_email_event_config(
     event_key: str,
     payload: EmailEventConfigUpdate,
     current_user: dict = Depends(require_permission("system.email_event_configs.manage")),

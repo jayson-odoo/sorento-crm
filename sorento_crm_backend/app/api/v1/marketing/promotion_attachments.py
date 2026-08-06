@@ -22,7 +22,7 @@ def _promotion_attachment_to_response(pa: Any) -> dict:
 
 
 @router.get("/", response_model=ListResponse[PromotionAttachmentResponse])
-async def get_promotion_attachments(
+def get_promotion_attachments(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: Optional[str] = Query("created_at"),
@@ -132,7 +132,7 @@ async def get_promotion_attachments(
 
 
 @router.get("/{promotion_attachment_id}", response_model=PromotionAttachmentResponse)
-async def get_promotion_attachment(
+def get_promotion_attachment(
     promotion_attachment_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -150,7 +150,7 @@ async def get_promotion_attachment(
 
 
 @router.post("/", response_model=PromotionAttachmentResponse, status_code=status.HTTP_201_CREATED)
-async def create_promotion_attachment(
+def create_promotion_attachment(
     promotion_attachment_data: PromotionAttachmentCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -168,7 +168,7 @@ async def create_promotion_attachment(
 
 
 @router.put("/{promotion_attachment_id}", response_model=PromotionAttachmentResponse)
-async def update_promotion_attachment(
+def update_promotion_attachment(
     promotion_attachment_id: str,
     promotion_attachment_data: PromotionAttachmentUpdate,
     current_user: dict = Depends(get_current_user),
@@ -187,7 +187,7 @@ async def update_promotion_attachment(
 
 
 @router.delete("/{promotion_attachment_id}", status_code=status.HTTP_200_OK)
-async def delete_promotion_attachment(
+def delete_promotion_attachment(
     promotion_attachment_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -205,7 +205,7 @@ async def delete_promotion_attachment(
 
 
 @router.get("/promotion/{promotion_id}")
-async def get_promotion_attachments_by_promotion(
+def get_promotion_attachments_by_promotion(
     promotion_id: str = Path(
         ...,
         description="Promotion UUID.",

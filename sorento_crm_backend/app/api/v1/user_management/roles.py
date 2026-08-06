@@ -14,7 +14,7 @@ router = APIRouter()
 
 
 @router.get("/select", response_model=List[UserRoleResponse])
-async def get_roles_select(
+def get_roles_select(
     query: Optional[str] = Query(None),
     current_user: dict = Depends(require_permission("user_management.roles.view")),
     db: Session = Depends(get_db)
@@ -29,7 +29,7 @@ async def get_roles_select(
 
 
 @router.get("/", response_model=ListResponse[UserRoleResponse])
-async def get_roles(
+def get_roles(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -46,7 +46,7 @@ async def get_roles(
 
 
 @router.get("/{role_id}", response_model=UserRoleResponse)
-async def get_role(
+def get_role(
     role_id: str,
     current_user: dict = Depends(require_permission("user_management.roles.view")),
     db: Session = Depends(get_db)
@@ -64,7 +64,7 @@ async def get_role(
 
 
 @router.post("/", response_model=UserRoleResponse, status_code=status.HTTP_201_CREATED)
-async def create_role(
+def create_role(
     role_data: UserRoleCreate,
     current_user: dict = Depends(require_permission("user_management.roles.add")),
     db: Session = Depends(get_db)
@@ -81,7 +81,7 @@ async def create_role(
 
 
 @router.put("/{role_id}", response_model=UserRoleResponse)
-async def update_role(
+def update_role(
     role_id: str,
     role_data: UserRoleUpdate,
     current_user: dict = Depends(require_permission("user_management.roles.edit")),
@@ -100,7 +100,7 @@ async def update_role(
 
 
 @router.delete("/{role_id}", status_code=status.HTTP_200_OK)
-async def delete_role(
+def delete_role(
     role_id: str,
     current_user: dict = Depends(require_permission("user_management.roles.delete")),
     db: Session = Depends(get_db)
@@ -117,7 +117,7 @@ async def delete_role(
 
 
 @router.patch("/{role_id}/default", status_code=status.HTTP_200_OK)
-async def set_default_role(
+def set_default_role(
     role_id: str,
     current_user: dict = Depends(require_permission("user_management.roles.edit")),
     db: Session = Depends(get_db)

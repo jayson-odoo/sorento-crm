@@ -24,7 +24,7 @@ def _service(db: Session) -> MarketSegmentService:
 
 
 @router.get("/", response_model=list[MarketSegmentResponse])
-async def list_market_segments(
+def list_market_segments(
     active_only: bool = False,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -39,7 +39,7 @@ async def list_market_segments(
 
 
 @router.post("/", response_model=MarketSegmentResponse, status_code=status.HTTP_201_CREATED)
-async def create_market_segment(
+def create_market_segment(
     data: MarketSegmentCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -61,7 +61,7 @@ async def create_market_segment(
 
 
 @router.put("/{code}", response_model=MarketSegmentResponse)
-async def update_market_segment(
+def update_market_segment(
     code: str,
     data: MarketSegmentUpdate,
     current_user: dict = Depends(get_current_user),
@@ -84,7 +84,7 @@ async def update_market_segment(
 
 
 @router.delete("/{code}", status_code=status.HTTP_200_OK)
-async def delete_market_segment(
+def delete_market_segment(
     code: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),

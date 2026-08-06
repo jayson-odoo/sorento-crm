@@ -15,7 +15,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=ListResponse[UnitOfMeasureResponse])
-async def get_units_of_measure(
+def get_units_of_measure(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -46,7 +46,7 @@ async def get_units_of_measure(
 
 
 @router.get("/select", response_model=List[UnitOfMeasureResponse])
-async def get_uoms_select(
+def get_uoms_select(
     query: Optional[str] = Query(None),
     current_user: dict = Depends(require_permission_with_api_key("master_data.units_of_measure.view")),
     db: Session = Depends(get_db)
@@ -72,7 +72,7 @@ async def get_uoms_select(
 
 
 @router.get("/{uom_id}", response_model=UnitOfMeasureResponse)
-async def get_uom(
+def get_uom(
     uom_id: str,
     current_user: dict = Depends(require_permission_with_api_key("master_data.units_of_measure.view")),
     db: Session = Depends(get_db)
@@ -90,7 +90,7 @@ async def get_uom(
 
 
 @router.post("/", response_model=UnitOfMeasureResponse, status_code=status.HTTP_201_CREATED)
-async def create_uom(
+def create_uom(
     uom_data: UnitOfMeasureCreate,
     current_user: dict = Depends(require_permission("master_data.units_of_measure.add")),
     db: Session = Depends(get_db)
@@ -107,7 +107,7 @@ async def create_uom(
 
 
 @router.put("/{uom_id}", response_model=UnitOfMeasureResponse)
-async def update_uom(
+def update_uom(
     uom_id: str,
     uom_data: UnitOfMeasureUpdate,
     current_user: dict = Depends(require_permission("master_data.units_of_measure.edit")),
@@ -126,7 +126,7 @@ async def update_uom(
 
 
 @router.delete("/{uom_id}", status_code=status.HTTP_200_OK)
-async def delete_uom(
+def delete_uom(
     uom_id: str,
     current_user: dict = Depends(require_permission("master_data.units_of_measure.delete")),
     db: Session = Depends(get_db)

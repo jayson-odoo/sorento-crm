@@ -35,6 +35,20 @@ from app.models.company import Company
 from app.services.company_scope import register_company_scope_listeners
 from app.services.company_scope_sql import company_sql_predicate
 
+
+def _call_route(result):
+    """Call a route handler from a test, whether it is sync or async.
+
+    Handlers that do blocking work are plain ``def`` so FastAPI runs them in the
+    threadpool; calling one returns a value, not a coroutine. Staying tolerant of
+    both keeps these tests from caring which, so a handler that genuinely awaits
+    does not break them again.
+    """
+    import inspect as _inspect
+
+    return asyncio.run(result) if _inspect.isawaitable(result) else result
+
+
 # The scope listeners are installed at app/worker startup; install explicitly so
 # this file enforces the same ORM filter when run in isolation.
 register_company_scope_listeners()
@@ -244,7 +258,7 @@ def test_bind_endpoint_rejects_cross_company_product(db, two_companies):
     payload = ProductAttachmentLinkRequestAny(attachment_id=att_a, product_code=code)
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(create_product_attachment(payload, current_user={"id": "system"}, db=db))
+        _call_route(create_product_attachment(payload, current_user={"id": "system"}, db=db))
     assert exc.value.status_code == 400
     assert "product_code" in str(exc.value.detail).lower()
 
@@ -279,7 +293,7 @@ def test_lookup_resolve_scopes_from_body(db, two_companies, monkeypatch):
         set_key=f"zzraw_set_{suffix}", raw="CHAIR-01", contact_id="rid-1", space_id="space-1"
     )
     # X-API-Key/MCP principal -> body contact params DO re-scope (AC-I3).
-    result = asyncio.run(
+    result = _call_route(
         lookup_mod.resolve(
             body, current_user={"id": "system", "auth_method": "api_key"}, db=db
         )
@@ -291,7 +305,7 @@ def test_lookup_resolve_scopes_from_body(db, two_companies, monkeypatch):
     # L3: a logged-in JWT user with the SAME forged body params is NOT re-scoped —
     # their active-company scope is preserved (no cross-company escalation).
     set_company_scope(db, None)
-    asyncio.run(
+    _call_route(
         lookup_mod.resolve(
             body, current_user={"id": "u1", "auth_method": "jwt"}, db=db
         )
@@ -314,5 +328,5 @@ def test_lookup_resolve_without_contact_leaves_scope(db, two_companies, monkeypa
     # No contact params in the body -> resolver's scope is left untouched.
     set_company_scope(db, None)
     body = LookupResolveRequest(set_key=f"zzraw_set2_{suffix}", raw="CHAIR-01")
-    asyncio.run(lookup_mod.resolve(body, current_user={"id": "system"}, db=db))
+    _call_route(lookup_mod.resolve(body, current_user={"id": "system"}, db=db))
     assert get_company_scope(db) is None

@@ -13,7 +13,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=ListResponse[CampaignTypeResponse])
-async def get_campaign_types(
+def get_campaign_types(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -31,7 +31,7 @@ async def get_campaign_types(
 
 
 @router.get("/{type_id}", response_model=CampaignTypeResponse)
-async def get_campaign_type(
+def get_campaign_type(
     type_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -49,7 +49,7 @@ async def get_campaign_type(
 
 
 @router.post("/", response_model=CampaignTypeResponse, status_code=status.HTTP_201_CREATED)
-async def create_campaign_type(
+def create_campaign_type(
     type_data: CampaignTypeCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -66,7 +66,7 @@ async def create_campaign_type(
 
 
 @router.put("/{type_id}", response_model=CampaignTypeResponse)
-async def update_campaign_type(
+def update_campaign_type(
     type_id: str,
     type_data: CampaignTypeUpdate,
     current_user: dict = Depends(get_current_user),
@@ -85,7 +85,7 @@ async def update_campaign_type(
 
 
 @router.delete("/{type_id}", status_code=status.HTTP_200_OK)
-async def delete_campaign_type(
+def delete_campaign_type(
     type_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)

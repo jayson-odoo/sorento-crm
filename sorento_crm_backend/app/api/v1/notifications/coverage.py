@@ -45,7 +45,7 @@ class _NominateRequest(BaseModel):
 
 
 @router.get("/")
-async def list_my_coverage(
+def list_my_coverage(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -60,7 +60,7 @@ async def list_my_coverage(
 
 
 @router.post("/", status_code=201)
-async def subscribe_coverage(
+def subscribe_coverage(
     payload: _SubscribeRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -91,7 +91,7 @@ async def subscribe_coverage(
 
 
 @router.get("/for-me")
-async def list_coverage_for_me(
+def list_coverage_for_me(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -106,7 +106,7 @@ async def list_coverage_for_me(
 
 
 @router.post("/nominate", status_code=201)
-async def nominate_coverer(
+def nominate_coverer(
     payload: _NominateRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -141,7 +141,7 @@ async def nominate_coverer(
 
 
 @router.get("/team")
-async def list_team_coverage(
+def list_team_coverage(
     current_user: dict = Depends(require_permission(MANAGE_TEAM_PERM)),
     db: Session = Depends(get_db),
 ):
@@ -156,7 +156,7 @@ async def list_team_coverage(
 
 
 @router.post("/assign", status_code=201)
-async def assign_coverage(
+def assign_coverage(
     payload: _AssignRequest,
     current_user: dict = Depends(require_permission(MANAGE_TEAM_PERM)),
     db: Session = Depends(get_db),
@@ -191,7 +191,7 @@ async def assign_coverage(
 
 
 @router.delete("/manage/{subscription_id}", status_code=200)
-async def revoke_coverage_by_id(
+def revoke_coverage_by_id(
     subscription_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -213,7 +213,7 @@ async def revoke_coverage_by_id(
 
 
 @router.delete("/{target_user_id}", status_code=200)
-async def unsubscribe_coverage(
+def unsubscribe_coverage(
     target_user_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),

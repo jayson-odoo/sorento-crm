@@ -19,7 +19,7 @@ router = APIRouter()
 
 
 @router.get("")
-async def get_team_members(
+def get_team_members(
     team_code: Optional[str] = Query(None),
     team_id: Optional[str] = Query(None),
     agent_code: Optional[str] = Query(None),

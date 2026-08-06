@@ -25,7 +25,7 @@ def _safe_select_response():
 
 
 @router.get("/", response_model=ListResponse[OrderStatusResponse])
-async def get_order_statuses(
+def get_order_statuses(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(get_current_user),
@@ -76,7 +76,7 @@ def get_order_statuses_select(
 
 
 @router.get("/{status_id}", response_model=OrderStatusResponse)
-async def get_order_status(
+def get_order_status(
     status_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -94,7 +94,7 @@ async def get_order_status(
 
 
 @router.post("/", response_model=OrderStatusResponse, status_code=status.HTTP_201_CREATED)
-async def create_order_status(
+def create_order_status(
     status_data: OrderStatusCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -111,7 +111,7 @@ async def create_order_status(
 
 
 @router.put("/{status_id}", response_model=OrderStatusResponse)
-async def update_order_status(
+def update_order_status(
     status_id: str,
     status_data: OrderStatusUpdate,
     current_user: dict = Depends(get_current_user),
@@ -130,7 +130,7 @@ async def update_order_status(
 
 
 @router.delete("/{status_id}", status_code=status.HTTP_200_OK)
-async def delete_order_status(
+def delete_order_status(
     status_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)

@@ -23,7 +23,7 @@ router = APIRouter()
 
 
 @router.get("/requestor-select")
-async def get_requestor_select(
+def get_requestor_select(
     q: Optional[str] = Query(None),
     include_ids: Optional[str] = Query(None, description="Comma-separated ids always included"),
     current_user: dict = Depends(get_current_user_or_api_key),

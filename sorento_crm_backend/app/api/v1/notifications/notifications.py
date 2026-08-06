@@ -50,7 +50,7 @@ def _to_response(n):
 
 
 @router.get("/preferences/daily-sla-summary")
-async def get_daily_sla_summary_preference(
+def get_daily_sla_summary_preference(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -62,7 +62,7 @@ async def get_daily_sla_summary_preference(
 
 
 @router.patch("/preferences/daily-sla-summary")
-async def set_daily_sla_summary_preference(
+def set_daily_sla_summary_preference(
     subscribed: bool = Query(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -75,7 +75,7 @@ async def set_daily_sla_summary_preference(
 
 
 @router.get("/preferences/daily-sla-summary/unsubscribe")
-async def unsubscribe_daily_sla_summary_via_token(
+def unsubscribe_daily_sla_summary_via_token(
     token: str = Query(..., min_length=10),
     db: Session = Depends(get_db),
 ):
@@ -129,7 +129,7 @@ def _channel_prefs(user) -> dict:
 
 
 @router.get("/preferences/channels")
-async def get_channel_preferences(
+def get_channel_preferences(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -141,7 +141,7 @@ async def get_channel_preferences(
 
 
 @router.patch("/preferences/channels")
-async def set_channel_preferences(
+def set_channel_preferences(
     payload: _ChannelPrefsUpdate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -176,7 +176,7 @@ class _PushSubscriptionIn(BaseModel):
 
 
 @router.post("/push/subscriptions", status_code=status.HTTP_201_CREATED)
-async def subscribe_web_push(
+def subscribe_web_push(
     payload: _PushSubscriptionIn,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -207,7 +207,7 @@ async def subscribe_web_push(
 
 
 @router.delete("/push/subscriptions")
-async def unsubscribe_web_push(
+def unsubscribe_web_push(
     endpoint: str = Query(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -224,7 +224,7 @@ async def unsubscribe_web_push(
 
 
 @router.get("/", response_model=ListResponse[NotificationResponse])
-async def list_notifications(
+def list_notifications(
     tab: Optional[str] = Query(None, description="all | inbox | archived"),
     status: Optional[str] = Query(None, description="read | unread"),
     type: Optional[str] = Query(None, description="Filter by notification type"),
@@ -255,7 +255,7 @@ async def list_notifications(
 
 
 @router.get("/unread-count", response_model=UnreadCountResponse)
-async def get_unread_count(
+def get_unread_count(
     include_archived: bool = Query(False),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -271,7 +271,7 @@ async def get_unread_count(
 
 
 @router.patch("/{notification_id}/read", response_model=NotificationResponse)
-async def mark_read(
+def mark_read(
     notification_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -294,7 +294,7 @@ async def mark_read(
 
 
 @router.patch("/{notification_id}/unread", response_model=NotificationResponse)
-async def mark_unread(
+def mark_unread(
     notification_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -317,7 +317,7 @@ async def mark_unread(
 
 
 @router.post("/mark-all-read")
-async def mark_all_read(
+def mark_all_read(
     archived: Optional[bool] = Query(None, description="If set, only mark all in that tab"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -336,7 +336,7 @@ async def mark_all_read(
 
 
 @router.patch("/{notification_id}/archive", response_model=NotificationResponse)
-async def archive_notification(
+def archive_notification(
     notification_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -359,7 +359,7 @@ async def archive_notification(
 
 
 @router.post("/archive-all")
-async def archive_all(
+def archive_all(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -376,7 +376,7 @@ async def archive_all(
 
 
 @router.post("/bulk-delete")
-async def bulk_delete_notifications(
+def bulk_delete_notifications(
     body: BulkDeleteNotificationsRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -401,7 +401,7 @@ async def bulk_delete_notifications(
 
 
 @router.post("/delete-all")
-async def delete_all_notifications(
+def delete_all_notifications(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -425,7 +425,7 @@ async def delete_all_notifications(
 
 
 @router.delete("/{notification_id}")
-async def delete_notification(
+def delete_notification(
     notification_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -455,7 +455,7 @@ async def delete_notification(
 
 
 @router.patch("/{notification_id}/resolve", response_model=NotificationResponse)
-async def resolve_notification(
+def resolve_notification(
     notification_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),

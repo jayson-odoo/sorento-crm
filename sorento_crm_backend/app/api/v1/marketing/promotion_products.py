@@ -201,7 +201,7 @@ def _comma_separated_promotion_uuids(q: Optional[str]) -> Optional[List[str]]:
 
 # Standalone endpoint for listing all promotion products
 @router.get("/", response_model=ListResponse[PromotionProductResponse])
-async def list_all_promotion_products(
+def list_all_promotion_products(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: Optional[str] = Query("created_at"),

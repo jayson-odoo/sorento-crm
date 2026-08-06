@@ -293,7 +293,7 @@ def resolve_company_scope(request: Request, db: Session) -> CompanyScope:
 # --------------------------------------------------------------------------- #
 # FastAPI dependency                                                            #
 # --------------------------------------------------------------------------- #
-async def apply_company_scope(
+def apply_company_scope(
     request: Request, db: Session = Depends(get_db)
 ) -> CompanyScope:
     """Router-level dependency: resolve + stamp the company scope onto the request

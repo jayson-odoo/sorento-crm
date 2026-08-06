@@ -40,7 +40,7 @@ def _build_tree_node(service: AttachmentDirectoryService, dir_id: str) -> Attach
 
 
 @router.get("/", response_model=list[AttachmentDirectoryResponse])
-async def list_directories(
+def list_directories(
     parent_id: str | None = None,
     current_user: dict = Depends(get_current_user_or_api_key),
     db=Depends(get_db),
@@ -55,7 +55,7 @@ async def list_directories(
 
 
 @router.get("/tree", response_model=list[AttachmentDirectoryTreeNode])
-async def get_directory_tree(
+def get_directory_tree(
     deleted: bool = Query(False, description="If true, return tree of deleted directories only (for Trash)"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db=Depends(get_db),
@@ -75,7 +75,7 @@ async def get_directory_tree(
 
 
 @router.get("/{directory_id}", response_model=AttachmentDirectoryResponse)
-async def get_directory(
+def get_directory(
     directory_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db=Depends(get_db),
@@ -92,7 +92,7 @@ async def get_directory(
 
 
 @router.post("/", response_model=AttachmentDirectoryResponse, status_code=201)
-async def create_directory(
+def create_directory(
     data: AttachmentDirectoryCreate,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
@@ -108,7 +108,7 @@ async def create_directory(
 
 
 @router.put("/{directory_id}", response_model=AttachmentDirectoryResponse)
-async def update_directory(
+def update_directory(
     directory_id: str,
     data: AttachmentDirectoryUpdate,
     current_user: dict = Depends(get_current_user),
@@ -126,7 +126,7 @@ async def update_directory(
 
 
 @router.post("/{directory_id}/move", response_model=AttachmentDirectoryResponse)
-async def move_directory(
+def move_directory(
     directory_id: str,
     data: AttachmentDirectoryMoveRequest,
     current_user: dict = Depends(get_current_user),
@@ -144,7 +144,7 @@ async def move_directory(
 
 
 @router.delete("/{directory_id}", status_code=200)
-async def delete_directory(
+def delete_directory(
     directory_id: str,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
@@ -168,7 +168,7 @@ async def delete_directory(
 
 
 @router.post("/{directory_id}/restore", status_code=200)
-async def restore_directory(
+def restore_directory(
     directory_id: str,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
@@ -190,7 +190,7 @@ async def restore_directory(
 
 
 @router.post("/{directory_id}/permanent-delete", status_code=200)
-async def permanent_delete_directory(
+def permanent_delete_directory(
     directory_id: str,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db),

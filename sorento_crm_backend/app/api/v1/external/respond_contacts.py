@@ -25,7 +25,7 @@ router = APIRouter()
 
 
 @router.post("", response_model=RespondContactSyncResponse, status_code=status.HTTP_200_OK)
-async def sync_respond_contact(
+def sync_respond_contact(
     payload: RespondContactSyncRequest,
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),

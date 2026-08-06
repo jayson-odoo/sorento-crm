@@ -14,7 +14,7 @@ router = APIRouter()
 
 
 @router.get("/summary", response_model=PublicApprovalSummaryResponse)
-async def get_approval_summary(
+def get_approval_summary(
     token: str = Query(..., description="One-time approval token"),
     db=Depends(get_db),
 ):
@@ -30,7 +30,7 @@ async def get_approval_summary(
 
 
 @router.post("/submit")
-async def submit_approval(
+def submit_approval(
     data: PublicApprovalSubmitRequest,
     request: Request,
     token: str = Query(..., description="One-time approval token"),

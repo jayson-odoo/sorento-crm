@@ -23,7 +23,7 @@ router = APIRouter()
 # ----- Sets -----
 
 @router.get("/", response_model=ListResponse[LookupSetResponse])
-async def list_sets(
+def list_sets(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -37,7 +37,7 @@ async def list_sets(
 
 
 @router.post("/", response_model=LookupSetResponse, status_code=status.HTTP_201_CREATED)
-async def create_set(
+def create_set(
     data: LookupSetCreate,
     current_user=Depends(require_permission("master_data.lookup_sets.add")),
     db: Session = Depends(get_db),
@@ -56,7 +56,7 @@ async def create_set(
 
 
 @router.get("/{set_id}", response_model=LookupSetResponse)
-async def get_set(
+def get_set(
     set_id: str,
     current_user=Depends(require_permission_with_api_key("master_data.lookup_sets.view")),
     db: Session = Depends(get_db),
@@ -72,7 +72,7 @@ async def get_set(
 
 
 @router.patch("/{set_id}", response_model=LookupSetResponse)
-async def update_set(
+def update_set(
     set_id: str,
     data: LookupSetUpdate,
     current_user=Depends(require_permission("master_data.lookup_sets.edit")),
@@ -89,7 +89,7 @@ async def update_set(
 
 
 @router.delete("/{set_id}")
-async def delete_set(
+def delete_set(
     set_id: str,
     current_user=Depends(require_permission("master_data.lookup_sets.delete")),
     db: Session = Depends(get_db),
@@ -125,7 +125,7 @@ def _set_to_response(db: Session, s) -> dict:
 # ----- Options nested -----
 
 @router.get("/{set_id}/options", response_model=ListResponse[LookupOptionResponse])
-async def list_options(
+def list_options(
     set_id: str,
     page: int = Query(1, ge=1),
     limit: int = Query(100, ge=1, le=MAX_PAGE_LIMIT),
@@ -140,7 +140,7 @@ async def list_options(
 
 
 @router.post("/{set_id}/options", response_model=LookupOptionResponse, status_code=status.HTTP_201_CREATED)
-async def create_option(
+def create_option(
     set_id: str,
     data: LookupOptionCreate,
     current_user=Depends(require_permission("master_data.lookup_sets.edit")),
@@ -157,7 +157,7 @@ async def create_option(
 
 
 @router.patch("/{set_id}/options/{option_id}", response_model=LookupOptionResponse)
-async def update_option(
+def update_option(
     set_id: str,
     option_id: str,
     data: LookupOptionUpdate,
@@ -175,7 +175,7 @@ async def update_option(
 
 
 @router.delete("/{set_id}/options/{option_id}")
-async def delete_option(
+def delete_option(
     set_id: str,
     option_id: str,
     current_user=Depends(require_permission("master_data.lookup_sets.edit")),
@@ -194,7 +194,7 @@ async def delete_option(
 # ----- Bindings nested -----
 
 @router.get("/{set_id}/bindings", response_model=list[LookupBindingResponse])
-async def list_bindings(
+def list_bindings(
     set_id: str,
     current_user=Depends(require_permission_with_api_key("master_data.lookup_sets.view")),
     db: Session = Depends(get_db),
@@ -208,7 +208,7 @@ async def list_bindings(
 
 
 @router.post("/{set_id}/bindings", response_model=LookupBindingResponse, status_code=status.HTTP_201_CREATED)
-async def add_binding(
+def add_binding(
     set_id: str,
     data: LookupBindingCreate,
     current_user=Depends(require_permission("master_data.lookup_sets.edit")),
@@ -226,7 +226,7 @@ async def add_binding(
 
 
 @router.patch("/{set_id}/bindings/{binding_id}", response_model=LookupBindingResponse)
-async def update_binding_default(
+def update_binding_default(
     set_id: str,
     binding_id: str,
     data: LookupBindingDefaultUpdate,
@@ -246,7 +246,7 @@ async def update_binding_default(
 
 
 @router.delete("/{set_id}/bindings/{binding_id}")
-async def remove_binding(
+def remove_binding(
     set_id: str,
     binding_id: str,
     current_user=Depends(require_permission("master_data.lookup_sets.edit")),

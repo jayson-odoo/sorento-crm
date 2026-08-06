@@ -10,7 +10,7 @@ router = APIRouter()
 
 
 @router.get("/select")
-async def get_customers_select(
+def get_customers_select(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):

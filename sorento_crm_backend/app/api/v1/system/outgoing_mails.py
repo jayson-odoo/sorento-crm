@@ -17,7 +17,7 @@ router = APIRouter()
 
 
 @router.get("/outgoing-mails", response_model=ListResponse[OutgoingMailResponse])
-async def list_outgoing_mails(
+def list_outgoing_mails(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     status: Optional[str] = Query(None, description="pending | sent | failed"),

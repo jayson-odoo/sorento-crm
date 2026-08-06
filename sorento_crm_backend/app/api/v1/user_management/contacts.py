@@ -69,7 +69,7 @@ def _effective_base_url(request: Request, payload_base_url: Optional[str]) -> Op
 
 
 @router.get("/", response_model=ListResponse[RespondContactResponse])
-async def get_contacts(
+def get_contacts(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
@@ -125,7 +125,7 @@ class PortalLinkSendResponse(BaseModel):
 
 
 @router.post("/bulk-sync", status_code=status.HTTP_200_OK)
-async def bulk_sync_contacts(
+def bulk_sync_contacts(
     body: BulkSyncContactsRequest = Body(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -143,7 +143,7 @@ async def bulk_sync_contacts(
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_delete_contacts(
+def bulk_delete_contacts(
     body: BulkDeleteContactsRequest = Body(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -161,7 +161,7 @@ async def bulk_delete_contacts(
 
 
 @router.get("/{contact_id}", response_model=RespondContactResponse)
-async def get_contact(
+def get_contact(
     contact_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -178,7 +178,7 @@ async def get_contact(
 
 
 @router.post("/", response_model=RespondContactResponse, status_code=status.HTTP_201_CREATED)
-async def create_contact(
+def create_contact(
     contact_data: RespondContactCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -195,7 +195,7 @@ async def create_contact(
 
 
 @router.put("/{contact_id}", response_model=RespondContactResponse)
-async def update_contact(
+def update_contact(
     contact_id: str,
     contact_data: RespondContactUpdate,
     current_user: dict = Depends(get_current_user),
@@ -214,7 +214,7 @@ async def update_contact(
 
 
 @router.get("/{contact_id}/companies")
-async def get_contact_companies(
+def get_contact_companies(
     contact_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -231,7 +231,7 @@ async def get_contact_companies(
 
 
 @router.put("/{contact_id}/companies", status_code=status.HTTP_200_OK)
-async def set_contact_companies(
+def set_contact_companies(
     contact_id: str,
     body: ContactCompaniesUpdateRequest = Body(...),
     current_user: dict = Depends(get_current_user),
@@ -249,7 +249,7 @@ async def set_contact_companies(
 
 
 @router.delete("/{contact_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_contact(
+def delete_contact(
     contact_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -267,7 +267,7 @@ async def delete_contact(
 
 
 @router.post("/{contact_id}/sync", response_model=RespondContactResponse)
-async def sync_contact(
+def sync_contact(
     contact_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -365,7 +365,7 @@ class CsRoutingPinRequest(BaseModel):
 
 
 @router.get("/cs-routing/candidates")
-async def list_cs_routing_candidates(
+def list_cs_routing_candidates(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -381,7 +381,7 @@ async def list_cs_routing_candidates(
 
 
 @router.get("/{contact_id}/cs-routing")
-async def get_contact_cs_routing(
+def get_contact_cs_routing(
     contact_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -398,7 +398,7 @@ async def get_contact_cs_routing(
 
 
 @router.put("/{contact_id}/cs-routing/{use_case}")
-async def upsert_contact_cs_routing(
+def upsert_contact_cs_routing(
     contact_id: str,
     use_case: str,
     payload: CsRoutingPinRequest,
@@ -431,7 +431,7 @@ async def upsert_contact_cs_routing(
 
 
 @router.get("/cs-routing/fields")
-async def list_cs_routing_fields(
+def list_cs_routing_fields(
     use_case: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -448,7 +448,7 @@ async def list_cs_routing_fields(
 
 
 @router.delete("/{contact_id}/cs-routing/{use_case}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_contact_cs_routing(
+def delete_contact_cs_routing(
     contact_id: str,
     use_case: str,
     row_id: Optional[str] = None,
@@ -468,7 +468,7 @@ async def delete_contact_cs_routing(
 
 
 @router.get("/{contact_id}/market-segments")
-async def get_contact_market_segments(
+def get_contact_market_segments(
     contact_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -485,7 +485,7 @@ async def get_contact_market_segments(
 
 
 @router.put("/{contact_id}/market-segments")
-async def set_contact_market_segments(
+def set_contact_market_segments(
     contact_id: str,
     payload: MarketSegmentCodesUpdate,
     current_user: dict = Depends(get_current_user),
@@ -505,7 +505,7 @@ async def set_contact_market_segments(
 
 
 @router.get("/{contact_id}/access-agents", response_model=ListResponse[ContactAgentAccessResponse])
-async def get_contact_access_agents(
+def get_contact_access_agents(
     contact_id: str,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
@@ -533,7 +533,7 @@ async def get_contact_access_agents(
 
 
 @router.post("/{contact_id}/portal-link", response_model=PortalLinkResponse)
-async def get_contact_portal_link(
+def get_contact_portal_link(
     contact_id: str,
     request: Request,
     payload: PortalLinkRequest = Body(default_factory=PortalLinkRequest),
@@ -556,7 +556,7 @@ async def get_contact_portal_link(
 
 
 @router.post("/{contact_id}/portal-link/send", response_model=PortalLinkSendResponse)
-async def send_contact_portal_link(
+def send_contact_portal_link(
     contact_id: str,
     request: Request,
     payload: PortalLinkRequest = Body(default_factory=PortalLinkRequest),

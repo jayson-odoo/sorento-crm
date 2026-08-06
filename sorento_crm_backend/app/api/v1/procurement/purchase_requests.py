@@ -49,7 +49,7 @@ def _respond_user_id_from_current_user(current_user: dict) -> str:
 
 
 @router.get("/", response_model=ListResponse[PurchaseRequestHeaderListResponse])
-async def get_purchase_requests(
+def get_purchase_requests(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -82,7 +82,7 @@ async def get_purchase_requests(
 
 
 @router.get("/neighbours")
-async def get_purchase_request_neighbours(
+def get_purchase_request_neighbours(
     id: str = Query(..., description="Purchase request / sponsorship form id to resolve neighbours for"),
     query: Optional[str] = Query(None),
     request_type: Optional[str] = Query(None, description="purchase_request or sponsorship_form"),
@@ -120,7 +120,7 @@ async def get_purchase_request_neighbours(
 
 
 @router.get("/{request_id}", response_model=PurchaseRequestHeaderResponse)
-async def get_purchase_request(
+def get_purchase_request(
     request_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
@@ -189,7 +189,7 @@ async def get_purchase_request(
 
 
 @router.get("/{request_id}/conversation")
-async def get_purchase_request_conversation(
+def get_purchase_request_conversation(
     request_id: str,
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     cursor: Optional[str] = Query(None),
@@ -238,7 +238,7 @@ async def get_purchase_request_conversation(
 
 
 @router.post("/", response_model=PurchaseRequestHeaderResponse, status_code=status.HTTP_201_CREATED)
-async def create_purchase_request(
+def create_purchase_request(
     data: PurchaseRequestHeaderCreate,
     request: Request,
     current_user: dict = Depends(get_current_user),
@@ -257,7 +257,7 @@ async def create_purchase_request(
 
 
 @router.put("/{request_id}", response_model=PurchaseRequestHeaderResponse)
-async def update_purchase_request(
+def update_purchase_request(
     request_id: str,
     data: PurchaseRequestHeaderUpdate,
     request: Request,
@@ -278,7 +278,7 @@ async def update_purchase_request(
 
 
 @router.post("/{request_id}/update-and-reply", response_model=PurchaseRequestHeaderResponse)
-async def update_purchase_request_and_reply(
+def update_purchase_request_and_reply(
     request_id: str,
     data: PurchaseRequestUpdateAndReply,
     request: Request,
@@ -317,7 +317,7 @@ async def update_purchase_request_and_reply(
 
 
 @router.post("/{request_id}/set-pending-approval", response_model=PurchaseRequestHeaderResponse)
-async def set_pending_approval(
+def set_pending_approval(
     request_id: str,
     current_user: dict = Depends(require_permission_with_api_key("procurement.purchase_requests.send_for_approval")),
     db: Session = Depends(get_db),
@@ -352,7 +352,7 @@ async def set_pending_approval(
 
 
 @router.post("/{request_id}/reject-submitted", response_model=PurchaseRequestHeaderResponse)
-async def reject_submitted_purchase_request(
+def reject_submitted_purchase_request(
     request_id: str,
     body: RejectSubmittedRequest,
     current_user: dict = Depends(require_permission_with_api_key("procurement.purchase_requests.send_for_approval")),
@@ -391,7 +391,7 @@ class ApprovalDecisionRequest(BaseModel):
 
 
 @router.post("/{request_id}/approval-decision", response_model=PurchaseRequestHeaderResponse)
-async def decide_purchase_request_approval(
+def decide_purchase_request_approval(
     request_id: str,
     body: ApprovalDecisionRequest,
     current_user: dict = Depends(require_permission_with_api_key("procurement.purchase_requests.approve")),
@@ -441,7 +441,7 @@ class CsFinalizeRequest(BaseModel):
 
 
 @router.post("/{request_id}/process", response_model=PurchaseRequestHeaderResponse)
-async def process_request_by_cs(
+def process_request_by_cs(
     request_id: str,
     payload: CsFinalizeRequest,
     current_user: dict = Depends(require_permission("procurement.purchase_requests.process")),
@@ -471,7 +471,7 @@ async def process_request_by_cs(
 
 
 @router.post("/{request_id}/close", response_model=PurchaseRequestHeaderResponse)
-async def close_request_by_cs(
+def close_request_by_cs(
     request_id: str,
     payload: CsFinalizeRequest,
     current_user: dict = Depends(require_permission("procurement.purchase_requests.close")),
@@ -501,7 +501,7 @@ async def close_request_by_cs(
 
 
 @router.post("/{request_id}/void", response_model=PurchaseRequestHeaderResponse)
-async def void_purchase_request(
+def void_purchase_request(
     request_id: str,
     payload: FormVoidRequest,
     current_user: dict = Depends(get_current_user),
@@ -548,7 +548,7 @@ async def void_purchase_request(
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_delete_purchase_requests(
+def bulk_delete_purchase_requests(
     body: BulkDeletePurchaseRequestsRequest = Body(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -564,7 +564,7 @@ async def bulk_delete_purchase_requests(
 
 
 @router.delete("/{request_id}", status_code=status.HTTP_200_OK)
-async def delete_purchase_request(
+def delete_purchase_request(
     request_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -582,7 +582,7 @@ async def delete_purchase_request(
 
 
 @router.post("/{request_id}/send-approval-link", response_model=SendApprovalLinkResponse)
-async def send_approval_link(
+def send_approval_link(
     request_id: str,
     data: SendApprovalLinkRequest,
     current_user: dict = Depends(get_current_user),
@@ -672,7 +672,7 @@ async def send_approval_link(
 
 
 @router.delete("/attachments/{link_id}", status_code=status.HTTP_200_OK)
-async def delete_purchase_request_attachment(
+def delete_purchase_request_attachment(
     link_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -689,7 +689,7 @@ async def delete_purchase_request_attachment(
 
 
 @router.post("/{request_id}/attachments", status_code=status.HTTP_201_CREATED)
-async def link_attachment_to_purchase_request(
+def link_attachment_to_purchase_request(
     request_id: str,
     body: PurchaseRequestAttachmentLinkRequest,
     current_user: dict = Depends(get_current_user),
@@ -722,7 +722,7 @@ async def link_attachment_to_purchase_request(
     response_model=ViewLinkResponse,
     dependencies=[Depends(require_public_view_links_enabled())],
 )
-async def get_or_create_view_link(
+def get_or_create_view_link(
     request_id: str,
     data: Optional[ViewLinkRequest] = Body(None),
     current_user: dict = Depends(get_current_user),

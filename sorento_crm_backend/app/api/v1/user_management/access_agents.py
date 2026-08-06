@@ -24,7 +24,7 @@ router = APIRouter()
 
 
 @router.get("/contact-access", response_model=ListResponse[ContactAgentAccessResponse])
-async def get_all_contact_access_agents(
+def get_all_contact_access_agents(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=10000),  # Increased limit for grouping
     query: Optional[str] = Query(None),
@@ -53,7 +53,7 @@ async def get_all_contact_access_agents(
 
 
 @router.get("/", response_model=ListResponse[AccessAgentResponse])
-async def get_access_agents(
+def get_access_agents(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
@@ -70,7 +70,7 @@ async def get_access_agents(
 
 
 @router.get("/neighbours")
-async def get_access_agent_neighbours(
+def get_access_agent_neighbours(
     id: str = Query(..., description="Access agent id to resolve neighbours for"),
     query: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
@@ -93,7 +93,7 @@ async def get_access_agent_neighbours(
 
 
 @router.get("/{agent_id}", response_model=AccessAgentResponse)
-async def get_access_agent(
+def get_access_agent(
     agent_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -112,7 +112,7 @@ async def get_access_agent(
 
 
 @router.post("/", response_model=AccessAgentResponse, status_code=status.HTTP_201_CREATED)
-async def create_access_agent(
+def create_access_agent(
     agent_data: AccessAgentCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -129,7 +129,7 @@ async def create_access_agent(
 
 
 @router.put("/{agent_id}", response_model=AccessAgentResponse)
-async def update_access_agent(
+def update_access_agent(
     agent_id: str,
     agent_data: AccessAgentUpdate,
     current_user: dict = Depends(get_current_user),
@@ -148,7 +148,7 @@ async def update_access_agent(
 
 
 @router.delete("/{agent_id}", status_code=status.HTTP_200_OK)
-async def delete_access_agent(
+def delete_access_agent(
     agent_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -166,7 +166,7 @@ async def delete_access_agent(
 
 
 @router.get("/{agent_id}/teams")
-async def get_agent_teams(
+def get_agent_teams(
     agent_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -182,7 +182,7 @@ async def get_agent_teams(
 
 
 @router.put("/{agent_id}/teams")
-async def set_agent_teams(
+def set_agent_teams(
     agent_id: str,
     body: AgentTeamsUpdate,
     current_user: dict = Depends(get_current_user),
@@ -211,7 +211,7 @@ async def set_agent_teams(
 
 
 @router.get("/{agent_id}/contact-access", response_model=list[ContactAgentAccessResponse])
-async def get_contact_access_agents(
+def get_contact_access_agents(
     agent_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -234,7 +234,7 @@ async def get_contact_access_agents(
     response_model=ContactAgentAccessResponse,
     status_code=status.HTTP_201_CREATED
 )
-async def create_contact_access_agent(
+def create_contact_access_agent(
     agent_id: str,
     contact_data: ContactAgentAccessCreate,
     current_user: dict = Depends(get_current_user),
@@ -255,7 +255,7 @@ async def create_contact_access_agent(
     "/{agent_id}/contact-access/{contact_id}",
     response_model=ContactAgentAccessResponse
 )
-async def update_contact_access_agent(
+def update_contact_access_agent(
     agent_id: str,
     contact_id: str,
     contact_data: ContactAgentAccessUpdate,
@@ -274,7 +274,7 @@ async def update_contact_access_agent(
 
 
 @router.delete("/{agent_id}/contact-access/{contact_id}", status_code=status.HTTP_200_OK)
-async def delete_contact_access_agent(
+def delete_contact_access_agent(
     agent_id: str,
     contact_id: str,
     current_user: dict = Depends(get_current_user),
@@ -293,7 +293,7 @@ async def delete_contact_access_agent(
 
 
 @router.post("/contact-access/lookup", response_model=RespondContactLookupResponse)
-async def lookup_contact_name(
+def lookup_contact_name(
     payload: RespondContactLookupRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -311,7 +311,7 @@ async def lookup_contact_name(
     "/{agent_id}/contact-access/{contact_id}/sync-contact-name",
     response_model=ContactAgentAccessResponse
 )
-async def sync_contact_name(
+def sync_contact_name(
     agent_id: str,
     contact_id: str,
     current_user: dict = Depends(get_current_user),

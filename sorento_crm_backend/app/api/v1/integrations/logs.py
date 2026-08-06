@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("/", response_model=ListResponse[IntegrationLogResponse])
-async def get_integration_logs(
+def get_integration_logs(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     status: Optional[str] = Query(None),
@@ -58,7 +58,7 @@ async def get_integration_logs(
 
 
 @router.get("/{log_id}", response_model=IntegrationLogResponse)
-async def get_integration_log(
+def get_integration_log(
     log_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -76,7 +76,7 @@ async def get_integration_log(
 
 
 @router.get("/{log_id}/status", response_model=IntegrationLogResponse)
-async def get_integration_log_status(
+def get_integration_log_status(
     log_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -94,7 +94,7 @@ async def get_integration_log_status(
 
 
 @router.put("/{log_id}", response_model=IntegrationLogResponse)
-async def update_integration_log(
+def update_integration_log(
     log_id: str,
     update_data: IntegrationLogUpdateRequest,
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -131,7 +131,7 @@ async def update_integration_log(
 
 
 @router.post("/{log_id}/status", status_code=status.HTTP_200_OK)
-async def update_integration_log_status(
+def update_integration_log_status(
     log_id: str,
     update_data: IntegrationLogUpdateRequest,
     request: Request,
@@ -169,7 +169,7 @@ async def update_integration_log_status(
 
 
 @router.post("/{log_id}/retry", response_model=IntegrationLogResponse)
-async def retry_integration_log(
+def retry_integration_log(
     log_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)

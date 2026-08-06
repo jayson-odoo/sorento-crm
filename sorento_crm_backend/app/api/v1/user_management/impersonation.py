@@ -93,7 +93,7 @@ def _serialize_session(db: Session, row: ImpersonationSession, target: User) -> 
 
 
 @router.post("/start", response_model=ImpersonationSessionResponse)
-async def start_impersonation(
+def start_impersonation(
     body: StartImpersonationRequest,
     request: Request,
     real_user: dict = Depends(get_real_user),
@@ -156,7 +156,7 @@ async def start_impersonation(
 
 
 @router.post("/stop")
-async def stop_impersonation(
+def stop_impersonation(
     request: Request,
     real_user: dict = Depends(get_real_user),
     db: Session = Depends(get_db),
@@ -192,7 +192,7 @@ async def stop_impersonation(
 
 
 @router.get("/current", response_model=Optional[ImpersonationSessionResponse])
-async def current_impersonation(
+def current_impersonation(
     real_user: dict = Depends(get_real_user),
     db: Session = Depends(get_db),
 ):

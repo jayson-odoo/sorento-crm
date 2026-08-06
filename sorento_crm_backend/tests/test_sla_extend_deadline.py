@@ -544,8 +544,22 @@ from app.api.v1.sla.sla_tracking import (  # noqa: E402
 )
 
 
+def _call_route(result):
+    """Call a route handler from a test, whether it is sync or async.
+
+    Handlers that do blocking work are plain ``def`` so FastAPI runs them in the
+    threadpool; calling one returns a value, not a coroutine. Staying tolerant of
+    both keeps these tests from caring which, so a handler that genuinely awaits
+    does not break them again.
+    """
+    import inspect as _inspect
+
+    return asyncio.run(result) if _inspect.isawaitable(result) else result
+
+
+
 def _run(coro):
-    return asyncio.run(coro)
+    return _call_route(coro)
 
 
 def test_route_preview_both_days_and_date_422():

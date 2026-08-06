@@ -79,7 +79,7 @@ def _entity(entity: str) -> str:
 
 
 @ingest_router.post("/{entity}")
-async def ingest_masters(
+def ingest_masters(
     entity: str = Path(...),
     payload: dict = Body(...),
     dry_run: bool = Query(
@@ -154,7 +154,7 @@ async def ingest_masters(
 
 
 @read_router.post("/{entity}")
-async def read_current_state(
+def read_current_state(
     entity: str = Path(...),
     payload: dict = Body(...),
     db: Session = Depends(get_db),

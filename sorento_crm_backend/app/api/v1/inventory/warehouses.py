@@ -26,7 +26,7 @@ class BulkDeleteWarehousesRequest(BaseModel):
 
 
 @router.get("/", response_model=ListResponse[WarehouseResponse])
-async def get_warehouses(
+def get_warehouses(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -58,7 +58,7 @@ async def get_warehouses(
 
 
 @router.get("/{warehouse_id}", response_model=WarehouseResponse)
-async def get_warehouse(
+def get_warehouse(
     warehouse_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -75,7 +75,7 @@ async def get_warehouse(
 
 
 @router.post("/", response_model=WarehouseResponse, status_code=status.HTTP_201_CREATED)
-async def create_warehouse(
+def create_warehouse(
     warehouse_data: WarehouseCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -92,7 +92,7 @@ async def create_warehouse(
 
 
 @router.put("/{warehouse_id}", response_model=WarehouseResponse)
-async def update_warehouse(
+def update_warehouse(
     warehouse_id: str,
     warehouse_data: WarehouseUpdate,
     current_user: dict = Depends(get_current_user),
@@ -110,7 +110,7 @@ async def update_warehouse(
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_delete_warehouses(
+def bulk_delete_warehouses(
     body: BulkDeleteWarehousesRequest = Body(...),
     current_user: dict = Depends(require_permission("inventory.warehouses.delete")),
     db: Session = Depends(get_db),
@@ -126,7 +126,7 @@ async def bulk_delete_warehouses(
 
 
 @router.delete("/{warehouse_id}", status_code=status.HTTP_200_OK)
-async def delete_warehouse(
+def delete_warehouse(
     warehouse_id: str,
     current_user: dict = Depends(require_permission("inventory.warehouses.delete")),
     db: Session = Depends(get_db),
@@ -146,7 +146,7 @@ async def delete_warehouse(
     status_code=status.HTTP_202_ACCEPTED,
     responses={200: {"description": "Validation only (validate_only=true)", "model": ValidateImportResponse}},
 )
-async def bulk_import_warehouses(
+def bulk_import_warehouses(
     import_data: BulkImportWarehousesRequest,
     current_user: dict = Depends(require_permission("inventory.warehouses.import")),
     db: Session = Depends(get_db),

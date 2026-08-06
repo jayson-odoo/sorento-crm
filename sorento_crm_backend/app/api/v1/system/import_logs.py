@@ -13,7 +13,7 @@ router = APIRouter()
 
 
 @router.get("/import-logs", response_model=ListResponse[ImportLogResponse])
-async def list_import_logs(
+def list_import_logs(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     entity_type: Optional[str] = Query(None),
@@ -31,7 +31,7 @@ async def list_import_logs(
 
 
 @router.get("/import-logs/{log_id}", response_model=ImportLogResponse)
-async def get_import_log(
+def get_import_log(
     log_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),

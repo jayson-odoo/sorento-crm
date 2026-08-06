@@ -20,6 +20,20 @@ import app.api.v1.system.jobs as jobs_api
 from tests._pg_fixture import blank_session
 
 
+def _call_route(result):
+    """Call a route handler from a test, whether it is sync or async.
+
+    Handlers that do blocking work are plain ``def`` so FastAPI runs them in the
+    threadpool; calling one returns a value, not a coroutine. Staying tolerant of
+    both keeps these tests from caring which, so a handler that genuinely awaits
+    does not break them again.
+    """
+    import inspect as _inspect
+
+    return asyncio.run(result) if _inspect.isawaitable(result) else result
+
+
+
 @pytest.fixture
 def db():
     """A blank Postgres schema, rolled back after the test.
@@ -124,7 +138,7 @@ def test_download_returns_signed_url_for_owner(db, monkeypatch):
     )
     job = _make_job(db, user_id="717677a2-1052-5fb1-9f10-981584261561", key="import-sources/abc/Original Upload.xlsx")
 
-    res = asyncio.run(
+    res = _call_route(
         jobs_api.download_job_source_file(job.job_id, current_user={"id": "717677a2-1052-5fb1-9f10-981584261561"}, db=db)
     )
     assert res["url"].startswith("https://signed.test/")
@@ -136,7 +150,7 @@ def test_download_404_when_no_source_file(db):
     """AC-4: a job with no retained file returns 404."""
     job = _make_job(db, user_id="717677a2-1052-5fb1-9f10-981584261561", key=None)
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(jobs_api.download_job_source_file(job.job_id, current_user={"id": "717677a2-1052-5fb1-9f10-981584261561"}, db=db))
+        _call_route(jobs_api.download_job_source_file(job.job_id, current_user={"id": "717677a2-1052-5fb1-9f10-981584261561"}, db=db))
     assert exc.value.status_code == 404
 
 
@@ -145,5 +159,5 @@ def test_download_403_for_non_owner(db, monkeypatch):
     monkeypatch.setattr(jobs_api.JobService, "sync_job_status", lambda self, _jid: None)
     job = _make_job(db, user_id="bce624f8-fccd-501c-ae54-ee8598c65be3", key="import-sources/abc/f.xlsx")
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(jobs_api.download_job_source_file(job.job_id, current_user={"id": "intruder"}, db=db))
+        _call_route(jobs_api.download_job_source_file(job.job_id, current_user={"id": "intruder"}, db=db))
     assert exc.value.status_code == 403

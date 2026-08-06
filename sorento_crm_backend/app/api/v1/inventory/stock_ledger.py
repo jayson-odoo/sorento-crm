@@ -13,7 +13,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=ListResponse[StockLedgerResponse])
-async def get_stock_ledger(
+def get_stock_ledger(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     product_id: Optional[str] = Query(

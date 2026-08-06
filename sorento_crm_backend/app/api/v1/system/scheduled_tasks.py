@@ -60,7 +60,7 @@ def _task_to_response(task: ScheduledTask, grace_percent: Optional[int] = None) 
 
 
 @router.get("/scheduled-tasks", response_model=ListResponse[ScheduledTaskResponse])
-async def list_scheduled_tasks(
+def list_scheduled_tasks(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -76,7 +76,7 @@ async def list_scheduled_tasks(
 
 
 @router.get("/scheduled-tasks/{task_id}", response_model=ScheduledTaskResponse)
-async def get_scheduled_task(
+def get_scheduled_task(
     task_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -89,7 +89,7 @@ async def get_scheduled_task(
 
 
 @router.patch("/scheduled-tasks/{task_id}", response_model=ScheduledTaskResponse)
-async def update_scheduled_task(
+def update_scheduled_task(
   task_id: str,
   body: ScheduledTaskUpdate,
   current_user: dict = Depends(get_current_user),
@@ -117,7 +117,7 @@ async def update_scheduled_task(
 
 
 @router.get("/scheduled-tasks/{task_id}/runs", response_model=ListResponse[ScheduledTaskRunResponse])
-async def list_task_runs(
+def list_task_runs(
     task_id: str,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
@@ -138,7 +138,7 @@ async def list_task_runs(
 
 
 @router.post("/scheduled-tasks/{task_id}/run-now")
-async def trigger_run_now(
+def trigger_run_now(
     task_id: str,
     current_user: dict = Depends(get_current_user),
   db: Session = Depends(get_db),

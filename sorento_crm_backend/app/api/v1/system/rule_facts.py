@@ -21,7 +21,7 @@ router = APIRouter()
 
 
 @router.get("", response_model=List[RuleFactItem])
-async def list_rule_facts(
+def list_rule_facts(
     sources: Optional[List[str]] = Query(
         None, description="Fact source names to include (repeat or csv), e.g. promotion."
     ),

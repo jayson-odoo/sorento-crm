@@ -15,7 +15,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=ListResponse[ProductAttachmentResponse])
-async def get_product_attachments(
+def get_product_attachments(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: Optional[str] = Query("created_at"),
@@ -88,7 +88,7 @@ async def get_product_attachments(
 
 
 @router.get("/{product_attachment_id}", response_model=ProductAttachmentResponse)
-async def get_product_attachment(
+def get_product_attachment(
     product_attachment_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -106,7 +106,7 @@ async def get_product_attachment(
 
 
 @router.post("/", response_model=ProductAttachmentResponse, status_code=status.HTTP_201_CREATED)
-async def create_product_attachment(
+def create_product_attachment(
     product_attachment_data: ProductAttachmentCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -151,7 +151,7 @@ async def create_product_attachment(
 
 
 @router.put("/{product_attachment_id}", response_model=ProductAttachmentResponse)
-async def update_product_attachment(
+def update_product_attachment(
     product_attachment_id: str,
     product_attachment_data: ProductAttachmentUpdate,
     current_user: dict = Depends(get_current_user),
@@ -170,7 +170,7 @@ async def update_product_attachment(
 
 
 @router.delete("/{product_attachment_id}", status_code=status.HTTP_200_OK)
-async def delete_product_attachment(
+def delete_product_attachment(
     product_attachment_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -188,7 +188,7 @@ async def delete_product_attachment(
 
 
 @router.get("/product/{product_id}")
-async def get_product_attachments_by_product(
+def get_product_attachments_by_product(
     product_id: str,
     user_type: Optional[str] = Query(None, description="Legacy single access-level filter."),
     current_user: dict = Depends(get_current_user_or_api_key),

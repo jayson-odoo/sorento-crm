@@ -14,7 +14,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=ListResponse[BrandResponse])
-async def get_brands(
+def get_brands(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -45,7 +45,7 @@ async def get_brands(
 
 
 @router.get("/select", response_model=List[BrandResponse])
-async def get_brands_select(
+def get_brands_select(
     query: Optional[str] = Query(None),
     current_user: dict = Depends(require_permission_with_api_key("master_data.brands.view")),
     db: Session = Depends(get_db)
@@ -71,7 +71,7 @@ async def get_brands_select(
 
 
 @router.get("/{brand_id}", response_model=BrandResponse)
-async def get_brand(
+def get_brand(
     brand_id: str,
     current_user: dict = Depends(require_permission_with_api_key("master_data.brands.view")),
     db: Session = Depends(get_db)
@@ -88,7 +88,7 @@ async def get_brand(
 
 
 @router.post("/", response_model=BrandResponse, status_code=status.HTTP_201_CREATED)
-async def create_brand(
+def create_brand(
     brand_data: BrandCreate,
     current_user: dict = Depends(require_permission("master_data.brands.add")),
     db: Session = Depends(get_db)
@@ -105,7 +105,7 @@ async def create_brand(
 
 
 @router.put("/{brand_id}", response_model=BrandResponse)
-async def update_brand(
+def update_brand(
     brand_id: str,
     brand_data: BrandUpdate,
     current_user: dict = Depends(require_permission("master_data.brands.edit")),
@@ -123,7 +123,7 @@ async def update_brand(
 
 
 @router.delete("/{brand_id}", status_code=status.HTTP_200_OK)
-async def delete_brand(
+def delete_brand(
     brand_id: str,
     current_user: dict = Depends(require_permission("master_data.brands.delete")),
     db: Session = Depends(get_db)

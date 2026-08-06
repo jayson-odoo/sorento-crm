@@ -20,7 +20,7 @@ router = APIRouter()
 
 
 @router.post("/", response_model=StockInquiryResponse, status_code=status.HTTP_201_CREATED)
-async def create_stock_inquiry_external(
+def create_stock_inquiry_external(
     response: Response,
     inquiry_data: StockInquiryCreate = Body(...),
     current_user: dict = Depends(get_external_api_user),

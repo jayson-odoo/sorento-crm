@@ -8,10 +8,18 @@ from app.config import settings
 
 # Create database engine with connection pooling
 # Set timezone to UTC so all timestamps are stored and interpreted in UTC
+# Pool sizing is deliberately conservative and env-tunable: see `db_pool_size` in
+# app/config.py. Until the API stopped blocking its event loop, a worker could
+# only ever run ONE request at a time, so the pool was never actually exercised
+# and its oversubscription (4 workers x 30 = 120 against max_connections=100)
+# stayed hidden. Now that requests run concurrently in the threadpool, the pool
+# is real and has to fit inside the server's connection budget.
 engine = create_engine(
     settings.database_url,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+    pool_timeout=settings.db_pool_timeout,
+    pool_recycle=settings.db_pool_recycle,
     pool_pre_ping=True,  # Verify connections before using
     echo=settings.debug,
     connect_args={

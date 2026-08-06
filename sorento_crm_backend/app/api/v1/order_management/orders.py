@@ -285,7 +285,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=ListResponse[OrderResponse])
-async def get_orders(
+def get_orders(
     request: Request,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
@@ -442,7 +442,7 @@ async def get_orders(
 
 
 @router.get("/debtors")
-async def list_distinct_debtors(
+def list_distinct_debtors(
     request: Request,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
@@ -529,7 +529,7 @@ async def list_distinct_debtors(
 
 
 @router.get("/by-product", response_model=ListResponse[OrderSimpleRef])
-async def get_orders_by_product(
+def get_orders_by_product(
     request: Request,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
@@ -662,7 +662,7 @@ async def get_orders_by_product(
 
 
 @router.get("/neighbours")
-async def get_order_neighbours(
+def get_order_neighbours(
     id: str = Query(..., description="Order id (UUID or order_number) to resolve neighbours for"),
     query: Optional[str] = Query(None),
     customer_id: Optional[str] = Query(None),
@@ -716,7 +716,7 @@ async def get_order_neighbours(
 
 
 @router.get("/analytics")
-async def get_order_analytics(
+def get_order_analytics(
     metric: str = Query(
         ...,
         description=(
@@ -790,7 +790,7 @@ async def get_order_analytics(
 
 
 @router.get("/{order_id}/fulfilled-complaints")
-async def get_order_fulfilled_complaints(
+def get_order_fulfilled_complaints(
     order_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
@@ -810,7 +810,7 @@ async def get_order_fulfilled_complaints(
 
 
 @router.get("/{order_id}", response_model=OrderResponse)
-async def get_order(
+def get_order(
     order_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -827,7 +827,7 @@ async def get_order(
 
 
 @router.post("/", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
-async def create_order(
+def create_order(
     order_data: OrderCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -844,7 +844,7 @@ async def create_order(
 
 
 @router.put("/{order_id}", response_model=OrderResponse)
-async def update_order(
+def update_order(
     order_id: str,
     order_data: OrderUpdate,
     current_user: dict = Depends(get_current_user),
@@ -866,7 +866,7 @@ class OrderCancelRequest(BaseModel):
 
 
 @router.post("/{order_id}/cancel", response_model=OrderResponse)
-async def cancel_order(
+def cancel_order(
     order_id: str,
     body: OrderCancelRequest = Body(default_factory=OrderCancelRequest),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -895,7 +895,7 @@ async def cancel_order(
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_delete_orders(
+def bulk_delete_orders(
     body: BulkDeleteOrdersRequest = Body(...),
     current_user: dict = Depends(require_permission("order_management.orders.delete")),
     db: Session = Depends(get_db)
@@ -911,7 +911,7 @@ async def bulk_delete_orders(
 
 
 @router.delete("/{order_id}", status_code=status.HTTP_200_OK)
-async def delete_order(
+def delete_order(
     order_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -928,7 +928,7 @@ async def delete_order(
 
 
 @router.post("/{order_id}/lines", response_model=OrderLineResponse, status_code=status.HTTP_201_CREATED)
-async def create_order_line(
+def create_order_line(
     order_id: str,
     data: OrderLineCreate,
     current_user: dict = Depends(get_current_user),
@@ -946,7 +946,7 @@ async def create_order_line(
 
 
 @router.put("/{order_id}/lines/{line_id}", response_model=OrderLineResponse)
-async def update_order_line(
+def update_order_line(
     order_id: str,
     line_id: str,
     data: OrderLineUpdate,
@@ -965,7 +965,7 @@ async def update_order_line(
 
 
 @router.delete("/{order_id}/lines/{line_id}", status_code=status.HTTP_200_OK)
-async def delete_order_line(
+def delete_order_line(
     order_id: str,
     line_id: str,
     current_user: dict = Depends(get_current_user),
@@ -982,7 +982,7 @@ async def delete_order_line(
 
 
 @router.delete("/{order_id}/lines/bulk-delete", status_code=status.HTTP_200_OK)
-async def bulk_delete_order_lines(
+def bulk_delete_order_lines(
     order_id: str,
     body: BulkDeleteOrderLinesRequest = Body(...),
     current_user: dict = Depends(get_current_user),
@@ -999,7 +999,7 @@ async def bulk_delete_order_lines(
 
 
 @router.post("/{order_id}/archive", status_code=status.HTTP_200_OK)
-async def archive_order(
+def archive_order(
     order_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1016,7 +1016,7 @@ async def archive_order(
 
 
 @router.put("/{order_id}/restore", status_code=status.HTTP_200_OK)
-async def restore_order(
+def restore_order(
     order_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1033,7 +1033,7 @@ async def restore_order(
 
 
 @router.post("/bulk-import", response_model=BulkImportResponse, status_code=status.HTTP_200_OK)
-async def bulk_import_orders(
+def bulk_import_orders(
     import_data: BulkImportRequest,
     current_user: dict = Depends(require_permission("order_management.orders.import")),
     db: Session = Depends(get_db)

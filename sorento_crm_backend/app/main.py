@@ -192,6 +192,20 @@ async def startup_event():
         warm_backends()
     except Exception as e:  # noqa: BLE001 — never block boot on storage config
         logging.warning("Storage backend warm-up failed: %s", e)
+    # Route handlers are plain `def`, so FastAPI runs them in anyio's threadpool.
+    # Its default (40) is unrelated to how many DB connections this process may
+    # hold, so leaving them mismatched means 40 threads contend for far fewer
+    # connections and the surplus fails on pool-checkout timeout. Aligning the
+    # two makes the backpressure QUEUE (a request waits for a thread) instead of
+    # ERROR (a request starts, then cannot get a connection).
+    try:
+        import anyio.to_thread
+
+        capacity = settings.db_pool_size + settings.db_max_overflow
+        anyio.to_thread.current_default_thread_limiter().total_tokens = capacity
+        logging.info("Thread limiter aligned to DB pool capacity: %s", capacity)
+    except Exception as e:
+        logging.warning("Could not align thread limiter to pool capacity: %s", e)
     try:
         from app.services.audit_service import register_audit_listeners
         register_audit_listeners()

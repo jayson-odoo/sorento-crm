@@ -109,7 +109,7 @@ def _entity_link_for(db: Session, attachment_id: str) -> str:
 
 
 @router.post("/", response_model=PresignedUrlResponse)
-async def get_presigned_url(
+def get_presigned_url(
     body: PresignedUrlRequest,
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),

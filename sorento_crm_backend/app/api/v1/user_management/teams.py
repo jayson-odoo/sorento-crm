@@ -13,7 +13,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=list[TeamResponse])
-async def list_teams(
+def list_teams(
       current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
 ):
@@ -26,7 +26,7 @@ async def list_teams(
 
 
 @router.get("/{team_id}", response_model=TeamResponse)
-async def get_team(
+def get_team(
     team_id: str,
       current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
@@ -43,7 +43,7 @@ async def get_team(
 
 
 @router.post("/", response_model=TeamResponse, status_code=201)
-async def create_team(
+def create_team(
     data: TeamCreate,
       current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
@@ -57,7 +57,7 @@ async def create_team(
 
 
 @router.put("/{team_id}", response_model=TeamResponse)
-async def update_team(
+def update_team(
     team_id: str,
     data: TeamUpdate,
       current_user: dict = Depends(get_current_user),
@@ -75,7 +75,7 @@ async def update_team(
 
 
 @router.delete("/{team_id}", status_code=200)
-async def delete_team(
+def delete_team(
     team_id: str,
       current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
@@ -93,7 +93,7 @@ async def delete_team(
 
 
 @router.get("/{team_id}/members", response_model=list[TeamMemberResponse])
-async def list_team_members(
+def list_team_members(
     team_id: str,
       current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
@@ -110,7 +110,7 @@ async def list_team_members(
 
 
 @router.post("/{team_id}/members", response_model=TeamMemberResponse, status_code=201)
-async def add_team_member(
+def add_team_member(
     team_id: str,
     body: dict,
     current_user: dict = Depends(get_current_user),
@@ -138,7 +138,7 @@ async def add_team_member(
 
 
 @router.patch("/{team_id}/members/{user_id}", response_model=TeamMemberResponse)
-async def update_team_member(
+def update_team_member(
     team_id: str,
     user_id: str,
     body: dict,
@@ -163,7 +163,7 @@ async def update_team_member(
 
 
 @router.delete("/{team_id}/members/{user_id}", status_code=200)
-async def remove_team_member(
+def remove_team_member(
     team_id: str,
     user_id: str,
       current_user: dict = Depends(get_current_user),
@@ -182,7 +182,7 @@ async def remove_team_member(
 
 
 @router.get("/{team_id}/members/{user_id}/market-segments")
-async def get_team_member_market_segments(
+def get_team_member_market_segments(
     team_id: str,
     user_id: str,
     current_user: dict = Depends(get_current_user),
@@ -205,7 +205,7 @@ async def get_team_member_market_segments(
 
 
 @router.put("/{team_id}/members/{user_id}/market-segments")
-async def set_team_member_market_segments(
+def set_team_member_market_segments(
     team_id: str,
     user_id: str,
     payload: MarketSegmentCodesUpdate,

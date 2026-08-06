@@ -16,7 +16,7 @@ router = APIRouter()
 
 
 @router.get("/by-binding")
-async def options_by_binding(
+def options_by_binding(
     table: str = Query(..., min_length=1),
     column: str = Query(..., min_length=1),
     include_inactive: bool = Query(False),
@@ -60,7 +60,7 @@ async def options_by_binding(
 
 
 @router.get("/{set_key}/options")
-async def list_options_public(
+def list_options_public(
     set_key: str,
     include_inactive: bool = Query(False),
     current_user=Depends(get_current_user_or_api_key),
@@ -83,7 +83,7 @@ async def list_options_public(
 
 
 @router.post("/resolve", response_model=LookupResolveResponse)
-async def resolve(
+def resolve(
     body: LookupResolveRequest,
     current_user=Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),

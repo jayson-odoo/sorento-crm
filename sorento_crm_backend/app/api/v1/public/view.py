@@ -65,7 +65,7 @@ def _portal_url_for_view(db, entity: str, summary: dict) -> str | None:
 
 
 @router.get("/{entity}")
-async def get_public_view(
+def get_public_view(
     entity: str,
     token: str = Query(..., description="View token (shareable link)"),
     db=Depends(get_db),
@@ -84,7 +84,7 @@ async def get_public_view(
 
 
 @router.post("/{entity}/revise")
-async def request_public_view_revision(
+def request_public_view_revision(
     entity: str,
     payload: ViewRevisePayload = Body(...),
     db=Depends(get_db),

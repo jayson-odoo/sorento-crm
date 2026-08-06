@@ -20,6 +20,20 @@ from app.api.v1.sla.sla_tracking import (
 )
 
 
+def _call_route(result):
+    """Call a route handler from a test, whether it is sync or async.
+
+    Handlers that do blocking work are plain ``def`` so FastAPI runs them in the
+    threadpool; calling one returns a value, not a coroutine. Staying tolerant of
+    both keeps these tests from caring which, so a handler that genuinely awaits
+    does not break them again.
+    """
+    import inspect as _inspect
+
+    return asyncio.run(result) if _inspect.isawaitable(result) else result
+
+
+
 def _call(reason, tracking, *, assignee=None, escalated=None):
     """Run the route with a patched service; returns (result, service_mock)."""
     svc = MagicMock()
@@ -34,7 +48,7 @@ def _call(reason, tracking, *, assignee=None, escalated=None):
     with patch.object(mod, "ConversationSLATrackingService", return_value=svc), patch.object(
         mod, "build_conversation_sla_tracking_response", return_value={"ok": True}
     ), patch.object(mod, "_notify_conversation_sla_escalation", notify):
-        result = asyncio.run(
+        result = _call_route(
             escalate_conversation_sla_tracking(
                 tracking_id="t1",
                 payload=_ConversationEscalateRequest(reason=reason),

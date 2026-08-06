@@ -238,7 +238,7 @@ def export_stock_balance(
 
 
 @router.delete("/bulk")
-async def bulk_delete_stock(
+def bulk_delete_stock(
     body: BulkDeleteStockRequest = Body(...),
     current_user: dict = Depends(require_permission("inventory.stock.delete")),
     db: Session = Depends(get_db)
@@ -283,7 +283,7 @@ def get_stock_ledger_by_stock(
     status_code=status.HTTP_202_ACCEPTED,
     responses={200: {"description": "Validation only (validate_only=true)", "model": ValidateImportResponse}},
 )
-async def bulk_import_stock(
+def bulk_import_stock(
     import_data: BulkImportStockRequest,
     current_user: dict = Depends(require_permission("inventory.stock.import")),
     db: Session = Depends(get_db)

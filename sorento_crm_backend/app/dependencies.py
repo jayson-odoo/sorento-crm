@@ -181,7 +181,7 @@ def extract_token_from_request(request: Request) -> Optional[str]:
     return None
 
 
-async def get_current_user(
+def get_current_user(
     request: Request,
     token: Optional[str] = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
@@ -252,7 +252,7 @@ async def get_current_user(
         )
 
 
-async def get_current_user_optional(
+def get_current_user_optional(
     request: Request,
     token: Optional[str] = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
@@ -285,7 +285,7 @@ def get_api_key(
     return x_api_key
 
 
-async def get_real_user(
+def get_real_user(
     request: Request,
     token: Optional[str] = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
@@ -488,7 +488,7 @@ def require_any_permission_with_api_key(permission_slugs: List[str]):
     return _require
 
 
-async def get_external_api_user(
+def get_external_api_user(
     request: Request,
     api_key: Optional[str] = Depends(get_api_key),
     db: Session = Depends(get_db),

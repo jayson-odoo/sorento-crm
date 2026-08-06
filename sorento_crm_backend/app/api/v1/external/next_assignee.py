@@ -247,7 +247,7 @@ def _enrich_n8n_response(
 
 
 @router.post("")
-async def post_next_assignee(
+def post_next_assignee(
     body: dict,
     current_user: dict = Depends(get_external_api_user),
     db=Depends(get_db),

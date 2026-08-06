@@ -38,7 +38,7 @@ def _get_next_sort_order(db: Session, user_id: str) -> int:
 
 
 @router.get("/", response_model=list[QuickAccessResponse])
-async def list_quick_access(
+def list_quick_access(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -56,7 +56,7 @@ async def list_quick_access(
 
 
 @router.post("/", response_model=QuickAccessResponse, status_code=status.HTTP_201_CREATED)
-async def add_quick_access(
+def add_quick_access(
     body: QuickAccessCreate,
     current_user: dict = Depends(require_permission("menu.quick_access.pin")),
     db: Session = Depends(get_db),
@@ -95,7 +95,7 @@ async def add_quick_access(
 
 
 @router.patch("/reorder", response_model=list[QuickAccessResponse])
-async def reorder_quick_access(
+def reorder_quick_access(
     body: QuickAccessReorderRequest = Body(...),
     current_user: dict = Depends(require_permission("menu.quick_access.pin")),
     db: Session = Depends(get_db),
@@ -140,7 +140,7 @@ async def reorder_quick_access(
 
 
 @router.delete("/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def remove_quick_access(
+def remove_quick_access(
     entry_id: str,
     current_user: dict = Depends(require_permission("menu.quick_access.unpin")),
     db: Session = Depends(get_db),

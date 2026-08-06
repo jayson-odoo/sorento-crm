@@ -313,7 +313,7 @@ def _audit_activity_health(db: Session, cutoff: datetime, now: datetime) -> Opti
 
 
 @router.get("/health/summary", response_model=HealthSummaryResponse)
-async def get_health_summary(
+def get_health_summary(
     date_from: Optional[datetime] = Query(
         None, description="Window start. Filters on each record's created_at."
     ),

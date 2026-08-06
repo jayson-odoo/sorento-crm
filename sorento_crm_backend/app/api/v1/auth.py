@@ -140,7 +140,7 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
 
 
 @router.post("/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
-async def signup(
+def signup(
     payload: SignupRequest,
     request: Request,
     db: Session = Depends(get_db)
@@ -241,7 +241,7 @@ async def signup(
 
 
 @router.post("/reset-password", response_model=ResetPasswordResponse)
-async def reset_password(
+def reset_password(
     payload: ResetPasswordRequest,
     request: Request,
     db: Session = Depends(get_db)
@@ -329,7 +329,7 @@ async def reset_password(
 
 
 @router.post("/verify-reset-token", response_model=VerifyResetTokenResponse)
-async def verify_reset_token(
+def verify_reset_token(
     payload: VerifyResetTokenRequest,
     db: Session = Depends(get_db)
 ):
@@ -356,7 +356,7 @@ async def verify_reset_token(
 
 
 @router.post("/change-password", response_model=ChangePasswordResponse)
-async def change_password(
+def change_password(
     payload: ChangePasswordRequest,
     db: Session = Depends(get_db)
 ):
@@ -412,7 +412,7 @@ async def change_password(
 
 
 @router.post("/verify-email", response_model=VerifyEmailResponse)
-async def verify_email(
+def verify_email(
     payload: VerifyEmailRequest,
     db: Session = Depends(get_db)
 ):
