@@ -273,6 +273,20 @@ describe('PurchaseRequestDetail - printed / on-screen layout', () => {
     expect(grid?.className).toContain('[&_p]:break-words');
   });
 
+  it('puts Print / Download PDF directly below Export to Excel', async () => {
+    // Two ways to get the same document out. Separated in the menu they read as
+    // unrelated actions, and a user hunting for "the export" finds only one.
+    renderPage();
+    await openGearMenu();
+
+    const items = await screen.findAllByRole('menuitem');
+    const labels = items.map((el) => el.textContent?.trim() ?? '');
+    const excel = labels.findIndex((t) => t.startsWith('Export to Excel'));
+    const pdf = labels.findIndex((t) => t.startsWith('Print / Download PDF'));
+    expect(excel, 'no Export to Excel item').toBeGreaterThanOrEqual(0);
+    expect(pdf).toBe(excel + 1);
+  });
+
   it('offers the PDF from the gear menu, matching stock inquiries', async () => {
     // It used to be a labelled header button. Complaints and stock inquiries
     // put it in the actions menu with the printer icon and keep only the

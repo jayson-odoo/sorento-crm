@@ -191,6 +191,95 @@ def test_the_form_closes_with_a_signoff_block(db, request_type):
     assert "—" not in html, "an unfilled sign-off must be blank, not a dash"
 
 
+@pytest.mark.parametrize("request_type", BOTH_TYPES)
+def test_one_date_format_per_document(db, request_type):
+    """Every date on a page reads the same way.
+
+    The Excel export wrote the header date as ``6/8/26`` and the approval date as
+    ``6/8/2026``. Two formats on one sheet make a reader look for a distinction
+    that does not exist.
+    """
+    import re
+    from datetime import datetime
+
+    from app.services.purchase_request_pdf_service import PurchaseRequestPDFService
+
+    stamp = datetime(2026, 8, 6, 10, 30)
+    row = _make(db, request_type=request_type, submitted_at=stamp, approved_at=stamp)
+    db.commit()
+
+    html = PurchaseRequestPDFService(db)._html(row)
+    # Two-digit years are the specific inconsistency being ruled out.
+    assert not re.search(r"\b\d{1,2}/\d{1,2}/\d{2}\b", html), "a two-digit year slipped in"
+    assert html.count("6/8/2026" if request_type == "purchase_request" else "6-Aug-2026") >= 2
+
+
+@pytest.mark.parametrize("request_type", BOTH_TYPES)
+def test_a_paired_label_keeps_its_own_value(db, request_type):
+    """"Date:" and "Expected date to receive PO:" used to share a table column,
+    so the column stretched to the longer label and the short one's value ended
+    up stranded on the far side of it. Keeping the pair in a single cell is what
+    guarantees a value sits beside the label it belongs to."""
+    from app.services.purchase_request_pdf_service import PurchaseRequestPDFService
+
+    row = _make(db, request_type=request_type)
+    db.commit()
+
+    html = PurchaseRequestPDFService(db)._html(row)
+    assert '<td class="pair"' in html
+    assert '<span class="lbl">Date:</span>' in html, (
+        "the right-hand label must live in the same cell as its value"
+    )
+
+
+def test_sales_type_prints_its_label_not_its_code(db):
+    """`sales_type` stores `cash_sales`; the screen shows "Cash Sales" through
+    LookupBoundLabel. A printed copy showing the code would disagree with the
+    screen it was printed from."""
+    import uuid as _uuid
+
+    from app.models.lookup import LookupBinding, LookupOption, LookupSet
+    from app.services.purchase_request_pdf_service import PurchaseRequestPDFService
+
+    lset = LookupSet(id=str(_uuid.uuid4()), set_key=f"zzt_sales_{_uuid.uuid4().hex[:6]}",
+                     name="ZZT Sales Type", is_active=True)
+    db.add(lset)
+    db.flush()
+    db.add(LookupOption(id=str(_uuid.uuid4()), set_id=lset.id,
+                        value="cash_sales", label="Cash Sales", is_active=True))
+    db.add(LookupBinding(id=str(_uuid.uuid4()), set_id=lset.id,
+                         table_name="purchase_requests", column_name="sales_type"))
+    row = _make(db, request_type="purchase_request", sales_type="cash_sales")
+    db.commit()
+
+    html = PurchaseRequestPDFService(db)._html(row)
+    assert "Sales Type:" in html
+    assert "Cash Sales" in html
+    assert "cash_sales" not in html, "the raw code reached the printed page"
+
+
+def test_an_unbound_sales_type_still_prints_something(db):
+    """No binding, or a value with no matching option: print the stored value.
+    A code on the page beats a blank row that looks like nobody filled it in."""
+    from app.services.purchase_request_pdf_service import PurchaseRequestPDFService
+
+    row = _make(db, request_type="purchase_request", sales_type="mystery_type")
+    db.commit()
+
+    assert "mystery_type" in PurchaseRequestPDFService(db)._html(row)
+
+
+def test_the_sponsorship_form_has_no_sales_type_row(db):
+    """The field is Purchase Request only - an empty row on the SF would imply a
+    sales type nobody filled in."""
+    from app.services.purchase_request_pdf_service import PurchaseRequestPDFService
+
+    row = _make(db, request_type="sponsorship_form", sales_type="cash_sales")
+    db.commit()
+
+    assert "Sales Type:" not in PurchaseRequestPDFService(db)._html(row)
+
+
 def test_only_the_sponsorship_form_is_priced(db):
     """Column sets differ by type, exactly as the two Excel formats do: a
     Sponsorship Form carries U/P, Total and a Grand Total; a Purchase Request

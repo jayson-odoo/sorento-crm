@@ -81,3 +81,41 @@ describe('PIC in the PR / SF Excel export', () => {
     expect(String(pic?.[1]).toLowerCase()).not.toContain('null');
   });
 });
+
+describe('Sales Type in the PR Excel export', () => {
+  beforeEach(() => {
+    addedSheets.length = 0;
+  });
+
+  it('writes the resolved label, not the stored code', async () => {
+    // `sales_type` holds `cash_sales`; the screen shows "Cash Sales" via
+    // LookupBoundLabel. A sheet printing the code would disagree with the screen.
+    await exportPurchaseRequestOrSponsorshipToExcel(
+      request({ sales_type: 'cash_sales' }),
+      'Cash Sales',
+    );
+
+    const row = flatRows().find((r) => String(r?.[0]).startsWith('Sales Type'));
+    expect(row, 'no Sales Type row in the exported sheet').toBeTruthy();
+    expect(String(row?.[1])).toBe('Cash Sales');
+  });
+
+  it('falls back to the stored value when no label resolved', async () => {
+    // A missing binding must still put something on the page - a code beats a blank.
+    await exportPurchaseRequestOrSponsorshipToExcel(request({ sales_type: 'cash_sales' }));
+
+    const row = flatRows().find((r) => String(r?.[0]).startsWith('Sales Type'));
+    expect(String(row?.[1])).toBe('cash_sales');
+  });
+
+  it('omits Sales Type from a sponsorship form', async () => {
+    // The field is Purchase Request only; an empty row on the SF would imply the
+    // form has a sales type that nobody filled in.
+    await exportPurchaseRequestOrSponsorshipToExcel(
+      request({ request_type: 'sponsorship_form', sales_type: 'cash_sales' }),
+      'Cash Sales',
+    );
+
+    expect(flatRows().find((r) => String(r?.[0]).startsWith('Sales Type'))).toBeFalsy();
+  });
+});

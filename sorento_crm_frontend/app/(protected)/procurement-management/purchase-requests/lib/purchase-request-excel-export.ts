@@ -55,7 +55,13 @@ function str(value: unknown): string {
  * Purchase request number, Date, Customer, Project, Purpose, Expected dates,
  * line items table (#, Item Code, Qty, Remark), Requested by, Approved by.
  */
-export async function exportPurchaseRequestToExcel(request: PurchaseRequest): Promise<void> {
+export async function exportPurchaseRequestToExcel(
+  request: PurchaseRequest,
+  // `sales_type` stores a code (`cash_sales`); the screen shows "Cash Sales" via
+  // LookupBoundLabel. The caller has the resolved options, so it passes the label
+  // in - the sheet must not disagree with the screen.
+  salesTypeLabel?: string | null,
+): Promise<void> {
   const xlsx = await getXLSX();
   const lines = request.lines ?? [];
   // Single submission date shown at the top "Date"; no separate footer date.
@@ -76,6 +82,7 @@ export async function exportPurchaseRequestToExcel(request: PurchaseRequest): Pr
     ['PIC:', str(request.pic)],
     ['Project Title:', str(request.project_title)],
     ['Purpose:', str(request.purpose)],
+    ['Sales Type:', salesTypeLabel ?? str(request.sales_type)],
     ['Expected Date of Delivery:', expectedDelivery, 'Expected date to receive PO:', expectedPO],
     [],
     ['#', 'Item Code', 'Qty', 'Remark'],
@@ -191,10 +198,14 @@ export async function exportSponsorshipFormToExcel(request: PurchaseRequest): Pr
 /**
  * Export based on request_type: purchase_request -> Purchase Request format, sponsorship_form -> Sponsorship Form format.
  */
-export async function exportPurchaseRequestOrSponsorshipToExcel(request: PurchaseRequest): Promise<void> {
+export async function exportPurchaseRequestOrSponsorshipToExcel(
+  request: PurchaseRequest,
+  salesTypeLabel?: string | null,
+): Promise<void> {
   if (request.request_type === 'sponsorship_form') {
+    // Sponsorship forms have no sales type - the field is Purchase Request only.
     await exportSponsorshipFormToExcel(request);
   } else {
-    await exportPurchaseRequestToExcel(request);
+    await exportPurchaseRequestToExcel(request, salesTypeLabel);
   }
 }

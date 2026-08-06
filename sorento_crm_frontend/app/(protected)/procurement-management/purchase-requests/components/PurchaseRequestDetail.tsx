@@ -68,6 +68,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { exportPurchaseRequestOrSponsorshipToExcel } from '../lib/purchase-request-excel-export';
+import { useLookupOptionsByBinding } from '@/hooks/useLookupOptionsByBinding';
 import { toast } from 'sonner';
 import LookupBoundLabel from '@/components/common/LookupBoundLabel';
 import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSection';
@@ -186,6 +187,9 @@ export default function PurchaseRequestDetail({
   });
   const [exportingExcel, setExportingExcel] = useState(false);
   const exportPdfMutation = useExportPurchaseRequestPdf();
+  // Same source LookupBoundLabel reads, so the sheet says "Cash Sales" where
+  // the screen does, never the raw `cash_sales` code.
+  const salesTypeOptions = useLookupOptionsByBinding('purchase_requests', 'sales_type');
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const [approvalLinkCopying, setApprovalLinkCopying] = useState(false);
   const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
@@ -587,7 +591,13 @@ export default function PurchaseRequestDetail({
                 if (!request) return;
                 setExportingExcel(true);
                 try {
-                  await exportPurchaseRequestOrSponsorshipToExcel(request);
+                  const code = (request.sales_type ?? '').trim().toLowerCase();
+                  const salesTypeLabel = code
+                    ? (salesTypeOptions.data?.options.find(
+                        (o) => o.value.toLowerCase() === code,
+                      )?.label ?? request.sales_type)
+                    : null;
+                  await exportPurchaseRequestOrSponsorshipToExcel(request, salesTypeLabel);
                   toast.success(
                     request.request_type === 'sponsorship_form'
                       ? 'Sponsorship form exported to Excel'
@@ -602,6 +612,17 @@ export default function PurchaseRequestDetail({
             >
               <FileDown className="size-4" />
               {exportingExcel ? 'Exporting…' : 'Export to Excel'}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              data-guide-target="procurement.purchase-requests.download-pdf"
+              disabled={exportPdfMutation.isPending}
+              onSelect={(e) => {
+                e.preventDefault();
+                exportPdfMutation.mutate(requestId);
+              }}
+            >
+              <Printer className="size-4" />
+              {exportPdfMutation.isPending ? 'Preparing…' : 'Print / Download PDF'}
             </DropdownMenuItem>
             {request.respond_inbox_url && (
               <>
@@ -637,17 +658,6 @@ export default function PurchaseRequestDetail({
                 Void
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem
-              data-guide-target="procurement.purchase-requests.download-pdf"
-              disabled={exportPdfMutation.isPending}
-              onSelect={(e) => {
-                e.preventDefault();
-                exportPdfMutation.mutate(requestId);
-              }}
-            >
-              <Printer className="size-4" />
-              {exportPdfMutation.isPending ? 'Preparing…' : 'Print / Download PDF'}
-            </DropdownMenuItem>
           </DetailActionsMenu>
           <EntityDownloadsButton
             entityType="purchase_request"

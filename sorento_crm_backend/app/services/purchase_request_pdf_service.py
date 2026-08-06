@@ -24,6 +24,7 @@ from decimal import Decimal
 from html import escape
 from typing import Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.procurement import PurchaseRequestHeader
@@ -73,15 +74,14 @@ def _blank(value) -> str:
     return escape(str(value).strip())
 
 
-def _date_short(value) -> str:
-    """``6/8/26`` - the Purchase Request date format from the Excel export."""
-    if not isinstance(value, (date, datetime)):
-        return _blank(value)
-    return f"{value.day}/{value.month}/{str(value.year)[-2:]}"
-
-
 def _date_cell(value) -> str:
-    """``6/8/2026`` - the Purchase Request expected-date format."""
+    """``6/8/2026`` - every date on a Purchase Request.
+
+    The Excel export wrote the header date as ``6/8/26`` and the rest as
+    ``6/8/2026``. Two formats on one page invite the reader to wonder what the
+    difference means, and there isn't one, so the document uses a single format
+    throughout.
+    """
     if not isinstance(value, (date, datetime)):
         return _blank(value)
     return f"{value.day}/{value.month}/{value.year}"
@@ -98,9 +98,16 @@ def _field(label: str, value: str, *, label2: str = "", value2: str = "") -> str
     """One label/value line, optionally with a second pair on the same line
     (``Sponsorship form number: X    Date: Y``), mirroring the Excel columns."""
     if label2:
+        # The right-hand label and its value share ONE cell. As separate columns
+        # the label column stretched to its widest member - "Expected date to
+        # receive PO:" - so the short "Date:" on another row was left with its
+        # value stranded at the far side of that column. In one cell the value
+        # always follows its own label, whatever else is on the page.
         return (
-            f'<tr><td class="lbl">{escape(label)}</td><td class="val">{value}</td>'
-            f'<td class="lbl">{escape(label2)}</td><td class="val">{value2}</td></tr>'
+            f'<tr><td class="lbl">{escape(label)}</td>'
+            f'<td class="val tight">{value}</td>'
+            f'<td class="pair" colspan="2">'
+            f'<span class="lbl">{escape(label2)}</span>{value2}</td></tr>'
         )
     # No second pair: let the value run to the right edge instead of wrapping
     # inside a quarter-width column. A delivery address is the reason.
@@ -136,6 +143,43 @@ class PurchaseRequestPDFService:
 
             raise handle_not_found("Purchase Request", request_id)
         return req
+
+    def _lookup_label(self, column: str, value: Optional[str]) -> Optional[str]:
+        """Resolve a lookup-bound code to the label the screen shows.
+
+        ``sales_type`` stores ``cash_sales``; the detail page renders "Cash Sales"
+        through ``LookupBoundLabel``. Printing the raw code would make the paper
+        disagree with the screen. Falls back to the stored value if the binding
+        or option is missing - a code on the page beats a blank.
+        """
+        code = (value or "").strip()
+        if not code:
+            return None
+        try:
+            from app.models.lookup import LookupBinding, LookupOption
+
+            binding = (
+                self.db.query(LookupBinding)
+                .filter(
+                    LookupBinding.table_name == "purchase_requests",
+                    LookupBinding.column_name == column,
+                )
+                .first()
+            )
+            if binding is None:
+                return code
+            option = (
+                self.db.query(LookupOption)
+                .filter(
+                    LookupOption.set_id == binding.set_id,
+                    func.lower(LookupOption.value) == code.lower(),
+                )
+                .first()
+            )
+            return (option.label if option else None) or code
+        except Exception:  # pragma: no cover - never fail the PDF on a lookup
+            logger.warning("purchase request PDF: lookup label failed", exc_info=True)
+            return code
 
     def _attachment_links(self, req: PurchaseRequestHeader) -> list:
         try:
@@ -253,7 +297,7 @@ class PurchaseRequestPDFService:
             rows.append(
                 _field(
                     "Purchase request number:", _blank(getattr(req, "request_number", None)),
-                    label2="Date:", value2=_date_short(submitted),
+                    label2="Date:", value2=_date_cell(submitted),
                 )
             )
             rows.append('<tr class="spacer"><td colspan="4"></td></tr>')
@@ -266,6 +310,11 @@ class PurchaseRequestPDFService:
                 _field("PIC:", _blank(getattr(req, "pic", None))),
                 _field("Project Title:", _blank(getattr(req, "project_title", None))),
                 _field("Purpose:", _blank(getattr(req, "purpose", None))),
+                # Lookup-bound: print the label the screen shows, not the code.
+                _field(
+                    "Sales Type:",
+                    _blank(self._lookup_label("sales_type", getattr(req, "sales_type", None))),
+                ),
                 _field(
                     "Expected Date of Delivery:",
                     _date_cell(getattr(req, "expected_delivery_date", None)),
@@ -336,6 +385,15 @@ class PurchaseRequestPDFService:
   table.fields td {{ padding: 2.5px 14px 2.5px 0; vertical-align: top;
                      white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }}
   table.fields td.lbl {{ width: 1%; white-space: nowrap; }}
+  /* label and value in one cell: the label keeps its own gap, the value
+     follows immediately, and nothing on another row can push them apart. */
+  table.fields td.pair span.lbl {{ padding-right: 14px; }}
+  /* A paired row shrinks both its own cells: the left value to its content
+     and the pair to one unbroken line. Otherwise the left column soaks up
+     the row width and the right-hand date is squeezed against the margin,
+     wrapping mid-value ("6-" / "Aug-2026"). */
+  table.fields td.tight {{ width: 1%; white-space: nowrap; }}
+  table.fields td.pair {{ white-space: nowrap; }}
   table.fields tr.spacer td {{ padding: 0; height: 8px; }}
   .signoff {{ margin-top: 22px; }}
   table.items {{ width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 6px; }}
