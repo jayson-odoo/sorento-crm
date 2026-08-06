@@ -295,3 +295,87 @@ def test_the_lookup_costs_one_query_per_page_not_one_per_row(db, chain):
 
     assert len(rows) == 5
     assert len(statements) == 1, statements
+
+
+# ------------------------------------------------ filtering BY certificate
+# "Which products does this certificate cover, and with which file?" had no
+# answer through this endpoint: the only narrowing keys were product, attachment
+# and attachment type.
+def test_certificate_ids_narrows_to_that_certificates_files(db, chain):
+    wanted = _attachment(db, chain, "wanted")
+    cert = _file_certificate(db, chain, wanted, number="PAV-F1", until=date(2030, 1, 1))
+    # A second certificate over the same product must NOT come back.
+    other = _attachment(db, chain, "other")
+    _file_certificate(db, chain, other, number="PAV-F2", until=date(2030, 1, 1))
+    # ...nor an ordinary file.
+    _link(db, chain, _attachment(db, chain, "brochure", type_key="spec_type"))
+
+    rows = ProductAttachmentService(db).list_product_attachments(
+        certificate_ids=[str(cert.id)]
+    )["data"]
+
+    assert [r.attachment.original_filename for r in rows] == [f"{MARKER}-wanted.pdf"]
+
+
+def test_certificate_ids_serves_the_current_revision_only(db, chain):
+    """REV-3: a renewal supersedes its predecessor, and the replaced document
+    must not be handed out. The register deletes the superseded projection rows;
+    this filter restates the rule so a stale row cannot leak out either."""
+    old = _attachment(db, chain, "f-rev1")
+    cert = _file_certificate(db, chain, old, number="PAV-F3", until=date(2021, 1, 1))
+    new = _attachment(db, chain, "f-rev2")
+    _file_certificate(db, chain, new, number="PAV-F3", until=date(2030, 1, 1))
+
+    rows = ProductAttachmentService(db).list_product_attachments(
+        certificate_ids=[str(cert.id)]
+    )["data"]
+
+    assert [r.attachment.original_filename for r in rows] == [f"{MARKER}-f-rev2.pdf"]
+    assert rows[0].certificate["is_current_revision"] is True
+
+
+def test_certificate_ids_accepts_several_certificates(db, chain):
+    a_file = _attachment(db, chain, "multi-a")
+    a = _file_certificate(db, chain, a_file, number="PAV-F4", until=date(2030, 1, 1))
+    b_file = _attachment(db, chain, "multi-b")
+    b = _file_certificate(db, chain, b_file, number="PAV-F5", until=date(2030, 1, 1))
+
+    rows = ProductAttachmentService(db).list_product_attachments(
+        certificate_ids=[str(a.id), str(b.id)]
+    )["data"]
+
+    assert {r.attachment.original_filename for r in rows} == {
+        f"{MARKER}-multi-a.pdf",
+        f"{MARKER}-multi-b.pdf",
+    }
+
+
+def test_an_unknown_certificate_id_returns_nothing_rather_than_everything(db, chain):
+    """A filter that silently no-ops is worse than an empty page: the agent
+    would read another certificate's files as this one's."""
+    _file_certificate(db, chain, _attachment(db, chain, "present"),
+                      number="PAV-F6", until=date(2030, 1, 1))
+
+    rows = ProductAttachmentService(db).list_product_attachments(
+        certificate_ids=["00000000-0000-0000-0000-0000000000ff"]
+    )["data"]
+
+    assert rows == []
+
+
+def test_certificate_ids_composes_with_product_ids(db, chain):
+    """Both narrowers are AND, so an unrelated product yields nothing."""
+    attachment = _attachment(db, chain, "compose")
+    cert = _file_certificate(db, chain, attachment, number="PAV-F7", until=date(2030, 1, 1))
+    svc = ProductAttachmentService(db)
+
+    same = svc.list_product_attachments(
+        certificate_ids=[str(cert.id)], product_ids=[str(chain["product"].id)]
+    )["data"]
+    assert len(same) == 1
+
+    elsewhere = svc.list_product_attachments(
+        certificate_ids=[str(cert.id)],
+        product_ids=["00000000-0000-0000-0000-0000000000ff"],
+    )["data"]
+    assert elsewhere == []

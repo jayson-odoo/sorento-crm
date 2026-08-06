@@ -1312,11 +1312,51 @@ class AttachmentService:
                 "link_id": None,
             })
 
+        # Certificates. Unlike the four above, this linkage is not a join table a
+        # user maintains: the file IS a revision of the certificate, so the link
+        # exists because the document was filed. The FE renders it read-only for
+        # that reason - unlinking here would leave a revision with no document.
+        # A list, not a single ref: the same PDF can be filed under two
+        # identities (PPS and SPAN both issue against one document).
+        from app.models.certificate import Certificate, CertificateRevision
+
+        linked_certificates = []
+        q = (
+            self.db.query(
+                Certificate.id,
+                Certificate.scheme,
+                Certificate.certificate_number,
+                Certificate.certifying_body,
+                Certificate.title,
+                CertificateRevision.id.label("link_id"),
+                CertificateRevision.revision_no,
+                CertificateRevision.is_current,
+            )
+            .join(CertificateRevision, CertificateRevision.certificate_id == Certificate.id)
+            .filter(CertificateRevision.attachment_id == attachment_id)
+            .order_by(CertificateRevision.revision_no.desc())
+        )
+        for row in q.all():
+            name = " ".join(p for p in (row.scheme, row.certificate_number) if p).strip()
+            # Say WHICH issue this file is, so a superseded document is not
+            # mistaken for the live certificate when read from the attachment.
+            issue = f"Revision {row.revision_no}"
+            if not row.is_current:
+                issue += " (superseded)"
+            subject = (row.title or "").strip() or (row.certifying_body or "").strip()
+            linked_certificates.append({
+                "id": str(row.id),
+                "name": name or str(row.id),
+                "description": " - ".join(p for p in (subject, issue) if p) or None,
+                "link_id": str(row.link_id),
+            })
+
         return {
             "linked_products": linked_products,
             "linked_promotions": linked_promotions,
             "linked_form": linked_form,
             "linked_packing_lists": linked_packing_lists,
+            "linked_certificates": linked_certificates,
         }
 
     def list_attachment_ids_in_directory_subtree(self, root_directory_id: str) -> List[str]:

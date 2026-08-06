@@ -16,8 +16,8 @@
  * next/link, which jsdom renders as an anchor already.
  */
 import React from 'react';
-import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, cleanup, within } from '@testing-library/react';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -64,9 +64,17 @@ const CURRENT = revision({
   created_at: '2024-03-02T02:00:00',
 });
 
-function renderTimeline(revisions: CertificateRevision[], currentAccessLevels: string[] = ['sorento_dealer']) {
+function renderTimeline(
+  revisions: CertificateRevision[],
+  currentAccessLevels: string[] = ['sorento_dealer'],
+  onOpenAttachment?: (id: string) => void,
+) {
   return render(
-    <CertificateRevisionTimeline revisions={revisions} currentAccessLevels={currentAccessLevels} />,
+    <CertificateRevisionTimeline
+      revisions={revisions}
+      currentAccessLevels={currentAccessLevels}
+      onOpenAttachment={onOpenAttachment}
+    />,
   );
 }
 
@@ -249,5 +257,59 @@ describe('CertificateRevisionTimeline - access levels differ note (FE-6a)', () =
       ['sorento_dealer'],
     );
     expect(screen.getByText('Visibility changed at the current revision.')).toBeInTheDocument();
+  });
+});
+
+
+describe('CertificateRevisionTimeline - the file links back to Resource Management', () => {
+  it('the filename opens the attachment, passing that revision own attachment id', () => {
+    const onOpenAttachment = vi.fn();
+    renderTimeline(
+      [revision({ id: 'rev-1', attachment_id: 'att-1', attachment_filename: 'pps-2021.pdf' })],
+      ['sorento_dealer'],
+      onOpenAttachment,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /pps-2021\.pdf/ }));
+    expect(onOpenAttachment).toHaveBeenCalledWith('att-1');
+  });
+
+  it('each node opens ITS OWN file, not the current revision one', () => {
+    const onOpenAttachment = vi.fn();
+    renderTimeline(
+      [
+        revision({ id: 'rev-1', revision_no: 1, is_current: false, attachment_id: 'att-old', attachment_filename: 'pps-2021.pdf' }),
+        revision({ id: 'rev-2', revision_no: 2, is_current: true, attachment_id: 'att-new', attachment_filename: 'pps-2024.pdf' }),
+      ],
+      ['sorento_dealer'],
+      onOpenAttachment,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /pps-2021\.pdf/ }));
+    expect(onOpenAttachment).toHaveBeenCalledWith('att-old');
+  });
+
+  it('a revision with no attachment_id stays plain text, never a dead button', () => {
+    renderTimeline(
+      [revision({ attachment_id: null, attachment_filename: 'pps-2021.pdf' })],
+      ['sorento_dealer'],
+      vi.fn(),
+    );
+    expect(screen.queryByRole('button', { name: /pps-2021\.pdf/ })).toBeNull();
+    expect(screen.getByText('pps-2021.pdf')).toBeInTheDocument();
+  });
+
+  it('a trashed file keeps its File removed state and offers no way in', () => {
+    renderTimeline(
+      [revision({ attachment_id: 'att-1', attachment_is_deleted: true, attachment_filename: 'gone.pdf' })],
+      ['sorento_dealer'],
+      vi.fn(),
+    );
+    expect(screen.getByText('File removed')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /gone\.pdf/ })).toBeNull();
+  });
+
+  it('without the callback the filename is still readable text', () => {
+    renderTimeline([revision({ attachment_id: 'att-1', attachment_filename: 'pps-2021.pdf' })]);
+    expect(screen.queryByRole('button', { name: /pps-2021\.pdf/ })).toBeNull();
+    expect(screen.getByText('pps-2021.pdf')).toBeInTheDocument();
   });
 });

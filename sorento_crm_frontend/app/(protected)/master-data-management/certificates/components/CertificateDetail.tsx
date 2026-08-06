@@ -51,6 +51,7 @@ import CertificateCoveredProducts from './CertificateCoveredProducts';
 import CertificateFormDialog from './CertificateFormDialog';
 import CertificateMergeDialog from './CertificateMergeDialog';
 import CertificateRevisionTimeline from './CertificateRevisionTimeline';
+import AttachmentDetailModal from '@/app/(protected)/resource-management/attachments/components/AttachmentDetailModal';
 
 const LIST_PATH = '/master-data-management/certificates';
 
@@ -81,6 +82,9 @@ export default function CertificateDetail({ certificateId }: { certificateId: st
   const [editOpen, setEditOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  // The revision file opens in the shared resource-management modal rather
+  // than routing away, so the reader keeps their place in the timeline.
+  const [attachmentModalId, setAttachmentModalId] = useState<string | null>(null);
 
   if (isLoading) {
     return (
@@ -328,11 +332,25 @@ export default function CertificateDetail({ certificateId }: { certificateId: st
               <CertificateRevisionTimeline
                 revisions={revisions}
                 currentAccessLevels={currentAccessLevels}
+                onOpenAttachment={setAttachmentModalId}
               />
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Prev/next walks the revision files of THIS certificate - a renewal and
+          the issue it replaced sit side by side, which is the comparison the
+          reader is usually making. */}
+      <AttachmentDetailModal
+        open={attachmentModalId != null}
+        onOpenChange={(open) => !open && setAttachmentModalId(null)}
+        attachmentId={attachmentModalId}
+        neighbourItems={revisions
+          .filter((r) => r.attachment_id && !r.attachment_is_deleted)
+          .map((r) => ({ id: r.attachment_id as string }))}
+        onAttachmentChange={setAttachmentModalId}
+      />
 
       {editOpen && (
         <CertificateFormDialog
