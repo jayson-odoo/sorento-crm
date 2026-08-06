@@ -43,10 +43,10 @@ ACCESSORY_PENALTY = 6.0
 # demotes a contradicting product, it does not remove it, because the parser is the
 # thing most likely to be wrong.
 MISMATCH_PENALTY = 2.5
-# +/- 5mm reads as exact, matching the hedge convention already used for dimensions
-# elsewhere in the CRM.
-NUMERIC_EXACT_TOLERANCE = 5.0
-NUMERIC_DECAY = 150.0
+# Numeric tolerance is NOT a constant here any more. It is a property of the quantity
+# and lives on the registry row (`match_tolerance` / `match_decay`), because one
+# millimetre-shaped "+/- 5" applied to every numeric key made a one-bowl sink an exact
+# match for "double bowl". See product_spec_registry.default_match_window.
 MAX_CANDIDATES = 5
 # A single class match scores 5.0, so the floor sits just under "one real signal".
 # Below that a result is one weak trigram hit, which is how "flux capacitor" would
@@ -54,12 +54,19 @@ MAX_CANDIDATES = 5
 RELEVANCE_FLOOR = 1.5
 
 
-def _numeric_score(target: float, actual: float) -> float:
-    """1.0 at (or within tolerance of) the target, decaying with distance."""
+def _numeric_score(target: float, actual: float, tolerance: float, decay: float) -> float:
+    """1.0 within `tolerance` of the target, then decaying to 0 at `decay`.
+
+    `decay <= 0` means exact-or-nothing. That is the correct shape for a COUNT: two
+    bowls and one bowl are not "nearly the same", however small the arithmetic
+    difference looks next to a millimetre scale.
+    """
     distance = abs(float(target) - float(actual))
-    if distance <= NUMERIC_EXACT_TOLERANCE:
+    if distance <= tolerance:
         return 1.0
-    return max(0.0, 1.0 - (distance / NUMERIC_DECAY))
+    if decay <= 0:
+        return 0.0
+    return max(0.0, 1.0 - (distance / decay))
 
 
 def _tokens(text: str) -> set[str]:
@@ -68,6 +75,93 @@ def _tokens(text: str) -> set[str]:
 
 def _summarise(values: dict, rendered: str | None) -> str:
     return rendered or ""
+
+
+# Customers do not write in one unit. The catalog is millimetres throughout, so every
+# quantity is normalised to mm through this table before it is compared. Adding a unit
+# is a row here, not a new code path.
+_UNIT_TO_MM: dict[str, float] = {
+    "mm": 1.0,
+    "cm": 10.0,
+    "m": 1000.0,
+    "in": 25.4,
+    "inch": 25.4,
+    "inches": 25.4,
+    '"': 25.4,
+    "”": 25.4,
+    "''": 25.4,
+}
+
+# A number with an optional trailing unit. The leading guard stops it eating the digits
+# out of a product code (CKS1050), which is text a customer legitimately types.
+_QUANTITY_RE = re.compile(
+    r"(?<![a-z0-9.])(\d+(?:\.\d+)?)\s*(mm|cm|m|inches|inch|in|\"|”|'')?(?![a-z0-9])",
+    re.IGNORECASE,
+)
+
+# How far from a quantity a key's own word may sit and still claim it. Wide enough for
+# "S-TRAP 8\" ( 200mm)" and "thickness of 1.2mm", short enough that two different
+# measurements in one sentence do not steal each other's numbers.
+_QUANTITY_BINDING_WINDOW = 20
+
+# Inside a key's `synonyms` map, this pseudo-value holds the words that name the KEY
+# ITSELF rather than one of its values — "thickness", "trap", "length". Enum keys have
+# no use for it; numeric keys have no values to hang synonyms off, so without it there
+# is no way to write down what a customer calls the measurement.
+SELF_SYNONYM_KEY = "_self"
+
+
+def _extract_quantities(haystack: str) -> list[tuple[float, int, int, str]]:
+    """Every (value_in_mm, start, end, evidence) in the phrase.
+
+    A bare number carries no unit and is returned unconverted: "200" and "200mm" mean
+    the same thing in a millimetre catalog, but 8 does not become 8mm — see the caller,
+    which only binds a unitless number when a key's word is adjacent.
+    """
+    found: list[tuple[float, int, int, str]] = []
+    for match in _QUANTITY_RE.finditer(haystack):
+        raw, unit = match.group(1), (match.group(2) or "").lower()
+        try:
+            number = float(raw)
+        except ValueError:
+            continue
+        found.append(
+            (number * _UNIT_TO_MM.get(unit, 1.0), match.start(), match.end(), match.group(0).strip())
+        )
+    return found
+
+
+def _resolve_quantities(haystack: str, rows) -> dict[str, float]:
+    """Bind numbers in the phrase onto the numeric key whose own word sits nearest.
+
+    Nothing here guesses. A quantity is only claimed when a key's synonym is within
+    `_QUANTITY_BINDING_WINDOW` characters of it, so "S trap 8\" (200mm)" reaches
+    `trap_length` while a stray number in a product code reaches nothing. The
+    alternative — binding an unqualified number to the class's "obvious" dimension —
+    is exactly the kind of guess that puts a wrong product in front of a customer.
+    """
+    quantities = _extract_quantities(haystack)
+    if not quantities:
+        return {}
+
+    numeric_keys = [r for r in rows if r.data_type == "numeric"]
+    claimed: dict[str, tuple[int, float]] = {}
+
+    for row in numeric_keys:
+        words = [str(w).lower() for w in (row.synonyms or {}).get(SELF_SYNONYM_KEY, [])]
+        for word in words:
+            if not word:
+                continue
+            for anchor in re.finditer(rf"(?<!\w){re.escape(word)}(?!\w)", haystack):
+                for value, start, end, _evidence in quantities:
+                    # Distance from the word to the number, in either direction.
+                    distance = start - anchor.end() if start >= anchor.end() else anchor.start() - end
+                    if 0 <= distance <= _QUANTITY_BINDING_WINDOW:
+                        current = claimed.get(row.spec_key)
+                        if current is None or distance < current[0]:
+                            claimed[row.spec_key] = (distance, value)
+
+    return {key: value for key, (_, value) in claimed.items()}
 
 
 def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
@@ -86,9 +180,15 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
     if not haystack:
         return []
 
+    rows = active_registry(db)
+
     candidates: list[tuple[int, str, str]] = []
-    for row in active_registry(db):
+    for row in rows:
         for value, synonyms in (row.synonyms or {}).items():
+            # `_self` names the key, not a value. Reading it as one would resolve
+            # `thickness = "_self"`.
+            if value == SELF_SYNONYM_KEY:
+                continue
             for synonym in synonyms:
                 phrase = str(synonym).lower().strip()
                 if not phrase:
@@ -103,7 +203,7 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
         if key not in best or length > best[key][0]:
             best[key] = (length, value)
 
-    types = {row.spec_key: row.data_type for row in active_registry(db)}
+    types = {row.spec_key: row.data_type for row in rows}
     resolved: list[dict] = []
     for key, (_, value) in best.items():
         # The synonym map is JSON, so every key arrives as a string. Coerce back to the
@@ -117,6 +217,16 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
             except (TypeError, ValueError):
                 continue
         resolved.append({"key": key, "value": value})
+
+    # Numbers the customer typed: "trap 200mm", "thickness 1.2mm", 'S trap 8"'.
+    # A value stated in WORDS wins over one bound by proximity — "double bowl" is a
+    # direct statement, a nearby number is an inference about which measurement was
+    # meant.
+    already = {entry["key"] for entry in resolved}
+    for key, value in _resolve_quantities(haystack, rows).items():
+        if key not in already:
+            resolved.append({"key": key, "value": value})
+
     return resolved
 
 
@@ -137,7 +247,14 @@ def search_specs(
     specs = specs or []
     free_terms = [t for t in (free_terms or []) if t and t.strip()]
 
-    weights = {row.spec_key: float(row.rank_weight or 1.0) for row in active_registry(db)}
+    registry_rows = active_registry(db)
+    weights = {row.spec_key: float(row.rank_weight or 1.0) for row in registry_rows}
+    # (tolerance, decay) per key, so a count is compared as a count and a millimetre as
+    # a millimetre.
+    match_windows = {
+        row.spec_key: (float(row.match_tolerance or 0.0), float(row.match_decay or 0.0))
+        for row in registry_rows
+    }
 
     # Words the caller did not map onto a key are mapped here. An explicitly-passed
     # spec always wins: the caller's parser saw the whole sentence, this sees a bag of
@@ -192,11 +309,18 @@ def search_specs(
                     score += CLASS_BOOST
                     matched.append(key)
             elif isinstance(actual, (int, float, Decimal)) and isinstance(target, (int, float, Decimal)):
-                gain = _numeric_score(float(target), float(actual))
+                tolerance, decay = match_windows.get(key, (0.0, 0.0))
+                gain = _numeric_score(float(target), float(actual), tolerance, decay)
                 if gain > 0:
                     score += NUMERIC_BOOST * weight * gain
                     if gain == 1.0:
                         matched.append(key)
+                else:
+                    # Stated, stored, and outside the window entirely. A number can
+                    # contradict exactly as an enum can — without this a one-bowl sink
+                    # merely scored zero on bowl_count and still won on its other
+                    # signals, which is what put it above real double-bowl sinks.
+                    penalty += MISMATCH_PENALTY
             elif str(actual).lower() == str(target).lower():
                 score += weight
                 matched.append(key)

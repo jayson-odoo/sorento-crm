@@ -49,6 +49,19 @@ class ProductSpecRegistry(Base):
     # Multiplier on this key's contribution to the match score. Hand-tuned against the
     # eval baseline, so the seed must never overwrite it.
     rank_weight = Column(Numeric(6, 3), nullable=False, server_default=text("1.0"))
+    # How close a NUMERIC value must be to count as a match. These are properties of
+    # the quantity, not of the ranker, which is why they live here: one module-level
+    # "+/- 5" was a millimetre intuition applied to every numeric key, and it made a
+    # one-bowl sink an EXACT match for "double bowl" (1 and 2 are within 5).
+    #
+    #   match_tolerance : distance still scored as a perfect match
+    #   match_decay     : distance at which the score reaches zero. 0 means
+    #                     exact-or-nothing, which is what a COUNT needs.
+    #
+    # Defaulted from `unit` at seed time, then owned by whoever tunes them — the same
+    # split as rank_weight.
+    match_tolerance = Column(Numeric(10, 3), nullable=False, server_default=text("0"))
+    match_decay = Column(Numeric(10, 3), nullable=False, server_default=text("0"))
     # How many catalog codes carried this key when it was seeded. Recorded so a later
     # reviewer can see why a key is weighted low without redoing the measurement.
     measured_coverage = Column(Integer, nullable=True)

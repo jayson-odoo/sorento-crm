@@ -24,7 +24,7 @@ from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services.product_class_signal import backfill_category_signals
 from app.services.product_spec_derivation import derive_for_code
 from app.services.product_spec_registry import seed_spec_registry
-from app.services.product_spec_search import search_specs
+from app.services.product_spec_search import resolve_terms_to_specs, search_specs
 from tests._pg_fixture import blank_session
 
 _REFS: dict = {}
@@ -566,3 +566,113 @@ def test_a_spoken_number_resolves_onto_a_numeric_key(db):
     assert "bowl_count" in result["candidates"][0]["matched_specs"]
     # Demoted for stating the other number, not removed.
     assert codes.index("ZZT-1B") > 0
+
+
+# --------------------------------------------------------------------------- #
+# #96 numeric tolerance is a property of the QUANTITY, not of the ranker
+# --------------------------------------------------------------------------- #
+def test_a_count_is_matched_exactly_not_within_a_millimetre_tolerance(db):
+    """The defect this exists to stop: 1 bowl scoring a PERFECT match for 2.
+
+    `_numeric_score` used one module-level `+/- 5` for every numeric key. That is a
+    millimetre intuition, and against a COUNT it made 1 and 2 indistinguishable — a
+    single-bowl sink ranked above real double-bowl sinks for "double bowl kitchen sink"
+    while reporting `bowl_count` as a matched spec.
+    """
+    _product(db, "ZZT-1BOWL", "CABANA SINGLE BOWL KITCHEN SINK")
+    _product(db, "ZZT-2BOWL", "CABANA DOUBLE BOWL KITCHEN SINK")
+
+    result = search_specs(db, specs=[{"key": "bowl_count", "value": 2}], free_terms=[])
+    top = result["candidates"][0]
+
+    assert top["product_code"] == "ZZT-2BOWL"
+    assert "bowl_count" in top["matched_specs"]
+
+    # The single-bowl sink is absent entirely, and correctly so: this query states one
+    # spec and no free terms, so contradicting it leaves the row with NO positive
+    # evidence at all — the one condition that drops a candidate. Where the query
+    # carries other signal it is demoted instead, which the next test asserts.
+    assert "ZZT-1BOWL" not in _codes(result)
+
+
+def test_a_millimetre_key_keeps_its_tolerance(db):
+    """The mm behaviour must not regress while fixing counts: +/-5mm still reads exact."""
+    _product(db, "ZZT-DIM", "SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)")
+
+    result = search_specs(db, specs=[{"key": "dim_length", "value": 998}], free_terms=[])
+
+    assert "dim_length" in result["candidates"][0]["matched_specs"]
+
+
+def test_a_numeric_contradiction_demotes_without_removing(db):
+    """A number can contradict exactly as an enum can — and still not be deleted."""
+    _product(db, "ZZT-1BOWL", "CABANA SINGLE BOWL KITCHEN SINK")
+    _product(db, "ZZT-2BOWL", "CABANA DOUBLE BOWL KITCHEN SINK")
+
+    result = search_specs(db, specs=[], free_terms=["double bowl kitchen sink"])
+    codes = _codes(result)
+
+    assert codes[0] == "ZZT-2BOWL"
+    # Demoted, never removed: the parser is the thing most likely to be wrong.
+    assert "ZZT-1BOWL" in codes
+
+
+# --------------------------------------------------------------------------- #
+# #97 quantities and units in the phrase
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "phrase,expected_mm",
+    [
+        ("S trap 200mm close couple wc", 200.0),
+        ("s trap 20cm wc", 200.0),
+        ('S trap 8" ( 200mm) Close Couple WC', 203.2),   # nearest word wins: the 8"
+        ("s trap 8 inch wc", 203.2),
+    ],
+)
+def test_a_quantity_is_bound_to_the_key_its_own_word_names(db, phrase, expected_mm):
+    """Numbers in a phrase were dropped entirely — resolution scanned synonyms only."""
+    resolved = {e["key"]: e["value"] for e in resolve_terms_to_specs(db, [phrase])}
+
+    assert resolved.get("trap_length") == pytest.approx(expected_mm)
+    # The enum still resolves alongside it; they are different keys.
+    assert resolved.get("trap_type") == "s_trap"
+
+
+def test_an_inch_query_reaches_the_millimetre_product(db):
+    '''8" is 203.2mm and the catalog calls that size 200mm.
+
+    This only lands because the mm tolerance (#96) absorbs the 3.2mm rounding, which is
+    why the two tickets had to ship together.
+    '''
+    _product(db, "ZZT-T200", "CABANA CLOSE COUPLED WC (S-TRAP 200MM)", category="wc")
+    _product(db, "ZZT-T250", "CABANA CLOSE COUPLED WC (S-TRAP 250MM)", category="wc")
+
+    result = search_specs(db, specs=[], free_terms=['S trap 8" close couple wc'])
+
+    assert _codes(result)[0] == "ZZT-T200"
+
+
+def test_a_word_stated_value_beats_a_number_sitting_nearby(db):
+    """"double bowl ... 1.2mm" must not let the 1.2 land on bowl_count."""
+    resolved = {e["key"]: e["value"] for e in
+                resolve_terms_to_specs(db, ["double bowl kitchen sink with thickness 1.2mm"])}
+
+    assert resolved["bowl_count"] == 2
+    assert resolved["thickness"] == pytest.approx(1.2)
+
+
+def test_an_unqualified_number_is_not_guessed_onto_a_key(db):
+    """No key's word is near it, so it binds to nothing rather than to the wrong thing.
+
+    Guessing "the obvious dimension" is how a wrong product reaches a customer.
+    """
+    resolved = {e["key"]: e["value"] for e in resolve_terms_to_specs(db, ["1000mm kitchen sink"])}
+
+    assert "dim_length" not in resolved
+    assert resolved == {}
+
+
+def test_digits_inside_a_product_code_are_not_read_as_a_quantity(db):
+    resolved = {e["key"]: e["value"] for e in resolve_terms_to_specs(db, ["CKS1050 trap"])}
+
+    assert "trap_length" not in resolved

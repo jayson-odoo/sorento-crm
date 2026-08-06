@@ -35,6 +35,25 @@ _SEED_OWNED = (
     "measured_coverage",
 )
 
+# How close a numeric value must be to count, defaulted from the key's UNIT.
+# `(tolerance, decay)`; decay 0 means exact-or-nothing.
+#
+# The bug this replaces: one module-level `+/- 5` was a millimetre intuition applied to
+# every numeric key, so `bowl_count` 1 vs 2 (distance 1) scored a PERFECT match and a
+# single-bowl sink outranked real double-bowl sinks for "double bowl kitchen sink".
+#
+# A count is exact-or-nothing. Millimetres keep the old constants, so dimensions behave
+# exactly as before. Add a row here rather than special-casing a key.
+_MATCH_DEFAULTS_BY_UNIT: dict[str | None, tuple[float, float]] = {
+    "mm": (5.0, 150.0),
+    None: (0.0, 0.0),
+}
+
+
+def default_match_window(unit: str | None) -> tuple[float, float]:
+    """(tolerance, decay) for a unit. Unknown units are exact-or-nothing, never guessed."""
+    return _MATCH_DEFAULTS_BY_UNIT.get(unit, (0.0, 0.0))
+
 SPEC_REGISTRY_SEED: list[dict] = [
     {
         "spec_key": "class",
@@ -83,6 +102,7 @@ SPEC_REGISTRY_SEED: list[dict] = [
         "spec_key": "diameter",
         "label": "Diameter",
         "data_type": "numeric",
+        "synonyms": {"_self": ["diameter", "dia", "across"]},
         "unit": "mm",
         # A rectangular product has no diameter. Ungated this would be proposed for
         # every sink, and the ranker would compare a width against it.
@@ -94,6 +114,7 @@ SPEC_REGISTRY_SEED: list[dict] = [
         "spec_key": "dim_length",
         "label": "Length",
         "data_type": "numeric",
+        "synonyms": {"_self": ["length", "long"]},
         "unit": "mm",
         # Deliberately NOT gated on shape: shape is unknown for most rows (no ROUND
         # or SQUARE token in the description), and gating would drop every unlabelled
@@ -105,6 +126,7 @@ SPEC_REGISTRY_SEED: list[dict] = [
         "spec_key": "dim_width",
         "label": "Width",
         "data_type": "numeric",
+        "synonyms": {"_self": ["width", "wide"]},
         "unit": "mm",
         "measured_coverage": 3390,
         "rank_weight": 2.0,
@@ -113,6 +135,7 @@ SPEC_REGISTRY_SEED: list[dict] = [
         "spec_key": "dim_height",
         "label": "Height",
         "data_type": "numeric",
+        "synonyms": {"_self": ["height", "tall", "high"]},
         "unit": "mm",
         "measured_coverage": 3390,
         "rank_weight": 1.5,
@@ -121,6 +144,7 @@ SPEC_REGISTRY_SEED: list[dict] = [
         "spec_key": "depth",
         "label": "Depth",
         "data_type": "numeric",
+        "synonyms": {"_self": ["depth", "deep"]},
         "unit": "mm",
         "measured_coverage": 365,
         "rank_weight": 1.0,
@@ -129,6 +153,7 @@ SPEC_REGISTRY_SEED: list[dict] = [
         "spec_key": "thickness",
         "label": "Thickness",
         "data_type": "numeric",
+        "synonyms": {"_self": ["thickness", "thick", "gauge"]},
         "unit": "mm",
         # Only 136 codes carry the 4th dimension, so it is weighted low: a key that is
         # NULL for 99% of rows must not dominate a score.
@@ -302,6 +327,7 @@ SPEC_REGISTRY_SEED: list[dict] = [
         "spec_key": "trap_length",
         "label": "Trap outlet length",
         "data_type": "numeric",
+        "synonyms": {"_self": ["trap"]},
         "unit": "mm",
         # Independent of trap_type: "150mm S-trap" and "300mm S-trap" are different
         # products a customer must not be shown interchangeably. The catalog spells the
@@ -335,6 +361,7 @@ SPEC_REGISTRY_SEED: list[dict] = [
         # rendered sentence, so a SINGLE bowl sink scored the same and was never
         # demoted - the one distinction the customer actually cared about.
         "synonyms": {
+            "_self": ["bowl", "bowls"],
             "1": ["single bowl", "one bowl", "1 bowl", "single sink"],
             "2": ["double bowl", "two bowl", "2 bowl", "twin bowl", "double sink"],
             "3": ["triple bowl", "three bowl", "3 bowl"],
@@ -421,11 +448,17 @@ def seed_spec_registry(db: Session, *, commit: bool = False) -> dict:
         row = existing.get(key)
 
         if row is None:
+            # Calibration is set ONCE, at creation, then belongs to whoever tunes it.
+            # An explicit value in the seed entry wins over the unit default, so a key
+            # that needs an unusual window can say so without inventing a new unit.
+            tolerance, decay = default_match_window(entry.get("unit"))
             db.add(
                 ProductSpecRegistry(
                     spec_key=key,
                     rank_weight=entry.get("rank_weight", 1.0),
                     is_active=entry.get("is_active", True),
+                    match_tolerance=entry.get("match_tolerance", tolerance),
+                    match_decay=entry.get("match_decay", decay),
                     **values,
                 )
             )
