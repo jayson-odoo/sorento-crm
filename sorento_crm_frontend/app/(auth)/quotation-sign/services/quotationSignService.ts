@@ -5,8 +5,13 @@ import { extractApiError } from '@/lib/api-client';
  *
  * Contract, matching `app/api/v1/public/quotation_sign.py` exactly:
  *
- *   GET  /api/v1/public/quotation-sign/{token}         -> QuotationSignPage
- *   POST /api/v1/public/quotation-sign/{token}/accept  -> QuotationSignPage (the same shape)
+ *   GET  /api/v1/public/quotation-sign/{token}                  -> QuotationSignPage
+ *   POST /api/v1/public/quotation-sign/{token}/accept           -> QuotationSignPage (same shape)
+ *   POST /api/v1/public/quotation-sign/{token}/request-changes  -> QuotationSignPage (same shape)
+ *
+ * Both decisions answer with the whole page, so the browser settles on the new state without a
+ * second fetch. `request-changes` answers 409 on a quotation that is already accepted: the
+ * counter-signature won the scopes, and the two decisions cannot both stand.
  *
  * Two deliberate departures from the rest of the app's services:
  *
@@ -118,6 +123,15 @@ export type QuotationSignPage = {
   customer_signature: QuotationSignSignature | null;
   accepted_at: string | null;
   is_accepted: boolean;
+  /**
+   * The other decision, on the same issue. Both can be set - somebody who asked for changes may
+   * still sign - and the page renders whichever one was REACHED, so acceptance wins the display
+   * while the request stays on the record.
+   */
+  changes_requested_at: string | null;
+  changes_requested_note: string | null;
+  changes_requested_by_name: string | null;
+  is_changes_requested: boolean;
 };
 
 export type QuotationSignAcceptBody = {
@@ -140,6 +154,13 @@ export async function getQuotationSignPage(token: string): Promise<QuotationSign
   return response.json();
 }
 
+export type QuotationSignChangesBody = {
+  /** Required. The backend refuses a blank one, and so does the form. */
+  note: string;
+  /** No signature is captured on a request, so this is the only name it can carry. */
+  requester_name: string | null;
+};
+
 export async function acceptQuotation(
   token: string,
   body: QuotationSignAcceptBody,
@@ -152,6 +173,24 @@ export async function acceptQuotation(
   if (!response.ok) {
     throw new QuotationSignError(
       await extractApiError(response, 'Your signature could not be saved.'),
+      response.status,
+    );
+  }
+  return response.json();
+}
+
+export async function requestQuotationChanges(
+  token: string,
+  body: QuotationSignChangesBody,
+): Promise<QuotationSignPage> {
+  const response = await fetch(signUrl(`/${encodeURIComponent(token)}/request-changes`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new QuotationSignError(
+      await extractApiError(response, 'Your request could not be sent.'),
       response.status,
     );
   }

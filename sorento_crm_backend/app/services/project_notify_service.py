@@ -16,6 +16,7 @@ down must never turn a successful save into a 500. Failures warn and return Fals
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional
@@ -190,6 +191,68 @@ def notify_floor_breach(
         },
         project_id=str(project.id),
         dedup_key=floor_breach_dedup_key(event),
+    )
+
+
+def changes_requested_dedup_key(issue_id: str, note: str) -> str:
+    """Idempotency key for a revision request: the ISSUE plus the words that were sent.
+
+    Same shape and same reasoning as `floor_breach_dedup_key`. Keyed on the issue alone, the
+    FIRST message would silence every later one, so a customer who comes back with a second,
+    different objection would be captured on the row and never announced to anybody. Including
+    the message keeps the property that matters (the same submission twice does not re-alert)
+    while letting genuinely new feedback through.
+    """
+    digest = hashlib.sha256(note.strip().encode("utf-8")).hexdigest()[:16]
+    return f"{issue_id}:changes_requested:{digest}"
+
+
+def notify_quotation_changes_requested(
+    db: Session,
+    *,
+    project: Project,
+    document,
+    record,
+    note: str,
+    requester_name: Optional[str] = None,
+) -> int:
+    """The customer will not sign the quotation as it stands (S17).
+
+    Addressed to the person running the pursuit, not to "management": this is a message from a
+    customer that somebody has to answer by re-pricing and re-issuing, and management alerts are
+    for approvals. A project with no owner falls back to management rather than dropping the
+    message on the floor - an unanswered request is the failure this slice exists to prevent.
+
+    The words travel in the BODY, trimmed to what an email preview and a bell dropdown can hold,
+    so the salesperson knows whether it needs answering today without opening the CRM. The whole
+    note is on the quotation's Signatures tab and in the project's activity feed.
+    """
+    reference = getattr(record, "our_ref_text", None) or getattr(document, "document_no", "")
+    who = (requester_name or "").strip() or "The customer"
+    excerpt = " ".join(note.split())
+    if len(excerpt) > 400:
+        excerpt = f"{excerpt[:400]}..."
+
+    recipients = [str(project.owner_user_id)] if project.owner_user_id else management_user_ids(db)
+
+    return _send(
+        db,
+        user_ids=recipients,
+        notif_type="project_quotation_changes_requested",
+        title=f"{project.project_code}: changes requested on {reference}",
+        body=f'{who} asked for changes to {reference}: "{excerpt}"',
+        data={
+            "project_id": str(project.id),
+            "project_code": project.project_code,
+            "document_id": str(getattr(document, "id", "") or ""),
+            "document_no": getattr(document, "document_no", None),
+            "issue_id": str(getattr(record, "id", "") or ""),
+            "issue_no": getattr(record, "issue_no", None),
+            "our_ref": reference,
+            "requested_by": requester_name,
+        },
+        project_id=str(project.id),
+        dedup_key=changes_requested_dedup_key(str(getattr(record, "id", "")), note),
     )
 
 

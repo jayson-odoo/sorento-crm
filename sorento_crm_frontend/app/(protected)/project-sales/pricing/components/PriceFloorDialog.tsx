@@ -110,8 +110,12 @@ export function PriceFloorDialog({
         <DialogHeader>
           <DialogTitle>{isEdit ? 'Edit price floor' : 'Add a price floor'}</DialogTitle>
           <DialogDescription>
-            A quoted price under the floor is saved, flagged, and reported to management.
-            It is never blocked.
+            {/* This used to end "It is never blocked", which was true until the approval gate
+                landed. Quoting below a floor is still never refused - what is refused is ISSUING
+                that quotation to the customer before a manager approves it. Saying the old thing
+                here would have a salesperson meet the block with no idea a floor caused it. */}
+            A quoted price under the floor is still saved and flagged. What it stops is sending:
+            the quotation cannot be issued to the customer until a manager approves it.
           </DialogDescription>
         </DialogHeader>
 

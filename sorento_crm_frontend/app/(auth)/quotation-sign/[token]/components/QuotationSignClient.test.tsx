@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuotationSignPage } from '../../services/quotationSignService';
 
@@ -24,12 +24,14 @@ beforeAll(() => {
 });
 
 const getQuotationSignPage = vi.fn();
+const requestQuotationChanges = vi.fn();
 
 vi.mock('../../services/quotationSignService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../services/quotationSignService')>();
   return {
     ...actual,
     getQuotationSignPage: (...args: unknown[]) => getQuotationSignPage(...args),
+    requestQuotationChanges: (...args: unknown[]) => requestQuotationChanges(...args),
   };
 });
 
@@ -97,6 +99,10 @@ function page(overrides: Partial<QuotationSignPage> = {}): QuotationSignPage {
     customer_signature: null,
     accepted_at: null,
     is_accepted: false,
+    changes_requested_at: null,
+    changes_requested_note: null,
+    changes_requested_by_name: null,
+    is_changes_requested: false,
     ...overrides,
   };
 }
@@ -322,6 +328,132 @@ describe('QuotationSignClient signature provenance', () => {
 
     expect(await screen.findByText('near Kajang, Selangor')).toBeInTheDocument();
     expect(screen.queryByText(/3\.03927/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * S17 - the customer's other answer.
+ *
+ * A page that only offers Accept sends anybody who wants a lower price out of the system to say
+ * so. The three things pinned here are the ones that decide whether the feedback ever arrives: the
+ * action has to be visible beside Accept, an EMPTY request must not be sendable, and once sent the
+ * page has to settle on the new state in front of them - a form still sitting there is how a
+ * customer sends the same message four times.
+ */
+describe('QuotationSignClient requesting changes', () => {
+  const FEEDBACK = 'The townhouse rate is over our budget. Can you re-price the WC?';
+
+  const requested = page({
+    is_changes_requested: true,
+    changes_requested_at: '2026-08-05T02:15:00',
+    changes_requested_note: FEEDBACK,
+    changes_requested_by_name: 'Kelly Tan',
+  });
+
+  it('offers the request beside Accept, not instead of it', async () => {
+    getQuotationSignPage.mockResolvedValue(page());
+    renderPage();
+
+    expect(await screen.findByRole('button', { name: 'Sign and accept' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Request changes' })).toBeInTheDocument();
+  });
+
+  it('refuses to send an empty request', async () => {
+    // An empty box tells the salesperson nothing, and a stamped request with no words behind it
+    // would settle this page on an outcome nobody can act on.
+    getQuotationSignPage.mockResolvedValue(page());
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Request changes' }));
+
+    const send = screen.getByRole('button', { name: 'Send request' });
+    expect(send).toBeDisabled();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'What needs to change' }), {
+      target: { value: '   ' },
+    });
+    expect(send).toBeDisabled();
+    expect(requestQuotationChanges).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'What needs to change' }), {
+      target: { value: FEEDBACK },
+    });
+    expect(send).toBeEnabled();
+  });
+
+  it('settles the page on the request without fetching it again', async () => {
+    getQuotationSignPage.mockResolvedValue(page());
+    requestQuotationChanges.mockResolvedValue(requested);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Request changes' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'What needs to change' }), {
+      target: { value: FEEDBACK },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
+
+    await waitFor(() =>
+      expect(requestQuotationChanges).toHaveBeenCalledWith('tok-123', {
+        note: FEEDBACK,
+        requester_name: 'Kelly',
+      }),
+    );
+
+    // The response IS the page, written straight into the cache: no spinner in the one moment
+    // the customer needs confirmation, and no second GET.
+    expect(await screen.findByText('Changes requested')).toBeInTheDocument();
+    expect(getQuotationSignPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads as a settled outcome afterwards, with the words quoted back', async () => {
+    getQuotationSignPage.mockResolvedValue(requested);
+    renderPage();
+
+    expect(await screen.findByText('Changes requested')).toBeInTheDocument();
+    expect(screen.getByText(/Sent on 05\/08\/2026, 10:15\s?am/i)).toBeInTheDocument();
+    // Quoted back so the customer can see the message landed, rather than wondering.
+    expect(screen.getByText(FEEDBACK)).toBeInTheDocument();
+
+    // Nothing left to fill in: neither decision is on offer a second time.
+    expect(screen.queryByRole('textbox', { name: 'What needs to change' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send request' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sign and accept' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('signature-pad-canvas')).not.toBeInTheDocument();
+  });
+
+  it('shows the acceptance when the customer asked for changes and then signed anyway', async () => {
+    // Allowed on purpose: refusing a signature somebody wants to give would be worse. The page
+    // reports the decision that was REACHED, and the earlier request stays on the record.
+    getQuotationSignPage.mockResolvedValue({
+      ...requested,
+      is_accepted: true,
+      accepted_at: '2026-08-06T02:15:00',
+      customer_signature: {
+        id: 's4',
+        signer_name: 'Kelly Tan',
+        mode: 'type',
+        image_data_uri: 'data:image/png;base64,CUSTOMER',
+        signed_at: '2026-08-06T02:15:00',
+        ip_address: '203.0.113.20',
+        gps_lat: null,
+        gps_lng: null,
+      },
+    });
+    renderPage();
+
+    expect(await screen.findByText('Accepted')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Request changes' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send request' })).not.toBeInTheDocument();
+  });
+
+  it('stacks the two actions on a phone and sets them side by side above it', async () => {
+    // 375px: `justify-between` on one row puts a full-width pad next to a button and clips both.
+    getQuotationSignPage.mockResolvedValue(page());
+    renderPage();
+
+    const actions = await screen.findByTestId('quotation-sign-actions');
+    expect(actions.className).toContain('flex-col');
+    expect(actions.className).toContain('sm:flex-row');
   });
 });
 

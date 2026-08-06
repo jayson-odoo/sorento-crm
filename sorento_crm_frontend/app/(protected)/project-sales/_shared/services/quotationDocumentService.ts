@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import type { StatusGraph } from '@/app/(protected)/system-management/status-graphs/types/statusGraph.types';
 
 /**
  * The quotation DOCUMENT: one letterhead carrying several priced scopes.
@@ -22,6 +23,16 @@ import { extractApiError } from '@/lib/api-client';
  *                                                                         -> QueuedDownload
  *   POST   /projects/{projectId}/quotation-documents/{id}/issues/{issueId}/export/xlsx
  *                                                                         -> QueuedDownload
+ *
+ * The price-floor approval gate (S14-S16) adds four more, and one read:
+ *
+ *   GET    /quotation-approval-graph                                       -> StatusGraph
+ *   POST   /projects/{projectId}/quotation-documents/{id}/approval-status  -> QuotationDocument
+ *   POST   /projects/{projectId}/quotation-documents/{id}/approve          -> QuotationDocument
+ *   POST   /projects/{projectId}/quotation-documents/{id}/reject           -> QuotationDocument
+ *
+ * `/issue` gains one refusal: 422 `quotation_below_floor_pending_approval` when the document
+ * carries a line priced below its floor and is not `approved`.
  *
  * The two exports are QUEUED, not rendered in the response: a 50-page quotation held the
  * browser long enough to read as a broken button. The route answers with a `user_downloads`
@@ -102,6 +113,29 @@ export type QuotationDocument = {
   signatory_signature?: QuotationSignatureRecord | null;
   /** The same fact as a flag, for list rows that do not need the ink itself. */
   is_signed?: boolean;
+
+  /**
+   * Where this document stands on the `quotation` approval graph, or null.
+   *
+   * NULL is the normal answer and it means "this quotation has never needed a manager".
+   * A document only enters the graph when a below-floor line makes it need one, so the
+   * common case carries no graph position at all and its Issue flow is untouched.
+   */
+  approval_status_id?: string | null;
+  /** draft | pending_approval | approved | rejected | issued, or null. */
+  approval_status_key?: string | null;
+  /** What the admin called that rung on the status graph. Rendered, never the key. */
+  approval_status_label?: string | null;
+  /** Why the manager sent it back, present only while it stands at `rejected`. */
+  approval_rejected_reason?: string | null;
+  /**
+   * A line on a scope this document would issue is priced below its floor, so issuing needs
+   * an approved status. Computed server-side from the stored per-line `is_below_floor`, never
+   * re-derived here: the floor that applied is the one that applied when the line was priced.
+   */
+  requires_approval?: boolean;
+  /** How many such lines, so the block can say how much there is to look at. */
+  below_floor_line_count?: number;
 };
 
 export type QuotationIssue = {
@@ -121,6 +155,16 @@ export type QuotationIssue = {
   customer_signature?: QuotationSignatureRecord | null;
   accepted_at?: string | null;
   is_accepted?: boolean;
+  /**
+   * The other answer the customer can give (S17): they will not sign it as it stands, and why.
+   *
+   * Travels on the same issue history for the same reason the acceptance does. This is what the
+   * salesperson reads before pressing Revise - the notification is the nudge, this is the record.
+   */
+  changes_requested_at?: string | null;
+  changes_requested_note?: string | null;
+  changes_requested_by_name?: string | null;
+  is_changes_requested?: boolean;
 };
 
 export type QuotationDocumentBody = Partial<{
@@ -249,6 +293,75 @@ export async function issueQuotationDocument(
   );
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to issue this quotation'));
+  return response.json();
+}
+
+/**
+ * The `quotation` approval graph, as the status engine resolves it.
+ *
+ * Its own route under project-sales rather than the admin `/statuses/graph/{entity}` one,
+ * which is gated on `system.statuses.view` and held by administrators alone: a salesperson
+ * has to be able to read the rung their own quotation stands on. Same response shape, so the
+ * shared `availableStatusMoves` / `splitStatusMoves` helpers read it unchanged.
+ */
+export async function getQuotationApprovalGraph(): Promise<StatusGraph> {
+  const response = await apiFetch(`${BASE}/quotation-approval-graph`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the approval steps'));
+  return response.json();
+}
+
+/**
+ * Move the document along the approval graph. Only the salesperson's own two moves go
+ * through here - sending it for approval, and taking a rejected one back to draft.
+ *
+ * Approving, rejecting and issuing are each their own act with their own rules (a permission,
+ * a required reason, a frozen revision), so the server refuses them on this route rather than
+ * letting a generic move perform them without those rules.
+ */
+export async function moveQuotationApproval(
+  projectId: string,
+  documentId: string,
+  toStatusId: string,
+): Promise<QuotationDocument> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/approval-status`,
+    { method: 'POST', body: JSON.stringify({ to_status_id: toStatusId }) },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to move this quotation'));
+  return response.json();
+}
+
+/** The manager accepts the below-floor pricing. The next Issue press then proceeds. */
+export async function approveQuotationDocument(
+  projectId: string,
+  documentId: string,
+): Promise<QuotationDocument> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/approve`,
+    { method: 'POST' },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to approve this quotation'));
+  return response.json();
+}
+
+/**
+ * The manager sends it back, and the reason is REQUIRED: "rejected" with no reason leaves the
+ * salesperson guessing at which line to move, which is the whole thing this gate exists to stop.
+ */
+export async function rejectQuotationDocument(
+  projectId: string,
+  documentId: string,
+  reason: string,
+): Promise<QuotationDocument> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/reject`,
+    { method: 'POST', body: JSON.stringify({ reason }) },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to reject this quotation'));
   return response.json();
 }
 

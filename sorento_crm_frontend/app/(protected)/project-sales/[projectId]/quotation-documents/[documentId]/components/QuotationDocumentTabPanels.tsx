@@ -51,6 +51,9 @@ export function QuotationSignaturesTab() {
       sorentoSignature={sorentoSignature}
       customerSignature={latestIssue?.customer_signature ?? null}
       acceptedAt={latestIssue?.accepted_at ?? null}
+      changesRequestedAt={latestIssue?.changes_requested_at ?? null}
+      changesRequestedNote={latestIssue?.changes_requested_note ?? null}
+      changesRequestedByName={latestIssue?.changes_requested_by_name ?? null}
     />
   );
 }

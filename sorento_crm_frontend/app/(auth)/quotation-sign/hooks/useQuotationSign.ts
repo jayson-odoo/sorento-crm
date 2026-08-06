@@ -6,7 +6,9 @@ import {
   acceptQuotation,
   getQuotationSignPage,
   QuotationSignError,
+  requestQuotationChanges,
   type QuotationSignAcceptBody,
+  type QuotationSignChangesBody,
   type QuotationSignPage,
 } from '../services/quotationSignService';
 
@@ -46,5 +48,19 @@ export function useQuotationSignMutations(token: string) {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { accept };
+  /**
+   * The other decision, written into the cache the same way and for the same reason: the customer
+   * has just told us the price is wrong, and the one thing they need back is confirmation that it
+   * arrived. A refetch would answer that with a spinner.
+   */
+  const requestChanges = useMutation({
+    mutationFn: (body: QuotationSignChangesBody) => requestQuotationChanges(token, body),
+    onSuccess: (page: QuotationSignPage) => {
+      queryClient.setQueryData(quotationSignPageKey(token), page);
+      toast.success('Thank you. Your request has been sent to Sorento.');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { accept, requestChanges };
 }

@@ -423,6 +423,16 @@ PERMISSION_REGISTRY.extend([
         ),
     },
     {
+        "slug": "projects.quotations.approve",
+        "name": "Approve Below-Floor Quotations",
+        "description": (
+            "Sales-manager grant: approve or reject a quotation carrying a line priced "
+            "below its price floor, which is what lets it be issued to the customer. The "
+            "whole access control on that decision - there is no team-tier resolution "
+            "behind it - so it is deliberately narrow."
+        ),
+    },
+    {
         "slug": "projects.parties.view",
         "name": "View Project Parties",
         "description": (

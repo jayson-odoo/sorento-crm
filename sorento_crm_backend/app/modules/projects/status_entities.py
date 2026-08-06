@@ -8,13 +8,19 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.projects import Project, ProjectLead, ProjectTask
+from app.models.projects import (
+    Project,
+    ProjectLead,
+    ProjectQuotationDocument,
+    ProjectTask,
+)
 from app.modules.projects.bootstrap import MODULE_KEY
 from app.status_engine.registry import StatusEntity, register_status_entity
 
 PROJECT_ENTITY_TYPE = "project"
 PROJECT_TASK_ENTITY_TYPE = "project_task"
 PROJECT_LEAD_ENTITY_TYPE = "project_lead"
+QUOTATION_ENTITY_TYPE = "quotation"
 
 
 def _project_scope(record: Project) -> Optional[str]:
@@ -46,6 +52,7 @@ def register() -> None:
     _register_project()
     _register_project_task()
     _register_project_lead()
+    _register_quotation()
 
 
 def _register_project() -> None:
@@ -166,5 +173,51 @@ def _register_project_lead() -> None:
             record_label_attr="title",
             required_flags=["is_initial", "is_terminal"],
             fact_attrs=("outcome", "source", "developer_party_id", "customer_id"),
+        )
+    )
+
+
+def _count_quotation_documents(db: Session, status_id: str) -> int:
+    return (
+        db.query(ProjectQuotationDocument)
+        .filter(ProjectQuotationDocument.approval_status_id == status_id)
+        .count()
+    )
+
+
+def _migrate_quotation_documents(db: Session, from_status_id: str, to_status_id: str) -> int:
+    return (
+        db.query(ProjectQuotationDocument)
+        .filter(ProjectQuotationDocument.approval_status_id == from_status_id)
+        .update(
+            {ProjectQuotationDocument.approval_status_id: to_status_id},
+            synchronize_session=False,
+        )
+    )
+
+
+def _register_quotation() -> None:
+    """Entity #4 (S14): the price-floor approval gate on a quotation DOCUMENT.
+
+    No ``scope_resolver``, for the same reason a lead has none: a price floor is a company
+    policy, not a per-template one, so there is nothing a fork would express. The admin is
+    therefore never offered a scope picker that could only ever resolve the default.
+
+    ``is_terminal`` is deliberately NOT in ``required_flags``. Every other entity here ends
+    somewhere; this one does not. A quotation at `Issued` is revised and issued again, and a
+    rejected one is re-priced and asked again, so an admin marking either terminal would strand
+    the document. The graph must still have exactly one starting rung.
+    """
+    register_status_entity(
+        StatusEntity(
+            entity_type=QUOTATION_ENTITY_TYPE,
+            label="Quotation Approval",
+            module=MODULE_KEY,
+            count_records=_count_quotation_documents,
+            migrate_records=_migrate_quotation_documents,
+            model=ProjectQuotationDocument,
+            status_attr="approval_status_id",
+            record_label_attr="document_no",
+            required_flags=["is_initial"],
         )
     )

@@ -45,6 +45,25 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+// The shell renders the price-floor block, which reads the caller's grants. Answered outright:
+// the real hook reaches NextAuth, which throws outside a SessionProvider, and none of the tab
+// specs here are about the approval gate (it has its own spec).
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => false,
+  useHasAnyPermission: () => false,
+  usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
+}));
+
+vi.mock('../../../../_shared/hooks/useQuotationDocuments', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('../../../../_shared/hooks/useQuotationDocuments')
+  >();
+  return {
+    ...actual,
+    useQuotationApprovalGraph: () => ({ data: null, isLoading: false }),
+  };
+});
+
 vi.mock('../../../../_shared/services/quotationDocumentService', async (importOriginal) => {
   const actual = await importOriginal<
     typeof import('../../../../_shared/services/quotationDocumentService')

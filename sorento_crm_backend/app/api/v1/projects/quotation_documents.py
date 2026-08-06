@@ -24,6 +24,8 @@ from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.common import ListResponse
 from app.schemas.projects import (
     ProjectQuotationDocumentCreate,
+    QuotationApprovalMoveRequest,
+    QuotationRejectRequest,
     QuotationSignatureRequest,
     QuotationSignatureResponse,
     ProjectQuotationDocumentResponse,
@@ -33,6 +35,8 @@ from app.schemas.projects import (
     ProjectQuotationScopeSummary,
     ProjectQuotationScopeUpdate,
 )
+from app.schemas.status import StatusGraphResponse
+from app.services import project_quotation_approval_service as approvals
 from app.services import project_quotation_document_service as svc
 from app.services import project_service as projects
 from app.services.error_handler import handle_internal_error
@@ -45,6 +49,9 @@ router = APIRouter()
 VIEW = "projects.projects.view"
 EDIT = "projects.projects.edit"
 DELETE = "projects.projects.delete"
+# S16: the sales-manager grant on below-floor pricing. The whole access control on that
+# decision, by the client's own choice - no team-tier resolution behind it.
+APPROVE = "projects.quotations.approve"
 
 
 def _envelope(data: List[dict]):
@@ -317,6 +324,149 @@ async def issue_quotation_document(
         db.commit()
         db.refresh(record)
         return svc.serialize_issue(db, record)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+# ----------------------------------------------------- price-floor approval (S14-S16)
+
+
+@router.get("/quotation-approval-graph", response_model=StatusGraphResponse)
+async def get_quotation_approval_graph(
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The `quotation` approval graph, readable by anyone who can see a project.
+
+    Its own route rather than the admin ``/statuses/graph/{entity_type}`` one, which is gated on
+    `system.statuses.view` and held by administrators alone. A salesperson has to be able to read
+    the rung their own quotation stands on and the LABEL of the move out of it, or the block on
+    the quotation screen can only ever offer a hardcoded button that an admin renaming the edge
+    cannot change. Same response shape, so the frontend's shared status-move helpers read it
+    unchanged.
+
+    Read-only, and the graph is edited where every other graph is edited: Setup > Status Graphs.
+    """
+    try:
+        graph = approvals.graph(db)
+        return {
+            "entity_type": graph.entity_type,
+            "requested_scope_id": None,
+            "resolved_scope_id": graph.resolved_scope_id,
+            "is_fork": graph.is_fork,
+            "statuses": graph.statuses,
+            "transitions": graph.transitions,
+        }
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/projects/{project_id}/quotation-documents/{document_id}/approval-status",
+    response_model=ProjectQuotationDocumentResponse,
+)
+async def move_quotation_approval(
+    project_id: str,
+    document_id: str,
+    payload: QuotationApprovalMoveRequest,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """The salesperson's own two moves: ask for approval, or take a rejected one back to draft.
+
+    Both are edits to their own quotation, so the edit grant is the whole check. Approving and
+    rejecting have their own routes below even though their edges are on the same graph: the
+    service refuses them here (422 ``quotation_status_not_self_serve``), because reaching them
+    through a route that asks for neither the permission nor the reason would make both rules
+    decorative.
+    """
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        _editable_project(db, project_id, current_user)
+        document = svc.get_document_or_404(db, project_id, document_id)
+        approvals.move(
+            db,
+            document=document,
+            to_status_id=payload.to_status_id,
+            actor_user_id=current_user["id"],
+        )
+        db.commit()
+        db.refresh(document)
+        return svc.serialize_document(db, document)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/projects/{project_id}/quotation-documents/{document_id}/approve",
+    response_model=ProjectQuotationDocumentResponse,
+)
+async def approve_quotation_document(
+    project_id: str,
+    document_id: str,
+    current_user: dict = Depends(require_permission(APPROVE)),
+    db: Session = Depends(get_db),
+):
+    """A manager accepts the below-floor pricing; the next Issue press then proceeds.
+
+    Gated on the approve slug and NOT on project edit rights: a sales manager decides on
+    quotations they do not own, which is the entire point of sending it to them. The project is
+    still resolved so a document id from another project cannot be decided through a URL that
+    names this one.
+    """
+    try:
+        validate_uuid_path(project_id, resource="Project")
+        validate_uuid_path(document_id, resource="Quotation")
+        projects.get_project_or_404(db, project_id)
+        document = svc.get_document_or_404(db, project_id, document_id)
+        approvals.approve(
+            db,
+            document=document,
+            actor_user_id=current_user["id"],
+            permissions=permission_slugs(db, current_user["id"]),
+        )
+        db.commit()
+        db.refresh(document)
+        return svc.serialize_document(db, document)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/projects/{project_id}/quotation-documents/{document_id}/reject",
+    response_model=ProjectQuotationDocumentResponse,
+)
+async def reject_quotation_document(
+    project_id: str,
+    document_id: str,
+    payload: QuotationRejectRequest,
+    current_user: dict = Depends(require_permission(APPROVE)),
+    db: Session = Depends(get_db),
+):
+    """A manager sends it back, and the reason is required.
+
+    Same grant as approve: deciding is one act with two answers, and a manager who may say yes
+    may say no. The reason is stored on the document because the block on the salesperson's
+    screen is where it has to be read.
+    """
+    try:
+        validate_uuid_path(project_id, resource="Project")
+        validate_uuid_path(document_id, resource="Quotation")
+        projects.get_project_or_404(db, project_id)
+        document = svc.get_document_or_404(db, project_id, document_id)
+        approvals.reject(
+            db,
+            document=document,
+            actor_user_id=current_user["id"],
+            reason=payload.reason,
+            permissions=permission_slugs(db, current_user["id"]),
+        )
+        db.commit()
+        db.refresh(document)
+        return svc.serialize_document(db, document)
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

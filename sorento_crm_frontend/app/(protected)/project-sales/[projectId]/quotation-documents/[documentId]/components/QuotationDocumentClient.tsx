@@ -23,6 +23,7 @@ import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import {
+  useQuotationApprovalGraph,
   useQuotationDocument,
   useQuotationDocumentMutations,
   useQuotationIssues,
@@ -41,6 +42,10 @@ import {
   stagedScopeTotal,
   unfinishedStagedLines,
 } from '../../../components/QuotationVersionEditor';
+import {
+  QuotationApprovalPanel,
+  isBlockedByApproval,
+} from './QuotationApprovalPanel';
 import { QuotationDocumentHeader } from './QuotationDocumentHeader';
 import { QuotationDocumentProvider } from './QuotationDocumentContext';
 import { QuotationDocumentTabs } from './QuotationDocumentTabs';
@@ -81,6 +86,12 @@ export function QuotationDocumentClient({
   // counter-sign link are the ones worth handing out.
   const issues = useQuotationIssues(projectId, documentId);
   const mutations = useQuotationDocumentMutations(projectId, documentId);
+  /**
+   * The `quotation` approval graph, so the block below the header can offer the salesperson
+   * their own next move by the label the admin gave that edge rather than by a hardcoded one.
+   * One install-wide read, cached; it is Setup data, not per-quotation state.
+   */
+  const approvalGraph = useQuotationApprovalGraph();
   /**
    * Which scopes are still open for editing, straight from the server's own `is_editable`.
    *
@@ -233,6 +244,15 @@ export function QuotationDocumentClient({
    * server refuses it.
    */
   const isSigned = Boolean(sorentoSignature);
+  /**
+   * S15: a line priced below its floor cannot go to the customer until a manager says so.
+   *
+   * The server refuses it with 422 `quotation_below_floor_pending_approval`, and the CTA says
+   * so up front rather than letting somebody press it and read an error - exactly how the
+   * signature gate above already behaves. The reason and the way to ask for approval are in
+   * the panel under the header, because a disabled button with no way forward is a dead end.
+   */
+  const needsApproval = isBlockedByApproval(record);
 
   /**
    * What the header says about the state it is in, reason and next action together.
@@ -456,8 +476,14 @@ export function QuotationDocumentClient({
               <Button
                 type="button"
                 size="sm"
-                disabled={mutations.issue.isPending || !isSigned}
-                title={isSigned ? undefined : 'Sign it first'}
+                disabled={mutations.issue.isPending || !isSigned || needsApproval}
+                title={
+                  needsApproval
+                    ? 'A manager has to approve the below-floor pricing first'
+                    : isSigned
+                      ? undefined
+                      : 'Sign it first'
+                }
                 onClick={() => mutations.issue.mutate(documentId)}
               >
                 {`Issue R${nextIssueNo}`}
@@ -551,6 +577,28 @@ export function QuotationDocumentClient({
           ))}
         </div>
       </header>
+
+      {/* The price-floor gate. Renders nothing at all unless a line on this quotation is
+          priced below its floor, so the ordinary quotation gains no chrome and no extra step. */}
+      <QuotationApprovalPanel
+        document={record}
+        graph={approvalGraph.data}
+        canEdit={canEdit}
+        isMoving={mutations.submitForApproval.isPending}
+        isDeciding={mutations.approve.isPending || mutations.reject.isPending}
+        onMove={(toStatusId) =>
+          mutations.submitForApproval.mutate({ id: documentId, toStatusId })
+        }
+        onApprove={() => mutations.approve.mutate(documentId)}
+        onReject={async (reason) => {
+          try {
+            await mutations.reject.mutateAsync({ id: documentId, reason });
+          } catch {
+            // The mutation toasted the reason; the dialog closes either way so the manager
+            // is not left staring at a form they have already read the failure for.
+          }
+        }}
+      />
 
       <QuotationDocumentHeader
         document={shown}

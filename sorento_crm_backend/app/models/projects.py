@@ -896,6 +896,25 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("quotation_signatures.id", ondelete="SET NULL"), nullable=True
     )
 
+    # ---- the price-floor approval gate (S14-S16) ----
+    # Where this document stands on the ``quotation`` status graph, and NULLABLE on purpose:
+    # NULL means "this quotation has never needed a manager". A document only enters the graph
+    # when a line priced below its floor makes it need one, so the ordinary quotation carries no
+    # position at all and its Issue flow is exactly what it was before the gate existed. A
+    # column defaulted to `draft` on create would put every quotation into an approval lifecycle
+    # for the sake of the small minority that discount that far.
+    #
+    # It lives on the DOCUMENT rather than on an issue because approval gates the NEXT issue, not
+    # a past one, and a document is revised many times while holding one approval position.
+    approval_status_id = Column(
+        UUID(as_uuid=False), ForeignKey("statuses.id", ondelete="SET NULL"), nullable=True
+    )
+    # Why a manager sent it back. Kept on the document rather than only in the activity feed
+    # because the block on the quotation screen is where the salesperson has to read it, and
+    # cleared the moment it leaves `rejected` so the screen cannot quote a rejection that has
+    # already been answered.
+    approval_rejected_reason = Column(Text, nullable=True)
+
     created_by = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
@@ -904,6 +923,7 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
 
     __table_args__ = (
         Index("ix_project_quotation_documents_project", "project_id"),
+        Index("ix_project_quotation_documents_approval_status", "approval_status_id"),
         UniqueConstraint("company_id", "document_no", name="uq_project_quotation_documents_no"),
     )
 
@@ -1012,6 +1032,22 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("quotation_signatures.id", ondelete="SET NULL"), nullable=True
     )
     accepted_at = Column(DateTime(timezone=False), nullable=True)
+    # The other answer a customer can give: "not as it stands". Kept HERE, beside the acceptance,
+    # because both are decisions about the same thing - the revision they were holding - and a
+    # decision recorded anywhere else could not be shown next to the one it competes with.
+    #
+    # Three columns rather than one, each earning its place:
+    #   - `changes_requested_at`  : when they said it, the fact the salesperson sorts by.
+    #   - `changes_requested_note`: the words themselves. Required at the boundary; a stamped time
+    #                              with nothing behind it is a settled state nobody can act on.
+    #   - `changes_requested_by_name`: who said it. Acceptance gets a name for free off the
+    #                              signature row; a request has no signature, so without this the
+    #                              salesperson is handed feedback from "somebody".
+    # The row holds the LATEST request. Every one of them is also written to the project activity
+    # feed, so the history survives an overwrite the same way SLA event logs outlive a tracker.
+    changes_requested_at = Column(DateTime(timezone=False), nullable=True)
+    changes_requested_note = Column(Text, nullable=True)
+    changes_requested_by_name = Column(String(200), nullable=True)
     # The PDF carrying BOTH signatures, which is the record of what was agreed.
     signed_pdf_attachment_id = Column(
         UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True

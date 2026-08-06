@@ -34,6 +34,9 @@ export function QuotationSignatureBlock({
   sorentoSignature = null,
   customerSignature = null,
   acceptedAt = null,
+  changesRequestedAt = null,
+  changesRequestedNote = null,
+  changesRequestedByName = null,
 }: {
   document: QuotationDocument;
   /** Passed in rather than read off `document`: the screen owns where it got the signature. */
@@ -44,6 +47,14 @@ export function QuotationSignatureBlock({
    */
   customerSignature?: QuotationSignatureRecord | null;
   acceptedAt?: string | null;
+  /**
+   * The customer asked for a revision instead of signing (S17). Same origin as the acceptance -
+   * the issue they were holding - and shown here because this is the panel that answers "where
+   * does this quotation stand with the customer".
+   */
+  changesRequestedAt?: string | null;
+  changesRequestedNote?: string | null;
+  changesRequestedByName?: string | null;
 }) {
   return (
     <Card>
@@ -52,6 +63,12 @@ export function QuotationSignatureBlock({
         {acceptedAt ? (
           <Badge variant="success" appearance="light">
             {`Accepted ${formatDateTimeInMalaysia(acceptedAt)}`}
+          </Badge>
+        ) : changesRequestedAt ? (
+          // Ranked below acceptance on purpose: a customer who asked for changes and then signed
+          // has accepted, and the badge has to say the decision that was reached.
+          <Badge variant="warning" appearance="light">
+            {`Changes requested ${formatDateTimeInMalaysia(changesRequestedAt)}`}
           </Badge>
         ) : (
           <Badge variant="secondary" appearance="light">
@@ -127,6 +144,34 @@ export function QuotationSignatureBlock({
               Issue this quotation to send the customer a link they can counter-sign.
             </EmptyBox>
           )}
+
+          {/* Rendered in every state, empty included: a section that vanished would read as "we
+              did not record it" on the one screen somebody checks before revising. */}
+          <div className="space-y-2 pt-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Requested changes
+            </p>
+            {changesRequestedNote?.trim() ? (
+              <div className="space-y-2 rounded-md border border-border bg-muted/40 p-4">
+                <p className="min-w-0 whitespace-pre-line break-words text-sm">
+                  {changesRequestedNote}
+                </p>
+                <p className="min-w-0 break-words text-xs text-muted-foreground">
+                  {[
+                    changesRequestedByName?.trim() || 'The customer',
+                    changesRequestedAt ? formatDateTimeInMalaysia(changesRequestedAt) : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' - ')}
+                </p>
+              </div>
+            ) : (
+              <EmptyBox>
+                The customer has not asked for any changes. Revise this quotation from the header
+                when they do.
+              </EmptyBox>
+            )}
+          </div>
         </section>
       </CardContent>
     </Card>

@@ -1,13 +1,14 @@
 'use client';
 
 import * as React from 'react';
-import { CheckCircle2, Link2Off } from 'lucide-react';
+import { CheckCircle2, Link2Off, MessageSquareText } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
 import { SignaturePad } from '@/components/common/SignaturePad';
 import { signatureValueFrom } from '@/components/common/signatureValue';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -117,18 +118,27 @@ function ProsePanel({ title, html, empty }: { title: string; html: string | null
 }
 
 /**
- * The customer's half: sign it, or read back what was signed.
+ * The customer's half: sign it, ask for a revision, or read back the decision already taken.
  *
  * The name is asked for BEFORE the pad unlocks, because a signature with no name beside it is
  * weaker evidence than one with it, and prefilled from `Attn:` so the usual signer confirms
- * rather than types. Once accepted there is no signing affordance at all - not a disabled one:
- * offering to sign something already signed invites a second attempt that the backend would
- * ignore anyway.
+ * rather than types. The same name rides along with a change request, which carries no signature
+ * and would otherwise reach the salesperson from "somebody".
+ *
+ * Once a decision is taken there is no affordance for it at all - not a disabled one: offering to
+ * sign something already signed invites a second attempt the backend would ignore anyway.
+ * Acceptance is checked FIRST because both fields can be set: a customer who asked for changes
+ * and then signed has accepted, and that is what the page must say.
  */
 function CustomerSignature({ page, token }: { page: QuotationSignPage; token: string }) {
-  const { accept } = useQuotationSignMutations(token);
+  const { accept, requestChanges } = useQuotationSignMutations(token);
   const [signerName, setSignerName] = React.useState(page.attn_name ?? '');
+  const [asking, setAsking] = React.useState(false);
+  const [note, setNote] = React.useState('');
   const named = signerName.trim().length > 0;
+  // Trimmed, so a box holding three spaces is still empty. An empty request is not a request:
+  // the backend refuses it, and the button that would send it is never live.
+  const written = note.trim().length > 0;
 
   if (page.is_accepted) {
     return (
@@ -164,6 +174,48 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
         </CardContent>
       </Card>
     );
+  }
+
+  /**
+   * The other settled outcome. A form still sitting here is how somebody sends the same message
+   * four times, so the request replaces it - and the words are quoted back, because the one thing
+   * a customer who has just objected to a price needs is proof that it arrived.
+   */
+  if (page.is_changes_requested) {
+    return (
+      <Card>
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <CardTitle className="min-w-0 break-words text-sm">Your response</CardTitle>
+          <Badge variant="warning" appearance="light">
+            <MessageSquareText className="size-3.5" aria-hidden />
+            Changes requested
+          </Badge>
+        </CardHeader>
+        <CardContent className="space-y-4 py-5">
+          <p className="min-w-0 break-words text-sm text-muted-foreground">
+            {page.changes_requested_at
+              ? `Sent on ${formatDateTimeInMalaysia(page.changes_requested_at)}.`
+              : 'Your request has been sent.'}
+          </p>
+          <blockquote className="min-w-0 whitespace-pre-line break-words rounded-md border border-border bg-muted/40 p-4 text-sm">
+            {text(page.changes_requested_note)}
+          </blockquote>
+          <p className="min-w-0 break-words text-sm text-muted-foreground">
+            {page.signatory_name
+              ? `${page.signatory_name} will follow up with a revised quotation.`
+              : 'Sorento will follow up with a revised quotation.'}
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  function sendRequest() {
+    if (!written) return;
+    requestChanges.mutate({
+      note: note.trim(),
+      requester_name: signerName.trim() || null,
+    });
   }
 
   return (
@@ -214,6 +266,72 @@ function CustomerSignature({ page, token }: { page: QuotationSignPage; token: st
 
         {accept.isPending && (
           <p className="text-sm text-muted-foreground">Saving your signature...</p>
+        )}
+
+        {/* The second answer, beside the first rather than hidden below the fold. Stacked at
+            375px: a full-width button next to a sentence on one row clips both on a phone. */}
+        <div
+          data-testid="quotation-sign-actions"
+          className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <p className="min-w-0 break-words text-sm text-muted-foreground">
+            Not ready to sign this?
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full sm:w-auto"
+            disabled={accept.isPending || requestChanges.isPending}
+            onClick={() => setAsking((open) => !open)}
+          >
+            Request changes
+          </Button>
+        </div>
+
+        {asking && (
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="quotation-changes-note">What needs to change</Label>
+              <Textarea
+                id="quotation-changes-note"
+                rows={4}
+                value={note}
+                placeholder="e.g. the townhouse rate is above our budget"
+                disabled={requestChanges.isPending}
+                onChange={(event) => setNote(event.target.value)}
+              />
+              {!written && (
+                <p className="text-xs text-muted-foreground">
+                  Tell us what to change before sending.
+                </p>
+              )}
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button
+                type="button"
+                className="w-full sm:w-auto"
+                disabled={!written || requestChanges.isPending}
+                onClick={sendRequest}
+              >
+                Send request
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full sm:w-auto"
+                disabled={requestChanges.isPending}
+                onClick={() => {
+                  setAsking(false);
+                  setNote('');
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+            {requestChanges.isPending && (
+              <p className="text-sm text-muted-foreground">Sending your request...</p>
+            )}
+          </div>
         )}
       </CardContent>
     </Card>

@@ -80,6 +80,28 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+// The price-floor block reads the caller's grants to decide whether to offer Approve/Reject.
+// Answered outright rather than through a SessionProvider: none of the specs in this file are
+// about the approval gate (its own spec covers that), and the real hook reaches NextAuth, which
+// throws outside a provider.
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => false,
+  useHasAnyPermission: () => false,
+  usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
+}));
+
+// The approval graph is one install-wide read the block uses to name the salesperson's next
+// move. Empty here: with nothing below the floor the block never renders at all.
+vi.mock('../../../../_shared/hooks/useQuotationDocuments', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('../../../../_shared/hooks/useQuotationDocuments')
+  >();
+  return {
+    ...actual,
+    useQuotationApprovalGraph: () => ({ data: null, isLoading: false }),
+  };
+});
+
 vi.mock('../../../../_shared/services/quotationDocumentService', async (importOriginal) => {
   const actual = await importOriginal<
     typeof import('../../../../_shared/services/quotationDocumentService')
@@ -441,6 +463,42 @@ describe('QuotationDocumentClient signing gate', () => {
     expect(issue).toBeEnabled();
     expect(screen.queryByText('Sign it first')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sign' })).not.toBeInTheDocument();
+  });
+
+  it('holds Issue shut while below-floor pricing is waiting on a manager, and says why', async () => {
+    // S15's half of the same gate. Signed is not enough: the server refuses a below-floor
+    // quotation with 422 `quotation_below_floor_pending_approval`, so the CTA says so up front
+    // rather than letting somebody press it and read an error.
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        signatory_signature: signature(),
+        requires_approval: true,
+        below_floor_line_count: 2,
+        approval_status_key: null,
+      }),
+    );
+    renderScreen();
+
+    const issue = await screen.findByRole('button', { name: 'Issue R1' });
+    expect(issue).toBeDisabled();
+    expect(issue).toHaveAttribute(
+      'title',
+      'A manager has to approve the below-floor pricing first',
+    );
+  });
+
+  it('leaves Issue alone once a manager has approved', async () => {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        signatory_signature: signature(),
+        requires_approval: true,
+        below_floor_line_count: 2,
+        approval_status_key: 'approved',
+      }),
+    );
+    renderScreen();
+
+    expect(await screen.findByRole('button', { name: 'Issue R1' })).toBeEnabled();
   });
 
   it('refuses to re-issue an issued document that carries no signature', async () => {

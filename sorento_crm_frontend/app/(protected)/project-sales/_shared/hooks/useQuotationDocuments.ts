@@ -8,15 +8,19 @@ import {
 } from '@/services/myDownloadsService';
 import {
   addQuotationScope,
+  approveQuotationDocument,
   createQuotationDocument,
   createQuotationSignLink,
   deleteQuotationDocument,
+  getQuotationApprovalGraph,
   getQuotationDocument,
   issueQuotationDocument,
   listQuotationDocuments,
   listQuotationIssues,
+  moveQuotationApproval,
   queueQuotationIssuePdf,
   queueQuotationIssueXlsx,
+  rejectQuotationDocument,
   signQuotationDocument,
   updateQuotationDocument,
   updateQuotationScope,
@@ -27,6 +31,7 @@ import {
 
 const DOCUMENTS_KEY = 'project-quotation-documents';
 const ISSUES_KEY = 'project-quotation-issues';
+const APPROVAL_GRAPH_KEY = ['quotation-approval-graph'];
 
 export const quotationDocumentsKey = (projectId: string) => [DOCUMENTS_KEY, projectId];
 export const quotationDocumentKey = (projectId: string, documentId: string) => [
@@ -62,6 +67,18 @@ export function useQuotationIssues(
     queryKey: [ISSUES_KEY, projectId ?? '', documentId ?? ''],
     queryFn: () => listQuotationIssues(projectId as string, documentId as string),
     enabled: Boolean(projectId && documentId),
+  });
+}
+
+/**
+ * The `quotation` approval graph. One per install, so it is keyed on nothing and cached long:
+ * an admin reshaping the graph is a Setup act, not something a quotation screen watches for.
+ */
+export function useQuotationApprovalGraph() {
+  return useQuery({
+    queryKey: APPROVAL_GRAPH_KEY,
+    queryFn: getQuotationApprovalGraph,
+    staleTime: 5 * 60 * 1000,
   });
 }
 
@@ -172,6 +189,45 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
   });
 
   /**
+   * The three approval acts. All three answer with the document, and all three invalidate the
+   * same way an issue does: the Issue CTA, the block above it and the scope tabs all read the
+   * document's approval position, so refreshing one of them alone leaves the screen disagreeing
+   * with itself about whether it may be sent.
+   */
+  const submitForApproval = useMutation({
+    mutationFn: ({ id, toStatusId }: { id: string; toStatusId: string }) =>
+      moveQuotationApproval(projectId, id, toStatusId),
+    onSuccess: (record: QuotationDocument) => {
+      invalidate();
+      toast.success(
+        record.approval_status_key === 'pending_approval'
+          ? 'Sent to a manager for approval'
+          : `Moved to ${record.approval_status_label ?? 'draft'}`,
+      );
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const approve = useMutation({
+    mutationFn: (id: string) => approveQuotationDocument(projectId, id),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Quotation approved');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const reject = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      rejectQuotationDocument(projectId, id, reason),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Sent back to the salesperson');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  /**
    * Mint (or reuse) the tokenised counter-sign link for one issue. The server hands back a
    * RELATIVE path; the caller decides which origin to put in front of it.
    */
@@ -218,6 +274,9 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
     addScope,
     renameScope,
     issue,
+    submitForApproval,
+    approve,
+    reject,
     sign,
     signLink,
     issuePdf,

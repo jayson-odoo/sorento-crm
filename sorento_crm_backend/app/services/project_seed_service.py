@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 PROJECT_ENTITY = "project"
 PROJECT_TASK_ENTITY = "project_task"
 PROJECT_LEAD_ENTITY = "project_lead"
+QUOTATION_ENTITY = "quotation"
 
 # The funnel from the client's process-flow PDF. The terminal rung is "PO Received",
 # not "Won": status says what happened, while the commercial outcome is derived, so a
@@ -165,6 +166,46 @@ DEFAULT_LEAD_EDGES = (
     ("new", "qualifying", "Start qualifying"),
     ("qualifying", "qualified", "Qualified"),
     ("contacted", "qualified", "Qualified"),
+)
+
+# The price-floor approval graph (S14). Deliberately FIVE rungs and nothing more: this is a
+# gate, not a workflow, and the only question it answers is whether a manager has said yes to
+# pricing that went below the floor.
+#
+# Nothing is terminal. `issued` is not an ending - a quotation is revised and issued again, and
+# the next revision may dip below the floor again - and `rejected` is answered by re-pricing.
+# A terminal rung on either would strand the document with no legal move out of it.
+#
+# `rejected` sorts BETWEEN draft and pending_approval on purpose. Sort order is what the shared
+# frontend helpers read to tell an advance from a correction (`splitStatusMoves`), and being
+# sent back is a step backwards. Sorted after `issued` it would have read as the forward move
+# out of pending_approval, putting Reject where Approve belongs.
+DEFAULT_QUOTATION_STATUSES = (
+    # (key, label, initial, terminal)
+    ("draft", "Draft", True, False),
+    ("rejected", "Rejected", False, False),
+    ("pending_approval", "Pending Approval", False, False),
+    ("approved", "Approved", False, False),
+    ("issued", "Issued", False, False),
+)
+
+# The exact set, and no more. "Anything to anything" would make the engine decorative, and each
+# edge here is a move somebody actually makes:
+#
+# - draft -> pending_approval  the salesperson asks (their own move, no extra grant)
+# - pending_approval -> approved / rejected  the manager decides (permission-gated routes)
+# - rejected -> draft  the salesperson tries again; it is just "edit and re-price", so it needs
+#   nothing beyond the edit rights they already hold to change the quotation at all
+# - approved -> issued  stamped BY issuing, never claimed by a person: it spends the approval,
+#   so the next below-floor revision has to be approved on its own merits
+# - issued -> pending_approval  which is how that next revision asks
+DEFAULT_QUOTATION_EDGES = (
+    ("draft", "pending_approval", "Send for approval", 0),
+    ("pending_approval", "approved", "Approve", 0),
+    ("pending_approval", "rejected", "Reject", 1),
+    ("rejected", "draft", "Back to draft", 0),
+    ("approved", "issued", "Issued to the customer", 0),
+    ("issued", "pending_approval", "Send for approval", 0),
 )
 
 # Seeded starting points for the disqualification reason lookup (AC-O6). A free-text
@@ -678,6 +719,56 @@ def seed_default_lead_graph(db: Session) -> int:
     return len(by_key)
 
 
+def seed_quotation_approval_graph(db: Session) -> int:
+    """The DEFAULT graph for ``quotation`` (S14). No scoped variants: a price floor is a
+    company policy, not a per-template one, so there is nothing to fork on.
+
+    Same wholesale guard as the other three graphs: skipped once any default-scope quotation
+    status exists, so a team that renamed "Pending Approval" or pruned a rung keeps their
+    change across every restart.
+    """
+    already = (
+        db.query(func.count(Status.id))
+        .filter(Status.entity_type == QUOTATION_ENTITY, Status.scope_id.is_(None))
+        .scalar()
+    )
+    if already:
+        return 0
+
+    by_key: Dict[str, Status] = {}
+    for index, (key, label, initial, terminal) in enumerate(DEFAULT_QUOTATION_STATUSES):
+        row = Status(
+            id=_uid(),
+            entity_type=QUOTATION_ENTITY,
+            scope_id=None,
+            key=key,
+            label=label,
+            sort_order=index,
+            is_initial=initial,
+            is_terminal=terminal,
+            is_default=initial,
+        )
+        db.add(row)
+        by_key[key] = row
+    db.flush()
+
+    for from_key, to_key, label, sort_order in DEFAULT_QUOTATION_EDGES:
+        db.add(
+            StatusTransition(
+                id=_uid(),
+                entity_type=QUOTATION_ENTITY,
+                scope_id=None,
+                from_status_id=by_key[from_key].id,
+                to_status_id=by_key[to_key].id,
+                label=label,
+                sort_order=sort_order,
+                trigger_mode="manual",
+            )
+        )
+    db.flush()
+    return len(by_key)
+
+
 def seed_lead_disqualify_reasons(db: Session) -> int:
     """The reason lookup set (AC-O6), created empty-safe and never re-asserted.
 
@@ -768,6 +859,7 @@ def run(db: Session, company_id: Optional[str] = None) -> Dict[str, int]:
         "task_statuses": 0,
         "lead_numbering": 0,
         "lead_statuses": 0,
+        "quotation_statuses": 0,
         "lead_reasons": 0,
         "quotation_loss_reasons": 0,
         "po_edges": 0,
@@ -785,6 +877,7 @@ def run(db: Session, company_id: Optional[str] = None) -> Dict[str, int]:
     summary["task_statuses"] = seed_default_task_graph(db)
     summary["lead_numbering"] = 1 if seed_lead_numbering_rule(db) else 0
     summary["lead_statuses"] = seed_default_lead_graph(db)
+    summary["quotation_statuses"] = seed_quotation_approval_graph(db)
     summary["lead_reasons"] = seed_lead_disqualify_reasons(db)
     summary["quotation_loss_reasons"] = seed_quotation_loss_reasons(db)
 

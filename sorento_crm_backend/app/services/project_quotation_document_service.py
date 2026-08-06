@@ -18,6 +18,7 @@ wrong once somewhere in this codebase:
 """
 from __future__ import annotations
 
+import logging
 import secrets
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -41,9 +42,12 @@ from app.models.projects import (
     ProjectQuotationVersion,
     QuotationSignature,
 )
+from app.services import project_quotation_approval_service as approvals
 from app.services import project_quotation_service as scope_service
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
+
+logger = logging.getLogger(__name__)
 
 QUOTATION_DOC_TYPE = "project_quotation"
 
@@ -338,6 +342,10 @@ def issue(
             message="Sign this quotation before issuing it.",
             code="quotation_document_unsigned",
         )
+    # S15. Below-floor pricing needs a manager before it reaches the customer. Deliberately at
+    # ISSUE and not at Sign: the internal signature is readiness, not dispatch. A quotation with
+    # nothing below its floor - the overwhelming majority - is not touched by this at all.
+    approvals.assert_issuable(db, document)
 
     highest = (
         db.query(func.max(ProjectQuotationIssue.issue_no))
@@ -380,6 +388,10 @@ def issue(
         )
     record.grand_total = grand
     db.flush()
+    # Issuing SPENDS an approval: a manager approved those prices, so the document moves off
+    # `approved` and the next revision that dips below the floor has to be approved on its own
+    # merits. A no-op on a quotation that was never on the graph.
+    approvals.mark_issued(db, document)
     return record
 
 
@@ -491,6 +503,12 @@ def serialize_document(db: Session, document: ProjectQuotationDocument) -> Dict[
         "issue_count": int(issue_count),
         "current_issue_no": latest.issue_no if latest is not None else None,
         "is_issued": latest is not None,
+        # S15. The screen reads all six of these to decide whether to show the price-floor
+        # block at all, so they are present on EVERY document rather than only on a gated one:
+        # absent would be as bad as wrong. Spread from one function so this manual dict and the
+        # approval service cannot drift - this repo has been bitten by a manual builder silently
+        # dropping a new column more than once (`get_user`, `system_settings`).
+        **approvals.serialize_approval(db, document),
         "created_at": document.created_at,
         "updated_at": document.updated_at,
     }
@@ -537,6 +555,13 @@ def serialize_issue(db: Session, record: ProjectQuotationIssue) -> Dict[str, Any
         ),
         "accepted_at": record.accepted_at,
         "is_accepted": record.accepted_at is not None,
+        # The other decision, on the same row and needed on the same screen: the salesperson
+        # reads the feedback here and presses Revise. A notification alone would mean the words
+        # only ever exist in an inbox.
+        "changes_requested_at": record.changes_requested_at,
+        "changes_requested_note": record.changes_requested_note,
+        "changes_requested_by_name": record.changes_requested_by_name,
+        "is_changes_requested": record.changes_requested_at is not None,
     }
 
 
@@ -841,6 +866,156 @@ def _win_the_scopes_on(db: Session, record: ProjectQuotationIssue) -> List[Proje
     return won
 
 
+# --------------------------------------------------------- the other answer
+
+
+CHANGES_REQUESTED_TEMPLATE = "quotation_changes_requested"
+
+
+def request_changes(
+    db: Session,
+    *,
+    record: ProjectQuotationIssue,
+    note: Optional[str],
+    requester_name: Optional[str] = None,
+) -> ProjectQuotationIssue:
+    """The customer will not sign this as it stands, and says why.
+
+    Client decision (2026-08-05): the feedback is CAPTURED and the salesperson revises by hand.
+    Nothing here opens a revision, re-prices a line or moves an outcome - a customer asking for a
+    lower price has not been given one, and a system that auto-revised would put words in the
+    salesperson's mouth. What this owes them is the message, the moment, and a notification.
+
+    Three refusals and one silence, each mirroring the care `accept_issue` already takes:
+
+    * **An empty request is refused** (422). A stamped time with no words behind it renders on the
+      customer's page as a settled outcome that nobody can act on.
+    * **An accepted quotation is refused** (409). The counter-signature won every scope on the
+      issue and moved the project's outcome; a request for changes sitting beside it would be a
+      record that says both. The page stops offering the form once accepted, so this is only
+      reachable from a stale tab, and it is answered rather than silently dropped.
+    * **The same words twice do nothing** - no new stamp, no second activity row, no second
+      notification. A double-tap is one request, exactly as a double-tap on Accept is one
+      signature. Genuinely NEW words DO get through, which is the property
+      ``floor_breach_dedup_key`` exists for: deduplicating the repeat must not silence somebody
+      who came back with something else to say.
+
+    The read is taken ``FOR UPDATE`` so two submissions from the same thumb serialise instead of
+    racing: without the lock both see a null note and both notify.
+
+    The reverse order is deliberately ALLOWED. Somebody who asked for changes can still decide to
+    sign, and refusing a signature the customer wants to give would be worse than the mixed
+    record; the request stays on the row as the history it is, and acceptance is what the page
+    then reports.
+    """
+    text_note = (note or "").strip()
+    if not text_note:
+        raise AppException(
+            status_code=422,
+            message="Tell us what to change before sending this back.",
+            code="quotation_changes_note_required",
+        )
+
+    locked = (
+        db.query(ProjectQuotationIssue)
+        .filter(ProjectQuotationIssue.id == record.id)
+        .with_for_update()
+        .first()
+    ) or record
+
+    if locked.accepted_at is not None:
+        raise AppException(
+            status_code=409,
+            message=(
+                "This quotation has already been accepted. "
+                "Contact Sorento if something needs to change."
+            ),
+            code="quotation_already_accepted",
+        )
+
+    if locked.changes_requested_at is not None and locked.changes_requested_note == text_note:
+        return locked
+
+    name = (requester_name or "").strip() or None
+    locked.changes_requested_at = datetime.utcnow()
+    locked.changes_requested_note = text_note
+    locked.changes_requested_by_name = name
+    db.flush()
+
+    _record_changes_requested(db, record=locked, note=text_note, requester_name=name)
+    return locked
+
+
+def _record_changes_requested(
+    db: Session,
+    *,
+    record: ProjectQuotationIssue,
+    note: str,
+    requester_name: Optional[str],
+) -> None:
+    """Tell the feed and tell the salesperson. Best-effort, both of them.
+
+    The row is already written by the time this runs, so a notification backend that is down must
+    not turn a captured request into a 500 the customer would retry - and the retry would take the
+    identical-note path, which writes nothing at all.
+    """
+    document = (
+        db.query(ProjectQuotationDocument)
+        .filter(ProjectQuotationDocument.id == record.document_id)
+        .first()
+    )
+    project = (
+        db.query(Project).filter(Project.id == document.project_id).first()
+        if document is not None
+        else None
+    )
+    if project is None:
+        return
+
+    who = requester_name or "The customer"
+    reference = record.our_ref_text or (document.document_no if document else "")
+    try:
+        from app.services import project_activity_service as activity
+
+        # Deliberately NOT on `MEANINGFUL_TEMPLATES`: a request nobody has answered is exactly
+        # when a project should look unattended, and advancing the staleness clock here would
+        # clear the badge the moment the customer complains.
+        activity.record_project_event(
+            db,
+            project=project,
+            template=CHANGES_REQUESTED_TEMPLATE,
+            payload={
+                "document_id": str(record.document_id),
+                "issue_id": str(record.id),
+                "issue_no": record.issue_no,
+                "our_ref": reference,
+                "requested_by": requester_name,
+            },
+            body_text=f"{who} asked for changes to {reference}: {note}",
+        )
+        db.flush()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "quotation changes-requested activity not written: issue=%s (%s)", record.id, exc
+        )
+
+    try:
+        from app.services import project_notify_service as notify
+
+        notify.notify_quotation_changes_requested(
+            db,
+            project=project,
+            document=document,
+            record=record,
+            note=note,
+            requester_name=requester_name,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "quotation changes-requested notification not sent: issue=%s (%s)", record.id, exc
+        )
+
+
 # ------------------------------------------------------- the public sign page
 
 
@@ -965,4 +1140,10 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
         "customer_signature": _serialize_signature(customer),
         "accepted_at": record.accepted_at,
         "is_accepted": record.accepted_at is not None,
+        # So the page can settle on either decision without a reload, and quote the customer's
+        # own words back to them rather than making them wonder whether it sent.
+        "changes_requested_at": record.changes_requested_at,
+        "changes_requested_note": record.changes_requested_note,
+        "changes_requested_by_name": record.changes_requested_by_name,
+        "is_changes_requested": record.changes_requested_at is not None,
     }

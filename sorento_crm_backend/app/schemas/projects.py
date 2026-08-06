@@ -1519,6 +1519,13 @@ class ProjectQuotationIssueResponse(BaseModel):
     accepted_at: Optional[datetime] = None
     is_accepted: bool = False
 
+    # The customer's other answer, travelling with the same issue history: the salesperson reads
+    # the feedback on the Signatures tab and revises by hand.
+    changes_requested_at: Optional[datetime] = None
+    changes_requested_note: Optional[str] = None
+    changes_requested_by_name: Optional[str] = None
+    is_changes_requested: bool = False
+
 
 class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     model_config = ConfigDict(from_attributes=True)
@@ -1546,8 +1553,41 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     signatory_signature: Optional["QuotationSignatureResponse"] = None
     is_signed: bool = False
 
+    # ---- the price-floor approval gate (S14-S16) ----
+    # NULL is the normal answer: a quotation only enters the approval graph when a line priced
+    # below its floor makes a manager necessary. Declared here as well as built into
+    # `serialize_document`, because a field the response model does not know about is silently
+    # dropped on the way out however correctly the service computed it.
+    approval_status_id: Optional[str] = None
+    approval_status_key: Optional[str] = None
+    approval_status_label: Optional[str] = None
+    approval_rejected_reason: Optional[str] = None
+    requires_approval: bool = False
+    below_floor_line_count: int = 0
+
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+class QuotationApprovalMoveRequest(BaseModel):
+    """The salesperson's own move along the approval graph.
+
+    A status id rather than a key, so the client fires the edge the engine actually resolved
+    rather than one it guessed at from a name an admin may have re-keyed.
+    """
+
+    to_status_id: str = Field(min_length=1)
+
+
+class QuotationRejectRequest(BaseModel):
+    """Sending a below-floor quotation back, with the reason that makes it actionable.
+
+    Required at the schema as well as in the service: a client that omits it entirely should be
+    told which field is missing, and a client that sends whitespace should be told to say
+    something (which is the service's answer, because only it knows a stripped string is empty).
+    """
+
+    reason: str = Field(min_length=1)
 
 
 # ------------------------------------------------ cover letter and terms templates
@@ -1615,6 +1655,20 @@ class QuotationSignatureRequest(BaseModel):
 
 class QuotationSignAcceptRequest(QuotationSignatureRequest):
     pass
+
+
+class QuotationSignChangesRequest(BaseModel):
+    """The customer's other answer: they will not sign this as it stands, and here is why.
+
+    `note` is required and length-bounded rather than optional. A request with no words is not a
+    request - the salesperson cannot act on it, and it would render on the customer's own page as
+    a settled outcome. Whitespace-only gets past `min_length` and is refused by the service, so
+    both spellings of "empty" end as 422.
+    """
+
+    note: str = Field(min_length=1, max_length=4000)
+    # No signature is captured here, so this is the only name the request can carry.
+    requester_name: Optional[str] = Field(None, max_length=200)
 
 
 class QuotationSignatureResponse(BaseModel):
@@ -1696,3 +1750,9 @@ class QuotationSignPageResponse(BaseModel):
     customer_signature: Optional[QuotationSignatureResponse] = None
     accepted_at: Optional[datetime] = None
     is_accepted: bool = False
+    # Both decisions travel on the page, and the page renders whichever one was reached. A
+    # customer who asked for changes and then signed sees Accepted; the request stays as history.
+    changes_requested_at: Optional[datetime] = None
+    changes_requested_note: Optional[str] = None
+    changes_requested_by_name: Optional[str] = None
+    is_changes_requested: bool = False

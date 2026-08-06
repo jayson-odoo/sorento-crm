@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.projects import (
     QuotationSignAcceptRequest,
+    QuotationSignChangesRequest,
     QuotationSignPageResponse,
 )
 from app.services import project_quotation_document_service as svc
@@ -82,6 +83,36 @@ async def accept_quotation(
             user_agent=request.headers.get("user-agent"),
             gps_lat=payload.gps_lat,
             gps_lng=payload.gps_lng,
+        )
+        db.commit()
+        return svc.serialize_sign_page(db, record)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/{token}/request-changes", response_model=QuotationSignPageResponse)
+async def request_quotation_changes(
+    token: str,
+    payload: QuotationSignChangesRequest,
+    db: Session = Depends(get_db),
+):
+    """The customer will not sign it as it stands, and says why.
+
+    The feedback is captured and the salesperson revises by hand - the system deliberately does
+    not open a revision, because a customer asking for a lower price has not been given one.
+
+    Answers the page, not an acknowledgement, for the same reason `accept` does: the browser has
+    to settle on the new state without a second fetch. Refused on an already-accepted quotation
+    (409): the counter-signature won every scope, and a record that says both is unreadable.
+    """
+    try:
+        record = svc.get_issue_by_sign_token(db, token)
+        svc.request_changes(
+            db,
+            record=record,
+            note=payload.note,
+            requester_name=payload.requester_name,
         )
         db.commit()
         return svc.serialize_sign_page(db, record)
