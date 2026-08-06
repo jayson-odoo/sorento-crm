@@ -1,0 +1,382 @@
+'use client';
+
+import { useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  CopyCheck,
+  FileText,
+  History,
+  Package,
+  Pencil,
+  Settings,
+  Split,
+  Trash2,
+} from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import RecordEntityRegistrar from '@/components/common/RecordEntityRegistrar';
+import RecordNavigation from '@/components/common/RecordNavigation';
+import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
+// The backend serializes datetimes as NAIVE UTC (no trailing Z), so `new
+// Date(str)` would parse them as local time and render 8 hours early. The
+// Malaysia formatters parse as UTC first, then display in Asia/Kuala_Lumpur.
+// valid_from / valid_until / issued_at are DATE columns, so they go through
+// formatDateInMalaysia, which keeps a civil date stable on any machine.
+import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
+import {
+  useCertificate,
+  useCertificates,
+  useDeleteCertificate,
+} from '../hooks/useCertificates';
+import {
+  STATUS_LABELS,
+  VALIDITY_STATE_LABELS,
+  reviewReasonLabel,
+} from '../lib/certificateDisplay';
+import CertificateCoveredProducts from './CertificateCoveredProducts';
+import CertificateFormDialog from './CertificateFormDialog';
+import CertificateMergeDialog from './CertificateMergeDialog';
+import CertificateRevisionTimeline from './CertificateRevisionTimeline';
+
+const LIST_PATH = '/master-data-management/certificates';
+
+/**
+ * Records fetched for the prev/next chevrons. Deliberately UNFILTERED (no
+ * validity or status scope): the list's default view hides valid certificates,
+ * and a record you can open must be a record you can page through. Ordered by
+ * the same default the list uses so the counter agrees with what you just left.
+ */
+const NAVIGATION_PAGE_SIZE = 500;
+
+export default function CertificateDetail({ certificateId }: { certificateId: string }) {
+  const router = useRouter();
+  const { data: certificate, isLoading } = useCertificate(certificateId);
+  const deleteMutation = useDeleteCertificate();
+  const navigationList = useCertificates({
+    pageIndex: 0,
+    pageSize: NAVIGATION_PAGE_SIZE,
+    sorting: [{ id: 'valid_until', desc: false }],
+    searchQuery: '',
+    // Both omitted on purpose: the backend reads a missing validity_state /
+    // status as "no scope", which is what an unfiltered navigation list needs.
+    validity_state: undefined,
+    status: undefined,
+  });
+  const navigationItems = navigationList.data?.data ?? [];
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <Skeleton className="h-10 w-72" />
+        <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  if (!certificate) {
+    return (
+      <div className="py-12 text-center">
+        <p className="text-muted-foreground">Certificate not found</p>
+        <Button variant="outline" className="mt-4" onClick={() => router.push(LIST_PATH)}>
+          Back to Certificates
+        </Button>
+      </div>
+    );
+  }
+
+  const revisions = certificate.revisions ?? [];
+  const products = certificate.products ?? [];
+  const unmatched = certificate.unmatched_products ?? [];
+  const currentAccessLevels = certificate.current_revision?.access_levels ?? [];
+  const title = `${certificate.scheme} ${certificate.certificate_number}`;
+
+  return (
+    <div className="space-y-6">
+      <RecordEntityRegistrar entityType="certificate" id={certificateId} />
+
+      {/* Header (FE-9) */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 space-y-1">
+          <h1 className="break-words text-2xl font-bold">{title}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted-foreground">{certificate.certifying_body}</span>
+            <span className={`${STATUS_PILL_BASE} ${statusPillClass(certificate.validity_state)}`}>
+              {VALIDITY_STATE_LABELS[certificate.validity_state]}
+            </span>
+            <span className={`${STATUS_PILL_BASE} ${statusPillClass(certificate.status)}`}>
+              {STATUS_LABELS[certificate.status]}
+            </span>
+            {certificate.needs_review && (
+              <Badge variant="warning" appearance="light" size="sm">
+                <AlertTriangle className="size-3" />
+                Needs review
+              </Badge>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+          <RecordNavigation
+            currentId={certificate.id}
+            items={navigationItems}
+            totalCount={navigationList.data?.pagination?.total}
+            basePath={LIST_PATH}
+            ariaLabel="certificate"
+          />
+          <Button variant="outline" size="sm" onClick={() => router.push(LIST_PATH)}>
+            <ArrowLeft className="size-4" />
+            Back
+          </Button>
+          {/* Record actions live behind the gear, the same place every other
+              detail page in the system keeps them. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" aria-label="Certificate options">
+                <Settings className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setEditOpen(true)}>
+                <Pencil className="size-4" />
+                Edit
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setMergeOpen(true)}>
+                <Split className="size-4" />
+                Merge as revision of...
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
+                <Trash2 className="size-4" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+
+      {/*
+        Tabs, not one long scroll. Only sections with something to say are
+        rendered: an unflagged certificate shows no "Review flags" card, a fully
+        matched one shows no "Unmatched product codes" card, and one with no near
+        match shows no duplicate card. An empty state is for a section that is
+        ALWAYS relevant (coverage, revisions) - not for a warning that is not
+        firing, which is just noise.
+      */}
+      <Tabs defaultValue="overview">
+        <TabsList variant="line" className="mb-5">
+          <TabsTrigger value="overview">
+            <FileText />
+            <span>Overview</span>
+          </TabsTrigger>
+          <TabsTrigger value="products">
+            <Package />
+            <span>Products ({certificate.covered_product_count})</span>
+          </TabsTrigger>
+          <TabsTrigger value="revisions">
+            <History />
+            <span>Revisions ({revisions.length})</span>
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Certificate</CardTitle>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Field label="Scheme" value={certificate.scheme} />
+              <Field label="Certificate number" value={certificate.certificate_number} />
+              <Field label="Certifying body" value={certificate.certifying_body} />
+              <Field label="Issuer" value={certificate.issuer} />
+              <Field label="Title" value={certificate.title} />
+              <Field
+                label="Valid from"
+                value={certificate.valid_from ? formatDateInMalaysia(certificate.valid_from) : null}
+              />
+              <Field
+                label="Valid until"
+                value={
+                  certificate.valid_until ? formatDateInMalaysia(certificate.valid_until) : null
+                }
+              />
+              <Field
+                label="Days until expiry"
+                value={
+                  certificate.days_until_expiry == null
+                    ? null
+                    : certificate.days_until_expiry < 0
+                      ? `Expired ${Math.abs(certificate.days_until_expiry)} days ago`
+                      : `${certificate.days_until_expiry} days`
+                }
+              />
+              <Field label="Covered products" value={String(certificate.covered_product_count)} />
+              <Field label="Revisions" value={String(revisions.length)} />
+              <Field label="Filed" value={formatDateTimeInMalaysia(certificate.created_at)} />
+              <Field
+                label="Last updated"
+                value={formatDateTimeInMalaysia(certificate.updated_at)}
+              />
+            </CardContent>
+          </Card>
+
+          {/* Only when a rule actually fired. */}
+          {certificate.review_reasons.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="min-w-0 break-words">Review flags</CardTitle>
+                <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+                  <Pencil className="size-4" />
+                  Fix the details
+                </Button>
+              </CardHeader>
+              <CardContent>
+                <ul className="space-y-2">
+                  {certificate.review_reasons.map((reason, index) => (
+                    <li
+                      // The reason is an object, so it cannot be the key itself.
+                      key={typeof reason === 'string' ? reason : (reason?.code ?? index)}
+                      className="flex items-start gap-2 text-sm"
+                    >
+                      <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+                      <span>{reviewReasonLabel(reason)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Only when the reader produced a code that matched nothing. */}
+          {unmatched.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="min-w-0 break-words">Unmatched product codes</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  {unmatched.map((value) => (
+                    <span
+                      key={value}
+                      className="inline-flex max-w-full items-center rounded-md border border-dashed border-amber-400 bg-amber-50 px-2 py-1 text-sm text-amber-900"
+                      title={value}
+                    >
+                      <span className="truncate">{value}</span>
+                    </span>
+                  ))}
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Add the matching product under Products.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Only when a near match was actually found. */}
+          {certificate.possible_duplicate_of && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="min-w-0 break-words">Suspected duplicate</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm">
+                    May be a renewal of{' '}
+                    <Link
+                      href={`${LIST_PATH}/${certificate.possible_duplicate_of.id}`}
+                      className="font-medium underline"
+                    >
+                      {certificate.possible_duplicate_of.scheme}{' '}
+                      {certificate.possible_duplicate_of.certificate_number}
+                    </Link>
+                    .
+                  </p>
+                  <Button variant="outline" size="sm" onClick={() => setMergeOpen(true)}>
+                    <CopyCheck className="size-4" />
+                    Merge as revision of...
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="products">
+          <CertificateCoveredProducts certificateId={certificate.id} products={products} />
+        </TabsContent>
+
+        <TabsContent value="revisions">
+          <Card>
+            <CardContent className="pt-6">
+              <CertificateRevisionTimeline
+                revisions={revisions}
+                currentAccessLevels={currentAccessLevels}
+              />
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      {editOpen && (
+        <CertificateFormDialog
+          open={editOpen}
+          onOpenChange={setEditOpen}
+          certificateId={certificate.id}
+        />
+      )}
+
+      <CertificateMergeDialog
+        open={mergeOpen}
+        onOpenChange={setMergeOpen}
+        certificate={certificate}
+        onMerged={(targetId) => router.push(`${LIST_PATH}/${targetId}`)}
+      />
+
+      <ConfirmDeleteDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title="Confirm delete"
+        description={
+          <>
+            Delete {title}, its {revisions.length} revision
+            {revisions.length === 1 ? '' : 's'} and its {certificate.covered_product_count} covered
+            product link{certificate.covered_product_count === 1 ? '' : 's'}. The uploaded files are
+            kept. This action cannot be undone.
+          </>
+        }
+        successMessage="Certificate deleted"
+        onDelete={async () => {
+          await deleteMutation.mutateAsync(certificate.id);
+        }}
+        onSuccess={() => router.push(LIST_PATH)}
+        queryKeysToInvalidate={[['certificates']]}
+      />
+    </div>
+  );
+}
+
+function Field({ label, value }: { label: string; value: string | null | undefined }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-sm text-muted-foreground">{label}</p>
+      <p className="break-words font-medium">{value || 'Not recorded'}</p>
+    </div>
+  );
+}

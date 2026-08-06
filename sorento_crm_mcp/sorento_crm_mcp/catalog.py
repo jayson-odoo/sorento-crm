@@ -130,6 +130,50 @@ CATALOG: tuple[ToolSpec, ...] = (
         related_tools=("crm_master_products_list",),
         escalation_team="sales",
     ),
+    ToolSpec(
+        "crm_certificates_list",
+        (
+            "List product certificates from the certificate register (scheme such as PPS / SPAN, "
+            "certifying body such as IKRAM / JBC, certificate number, validity window, covered products). "
+            "Use this for 'is our PPS certificate still valid', 'when does WCM PC 000321 expire', "
+            "'which certificate covers WC8038', and to deliver the certificate PDF.\n\n"
+            "VALIDITY IS DERIVED, NEVER GUESSED. Every row carries `validity_state` "
+            "(valid | expiring_soon | expired | not_yet_valid | unknown), `is_expired`, "
+            "`days_until_expiry`, `valid_from`, `valid_until` and `covered_product_count`. "
+            "When `is_expired` is true, tell the user the certificate was FOUND but is EXPIRED; never "
+            "present an is_expired row as live, and never answer a validity question from a file name. "
+            "`validity_state=unknown` means the register holds no expiry date: say the expiry is not "
+            "recorded, never that the certificate does not expire.\n\n"
+            "NARROWING FILTERS (all optional; csv / JSON list / repeated where they take ids):\n"
+            "  - `certificate_ids` (canonical certificate UUIDs)\n"
+            "  - `certificate_number` (raw text, normalized server-side: 'PPS 0119', 'pps-0119' and "
+            "'PPS0119' all match the same certificate)\n"
+            "  - `product_ids` (canonical product UUIDs: certificates covering any of them)\n"
+            "  - `scheme` (e.g. PPS, SPAN), `status` (active | archived)\n"
+            "  - `validity_state`, `expiring_within_days` (integer), `valid_on` (YYYY-MM-DD)\n"
+            "  - `needs_review` (true = the register flagged the extracted data for a human)\n\n"
+            "THE SAME NUMBER CAN EXIST UNDER TWO SCHEMES (04124FC is approved under both PPS and SPAN, "
+            "with different expiries). When a number filter returns more than one row, ask which scheme "
+            "rather than answering from the first row.\n\n"
+            "FILES: pass `resolve_signed_urls=true` to get `preview_url` + `download_url` for the CURRENT "
+            "revision's PDF. Superseded revisions are never resolved, so no path can hand out a "
+            "replaced document.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
+        ),
+        "/api/v1/master-data/certificates",
+        (),
+        (
+            "page", "limit", "sort", "dir",
+            "certificate_ids", "certificate_number", "product_ids",
+            "scheme", "status", "validity_state", "expiring_within_days", "valid_on",
+            "needs_review", "resolve_signed_urls",
+            "contact_id", "space_id",
+        ),
+        domain="products",
+        related_tools=("crm_master_product_attachments_list", "crm_master_products_list"),
+        escalation_team="sales",
+    ),
     # --- lookup sets ---
     ToolSpec(
         "crm_lookup_resolve",

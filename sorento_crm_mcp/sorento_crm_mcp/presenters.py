@@ -44,6 +44,7 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_marketing_promotion_products_list",
         "crm_master_products_list",
         "crm_master_product_attachments_list",
+        "crm_certificates_list",
         "crm_resource_attachments_list",
         "crm_inventory_stock_balance_list",
         "crm_forms_management_forms_list",
@@ -61,6 +62,7 @@ _DEFAULT_INTRO = {
     "crm_marketing_promotion_products_list": "Here are the matching promotion products.",
     "crm_master_products_list": "Here are the matching products.",
     "crm_master_product_attachments_list": "Here are the product files I found.",
+    "crm_certificates_list": "Here are the certificates I found.",
     "crm_resource_attachments_list": "Here are the documents I found.",
     "crm_inventory_stock_balance_list": "Stock details found for the requested products.",
     "crm_forms_management_forms_list": "Here are the forms I found.",
@@ -77,6 +79,7 @@ _RESULT_TYPE = {
     "crm_marketing_promotion_products_list": "promotion_products",
     "crm_master_products_list": "products",
     "crm_master_product_attachments_list": "product_attachments",
+    "crm_certificates_list": "certificates",
     "crm_resource_attachments_list": "attachments",
     "crm_inventory_stock_balance_list": "stock",
     "crm_forms_management_forms_list": "forms",
@@ -431,6 +434,13 @@ def _product_attachments(rows: list[dict], b: _Builder) -> None:
     for r in rows:
         prod = r.get("product") or {}
         att = r.get("attachment") or {}
+        # Cert-bearing rows carry a nested `certificate{}`; every other row has
+        # no such key. Absent key = no Valid Until field and `expired` stays
+        # false, so the 951 Technical Specifications and all Product Photos rows
+        # render exactly as before.
+        cert = r.get("certificate") or {}
+        if not isinstance(cert, dict):
+            cert = {}
         b.item(
             prod.get("product_code"),
             [
@@ -440,10 +450,77 @@ def _product_attachments(rows: list[dict], b: _Builder) -> None:
                 ("Dimensions", _dims(prod)),
                 ("Attachment Type", _att_type(att)),
                 ("File Name", att.get("original_filename") or att.get("stored_filename")),
+                ("Valid Until", cert.get("valid_until")),
             ],
             discontinued=prod.get("is_discontinued") is True,
+            # Reuses the envelope's EXISTING flags.expired (same mechanism as
+            # _promotions), so the n8n renderer needs no update to say "found
+            # but expired" for a lapsed certificate.
+            expired=cert.get("is_expired") is True,
         )
         b.attach(att)
+
+
+def _certificate_file(row: dict) -> dict | None:
+    """The CURRENT revision's file for one certificate row, or None.
+
+    Superseded revisions are never returned (MCP-8): only the revision the row
+    points at is a candidate. Shapes accepted, in order - a nested
+    `current_revision.attachment`, a top-level `attachment`, the `is_current`
+    entry of an expanded `revisions[]`, and finally the signed-url pair the
+    backend adds for `resolve_signed_urls=true`. Returns None when nothing
+    usable is present so the caller emits an EMPTY attachments array rather than
+    a null or broken url entry (MCP-11).
+    """
+    candidates: list[Any] = []
+    current = row.get("current_revision")
+    if isinstance(current, dict):
+        candidates.append(current.get("attachment"))
+    candidates.append(row.get("attachment"))
+    for revision in row.get("revisions") or []:
+        if isinstance(revision, dict) and revision.get("is_current") is True:
+            candidates.append(revision.get("attachment"))
+    for candidate in candidates:
+        if isinstance(candidate, dict) and _filled(
+            candidate.get("file_path") or candidate.get("url")
+        ):
+            return candidate
+
+    url = row.get("download_url") or row.get("preview_url")
+    if _filled(url):
+        return {
+            "url": url,
+            "filename": row.get("attachment_filename")
+            or row.get("original_filename")
+            or row.get("stored_filename"),
+            "mime_type": row.get("mime_type"),
+            "attachment_type": row.get("attachment_type_name"),
+        }
+    return None
+
+
+def _certificates(rows: list[dict], b: _Builder) -> None:
+    for c in rows:
+        number = c.get("certificate_number")
+        scheme = c.get("scheme")
+        title = " ".join(str(x) for x in (scheme, number) if _filled(x)) or number
+        b.item(
+            title,
+            [
+                ("Scheme", scheme),
+                ("Certificate Number", number),
+                ("Certifying Body", c.get("certifying_body")),
+                ("Valid Until", c.get("valid_until")),
+                ("Validity", c.get("validity_state")),
+                ("Covered Products", c.get("covered_product_count")),
+            ],
+            # Same flag the promotions presenter sets, so an expired certificate
+            # is reported as found-but-expired rather than served as live.
+            expired=c.get("is_expired") is True,
+        )
+        current_file = _certificate_file(c)
+        if current_file is not None:
+            b.attach(current_file)
 
 
 def _resource_attachments(rows: list[dict], b: _Builder) -> None:
@@ -555,6 +632,7 @@ _BUILDERS = {
     "crm_marketing_promotion_products_list": _promotion_products,
     "crm_master_products_list": _products,
     "crm_master_product_attachments_list": _product_attachments,
+    "crm_certificates_list": _certificates,
     "crm_resource_attachments_list": _resource_attachments,
     "crm_inventory_stock_balance_list": _stock,
     "crm_forms_management_forms_list": _forms,
