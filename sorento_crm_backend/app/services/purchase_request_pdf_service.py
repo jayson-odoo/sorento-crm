@@ -40,42 +40,72 @@ __all__ = ["PurchaseRequestPDFService", "PDFRenderingUnavailable"]
 
 _SPONSORSHIP = "sponsorship_form"
 
-# Mirrors the FE status pills so the printed status matches the screen.
-_STATUS_LABELS = {
-    "draft": "Draft",
-    "submitted": "Submitted",
-    "pending": "Pending Approval",
-    "approved": "Approved",
-    "rejected": "Rejected",
-    "processed_by_cs": "Processed by CS",
-    "closed": "Closed",
-    "voided": "Voided",
-}
+# The printed form is Sorento letterhead. Same three lines the Excel export
+# writes (``SORENTO_HEADER`` in purchase-request-excel-export.ts) - the PDF
+# replaces that export, so it has to carry the same company block or the printed
+# copy stops looking like a company document.
+_LETTERHEAD = (
+    "SORENTO SDN BHD",
+    "No 5, Jalan Astana 2/KU2, Bandar Bukit Raja, 41050 Klang, Selangor, Malaysia.",
+    "Tel: +603-3082 9778, Fax: +603-30829278.",
+)
 
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
-def _fmt(value) -> str:
+def _blank(value) -> str:
+    """Empty renders as empty, not as a dash.
+
+    The Excel export leaves an unfilled cell blank and the printed form is meant
+    to be signed off by hand, so a row like ``Approved by:`` has to print as an
+    empty space someone can write in - a "—" reads as "not applicable".
+    """
     if value is None:
-        return "—"
+        return ""
     if isinstance(value, datetime):
         return value.strftime("%d/%m/%Y")
     if isinstance(value, date):
         return value.strftime("%d/%m/%Y")
     if isinstance(value, Decimal):
-        # Money-ish: thousands separated, trailing .00 dropped for whole numbers.
-        q = value.normalize()
-        return f"{q:,.2f}".rstrip("0").rstrip(".") if q == q.to_integral_value() else f"{value:,.2f}"
-    s = str(value).strip()
-    return escape(s) if s else "—"
+        return f"{value:,.2f}"
+    return escape(str(value).strip())
 
 
-def _row(label: str, value) -> str:
-    return f"<tr><th>{escape(label)}</th><td>{_fmt(value)}</td></tr>"
+def _date_short(value) -> str:
+    """``6/8/26`` - the Purchase Request date format from the Excel export."""
+    if not isinstance(value, (date, datetime)):
+        return _blank(value)
+    return f"{value.day}/{value.month}/{str(value.year)[-2:]}"
 
 
-def _row_if(label: str, value) -> str:
-    """Only emit a row that actually has a value — used for the type-specific
-    fields so a Purchase Request does not print empty Sponsorship rows."""
-    return _row(label, value) if value not in (None, "") else ""
+def _date_cell(value) -> str:
+    """``6/8/2026`` - the Purchase Request expected-date format."""
+    if not isinstance(value, (date, datetime)):
+        return _blank(value)
+    return f"{value.day}/{value.month}/{value.year}"
+
+
+def _date_long(value) -> str:
+    """``6-Aug-2026`` - the Sponsorship Form date format."""
+    if not isinstance(value, (date, datetime)):
+        return _blank(value)
+    return f"{value.day}-{_MONTHS[value.month - 1]}-{value.year}"
+
+
+def _field(label: str, value: str, *, label2: str = "", value2: str = "") -> str:
+    """One label/value line, optionally with a second pair on the same line
+    (``Sponsorship form number: X    Date: Y``), mirroring the Excel columns."""
+    if label2:
+        return (
+            f'<tr><td class="lbl">{escape(label)}</td><td class="val">{value}</td>'
+            f'<td class="lbl">{escape(label2)}</td><td class="val">{value2}</td></tr>'
+        )
+    # No second pair: let the value run to the right edge instead of wrapping
+    # inside a quarter-width column. A delivery address is the reason.
+    return (
+        f'<tr><td class="lbl">{escape(label)}</td>'
+        f'<td class="val" colspan="3">{value}</td></tr>'
+    )
 
 
 class PurchaseRequestPDFService:
@@ -119,145 +149,213 @@ class PurchaseRequestPDFService:
             )
             return []
 
-    def _status_label(self, req: PurchaseRequestHeader) -> str:
-        """Lifecycle status wins over approval_status — the same precedence
-        ``getDisplayStatus`` uses on the FE, so an approved-then-processed form
-        reads "Processed by CS" here exactly as it does on the list and portal."""
-        raw = (getattr(req, "status", None) or "").strip()
-        if not raw:
-            raw = (getattr(req, "approval_status", None) or "").strip()
-        if not raw:
-            return "—"
-        return _STATUS_LABELS.get(raw, raw.replace("_", " ").title())
+    def _lines_html(self, req: PurchaseRequestHeader) -> tuple[str, str]:
+        """Return (table_html, grand_total_text).
 
-    def _lines_html(self, req: PurchaseRequestHeader) -> str:
+        Column sets differ by type, exactly as the Excel export does: a
+        Sponsorship Form prices its items (U/P, Total, Grand Total), a Purchase
+        Request does not.
+        """
         lines = sorted(
             list(getattr(req, "lines", None) or []),
             key=lambda ln: (getattr(ln, "sort_order", None) or 0),
         )
-        if not lines:
-            return '<p class="empty">No items on this request.</p>'
-
         sponsorship = self._is_sponsorship(req)
-        head = (
-            "<tr><th>#</th><th>Item Code</th><th>Qty</th><th>Unit Price</th>"
-            "<th>Total</th><th>Remark</th></tr>"
-            if sponsorship
-            else "<tr><th>#</th><th>Item Code</th><th>Qty</th><th>Remark</th></tr>"
-        )
-        body = []
+
+        if sponsorship:
+            cols = '<col style="width:8%"/><col style="width:24%"/><col style="width:9%"/>' \
+                   '<col style="width:12%"/><col style="width:13%"/><col style="width:34%"/>'
+            head = ("<tr><th>NO.</th><th>Item Code</th><th>Qty</th><th>U/P</th>"
+                    "<th>Total</th><th>Remark</th></tr>")
+            span_before_total = 3
+        else:
+            cols = '<col style="width:8%"/><col style="width:30%"/><col style="width:12%"/>' \
+                   '<col style="width:50%"/>'
+            head = "<tr><th>#</th><th>Item Code</th><th>Qty</th><th>Remark</th></tr>"
+            span_before_total = 0
+
+        grand = Decimal("0")
+        body: list[str] = []
         for i, ln in enumerate(lines, start=1):
-            cells = [f"<td>{i}</td>", f"<td>{_fmt(getattr(ln, 'item_code', None))}</td>",
-                     f"<td>{_fmt(getattr(ln, 'quantity', None))}</td>"]
+            qty = getattr(ln, "quantity", None)
+            cells = [
+                f"<td>{i}</td>",
+                f'<td>{_blank(getattr(ln, "item_code", None))}</td>',
+                f"<td>{_blank(qty)}</td>",
+            ]
             if sponsorship:
-                cells.append(f"<td>{_fmt(getattr(ln, 'unit_price', None))}</td>")
-                cells.append(f"<td>{_fmt(getattr(ln, 'total', None))}</td>")
-            cells.append(f"<td>{_fmt(getattr(ln, 'remark', None))}</td>")
+                unit = getattr(ln, "unit_price", None) or Decimal("0")
+                total = getattr(ln, "total", None)
+                if total is None:
+                    total = (Decimal(str(qty or 0)) * Decimal(str(unit)))
+                grand += Decimal(str(total))
+                cells.append(f'<td class="num">{Decimal(str(unit)):,.2f}</td>')
+                cells.append(f'<td class="num">{Decimal(str(total)):,.2f}</td>')
+            cells.append(f'<td>{_blank(getattr(ln, "remark", None))}</td>')
             body.append(f"<tr>{''.join(cells)}</tr>")
-        return f'<table class="items">{head}{"".join(body)}</table>'
+
+        if not body:
+            span = 6 if sponsorship else 4
+            body.append(
+                f'<tr><td colspan="{span}" class="empty">No items on this request.</td></tr>'
+            )
+
+        if sponsorship:
+            body.append(
+                f'<tr class="grand"><td colspan="{span_before_total}"></td>'
+                f'<td class="lbl">Grand Total:</td>'
+                f'<td class="num">{grand:,.2f}</td><td></td></tr>'
+            )
+
+        table = f'<table class="items"><colgroup>{cols}</colgroup>{head}{"".join(body)}</table>'
+        return table, f"{grand:,.2f}"
+
+    def _fields_html(self, req: PurchaseRequestHeader) -> str:
+        """The label/value block, in the order the Excel document uses."""
+        sponsorship = self._is_sponsorship(req)
+        submitted = getattr(req, "submitted_at", None) or getattr(req, "request_date", None)
+
+        rows: list[str] = []
+        if sponsorship:
+            rows.append(
+                _field(
+                    "Sponsorship form number:", _blank(getattr(req, "request_number", None)),
+                    label2="Date:", value2=_date_long(submitted),
+                )
+            )
+            rows.append('<tr class="spacer"><td colspan="4"></td></tr>')
+            subject = (
+                getattr(req, "sponsor_subject_other", None)
+                or getattr(req, "sponsor_subject", None)
+            )
+            tpv = (
+                getattr(req, "total_project_value_text", None)
+                or getattr(req, "total_project_value", None)
+            )
+            rows += [
+                _field("Customer Name:", _blank(getattr(req, "customer_name", None))),
+                # PIC sits directly under Customer Name, on screen and in print, so a
+                # reader finds the human where they expect them - and stops anyone
+                # appending the contact to the address again.
+                _field("PIC:", _blank(getattr(req, "pic", None))),
+                _field("Delivery Address:", _blank(getattr(req, "delivery_address", None))),
+                _field("Project Title:", _blank(getattr(req, "project_title", None))),
+                _field("Total Project Value:", _blank(tpv)),
+                _field("Sponsor Subject:", _blank(subject)),
+                _field(
+                    "Date of Delivery:",
+                    _date_long(getattr(req, "expected_delivery_date", None)),
+                ),
+            ]
+        else:
+            rows.append(
+                _field(
+                    "Purchase request number:", _blank(getattr(req, "request_number", None)),
+                    label2="Date:", value2=_date_short(submitted),
+                )
+            )
+            rows.append('<tr class="spacer"><td colspan="4"></td></tr>')
+            expected_po = (
+                getattr(req, "expected_po_date_text", None)
+                or _date_cell(getattr(req, "expected_po_date", None))
+            )
+            rows += [
+                _field("Customer Name:", _blank(getattr(req, "customer_name", None))),
+                _field("PIC:", _blank(getattr(req, "pic", None))),
+                _field("Project Title:", _blank(getattr(req, "project_title", None))),
+                _field("Purpose:", _blank(getattr(req, "purpose", None))),
+                _field(
+                    "Expected Date of Delivery:",
+                    _date_cell(getattr(req, "expected_delivery_date", None)),
+                    label2="Expected date to receive PO:",
+                    value2=_blank(expected_po),
+                ),
+            ]
+        return f'<table class="fields">{"".join(rows)}</table>'
+
+    def _signoff_html(self, req: PurchaseRequestHeader) -> str:
+        """Requested by / Approved by + Date - the sign-off block that closes the
+        document. Printed even when unfilled: the blank IS the place to sign."""
+        sponsorship = self._is_sponsorship(req)
+        fmt = _date_long if sponsorship else _date_cell
+        return (
+            '<table class="fields signoff">'
+            + _field("Requested by:", _blank(getattr(req, "requested_by", None)))
+            + _field(
+                "Approved by:", _blank(getattr(req, "approved_by", None)),
+                label2="Date:", value2=fmt(getattr(req, "approved_at", None)),
+            )
+            + "</table>"
+        )
+
+    def _appendix_html(self, req: PurchaseRequestHeader) -> str:
+        """Attachments print only when there are some, so an ordinary form is the
+        one-page document the Excel export produced."""
+        links = self._attachment_links(req)
+        if not links:
+            return ""
+        images = embedded_images(links, context="purchase request PDF")
+        others = non_image_names(links)
+        parts = []
+        if images:
+            parts.append("<h2>Photos</h2>" + photos_section_html(images))
+        if others:
+            parts.append("<h2>Other Attachments</h2>" + names_list_html(others))
+        return "".join(parts)
 
     def _html(self, req: PurchaseRequestHeader) -> str:
         sponsorship = self._is_sponsorship(req)
-        doc_title = "Sponsorship Form" if sponsorship else "Purchase Request"
-
-        rows = [
-            _row("Date", getattr(req, "submitted_at", None) or getattr(req, "request_date", None)),
-            _row(
-                "Sponsorship Form Number" if sponsorship else "Purchase Request Number",
-                getattr(req, "request_number", None),
-            ),
-            _row("Customer Name", getattr(req, "customer_name", None)),
-            # PIC sits directly under Customer Name, on screen and in print, so a
-            # reader finds the human where they expect them - and stops anyone
-            # appending the contact to the address again.
-            _row("PIC", getattr(req, "pic", None)),
-            _row("Delivery Address", getattr(req, "delivery_address", None)),
-            _row("Project Title", getattr(req, "project_title", None)),
-        ]
-
-        if sponsorship:
-            rows += [
-                _row_if(
-                    "Total Project Value",
-                    getattr(req, "total_project_value", None)
-                    or getattr(req, "total_project_value_text", None),
-                ),
-                _row_if("Sponsor Subject", getattr(req, "sponsor_subject_other", None)
-                        or getattr(req, "sponsor_subject", None)),
-            ]
-        else:
-            rows += [
-                _row_if("Purpose", getattr(req, "purpose", None)),
-                _row_if("Sales Type", getattr(req, "sales_type", None)),
-            ]
-
-        rows += [
-            _row("Date of Delivery", getattr(req, "expected_delivery_date", None)),
-            _row_if(
-                "Expected PO Date",
-                getattr(req, "expected_po_date", None)
-                or getattr(req, "expected_po_date_text", None),
-            ),
-            _row("Requested By", getattr(req, "requested_by", None)),
-            _row_if("Approved By", getattr(req, "approved_by", None)),
-        ]
-        form_rows = "".join(rows)
-
-        links = self._attachment_links(req)
-        photos_html = photos_section_html(
-            embedded_images(links, context="purchase request PDF")
+        doc_title = "Project Sales Sponsorship Form" if sponsorship else "Purchase Request"
+        items_html, _ = self._lines_html(req)
+        head_lines = "".join(
+            f'<div class="{"co" if i == 0 else "co-sub"}">{escape(line)}</div>'
+            for i, line in enumerate(_LETTERHEAD)
         )
-        other_html = names_list_html(non_image_names(links))
-
-        title_num = _fmt(getattr(req, "request_number", None))
-        status = escape(self._status_label(req))
 
         return f"""<!doctype html><html><head><meta charset="utf-8"/>
 <style>
-  @page {{ size: A4; margin: 16mm 14mm; }}
-  body {{ font-family: 'Helvetica Neue', Arial, sans-serif; color: #1a1a1a; font-size: 11px; }}
-  .doc-title {{ text-align: center; font-size: 15px; font-weight: bold; text-transform: uppercase;
-                letter-spacing: .06em; text-decoration: underline; padding: 8px 0 10px; }}
-  .meta {{ color: #666; font-size: 9px; text-align: center; margin-bottom: 12px; }}
-  /* table-layout:fixed + the break rules below are what stop a long delivery
-     address widening a column and wrecking the print - the exact failure the
-     Excel export had. Without `fixed` the cell grows to its content. */
-  table.form {{ width: 100%; table-layout: fixed; border-collapse: collapse; border: 2px solid #1a1a1a; }}
-  table.form th, table.form td {{ border: 1px solid #b8b8b8; padding: 6px 8px; vertical-align: top;
-                                  text-align: left; white-space: pre-wrap;
-                                  overflow-wrap: anywhere; word-break: break-word; }}
-  table.form th {{ width: 34%; background: #f2f2f2; font-weight: bold; text-transform: uppercase;
-                   letter-spacing: .03em; font-size: 10px; }}
-  table.items {{ width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 4px; }}
-  table.items th, table.items td {{ border: 1px solid #b8b8b8; padding: 5px 7px; text-align: left;
+  @page {{ size: A4; margin: 14mm 14mm; }}
+  body {{ font-family: 'Helvetica Neue', Arial, sans-serif; color: #000; font-size: 11px; }}
+  .co {{ font-size: 15px; font-weight: bold; letter-spacing: .02em; }}
+  .co-sub {{ font-size: 10.5px; }}
+  .letterhead {{ padding-bottom: 10px; }}
+  .doc-title {{ font-size: 13px; font-weight: bold; margin: 14px 0 12px; }}
+  /* table-layout:fixed + the break rules are what stop a long delivery address
+     widening a column and wrecking the print - the exact failure the Excel
+     export had. Without `fixed` the cell grows to its content. */
+  table.fields {{ width: 100%; table-layout: fixed; border-collapse: collapse; }}
+  table.fields td {{ padding: 2.5px 6px 2.5px 0; vertical-align: top;
+                     white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }}
+  table.fields td.lbl {{ width: 22%; white-space: nowrap; }}
+  table.fields td.val {{ width: 28%; }}
+  table.fields tr.spacer td {{ padding: 0; height: 8px; }}
+  .signoff {{ margin-top: 22px; }}
+  table.items {{ width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 6px; }}
+  table.items th, table.items td {{ border: 1px solid #999; padding: 4px 6px; text-align: left;
                                     vertical-align: top; font-size: 10px;
                                     overflow-wrap: anywhere; word-break: break-word; }}
-  table.items th {{ background: #f2f2f2; text-transform: uppercase; font-size: 9px; }}
-  h2 {{ font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #444;
-        border-bottom: 1px solid #ccc; padding-bottom: 3px; margin: 16px 0 8px; }}
-  .empty {{ color: #999; font-style: italic; }}
+  table.items th {{ background: #f2f2f2; font-weight: bold; }}
+  table.items td.num {{ text-align: right; }}
+  table.items tr.grand td {{ border: none; font-weight: bold; padding-top: 6px; }}
+  table.items tr.grand td.lbl {{ text-align: right; }}
+  .empty {{ color: #777; font-style: italic; }}
+  h2 {{ font-size: 11px; font-weight: bold; margin: 18px 0 6px; }}
   .photos {{ display: flex; flex-wrap: wrap; gap: 10px; }}
   figure {{ margin: 0; width: 30%; }}
-  figure img {{ width: 100%; border: 1px solid #ddd; border-radius: 3px; }}
+  figure img {{ width: 100%; border: 1px solid #ddd; }}
   figcaption {{ font-size: 9px; color: #777; margin-top: 2px; word-break: break-all; }}
   ul {{ margin: 4px 0 0 16px; padding: 0; }}
-  .footer {{ margin-top: 22px; color: #999; font-size: 9px; border-top: 1px solid #eee; padding-top: 6px; }}
 </style></head><body>
+  <div class="letterhead">{head_lines}</div>
   <div class="doc-title">{escape(doc_title)}</div>
-  <div class="meta">{title_num} · {status} · printed {date.today().strftime('%d/%m/%Y')}</div>
 
-  <table class="form">{form_rows}</table>
+  {self._fields_html(req)}
 
-  <h2>Items</h2>
-  {self._lines_html(req)}
+  {items_html}
 
-  <h2>Photos</h2>
-  {photos_html}
+  {self._signoff_html(req)}
 
-  <h2>Other Attachments</h2>
-  {other_html}
-
-  <div class="footer">This document is a system-generated copy of the {escape(doc_title.lower())} record.</div>
+  {self._appendix_html(req)}
 </body></html>"""
 
     def render_pdf(self, request_id: str) -> tuple[bytes, str]:

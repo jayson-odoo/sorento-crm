@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAction } from '@/lib/useAction';
 import { apiFetch } from '@/lib/api';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
+import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Printer, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -637,18 +637,24 @@ export default function PurchaseRequestDetail({
                 Void
               </DropdownMenuItem>
             )}
+            <DropdownMenuItem
+              data-guide-target="procurement.purchase-requests.download-pdf"
+              disabled={exportPdfMutation.isPending}
+              onSelect={(e) => {
+                e.preventDefault();
+                exportPdfMutation.mutate(requestId);
+              }}
+            >
+              <Printer className="size-4" />
+              {exportPdfMutation.isPending ? 'Preparing…' : 'Print / Download PDF'}
+            </DropdownMenuItem>
           </DetailActionsMenu>
-          <Button
-            variant="outline"
-            size="sm"
-            data-guide-target="procurement.purchase-requests.download-pdf"
-            disabled={exportPdfMutation.isPending}
-            onClick={() => exportPdfMutation.mutate(requestId)}
-          >
-            <FileDown className="size-4 mr-1" />
-            {exportPdfMutation.isPending ? 'Preparing…' : 'Download PDF'}
-          </Button>
-          <EntityDownloadsButton entityType="purchase_request" entityId={requestId} />
+          <EntityDownloadsButton
+            entityType="purchase_request"
+            entityId={requestId}
+            label={request.request_number ?? undefined}
+            className="h-8 border border-border"
+          />
           <PurchaseRequestNavigation
             basePath={basePath}
             requestId={requestId}
@@ -923,7 +929,7 @@ export default function PurchaseRequestDetail({
                 <h2 className="text-center text-xl font-semibold tracking-tight border-b border-border pb-4 mb-6">
                   Purchase Request
                 </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5 [&>div]:min-w-0 [&_p]:break-words">
                   <div>
                     <p className="text-sm text-muted-foreground">Purchase request number</p>
                     <p className="font-medium tabular-nums">{request.request_number || '—'}</p>
@@ -1078,7 +1084,7 @@ export default function PurchaseRequestDetail({
                 <h2 className="text-center text-xl font-semibold tracking-tight border-b border-border pb-4 mb-6">
                   Project Sales Sponsorship Form
                 </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5 [&>div]:min-w-0 [&_p]:break-words">
                   <div>
                     <p className="text-sm text-muted-foreground">Sponsorship form number</p>
                     <p className="font-medium tabular-nums">{request.request_number || '—'}</p>

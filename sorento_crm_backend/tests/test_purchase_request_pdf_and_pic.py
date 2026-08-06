@@ -154,6 +154,71 @@ def test_a_long_address_cannot_widen_the_table(db, request_type):
 
 
 @pytest.mark.parametrize("request_type", BOTH_TYPES)
+def test_the_printed_form_is_on_sorento_letterhead(db, request_type):
+    """The PDF replaces the Excel export, which opened with the company block.
+    Without it the printed sheet is an anonymous list of fields, not a Sorento
+    document someone can send to a customer."""
+    from app.services.purchase_request_pdf_service import PurchaseRequestPDFService
+
+    row = _make(db, request_type=request_type)
+    db.commit()
+
+    html = PurchaseRequestPDFService(db)._html(row)
+    assert "SORENTO SDN BHD" in html
+    assert "Bandar Bukit Raja" in html
+    assert "+603-3082 9778" in html
+
+
+@pytest.mark.parametrize("request_type", BOTH_TYPES)
+def test_the_form_closes_with_a_signoff_block(db, request_type):
+    """Requested by / Approved by / Date close the document in the Excel format
+    it replaces. They print even when empty - the blank is where someone signs,
+    so a dash would read as "not applicable"."""
+    from app.services.purchase_request_pdf_service import PurchaseRequestPDFService
+
+    row = _make(db, request_type=request_type)  # no requested_by, no approver
+    db.commit()
+
+    html = PurchaseRequestPDFService(db)._html(row)
+    assert "Requested by:" in html
+    assert "Approved by:" in html
+    assert "—" not in html, "an unfilled sign-off must be blank, not a dash"
+
+
+def test_only_the_sponsorship_form_is_priced(db):
+    """Column sets differ by type, exactly as the two Excel formats do: a
+    Sponsorship Form carries U/P, Total and a Grand Total; a Purchase Request
+    is quantities only."""
+    from app.services.purchase_request_pdf_service import PurchaseRequestPDFService
+
+    sf = _make(db, request_type="sponsorship_form")
+    pr = _make(db, request_type="purchase_request")
+    db.commit()
+    svc = PurchaseRequestPDFService(db)
+
+    sf_html = svc._html(sf)
+    assert "Grand Total:" in sf_html and "U/P" in sf_html
+
+    pr_html = svc._html(pr)
+    assert "Grand Total:" not in pr_html
+    assert "U/P" not in pr_html
+
+
+def test_the_sponsorship_form_prints_its_delivery_address(db):
+    """The address is where staff were hiding the PIC, so it has to be legible on
+    the printed sponsorship form (the Purchase Request format has no address
+    row - matching the Excel export it replaces)."""
+    from app.services.purchase_request_pdf_service import PurchaseRequestPDFService
+
+    row = _make(db, request_type="sponsorship_form", delivery_address=PATHOLOGICAL_ADDRESS)
+    db.commit()
+
+    html = PurchaseRequestPDFService(db)._html(row)
+    assert "Delivery Address:" in html
+    assert "Lebuh Cecil" in html
+
+
+@pytest.mark.parametrize("request_type", BOTH_TYPES)
 def test_internal_only_fields_are_not_printed(db, request_type):
     """Same rule the complaint / stock-inquiry PDFs follow: a printed copy handed
     to a driver must not carry SLA tiers, assignees or audit trail."""
@@ -234,3 +299,23 @@ def test_pic_survives_a_portal_submission(kind):
         f"pic missing from the {kind} portal allowlist — the field renders, accepts "
         "input, and is then silently dropped on submit"
     )
+
+
+@pytest.mark.parametrize("request_type", BOTH_TYPES)
+def test_pic_is_echoed_back_when_a_draft_is_reopened(db, request_type):
+    """The write allowlist and the read serializer are two SEPARATE lists.
+
+    With `pic` in the allowlist only, a portal draft saved the value to the
+    column and then reopened with the box blank - the value was in the database
+    the whole time, so it read as "save did nothing". `_serialize_request_detail`
+    is a manual dict builder, so a new column reaches the portal only when it is
+    added there by hand.
+    """
+    from app.services.portal_service import PortalService
+
+    row = _make(db, request_type=request_type, pic=PIC_VALUE)
+    db.commit()
+
+    detail = PortalService(db)._serialize_request_detail(row)
+    assert "pic" in detail, "the portal never sends pic back, so a saved draft reopens blank"
+    assert detail["pic"] == PIC_VALUE

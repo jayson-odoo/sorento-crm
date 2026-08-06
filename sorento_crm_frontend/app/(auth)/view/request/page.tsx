@@ -278,7 +278,7 @@ function ViewRequestContent() {
             <h2 className="text-center text-lg sm:text-xl font-semibold border-b border-border pb-4 mb-6">
               Purchase Request
             </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4 [&>div]:min-w-0 [&_p]:break-words">
               <div className="py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Purchase request number</p>
                 <p className="text-sm font-medium">{summary?.request_number ?? '—'}</p>
@@ -373,7 +373,7 @@ function ViewRequestContent() {
             <h2 className="text-center text-lg sm:text-xl font-semibold border-b border-border pb-4 mb-6">
               Project Sales Sponsorship Form
             </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4 [&>div]:min-w-0 [&_p]:break-words">
               <div className="py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Sponsorship form number</p>
                 <p className="text-sm font-medium">{summary?.request_number ?? '—'}</p>
