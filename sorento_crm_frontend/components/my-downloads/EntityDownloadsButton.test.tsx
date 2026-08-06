@@ -5,8 +5,20 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/services/myDownloadsService', () => ({
+  ENTITY_DOWNLOADS_QUERY_KEY: ['entity-downloads'],
   fetchDownloadsForEntity: vi.fn(),
   fetchDownloadUrl: vi.fn(),
+  downloadFilePath: (id: string) => `/api/v1/downloads/${id}/file`,
+}));
+
+// The rows inside the modal render the shared preview modal, whose carousel wrapper needs
+// browser layout APIs jsdom lacks. Stubbed so this file stays about the chip and its modal.
+vi.mock('@/components/ui/carousel', () => ({
+  Carousel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  CarouselContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  CarouselItem: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  CarouselNext: () => <button type="button">next</button>,
+  CarouselPrevious: () => <button type="button">prev</button>,
 }));
 
 import {
@@ -77,5 +89,57 @@ describe('EntityDownloadsButton', () => {
     renderBtn({ count: undefined });
     // fetched on mount; chip reflects feed length
     await waitFor(() => expect(screen.getByRole('button', { name: /2/ })).toBeInTheDocument());
+  });
+
+  it('serves a quotation revision with no complaint-shaped copy anywhere', async () => {
+    // The component was written for complaints and hard-coded "this complaint" into its tooltip
+    // and its empty state. Reused on a quotation that reads as somebody else's screen, so the
+    // copy is now driven by the label it was given.
+    mockFetchEntity.mockResolvedValue({ downloads: [] });
+    renderBtn({
+      entityType: 'quotation_issue',
+      entityId: 'i9',
+      label: 'SRT/Q/2026/0141 (R2)',
+      count: undefined,
+    });
+
+    await waitFor(() =>
+      expect(mockFetchEntity).toHaveBeenCalledWith('quotation_issue', 'i9', 100),
+    );
+    expect(
+      screen.getByTitle('View downloads for SRT/Q/2026/0141 (R2)'),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /0/ }));
+    expect(await screen.findByText(/Downloads · SRT\/Q\/2026\/0141 \(R2\)/)).toBeInTheDocument();
+    expect(screen.getByText(/No downloads yet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/complaint/i)).toBeNull();
+  });
+
+  it('lists a queued quotation export while it is still preparing', async () => {
+    // The chip is the collection point, so it has to show the row from the moment the export is
+    // queued - not only once the worker has finished. A chip that stayed at 0 for ten seconds
+    // reads as "the button did nothing", which is the bug the whole async change was made for.
+    mockFetchEntity.mockResolvedValue({
+      downloads: [
+        {
+          id: 'd9',
+          kind: 'quotation_pdf',
+          status: 'pending',
+          filename: 'quotation-SRT-Q-2026-0141-R2.pdf',
+          created_at: '2026-08-05T02:00:00Z',
+        },
+      ],
+    });
+    renderBtn({ entityType: 'quotation_issue', entityId: 'i9', count: undefined });
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /1/ })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /1/ }));
+
+    expect(await screen.findByText('quotation-SRT-Q-2026-0141-R2.pdf')).toBeInTheDocument();
+    expect(screen.getByText(/Queued/i)).toBeInTheDocument();
+    // Nothing to open yet, so neither control is offered.
+    expect(screen.queryByRole('button', { name: /^Preview/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Download/ })).toBeNull();
   });
 });

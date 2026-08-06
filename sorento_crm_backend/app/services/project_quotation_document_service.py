@@ -552,7 +552,18 @@ def list_documents(db: Session, project_id: str) -> List[ProjectQuotationDocumen
 def update_document(
     db: Session, *, document: ProjectQuotationDocument, payload: Dict[str, Any]
 ) -> ProjectQuotationDocument:
-    """Header edits only. `document_no` is deliberately not editable: the customer has it."""
+    """Header edits only. `document_no` is deliberately not editable: the customer has it.
+
+    The recipient snapshot IS editable, and it is still a snapshot. What a correction changes is
+    this document's copy of who it is addressed to, never the developer party behind it, so a
+    quotation can go to the customer's finance department without moving the master record - and
+    the party changing later still cannot rewrite a quotation already in the customer's hands.
+
+    Applied by allow-list and keyed on PRESENCE, because the route hands down an `exclude_unset`
+    payload: a save correcting only Your Ref arrives with no recipient key at all, and reading
+    absent as null would blank the letterhead as a side effect. Null is a separate, deliberate
+    answer, and it clears.
+    """
     for field in (
         "your_ref",
         "doc_date",
@@ -562,6 +573,9 @@ def update_document(
         "terms_html",
         "signatory_name",
         "signatory_phone",
+        "recipient_name_snapshot",
+        "recipient_address_snapshot",
+        "recipient_phone_snapshot",
     ):
         if field in payload:
             setattr(document, field, payload[field])

@@ -7,6 +7,7 @@ storage key) or 'failed' (with an error). The "My Downloads" drawer polls the
 per-user rows while any are in flight.
 """
 import logging
+from typing import Optional
 
 from app.database import SessionLocal
 from app.services.company_scope import set_company_scope
@@ -64,7 +65,7 @@ def generate_complaint_pdf(download_id: str, complaint_id: str, user_id: str) ->
 
 
 def generate_promotions_pdf(
-    download_id: str, promotion_ids: list, user_id: str, company_id: str = None
+    download_id: str, promotion_ids: list, user_id: str, company_id: Optional[str] = None
 ) -> dict:
     """Compile the selected promotions' attachment flyers into one PDF, store it,
     and update the download row.
@@ -117,6 +118,147 @@ def generate_promotions_pdf(
             svc.mark_failed(download_id, str(e))
         except Exception:
             logger.exception("generate_promotions_pdf: could not mark download %s failed", download_id)
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
+    finally:
+        db.close()
+
+
+def _quotation_issue_or_die(db, issue_id: str):
+    """The issue row the export renders from, or a readable failure.
+
+    The download row outlives what it points at - a document can be deleted between the
+    enqueue and the render - so a missing revision has to become a failed download rather
+    than an AttributeError deep inside the renderer.
+    """
+    from app.models.projects import ProjectQuotationIssue
+
+    issue = (
+        db.query(ProjectQuotationIssue)
+        .filter(ProjectQuotationIssue.id == str(issue_id))
+        .first()
+    )
+    if issue is None:
+        raise ValueError(
+            "This revision no longer exists, so it cannot be exported."
+        )
+    return issue
+
+
+def generate_quotation_issue_pdf(
+    download_id: str, issue_id: str, user_id: str, company_id: Optional[str] = None
+) -> dict:
+    """Render one issued quotation as a PDF, store it, and update the download row.
+
+    The renderer is the SAME one the on-demand route uses and it still reads the ISSUE
+    snapshot, so a download next year is what was sent. What is new is only that the bytes are
+    persisted once, as this download job's artifact - nothing else ever reads that object, and
+    the document itself keeps rendering on demand.
+
+    Best-effort and self-contained: any failure marks the download 'failed' with a readable
+    message rather than raising into RQ's failed registry.
+    """
+    db = SessionLocal()
+    # Worker sessions default to the fail-closed UNSET scope, which would hide every
+    # company-owned quotation row. Re-establish the enqueuer's active company (snapshotted at
+    # enqueue); None = system-wide, for a principal with no single company.
+    set_company_scope(db, frozenset({company_id}) if company_id else None)
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+
+        from app.services import project_quotation_pdf_service as pdf
+
+        pdf_bytes, filename = pdf.render_issue_pdf(
+            db, _quotation_issue_or_die(db, issue_id)
+        )
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        # Keyed by DOWNLOAD id, not by the reference: two exports of the same revision are two
+        # rows, and a shared key would have the second silently overwrite the first's file.
+        key = f"exports/quotation-pdf/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=pdf_bytes,
+            file_path=key,
+            content_type="application/pdf",
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        logger.info(
+            "generate_quotation_issue_pdf: download %s ready (%d bytes)",
+            download_id, len(pdf_bytes),
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(pdf_bytes)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_quotation_issue_pdf failed for download %s", download_id)
+        try:
+            svc.mark_failed(download_id, str(e))
+        except Exception:
+            logger.exception(
+                "generate_quotation_issue_pdf: could not mark download %s failed", download_id
+            )
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
+    finally:
+        db.close()
+
+
+def generate_quotation_issue_xlsx(
+    download_id: str, issue_id: str, user_id: str, company_id: Optional[str] = None
+) -> dict:
+    """Render one issued quotation as a workbook, store it, and update the download row.
+
+    Same snapshot as the PDF, so the two artifacts of one revision can never quote different
+    money. Separate task rather than a format flag: they upload under different prefixes with
+    different mime types, and an xlsx served as application/pdf downloads as a file Excel
+    refuses to open.
+    """
+    db = SessionLocal()
+    set_company_scope(db, frozenset({company_id}) if company_id else None)
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+
+        from app.services import project_quotation_excel_service as excel
+
+        payload, filename = excel.render_issue_xlsx(
+            db, _quotation_issue_or_die(db, issue_id)
+        )
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/quotation-xlsx/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=payload,
+            file_path=key,
+            content_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        logger.info(
+            "generate_quotation_issue_xlsx: download %s ready (%d bytes)",
+            download_id, len(payload),
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(payload)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_quotation_issue_xlsx failed for download %s", download_id)
+        try:
+            svc.mark_failed(download_id, str(e))
+        except Exception:
+            logger.exception(
+                "generate_quotation_issue_xlsx: could not mark download %s failed", download_id
+            )
         return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
         db.close()

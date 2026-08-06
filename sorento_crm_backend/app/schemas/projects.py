@@ -1453,7 +1453,21 @@ class ProjectQuotationDocumentCreate(ProjectQuotationDocumentBase):
 
 
 class ProjectQuotationDocumentUpdate(ProjectQuotationDocumentBase):
-    pass
+    """The letterhead, correctable in the edit view.
+
+    The recipient block is here and NOT on the base, so it can be corrected but never supplied at
+    creation: AC-A3 snapshots it off the project's developer party, and a create that accepted its
+    own recipient would let the two disagree from the first save.
+
+    Correcting is not re-deriving. The snapshot stays the document's own copy, so the customer's
+    finance department can take the letter at their own address without touching the party record
+    every other document in the project reads, and a party edited next year still cannot rewrite a
+    quotation the customer is already holding.
+    """
+
+    recipient_name_snapshot: Optional[str] = None
+    recipient_address_snapshot: Optional[str] = None
+    recipient_phone_snapshot: Optional[str] = None
 
 
 class ProjectQuotationScopeCreate(BaseModel):

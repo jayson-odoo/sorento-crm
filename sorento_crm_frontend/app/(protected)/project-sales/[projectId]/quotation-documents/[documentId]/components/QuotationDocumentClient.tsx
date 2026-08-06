@@ -21,11 +21,13 @@ import {
 } from '@/components/ui/alert-dialog';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import {
   useQuotationDocument,
   useQuotationDocumentMutations,
   useQuotationIssues,
 } from '../../../../_shared/hooks/useQuotationDocuments';
+import type { QuotationDocument } from '../../../../_shared/services/quotationDocumentService';
 import {
   useProject,
   useProjectQuotationVersions,
@@ -202,6 +204,20 @@ export function QuotationDocumentClient({
 
   const record = document.data;
   const canEdit = project.data.can_edit;
+  /**
+   * The document as the SCREEN currently stands: the server's row with whatever header edits are
+   * staged merged over it.
+   *
+   * Merged here, once, rather than per field further down, because three places read the
+   * letterhead - the title, the recipient line under it, and the letterhead card - and a session
+   * that only reached one of them would have the card saying one recipient while the heading two
+   * centimetres above it said another. `documentDraft` only ever holds keys somebody actually
+   * typed into, so an untouched field still reads the server's value.
+   */
+  const shown: QuotationDocument = { ...record, ...edit.documentDraft };
+  // Same gate the letter panels use: a reader with no edit rights never gets a writing surface,
+  // even if a session were somehow open.
+  const isHeaderEditable = canEdit && edit.isEditing;
   // R1 on a document nobody has issued, R3 on one that stands at R2. One expression for both:
   // the next revision is always the one after whatever the customer currently holds.
   const nextIssueNo = (record.current_issue_no ?? 0) + 1;
@@ -321,55 +337,28 @@ export function QuotationDocumentClient({
     void runSave();
   }
 
-  async function openIssuePdf() {
+  /**
+   * Both exports are QUEUED, and neither of them puts a file in front of the user here.
+   *
+   * They used to render inline and hand the browser a blob: on a long quotation that held the
+   * page for as long as WeasyPrint took, which reads as a broken button and was what the client
+   * complained about. Now the click leaves a job behind and says so; the file is collected from
+   * the printer chip in this header (or the My Downloads drawer) once it is ready, and it can be
+   * previewed there rather than downloaded blind.
+   */
+  async function queueIssuePdf() {
     if (!latestIssue) return;
     try {
-      const blob = await mutations.issuePdf.mutateAsync({
-        id: documentId,
-        issueId: latestIssue.id,
-      });
-      const url = URL.createObjectURL(blob);
-      // The backend sends it `inline`, so a tab is the intended destination. A blocked popup
-      // falls back to saving the file, which is never worse than nothing happening.
-      //
-      // Deliberately WITHOUT `noopener`: Chrome returns null for a noopener window whether it
-      // opened or not, so the null check would fire the download every single time and the user
-      // would get a tab AND a file. There is nothing to protect here anyway - a blob: URL has no
-      // remote page to hand a window reference to.
-      const opened = window.open(url, '_blank');
-      if (!opened) {
-        const anchor = window.document.createElement('a');
-        anchor.href = url;
-        anchor.download = `${record.document_no.replace(/\//g, '-')}-R${latestIssue.issue_no}.pdf`;
-        window.document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-      }
-      // Revoked on a timer, not immediately: the new tab has to finish reading the blob first.
-      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+      await mutations.issuePdf.mutateAsync({ id: documentId, issueId: latestIssue.id });
     } catch {
-      // The mutation already toasted the reason, including the 503 a host without the native
-      // rendering libraries answers with.
+      // The mutation already toasted the reason.
     }
   }
 
-  async function saveIssueXlsx() {
+  async function queueIssueXlsx() {
     if (!latestIssue) return;
     try {
-      const blob = await mutations.issueXlsx.mutateAsync({
-        id: documentId,
-        issueId: latestIssue.id,
-      });
-      const url = URL.createObjectURL(blob);
-      // Saved, never opened in a tab: no browser renders a workbook, so window.open would show
-      // the user a blank tab and then a download anyway.
-      const anchor = window.document.createElement('a');
-      anchor.href = url;
-      anchor.download = `${record.document_no.replace(/\//g, '-')}-R${latestIssue.issue_no}.xlsx`;
-      window.document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+      await mutations.issueXlsx.mutateAsync({ id: documentId, issueId: latestIssue.id });
     } catch {
       // Already toasted by the mutation.
     }
@@ -409,10 +398,10 @@ export function QuotationDocumentClient({
             </Badge>
           </div>
           <h1 className="mt-1 break-words text-xl font-semibold">
-            {record.subject_title ?? '-'}
+            {shown.subject_title ?? '-'}
           </h1>
           <p className="break-words text-sm text-muted-foreground">
-            {record.recipient_name_snapshot ?? '-'}
+            {shown.recipient_name_snapshot ?? '-'}
           </p>
         </div>
 
@@ -474,6 +463,20 @@ export function QuotationDocumentClient({
                 {`Issue R${nextIssueNo}`}
               </Button>
             )}
+            {/* Where a queued export is actually collected. Rendered only once something has
+                been issued, because a download of a revision that does not exist yet cannot: the
+                gear already says "Issue it first", and a chip that can only ever read 0 is a
+                control with nothing behind it.
+
+                Keyed to the LATEST revision, which is the one whose exports anybody is chasing.
+                Earlier revisions' files are still in the My Downloads drawer. */}
+            {latestIssue && (
+              <EntityDownloadsButton
+                entityType="quotation_issue"
+                entityId={latestIssue.id}
+                label={latestIssue.our_ref_text ?? `${record.document_no} R${latestIssue.issue_no}`}
+              />
+            )}
             <DetailActionsMenu ariaLabel="Quotation actions">
               {canEdit && (
                 <DropdownMenuItem onSelect={() => setSigning(true)}>
@@ -482,33 +485,30 @@ export function QuotationDocumentClient({
                 </DropdownMenuItem>
               )}
               {/* Disabled rather than absent: the client asked for both exports, and a menu that
-                  simply lacks them reads as "this system cannot do it". */}
+                  simply lacks them reads as "this system cannot do it". The subtext names where
+                  the file lands, because the click itself no longer produces one. */}
               <DropdownMenuItem
                 disabled={!record.is_issued || mutations.issuePdf.isPending}
-                onSelect={() => void openIssuePdf()}
+                onSelect={() => void queueIssuePdf()}
               >
                 <Download className="size-4" aria-hidden />
                 <span className="min-w-0">
                   Download PDF
-                  {!record.is_issued && (
-                    <span className="block text-xs text-muted-foreground">
-                      Issue it first
-                    </span>
-                  )}
+                  <span className="block text-xs text-muted-foreground">
+                    {record.is_issued ? 'Prepared in My Downloads' : 'Issue it first'}
+                  </span>
                 </span>
               </DropdownMenuItem>
               <DropdownMenuItem
                 disabled={!record.is_issued || mutations.issueXlsx.isPending}
-                onSelect={() => void saveIssueXlsx()}
+                onSelect={() => void queueIssueXlsx()}
               >
                 <Download className="size-4" aria-hidden />
                 <span className="min-w-0">
                   Download Excel
-                  {!record.is_issued && (
-                    <span className="block text-xs text-muted-foreground">
-                      Issue it first
-                    </span>
-                  )}
+                  <span className="block text-xs text-muted-foreground">
+                    {record.is_issued ? 'Prepared in My Downloads' : 'Issue it first'}
+                  </span>
                 </span>
               </DropdownMenuItem>
               {canEdit && (
@@ -552,7 +552,11 @@ export function QuotationDocumentClient({
         </div>
       </header>
 
-      <QuotationDocumentHeader document={record} liveGrandTotal={liveGrandTotal} />
+      <QuotationDocumentHeader
+        document={shown}
+        liveGrandTotal={liveGrandTotal}
+        onChange={isHeaderEditable ? edit.stageDocument : undefined}
+      />
 
       <QuotationDocumentTabs projectId={projectId} documentId={documentId} />
 

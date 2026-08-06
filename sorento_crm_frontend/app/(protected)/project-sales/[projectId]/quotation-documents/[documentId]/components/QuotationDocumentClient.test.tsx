@@ -16,6 +16,12 @@
  *
  * The line editor is NOT stubbed for those: the whole point is the chain from a keystroke in a
  * cell to a single request, and a stub in the middle would prove none of it.
+ *
+ * The last block is the letterhead becoming editable, which is the client's next sentence: "when we
+ * are in edit view right, we need to be able to edit these also, like the header details, your ref,
+ * date, to, attn". Its claims are that the block is a read until Edit, that what is typed there
+ * rides the SAME one Save as the lines, that Cancel puts the letterhead back too, and that the
+ * address survives being multi-line.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -55,6 +61,9 @@ vi.mock('sonner', () => ({
 const getQuotationDocument = vi.fn();
 const listQuotationIssues = vi.fn();
 const updateQuotationDocument = vi.fn();
+const queueQuotationIssuePdf = vi.fn();
+const queueQuotationIssueXlsx = vi.fn();
+const fetchDownloadsForEntity = vi.fn();
 const getProject = vi.fn();
 const listQuotations = vi.fn();
 const listQuotationVersions = vi.fn();
@@ -80,8 +89,31 @@ vi.mock('../../../../_shared/services/quotationDocumentService', async (importOr
     getQuotationDocument: (...args: unknown[]) => getQuotationDocument(...args),
     listQuotationIssues: (...args: unknown[]) => listQuotationIssues(...args),
     updateQuotationDocument: (...args: unknown[]) => updateQuotationDocument(...args),
+    queueQuotationIssuePdf: (...args: unknown[]) => queueQuotationIssuePdf(...args),
+    queueQuotationIssueXlsx: (...args: unknown[]) => queueQuotationIssueXlsx(...args),
   };
 });
+
+// The printer chip in the header reads the per-entity downloads feed. Answered here so the
+// export specs below are about the click and the chip, not about the drawer's polling.
+vi.mock('@/services/myDownloadsService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/services/myDownloadsService')>();
+  return {
+    ...actual,
+    fetchDownloadsForEntity: (...args: unknown[]) => fetchDownloadsForEntity(...args),
+    fetchDownloadUrl: vi.fn(),
+  };
+});
+
+// The download rows inside the chip's modal mount the shared preview modal, whose carousel
+// wrapper needs layout APIs jsdom lacks.
+vi.mock('@/components/ui/carousel', () => ({
+  Carousel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  CarouselContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  CarouselItem: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  CarouselNext: () => <button type="button">next</button>,
+  CarouselPrevious: () => <button type="button">prev</button>,
+}));
 
 vi.mock('../../../../_shared/services/projectService', async (importOriginal) => {
   const actual = await importOriginal<
@@ -114,6 +146,7 @@ vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-uom-select-qu
   useUOMSelectQuery: () => ({ data: [{ id: 'u1', uom_code: 'PCS', uom_name: 'Pieces' }] }),
 }));
 
+import { toast } from 'sonner';
 import { QuotationDocumentClient } from './QuotationDocumentClient';
 import { QuotationDocumentHeader } from './QuotationDocumentHeader';
 import { QuotationScopesTab } from './QuotationScopesTab';
@@ -292,6 +325,23 @@ beforeEach(() => {
   reviseQuotation.mockResolvedValue(
     version({ id: 'v3', version_no: 3, is_current: true, is_editable: true }),
   );
+  fetchDownloadsForEntity.mockResolvedValue({ downloads: [] });
+  queueQuotationIssuePdf.mockResolvedValue({
+    id: 'dl-pdf',
+    kind: 'quotation_pdf',
+    status: 'pending',
+    filename: 'quotation-SRT-Q-2026-0141-R1.pdf',
+    source_entity_type: 'quotation_issue',
+    source_entity_id: 'i1',
+  });
+  queueQuotationIssueXlsx.mockResolvedValue({
+    id: 'dl-xlsx',
+    kind: 'quotation_xlsx',
+    status: 'pending',
+    filename: 'quotation-SRT-Q-2026-0141-R1.xlsx',
+    source_entity_type: 'quotation_issue',
+    source_entity_id: 'i1',
+  });
 });
 
 /**
@@ -706,5 +756,333 @@ describe('QuotationDocumentClient edit view', () => {
     expect(
       screen.getByText('You can read this quotation but not change it.'),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * The letterhead in an edit session.
+ *
+ * No scope is seeded for most of these: the letterhead is the shell's own block, and a spec that
+ * needed the line editor running to make a claim about the Attn field would be pinning the wrong
+ * thing (and paying eleven renders for it).
+ */
+describe('QuotationDocumentClient letterhead editing', () => {
+  /** Straight into a session, without the line editor in the way. */
+  async function editLetterhead(overrides: Partial<QuotationDocument> = {}) {
+    getQuotationDocument.mockResolvedValue(quotationDocument(overrides));
+    const rendered = renderScreen();
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    return rendered;
+  }
+
+  it('is a read until Edit, and only then an input', async () => {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({ your_ref: 'NCSB/2026/117' }),
+    );
+    renderScreen();
+
+    // The values are on screen from the start, because the whole point of the block is that the
+    // system already knows them. What is absent is anywhere to type.
+    expect(await screen.findByText('NCSB/2026/117')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Your Ref')).toBeNull();
+    expect(screen.queryByLabelText('Attn')).toBeNull();
+    expect(screen.queryByLabelText('Address')).toBeNull();
+    expect(screen.queryByLabelText('Date')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+
+    expect(await screen.findByLabelText('Your Ref')).toHaveValue('NCSB/2026/117');
+    expect(screen.getByLabelText('Attn')).toHaveValue('Kelly');
+    expect(screen.getByLabelText('Name')).toHaveValue('Nadi Cergas Sdn Bhd');
+    expect(screen.getByLabelText('Date')).toHaveValue('2026-02-26');
+    // Our Ref is the number the customer already has, minted by the numbering rule, and the
+    // backend refuses to change it. So it stays a read even here.
+    expect(screen.queryByLabelText('Our Ref')).toBeNull();
+    expect(screen.getByText('Our Ref')).toBeInTheDocument();
+    // Twice on screen on purpose: the record's identity line at the top, and the letterhead.
+    expect(screen.getAllByText('SRT/Q/2026/0141').length).toBeGreaterThan(0);
+  });
+
+  it('sends the staged letterhead in the ONE document PATCH', async () => {
+    await editLetterhead();
+
+    fireEvent.change(await screen.findByLabelText('Your Ref'), {
+      target: { value: 'NCSB/PO/2026/551' },
+    });
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-03-02' } });
+    fireEvent.change(screen.getByLabelText('Attn'), { target: { value: 'Ms Tan' } });
+    fireEvent.change(screen.getByLabelText('Name'), {
+      target: { value: 'Nadi Cergas Sdn Bhd (Finance)' },
+    });
+    fireEvent.change(screen.getByLabelText('Phone'), { target: { value: '03-1234 5678' } });
+
+    // Nothing has left the browser, exactly as for a line edit.
+    expect(updateQuotationDocument).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
+    const [projectArg, documentArg, body] = updateQuotationDocument.mock.calls[0] as [
+      string,
+      string,
+      Record<string, unknown>,
+    ];
+    expect(projectArg).toBe('p1');
+    expect(documentArg).toBe('d1');
+    expect(body).toEqual({
+      your_ref: 'NCSB/PO/2026/551',
+      doc_date: '2026-03-02',
+      attn_name: 'Ms Tan',
+      recipient_name_snapshot: 'Nadi Cergas Sdn Bhd (Finance)',
+      recipient_phone_snapshot: '03-1234 5678',
+    });
+    // Saved, and back to a document you can read.
+    await waitFor(() => expect(screen.queryByLabelText('Your Ref')).toBeNull());
+  });
+
+  it('keeps a staged letterhead edit across a tab switch', async () => {
+    // The same claim the lines make, and it has to be made separately: the letterhead reads its
+    // value out of `documentDraft`, so a session that reset the draft on the way to the terms
+    // would silently put the server's recipient back while the user was reading the clauses.
+    const { openTab } = await editLetterhead();
+
+    fireEvent.change(await screen.findByLabelText('Attn'), { target: { value: 'Ms Tan' } });
+
+    openTab(<QuotationTermsTab />);
+    expect(
+      await screen.findByText('Terms and conditions', { selector: '[data-slot="card-title"]' }),
+    ).toBeInTheDocument();
+
+    openTab(<QuotationScopesTab />);
+
+    expect(await screen.findByLabelText('Attn')).toHaveValue('Ms Tan');
+    expect(updateQuotationDocument).not.toHaveBeenCalled();
+  });
+
+  it('puts the letterhead back on Cancel, and writes nothing', async () => {
+    await editLetterhead({ your_ref: 'NCSB/2026/117' });
+
+    fireEvent.change(await screen.findByLabelText('Your Ref'), {
+      target: { value: 'WRONG-REF' },
+    });
+    fireEvent.change(screen.getByLabelText('Attn'), { target: { value: 'Nobody' } });
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Wrong subject' } });
+    // The heading follows the staged copy too, or the card and the title two centimetres above
+    // it would disagree about the same document.
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Wrong subject' }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(await screen.findByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Your Ref')).toBeNull();
+    expect(screen.getByText('NCSB/2026/117')).toBeInTheDocument();
+    expect(screen.getByText('Kelly')).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'CADANGAN MEMBINA PANGSAPURI' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('WRONG-REF')).toBeNull();
+    expect(updateQuotationDocument).not.toHaveBeenCalled();
+  });
+
+  it('round-trips a multi-line address through the textarea', async () => {
+    const address = 'Level 12, Menara Nadi\nJalan Ampang\n50450 Kuala Lumpur';
+    await editLetterhead();
+
+    // A single-line input would flatten this on the way in, and the PDF prints a line per
+    // newline, so the newlines ARE the address.
+    fireEvent.change(await screen.findByLabelText('Address'), { target: { value: address } });
+    expect(screen.getByLabelText('Address')).toHaveValue(address);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
+    expect(updateQuotationDocument.mock.calls[0][2]).toEqual({
+      recipient_address_snapshot: address,
+    });
+  });
+
+  it('reads a multi-line address back a line at a time', async () => {
+    // The display half of the same round trip, made on the header alone: one stored string, one
+    // paragraph per line, which is what the printed letterhead does with it.
+    render(
+      <QuotationDocumentHeader
+        document={quotationDocument({
+          recipient_address_snapshot: 'Level 12, Menara Nadi\nJalan Ampang\n50450 Kuala Lumpur',
+        })}
+      />,
+    );
+
+    expect(screen.getByText('Level 12, Menara Nadi')).toBeInTheDocument();
+    expect(screen.getByText('Jalan Ampang')).toBeInTheDocument();
+    expect(screen.getByText('50450 Kuala Lumpur')).toBeInTheDocument();
+  });
+
+  it('offers a reader no letterhead inputs', async () => {
+    getProject.mockResolvedValue(project({ can_edit: false }));
+    getQuotationDocument.mockResolvedValue(quotationDocument());
+    renderScreen();
+
+    // The record's own subtitle and the letterhead both name the recipient, so both answer here.
+    await waitFor(() =>
+      expect(screen.getAllByText('Nadi Cergas Sdn Bhd').length).toBeGreaterThan(0),
+    );
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    expect(screen.queryByLabelText('Your Ref')).toBeNull();
+  });
+});
+
+/**
+ * The two exports going asynchronous, which is the client's complaint answered: pressing Download
+ * PDF used to hold the browser for as long as WeasyPrint took on a fifty-page quotation, and a
+ * dead-looking button is what they reported.
+ *
+ * So the claims are that the gear now QUEUES and says where the file will be, that it fetches no
+ * bytes and creates no blob on the way past, and that the header carries the printer chip the file
+ * is actually collected from - keyed to the revision, not to some invented id.
+ */
+describe('QuotationDocumentClient queued exports', () => {
+  const issue = {
+    id: 'i1',
+    document_id: 'd1',
+    issue_no: 1,
+    our_ref_text: 'SRT/Q/2026/0141 (R1)',
+    issued_at: '2026-08-04T02:00:00',
+    issued_by: 'u1',
+    issued_by_name: 'Ahmad',
+    grand_total: '9000.00',
+    scope_count: 1,
+  };
+
+  /** An issued, signed document, which is the only state the exports are offered in. */
+  function seedIssued() {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        is_issued: true,
+        issue_count: 1,
+        current_issue_no: 1,
+        signatory_signature: signature(),
+      }),
+    );
+    listQuotationIssues.mockResolvedValue([issue]);
+  }
+
+  async function openGear() {
+    // pointerDown, not click: Radix's dropdown trigger opens on the pointer event.
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Quotation actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    return screen.findByRole('menu');
+  }
+
+  it('queues the PDF and names where it will land, fetching no bytes', async () => {
+    seedIssued();
+    renderScreen();
+    const menu = await openGear();
+
+    // The menu itself sets the expectation before the click, because the click no longer produces
+    // a file in front of the user.
+    // Once per export, PDF and Excel, because each one lands somewhere the click does not show.
+    expect(within(menu).getAllByText('Prepared in My Downloads')).toHaveLength(2);
+
+    fireEvent.click(within(menu).getByText('Download PDF'));
+
+    await waitFor(() =>
+      expect(queueQuotationIssuePdf).toHaveBeenCalledWith('p1', 'd1', 'i1'),
+    );
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        'Preparing the PDF. It will appear in My Downloads.',
+      ),
+    );
+    // No blob dance: nothing was saved to disk and no tab was opened behind the user's back.
+    expect(queueQuotationIssueXlsx).not.toHaveBeenCalled();
+  });
+
+  it('queues the Excel file the same way, as its own row', async () => {
+    seedIssued();
+    renderScreen();
+    const menu = await openGear();
+
+    fireEvent.click(within(menu).getByText('Download Excel'));
+
+    await waitFor(() =>
+      expect(queueQuotationIssueXlsx).toHaveBeenCalledWith('p1', 'd1', 'i1'),
+    );
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        'Preparing the Excel file. It will appear in My Downloads.',
+      ),
+    );
+    expect(queueQuotationIssuePdf).not.toHaveBeenCalled();
+  });
+
+  it('reports the server refusal rather than a silent nothing', async () => {
+    // The failure the user will actually meet is a queue that cannot be reached. Swallowed, the
+    // click looks exactly like a successful one, which is the worst of both designs.
+    seedIssued();
+    queueQuotationIssuePdf.mockRejectedValue(
+      new Error('Could not queue the export. Please try again.'),
+    );
+    renderScreen();
+    const menu = await openGear();
+
+    fireEvent.click(within(menu).getByText('Download PDF'));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        'Could not queue the export. Please try again.',
+      ),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it('offers no export on a draft, and says why', async () => {
+    getQuotationDocument.mockResolvedValue(quotationDocument());
+    renderScreen();
+    const menu = await openGear();
+
+    expect(within(menu).getAllByText('Issue it first').length).toBeGreaterThan(0);
+    fireEvent.click(within(menu).getByText('Download PDF'));
+    expect(queueQuotationIssuePdf).not.toHaveBeenCalled();
+  });
+
+  it('carries the printer chip for the issued revision, and only once issued', async () => {
+    // The chip IS the collection point, keyed to the revision the exports belong to. A draft has
+    // no revision, so there is nothing for it to count and it is not rendered.
+    getQuotationDocument.mockResolvedValue(quotationDocument());
+    const { unmount } = renderScreen();
+    await screen.findByRole('button', { name: 'Quotation actions' });
+    expect(fetchDownloadsForEntity).not.toHaveBeenCalled();
+    unmount();
+
+    seedIssued();
+    fetchDownloadsForEntity.mockResolvedValue({
+      downloads: [
+        {
+          id: 'dl-pdf',
+          kind: 'quotation_pdf',
+          status: 'ready',
+          filename: 'quotation-SRT-Q-2026-0141-R1.pdf',
+          created_at: '2026-08-05T02:00:00Z',
+        },
+      ],
+    });
+    renderScreen();
+
+    await waitFor(() =>
+      expect(fetchDownloadsForEntity).toHaveBeenCalledWith('quotation_issue', 'i1', 100),
+    );
+    // Named after the revision, never after a raw id: the chip's tooltip is read by a person.
+    const chip = await screen.findByTitle('View downloads for SRT/Q/2026/0141 (R1)');
+    fireEvent.click(chip);
+
+    expect(
+      await screen.findByText('quotation-SRT-Q-2026-0141-R1.pdf'),
+    ).toBeInTheDocument();
+    // And it is previewable from there, which is the other half of what the client asked for.
+    expect(screen.getByRole('button', { name: /^Preview/ })).toBeInTheDocument();
   });
 });

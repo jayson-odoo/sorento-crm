@@ -63,6 +63,22 @@ def _client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
+def _issue_or_404(db: Session, document, issue_id: str):
+    """The revision, checked against THIS document rather than merely fetched by id.
+
+    Without the check a known issue id exports through any document the caller may view,
+    handing over a price list they were never shown.
+    """
+    record = next((row for row in svc.list_issues(db, document) if str(row.id) == issue_id), None)
+    if record is None:
+        from app.services.error_handler import AppException
+
+        raise AppException(
+            status_code=404, message="Revision not found.", code="quotation_issue_not_found"
+        )
+    return record
+
+
 def _editable_project(db: Session, project_id: str, current_user: dict):
     validate_uuid_path(project_id, resource="Project")
     project = projects.get_project_or_404(db, project_id)
@@ -366,15 +382,7 @@ async def create_quotation_sign_link(
         validate_uuid_path(issue_id, resource="Revision")
         _editable_project(db, project_id, current_user)
         document = svc.get_document_or_404(db, project_id, document_id)
-        record = next(
-            (row for row in svc.list_issues(db, document) if str(row.id) == issue_id), None
-        )
-        if record is None:
-            from app.services.error_handler import AppException
-
-            raise AppException(
-                status_code=404, message="Revision not found.", code="quotation_issue_not_found"
-            )
+        record = _issue_or_404(db, document, issue_id)
         token = svc.issue_sign_link(db, record=record)
         db.commit()
         return {
@@ -400,11 +408,16 @@ async def download_quotation_issue_pdf(
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
-    """The issued quotation, as the customer received it.
+    """The issued quotation, as the customer received it, rendered inline in this request.
 
     Rendered from the ISSUE snapshot every time rather than from live rows, so a download next year
-    is what was sent. Generated on demand rather than stored: the snapshot IS the source of truth,
-    so a stored file would be a second copy of the same facts that could fall out of step with it.
+    is what was sent. Generated on demand and never stored: the snapshot IS the source of truth, so
+    a stored file would be a second copy of the same facts that could fall out of step with it.
+
+    The CRM screen no longer calls this - a 50-page render held the browser long enough to read as
+    a broken button, so the gear queues ``/export/pdf`` instead and the file arrives in My
+    Downloads. This stays as the on-demand render for API/automation callers who want the bytes in
+    the response, and it remains the only path that stores nothing.
     """
     from app.services.complaint_pdf_service import PDFRenderingUnavailable
     from app.services import project_quotation_pdf_service as pdf
@@ -416,13 +429,7 @@ async def download_quotation_issue_pdf(
         validate_uuid_path(project_id, resource="Project")
         projects.get_project_or_404(db, project_id)
         document = svc.get_document_or_404(db, project_id, document_id)
-        record = next(
-            (row for row in svc.list_issues(db, document) if str(row.id) == issue_id), None
-        )
-        if record is None:
-            raise AppException(
-                status_code=404, message="Revision not found.", code="quotation_issue_not_found"
-            )
+        record = _issue_or_404(db, document, issue_id)
         try:
             pdf_bytes, filename = pdf.render_issue_pdf(db, record)
         except PDFRenderingUnavailable as unavailable:
@@ -464,9 +471,11 @@ async def download_quotation_issue_xlsx(
     an inline disposition on a binary the browser cannot render turns a download into a blank page.
     Built from the ISSUE snapshot on demand, exactly as the PDF is, so the two artifacts of one
     revision can never quote different money.
+
+    As with the PDF route, the CRM screen now queues ``/export/xlsx`` instead; this remains the
+    on-demand, stores-nothing render for API/automation callers.
     """
     from app.services import project_quotation_excel_service as excel
-    from app.services.error_handler import AppException
 
     try:
         validate_uuid_path(document_id, resource="Quotation")
@@ -474,16 +483,7 @@ async def download_quotation_issue_xlsx(
         validate_uuid_path(project_id, resource="Project")
         projects.get_project_or_404(db, project_id)
         document = svc.get_document_or_404(db, project_id, document_id)
-        # Checked against THIS document, not merely fetched by id: otherwise a known issue id
-        # exports through any document the caller may view, handing over a price list they were
-        # never shown in the one format that is already machine readable.
-        record = next(
-            (row for row in svc.list_issues(db, document) if str(row.id) == issue_id), None
-        )
-        if record is None:
-            raise AppException(
-                status_code=404, message="Revision not found.", code="quotation_issue_not_found"
-            )
+        record = _issue_or_404(db, document, issue_id)
         payload, filename = excel.render_issue_xlsx(db, record)
         return Response(
             content=payload,
@@ -491,6 +491,134 @@ async def download_quotation_issue_xlsx(
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             ),
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+# ------------------------------------------------------------- queued exports
+
+
+def _queue_issue_export(
+    db: Session,
+    *,
+    project_id: str,
+    document_id: str,
+    issue_id: str,
+    current_user: dict,
+    kind: str,
+    suffix: str,
+    task,
+):
+    """Create the ``pending`` download row and hand the render to the worker.
+
+    One body for both formats: the only things that differ are the kind, the extension and the
+    task, and duplicating the row-creation plus the enqueue-failure handling twice is how the
+    two drift. The row is committed BEFORE the enqueue so the printer chip has something to
+    show the instant the click returns, and a queue that cannot be reached marks that row
+    failed rather than leaving it pending forever behind a spinner.
+    """
+    from app.schemas.download import DownloadResponse
+    from app.services.company_scope import get_company_scope
+    from app.services.download_service import DownloadService
+    from app.services.queue_service import enqueue_job
+
+    validate_uuid_path(document_id, resource="Quotation")
+    validate_uuid_path(issue_id, resource="Revision")
+    validate_uuid_path(project_id, resource="Project")
+    projects.get_project_or_404(db, project_id)
+    document = svc.get_document_or_404(db, project_id, document_id)
+    record = _issue_or_404(db, document, issue_id)
+
+    downloads = DownloadService(db)
+    download = downloads.create(
+        user_id=str(current_user["id"]),
+        kind=kind,
+        source_entity_type="quotation_issue",
+        source_entity_id=str(record.id),
+        # Named up front so the drawer reads as the quotation it is while still pending; the
+        # task overwrites it with the renderer's own name once it knows it.
+        filename=(
+            f"quotation-{(record.our_ref_text or document.document_no or 'quotation')}"
+            f".{suffix}"
+        ).replace("/", "-"),
+    )
+    # Snapshot the enqueuer's active company: the worker runs at the fail-closed UNSET scope
+    # and every quotation row is company-owned, so without this the render sees nothing.
+    scope = get_company_scope(db)
+    company_id = next(iter(scope)) if isinstance(scope, frozenset) and len(scope) == 1 else None
+    try:
+        enqueue_job(
+            task,
+            str(download.id),
+            str(record.id),
+            str(current_user["id"]),
+            company_id=company_id,
+            queue_name="imports",
+            job_timeout=600,
+        )
+    except Exception as e:  # noqa: BLE001 - a queue outage is a failed row, not a stack trace
+        downloads.mark_failed(str(download.id), f"Could not queue the export: {e}")
+        raise handle_internal_error("Could not queue the export. Please try again.")
+
+    return DownloadResponse.model_validate(downloads.get(str(download.id)))
+
+
+@router.post(
+    "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/export/pdf",
+)
+async def queue_quotation_issue_pdf(
+    project_id: str,
+    document_id: str,
+    issue_id: str,
+    current_user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Queue the issued quotation's PDF; it appears in My Downloads when it is ready.
+
+    Same permission as the inline route: a quotation export is the full price list whether it
+    arrives in the response or in a drawer ten seconds later.
+    """
+    from app.tasks.export_tasks import generate_quotation_issue_pdf
+
+    try:
+        return _queue_issue_export(
+            db,
+            project_id=project_id,
+            document_id=document_id,
+            issue_id=issue_id,
+            current_user=current_user,
+            kind="quotation_pdf",
+            suffix="pdf",
+            task=generate_quotation_issue_pdf,
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/export/xlsx",
+)
+async def queue_quotation_issue_xlsx(
+    project_id: str,
+    document_id: str,
+    issue_id: str,
+    current_user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Queue the issued quotation's workbook; it appears in My Downloads when it is ready."""
+    from app.tasks.export_tasks import generate_quotation_issue_xlsx
+
+    try:
+        return _queue_issue_export(
+            db,
+            project_id=project_id,
+            document_id=document_id,
+            issue_id=issue_id,
+            current_user=current_user,
+            kind="quotation_xlsx",
+            suffix="xlsx",
+            task=generate_quotation_issue_xlsx,
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

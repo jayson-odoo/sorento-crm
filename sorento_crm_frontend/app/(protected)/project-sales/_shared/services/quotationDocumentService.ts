@@ -18,7 +18,16 @@ import { extractApiError } from '@/lib/api-client';
  *   POST   /projects/{projectId}/quotation-documents/{id}/sign             -> QuotationSignature (201)
  *   POST   /projects/{projectId}/quotation-documents/{id}/issues/{issueId}/sign-link
  *                                                                         -> QuotationSignLink
- *   GET    /projects/{projectId}/quotation-documents/{id}/issues/{issueId}/pdf -> application/pdf
+ *   POST   /projects/{projectId}/quotation-documents/{id}/issues/{issueId}/export/pdf
+ *                                                                         -> QueuedDownload
+ *   POST   /projects/{projectId}/quotation-documents/{id}/issues/{issueId}/export/xlsx
+ *                                                                         -> QueuedDownload
+ *
+ * The two exports are QUEUED, not rendered in the response: a 50-page quotation held the
+ * browser long enough to read as a broken button. The route answers with a `user_downloads`
+ * row in status `pending`; the file arrives in My Downloads and behind the printer chip on the
+ * document header. The backend still exposes the inline GET `.../pdf` and `.../xlsx` renders
+ * for API/automation callers, but this screen no longer uses them.
  *
  * Money arrives as a decimal STRING, never a JS number: `1805907.02` parsed as a float and added
  * back up is how a quotation ends up disagreeing with its own PDF by a cent. Format it, do not
@@ -123,6 +132,17 @@ export type QuotationDocumentBody = Partial<{
   terms_html: string | null;
   signatory_name: string | null;
   signatory_phone: string | null;
+  /**
+   * The recipient block, PATCH only.
+   *
+   * Snapshotted from the project's developer party when the document is created and deliberately
+   * never re-derived after that, so a correction here is a correction to THIS quotation's copy -
+   * the finance department having a different mailing address to the party record, say. It does
+   * not touch the party, and the party changing later does not touch it back.
+   */
+  recipient_name_snapshot: string | null;
+  recipient_address_snapshot: string | null;
+  recipient_phone_snapshot: string | null;
 }>;
 
 type Envelope<T> = { data: T[]; pagination: { total: number }; empty: boolean };
@@ -296,40 +316,58 @@ export async function createQuotationSignLink(
 }
 
 /**
- * The issued quotation as the customer received it, rendered from the issue snapshot.
+ * One queued export, the `user_downloads` row the trigger routes answer with.
  *
- * A 503 here is an operational fact (the host is missing the native rendering libraries) and the
- * server says so in words, which is why the message is surfaced rather than replaced.
+ * Deliberately the same shape the My Downloads drawer already reads, so the printer chip on the
+ * document and the drawer in the top nav are looking at one thing rather than two.
  */
-export async function downloadQuotationIssuePdf(
+export type QueuedDownload = {
+  id: string;
+  kind: string;
+  status: 'pending' | 'processing' | 'ready' | 'failed';
+  filename: string | null;
+  source_entity_type: string | null;
+  source_entity_id: string | null;
+};
+
+/**
+ * Queue the issued quotation's PDF, rendered from the issue snapshot by the worker.
+ *
+ * Nothing comes back but the receipt. The wait was the client's complaint: a long render held
+ * the browser and read as a dead button, so the file is collected from My Downloads (or the
+ * printer chip on this document) once it is ready.
+ */
+export async function queueQuotationIssuePdf(
   projectId: string,
   documentId: string,
   issueId: string,
-): Promise<Blob> {
+): Promise<QueuedDownload> {
   const response = await apiFetch(
-    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/issues/${issueId}/pdf`,
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/issues/${issueId}/export/pdf`,
+    { method: 'POST' },
   );
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to generate the PDF'));
-  return response.blob();
+    throw new Error(await extractApiError(response, 'Failed to queue the PDF'));
+  return response.json();
 }
 
 /**
- * The same issue as a workbook, one sheet per scope.
+ * The same issue as a workbook, one sheet per scope, queued the same way.
  *
- * A separate call rather than a format flag on the PDF one: the two artifacts have different
- * audiences (the PDF is the document of record, this is what the customer's QS re-prices in) and
- * the caller saves this one instead of opening it.
+ * A separate call rather than a format flag: the two artifacts have different audiences (the PDF
+ * is the document of record, this is what the customer's QS re-prices in) and each gets its own
+ * download row so the drawer can say which format is ready.
  */
-export async function downloadQuotationIssueXlsx(
+export async function queueQuotationIssueXlsx(
   projectId: string,
   documentId: string,
   issueId: string,
-): Promise<Blob> {
+): Promise<QueuedDownload> {
   const response = await apiFetch(
-    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/issues/${issueId}/xlsx`,
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/issues/${issueId}/export/xlsx`,
+    { method: 'POST' },
   );
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to generate the Excel file'));
-  return response.blob();
+    throw new Error(await extractApiError(response, 'Failed to queue the Excel file'));
+  return response.json();
 }

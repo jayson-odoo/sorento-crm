@@ -5,8 +5,9 @@ populated asynchronously by RQ tasks. These endpoints are scoped to the current
 user — a download is only visible/resolvable by the user who requested it.
 """
 import logging
+import mimetypes
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -15,7 +16,7 @@ from app.models.download import DownloadStatus
 from app.schemas.download import DownloadListResponse, DownloadResponse, DownloadUrlResponse
 from app.services.uuid_path_param import validate_uuid_path
 from app.services.download_service import DownloadService
-from app.services.storage_router import resolve_signed_url
+from app.services.storage_router import get_backend, resolve_signed_url
 
 logger = logging.getLogger(__name__)
 
@@ -59,3 +60,44 @@ def get_download_url(
     if not url:
         raise HTTPException(status_code=500, detail="Could not resolve a download URL")
     return DownloadUrlResponse(url=url, filename=row.filename)
+
+
+@router.get("/{download_id}/file")
+def stream_download_file(
+    download_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """The bytes themselves, same-origin and authenticated.
+
+    Separate from ``/url`` because a bucket's presigned URL is cross-origin and sends no CORS
+    headers: the shared preview modal reads spreadsheet bytes with ``fetch`` and saves files as
+    a blob, and both fail against a presigned URL while succeeding here. ``/url`` stays for the
+    cases where an element loads the file itself (an ``<iframe>``/``<img>`` cannot send an auth
+    header, so it needs the signed URL).
+
+    Scoped to the row's owner, exactly as ``/url`` is - a download id in someone else's hand is
+    not a licence to read it.
+    """
+    validate_uuid_path(download_id, resource="Download")
+    row = DownloadService(db).get_for_user(download_id, str(current_user["id"]))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Download not found")
+    if row.status != DownloadStatus.READY.value or not row.storage_key:
+        raise HTTPException(status_code=409, detail=f"Download is not ready (status: {row.status})")
+    try:
+        content = get_backend(row.storage_provider).download_file(row.storage_key)
+    except Exception as e:  # noqa: BLE001 - a missing object is not a server bug worth a 500
+        logger.warning("stream_download_file: could not read %s: %s", row.storage_key, e)
+        raise HTTPException(status_code=404, detail="The stored file is no longer available")
+
+    filename = row.filename or "download"
+    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(content)),
+        },
+    )
