@@ -729,6 +729,69 @@ def test_an_unknown_pool_code_is_a_404_naming_the_pool(scm_app):
     assert "pool" in r.text.lower()
 
 
+def test_a_code_that_exists_in_two_companies_is_a_400_not_a_500(scm_app):
+    """The route used to raise `MultipleResultsFound` and answer 500 on a plain GET.
+
+    Product and location codes are unique WITHIN a company, not across the install. A caller
+    whose company scope is unresolved - an API-key principal with no active company, which is
+    how n8n and the MCP server reach this - sees every company's row, and `one_or_none` blew
+    up on the second one. Two things are wrong with that: a 500 says the server is broken
+    when the request was ambiguous, and the alternative fix (take the first row) would answer
+    with another company's product while looking entirely successful.
+
+    The scope is dropped to None here rather than mocked at the query, because None is
+    exactly what an unscoped principal produces.
+    """
+    from app.models.base import set_company_scope
+    from app.models.company import Company
+    from app.services.company_scope_resolver import apply_company_scope
+
+    app, db, gcu, gcuk = scm_app
+    client = _client(scm_app)
+    chain = _chain(db)
+
+    # A real second company, because `products.company_id` is a live FK - an invented UUID
+    # aborts the transaction rather than producing the duplicate the test needs.
+    other_company_id = str(uuid.uuid4())
+    db.add(Company(
+        id=other_company_id,
+        name=f"ZZT other company {other_company_id[:8]}",
+        code=f"ZZTC-{uuid.uuid4().hex[:6]}".upper()[:50],
+        is_active=True,
+    ))
+    db.flush()
+
+    # The SAME code in that second company. Seeded through the ORM under an explicit company
+    # so the row is a genuine duplicate rather than a hand-written insert that skips the stamp.
+    twin = Product(
+        id=_u(),
+        product_code=chain["product"].product_code,
+        product_name="the same code, another company",
+        category_id=chain["product"].category_id,
+        base_uom_id=chain["product"].base_uom_id,
+        list_price=0,
+        company_id=other_company_id,
+    )
+    db.add(twin)
+    db.flush()
+
+    async def _unscoped():
+        set_company_scope(db, None)
+        return None
+
+    app.dependency_overrides[apply_company_scope] = _unscoped
+    set_company_scope(db, None)
+
+    r = _get(
+        client,
+        product_code=chain["product"].product_code,
+        pool_code=chain["pool"].warehouse_code,
+    )
+
+    assert r.status_code == 400, r.text
+    assert "more than one company" in r.text
+
+
 def test_a_request_with_no_product_code_is_a_422(scm_app):
     """Defaulting an absent product to something would answer a question nobody asked, and
     the answer would look like a real coverage position for a real SKU."""

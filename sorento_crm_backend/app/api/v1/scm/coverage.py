@@ -152,10 +152,13 @@ def get_coverage(
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    product = (
-        db.query(Product).filter(Product.product_code == product_code).one_or_none()
-    )
-    if product is None:
+    # `.all()`, not `.one_or_none()`. Product and location codes are unique WITHIN a company,
+    # not across the install, and a caller whose company scope is unresolved (an API-key
+    # principal with no active company) sees every company's row. `one_or_none` turned that
+    # into a 500 on a plain GET. Ambiguity is a bad request, not a server fault, and the
+    # answer names the problem instead of silently picking somebody else's product.
+    products = db.query(Product).filter(Product.product_code == product_code).all()
+    if not products:
         # Naming WHICH of the two codes failed: told only "not found", the planner's only
         # way forward is to try both.
         raise AppException(
@@ -163,11 +166,19 @@ def get_coverage(
             message=f"No product found with code '{product_code}'.",
             code="NOT_FOUND",
         )
+    if len(products) > 1:
+        raise AppException(
+            status_code=400,
+            message=(
+                f"'{product_code}' exists in more than one company, and no company was "
+                "resolved for this request. Choose a company first."
+            ),
+            code="AMBIGUOUS_COMPANY_SCOPE",
+        )
+    product = products[0]
 
-    location = (
-        db.query(Warehouse).filter(Warehouse.warehouse_code == pool_code).one_or_none()
-    )
-    if location is None:
+    locations = db.query(Warehouse).filter(Warehouse.warehouse_code == pool_code).all()
+    if not locations:
         raise AppException(
             status_code=404,
             message=(
@@ -176,6 +187,16 @@ def get_coverage(
             ),
             code="NOT_FOUND",
         )
+    if len(locations) > 1:
+        raise AppException(
+            status_code=400,
+            message=(
+                f"Location '{pool_code}' exists in more than one company, and no company "
+                "was resolved for this request. Choose a company first."
+            ),
+            code="AMBIGUOUS_COMPANY_SCOPE",
+        )
+    location = locations[0]
 
     service = CoverageService(db)
     pool_id = service.pool_for_location(location.id)
