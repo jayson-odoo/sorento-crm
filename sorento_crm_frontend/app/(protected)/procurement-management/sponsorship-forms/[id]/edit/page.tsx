@@ -44,7 +44,7 @@ async function EditSponsorshipFormWrapper({
           </BreadcrumbItem>
           <BreadcrumbSeparator />
           <BreadcrumbItem>
-            <BreadcrumbLink href="/procurement-management">Procurement</BreadcrumbLink>
+            <BreadcrumbPage>Project Sales Admin</BreadcrumbPage>
           </BreadcrumbItem>
           <BreadcrumbSeparator />
           <BreadcrumbItem>

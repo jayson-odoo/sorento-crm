@@ -5450,6 +5450,7 @@ class PurchaseRequestService:
             request_number=request_number,
             request_date=self._parse_date(payload.date),
             customer_name=payload.customer_name,
+            pic=getattr(payload, "pic", None),
             project_title=payload.project_title,
             purpose=payload.purpose,
             delivery_address=getattr(payload, "delivery_address", None),
@@ -5567,6 +5568,7 @@ class PurchaseRequestService:
         row.request_type = payload.request_type
         row.request_date = self._parse_date(payload.date)
         row.customer_name = payload.customer_name
+        row.pic = getattr(payload, "pic", None)
         row.project_title = payload.project_title
         row.purpose = payload.purpose
         row.delivery_address = getattr(payload, "delivery_address", None)
@@ -6008,6 +6010,7 @@ class PurchaseRequestService:
                 "request_number": getattr(header, "request_number", None),
                 "request_date": request_date.isoformat() if request_date else None,
                 "customer_name": getattr(header, "customer_name", None),
+                "pic": getattr(header, "pic", None),
                 "project_title": getattr(header, "project_title", None),
                 "purpose": getattr(header, "purpose", None),
                 "requested_by": getattr(header, "requested_by", None),
@@ -6873,6 +6876,7 @@ class PurchaseRequestService:
             "request_number": header.request_number,
             "request_type": header.request_type,
             "customer_name": header.customer_name,
+            "pic": header.pic,
             "project_title": header.project_title,
             "purpose": header.purpose,
             "delivery_address": getattr(header, "delivery_address", None),
@@ -7029,6 +7033,7 @@ class PurchaseRequestService:
             "request_number": header.request_number,
             "request_type": header.request_type,
             "customer_name": header.customer_name,
+            "pic": header.pic,
             "project_title": header.project_title,
             "purpose": header.purpose,
             "delivery_address": getattr(header, "delivery_address", None),

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAction } from '@/lib/useAction';
 import { apiFetch } from '@/lib/api';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
+import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Printer, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -29,7 +29,8 @@ import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { usePurchaseRequest } from '../hooks/usePurchaseRequests';
+import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
+import { usePurchaseRequest, useExportPurchaseRequestPdf } from '../hooks/usePurchaseRequests';
 import { formatDate, formatCurrency } from '@/lib/helpers';
 import { useCurrencyFormat } from '@/hooks/useCurrencyFormat';
 import PurchaseRequestDeleteDialog from './purchase-request-delete-dialog';
@@ -67,6 +68,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { exportPurchaseRequestOrSponsorshipToExcel } from '../lib/purchase-request-excel-export';
+import { useLookupOptionsByBinding } from '@/hooks/useLookupOptionsByBinding';
 import { toast } from 'sonner';
 import LookupBoundLabel from '@/components/common/LookupBoundLabel';
 import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSection';
@@ -184,6 +186,10 @@ export default function PurchaseRequestDetail({
     }
   });
   const [exportingExcel, setExportingExcel] = useState(false);
+  const exportPdfMutation = useExportPurchaseRequestPdf();
+  // Same source LookupBoundLabel reads, so the sheet says "Cash Sales" where
+  // the screen does, never the raw `cash_sales` code.
+  const salesTypeOptions = useLookupOptionsByBinding('purchase_requests', 'sales_type');
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const [approvalLinkCopying, setApprovalLinkCopying] = useState(false);
   const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
@@ -585,7 +591,13 @@ export default function PurchaseRequestDetail({
                 if (!request) return;
                 setExportingExcel(true);
                 try {
-                  await exportPurchaseRequestOrSponsorshipToExcel(request);
+                  const code = (request.sales_type ?? '').trim().toLowerCase();
+                  const salesTypeLabel = code
+                    ? (salesTypeOptions.data?.options.find(
+                        (o) => o.value.toLowerCase() === code,
+                      )?.label ?? request.sales_type)
+                    : null;
+                  await exportPurchaseRequestOrSponsorshipToExcel(request, salesTypeLabel);
                   toast.success(
                     request.request_type === 'sponsorship_form'
                       ? 'Sponsorship form exported to Excel'
@@ -600,6 +612,17 @@ export default function PurchaseRequestDetail({
             >
               <FileDown className="size-4" />
               {exportingExcel ? 'Exporting…' : 'Export to Excel'}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              data-guide-target="procurement.purchase-requests.download-pdf"
+              disabled={exportPdfMutation.isPending}
+              onSelect={(e) => {
+                e.preventDefault();
+                exportPdfMutation.mutate(requestId);
+              }}
+            >
+              <Printer className="size-4" />
+              {exportPdfMutation.isPending ? 'Preparing…' : 'Print / Download PDF'}
             </DropdownMenuItem>
             {request.respond_inbox_url && (
               <>
@@ -636,6 +659,12 @@ export default function PurchaseRequestDetail({
               </DropdownMenuItem>
             )}
           </DetailActionsMenu>
+          <EntityDownloadsButton
+            entityType="purchase_request"
+            entityId={requestId}
+            label={request.request_number ?? undefined}
+            className="h-8 border border-border"
+          />
           <PurchaseRequestNavigation
             basePath={basePath}
             requestId={requestId}
@@ -910,7 +939,7 @@ export default function PurchaseRequestDetail({
                 <h2 className="text-center text-xl font-semibold tracking-tight border-b border-border pb-4 mb-6">
                   Purchase Request
                 </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5 [&>div]:min-w-0 [&_p]:break-words">
                   <div>
                     <p className="text-sm text-muted-foreground">Purchase request number</p>
                     <p className="font-medium tabular-nums">{request.request_number || '—'}</p>
@@ -926,6 +955,10 @@ export default function PurchaseRequestDetail({
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Customer Name</p>
                     <p className="font-medium">{request.customer_name || '—'}</p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">PIC</p>
+                    <p className="font-medium whitespace-pre-wrap">{request.pic || '—'}</p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Project Title</p>
@@ -1061,7 +1094,7 @@ export default function PurchaseRequestDetail({
                 <h2 className="text-center text-xl font-semibold tracking-tight border-b border-border pb-4 mb-6">
                   Project Sales Sponsorship Form
                 </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5 [&>div]:min-w-0 [&_p]:break-words">
                   <div>
                     <p className="text-sm text-muted-foreground">Sponsorship form number</p>
                     <p className="font-medium tabular-nums">{request.request_number || '—'}</p>
@@ -1077,6 +1110,10 @@ export default function PurchaseRequestDetail({
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Customer Name</p>
                     <p className="font-medium">{request.customer_name || '—'}</p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">PIC</p>
+                    <p className="font-medium whitespace-pre-wrap">{request.pic || '—'}</p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Delivery Address</p>

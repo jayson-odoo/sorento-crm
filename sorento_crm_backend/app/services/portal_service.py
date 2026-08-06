@@ -1304,6 +1304,7 @@ class PortalService:
             )
         return (
             "customer_name",
+            "pic",
             "project_title",
             "purpose",
             "delivery_address",
@@ -1694,8 +1695,13 @@ class PortalService:
                 "request_date": row.request_date.isoformat() if row.request_date else None,
                 "submitted_at": row.submitted_at.isoformat() if row.submitted_at else None,
                 "customer_name": row.customer_name,
+                # Must be echoed back or a saved draft reopens with PIC blank: the
+                # write allowlist and the read serializer are two separate lists and
+                # a field has to be in BOTH.
+                "pic": getattr(row, "pic", None),
                 "project_title": row.project_title,
                 "purpose": row.purpose,
+                "sales_type": row.sales_type,
                 "delivery_address": row.delivery_address,
                 "total_project_value": str(row.total_project_value) if row.total_project_value is not None else None,
                 "total_project_value_text": row.total_project_value_text,

@@ -190,6 +190,25 @@ export function PurchaseRequestDocumentEditCard({
               />
             </DocField>
 
+            <DocField label="PIC" className="sm:col-span-2">
+              <FormField
+                control={control}
+                name="pic"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormControl>
+                      <Input
+                        placeholder="Name and contact number"
+                        {...field}
+                        value={field.value ?? ''}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </DocField>
+
             <DocField label="Project Title" className="sm:col-span-2">
               <FormField
                 control={control}
