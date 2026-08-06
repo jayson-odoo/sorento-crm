@@ -25,6 +25,9 @@ export interface Attachment {
   linked_promotions?: LinkedEntityRef[];
   linked_form?: LinkedEntityRef | null;
   linked_packing_lists?: LinkedEntityRef[];
+  /** Certificates this file is a filed revision of. Read-only: the link
+   *  exists because the document was filed, not because a user made it. */
+  linked_certificates?: LinkedEntityRef[];
   uploaded_by?: string | null;
   uploaded_at: Date;
   created_at: Date;
@@ -113,6 +116,9 @@ export interface AttachmentResponse {
   linked_promotions?: LinkedEntityRef[];
   linked_form?: LinkedEntityRef | null;
   linked_packing_lists?: LinkedEntityRef[];
+  /** Certificates this file is a filed revision of. Read-only: the link
+   *  exists because the document was filed, not because a user made it. */
+  linked_certificates?: LinkedEntityRef[];
   uploaded_by?: string | null;
   uploaded_at: Date | string;
   created_at?: Date | string;

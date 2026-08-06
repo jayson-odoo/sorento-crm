@@ -119,7 +119,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "INSTALLATION GUIDE / CERTIFICATE for a specific product). FILTER BY UUID: `product_ids` "
             "(canonical product UUIDs), `attachment_ids` (canonical attachment UUIDs), and / or "
             "`attachment_type_ids` (canonical AttachmentType UUIDs — narrows to a doc class such as "
-            "brochure or spec sheet). All three accept csv / JSON list / repeated query params.\n\n"
+            "brochure or spec sheet), and / or `certificate_ids` (canonical Certificate UUIDs — the "
+            "product↔file rows whose file is a filed revision of those certificates; get the UUID from "
+            "crm_certificates_list first). All accept csv / JSON list / repeated query params.\n\n"
             "CERTIFICATE VALIDITY: a row whose file is a filed certificate carries `certificate` "
             "with `validity_state` (valid / expiring_soon / expired / not_yet_valid / unknown), "
             "`valid_until` and `is_current_revision`. NEVER compare dates yourself and never call a "
@@ -132,9 +134,10 @@ CATALOG: tuple[ToolSpec, ...] = (
         ),
         "/api/v1/master-data/product-attachments",
         (),
-        ("page", "limit", "sort", "dir", "product_ids", "attachment_ids", "attachment_type_ids", "contact_id", "space_id"),
+        ("page", "limit", "sort", "dir", "product_ids", "attachment_ids", "attachment_type_ids",
+         "certificate_ids", "contact_id", "space_id"),
         domain="products",
-        related_tools=("crm_master_products_list",),
+        related_tools=("crm_master_products_list", "crm_certificates_list"),
         escalation_team="sales",
     ),
     ToolSpec(

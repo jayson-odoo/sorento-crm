@@ -63,6 +63,10 @@ export interface CertificateRevision {
   // Emitted by CertificateRevisionResponse. `access_levels` is null when the
   // revision has no attachment; the signed urls are present only for the current
   // revision, so superseded rows render the filename without controls.
+  /** The resource-management attachment behind this revision. Null when the
+   *  revision was filed before its document arrived, or when the file was hard
+   *  deleted (the FK is ON DELETE SET NULL). */
+  attachment_id?: string | null;
   attachment_filename?: string | null;
   attachment_is_deleted?: boolean | null;
   preview_url?: string | null;

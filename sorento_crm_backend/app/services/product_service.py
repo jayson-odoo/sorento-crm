@@ -2183,6 +2183,7 @@ class ProductAttachmentService:
         product_ids: Optional[list[str]] = None,
         attachment_ids: Optional[list[str]] = None,
         attachment_type_ids: Optional[list[str]] = None,
+        certificate_ids: Optional[list[str]] = None,
         query: Optional[str] = None,
     ):
         """List product attachments with filtering and pagination.
@@ -2258,6 +2259,27 @@ class ProductAttachmentService:
                     Attachment.attachment_type_id.in_(attachment_type_ids)
                 )
             )
+
+        if certificate_ids:
+            # "Which products does this certificate cover, and with which file?"
+            # CURRENT revision only, matching REV-3 - the register deletes the
+            # projection rows of a superseded revision precisely so a replaced
+            # document is never served. Restating it here means a stale row left
+            # by a bug still cannot leak out through this filter.
+            # The subquery joins Certificate, so company scope applies
+            # (certificate_revisions carries no company_id of its own).
+            from app.models.certificate import Certificate, CertificateRevision
+
+            cert_attachment_ids = (
+                self.db.query(CertificateRevision.attachment_id)
+                .join(Certificate, Certificate.id == CertificateRevision.certificate_id)
+                .filter(
+                    Certificate.id.in_(certificate_ids),
+                    CertificateRevision.is_current.is_(True),
+                    CertificateRevision.attachment_id.isnot(None),
+                )
+            )
+            q = q.filter(ProductAttachment.attachment_id.in_(cert_attachment_ids))
 
         if user_type:
             q = q.filter(ProductAttachment.attachment.has(Attachment.access_levels.contains([user_type])))

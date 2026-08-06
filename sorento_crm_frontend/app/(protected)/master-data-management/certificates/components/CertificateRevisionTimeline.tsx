@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Download, Eye, FileWarning } from 'lucide-react';
+import { Download, Eye, FileText, FileWarning } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -26,9 +26,14 @@ import type { CertificateRevision } from '../types/certificate.types';
 export default function CertificateRevisionTimeline({
   revisions,
   currentAccessLevels,
+  onOpenAttachment,
 }: {
   revisions: CertificateRevision[];
   currentAccessLevels: string[];
+  /** Opens the file in the shared resource-management attachment modal - the
+   *  same affordance a product / promotion / packing-list detail page gives.
+   *  Omitted, or a revision with no `attachment_id`, renders plain text. */
+  onOpenAttachment?: (attachmentId: string) => void;
 }) {
   if (revisions.length === 0) {
     return (
@@ -60,6 +65,7 @@ export default function CertificateRevisionTimeline({
           key={revision.id}
           revision={revision}
           currentAccessLevels={currentAccessLevels}
+          onOpenAttachment={onOpenAttachment}
         />
       ))}
     </ol>
@@ -69,9 +75,11 @@ export default function CertificateRevisionTimeline({
 function RevisionNode({
   revision,
   currentAccessLevels,
+  onOpenAttachment,
 }: {
   revision: CertificateRevision;
   currentAccessLevels: string[];
+  onOpenAttachment?: (attachmentId: string) => void;
 }) {
   const eventLabel = revision.revision_no === 1 ? 'Issued' : 'Renewed';
   const dotClass = revision.is_current ? 'bg-primary' : 'bg-muted-foreground/40';
@@ -141,9 +149,26 @@ function RevisionNode({
                 </div>
               ) : (
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="truncate text-sm" title={revision.attachment_filename}>
-                    {revision.attachment_filename}
-                  </span>
+                  {/* The filename is the way into resource management, matching
+                      how a product / promotion / packing-list detail page opens
+                      its files. A revision with no attachment_id (filed before
+                      its document, or the file hard-deleted) stays plain text
+                      rather than becoming a button that goes nowhere. */}
+                  {onOpenAttachment && revision.attachment_id ? (
+                    <button
+                      type="button"
+                      onClick={() => onOpenAttachment(revision.attachment_id as string)}
+                      className="inline-flex max-w-full items-center gap-1 truncate text-sm text-primary hover:underline"
+                      title={`Open ${revision.attachment_filename} in Resource Management`}
+                    >
+                      <span className="truncate">{revision.attachment_filename}</span>
+                      <FileText className="size-3.5 shrink-0" />
+                    </button>
+                  ) : (
+                    <span className="truncate text-sm" title={revision.attachment_filename}>
+                      {revision.attachment_filename}
+                    </span>
+                  )}
                   {/* Only the CURRENT revision is url-resolved, so superseded rows
                       show the filename without controls rather than a dead link. */}
                   {revision.preview_url ? (
