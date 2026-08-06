@@ -384,6 +384,9 @@ class PurchaseRequestPDFService:
   table.fields {{ width: 100%; table-layout: auto; border-collapse: collapse; }}
   table.fields td {{ padding: 2.5px 14px 2.5px 0; vertical-align: top;
                      white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }}
+  /* Labels bold: on a dense form the eye needs the label to separate from the
+     value it sits beside, and there is no column rule doing that job. */
+  table.fields td.lbl, table.fields td.pair span.lbl {{ font-weight: bold; }}
   table.fields td.lbl {{ width: 1%; white-space: nowrap; }}
   /* label and value in one cell: the label keeps its own gap, the value
      follows immediately, and nothing on another row can push them apart. */

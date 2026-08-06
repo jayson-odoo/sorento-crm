@@ -280,6 +280,21 @@ def test_the_sponsorship_form_has_no_sales_type_row(db):
     assert "Sales Type:" not in PurchaseRequestPDFService(db)._html(row)
 
 
+@pytest.mark.parametrize("request_type", BOTH_TYPES)
+def test_labels_are_bold(db, request_type):
+    """On a dense form with no column rules, weight is the only thing separating
+    a label from the value sitting right beside it."""
+    from app.services.purchase_request_pdf_service import PurchaseRequestPDFService
+
+    row = _make(db, request_type=request_type)
+    db.commit()
+
+    html = PurchaseRequestPDFService(db)._html(row)
+    assert "td.lbl, table.fields td.pair span.lbl { font-weight: bold; }" in html, (
+        "both the left-hand labels and the paired right-hand label must be bold"
+    )
+
+
 def test_only_the_sponsorship_form_is_priced(db):
     """Column sets differ by type, exactly as the two Excel formats do: a
     Sponsorship Form carries U/P, Total and a Grand Total; a Purchase Request
