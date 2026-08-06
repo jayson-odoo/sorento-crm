@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAction } from '@/lib/useAction';
 import { apiFetch } from '@/lib/api';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Link2, ScrollText, BadgeCheck, XCircle, Printer } from 'lucide-react';
+import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -29,6 +29,7 @@ import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import { usePurchaseRequest, useExportPurchaseRequestPdf } from '../hooks/usePurchaseRequests';
 import { formatDate, formatCurrency } from '@/lib/helpers';
 import { useCurrencyFormat } from '@/hooks/useCurrencyFormat';
@@ -580,17 +581,6 @@ export default function PurchaseRequestDetail({
               </DropdownMenuItem>
             )}
             <DropdownMenuItem
-              disabled={exportPdfMutation.isPending}
-              onSelect={(e) => {
-                e.preventDefault();
-                if (!request) return;
-                exportPdfMutation.mutate(request.id);
-              }}
-            >
-              <Printer className="size-4" />
-              {exportPdfMutation.isPending ? 'Preparing…' : 'Print / Download PDF'}
-            </DropdownMenuItem>
-            <DropdownMenuItem
               disabled={exportingExcel}
               onClick={async (e) => {
                 e.preventDefault();
@@ -648,6 +638,17 @@ export default function PurchaseRequestDetail({
               </DropdownMenuItem>
             )}
           </DetailActionsMenu>
+          <Button
+            variant="outline"
+            size="sm"
+            data-guide-target="procurement.purchase-requests.download-pdf"
+            disabled={exportPdfMutation.isPending}
+            onClick={() => exportPdfMutation.mutate(requestId)}
+          >
+            <FileDown className="size-4 mr-1" />
+            {exportPdfMutation.isPending ? 'Preparing…' : 'Download PDF'}
+          </Button>
+          <EntityDownloadsButton entityType="purchase_request" entityId={requestId} />
           <PurchaseRequestNavigation
             basePath={basePath}
             requestId={requestId}

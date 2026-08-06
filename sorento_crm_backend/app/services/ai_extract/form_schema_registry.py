@@ -238,10 +238,10 @@ _PORTAL_PURCHASE_REQUEST: list[ExtractFieldSpec] = [
             "Usually appears near the delivery address as 'Contact:', 'Attn:', "
             "'PIC' or 'c/o'. This is NOT the salesperson / sales rep, NOT the "
             "person raising the request, and NOT the company name. Return the "
-            "name and number as written, e.g. 'Hanson (012-403 9611)'. Leave "
+            "name and number as written, e.g. 'Ah Meng (01X-XXX XXXX)'. Leave "
             "empty when no site contact is named — most documents do not have one."
         ),
-        examples=["Hanson (012-403 9611)", "Mr Tan 012-3456789"],
+        examples=["Site contact name (mobile number)", "Attn: store keeper, office line"],
     ),
     ExtractFieldSpec(
         name="project_title",
@@ -310,10 +310,10 @@ _PORTAL_SPONSORSHIP_FORM: list[ExtractFieldSpec] = [
             "Usually appears near the delivery address as 'Contact:', 'Attn:', "
             "'PIC' or 'c/o'. This is NOT the salesperson / sales rep, NOT the "
             "person raising the request, and NOT the company name. Return the "
-            "name and number as written, e.g. 'Hanson (012-403 9611)'. Leave "
+            "name and number as written, e.g. 'Ah Meng (01X-XXX XXXX)'. Leave "
             "empty when no site contact is named — most documents do not have one."
         ),
-        examples=["Hanson (012-403 9611)", "Mr Tan 012-3456789"],
+        examples=["Site contact name (mobile number)", "Attn: store keeper, office line"],
     ),
     ExtractFieldSpec(
         name="project_title",

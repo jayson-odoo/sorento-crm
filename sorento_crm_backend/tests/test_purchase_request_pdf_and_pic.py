@@ -213,3 +213,24 @@ def test_the_pic_prompt_disambiguates_from_the_salesperson(form_key):
     note = (spec.note or "").lower()
     assert note, "PIC has no note, so nothing stops the model taking the salesperson"
     assert "salesperson" in note or "sales person" in note
+
+
+# --- the portal allowlist (this one actually shipped broken) ---------------- #
+
+@pytest.mark.parametrize("kind", ["purchase_request", "sponsorship_form"])
+def test_pic_survives_a_portal_submission(kind):
+    """PIC was on the portal form, the user filled it, and it silently vanished.
+
+    ``PortalService`` applies an explicit per-kind allowlist of editable fields;
+    anything absent is dropped without an error, so the field rendered, accepted
+    input, and saved NULL. Adding a column and a form widget is not enough - the
+    allowlist is a third place that has to know about it.
+    """
+    from app.services.portal_service import PortalService
+
+    # instance method, but the allowlist depends only on `kind`
+    fields = PortalService._editable_fields(None, kind)  # type: ignore[arg-type]
+    assert "pic" in fields, (
+        f"pic missing from the {kind} portal allowlist — the field renders, accepts "
+        "input, and is then silently dropped on submit"
+    )

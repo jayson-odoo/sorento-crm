@@ -379,7 +379,7 @@ export default function PurchaseRequestForm({
                       <FormLabel>PIC</FormLabel>
                       <FormControl>
                         <Input
-                          placeholder="e.g. Hanson (012-403 9611)"
+                          placeholder="Name and contact number"
                           {...field}
                           value={field.value ?? ''}
                         />

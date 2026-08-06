@@ -1304,6 +1304,7 @@ class PortalService:
             )
         return (
             "customer_name",
+            "pic",
             "project_title",
             "purpose",
             "delivery_address",
