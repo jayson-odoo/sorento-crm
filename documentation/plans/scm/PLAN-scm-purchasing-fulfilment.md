@@ -284,6 +284,18 @@ before commit.
   alternatives. Approve advances `qty_received`; split across PO lines must sum to shipped
   quantity.
 
+> **S9 under the 6 Aug supply decision.** Supply is the SPO allocation, never the purchase order
+> (migration 337). That makes this slice the one that WRITES supply, not merely a bookkeeping
+> step after it. Approving an allocation moves quantity from the Ordered tile to the Incoming
+> tile in one action: the allocation raises `scm.on_order_v`, and the `qty_received` it advances
+> lowers `scm.po_ordered_v`.
+>
+> Linking `po_line_id` is therefore worth doing even though nothing nets the two views: a LINKED
+> allocation stops being counted as ordered the moment it is approved, so the Ordered figure
+> sharpens from "everything placed" toward "placed and not yet shipped against". Historical
+> unlinked rows keep the old, overstated reading. The progression is monotonic and safe because
+> supply never includes ordered - see AC-G6a.
+
 ## Holes closed during the plan grill
 
 Six weaknesses were found in the first draft of this plan. Each is resolved here so a builder does

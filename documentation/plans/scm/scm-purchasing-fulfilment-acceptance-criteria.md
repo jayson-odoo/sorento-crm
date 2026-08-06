@@ -467,16 +467,29 @@ stage. Re-uploading the same pre-load list creates no second set of shipments.
 Fulfilment Priority, with the reason and the alternatives shown.
 
 **AC-G5** `spo_allocations` carries a nullable `po_line_id`. Nullable because existing rows have
-no PO, and because stock can arrive against no PO.
+no PO, and because stock can arrive against no PO. Today **all 860 live rows are unlinked**, which
+is why supply and ordered are never netted against each other (see AC-G6a).
 
-**AC-G6** Approving allocations advances the PO line's received quantity, so `scm.on_order_v`
-falls and the Coverage Timeline corrects itself in the same action.
+**AC-G6** REVISED 6 Aug 2026, because supply is now the SPO allocation rather than the purchase
+order. Approving allocations does two things in one action: the new allocation makes
+`scm.on_order_v` (INCOMING) **rise**, and advancing the PO line's received quantity makes
+`scm.po_ordered_v` (ORDERED) **fall**. On screen the quantity moves from the Ordered tile to the
+Incoming tile, and the Coverage Timeline gains a dated arrival in the same action. The earlier
+wording said `on_order_v` falls, which was true only while that view read purchase orders.
+
+**AC-G6a** Because approving an allocation writes BOTH the allocation and the PO line's received
+quantity, a linked allocation is counted exactly once: as incoming supply, and no longer as
+ordered. An UNLINKED allocation (`po_line_id IS NULL`, every historical row) leaves the ordered
+figure overstated by whatever it shipped against, which is the stated cost of the 6 Aug decision
+and is visible rather than hidden. What must never happen is the reverse: adding the ordered
+figure into the balance, which would double every shipped order.
 
 **AC-G7** A shipment line may be split across several PO lines and locations, and the split must
 sum to the shipped quantity.
 
 **AC-G8** Incoming stock is visible to salespeople from the moment allocations are approved, not
-from the goods-received date.
+from the goods-received date. This is now structural rather than a feature to build: the
+allocation IS the supply, so there is no path by which an approved allocation is invisible.
 
 ## Group H - Fulfilment Priority policy
 
