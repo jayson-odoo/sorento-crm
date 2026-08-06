@@ -17,6 +17,29 @@ from app.services.storage_router import default_provider, get_backend
 logger = logging.getLogger(__name__)
 
 
+def _record_failure(db, svc: DownloadService, download_id: str, error: Exception, label: str) -> None:
+    """Write the failure onto the download row, whatever it was that failed.
+
+    The rollback is the point. When the thing that failed was the DATABASE - a query against a
+    column the running code expects and the schema does not yet have, say - psycopg2 leaves the
+    transaction aborted, and every later statement on that session raises
+    `InFailedSqlTransaction`. `mark_failed` is a later statement on that session, so without a
+    rollback first it raises too, and the row is left sitting in 'processing' for good: the
+    drawer polls it forever, and its sweeper only reaps rows in 'sent'. The user is told nothing.
+
+    Marking the failure is itself best-effort - if even this cannot be written, log it and let
+    the task return normally rather than poisoning RQ's failed registry.
+    """
+    try:
+        db.rollback()
+    except Exception:  # noqa: BLE001 - a session too broken to roll back is still worth trying
+        logger.exception("%s: rollback before marking download %s failed", label, download_id)
+    try:
+        svc.mark_failed(download_id, str(error))
+    except Exception:  # noqa: BLE001
+        logger.exception("%s: could not mark download %s failed", label, download_id)
+
+
 def generate_complaint_pdf(download_id: str, complaint_id: str, user_id: str) -> dict:
     """Render a complaint PDF, store it, and update the download row.
 
@@ -55,10 +78,7 @@ def generate_complaint_pdf(download_id: str, complaint_id: str, user_id: str) ->
         return {"download_id": download_id, "status": "ready", "bytes": len(pdf_bytes)}
     except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
         logger.exception("generate_complaint_pdf failed for download %s", download_id)
-        try:
-            svc.mark_failed(download_id, str(e))
-        except Exception:
-            logger.exception("generate_complaint_pdf: could not mark download %s failed", download_id)
+        _record_failure(db, svc, download_id, e, "generate_complaint_pdf")
         return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
         db.close()
@@ -114,10 +134,7 @@ def generate_promotions_pdf(
         }
     except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
         logger.exception("generate_promotions_pdf failed for download %s", download_id)
-        try:
-            svc.mark_failed(download_id, str(e))
-        except Exception:
-            logger.exception("generate_promotions_pdf: could not mark download %s failed", download_id)
+        _record_failure(db, svc, download_id, e, "generate_promotions_pdf")
         return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
         db.close()
@@ -196,12 +213,7 @@ def generate_quotation_issue_pdf(
         return {"download_id": download_id, "status": "ready", "bytes": len(pdf_bytes)}
     except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
         logger.exception("generate_quotation_issue_pdf failed for download %s", download_id)
-        try:
-            svc.mark_failed(download_id, str(e))
-        except Exception:
-            logger.exception(
-                "generate_quotation_issue_pdf: could not mark download %s failed", download_id
-            )
+        _record_failure(db, svc, download_id, e, "generate_quotation_issue_pdf")
         return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
         db.close()
@@ -253,12 +265,7 @@ def generate_quotation_issue_xlsx(
         return {"download_id": download_id, "status": "ready", "bytes": len(payload)}
     except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
         logger.exception("generate_quotation_issue_xlsx failed for download %s", download_id)
-        try:
-            svc.mark_failed(download_id, str(e))
-        except Exception:
-            logger.exception(
-                "generate_quotation_issue_xlsx: could not mark download %s failed", download_id
-            )
+        _record_failure(db, svc, download_id, e, "generate_quotation_issue_xlsx")
         return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
         db.close()
@@ -353,10 +360,7 @@ def generate_chat_history_csv(download_id: str, filters: dict) -> dict:
         return {"download_id": download_id, "status": "ready", "rows": rows_written}
     except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
         logger.exception("generate_chat_history_csv failed for download %s", download_id)
-        try:
-            svc.mark_failed(download_id, str(e))
-        except Exception:
-            logger.exception("generate_chat_history_csv: could not mark download %s failed", download_id)
+        _record_failure(db, svc, download_id, e, "generate_chat_history_csv")
         return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
         db.close()

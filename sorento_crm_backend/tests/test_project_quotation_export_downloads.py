@@ -643,6 +643,51 @@ def test_a_revision_that_no_longer_exists_fails_the_row_instead_of_crashing_the_
     assert backend.uploads == []
 
 
+def test_a_database_failure_still_lands_on_the_row_rather_than_stranding_it(api, queued):
+    """The failure that CANNOT be reported is the one that broke the reporting channel.
+
+    When what blows up is the database - a query against a column the running code expects and
+    the schema does not have yet, which is exactly what a half-applied migration looks like -
+    psycopg2 leaves the transaction aborted and every later statement on that session raises
+    `InFailedSqlTransaction`. Marking the download failed is a later statement on that session.
+    So the handler that exists to record failures fails too, and the row is stranded on
+    'processing': the drawer says "Preparing" forever, its sweeper only reaps 'sent', and the
+    user is never told anything went wrong. Rolling back first is what makes the report land.
+
+    Seen for real: an in-flight migration left `project_quotation_documents.approval_status_id`
+    in the model and not in the database, and the download row sat on 'processing'.
+    """
+    client, db, company_id, _user_id, project = api
+    root, document, issue = _issue_one(client, db, project)
+    row = client.post(f"{root}/{document['id']}/issues/{issue['id']}/export/pdf").json()
+
+    def _abort_the_transaction(inner_db, _issue):
+        # Any statement Postgres refuses will do: what matters is that the transaction is left
+        # aborted afterwards, the way a missing column leaves it.
+        inner_db.execute(text(f'SELECT "{MARKER}_no_such_column"'))
+
+    backend = _FakeBackend()
+    with _task_env(db, backend) as tasks:
+        from app.services import project_quotation_pdf_service as pdf_service
+
+        original = pdf_service.render_issue_pdf
+        pdf_service.render_issue_pdf = _abort_the_transaction
+        try:
+            result = tasks.generate_quotation_issue_pdf(
+                row["id"], issue["id"], "unused", company_id=company_id
+            )
+        finally:
+            pdf_service.render_issue_pdf = original
+
+    assert result["status"] == "failed", result
+    stored = db.query(UserDownload).filter(UserDownload.id == row["id"]).one()
+    assert stored.status == DownloadStatus.FAILED.value, (
+        "a database-level failure left the row stranded on 'processing'"
+    )
+    assert stored.error
+    assert backend.uploads == []
+
+
 # ------------------------------------------------------- serving the artifact
 
 
