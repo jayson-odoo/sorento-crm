@@ -139,6 +139,7 @@ vi.mock('../hooks/usePurchaseRequests', () => ({
   useDeletePurchaseRequestAttachment: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeletePurchaseRequest: () => ({ mutateAsync: vi.fn(), isPending: false }),
   usePurchaseRequestConversation: () => ({ data: undefined, isLoading: false }),
+  useExportPurchaseRequestPdf: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 import PurchaseRequestDetail from './PurchaseRequestDetail';

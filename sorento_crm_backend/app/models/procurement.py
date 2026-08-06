@@ -451,6 +451,10 @@ class PurchaseRequestHeader(Base):
     request_number = Column(String(50), nullable=True)
     request_date = Column(Date, nullable=True)
     customer_name = Column(Text, nullable=True)
+    # Person in charge at the delivery site: free text, "name and contact number".
+    # Optional. Exists so the receiving contact stops being appended to
+    # delivery_address (see migration 313).
+    pic = Column(Text, nullable=True)
     project_title = Column(Text, nullable=True)
     purpose = Column(Text, nullable=True)
     delivery_address = Column(Text, nullable=True)  # sponsorship form

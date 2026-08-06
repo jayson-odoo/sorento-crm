@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAction } from '@/lib/useAction';
 import { apiFetch } from '@/lib/api';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
+import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Link2, ScrollText, BadgeCheck, XCircle, Printer } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -29,7 +29,7 @@ import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { usePurchaseRequest } from '../hooks/usePurchaseRequests';
+import { usePurchaseRequest, useExportPurchaseRequestPdf } from '../hooks/usePurchaseRequests';
 import { formatDate, formatCurrency } from '@/lib/helpers';
 import { useCurrencyFormat } from '@/hooks/useCurrencyFormat';
 import PurchaseRequestDeleteDialog from './purchase-request-delete-dialog';
@@ -184,6 +184,7 @@ export default function PurchaseRequestDetail({
     }
   });
   const [exportingExcel, setExportingExcel] = useState(false);
+  const exportPdfMutation = useExportPurchaseRequestPdf();
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const [approvalLinkCopying, setApprovalLinkCopying] = useState(false);
   const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
@@ -579,6 +580,17 @@ export default function PurchaseRequestDetail({
               </DropdownMenuItem>
             )}
             <DropdownMenuItem
+              disabled={exportPdfMutation.isPending}
+              onSelect={(e) => {
+                e.preventDefault();
+                if (!request) return;
+                exportPdfMutation.mutate(request.id);
+              }}
+            >
+              <Printer className="size-4" />
+              {exportPdfMutation.isPending ? 'Preparing…' : 'Print / Download PDF'}
+            </DropdownMenuItem>
+            <DropdownMenuItem
               disabled={exportingExcel}
               onClick={async (e) => {
                 e.preventDefault();
@@ -928,6 +940,10 @@ export default function PurchaseRequestDetail({
                     <p className="font-medium">{request.customer_name || '—'}</p>
                   </div>
                   <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">PIC</p>
+                    <p className="font-medium whitespace-pre-wrap">{request.pic || '—'}</p>
+                  </div>
+                  <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Project Title</p>
                     <p className="font-medium">{request.project_title || '—'}</p>
                   </div>
@@ -1077,6 +1093,10 @@ export default function PurchaseRequestDetail({
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Customer Name</p>
                     <p className="font-medium">{request.customer_name || '—'}</p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">PIC</p>
+                    <p className="font-medium whitespace-pre-wrap">{request.pic || '—'}</p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Delivery Address</p>

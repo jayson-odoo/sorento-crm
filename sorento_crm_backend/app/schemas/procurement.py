@@ -728,6 +728,8 @@ class PurchaseRequestHeaderBase(BaseModel):
     request_number: Optional[str] = None  # User-assignable form number (e.g. PR-2026-001)
     request_date: Optional[date] = None
     customer_name: Optional[str] = None
+    # Site contact, free text ("name and contact number"). Optional.
+    pic: Optional[str] = None
     project_title: Optional[str] = None
     purpose: Optional[str] = None
     delivery_address: Optional[str] = None  # sponsorship form
@@ -790,6 +792,8 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     request_number: Optional[str] = None
     request_date: Optional[date] = None
     customer_name: Optional[str] = None
+    # Site contact, free text ("name and contact number"). Optional.
+    pic: Optional[str] = None
     project_title: Optional[str] = None
     purpose: Optional[str] = None
     delivery_address: Optional[str] = None
@@ -960,6 +964,8 @@ class PublicApprovalSummaryResponse(BaseModel):
     request_number: Optional[str] = None
     request_type: str
     customer_name: Optional[str] = None
+    # Site contact, free text ("name and contact number"). Optional.
+    pic: Optional[str] = None
     project_title: Optional[str] = None
     purpose: Optional[str] = None
     delivery_address: Optional[str] = None  # sponsorship form

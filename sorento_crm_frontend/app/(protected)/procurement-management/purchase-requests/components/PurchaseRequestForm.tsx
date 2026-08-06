@@ -118,6 +118,7 @@ export default function PurchaseRequestForm({
       request_number: null,
       request_date: null,
       customer_name: null,
+      pic: null,
       project_title: null,
       purpose: null,
       delivery_address: null,
@@ -184,6 +185,7 @@ export default function PurchaseRequestForm({
           ? new Date(request.request_date).toISOString().split('T')[0]
           : null,
         customer_name: request.customer_name ?? null,
+        pic: request.pic ?? null,
         project_title: request.project_title ?? null,
         purpose: request.purpose ?? null,
         delivery_address: request.delivery_address ?? null,
@@ -221,6 +223,8 @@ export default function PurchaseRequestForm({
         request_number: data.request_number ?? undefined,
         request_date: data.request_date || undefined,
         customer_name: data.customer_name || undefined,
+        // Empty string must become undefined, not "" — "not given" is one value.
+        pic: data.pic || undefined,
         project_title: data.project_title || undefined,
         purpose: data.purpose ?? undefined,
         delivery_address: data.delivery_address ?? undefined,
@@ -359,6 +363,23 @@ export default function PurchaseRequestForm({
                       <FormControl>
                         <Input
                           placeholder="Customer name"
+                          {...field}
+                          value={field.value ?? ''}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="pic"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>PIC</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="e.g. Hanson (012-403 9611)"
                           {...field}
                           value={field.value ?? ''}
                         />

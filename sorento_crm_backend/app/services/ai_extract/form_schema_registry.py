@@ -229,6 +229,21 @@ _PORTAL_PURCHASE_REQUEST: list[ExtractFieldSpec] = [
         examples=["ACME Sdn Bhd", "Tan Construction Sdn Bhd"],
     ),
     ExtractFieldSpec(
+        name="pic",
+        label="PIC",
+        kind="text",
+        note=(
+            "The person in charge AT THE DELIVERY SITE — who the driver asks for "
+            "on arrival — together with their phone number if one is printed. "
+            "Usually appears near the delivery address as 'Contact:', 'Attn:', "
+            "'PIC' or 'c/o'. This is NOT the salesperson / sales rep, NOT the "
+            "person raising the request, and NOT the company name. Return the "
+            "name and number as written, e.g. 'Hanson (012-403 9611)'. Leave "
+            "empty when no site contact is named — most documents do not have one."
+        ),
+        examples=["Hanson (012-403 9611)", "Mr Tan 012-3456789"],
+    ),
+    ExtractFieldSpec(
         name="project_title",
         label="Project title",
         kind="text",
@@ -284,6 +299,21 @@ _PORTAL_SPONSORSHIP_FORM: list[ExtractFieldSpec] = [
             "project_title). Company name only."
         ),
         examples=["ACME Sdn Bhd", "Tan Construction Sdn Bhd"],
+    ),
+    ExtractFieldSpec(
+        name="pic",
+        label="PIC",
+        kind="text",
+        note=(
+            "The person in charge AT THE DELIVERY SITE — who the driver asks for "
+            "on arrival — together with their phone number if one is printed. "
+            "Usually appears near the delivery address as 'Contact:', 'Attn:', "
+            "'PIC' or 'c/o'. This is NOT the salesperson / sales rep, NOT the "
+            "person raising the request, and NOT the company name. Return the "
+            "name and number as written, e.g. 'Hanson (012-403 9611)'. Leave "
+            "empty when no site contact is named — most documents do not have one."
+        ),
+        examples=["Hanson (012-403 9611)", "Mr Tan 012-3456789"],
     ),
     ExtractFieldSpec(
         name="project_title",

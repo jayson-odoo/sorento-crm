@@ -199,6 +199,7 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
   ],
   purchase_request: [
     { name: 'customer_name', label: 'Customer name', widget: 'debtor-async' },
+    { name: 'pic', label: 'PIC', placeholder: 'e.g. Hanson (012-403 9611)' },
     { name: 'project_title', label: 'Project title' },
     { name: 'purpose', label: 'Purpose', widget: 'textarea' },
     {
@@ -228,6 +229,7 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
   // Sponsor Subject → Date of Delivery → Request date → Requested by.
   sponsorship_form: [
     { name: 'customer_name', label: 'Customer name', widget: 'debtor-async' },
+    { name: 'pic', label: 'PIC', placeholder: 'e.g. Hanson (012-403 9611)' },
     { name: 'delivery_address', label: 'Delivery address', widget: 'textarea' },
     { name: 'project_title', label: 'Project title' },
     { name: 'total_project_value', label: 'Total project value', widget: 'number', placeholder: 'e.g. 1234.00' },

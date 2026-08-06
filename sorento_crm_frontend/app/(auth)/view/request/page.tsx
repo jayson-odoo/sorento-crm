@@ -34,6 +34,7 @@ interface ViewSummary {
   request_number: string | null;
   request_type: string;
   customer_name: string | null;
+  pic: string | null;
   project_title: string | null;
   purpose: string | null;
   delivery_address?: string | null;
@@ -296,6 +297,10 @@ function ViewRequestContent() {
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Customer Name</p>
                 <p className="text-sm font-medium break-words">{summary?.customer_name ?? '—'}</p>
               </div>
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">PIC</p>
+                <p className="text-sm font-medium break-words">{summary?.pic ?? '—'}</p>
+              </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Project Title</p>
                 <p className="text-sm font-medium break-words">{summary?.project_title ?? '—'}</p>
@@ -387,6 +392,10 @@ function ViewRequestContent() {
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Customer Name</p>
                 <p className="text-sm font-medium break-words">{summary?.customer_name ?? '—'}</p>
               </div>
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">PIC</p>
+                <p className="text-sm font-medium break-words">{summary?.pic ?? '—'}</p>
+              </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Delivery Address</p>
                 <p className="text-sm font-medium whitespace-pre-wrap break-words">
@@ -474,6 +483,7 @@ function ViewRequestContent() {
               <DetailRow label="Form number" value={summary?.request_number ?? undefined} />
               <DetailRow label="Status" value={approvalStatusLabel(summary?.approval_status)} />
               <DetailRow label="Customer" value={summary?.customer_name ?? undefined} />
+              <DetailRow label="PIC" value={summary?.pic ?? undefined} />
               <DetailRow label="Project" value={summary?.project_title ?? undefined} />
               <DetailRow label="Requested by" value={summary?.requested_by ?? undefined} />
               <DetailRow label="Request date" value={summary?.request_date ? formatDateStr(summary.request_date) : undefined} />

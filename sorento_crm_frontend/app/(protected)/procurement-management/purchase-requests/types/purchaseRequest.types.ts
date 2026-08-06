@@ -32,6 +32,8 @@ export interface PurchaseRequest {
   request_number?: string | null;
   request_date?: string | null;
   customer_name?: string | null;
+  /** Site contact, free text ("name and contact number"). Optional. */
+  pic?: string | null;
   project_title?: string | null;
   purpose?: string | null;
   delivery_address?: string | null;
@@ -111,6 +113,7 @@ export interface PurchaseRequestFormData {
   request_number?: string | null;
   request_date?: string;
   customer_name?: string;
+  pic?: string | null;
   project_title?: string;
   purpose?: string;
   delivery_address?: string;
