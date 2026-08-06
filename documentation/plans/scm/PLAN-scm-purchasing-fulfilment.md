@@ -296,6 +296,31 @@ before commit.
 > unlinked rows keep the old, overstated reading. The progression is monotonic and safe because
 > supply never includes ordered - see AC-G6a.
 
+> **Most of S9's plumbing already exists outside SCM. Adopt it; do not re-port.** Surveyed
+> 6 Aug 2026:
+>
+> - `InboundShipmentService.create_shipment` (`procurement_service.py`) already creates or
+>   updates a shipment in place, resolving by `shipment_number`, then the container triple
+>   (`shipping_container_number` + `estimated_arrival_date` + `shipment_date`, field-wise
+>   `IS NOT DISTINCT FROM`), then `attachment_id`. That is **AC-G3** already satisfied, and
+>   blank container / bill of lading already work, which is **AC-G2**. See
+>   `documentation/plans/PLAN-packing-list-duplicate-detection.md`.
+> - `SPOAllocationService` and `/api/v1/procurement/spo-allocations` already do allocation
+>   CRUD.
+> - `IncomingStockService` already reads shipments, allocations and per-warehouse
+>   `unallocated_quantity`.
+>
+> So S9's genuinely new work is three things, not six:
+>
+> 1. **The multi-block WORKBOOK reader** (AC-G1). The existing path is n8n PDF extraction
+>    posting one shipment at a time; nothing reads an Excel file carrying several container
+>    blocks. This is the only new importer.
+> 2. **The allocation SUGGESTION** (AC-G4, AC-H5): per shipment line, a ranked (PO line,
+>    warehouse) with its reason and alternatives, scored by the SAME S0 Fulfilment Priority
+>    policy the Loading Plan uses.
+> 3. **Approve** (AC-G6/G6a/G7): write the allocations, advance `qty_received`, enforce that a
+>    split sums to the shipped quantity.
+
 ## Holes closed during the plan grill
 
 Six weaknesses were found in the first draft of this plan. Each is resolved here so a builder does
