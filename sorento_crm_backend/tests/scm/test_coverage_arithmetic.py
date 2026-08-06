@@ -258,7 +258,12 @@ def test_supply_arriving_before_the_demand_means_nothing_has_to_be_bought(db, ch
     planner who learns to ignore it stops reading the panel at all.
     """
     product = chain["product"]
-    _po_line(db, product, chain["bin_a"], 500, _today() + timedelta(days=10))
+    # An allocated shipment, not a purchase order: PO -> SPO -> GRN, and only the allocation
+    # is stock actually on the water. The point of the test is unchanged.
+    ship, _line = _shipment(
+        db, product, shipped=500, received=0, arrival=_today() + timedelta(days=10)
+    )
+    _alloc(db, ship, product, chain["bin_a"], allocated=500)
     _so_line(db, product, chain["bin_a"], 100, _today() + timedelta(days=30))
 
     cov = CoverageService(db).coverage_for(product.id, pool_id=chain["pool"].id)
@@ -284,7 +289,10 @@ def test_supply_arriving_after_the_demand_still_has_to_be_bought(db, chain):
     """
     product = chain["product"]
     _so_line(db, product, chain["bin_a"], 100, _today() + timedelta(days=30))
-    _po_line(db, product, chain["bin_a"], 500, _today() + timedelta(days=50))
+    ship, _line = _shipment(
+        db, product, shipped=500, received=0, arrival=_today() + timedelta(days=50)
+    )
+    _alloc(db, ship, product, chain["bin_a"], allocated=500)
 
     cov = CoverageService(db).coverage_for(product.id, pool_id=chain["pool"].id)
 
@@ -328,7 +336,10 @@ def test_the_allocations_still_say_where_todays_cover_comes_from_when_nothing_is
     """
     product = chain["product"]
     _stock(db, product, chain["pool"], 30)
-    _po_line(db, product, chain["bin_a"], 500, _today() + timedelta(days=10))
+    ship, _line = _shipment(
+        db, product, shipped=500, received=0, arrival=_today() + timedelta(days=10)
+    )
+    _alloc(db, ship, product, chain["bin_a"], allocated=500)
     _so_line(db, product, chain["bin_a"], 100, _today() + timedelta(days=30))
 
     cov = CoverageService(db).coverage_for(product.id, pool_id=chain["pool"].id)
@@ -353,7 +364,12 @@ def test_the_buy_is_sized_on_the_floor_the_timeline_was_given(db, chain):
     is the 200 the floor is short by.
     """
     product = chain["product"]
-    _po_line(db, product, chain["bin_a"], 500, _today() + timedelta(days=10))
+    # An allocated shipment, not a purchase order: PO -> SPO -> GRN, and only the allocation
+    # is stock actually on the water. The point of the test is unchanged.
+    ship, _line = _shipment(
+        db, product, shipped=500, received=0, arrival=_today() + timedelta(days=10)
+    )
+    _alloc(db, ship, product, chain["bin_a"], allocated=500)
     _so_line(db, product, chain["bin_a"], 100, _today() + timedelta(days=30))
 
     cov = CoverageService(db).coverage_for(product.id, pool_id=chain["pool"].id, floor=200)
@@ -699,14 +715,13 @@ def test_demand_with_no_warehouse_is_reported_rather_than_swallowed(db, chain):
     )
 
 
-def test_on_order_supply_with_no_warehouse_is_reported_rather_than_swallowed(db, chain):
+def test_ordered_supply_with_no_warehouse_is_reported_rather_than_swallowed(db, chain):
     """Five hundred units on order that nobody can see are five hundred bought twice.
 
-    Same nullable column on the purchase side. Supply that cannot be placed must not be
-    netted into an arbitrary pool - that is the mistake the in-transit destination work
-    already corrected, where one container counted on every pool suppressed a purchase per
-    pool. But excluding it while saying nothing is the other failure: a buyer with no way to
-    see the 500 already on order raises a second PO for them.
+    Same nullable column on the purchase side. A purchase order is no longer counted as
+    supply, but it is still REPORTED as ordered - and one whose line names no warehouse
+    reaches no pool's ordered figure either, so it would be in no number at all. A buyer
+    with no way to see the 500 already on order raises a second order for them.
     """
     product = chain["product"]
     _po_line(db, product, None, 500, _today() + timedelta(days=10))
@@ -715,9 +730,10 @@ def test_on_order_supply_with_no_warehouse_is_reported_rather_than_swallowed(db,
 
     reported = _reported_qty(cov, _UNPLACEABLE_SUPPLY_FIELDS)
     assert reported == 500, (
-        "unplaceable on-order supply is on no timeline and on no report; expected it under "
+        "unplaceable ordered quantity is on no timeline and on no report; expected it under "
         f"one of {_UNPLACEABLE_SUPPLY_FIELDS}, got {reported!r}"
     )
+    assert _in_transit_qty(cov) == 0, "and it is still not supply"
 
 
 def test_unplaceable_rows_stay_out_of_the_pool_balance(db, chain):
@@ -747,7 +763,10 @@ def test_a_line_that_does_have_a_warehouse_is_not_reported_as_unplaceable(db, ch
     """
     product = chain["product"]
     _so_line(db, product, chain["bin_a"], 80, _today() + timedelta(days=30))
-    _po_line(db, product, chain["bin_a"], 500, _today() + timedelta(days=10))
+    ship, _line = _shipment(
+        db, product, shipped=500, received=0, arrival=_today() + timedelta(days=10)
+    )
+    _alloc(db, ship, product, chain["bin_a"], allocated=500)
 
     cov = CoverageService(db).coverage_for(product.id, pool_id=chain["pool"].id)
 

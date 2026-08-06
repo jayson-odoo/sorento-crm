@@ -112,10 +112,15 @@ def _supplier_of(db, po_number):
     return (row[0], row[1])
 
 
-def _on_order(db, item):
-    """What `scm.on_order_v` counts as incoming supply for this item, across warehouses."""
+def _ordered(db, item):
+    """What `scm.po_ordered_v` counts as ORDERED for this item, across warehouses.
+
+    Not `on_order_v`, which is now the SPO allocation: incoming stock (decision, 6 Aug 2026,
+    migration 337). What the PO importer writes is an ORDER placed with a supplier, and the
+    view that counts those is the right observable for a test about the PO book.
+    """
     return float(db.execute(text(
-        "SELECT COALESCE(SUM(oo.on_order), 0) FROM scm.on_order_v oo "
+        "SELECT COALESCE(SUM(oo.ordered), 0) FROM scm.po_ordered_v oo "
         "JOIN products p ON p.id = oo.product_id WHERE p.product_code = :item"
     ), {"item": item}).scalar())
 
@@ -288,7 +293,7 @@ def test_a_line_whose_creditor_is_unknown_still_counts_as_incoming_supply(db, se
 
     assert out["applied"]["added"] == 1
     assert _supplier_of(db, seeded.alt_po) == (None, None)
-    assert _on_order(db, seeded.item_wt) == 5.0
+    assert _ordered(db, seeded.item_wt) == 5.0
 
 
 # --------------------------------------------------------------------------- #
@@ -445,8 +450,8 @@ def test_applying_the_po_book_makes_the_lines_count_as_incoming_supply(db, seede
     """
     svc.apply(db, po_week1(seeded), PO)
 
-    assert _on_order(db, seeded.item_rl) == 207.0    # 135 + 72, both at the project location
-    assert _on_order(db, seeded.item_blue) == 7646.0
+    assert _ordered(db, seeded.item_rl) == 207.0    # 135 + 72, both at the project location
+    assert _ordered(db, seeded.item_blue) == 7646.0
 
 
 def test_a_closed_po_line_stops_counting_as_incoming_supply(db, seeded):
@@ -471,10 +476,10 @@ def test_a_closed_po_line_stops_counting_as_incoming_supply(db, seeded):
     they fail separately - the receipt column must be untouched AND the figure must drop.
     """
     svc.apply(db, po_week1(seeded), PO)
-    before = _on_order(db, seeded.item_wt)
+    before = _ordered(db, seeded.item_wt)
 
     svc.apply(db, po_week2(seeded), PO)
-    after = _on_order(db, seeded.item_wt)
+    after = _ordered(db, seeded.item_wt)
 
     assert before == 67.0, "60 on the main PO plus 7 on the alt PO"
     assert after == 7.0, "the main PO's line closed; only the alt PO's remains"

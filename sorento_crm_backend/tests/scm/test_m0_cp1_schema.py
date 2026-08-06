@@ -142,7 +142,10 @@ def test_migration_downgrade_upgrade_isolated(conn):
         # customers.market_segment_code). In the real chain 274 downgrades first; here we
         # isolate just 273, so drop those dependent views inside the savepoint (the final
         # rollback restores them) before exercising 273's down/up.
-        for _v in ("net_position_v", "on_order_v", "committed_v", "consumption_v", "receipt_lead_v"):
+        for _v in (
+            "net_position_v", "on_order_v", "po_ordered_v", "committed_v",
+            "consumption_v", "receipt_lead_v",
+        ):
             conn.execute(text(f"DROP VIEW IF EXISTS scm.{_v} CASCADE"))
         # Same reasoning one step further on, and now generic. 273's downgrade drops the four
         # public SO/PO tables and the whole `scm` schema, and everything built since points at

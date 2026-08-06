@@ -42,9 +42,9 @@ import { OrderDecisionSheet } from './OrderDecisionSheet';
  * What the row carries is deliberately short. Every aggregate opens behind an
  * information icon rather than rendering inline (AC-C2.2a), because the list has
  * to hold only what is needed to decide; preventing information fatigue is a
- * requirement, not a preference. On order and in transit are separate columns
- * (AC-C2.2): their sum is what the net position uses, but only the on-order half
- * is still negotiable, so a decider needs to see which is which. The engine's
+ * requirement, not a preference. Ordered and Incoming are separate columns
+ * (AC-C2.2): only Incoming is in the net position, and Ordered is there so a
+ * shortfall does not read as "nobody has done anything about this". The engine's
  * suggested quantity sits immediately beside the chosen one (AC-C2.8), so a
  * larger number is visibly a decision rather than a silent override.
  *
@@ -159,17 +159,17 @@ export function SummaryOrderReportView({ runId = null }: SummaryOrderReportViewP
         // Separate from in transit on purpose (AC-C2.2): this half can still be
         // re-dated or cancelled, so it is the half a decider can act on.
         accessorKey: 'qty_on_order',
-        header: ({ column }) => <DataGridColumnHeader title="On order" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Ordered" column={column} />,
         cell: ({ row }) => fmtInt(row.original.qty_on_order),
         size: 120,
-        meta: { headerTitle: 'On order', ...numMeta },
+        meta: { headerTitle: 'Ordered', ...numMeta },
       },
       {
         accessorKey: 'qty_in_transit',
-        header: ({ column }) => <DataGridColumnHeader title="In transit" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Incoming" column={column} />,
         cell: ({ row }) => fmtInt(row.original.qty_in_transit),
         size: 120,
-        meta: { headerTitle: 'In transit', ...numMeta },
+        meta: { headerTitle: 'Incoming', ...numMeta },
       },
       // These two columns answer DIFFERENT questions and sit side by side, so each names
       // the demand it is about. On the real book 317 of 317 planned rows read "0" here and

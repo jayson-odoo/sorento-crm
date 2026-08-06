@@ -30,7 +30,14 @@ import pytest
 
 from app.models.inventory import Stock, Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
-from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
+from app.models.procurement import (
+    InboundShipment,
+    InboundShipmentLine,
+    PurchaseOrder,
+    PurchaseOrderLine,
+    SPOAllocation,
+    Supplier,
+)
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services.scm.coverage_service import CoverageService
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
@@ -155,6 +162,36 @@ def _on_order(db, product, wh, qty, when):
     return po
 
 
+def _incoming(db, product, wh, qty, when):
+    """One in-transit shipment ALLOCATED to `wh`, which is what supply now means.
+
+    A purchase order is an order placed; the SPO allocation against it is the stock on the
+    water, and it is the only thing the balance counts (decision, 6 Aug 2026).
+    """
+    sup = Supplier(id=_u(), supplier_code=_code("S")[:30], supplier_name="guangdong sw")
+    db.add(sup)
+    db.flush()
+    ship = InboundShipment(
+        id=_u(), shipment_number=_code("SH")[:50], supplier_id=sup.id,
+        shipment_date=_today() - timedelta(days=15),
+        estimated_arrival_date=when, shipment_status="in_transit",
+    )
+    db.add(ship)
+    db.flush()
+    db.add(InboundShipmentLine(
+        id=_u(), shipment_id=ship.id, product_id=product.id,
+        quantity_shipped=qty, quantity_received=0, cartons_count=1,
+        spo_allocated_quantity=0, line_status="in_transit",
+    ))
+    db.add(SPOAllocation(
+        id=_u(), spo_number=_code("SPO")[:50], inbound_shipment_id=ship.id,
+        product_id=product.id, warehouse_id=wh.id,
+        allocated_quantity=qty, quantity_received=0,
+    ))
+    db.flush()
+    return ship
+
+
 # --------------------------------------------------------------------------- #
 # agreement with the per-pool engine
 # --------------------------------------------------------------------------- #
@@ -208,13 +245,13 @@ def test_the_network_nets_pools_together_rather_than_summing_their_shortfalls(db
 def test_late_supply_does_not_cover_earlier_demand(db, two_pools):
     """The dated property, which is the whole reason the report cannot use a net position.
 
-    On hand 0, demand 50 in ten days, 50 on order in ninety. `on hand + on order - demand` is
-    zero and reads as covered. The dated balance goes to -50 on the demand date and stays
+    On hand 0, demand 50 in ten days, 50 arriving in ninety. `on hand + incoming - demand`
+    is zero and reads as covered. The dated balance goes to -50 on the demand date and stays
     there for eighty days, which is a real stockout somebody has to be told about.
     """
     f = two_pools
     _demand(db, f["p1"], f["bin_a"], 50, _today() + timedelta(days=10))
-    _on_order(db, f["p1"], f["bin_a"], 50, _today() + timedelta(days=90))
+    _incoming(db, f["p1"], f["bin_a"], 50, _today() + timedelta(days=90))
 
     net = CoverageService(db).network_positions([f["p1"].id])[str(f["p1"].id)]
 
@@ -266,19 +303,33 @@ def test_an_empty_product_list_reads_nothing(db):
     assert CoverageService(db).network_positions([]) == {}
 
 
-def test_on_order_and_in_transit_stay_separate(db, two_pools):
-    """AC-C2.2: their sum drives the balance, the split is what a person reads.
+def test_an_order_is_reported_but_never_added_to_the_balance(db, two_pools):
+    """AC-C2.2, restated: the split is what a person reads, and only ONE half is counted.
 
-    Only the on-order half is still negotiable, so a single "incoming" figure would hide the
-    one thing a buyer can act on.
+    The two figures used to be summed into the balance on the reasoning that an order can
+    still be cancelled while a container cannot. The live book disproved the premise that
+    both were supply: an order is an order PLACED, and the supplier may have shipped nothing
+    against it. So `qty_on_order` is reported beside the balance - a buyer staring at a
+    shortfall can see somebody already acted on it - and contributes zero to it.
     """
     f = two_pools
     _on_order(db, f["p1"], f["bin_a"], 25, _today() + timedelta(days=30))
 
     pos = CoverageService(db).network_positions([f["p1"].id])[str(f["p1"].id)]
 
-    assert pos.qty_on_order == 25
-    assert pos.qty_in_transit == 0
+    assert pos.qty_on_order == 25, "the order is still reported"
+    assert pos.qty_in_transit == 0, "nothing has shipped against it"
+    assert pos.closing_balance == 0, "and it lifted no balance"
+
+
+def test_the_shipment_against_that_order_is_what_the_balance_counts(db, two_pools):
+    """The mirror, so "count nothing" cannot pass for the fix above."""
+    f = two_pools
+    _incoming(db, f["p1"], f["bin_a"], 25, _today() + timedelta(days=30))
+
+    pos = CoverageService(db).network_positions([f["p1"].id])[str(f["p1"].id)]
+
+    assert pos.qty_in_transit == 25
     assert pos.closing_balance == 25
 
 
@@ -287,16 +338,21 @@ def test_supply_beyond_the_horizon_is_excluded_from_both_the_balance_and_the_spl
 ):
     """A container arriving after the window cannot be the reason a row looks covered.
 
-    The horizon bounds the balance already; the on-order figure beside it has to honour the
-    same bound or the row shows incoming stock the shortfall did not count.
+    The horizon bounds the balance already; the figures beside it have to honour the same
+    bound or the row shows incoming stock the shortfall did not count. Both halves are
+    checked: the incoming one because it is what the balance uses, and the ordered one
+    because it sits in the same tile and an order landing after the window cannot inform the
+    decision this shortfall drives.
     """
     f = two_pools
     _demand(db, f["p1"], f["bin_a"], 40, _today() + timedelta(days=20))
     _on_order(db, f["p1"], f["bin_a"], 40, _today() + timedelta(days=400))
+    _incoming(db, f["p1"], f["bin_a"], 40, _today() + timedelta(days=400))
 
     pos = CoverageService(db).network_positions(
         [f["p1"].id], horizon_months=6
     )[str(f["p1"].id)]
 
-    assert pos.qty_on_order == 0, "supply past the horizon was counted as incoming"
+    assert pos.qty_in_transit == 0, "supply past the horizon was counted as incoming"
+    assert pos.qty_on_order == 0, "an order past the horizon was counted as ordered"
     assert pos.shortfall == 40

@@ -39,8 +39,9 @@ class CoverageEventOut(BaseModel):
     supply_stage: Optional[str] = Field(
         default=None,
         description=(
-            "on_order | in_transit, on supply rows only. Kept split because only one of "
-            "the two can still be cancelled or re-dated."
+            "in_transit, on supply rows only. `on_order` is no longer produced: a purchase "
+            "order is an order placed, not stock on the water, so its quantity is reported "
+            "as `qty_ordered_not_incoming` and never as a timeline event."
         ),
     )
 
@@ -163,8 +164,15 @@ class CoverageTimelineResult(BaseModel):
     )
     unplaceable_on_order_qty: float = Field(
         default=0.0,
-        description="Placed on-order supply carrying no warehouse at all. Same treatment as "
-        "the demand side, for the same reason.",
+        description="Placed order quantity carrying no warehouse at all, so it reached no "
+        "pool's ordered figure. Same treatment as the demand side, for the same reason.",
+    )
+    qty_ordered_not_incoming: float = Field(
+        default=0.0,
+        description="Placed on a purchase order for this pool with no shipment allocated "
+        "against it yet, and arriving within the horizon. Reported BESIDE the balance and "
+        "deliberately absent from it: an order is not stock on the water. Without it a "
+        "shortfall would give no hint that a buyer already acted on it.",
     )
     unattributed_in_transit_qty: float = Field(
         default=0.0,

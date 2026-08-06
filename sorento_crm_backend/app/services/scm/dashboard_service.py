@@ -10,7 +10,8 @@ Health status (per SKU×warehouse or per aggregated product) precedence:
                      ``reorder_policy.dead_stock_days`` (or never moved)
   3. ``low``       — on_hand > 0, not dead, and ``net <= reorder_point`` (the demand-aware
                      engine ROP from the latest completed run); rendered "Low stock" (M8-B7)
-  4. ``incoming``  — on_hand > 0, not dead/low, and an open (placed) PO contributes supply
+  4. ``incoming``  — on_hand > 0, not dead/low, and supply is on its way (``on_order`` from
+     ``scm.net_position_v``, which reads SPO ALLOCATIONS, not purchase orders)
   5. ``healthy``   — otherwise
 
 ``stockout_with_committed`` = on_hand == 0 AND committed > 0 (the reorder-signal
@@ -43,7 +44,10 @@ from app.services.scm.reorder_policy import (
 # across its per-warehouse classification rows.
 _ABC_RANK = {"A": 0, "B": 1, "C": 2}
 
-# PO statuses that count as placed supply — mirrors scm.on_order_v (drafts excluded).
+# PO statuses that count as PLACED. No longer "supply": since migration 337 `scm.on_order_v`
+# reads SPO allocations, because a purchase order is an order placed and the allocation is the
+# shipment against it. These statuses now scope the open-PO COUNTS and ETAs this screen shows
+# beside the stock figures, which remain honest purchase-order facts.
 PLACED_PO_STATUSES = ("active", "received", "partial", "closed")
 
 _STATUS_RANK = {"stockout": 1, "dead": 2, "low": 3, "incoming": 4, "healthy": 5}
@@ -517,11 +521,13 @@ class ScmDashboardService:
         return out
 
     def _placed_po_rows(self, filters: ScmFilters) -> List[dict]:
-        """Open (placed) PO lines with remaining supply, respecting scope filters.
+        """Open (placed) PO lines, respecting scope filters. Used for COUNTS and ETAs only.
 
-        The predicates mirror ``scm.on_order_v`` exactly, ``pol.line_status`` included: a line
-        that left the order book is not incoming, and a dashboard that counted it while the net
-        position did not would have the buyer looking at two answers on one screen.
+        Not supply: the quantity a buyer is waiting for comes from ``scm.net_position_v``,
+        which reads SPO allocations (migration 337). What these rows answer is "how many
+        orders are open with this supplier, and when is the earliest due", which is a
+        purchase-order question and stays a purchase-order answer. ``pol.line_status`` is
+        still filtered because a line that left the order book is not an open order either.
         """
         where = ["po.status = ANY(:statuses)", "pol.line_status = 'open'",
                  "pol.qty_ordered > pol.qty_received"]

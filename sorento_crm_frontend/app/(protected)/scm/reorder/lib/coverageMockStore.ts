@@ -128,8 +128,11 @@ const HORIZON = {
 const COMPUTED_AT = '2026-08-03T09:12:00';
 
 // -- 1) The ADR-0011 worked example -------------------------------------------
-// 135 due 1 Jul, 72 due 3 Aug, a PO of 200 arriving 25 Aug, opening 140.
+// 135 due 1 Jul, 72 due 3 Aug, a SHIPMENT of 200 arriving 25 Aug, opening 140.
 // Balances 140, 5, -67, 133. Shortfall 67 on 3 Aug. Closing positive at 133.
+// The 200 is an allocated shipment, not a purchase order: since 6 Aug 2026 only the SPO
+// allocation is supply. A separate 300 sits on a PO with nothing shipped against it, which
+// is reported (`qty_ordered_not_incoming`) and is deliberately in none of these balances.
 
 function shortfallFixture(sku: string, productName: string | null): CoverageTimeline {
   const { rows, closing } = accumulate(140, [
@@ -155,10 +158,10 @@ function shortfallFixture(sku: string, productName: string | null): CoverageTime
       at: '2026-08-25',
       qty: 200,
       kind: 'supply',
-      ref: 'PO-2026-0442',
+      ref: 'SH-2026-0442',
       label: 'Guangdong Sanitary Ware',
       location: 'BRW',
-      supply_stage: 'on_order',
+      supply_stage: 'in_transit',
     },
   ]);
 
@@ -206,6 +209,7 @@ function shortfallFixture(sku: string, productName: string | null): CoverageTime
     ...HORIZON,
     excluded_event_count: 2,
     unattributed_in_transit_qty: 40,
+    qty_ordered_not_incoming: 300,
     unplaceable_demand_qty: 0,
     unplaceable_on_order_qty: 0,
     computed_at: COMPUTED_AT,
@@ -264,6 +268,7 @@ function poolFixture(): CoverageTimeline {
     ...HORIZON,
     excluded_event_count: 0,
     unattributed_in_transit_qty: 0,
+    qty_ordered_not_incoming: 0,
     unplaceable_demand_qty: 0,
     unplaceable_on_order_qty: 0,
     computed_at: COMPUTED_AT,
@@ -329,6 +334,7 @@ function healthyFixture(sku: string, productName: string | null): CoverageTimeli
     ...HORIZON,
     excluded_event_count: 0,
     unattributed_in_transit_qty: 0,
+    qty_ordered_not_incoming: 0,
     unplaceable_demand_qty: 0,
     unplaceable_on_order_qty: 0,
     computed_at: COMPUTED_AT,
@@ -388,6 +394,7 @@ function undatedFixture(sku: string, productName: string | null): CoverageTimeli
     ...HORIZON,
     excluded_event_count: 3,
     unattributed_in_transit_qty: 0,
+    qty_ordered_not_incoming: 0,
     unplaceable_demand_qty: 0,
     unplaceable_on_order_qty: 0,
     computed_at: COMPUTED_AT,
@@ -424,6 +431,7 @@ function emptyFixture(sku: string, productName: string | null): CoverageTimeline
     ...HORIZON,
     excluded_event_count: 0,
     unattributed_in_transit_qty: 0,
+    qty_ordered_not_incoming: 0,
     unplaceable_demand_qty: 0,
     unplaceable_on_order_qty: 0,
     computed_at: COMPUTED_AT,

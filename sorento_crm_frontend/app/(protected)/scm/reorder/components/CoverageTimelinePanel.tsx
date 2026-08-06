@@ -707,9 +707,16 @@ export function CoverageTimelinePanel({
         />
         <Figure
           label="Incoming"
-          value={fmtInt(split.on_order + split.in_transit)}
-          hint={`${fmtInt(split.on_order)} on order · ${fmtInt(split.in_transit)} in transit`}
+          value={fmtInt(split.in_transit)}
+          hint="allocated shipments"
           testId="coverage-incoming"
+        />
+        <Figure
+          label="Ordered"
+          value={fmtInt(data.qty_ordered_not_incoming)}
+          tone="muted"
+          hint="on a PO, nothing shipped yet"
+          testId="coverage-ordered"
         />
       </div>
 

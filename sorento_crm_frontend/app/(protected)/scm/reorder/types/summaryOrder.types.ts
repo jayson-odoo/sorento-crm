@@ -12,9 +12,10 @@
  *     `supplier_code`, SO numbers, pool codes). `run_id` is the single exception
  *     and it is opaque: it identifies which week's report is being read (AC-C2.9)
  *     and is never rendered.
- *   - **On order and in transit stay separate** (AC-C2.2). Their sum drives the
- *     net position; the split is displayed because only the on-order half is
- *     still negotiable.
+ *   - **Ordered and incoming stay separate** (AC-C2.2, revised 6 Aug 2026). Only
+ *     `qty_in_transit` - the SPO allocation - drives the net position. A purchase
+ *     order is an order placed, which the supplier may have shipped nothing
+ *     against, so `qty_on_order` is displayed and never counted.
  *   - **A missing input is named, never zeroed.** Months of cover and container
  *     volume are nullable because the data genuinely is not there for most
  *     products (cover derivable for 62% of them, volume for 16%). A volume of 0

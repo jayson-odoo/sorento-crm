@@ -56,7 +56,6 @@ from app.services.scm.coverage_timeline import (
     EPSILON,
     SUPPLY,
     SUPPLY_IN_TRANSIT,
-    SUPPLY_ON_ORDER,
     QTY_PRECISION,
     SOURCE_ORDER,
     SOURCE_OWN,
@@ -76,6 +75,8 @@ from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 # PO statuses that represent real placed supply. Drafts are NOT supply: a draft PO is a
 # recommendation nobody has committed to, and counting it would suppress the buy that
 # creates it. Mirrors scm.on_order_v.
+# Still used, but for the ORDERED figure rather than for supply: these are the statuses
+# under which a purchase order counts as really placed with the supplier.
 _PLACED_PO_STATUSES = ("active", "received", "partial", "closed")
 
 # Shipment states that mean the goods have LANDED or left the book, so their lines are no
@@ -242,6 +243,11 @@ class Coverage:
     # since the alternative is discovering it on a delivery date.
     unplaceable_demand_qty: float = 0.0
     unplaceable_on_order_qty: float = 0.0
+    # Placed on a purchase order and allocated to this pool, with no shipment allocated
+    # against it yet. Reported BESIDE the timeline and deliberately absent FROM it: an order
+    # is not stock on the water. Without it the screen would show a shortfall and no hint
+    # that a buyer already acted on it.
+    qty_ordered_not_incoming: float = 0.0
 
     @property
     def excluded_event_count(self) -> int:
@@ -439,21 +445,27 @@ class CoverageService:
 
     def _supply_events(
         self, product_id: str, wh_ids: list[str]
-    ) -> tuple[list[TimelineEvent], float, float]:
-        """Dated supply for this pool, the in-transit quantity nobody could place, and the
-        placed on-order quantity carrying no location at all.
+    ) -> tuple[list[TimelineEvent], float, float, tuple[tuple[Optional[date], float], ...]]:
+        """Four figures for this pool: dated SUPPLY events, the in-transit quantity nobody
+        could place, the placed order quantity carrying no location at all, and the placed
+        order quantity that IS placed here.
 
-        The second element is returned rather than stashed on the instance: it is a fact
-        about THIS call, and a service attribute would quietly describe whichever product
-        was asked about last.
+        Only the first drives the balance. A purchase order is ordered, not incoming, so its
+        quantity travels beside the timeline rather than on it.
+
+        These are returned rather than stashed on the instance: they are facts about THIS
+        call, and a service attribute would quietly describe whichever product was asked
+        about last.
         """
         return self._supply_events_many([product_id], wh_ids).get(
-            str(product_id), ([], 0.0, 0.0)
+            str(product_id), ([], 0.0, 0.0, ())
         )
 
     def _supply_events_many(
         self, product_ids: Iterable[str], wh_ids: list[str]
-    ) -> dict[str, tuple[list[TimelineEvent], float, float]]:
+    ) -> dict[
+        str, tuple[list[TimelineEvent], float, float, tuple[tuple[Optional[date], float], ...]]
+    ]:
         """`_supply_events` for many products at once, keyed by product id.
 
         One body, batched, for the same reason as the demand half: the in-transit attribution
@@ -465,49 +477,50 @@ class CoverageService:
             return {}
         events: dict[str, list[TimelineEvent]] = {}
 
-        po_rows = (
+        # Purchase orders are ORDERED, never SUPPLY. The chain is PO -> SPO -> GRN, and only
+        # the SPO allocation is stock on its way in: a purchase order is an order PLACED,
+        # which the supplier may not have shipped anything against. The live book made the
+        # difference unmissable - 9 open PO lines against 842 in-transit allocations carrying
+        # 203,115 units - so counting the PO half reported almost none of the real supply
+        # while the allocations sat unread (decision, 6 Aug 2026; `scm.on_order_v` now reads
+        # the same source).
+        #
+        # The two are NOT netted against each other because nothing links them:
+        # `spo_allocations.po_line_id` is NULL on all 860 existing rows, so counting both
+        # would double every shipped order. So the quantity is still READ and still reported,
+        # under its own name, and it produces NO timeline event: the balance is unaffected,
+        # and a buyer looking at a shortfall can still see that an order is already out for
+        # it. Reporting it is the whole mitigation for the exposure this decision accepts -
+        # between placing an order and its first allocation, the plan would otherwise
+        # recommend buying it a second time with nothing on screen to say why.
+        # Dated, because the caller bounds it by ITS horizon: this figure sits beside a
+        # horizon-scoped shortfall, and an order landing after the window cannot inform the
+        # decision that shortfall drives.
+        po_ordered: dict[str, list[tuple[Optional[date], float]]] = {}
+        for pid, a, b, line_when, po_when in (
             self.db.query(
                 PurchaseOrderLine.product_id,
                 PurchaseOrderLine.qty_ordered,
                 PurchaseOrderLine.qty_received,
                 PurchaseOrderLine.expected_date,
                 PurchaseOrder.expected_date.label("po_expected"),
-                PurchaseOrder.po_number,
-                Supplier.supplier_name,
-                Warehouse.warehouse_code,
             )
             .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
-            .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
-            .outerjoin(Warehouse, Warehouse.id == PurchaseOrderLine.warehouse_id)
             .filter(
                 PurchaseOrderLine.product_id.in_(pids),
                 PurchaseOrderLine.warehouse_id.in_(wh_ids),
                 PurchaseOrder.status.in_(_PLACED_PO_STATUSES),
-                # A line the importer has CLOSED left the supplier's order book, so it is
-                # not incoming. `scm.on_order_v` applies the same predicate and the demand
-                # half above applies it to `sales_order_lines`; without it here the two
-                # readers of "on order" disagree, and the disagreement HIDES a shortfall
-                # (a container the supplier is no longer holding still covers demand).
+                # A line the importer has CLOSED left the supplier's order book, so nothing
+                # is on order against it any more.
                 PurchaseOrderLine.line_status == "open",
                 PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
             )
             .all()
-        )
-        for r in po_rows:
-            incoming = float(r.qty_ordered or 0) - float(r.qty_received or 0)
-            if incoming <= 0:
+        ):
+            qty = float(a or 0) - float(b or 0)
+            if qty <= 0:
                 continue
-            events.setdefault(str(r.product_id), []).append(
-                TimelineEvent(
-                    at=r.expected_date or r.po_expected,
-                    qty=incoming,
-                    kind=SUPPLY,
-                    ref=r.po_number or "",
-                    label=r.supplier_name or "",
-                    location=r.warehouse_code or "",
-                    supply_stage=SUPPLY_ON_ORDER,
-                )
-            )
+            po_ordered.setdefault(str(pid), []).append((line_when or po_when, qty))
 
         # In-transit supply, scoped to THIS pool through the allocation that names its
         # destination. Neither `inbound_shipments` nor `inbound_shipment_lines` carries a
@@ -525,8 +538,9 @@ class CoverageService:
         # `warehouses.company_id` into the ON clause under the unaliased table name, and
         # Postgres rejects the reference. One small set read is also cheaper than a join
         # repeated per allocation row.
-        # Placed PO supply the location filter cannot place. `purchase_order_lines.warehouse_id`
-        # is nullable, so these are real containers on order that reached no pool's figure.
+        # Placed PO quantity the location filter cannot place, because
+        # `purchase_order_lines.warehouse_id` is nullable. Not supply either way, but a real
+        # order that reached no pool's ORDERED figure, so it is named rather than dropped.
         unplaceable_on_order: dict[str, float] = {}
         for pid, a, b in (
             self.db.query(
@@ -671,12 +685,15 @@ class CoverageService:
         # An undated supply line cannot be placed on the axis. It is dropped from the balance
         # rather than assumed imminent, because assuming it arrives in time is exactly the
         # optimism that produces a stockout.
-        keys = set(events) | set(unattributed) | set(unplaceable_on_order)
+        keys = (
+            set(events) | set(unattributed) | set(unplaceable_on_order) | set(po_ordered)
+        )
         return {
             pid: (
                 [e for e in events.get(pid, []) if e.at is not None],
                 round(unattributed.get(pid, 0.0), QTY_PRECISION),
                 max(unplaceable_on_order.get(pid, 0.0), 0.0),
+                tuple(po_ordered.get(pid, ())),
             )
             for pid in keys
         }
@@ -942,8 +959,15 @@ class CoverageService:
         resolved_horizon_end = horizon_end or _add_months(today, config.horizon_months)
 
         demand, undated, unplaceable_demand = self._demand_events(product_id, wh_ids)
-        supply, unattributed_in_transit, unplaceable_on_order = self._supply_events(
-            product_id, wh_ids
+        (
+            supply,
+            unattributed_in_transit,
+            unplaceable_on_order,
+            ordered_pairs,
+        ) = self._supply_events(product_id, wh_ids)
+        qty_ordered_not_incoming = round(
+            sum(q for at, q in ordered_pairs if at is None or at <= resolved_horizon_end),
+            QTY_PRECISION,
         )
         opening = self._opening(product_id, wh_ids)
         timeline = build_timeline(
@@ -1024,6 +1048,7 @@ class CoverageService:
             unattributed_in_transit_qty=unattributed_in_transit,
             unplaceable_demand_qty=unplaceable_demand,
             unplaceable_on_order_qty=unplaceable_on_order,
+            qty_ordered_not_incoming=qty_ordered_not_incoming,
         )
 
     def network_positions(
@@ -1068,7 +1093,9 @@ class CoverageService:
         out: dict[str, NetworkPosition] = {}
         for pid in pids:
             d_events, undated, unplaceable_demand = demand.get(pid, ([], [], 0.0))
-            s_events, unattributed, unplaceable_on_order = supply.get(pid, ([], 0.0, 0.0))
+            s_events, unattributed, unplaceable_on_order, ordered_pairs = supply.get(
+                pid, ([], 0.0, 0.0, ())
+            )
             opening = openings.get(pid, 0.0)
             timeline = build_timeline(
                 opening,
@@ -1080,10 +1107,12 @@ class CoverageService:
             # aggregate would drift from the timeline the moment a predicate changed, and the
             # row would then show a quantity on order that the shortfall beside it did not
             # account for.
+            # `qty_on_order` is the PLACED-order figure and is NOT summed off the events,
+            # because a purchase order produces no event: it is reported, not counted. Only
+            # `qty_in_transit` below comes off the same events the balance used.
             on_order = sum(
-                e.qty for e in s_events
-                if e.supply_stage == SUPPLY_ON_ORDER
-                and (e.at is None or e.at <= resolved_horizon_end)
+                q for at, q in ordered_pairs
+                if at is None or at <= resolved_horizon_end
             )
             in_transit = sum(
                 e.qty for e in s_events

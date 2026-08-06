@@ -24,22 +24,42 @@ missing cost, volume or lead time is reported as missing).
 | **On hand** | `stock`, filtered to warehouses where `counts_as_available` is true | Config, default true. A bin is only excluded when an admin says so. |
 | **Committed demand** | `sales_order_lines` on `sales_orders` with `status = 'open'`, line `open`, `qty_ordered > qty_delivered` (`scm.committed_v`) | A line closed short is no longer a commitment. |
 | **When demand is due** | `sales_order_lines.required_date`, else the order's `requested_delivery_date` | A line with NEITHER date is reported as undated, never dated today: pretending it is due now would fabricate a shortage. |
-| **On order (incoming)** | `purchase_order_lines` on POs with `status IN (active, received, partial, closed)`, line `open`, `qty_ordered > qty_received` (`scm.on_order_v`) | **Draft POs are not supply.** Nothing counts as incoming until it is confirmed. |
-| **In transit** | `inbound_shipment_lines` on shipments not yet received | Kept separate from on-order, because only one of the two can still be cancelled or re-dated. |
+| **Incoming supply** | `spo_allocations` on inbound shipments not yet received (`scm.on_order_v`) | **The SPO allocation is the only supply.** See "Why a purchase order is not supply" below. |
+| **Ordered (not supply)** | `purchase_order_lines` on POs with `status IN (active, received, partial, closed)`, line `open`, `qty_ordered > qty_received` (`scm.po_ordered_v`) | Reported beside the plan, never inside it. **Draft POs are not even ordered** - a draft is a recommendation nobody has committed to. |
 | **Sales history (the demand rate)** | `order_lines` joined `orders`, cancelled excluded (`scm.consumption_v`), aggregated into `scm.demand_stat` | ~13 trailing weekly buckets. Steady items use the plain sum; only mid-variability items are trimmed; lumpy items are kept whole so one real spike is not trimmed to zero. |
 | **Supplier lead time and reliability** | PO to goods-receipt pairs (`scm.receipt_lead_v`) aggregated into `scm.supplier_performance` | Measured from your own receipts. Below a minimum sample it falls back to the supplier average and says its confidence is lower. |
 | **Cost** | `product_suppliers.unit_cost` | No cost means the line cannot be ranked against cash: it goes to a **needs cost** list rather than being priced at zero. |
 | **Cash budget** | `scm.purchasing_budget` (global scope, period-aware) | Yours. When none is set, the plan shows itself whole rather than inventing a limit. |
 
-**Net position** = `on hand + on order - committed`, per product per location
+**Net position** = `on hand + incoming - committed`, per product per location
 (`scm.net_position_v`). That single figure is the starting point of everything else.
+
+### Why a purchase order is not supply
+
+The chain is **PO -> SPO -> GRN**. A purchase order is an order *placed*; the SPO allocation
+is the supplier's actual shipment against it, allocated to a destination warehouse; the GRN is
+the receipt. Only the middle one is stock on its way to you, so only the middle one is counted.
+
+The live book settles the argument: **9 open purchase-order lines against 842 in-transit
+allocations carrying about 203,000 units**. Reading supply off the PO half reported almost
+none of the stock actually coming.
+
+The two are not netted against each other because nothing links them: `spo_allocations.po_line_id`
+is empty on every existing row, so counting both would double every order the supplier has
+already shipped.
+
+**The exposure this accepts, stated plainly:** between placing an order and the supplier's first
+shipment against it, that order is not cover, so the plan can recommend buying the same thing
+again. The mitigation is that the ordered quantity is always on screen next to the shortfall -
+a buyer looking at "short 500" can see "500 already ordered" and hold. It is a figure a person
+reads, never a figure the arithmetic uses.
 
 ## The five steps
 
 ```mermaid
 flowchart TD
-  A["Your records<br/>stock · sales orders · purchase orders · shipments · sales history"]
-    --> B["1. Net position<br/>on hand + on order − committed"]
+  A["Your records<br/>stock · sales orders · SPO allocations · shipments · sales history"]
+    --> B["1. Net position<br/>on hand + incoming - committed"]
   B --> C["2. Coverage timeline<br/>dated walk, per pool"]
   C --> D["3. Cover from stock you already have<br/>own bin → shared pool → transfer proposal"]
   D --> E["4. How much to buy<br/>reach the target level, then MOQ and pack size"]
@@ -54,6 +74,12 @@ already committed beyond what you hold and have coming.
 
 ### 2. The coverage timeline: dated, and the worst point wins
 
+**The plan is dated, and re-running it tomorrow gives a different answer.** That is by design,
+not drift: the timeline is walked from today over the horizon, so an order due on the 12th is
+three days out on the 9th and one day out on the 11th. `scm.net_position_v` is the opposite -
+one undated snapshot of on hand plus incoming minus committed, with no calendar at all - and
+the two are meant to disagree. A frozen run keeps the dated answer the decider actually saw.
+
 Every commitment and every incoming receipt is placed on the date it is due, and the balance
 is walked forward over the planning horizon (default 6 months, configurable). The screen shows
 four figures for that walk:
@@ -64,7 +90,8 @@ four figures for that walk:
   healthy closing figure while leaving you out of stock for two months; the closing balance
   hides exactly the problem the plan exists to find.
 - **Closing balance** - where the horizon ends up.
-- **Incoming**, split into **on order** (still cancellable) and **in transit** (not).
+- **Incoming** - allocated shipments on their way in. Beside it, **ordered**, which is on a
+  purchase order with nothing shipped against it yet and is deliberately not in the balance.
 
 Each row of the timeline names the document behind it, so any figure can be checked against a
 sales order or a purchase order the planner recognises.
@@ -92,6 +119,17 @@ target level (S)          = ROP + demand rate x review period            (defaul
 recommended qty           = S - net position        (0 when not triggered)
 order qty                 = ceil(max(recommended, MOQ) / pack size) x pack size
 ```
+
+**Only `fixed_days` is in use.** Every configured policy selects it, so today safety stock is
+literally `demand rate x safety days` (7 by default). The statistical formula is implemented
+and available per policy, and falls back to fixed-days on a thin sales history rather than
+trusting a standard deviation computed from three data points.
+
+**The unit of the demand rate is whatever unit your sales lines are in.** It is average units
+per day, taken straight from delivery-order line quantities, with no unit conversion anywhere
+in the chain: a product sold in pieces gives pieces per day, one sold in sets gives sets per
+day. Everything downstream (safety stock, reorder point, target level, order quantity) carries
+that same unit.
 
 It triggers when `net <= ROP` (reorder point policy), on cadence when below target (periodic
 review), or at the minimum (min/max). Thin sales history falls back from the statistical safety
@@ -127,7 +165,8 @@ the keyed status is manual because no AutoCount integration exists to detect it.
 These are design decisions, not gaps, and each one exists because the alternative produces a
 confidently wrong number:
 
-- **No draft PO counts as supply.** Only a confirmed order is incoming.
+- **No purchase order counts as supply.** An order placed is not stock on the water; the SPO
+  allocation against it is. The order is reported, never counted.
 - **An undated commitment is reported, not dated today.**
 - **A missing cost, volume or dimension stays missing.** Zero would read as "free" or "takes no
   space" and win the ranking.
@@ -141,7 +180,8 @@ confidently wrong number:
 | Read model | Answers |
 |---|---|
 | `scm.net_position_v` | on hand + on order - committed, per product per location |
-| `scm.on_order_v` / `scm.committed_v` | incoming supply / open commitments |
+| `scm.on_order_v` / `scm.committed_v` | incoming supply (SPO allocations) / open commitments |
+| `scm.po_ordered_v` | placed on a purchase order, reported beside the plan and never in it |
 | `scm.consumption_v` | daily outflow history |
 | `scm.receipt_lead_v` | PO to receipt pairs, for measured lead time |
 | `scm.demand_stat` | demand rate and variability per product per location |

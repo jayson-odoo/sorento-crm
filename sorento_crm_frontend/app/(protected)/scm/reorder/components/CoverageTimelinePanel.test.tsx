@@ -131,7 +131,7 @@ describe('CoverageTimelinePanel - states', () => {
     // Every event names a document a person recognises - no UUID (AC-B2).
     expect(within(timeline).getByText('SO-2026-0311')).toBeInTheDocument();
     expect(within(timeline).getByText('SO-2026-0342')).toBeInTheDocument();
-    expect(within(timeline).getByText('PO-2026-0442')).toBeInTheDocument();
+    expect(within(timeline).getByText('SH-2026-0442')).toBeInTheDocument();
     // Balances 140 -> 5 -> -67 -> 133, as accumulated by the server.
     expect(within(timeline).getByText('5')).toBeInTheDocument();
     expect(within(timeline).getByText('−67')).toBeInTheDocument();
@@ -153,7 +153,7 @@ describe('CoverageTimelinePanel - a positive closing balance with a real shortfa
     withData(SHORTFALL);
     const banner = screen.getByTestId('coverage-shortfall');
     // The PO of 200 lands 25 Aug against an order due 3 Aug: 22 days late.
-    expect(banner).toHaveTextContent('PO-2026-0442');
+    expect(banner).toHaveTextContent('SH-2026-0442');
     expect(banner).toHaveTextContent('25 Aug 2026');
     expect(banner).toHaveTextContent('22 days too late');
   });
@@ -173,16 +173,22 @@ describe('CoverageTimelinePanel - a positive closing balance with a real shortfa
     expect(screen.getByTestId('coverage-peak')).toHaveTextContent('67');
   });
 
-  it('shows the on-order / in-transit split beside the incoming total', () => {
-    withData(SHORTFALL);
-    expect(screen.getByTestId('coverage-incoming')).toHaveTextContent('200 on order');
-    expect(screen.getByTestId('coverage-incoming')).toHaveTextContent('0 in transit');
+  it('counts only the allocated shipments as incoming', () => {
+    withData(HEALTHY);
+    expect(screen.getByTestId('coverage-incoming')).toHaveTextContent('400');
+    expect(screen.getByTestId('coverage-incoming')).toHaveTextContent('allocated shipments');
   });
 
-  it('keeps in-transit separate from on-order when the supply has shipped', () => {
-    withData(HEALTHY);
-    expect(screen.getByTestId('coverage-incoming')).toHaveTextContent('0 on order');
-    expect(screen.getByTestId('coverage-incoming')).toHaveTextContent('400 in transit');
+  it('shows an order with nothing shipped against it as ordered, not as incoming', () => {
+    // The distinction the balance turns on: a purchase order is an order PLACED, and the
+    // supplier may have shipped nothing against it. Putting it in Incoming would read as
+    // cover and suppress the buy that the shortfall beside it is asking for.
+    withData(SHORTFALL);
+    expect(screen.getByTestId('coverage-incoming')).toHaveTextContent('200');
+    expect(screen.getByTestId('coverage-ordered')).toHaveTextContent('300');
+    expect(screen.getByTestId('coverage-ordered')).toHaveTextContent(
+      'on a PO, nothing shipped yet',
+    );
   });
 });
 

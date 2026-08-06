@@ -6,9 +6,9 @@
  *  - One row per product with every figure the printed sheet carries, plus the
  *    two the pen version has no room for: the chosen quantity and the supplier
  *    (AC-C2.1).
- *  - On order and in transit as SEPARATE columns (AC-C2.2). Their sum drives the
- *    net position; the split is displayed because only the on-order half is
- *    still negotiable.
+ *  - Ordered and Incoming as SEPARATE columns (AC-C2.2). Only Incoming drives the
+ *    net position; Ordered is displayed so a shortfall does not read as
+ *    unattended.
  *  - Nothing decomposed inline. Every aggregate is a figure with an information
  *    icon (AC-C2.2a).
  *  - The engine's suggestion sits beside the chosen quantity (AC-C2.8), and a
@@ -178,12 +178,14 @@ describe('SummaryOrderReportView - the row carries only what is needed (AC-C2.1 
   });
 });
 
-describe('SummaryOrderReportView - on order and in transit stay separate (AC-C2.2)', () => {
-  it('renders them as two columns, not one incoming total', () => {
+describe('SummaryOrderReportView - ordered and incoming stay separate (AC-C2.2)', () => {
+  it('renders them as two columns, and never as one total', () => {
     renderView(state({ data: REPORT }));
-    expect(screen.getByText('On order')).toBeInTheDocument();
-    expect(screen.getByText('In transit')).toBeInTheDocument();
-    expect(screen.queryByText('Incoming')).not.toBeInTheDocument();
+    expect(screen.getByText('Ordered')).toBeInTheDocument();
+    expect(screen.getByText('Incoming')).toBeInTheDocument();
+    // Only Incoming is in the net position. A single combined column would put an order
+    // the supplier has shipped nothing against into a figure that reads as cover.
+    expect(screen.queryByText('Total incoming')).not.toBeInTheDocument();
   });
 
   it('keeps the split visible even where one half is zero', () => {

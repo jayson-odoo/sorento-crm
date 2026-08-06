@@ -203,9 +203,13 @@ def test_an_allocated_container_reaches_only_the_pool_it_is_allocated_to(db, two
     # The invariant behind both: the quantity exists once across the whole business.
     assert sum(r.event.qty for r in in_a + in_b) == 60.0
     # And the balances the two screens show, so a change that breaks the attribution
-    # while keeping the row counts right still fails here.
-    assert cov_a.timeline.closing_balance == 260  # 200 on order + 60 in transit
+    # while keeping the row counts right still fails here. 60, not 260: the 200 on the
+    # purchase order is ORDERED, not incoming, so it is reported beside the balance and
+    # never inside it.
+    assert cov_a.timeline.closing_balance == 60
     assert cov_b.timeline.closing_balance == 0
+    assert cov_a.qty_ordered_not_incoming == 200
+    assert cov_b.qty_ordered_not_incoming == 0
 
 
 def test_attribution_follows_the_allocation_rather_than_favouring_one_pool(db, two_pools):
@@ -228,7 +232,10 @@ def test_attribution_follows_the_allocation_rather_than_favouring_one_pool(db, t
     assert [r.event.ref for r in _in_transit_rows(cov_b)] == [ship.shipment_number]
     assert _in_transit_rows(cov_a) == []
     assert cov_a.timeline.closing_balance == 0
-    assert cov_b.timeline.closing_balance == 245
+    assert cov_b.timeline.closing_balance == 45
+    # The purchase order follows the same allocation, and is reported, not counted.
+    assert cov_a.qty_ordered_not_incoming == 0
+    assert cov_b.qty_ordered_not_incoming == 200
 
 
 # =========================================================================== #
@@ -283,13 +290,15 @@ def test_an_allocated_container_leaves_nothing_unattributed(db, two_pools):
 # c. the split the existing suite relies on survives the fix
 # =========================================================================== #
 
-def test_in_transit_stays_its_own_stage_beside_the_on_order_half(db, two_pools):
-    """GUARD, expected green before and after: one of the two can still be cancelled.
+def test_the_order_stays_off_the_timeline_the_shipment_against_it_stays_on(db, two_pools):
+    """The two halves are still distinguished, but by which side of the balance they sit on.
 
-    On-order can be re-dated or pulled; a container already loaded cannot. That difference
-    IS the content of the decision a person makes reading the row, so scoping the in-transit
-    half to a destination must not collapse it into the PO line it was allocated against -
-    the balance needs the SUM, the person needs the SPLIT.
+    They used to be two supply stages summed into one balance, on the reasoning that an
+    order can still be cancelled while a loaded container cannot. The live book showed that
+    reasoning was buying the wrong thing: 9 open PO lines against 842 allocations, so the
+    balance was made almost entirely of the half that had not shipped. An order is not stock
+    on the water. It is reported, so a buyer looking at a shortfall can see somebody already
+    acted on it, and it changes no number the plan computes.
     """
     product = two_pools["product"]
     _po, po_line = _po_with_line(
@@ -299,10 +308,12 @@ def test_in_transit_stays_its_own_stage_beside_the_on_order_half(db, two_pools):
 
     cov = CoverageService(db).coverage_for(product.id, pool_id=two_pools["pool_a"].id)
 
-    assert [r.event.supply_stage for r in cov.timeline.rows] == [
-        None, SUPPLY_ON_ORDER, SUPPLY_IN_TRANSIT,
-    ]
-    assert [r.balance for r in cov.timeline.rows] == [0, 200, 260]
+    assert [r.event.supply_stage for r in cov.timeline.rows] == [None, SUPPLY_IN_TRANSIT]
+    assert [r.balance for r in cov.timeline.rows] == [0, 60]
+    assert cov.qty_ordered_not_incoming == 200
+    assert not any(
+        r.event.supply_stage == SUPPLY_ON_ORDER for r in cov.timeline.rows
+    ), "a purchase order must produce no timeline event at all"
 
 
 def test_a_received_shipment_is_not_in_transit_supply(db, two_pools):
@@ -327,4 +338,6 @@ def test_a_received_shipment_is_not_in_transit_supply(db, two_pools):
     cov = CoverageService(db).coverage_for(product.id, pool_id=two_pools["pool_a"].id)
 
     assert _in_transit_rows(cov) == []
-    assert cov.timeline.closing_balance == 200
+    # Zero, not 200: the received container is on hand (counted in the opening balance once
+    # its GRN lands) and the purchase order behind it was never part of the balance.
+    assert cov.timeline.closing_balance == 0

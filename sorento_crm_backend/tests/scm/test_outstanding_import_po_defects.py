@@ -135,10 +135,14 @@ def _supplier_of(db, po_number):
     return (row["supplier_code"], row["supplier_name"])
 
 
-def _on_order(db, item) -> float:
-    """What `scm.on_order_v` counts as incoming supply for this item, across warehouses."""
+def _ordered(db, item) -> float:
+    """What `scm.po_ordered_v` counts as ORDERED for this item, across warehouses.
+
+    `on_order_v` is the SPO allocation now (migration 337): incoming stock, which a purchase
+    order alone is not. These tests are about the PO book, so they read the PO view.
+    """
     return float(db.execute(text(
-        "SELECT COALESCE(SUM(oo.on_order), 0) FROM scm.on_order_v oo "
+        "SELECT COALESCE(SUM(oo.ordered), 0) FROM scm.po_ordered_v oo "
         "JOIN products p ON p.id = oo.product_id WHERE p.product_code = :item"
     ), {"item": item}).scalar())
 
@@ -194,7 +198,7 @@ def test_reapplying_a_file_after_the_po_moved_to_a_live_status_is_a_no_op(db, se
     """
     svc.apply(db, po_week1(seeded), PO)
     lines_before = _line_count(db, seeded.main_po, seeded.alt_po)
-    on_order_before = _on_order(db, seeded.item_rl)
+    ordered_before = _ordered(db, seeded.item_rl)
     db.execute(text("UPDATE purchase_orders SET status = :s WHERE po_number = :po"),
                {"s": status, "po": seeded.main_po})
     db.flush()
@@ -205,7 +209,7 @@ def test_reapplying_a_file_after_the_po_moved_to_a_live_status_is_a_no_op(db, se
         f"a purchase order in status {status!r} was treated as a document with no lines"
     assert _line_count(db, seeded.main_po, seeded.alt_po) == lines_before, \
         "the same extract inserted its lines a second time"
-    assert _on_order(db, seeded.item_rl) == on_order_before, \
+    assert _ordered(db, seeded.item_rl) == ordered_before, \
         "on-order doubled: the plan now sees supply that was never ordered"
 
 
@@ -232,7 +236,7 @@ def test_a_draft_header_named_by_the_extract_is_lifted_to_the_live_status(db, se
 
     assert _header(db, seeded.main_po)["status"] == LIVE, \
         f"a {status!r} header named by the extract was left as a draft"
-    assert _on_order(db, seeded.item_rl) == 207.0, \
+    assert _ordered(db, seeded.item_rl) == 207.0, \
         "the lines landed on a draft, so the plan cannot see the supply at all"
     assert out.get("activated_documents") == [seeded.main_po], \
         "the response does not name the document whose status it changed"
@@ -363,7 +367,7 @@ def test_every_reader_agrees_a_closed_po_line_is_not_incoming(db, seeded):
     dash = ScmDashboardService(db)
     filters = ScmFilters(q=seeded.item_wt)
     incoming = {
-        "scm.on_order_v": _on_order(db, seeded.item_wt) > 0,
+        "scm.po_ordered_v": _ordered(db, seeded.item_wt) > 0,
         "dashboard placed-PO rows": bool(dash._placed_po_rows(filters)),
         "dashboard incoming_po_count": dash.rollups(filters)["incoming_po_count"] > 0,
     }
@@ -397,7 +401,7 @@ def test_every_reader_agrees_a_closed_po_line_is_not_incoming(db, seeded):
 
     spent_view = PurchaseOrderService(db).get_one(spent.id)
     spent_incoming = {
-        "scm.on_order_v": _on_order(db, seeded.item_blue) > 0,
+        "scm.po_ordered_v": _ordered(db, seeded.item_blue) > 0,
         "purchase_order_service is_on_order": spent_view["is_on_order"],
     }
     assert set(spent_incoming.values()) == {False}, \
@@ -451,7 +455,7 @@ def test_a_closed_line_that_reappears_is_reopened_in_place(db, seeded):
     assert rows[0]["id"] == original, "the reopened line is not the row the receipt sits on"
     assert rows[0]["line_status"] == "open", "the line is back in the book but still closed"
     assert float(rows[0]["qty_received"]) == 15.0, "the booked receipt was stranded"
-    assert _on_order(db, seeded.item_wt) == 45.0, \
+    assert _ordered(db, seeded.item_wt) == 45.0, \
         "supply is not ordered minus what already arrived"
 
 

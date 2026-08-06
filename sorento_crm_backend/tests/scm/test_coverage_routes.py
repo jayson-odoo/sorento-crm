@@ -85,6 +85,9 @@ TIMELINE_FIELDS = {
     "horizon_end",
     "excluded_event_count",
     "unattributed_in_transit_qty",
+    # Placed on a PO and NOT counted in the balance, reported so a shortfall does not read
+    # as "nobody has done anything about this".
+    "qty_ordered_not_incoming",
     "unplaceable_demand_qty",
     "unplaceable_on_order_qty",
     "computed_at",
@@ -241,17 +244,21 @@ def _shipment_line(db, product, qty, arrival, *, status="in_transit", destinatio
 
 
 def _adr_worked_example(db, chain) -> dict:
-    """Opening 140; demand 135 due 1 Jul 2026; demand 72 due 3 Aug 2026; PO 200 due 25 Aug.
+    """Opening 140; demand 135 due 1 Jul 2026; demand 72 due 3 Aug 2026; 200 arriving 25 Aug.
 
-    Verbatim from ADR-0011 and the Group B acceptance criteria, not invented figures.
+    Verbatim from ADR-0011 and the Group B acceptance criteria, not invented figures. The
+    arriving 200 is now an ALLOCATED SHIPMENT rather than a purchase order: the figures and
+    the point of the example are unchanged, but a purchase order is an order placed, and
+    only the SPO allocation against it is stock on its way in.
     """
     _stock(db, chain["product"], chain["pool"], 140)
     first = _so_line(db, chain["product"], chain["bin_a"], 135, date(2026, 7, 1),
                      customer_name="MARYAM TUJU RESIDENCE")
     second = _so_line(db, chain["product"], chain["bin_a"], 72, date(2026, 8, 3),
                       customer_name="MARYAM TUJU RESIDENCE")
-    po = _po_line(db, chain["product"], chain["bin_a"], 200, date(2026, 8, 25))
-    return {"first_so": first, "second_so": second, "po": po}
+    ship = _shipment_line(db, chain["product"], 200, date(2026, 8, 25),
+                          destination=chain["bin_a"])
+    return {"first_so": first, "second_so": second, "shipment": ship}
 
 
 def _get(client, *, product_code=None, pool_code=None, floor=None):
@@ -409,13 +416,13 @@ def test_demand_of_67_against_a_pool_holding_4397_answers_use_stock_not_a_buy(sc
 # 4. supply stages
 # =========================================================================== #
 
-def test_on_order_and_in_transit_stay_separate_rows_whose_sum_moves_the_balance(scm_app):
-    """One of the two can still be cancelled or re-dated and the other cannot.
+def test_a_purchase_order_does_not_reach_the_payload_but_its_shipment_does(scm_app):
+    """PO -> SPO -> GRN: the payload carries the middle link only.
 
-    That distinction is the whole content of the decision a person makes when they read the
-    row, so flattening both into "incoming" would leave them acting on a container that is
-    already on the water as though it could be pulled. The balance needs the SUM, the person
-    needs the SPLIT, and the payload owes both.
+    A purchase order is an order PLACED, and the supplier may have shipped nothing against
+    it; sending it as supply had the planner reading cover that does not exist. Both halves
+    are asserted together, because "the PO is gone" alone would also pass if supply had been
+    dropped entirely, and every product would then read short.
     """
     app, db, gcu, gcuk = scm_app
     client = _client(scm_app)
@@ -430,11 +437,9 @@ def test_on_order_and_in_transit_stay_separate_rows_whose_sum_moves_the_balance(
     assert r.status_code == 200, r.text
     body = r.json()
 
-    assert [row["event"]["supply_stage"] for row in body["rows"]] == [
-        None, "on_order", "in_transit",
-    ]
-    assert [row["balance"] for row in body["rows"]] == [0, 200, 260]
-    assert body["closing_balance"] == 260
+    assert [row["event"]["supply_stage"] for row in body["rows"]] == [None, "in_transit"]
+    assert [row["balance"] for row in body["rows"]] == [0, 60]
+    assert body["closing_balance"] == 60
 
 
 # =========================================================================== #

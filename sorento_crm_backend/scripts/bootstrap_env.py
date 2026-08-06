@@ -112,6 +112,10 @@ def create_views() -> None:
     # after it had already been stamped somewhere, so databases at 311 can hold the old
     # definition). Replayed here too, in revision order, rather than assumed identical.
     ordered.extend(_load("327_scm_coverage_config.py")._REDEFINED_VIEWS)
+    # 337 redefines on_order_v to read the SPO allocation (a purchase order is an order
+    # placed, not stock incoming) and adds po_ordered_v under the old body's honest name.
+    _m337 = _load("337_scm_on_order_from_spo.py")
+    ordered.extend([_m337.ON_ORDER_FROM_SPO, _m337.PO_ORDERED_V])
     with engine.begin() as conn:
         for ddl in ordered:
             # The migration's DDL uses bare CREATE VIEW; make re-runs idempotent.

@@ -63,9 +63,11 @@ SOURCE_POOL = "brw"
 SOURCE_OTHER = "other_project"
 SOURCE_ORDER = "order"
 
-# In-transit is supply that has been loaded and cannot be re-dated or cancelled; on-order
-# still can. Their SUM is what the balance needs, and the SPLIT is what a person deciding a
-# quantity reads, so the timeline carries the distinction rather than flattening it.
+# Incoming stock is the SPO allocation against a shipment, and it is the ONLY supply the
+# balance counts (decision, 6 Aug 2026). `SUPPLY_ON_ORDER` is no longer emitted by any
+# producer: a purchase order is an order placed, not stock on the water, so its quantity is
+# reported beside the timeline (`Coverage.qty_ordered_not_incoming`) and never on it. The
+# constant stays because persisted rows and API consumers still carry the string.
 SUPPLY_ON_ORDER = "on_order"
 SUPPLY_IN_TRANSIT = "in_transit"
 
@@ -80,7 +82,7 @@ class TimelineEvent:
     ref: str = ""               # document number, shown on screen. Never a UUID.
     label: str = ""             # human context: project or customer or supplier
     location: str = ""          # the bin or pool the movement sits in
-    supply_stage: Optional[str] = None   # on_order | in_transit, for SUPPLY only
+    supply_stage: Optional[str] = None   # in_transit, for SUPPLY only (see above)
 
 
 @dataclass(frozen=True)

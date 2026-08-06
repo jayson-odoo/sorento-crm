@@ -279,8 +279,10 @@ export function OrderDecisionSheet({
               <Position label="On hand" value={row.on_hand} />
               <Position label="Project demand" value={row.project_demand} />
               <Position label="Dealer outstanding" value={row.dealer_outstanding} />
-              <Position label="On order" value={row.qty_on_order} />
-              <Position label="In transit" value={row.qty_in_transit} />
+              {/* Ordered is not in the net position: an order placed is not stock on the
+                  water. Shown so a shortfall does not read as unattended. */}
+              <Position label="Ordered" value={row.qty_on_order} />
+              <Position label="Incoming" value={row.qty_in_transit} />
               {/* Same label as the grid column. The two surfaces are one click apart, and
                   calling the same number "Shortfall" here and "Short vs orders" there
                   reads as two different figures. */}

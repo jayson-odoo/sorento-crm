@@ -17,13 +17,21 @@ from sqlalchemy import text
 
 from app.models.inventory import Stock, Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
-from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
+from app.models.procurement import (
+    InboundShipment,
+    InboundShipmentLine,
+    PurchaseOrder,
+    PurchaseOrderLine,
+    SPOAllocation,
+    Supplier,
+)
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services.scm.coverage_service import CoverageService
 from app.services.scm.coverage_timeline import (
     SOURCE_ORDER,
     SOURCE_OWN,
     SOURCE_POOL,
+    SUPPLY_IN_TRANSIT,
     SUPPLY_ON_ORDER,
 )
 from app.services.scm.coverage_timeline import buy_quantity, is_use_stock
@@ -123,6 +131,37 @@ def _po_line(db, product, wh, qty, when, *, status="active"):
     return po
 
 
+def _incoming(db, product, wh, qty, arrival, *, status="in_transit", received=0):
+    """One allocated inbound shipment: the ONLY thing that counts as supply.
+
+    A purchase order is an order placed; the SPO allocation is the supplier's shipment
+    against it, and it is the row that names a destination warehouse.
+    """
+    sup = Supplier(id=_u(), supplier_code=unique_code("S"), supplier_name="GUANGDONG SW")
+    db.add(sup)
+    db.flush()
+    ship = InboundShipment(
+        id=_u(), shipment_number=unique_code("SH")[:50], supplier_id=sup.id,
+        # NOT NULL on the table: a shipment that never left has no meaning.
+        shipment_date=date(2026, 7, 1),
+        estimated_arrival_date=arrival, shipment_status=status,
+    )
+    db.add(ship)
+    db.flush()
+    db.add(InboundShipmentLine(
+        id=_u(), shipment_id=ship.id, product_id=product.id,
+        quantity_shipped=qty, quantity_received=received, cartons_count=1,
+        spo_allocated_quantity=qty, line_status="in_transit",
+    ))
+    db.add(SPOAllocation(
+        id=_u(), spo_number=unique_code("SPO")[:50], inbound_shipment_id=ship.id,
+        product_id=product.id, warehouse_id=wh.id,
+        allocated_quantity=qty, quantity_received=received,
+    ))
+    db.flush()
+    return ship
+
+
 # --------------------------------------------------------------------------- #
 # the regression case, through the database
 # --------------------------------------------------------------------------- #
@@ -202,7 +241,9 @@ def test_timeline_orders_real_documents_by_date(db, chain):
              customer_name="TUJU RESIDENCE")
     _so_line(db, chain["product"], chain["bin_a"], 72, date(2026, 8, 3),
              customer_name="TUJU RESIDENCE")
-    _po_line(db, chain["product"], chain["bin_a"], 200, date(2026, 8, 25))
+    # Supply is the ALLOCATION, not the purchase order: PO -> SPO -> GRN, and only the
+    # middle link is stock actually on its way.
+    _incoming(db, chain["product"], chain["bin_a"], 200, date(2026, 8, 25))
 
     cov = CoverageService(db).coverage_for(chain["product"].id, pool_id=chain["pool"].id)
 
@@ -226,44 +267,51 @@ def test_a_draft_po_is_not_counted_as_supply(db, chain):
     assert cov.timeline.shortfall is not None
 
 
-def test_supply_stage_distinguishes_on_order_from_in_transit(db, chain):
-    _po_line(db, chain["product"], chain["bin_a"], 400, date(2026, 8, 1))
-    cov = CoverageService(db).coverage_for(chain["product"].id, pool_id=chain["pool"].id)
-    stages = [r.event.supply_stage for r in cov.timeline.rows if r.event.supply_stage]
-    assert stages == [SUPPLY_ON_ORDER]
+def test_a_purchase_order_alone_is_not_supply(db, chain):
+    """PO -> SPO -> GRN, and only the SPO is stock on its way in.
 
-
-def test_a_closed_po_line_is_not_supply_and_the_timeline_agrees_with_on_order_v(db, chain):
-    """Two readers of "on order" must not disagree, and here the disagreement HIDES a
-    shortfall.
-
-    ``scm.on_order_v`` excludes a line whose ``line_status`` the outstanding-orders importer
-    has closed; the demand half of this very service applies the same predicate to
-    ``sales_order_lines``. The supply half does not, so a container the supplier is no longer
-    holding for us still arrives on the timeline and covers demand that is in fact uncovered.
-    A planner reading a shortfall of zero next to a dashboard reading a shortfall stops
-    trusting both numbers, so the agreement of the two figures is the real invariant, which
-    is why it is asserted directly rather than inferred from one of them.
+    A purchase order is an order PLACED; the supplier may have shipped nothing against it.
+    Counting it made the plan believe in cover that does not exist, and in the live book the
+    two were nowhere near each other: 9 open PO lines against 842 in-transit allocations.
     """
-    sup = Supplier(id=_u(), supplier_code=unique_code("S"), supplier_name="KAILU")
-    db.add(sup)
-    db.flush()
-    po = PurchaseOrder(id=_u(), po_number=unique_code("PO"), supplier_id=sup.id, status="active")
-    db.add(po)
-    db.flush()
-    # Same PO, same product, same pool member: the only difference is line_status, so
-    # nothing else can explain a divergence between the two readers.
-    db.add(PurchaseOrderLine(
-        id=_u(), purchase_order_id=po.id, product_id=chain["product"].id,
-        warehouse_id=chain["bin_a"].id, qty_ordered=200, qty_received=0,
-        expected_date=date(2026, 8, 25), line_status="open",
-    ))
-    db.add(PurchaseOrderLine(
-        id=_u(), purchase_order_id=po.id, product_id=chain["product"].id,
-        warehouse_id=chain["bin_a"].id, qty_ordered=500, qty_received=0,
-        expected_date=date(2026, 8, 10), line_status="closed",
-    ))
-    db.flush()
+    _po_line(db, chain["product"], chain["bin_a"], 400, date(2026, 8, 1))
+
+    cov = CoverageService(db).coverage_for(chain["product"].id, pool_id=chain["pool"].id)
+
+    assert [r.event.supply_stage for r in cov.timeline.rows if r.event.supply_stage] == []
+    assert cov.timeline.closing_balance == 0
+
+
+def test_the_allocation_against_that_order_IS_supply(db, chain):
+    # The other half: dropping the PO must not drop the supply, or the fix would simply be
+    # "count nothing" and every product would read short.
+    _incoming(db, chain["product"], chain["bin_a"], 400, date(2026, 8, 1))
+
+    cov = CoverageService(db).coverage_for(chain["product"].id, pool_id=chain["pool"].id)
+
+    assert [r.event.supply_stage for r in cov.timeline.rows if r.event.supply_stage] == [
+        SUPPLY_IN_TRANSIT
+    ]
+    assert cov.timeline.closing_balance == 400
+
+
+def test_the_timeline_and_on_order_v_report_the_same_incoming_quantity(db, chain):
+    """Two readers of "incoming" must not disagree, and a disagreement HIDES a shortfall.
+
+    `scm.on_order_v` (the snapshot the dashboard reads) and the dated timeline now draw from
+    the same place: the SPO allocation. A received allocation is excluded by both, so a
+    container that has already landed cannot cover demand a second time. A planner reading a
+    shortfall of zero next to a dashboard reading a shortfall stops trusting both numbers, so
+    the agreement is asserted directly rather than inferred from one of them.
+    """
+    _incoming(db, chain["product"], chain["bin_a"], 200, date(2026, 8, 25))
+    # Already landed: excluded from both readers, not netted to zero in one of them.
+    _incoming(
+        db, chain["product"], chain["bin_a"], 500, date(2026, 8, 10),
+        status="fully_received", received=500,
+    )
+    # And a purchase order over the same product and bin, which is not supply at all.
+    _po_line(db, chain["product"], chain["bin_a"], 900, date(2026, 8, 5))
 
     on_order = db.execute(
         text(
@@ -275,17 +323,14 @@ def test_a_closed_po_line_is_not_supply_and_the_timeline_agrees_with_on_order_v(
 
     cov = CoverageService(db).coverage_for(chain["product"].id, pool_id=chain["pool"].id)
 
-    # The invariant: the dashboard's on-order figure and the timeline's supply are the
-    # same quantity described two ways.
     assert cov.timeline.closing_balance == float(on_order)
-    # And the absolute figure, so a future change that breaks BOTH readers together still
-    # fails here rather than agreeing on the wrong number.
+    # The absolute figure too, so a change that breaks BOTH readers together still fails
+    # here rather than agreeing on the wrong number.
     assert float(on_order) == 200
     assert cov.timeline.closing_balance == 200
-    # One supply row, not two: the closed line must be absent from the timeline entirely,
-    # not merely netted to zero, or the planner reads a delivery that is not coming.
-    assert [r.event.ref for r in cov.timeline.rows] == ["", po.po_number]
-    assert [r.event.qty for r in cov.timeline.rows] == [0.0, 200.0]
+    # One supply row, not three: the received allocation and the purchase order must be
+    # ABSENT, not present-and-netted, or the planner reads deliveries that are not coming.
+    assert len([r for r in cov.timeline.rows if r.event.supply_stage]) == 1
 
 
 def test_an_undated_commitment_is_reported_rather_than_dated_today(db, chain):

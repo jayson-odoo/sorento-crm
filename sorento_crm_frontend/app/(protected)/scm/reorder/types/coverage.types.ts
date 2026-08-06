@@ -22,6 +22,12 @@ export type CoverageEventKind = 'opening' | 'demand' | 'supply';
  * cancelled; on-order still can. Their sum drives the balance, the split is what a
  * person deciding a quantity reads, so the timeline keeps both.
  */
+/**
+ * Supply rows carry `in_transit` only. `on_order` stays in the union because older frozen
+ * payloads still hold it, but nothing produces it any more: a purchase order is an order
+ * placed, not stock on the water, so it is reported as `qty_ordered_not_incoming` and
+ * never as a timeline event.
+ */
 export type CoverageSupplyStage = 'on_order' | 'in_transit';
 
 /**
@@ -162,6 +168,12 @@ export interface CoverageTimeline {
    * and suppress a purchase per pool, invisibly, so it is set aside and stated here.
    */
   unattributed_in_transit_qty: number;
+  /**
+   * Placed on a purchase order for this pool with nothing shipped against it yet. Shown
+   * BESIDE the balance and deliberately absent from it, so a shortfall does not read as
+   * "nobody has done anything about this".
+   */
+  qty_ordered_not_incoming: number;
   /**
    * Committed demand, and placed on-order supply, carrying no warehouse at all. Both
    * columns are nullable, so these rows belonged to no pool and appeared in no total
