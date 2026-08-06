@@ -1304,3 +1304,63 @@ describe('QuotationDocumentClient change request', () => {
     expect(screen.queryByRole('button', { name: /^Revise/ })).toBeNull();
   });
 });
+
+/**
+ * The badge beside the reference, which has to agree with the project's quotation list.
+ *
+ * Reported from the running system: the list said "Accepted" and the document said "Issued" for
+ * the same record. `quotationStanding` was written precisely so those two surfaces could not
+ * disagree, and the header simply never used it - it kept its own `is_issued ? Issued : Draft`.
+ * These pin the header to the shared reading.
+ */
+describe('QuotationDocumentClient standing badge', () => {
+  function seedWithDecision(overrides: Partial<QuotationDocument>) {
+    seedOneScope();
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        grand_total: '9000.00',
+        scopes: [scope()],
+        is_issued: true,
+        issue_count: 1,
+        current_issue_no: 1,
+        signatory_signature: signature(),
+        ...overrides,
+      }),
+    );
+  }
+
+  it('reads Accepted, not Issued, once the customer has signed', async () => {
+    seedWithDecision({ customer_decision: 'accepted', accepted_at: '2026-08-06T02:15:00' });
+    renderScreen();
+
+    expect(await screen.findByText('Accepted')).toBeInTheDocument();
+    // The bug in one line: both words on screen at once is the disagreement, not a richer label.
+    expect(screen.queryByText('Issued')).toBeNull();
+  });
+
+  it('reads Changes requested while the customer is waiting on a revision', async () => {
+    seedWithDecision({
+      customer_decision: 'changes_requested',
+      changes_requested_at: '2026-08-06T02:15:00',
+      changes_requested_note: 'cheaper please',
+    });
+    renderScreen();
+
+    expect(await screen.findByText('Changes requested')).toBeInTheDocument();
+    expect(screen.queryByText('Issued')).toBeNull();
+  });
+
+  it('still reads Issued when the customer has not answered', async () => {
+    seedWithDecision({ customer_decision: null });
+    renderScreen();
+
+    expect(await screen.findByText('Issued')).toBeInTheDocument();
+  });
+
+  it('reads Draft before anything has been issued', async () => {
+    seedWithDecision({ is_issued: false, issue_count: 0, current_issue_no: null });
+    renderScreen();
+
+    expect(await screen.findByText('Draft')).toBeInTheDocument();
+  });
+});

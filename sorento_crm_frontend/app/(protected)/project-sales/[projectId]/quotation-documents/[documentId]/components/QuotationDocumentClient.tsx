@@ -36,6 +36,7 @@ import {
   useQuotationMutations,
   useQuotations,
 } from '../../../../_shared/hooks/useProjects';
+import { quotationStanding } from '../../../../_shared/lib/quotationDecision';
 import { sumMoney } from '../../../components/POIntakeMoney';
 import {
   stagedLinesToBody,
@@ -229,6 +230,9 @@ export function QuotationDocumentClient({
    * typed into, so an untouched field still reads the server's value.
    */
   const shown: QuotationDocument = { ...record, ...edit.documentDraft };
+  // Read off the SERVER's record, never off `shown`: where a quotation stands is the customer's
+  // answer, not something a half-typed edit session can change.
+  const standing = quotationStanding(record);
   // Same gate the letter panels use: a reader with no edit rights never gets a writing surface,
   // even if a session were somehow open.
   const isHeaderEditable = canEdit && edit.isEditing;
@@ -435,8 +439,12 @@ export function QuotationDocumentClient({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm text-muted-foreground">{record.document_no}</span>
-            <Badge variant={record.is_issued ? 'success' : 'secondary'} appearance="light">
-              {record.is_issued ? 'Issued' : 'Draft'}
+            {/* The SAME reading as the project's quotation list. This badge used to be its own
+                `is_issued ? Issued : Draft`, which is why a quotation the customer had accepted
+                read "Accepted" in the list and "Issued" here - the two surfaces answered the same
+                question differently, which is exactly what `quotationStanding` exists to stop. */}
+            <Badge variant={standing.variant} appearance="light">
+              {standing.label}
             </Badge>
           </div>
           <h1 className="mt-1 break-words text-xl font-semibold">
