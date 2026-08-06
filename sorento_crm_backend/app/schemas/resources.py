@@ -314,6 +314,9 @@ class AttachmentResponse(AttachmentBase):
     linked_promotions: list[LinkedEntityRef] = []
     linked_form: Optional[LinkedEntityRef] = None
     linked_packing_lists: list[LinkedEntityRef] = []
+    # Certificates this file is a filed revision of. Read-only on the FE: the
+    # link is created by filing the document, not by a user linking two rows.
+    linked_certificates: list[LinkedEntityRef] = []
 
     @field_validator('id', 'uploaded_by', 'deleted_by', 'attachment_type_id', 'entity_id', 'directory_id', mode='before')
     @classmethod

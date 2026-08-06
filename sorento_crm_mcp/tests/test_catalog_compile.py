@@ -97,3 +97,28 @@ def test_no_freetext_query_on_data_list_tools():
         if spec.name in exempt:
             continue
         assert "query" not in spec.query_params, f"{spec.name} still exposes free-text query"
+
+
+def test_product_attachments_accepts_certificate_ids_as_a_narrower():
+    """`certificate_ids` must be BOTH a query param and a recognised narrowing
+    key. Listed as one but not the other, "the files for this certificate"
+    returns an empty page while the filter itself works - a silent wrong answer,
+    not an error.
+    """
+    spec = next(s for s in CATALOG if s.name == "crm_master_product_attachments_list")
+    assert "certificate_ids" in spec.query_params
+    assert "certificate_ids" in TOOL_REQUIRED_NARROWING_FILTERS[spec.name]
+    # And the agent has to be told, or it will never pass it.
+    assert "certificate_ids" in spec.description
+
+
+@pytest.mark.asyncio
+async def test_certificate_ids_alone_reaches_the_backend():
+    """Not short-circuited: the request must actually carry the filter."""
+    spec = next(s for s in CATALOG if s.name == "crm_master_product_attachments_list")
+    fn = _compile_tool(spec)
+    out = await fn(
+        _FakeCtx(_FakeClient()),
+        certificate_ids="11111111-1111-4111-8111-111111111111",
+    )  # type: ignore[arg-type]
+    assert "certificate_ids" in out

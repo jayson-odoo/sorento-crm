@@ -572,6 +572,7 @@ def _attachment_response_with_linked_entities(service: AttachmentService, attach
     data["linked_promotions"] = [LinkedEntityRef.model_validate(p).model_dump() for p in linked["linked_promotions"]]
     data["linked_form"] = LinkedEntityRef.model_validate(linked["linked_form"]).model_dump() if linked["linked_form"] else None
     data["linked_packing_lists"] = [LinkedEntityRef.model_validate(p).model_dump() for p in linked["linked_packing_lists"]]
+    data["linked_certificates"] = [LinkedEntityRef.model_validate(c).model_dump() for c in linked["linked_certificates"]]
     if linked["linked_products"]:
         data["entity_display_name"] = linked["linked_products"][0]["name"]
     elif linked["linked_promotions"]:
@@ -580,6 +581,11 @@ def _attachment_response_with_linked_entities(service: AttachmentService, attach
         data["entity_display_name"] = linked["linked_form"]["name"]
     elif linked["linked_packing_lists"]:
         data["entity_display_name"] = linked["linked_packing_lists"][0]["name"]
+    # Certificates come LAST in the display-name chain: a certificate PDF is
+    # normally also linked to the products it covers, and the product is the
+    # more useful label. This only wins for a certificate covering nothing.
+    elif linked["linked_certificates"]:
+        data["entity_display_name"] = linked["linked_certificates"][0]["name"]
     else:
         data["entity_display_name"] = service.get_entity_display_name(
             attachment.entity_type, attachment.entity_id
