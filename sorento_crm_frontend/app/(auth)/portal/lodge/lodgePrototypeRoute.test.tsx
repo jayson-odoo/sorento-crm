@@ -22,12 +22,13 @@ vi.mock('next/navigation', () => ({
 
 const readPortalToken = vi.fn();
 const readPortalSlug = vi.fn();
+const fetchMe = vi.fn();
 
 vi.mock('../lib/portal-client', async () => {
   const actual = await vi.importActual<typeof import('../lib/portal-client')>(
     '../lib/portal-client',
   );
-  return { ...actual, readPortalToken: () => readPortalToken() };
+  return { ...actual, readPortalToken: () => readPortalToken(), fetchMe: () => fetchMe() };
 });
 
 vi.mock('../lib/portal-paths', async () => {
@@ -91,13 +92,37 @@ describe('/portal/lodge', () => {
     expect(replace).not.toHaveBeenCalled();
   });
 
-  it('does not redirect a token with no slug, which cannot address a journey', async () => {
+  it('asks the token who it belongs to when no slug is stored (impersonation)', async () => {
+    // `/portal` deliberately persists nothing on an admin's machine, so an impersonating
+    // admin holds a good token and no slug. Keying only on the stored slug stranded exactly
+    // the people testing this on the mock - the bug this route exists to prevent.
     readPortalToken.mockReturnValue('tok_live');
     readPortalSlug.mockReturnValue(null);
+    fetchMe.mockResolvedValue({ portal_slug: 'S9' });
+
+    render(<PortalLodgePage />);
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/portal/c/S9/lodge'));
+  });
+
+  it('falls back to the labelled prototype when the contact has no slug at all', async () => {
+    readPortalToken.mockReturnValue('tok_live');
+    readPortalSlug.mockReturnValue(null);
+    fetchMe.mockResolvedValue({ portal_slug: null });
 
     render(<PortalLodgePage />);
 
     await waitFor(() => expect(screen.getByText(/Preview only/i)).toBeInTheDocument());
     expect(replace).not.toHaveBeenCalled();
+  });
+
+  it('falls back rather than blanking when the token is expired', async () => {
+    readPortalToken.mockReturnValue('tok_dead');
+    readPortalSlug.mockReturnValue(null);
+    fetchMe.mockRejectedValue(new Error('401'));
+
+    render(<PortalLodgePage />);
+
+    await waitFor(() => expect(screen.getByText(/Preview only/i)).toBeInTheDocument());
   });
 });

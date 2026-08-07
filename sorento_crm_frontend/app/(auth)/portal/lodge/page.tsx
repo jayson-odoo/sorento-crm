@@ -32,7 +32,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 
 import { LodgeFlow } from '../components/lodge/LodgeFlow';
 import type { MockScenario } from '../components/lodge/lodgeMocks';
-import { readPortalToken } from '../lib/portal-client';
+import { fetchMe, readPortalToken } from '../lib/portal-client';
 import { portalLodgePath, readPortalSlug } from '../lib/portal-paths';
 
 const SCENARIOS: MockScenario[] = ['resolved', 'candidate', 'unmatched', 'dealer_track'];
@@ -49,14 +49,39 @@ function LodgeContent() {
       setDecided(true);
       return;
     }
-    const slug = readPortalSlug();
-    if (readPortalToken() && slug) {
-      // There is a real contact behind this browser, so there is a real complaint to file.
-      // Running the mock here would end in a warranty verdict for nothing.
-      router.replace(portalLodgePath(slug));
+    if (!readPortalToken()) {
+      // Nobody to file against. The prototype is the honest thing to show.
+      setDecided(true);
       return;
     }
-    setDecided(true);
+
+    const stored = readPortalSlug();
+    if (stored) {
+      router.replace(portalLodgePath(stored));
+      return;
+    }
+
+    // A token with no stored slug is the IMPERSONATION case, and it is the common one:
+    // `/portal` deliberately persists nothing on an admin's machine, so an admin viewing
+    // the portal as a contact has a perfectly good token and no slug. Keying only on the
+    // stored slug left exactly the people testing this stranded on the mock, which is the
+    // bug this route was supposed to fix. Ask the token who it belongs to instead.
+    let cancelled = false;
+    fetchMe()
+      .then((me) => {
+        if (cancelled) return;
+        const slug = (me.portal_slug || '').trim();
+        if (slug) router.replace(portalLodgePath(slug));
+        else setDecided(true);
+      })
+      .catch(() => {
+        // Expired, revoked, or a contact with no slug. Falling back to the labelled
+        // prototype beats a blank screen.
+        if (!cancelled) setDecided(true);
+      });
+    return () => {
+      cancelled = true;
+    };
     // Intentional: decided once, on mount. A redirect mid-journey would be worse than the
     // prototype it is replacing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
