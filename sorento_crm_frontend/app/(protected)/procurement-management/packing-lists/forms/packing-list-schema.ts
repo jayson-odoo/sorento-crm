@@ -21,7 +21,6 @@ export const clearanceSchema = z.object({
   loading_date: z.string().optional(),
   etc_date: z.string().optional(),
   etd_date: z.string().optional(),
-  eta_date: z.string().optional(),
   eta_delay_date: z.string().optional(),
   inspection_date: z.string().optional(),
   approval_date: z.string().optional(),

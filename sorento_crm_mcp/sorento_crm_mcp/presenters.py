@@ -308,10 +308,13 @@ def _orders_by_product(rows: list[dict], b: _Builder) -> None:
 #: pairs, so a denied field renders as nothing rather than as a blank row.
 #:
 #: These sit AFTER the identity/quantity pairs above them, which are never gated:
-#: product, container, shipment, ETA and quantity are the answer itself, and a
-#: contact who may not see a gatepass date must still be told what is arriving.
+#: product, container, shipment and quantity are the answer itself, and a contact
+#: who may not see a gatepass date must still be told what is arriving.
+#:
+#: ETA is the exception that proves the rule - it IS gateable (an admin can revoke
+#: it) but ships allowed, so it lives in this list rather than the identity block.
 _CLEARANCE_PAIRS = (
-    ("eta_date", "ETA"),
+    ("estimated_arrival_date", "ETA"),
     ("eta_delay_date", "ETA Delay"),
     ("inspection_date", "CIDB Inspection"),
     ("approval_date", "CIDB Approval"),
@@ -345,7 +348,6 @@ def _incoming_list(rows: list[dict], b: _Builder) -> None:
                     ("Product Name", _distinct_name(l.get("product_code"), l.get("product_name"))),
                     ("Shipment", s.get("shipment_number")),
                     ("Container", s.get("shipping_container_number")),
-                    ("Estimated Arrival Date", s.get("estimated_arrival_date")),
                     ("Batch", l.get("batch_number")),
                     ("Incoming Quantity", l.get("remaining_incoming_quantity")),
                     ("Warehouse Allocations", _wh_alloc(l.get("warehouse_allocations"))),

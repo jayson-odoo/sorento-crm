@@ -11,10 +11,14 @@ This moves the granularity down one level: the agent stays the FUNCTION, and the
 fields it may reveal become rows. `contact_id IS NULL` is the agent-wide default;
 a row naming a contact overrides it for that contact alone.
 
-Seeds one denied row per gated field so an admin opens the screen to a complete
-checklist rather than a blank one. Denied, not allowed - a field that has never
-been reviewed must not be readable, and the 53 contacts must not gain ETA delay
-and CIDB dates the moment this deploys.
+Seeds one row per gated field so an admin opens the screen to a complete
+checklist rather than a blank one. Denied by default - a field that has never been
+reviewed must not be readable, and the 53 contacts must not gain ETA delay and
+CIDB dates the moment this deploys.
+
+`estimated_arrival_date` is the exception, seeded ALLOWED: those contacts already
+receive it every day, so a denied seed would REMOVE an answer rather than withhold
+a new one. It is listed here so an admin can revoke it, not so the deploy does.
 
 Drops `container_status_enquiries`; its grants go with it via ON DELETE CASCADE.
 
@@ -38,7 +42,7 @@ depends_on = None
 #: rather than imported: a migration must keep describing the world as it was the
 #: day it ran, even after the registry grows.
 INCOMING_STOCK_FIELDS = (
-    "eta_date",
+    "estimated_arrival_date",
     "eta_delay_date",
     "inspection_date",
     "approval_date",
@@ -144,11 +148,18 @@ def upgrade() -> None:
                     """
                     INSERT INTO agent_field_access
                         (id, agent_code, resource, field_key, contact_id, is_allowed)
-                    VALUES (:id, :agent, 'incoming_stock', :field, NULL, false)
+                    VALUES (:id, :agent, 'incoming_stock', :field, NULL, :allowed)
                     ON CONFLICT DO NOTHING
                     """
                 ),
-                {"id": str(uuid.uuid4()), "agent": OWNING_AGENT, "field": field},
+                {
+                    "id": str(uuid.uuid4()),
+                    "agent": OWNING_AGENT,
+                    "field": field,
+                    # ETA ships ALLOWED: contacts already receive it, so a denied
+                    # seed would remove an answer rather than withhold a new one.
+                    "allowed": field == "estimated_arrival_date",
+                },
             )
 
     # The agent this replaces. Its contact grants cascade away with it.

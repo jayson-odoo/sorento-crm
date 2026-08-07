@@ -90,7 +90,7 @@ def _one_row_workbook(container: str, **cells) -> bytes:
 
     header_for = {
         "eta_delay_date": "ETA DELAY",
-        "eta_date": "ETA",
+        "estimated_arrival_date": "ETA",
         "gatepass_date": "GATEPASS",
         "inspection_date": "INSPECTION",
         "approval_date": "APPROVAL",
@@ -152,7 +152,7 @@ def test_skips_a_container_with_no_packing_list_instead_of_inventing_one(db):
     """D32. The sheet has nothing to build a packing list out of."""
     before = db.query(InboundShipment).count()
     parsed = parse_container_status_workbook(
-        _one_row_workbook("TGBU9807730", eta_date=date(2026, 7, 19), liner_code="MSC")
+        _one_row_workbook("TGBU9807730", estimated_arrival_date=date(2026, 7, 19), liner_code="MSC")
     )
     result = _service(db).apply(parsed, user_id=None)
 
@@ -187,7 +187,7 @@ def test_a_skipped_row_is_recorded_on_the_job_not_silently_dropped(db):
             pass
 
     parsed = parse_container_status_workbook(
-        _one_row_workbook("TGBU9807730", eta_date=date(2026, 7, 19))
+        _one_row_workbook("TGBU9807730", estimated_arrival_date=date(2026, 7, 19))
     )
     _service(db).apply(parsed, user_id=None, outcome=_Outcome())
 

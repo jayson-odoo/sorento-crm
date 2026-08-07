@@ -61,7 +61,7 @@ WRITABLE_FIELDS: tuple[str, ...] = (
     "loading_date",
     "etc_date",
     "etd_date",
-    "eta_date",
+    "estimated_arrival_date",
     "eta_delay_date",
     "inspection_date",
     "approval_date",

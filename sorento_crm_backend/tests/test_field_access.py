@@ -43,6 +43,7 @@ from app.services.field_access import (
     AGENT_NOT_ASSIGNED,
     ALLOWED,
     CONTACT_NOT_FOUND,
+    DEFAULT_ALLOWED,
     FIELD_NOT_ALLOWED,
     GATED_FIELDS,
     NOT_GATED,
@@ -176,18 +177,65 @@ def test_gated_keys_are_absent_not_null(db):
     row = gated["data"][0]
 
     for key in GATED_FIELDS[RESOURCE]:
+        if key in DEFAULT_ALLOWED:
+            continue  # ships allowed; covered by its own test below
         assert key not in row, f"{key} must be absent, not present-and-null"
     # ...and specifically the one that was already null before stripping.
     assert "gatepass_date" not in row
 
 
 def test_the_public_eta_still_flows(db):
-    """`estimated_arrival_date` is today's ETA and the reason those agents exist.
-    Gating "anything ending in _date" would have taken it too."""
+    """ETA is gateable but ships ALLOWED, so the deploy is inert.
+
+    `estimated_arrival_date` is what the 53 contacts holding
+    `incoming_stock_enquiries` ask about every day. Adding it to the registry must
+    let an admin REVOKE it, never silently withhold it - a gate that removes an
+    answer people already have is a regression wearing a security badge.
+    """
     gated = apply_field_access(db, _payload(), resource=RESOURCE, current_user={"id": None})
 
     assert gated["data"][0]["estimated_arrival_date"] == "2026-07-18"
-    assert "estimated_arrival_date" not in GATED_FIELDS[RESOURCE]
+    assert "estimated_arrival_date" in GATED_FIELDS[RESOURCE], "revocable"
+    assert "estimated_arrival_date" in DEFAULT_ALLOWED, "but allowed by default"
+
+
+def test_eta_reaches_a_contact_holding_no_agent_at_all(db):
+    """The strongest form of inert: even a contact with no grants keeps the ETA,
+    because every caller receives it today."""
+    contact = _contact(db)
+
+    (decision,) = decide(
+        db, resource=RESOURCE, fields=["estimated_arrival_date"], contact_id=contact.id
+    )
+    assert decision.outcome == ALLOWED
+
+
+def test_eta_can_still_be_revoked_agent_wide(db):
+    """Default-allowed is a default, not a guarantee - otherwise the tick on the
+    admin screen would be decorative."""
+    contact, _ = _entitled_contact(db)
+    _field(db, "estimated_arrival_date", allowed=False)
+
+    (decision,) = decide(
+        db, resource=RESOURCE, fields=["estimated_arrival_date"], contact_id=contact.id
+    )
+    assert decision.outcome == FIELD_NOT_ALLOWED
+
+
+def test_eta_can_be_revoked_for_one_contact_only(db):
+    contact, agent = _entitled_contact(db)
+    other = _contact(db)
+    _grant(db, other, agent)
+    _field(db, "estimated_arrival_date", contact=contact, allowed=False)
+
+    (denied,) = decide(
+        db, resource=RESOURCE, fields=["estimated_arrival_date"], contact_id=contact.id
+    )
+    (kept,) = decide(
+        db, resource=RESOURCE, fields=["estimated_arrival_date"], contact_id=other.id
+    )
+    assert denied.outcome == FIELD_NOT_ALLOWED
+    assert kept.outcome == ALLOWED
 
 
 def test_stripping_does_not_mutate_the_callers_payload(db):
@@ -257,7 +305,7 @@ def test_an_ungated_field_is_reported_as_not_gated(db):
     contact, _ = _entitled_contact(db)
 
     (decision,) = decide(
-        db, resource=RESOURCE, fields=["estimated_arrival_date"], contact_id=contact.id
+        db, resource=RESOURCE, fields=["shipping_container_number"], contact_id=contact.id
     )
 
     assert decision.outcome == NOT_GATED
@@ -373,7 +421,8 @@ def test_a_gated_field_with_no_row_is_denied(db):
         db, contact_id=contact.id, resource=RESOURCE, agent_codes=[OWNER]
     )
 
-    assert allowed == {"eta_delay_date"}
+    # ETA is in there by default; everything else needs a row.
+    assert "eta_delay_date" in allowed
     assert "gatepass_date" not in allowed
 
 
@@ -543,7 +592,8 @@ def test_check_attributes_reports_each_field_separately(db):
     assert by_field == {
         "eta_delay_date": ALLOWED,
         "gatepass_date": FIELD_NOT_ALLOWED,
-        "estimated_arrival_date": NOT_GATED,
+        # Gated, but default-allowed - not the same as ungated.
+        "estimated_arrival_date": ALLOWED,
     }
 
 
@@ -668,17 +718,17 @@ def test_space_id_reaches_the_decision(db):
     db.flush()
     agent = _agent(db)
     _grant(db, contact, agent)
-    _field(db, "eta_date")
+    _field(db, "estimated_arrival_date")
 
     (ok,) = decide(
-        db, resource=RESOURCE, fields=["eta_date"], contact_id="io-1", space_id="space-A"
+        db, resource=RESOURCE, fields=["estimated_arrival_date"], contact_id="io-1", space_id="space-A"
     )
     assert ok.outcome == ALLOWED
 
     # The wrong workspace resolves to NOBODY - which is a lookup failure, not a
     # revoked grant. The contact's grants are untouched and still say "allowed".
     (denied,) = decide(
-        db, resource=RESOURCE, fields=["eta_date"], contact_id="io-1", space_id="space-B"
+        db, resource=RESOURCE, fields=["estimated_arrival_date"], contact_id="io-1", space_id="space-B"
     )
     assert denied.outcome == CONTACT_NOT_FOUND
 

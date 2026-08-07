@@ -57,7 +57,7 @@ GATED_FIELDS: dict[str, dict[str, str]] = {
     "incoming_stock": {
         field: "incoming_stock_enquiries"
         for field in (
-            "eta_date",
+            "estimated_arrival_date",
             "eta_delay_date",
             "inspection_date",
             "approval_date",
@@ -82,16 +82,22 @@ GATED_FIELDS: dict[str, dict[str, str]] = {
     }
 }
 
-#: Deliberately NOT gated on `incoming_stock`, and worth naming so nobody adds it
-#: by reflex: `estimated_arrival_date` is the public ETA those 53 contacts already
-#: receive, and `shipment_number` / `shipping_container_number` / `lines` /
-#: `attachment` are the answer itself.
+#: Fields that ship ALLOWED rather than denied. Default-deny is right for a column
+#: nobody could see before; it is wrong for one they already read every day.
+#: `estimated_arrival_date` is the ETA the 53 contacts holding
+#: `incoming_stock_enquiries` ask about daily, so it is gated (an admin CAN revoke
+#: it) but seeded true, and the deploy changes nothing.
+DEFAULT_ALLOWED: frozenset[str] = frozenset({"estimated_arrival_date"})
+
+#: Never gated, and worth naming so nobody adds them by reflex: `shipment_number`,
+#: `shipping_container_number`, `lines` and `attachment` are the answer itself - a
+#: contact who may not see a gatepass date must still be told what is arriving.
 
 #: Admin-facing labels. The column name is not what an admin deciding "may a
 #: dealer be told this" is thinking in, and `loc` / `etc_date` / `coa_permit_no`
 #: are unguessable. Falls back to a title-cased key.
 FIELD_LABELS: dict[str, str] = {
-    "eta_date": "ETA",
+    "estimated_arrival_date": "ETA",
     "eta_delay_date": "ETA delay",
     "inspection_date": "CIDB inspection",
     "approval_date": "CIDB approval",
@@ -299,7 +305,50 @@ def allowed_fields_for(
         (override if row_contact_id else default)[field_key] = bool(is_allowed)
 
     resolved = {**default, **override}
+    # DEFAULT_ALLOWED fields are allowed unless a row says otherwise. Seeding alone
+    # would not be enough: a database that has never run the bootstrap, or a field
+    # added to the set later, would silently withhold an answer contacts already
+    # get. An explicit row still wins in both directions, so revoking works.
+    for field in DEFAULT_ALLOWED:
+        resolved.setdefault(field, True)
     return {field for field, allowed in resolved.items() if allowed}
+
+
+def explicitly_denied(db: Session, *, contact_id: str, resource: str) -> set[str]:
+    """Fields a row explicitly denies this contact, regardless of which agents they
+    hold.
+
+    Needed only for `DEFAULT_ALLOWED`. Those fields are allowed even to a contact
+    who holds no agent at all - otherwise adding ETA to the registry would REMOVE
+    an answer that every caller gets today, which is the opposite of inert. But a
+    deliberate revoke must still bite, and `allowed_fields_for` cannot see it
+    because it only looks at rows for agents the contact holds.
+    """
+    try:
+        from app.models.access import AgentFieldAccess
+
+        rows = (
+            db.query(AgentFieldAccess.field_key, AgentFieldAccess.contact_id, AgentFieldAccess.is_allowed)
+            .filter(
+                AgentFieldAccess.resource == resource,
+                AgentFieldAccess.field_key.in_(DEFAULT_ALLOWED),
+                or_(
+                    AgentFieldAccess.contact_id.is_(None),
+                    AgentFieldAccess.contact_id == str(contact_id),
+                ),
+            )
+            .all()
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("Default-allow lookup failed; treating as allowed", exc_info=True)
+        return set()
+
+    default: dict[str, bool] = {}
+    override: dict[str, bool] = {}
+    for field_key, row_contact, is_allowed in rows:
+        (override if row_contact else default)[field_key] = bool(is_allowed)
+    resolved = {**default, **override}
+    return {f for f, allowed in resolved.items() if not allowed}
 
 
 def decide(
@@ -338,12 +387,17 @@ def decide(
     allowed = allowed_fields_for(
         db, contact_id=resolved, resource=resource, agent_codes=held
     )
+    denied_defaults = explicitly_denied(db, contact_id=resolved, resource=resource)
 
     decisions: list[FieldDecision] = []
     for field in requested:
         owner = registry.get(field)
         if owner is None:
             decisions.append(FieldDecision(field, None, NOT_GATED))
+        elif field in DEFAULT_ALLOWED and field not in denied_defaults:
+            # Allowed even without the agent: this field is one every caller
+            # already receives, so gating it must not take it away by default.
+            decisions.append(FieldDecision(field, owner, ALLOWED))
         elif owner not in held:
             decisions.append(FieldDecision(field, owner, AGENT_NOT_ASSIGNED))
         elif field not in allowed:
@@ -426,7 +480,11 @@ def apply_field_access(
         # governed by an RBAC permission, not by an agent grant.
         entitled = _staff_entitled(db, current_user, staff_permission)
         decisions = [
-            FieldDecision(f, registry[f], ALLOWED if entitled else FIELD_NOT_ALLOWED)
+            FieldDecision(
+                f,
+                registry[f],
+                ALLOWED if (entitled or f in DEFAULT_ALLOWED) else FIELD_NOT_ALLOWED,
+            )
             for f in registry
         ]
 

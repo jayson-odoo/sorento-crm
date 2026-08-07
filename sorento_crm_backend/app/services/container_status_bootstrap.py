@@ -5,10 +5,14 @@ Keeps `agent_field_access` in step with the code registry: every field in
 opens the screen to a complete checklist rather than a list that silently omits
 whatever was added after migration 313 ran.
 
-**Seeded DENIED.** A field nobody has reviewed must not be readable, and the 53
-contacts holding `incoming_stock_enquiries` must not gain ETA delay and CIDB
-dates the moment this deploys. The row exists so the field is visible and
-tickable; the tick is the admin's.
+**Seeded DENIED, except `DEFAULT_ALLOWED`.** A field nobody has reviewed must
+not be readable, and the 53 contacts holding `incoming_stock_enquiries` must not
+gain ETA delay and CIDB dates the moment this deploys. The row exists so the
+field is visible and tickable; the tick is the admin's.
+
+The exception is `estimated_arrival_date`: those contacts already ask about it
+every day, so shipping a deny would REMOVE an answer rather than withhold a new
+one. It is gated (revocable) but seeded allowed, which makes the deploy inert.
 
 Existing rows are never touched - this only ever inserts what is missing, so a
 restart cannot undo a deliberate grant or a per-contact override.
@@ -24,7 +28,7 @@ import uuid
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.services.field_access import GATED_FIELDS
+from app.services.field_access import DEFAULT_ALLOWED, GATED_FIELDS
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +53,7 @@ def run(db: Session) -> dict:
                         """
                         INSERT INTO agent_field_access
                             (id, agent_code, resource, field_key, contact_id, is_allowed)
-                        VALUES (:id, :agent, :resource, :field, NULL, false)
+                        VALUES (:id, :agent, :resource, :field, NULL, :allowed)
                         ON CONFLICT DO NOTHING
                         """
                     ),
@@ -58,6 +62,10 @@ def run(db: Session) -> dict:
                         "agent": agent_code,
                         "resource": resource,
                         "field": field_key,
+                        # Denied unless the field is one people already read today
+                        # - see DEFAULT_ALLOWED. Seeding ETA denied would take away
+                        # an answer the 53 contacts get right now.
+                        "allowed": field_key in DEFAULT_ALLOWED,
                     },
                 ).rowcount
                 summary["field_rows_seeded"] += inserted or 0

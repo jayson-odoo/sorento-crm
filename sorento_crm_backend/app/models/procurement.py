@@ -142,7 +142,6 @@ class InboundShipment(Base, CompanyScopedMixin):
     etd_date = Column(Date, nullable=True)
     # First-published ETA. `eta_delay_date` is the revised one and the accurate
     # one; auto-transitions key off it, never off ATA (B6, D34).
-    eta_date = Column(Date, nullable=True)
     eta_delay_date = Column(Date, nullable=True)
     inspection_date = Column(Date, nullable=True)
     approval_date = Column(Date, nullable=True)

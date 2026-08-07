@@ -39,6 +39,9 @@ from tests._pg_fixture import blank_session, unique_code
 # The 21 fields the sheet contributes. Written out by hand ON PURPOSE: deriving
 # this list from the model or the migration would make the parity tests below
 # tautological.
+#: The columns migration 311 ADDS. `estimated_arrival_date` is deliberately not
+#: here: it already existed on inbound_shipments, and the workbook ETA writes to
+#: it rather than to a second column of its own (see migration 314).
 CLEARANCE_COLUMNS = {
     "loc",
     "liner_code",
@@ -50,7 +53,6 @@ CLEARANCE_COLUMNS = {
     "loading_date",
     "etc_date",
     "etd_date",
-    "eta_date",
     "eta_delay_date",
     "inspection_date",
     "approval_date",

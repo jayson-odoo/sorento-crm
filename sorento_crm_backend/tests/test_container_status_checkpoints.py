@@ -123,7 +123,7 @@ def test_the_seed_order_is_the_real_chain():
         "loading_date",
         "etc_date",
         "etd_date",
-        "eta_date",
+        "estimated_arrival_date",
         "eta_delay_date",
         "inspection_date",
         "approval_date",

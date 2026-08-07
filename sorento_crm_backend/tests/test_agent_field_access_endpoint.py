@@ -279,15 +279,15 @@ def test_scoping_to_a_contact_shows_the_inherited_value_alongside_the_override(c
     contact = _contact(db)
     client.put(
         _url(agent),
-        json={"fields": [{"resource": "incoming_stock", "field_key": "eta_date", "is_allowed": True}]},
+        json={"fields": [{"resource": "incoming_stock", "field_key": "estimated_arrival_date", "is_allowed": True}]},
     )
 
     body = client.get(f"{_url(agent)}?contact_id={contact.id}").json()
     by_key = {f["field_key"]: f for f in body["fields"]}
 
-    assert by_key["eta_date"]["is_allowed"] is True, "the agent-wide default"
-    assert by_key["eta_date"]["override"] is None, "this contact has no exception"
-    assert by_key["eta_date"]["effective"] is True, "so it inherits the default"
+    assert by_key["estimated_arrival_date"]["is_allowed"] is True, "the agent-wide default"
+    assert by_key["estimated_arrival_date"]["override"] is None, "this contact has no exception"
+    assert by_key["estimated_arrival_date"]["effective"] is True, "so it inherits the default"
 
 
 def test_an_override_can_grant_a_contact_more_than_the_agent(client, agent, db):
@@ -321,7 +321,7 @@ def test_clearing_an_override_returns_the_contact_to_following_the_agent(client,
     contact = _contact(db)
     client.put(
         _url(agent),
-        json={"fields": [{"resource": "incoming_stock", "field_key": "eta_date", "is_allowed": True}]},
+        json={"fields": [{"resource": "incoming_stock", "field_key": "estimated_arrival_date", "is_allowed": True}]},
     )
     client.put(
         f"{_url(agent)}?contact_id={contact.id}",
@@ -329,7 +329,7 @@ def test_clearing_an_override_returns_the_contact_to_following_the_agent(client,
             "fields": [
                 {
                     "resource": "incoming_stock",
-                    "field_key": "eta_date",
+                    "field_key": "estimated_arrival_date",
                     "is_allowed": False,
                     "contact_id": contact.id,
                 }
@@ -343,7 +343,7 @@ def test_clearing_an_override_returns_the_contact_to_following_the_agent(client,
             "fields": [
                 {
                     "resource": "incoming_stock",
-                    "field_key": "eta_date",
+                    "field_key": "estimated_arrival_date",
                     "is_allowed": None,
                     "contact_id": contact.id,
                 }
@@ -351,7 +351,7 @@ def test_clearing_an_override_returns_the_contact_to_following_the_agent(client,
         },
     ).json()
 
-    row = {f["field_key"]: f for f in body["fields"]}["eta_date"]
+    row = {f["field_key"]: f for f in body["fields"]}["estimated_arrival_date"]
     assert row["override"] is None, "the exception is gone, not flipped"
     assert row["effective"] is True, "so it follows the agent again"
     assert body["overrides"] == []
@@ -362,7 +362,7 @@ def test_clearing_without_a_contact_is_rejected(client, agent):
     already says - accepting it would give two spellings of one state."""
     response = client.put(
         _url(agent),
-        json={"fields": [{"resource": "incoming_stock", "field_key": "eta_date", "is_allowed": None}]},
+        json={"fields": [{"resource": "incoming_stock", "field_key": "estimated_arrival_date", "is_allowed": None}]},
     )
     assert response.status_code == 422
     assert "per-contact override" in response.text
@@ -378,7 +378,7 @@ def test_the_unscoped_view_does_not_leak_override_keys(client, agent, db):
             "fields": [
                 {
                     "resource": "incoming_stock",
-                    "field_key": "eta_date",
+                    "field_key": "estimated_arrival_date",
                     "is_allowed": True,
                     "contact_id": contact.id,
                 }

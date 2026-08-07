@@ -356,7 +356,7 @@ def test_render_shows_the_clearance_fields_a_caller_may_see():
     """The render view had a hardcoded field list that never included any of them,
     so an entitled contact still got nothing."""
     out = env("crm_incoming_stock_list", {
-        "data": [_incoming_row(eta_date="2026-07-08", eta_delay_date="2026-07-12", liner_code="CMA")],
+        "data": [_incoming_row(eta_delay_date="2026-07-12", liner_code="CMA")],
     })
 
     fields = {f["label"]: f["value"] for f in out["items"][0]["fields"]}
@@ -369,18 +369,21 @@ def test_render_omits_a_field_the_caller_may_not_see():
     """The backend strips denied keys, so they simply are not in the row. Render
     must not invent a blank line for them - a labelled empty value reads as "not
     reached yet"."""
-    out = env("crm_incoming_stock_list", {"data": [_incoming_row(eta_date="2026-07-08")]})
+    out = env("crm_incoming_stock_list", {"data": [_incoming_row()]})
 
     labels = {f["label"] for f in out["items"][0]["fields"]}
-    assert "ETA" in labels
+    assert "ETA" in labels, "ships allowed, so the backend sent it"
     assert "Gatepass" not in labels
     assert "ETA Delay" not in labels
 
 
 def test_render_never_gates_the_answer_itself():
-    """Product, container, shipment, ETA and quantity are what the contact asked
-    about. A contact who may not see a gatepass date must still be told what is
-    arriving, so none of these may ever be stripped."""
+    """Product, container, shipment and quantity are what the contact asked about.
+    A contact who may not see a gatepass date must still be told what is arriving,
+    so none of these may ever be stripped.
+
+    ETA is NOT among them: it is gateable (revocable by an admin) though it ships
+    allowed, so it renders as a clearance pair rather than as identity."""
     out = env("crm_incoming_stock_list", {"data": [_incoming_row()]})
 
     fields = {f["label"]: f["value"] for f in out["items"][0]["fields"]}
@@ -388,7 +391,6 @@ def test_render_never_gates_the_answer_itself():
     assert fields["Product Name"] == "Basin Mixer"
     assert fields["Shipment"] == "SHP-1"
     assert fields["Container"] == "SEGU4008631"
-    assert fields["Estimated Arrival Date"] == "2026-07-08"
     assert fields["Incoming Quantity"] == 12
     assert "BRW" in str(fields["Warehouse Allocations"])
     assert out["has_result"] is True
@@ -398,7 +400,7 @@ def test_render_carries_the_denial_reason_through():
     """Without it the agent cannot tell "you may not see this" from "it has not
     happened yet", so it guesses - and it guesses the second one out loud."""
     out = env("crm_incoming_stock_list", {
-        "data": [_incoming_row(eta_date="2026-07-08")],
+        "data": [_incoming_row()],
         "field_access": {
             "denied": [
                 {
@@ -417,5 +419,5 @@ def test_render_carries_the_denial_reason_through():
 
 
 def test_render_omits_field_access_when_nothing_was_denied():
-    out = env("crm_incoming_stock_list", {"data": [_incoming_row(eta_date="2026-07-08")]})
+    out = env("crm_incoming_stock_list", {"data": [_incoming_row()]})
     assert "field_access" not in out

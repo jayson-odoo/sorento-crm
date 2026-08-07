@@ -65,7 +65,7 @@ FIELD_MAP: dict[str, str] = {
     "LOADING": "loading_date",
     "ETC": "etc_date",
     "ETD": "etd_date",
-    "ETA": "eta_date",
+    "ETA": "estimated_arrival_date",
     "ETA DELAY": "eta_delay_date",
     "INSPECTION": "inspection_date",
     "APPROVAL": "approval_date",

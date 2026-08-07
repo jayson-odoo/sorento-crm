@@ -39,6 +39,13 @@ const CLEARANCE_KEYS = Object.keys(clearanceSchema.shape) as Array<
   keyof typeof clearanceSchema.shape
 >;
 
+/** Checkpoints whose field is already an input in the Shipment card above.
+ * ETA is a checkpoint AND the packing list's own `estimated_arrival_date`, so
+ * rendering it in both places would bind two inputs to one field - edit one and
+ * the other silently disagrees until the form re-renders. The Shipment card keeps
+ * it, because that is where someone creating a packing list expects to type it. */
+const CHECKPOINTS_RENDERED_ELSEWHERE = new Set(['estimated_arrival_date']);
+
 const emptyClearance = () =>
   Object.fromEntries(CLEARANCE_KEYS.map((k) => [k, ''])) as Record<string, string>;
 
@@ -331,9 +338,11 @@ export default function PackingListForm({
             </p>
           </CardHeader>
           <CardContent className="space-y-6">
-            {checkpoints.length > 0 && (
+            {checkpoints.some((cp) => !CHECKPOINTS_RENDERED_ELSEWHERE.has(cp.field)) && (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {checkpoints.map((cp) => (
+                {checkpoints
+                  .filter((cp) => !CHECKPOINTS_RENDERED_ELSEWHERE.has(cp.field))
+                  .map((cp) => (
                   <FormField
                     key={cp.field}
                     control={form.control}

@@ -105,7 +105,6 @@ export interface ClearanceFields {
   etc_date?: string | null;
   etd_date?: string | null;
   /** First-published ETA. */
-  eta_date?: string | null;
   /** Revised ETA - the accurate one. Doubles as de-facto arrival. */
   eta_delay_date?: string | null;
   inspection_date?: string | null;

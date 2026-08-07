@@ -56,11 +56,12 @@ _TEXT_COLUMNS = [
     ("source_sheet", sa.String(100)),
 ]
 
+# NOTE: no `eta_date` here. The workbook ETA lands on the pre-existing
+# `estimated_arrival_date`; a second column for one fact drifts (see 314).
 _DATE_COLUMNS = [
     "loading_date",
     "etc_date",
     "etd_date",
-    "eta_date",
     "eta_delay_date",
     "inspection_date",
     "approval_date",

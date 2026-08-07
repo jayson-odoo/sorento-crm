@@ -175,7 +175,6 @@ class ClearanceFields(BaseModel):
     loading_date: Optional[date] = None
     etc_date: Optional[date] = None
     etd_date: Optional[date] = None
-    eta_date: Optional[date] = None
     eta_delay_date: Optional[date] = None
     inspection_date: Optional[date] = None
     approval_date: Optional[date] = None

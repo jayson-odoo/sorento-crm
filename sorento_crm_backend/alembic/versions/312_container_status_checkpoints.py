@@ -62,7 +62,7 @@ CHECKPOINTS = [
     ("loading_date", "Loading", "2-4 days before ETD", "#94a3b8"),
     ("etc_date", "ETC", "China forwarder", "#94a3b8"),
     ("etd_date", "ETD", "China forwarder", "#94a3b8"),
-    ("eta_date", "ETA", "Liner, first published", "#0ea5e9"),
+    ("estimated_arrival_date", "ETA", "Liner, first published", "#0ea5e9"),
     ("eta_delay_date", "ETA Delay", "Liner, revised - the accurate one", "#0284c7"),
     ("inspection_date", "Inspection", "CIDB officer at port", "#f59e0b"),
     (
