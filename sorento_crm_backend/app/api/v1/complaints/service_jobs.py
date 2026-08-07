@@ -65,6 +65,17 @@ class ServiceJobCreate(BaseModel):
     site_place_id: Optional[str] = None
 
 
+class ServiceJobFromSource(BaseModel):
+    """Name the case; the server reads the site off it.
+
+    Deliberately carries NO site fields. See `raise_service_job_from_source` for why the
+    client is not trusted with that copy.
+    """
+
+    source_entity_type: str = Field(..., min_length=1, max_length=40)
+    source_entity_id: str = Field(..., min_length=1)
+
+
 class ServiceJobConfirm(BaseModel):
     """Both fields are required by the service, not by pydantic.
 
@@ -222,6 +233,37 @@ async def create_service_job(
     except HTTPException:
         # AppException subclasses HTTPException, so a bare `except Exception` would
         # turn every domain 422 (AC-F5's refusal above all) into an opaque 500.
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise handle_internal_error(str(e))
+
+
+@router.post("/from-source")
+async def raise_service_job_from_source(
+    payload: ServiceJobFromSource,
+    current_user: dict = Depends(require_permission(DISPATCH_PERMISSION)),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Raise a job for a case, with the server reading the Site off the case.
+
+    The client names the case and nothing else. The Site is whatever was REPORTED (AC-B3),
+    and a complaint routinely holds a dealer's shop in `customer_address` alongside the house
+    the fault is in - letting the client post the address it had on screen would make that
+    decision in a second place, and the second place is always the one that is wrong.
+    """
+    try:
+        from app.services.service_job_intake import raise_job_for_source
+
+        job = raise_job_for_source(
+            db,
+            source_entity_type=payload.source_entity_type,
+            source_entity_id=payload.source_entity_id,
+        )
+        db.commit()
+        return _serialize(db, job)
+    except HTTPException:
         db.rollback()
         raise
     except Exception as e:

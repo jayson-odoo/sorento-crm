@@ -70,6 +70,7 @@ import { useComplaintRootCausesSelect } from '@/app/(protected)/complaint-manage
 import { useComplaintResolutionsSelect } from '@/app/(protected)/complaint-management/complaint-resolutions/hooks/useComplaintResolutions';
 import ComplaintNavigation from './ComplaintNavigation';
 import ComplaintManualAttachmentsSection from './ComplaintManualAttachmentsSection';
+import ComplaintServiceJobsSection from './ComplaintServiceJobsSection';
 import ComplaintConversationPanel from './ComplaintConversationPanel';
 import AuditTrail from '@/components/audit/AuditTrail';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
@@ -1235,6 +1236,8 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
         complaintId={complaintId}
         attachments={complaint.attachments ?? []}
       />
+
+      <ComplaintServiceJobsSection complaintId={complaintId} />
 
       <AuditTrail entityType="complaint" entityId={complaintId} title="Audit Trail" />
 

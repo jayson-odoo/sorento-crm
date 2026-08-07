@@ -407,3 +407,58 @@ def test_an_unknown_employment_type_is_refused(client):
             json={"name": f"{TEST_PREFIX} Nobody", "employment_type": "freelance-ish"},
         )
     assert response.status_code == 422
+
+
+def test_a_job_is_raised_from_a_complaint_with_the_site_the_case_reported(client, db):
+    """The link the dispatch board was missing. The client names the case and nothing else.
+
+    The complaint below carries the dealer's shop in `customer_address` and the house in the
+    Site columns; a job that came back with the shop would send a van to the wrong place, and
+    both are real addresses so nothing on screen would look wrong.
+    """
+    import uuid as _uuid
+
+    from app.models.complaints import Complaint
+
+    complaint = Complaint(
+        id=str(_uuid.uuid4()),
+        complaint_number=f"{TEST_PREFIX}-CMP-9001",
+        customer_name=f"{TEST_PREFIX} Dealer Sdn Bhd",
+        customer_address="Lot 5, Jalan Industri (the DEALER's shop)",
+        site_address="12 Jalan Damai, Shah Alam",
+        site_contact_name="Puan Aminah",
+        site_contact_phone="+60127770099",
+        status="new",
+    )
+    db.add(complaint)
+    db.flush()
+
+    with granted(DISPATCH):
+        response = client.post(
+            f"{BASE}/from-source",
+            json={"source_entity_type": "complaint", "source_entity_id": complaint.id},
+        )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status_key"] == "proposed"
+    assert body["site_address"] == "12 Jalan Damai, Shah Alam"
+    assert body["source_entity_id"] == complaint.id
+
+
+def test_raising_from_an_unsupported_source_is_a_422_naming_it(client):
+    with granted(DISPATCH):
+        response = client.post(
+            f"{BASE}/from-source",
+            json={"source_entity_type": "purchase_request", "source_entity_id": "x"},
+        )
+    assert response.status_code == 422, response.text
+    assert "purchase_request" in response.json()["message"]
+
+
+def test_raising_a_job_is_not_included_in_viewing(client):
+    with granted(VIEW):
+        response = client.post(
+            f"{BASE}/from-source",
+            json={"source_entity_type": "complaint", "source_entity_id": "x"},
+        )
+    assert response.status_code == 403

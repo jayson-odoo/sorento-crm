@@ -184,3 +184,85 @@ describe('LodgeFlow', () => {
     expect(screen.queryByText(/we have your report/i)).not.toBeInTheDocument();
   });
 });
+
+
+/**
+ * The photo step, which is where a real consumer either gets their receipt in or gives up.
+ *
+ * The first version of this tile assigned `setFiles(Array.from(...))` on every change, so a
+ * second pick REPLACED the first. Somebody who attached the receipt and then went back for a
+ * photo of the fault lost the receipt, and the counter still said a photo was ready - the
+ * worst kind of wrong, because the screen looks correct.
+ */
+describe('lodge photo step', () => {
+  function galleryInput() {
+    return document.querySelectorAll('input[type="file"]')[0] as HTMLInputElement;
+  }
+
+  function file(name: string, contents = 'x') {
+    return new File([contents], name, { type: 'image/jpeg' });
+  }
+
+  it('adds to what is already attached instead of replacing it', () => {
+    render(<LodgeFlow live backend={backend()} />);
+    const input = galleryInput();
+
+    fireEvent.change(input, { target: { files: [file('receipt.jpg')] } });
+    fireEvent.change(input, { target: { files: [file('fault.jpg')] } });
+
+    expect(screen.getByText('2 photos ready.')).toBeInTheDocument();
+    expect(screen.getByTitle('receipt.jpg')).toBeInTheDocument();
+    expect(screen.getByTitle('fault.jpg')).toBeInTheDocument();
+  });
+
+  it('accepts a pasted screenshot, which is how most receipts arrive on a desktop', async () => {
+    render(<LodgeFlow live backend={backend()} />);
+
+    const pasted = file('screenshot.png');
+    const event = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', { value: { files: [pasted] } });
+    fireEvent(window, event);
+
+    await waitFor(() => expect(screen.getByText('1 photo ready.')).toBeInTheDocument());
+  });
+
+  it('ignores the same file picked twice', () => {
+    render(<LodgeFlow live backend={backend()} />);
+    const input = galleryInput();
+    const same = file('receipt.jpg');
+
+    fireEvent.change(input, { target: { files: [same] } });
+    fireEvent.change(input, { target: { files: [same] } });
+
+    expect(screen.getByText('1 photo ready.')).toBeInTheDocument();
+  });
+
+  it('lets a mis-picked photo be removed', () => {
+    render(<LodgeFlow live backend={backend()} />);
+    const input = galleryInput();
+    fireEvent.change(input, { target: { files: [file('receipt.jpg'), file('wrong.jpg')] } });
+    expect(screen.getByText('2 photos ready.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove wrong.jpg' }));
+
+    expect(screen.getByText('1 photo ready.')).toBeInTheDocument();
+    expect(screen.queryByTitle('wrong.jpg')).not.toBeInTheDocument();
+  });
+
+  it('takes files dropped onto the tile', () => {
+    render(<LodgeFlow live backend={backend()} />);
+    const tile = screen.getByRole('button', { name: /add a photo/i }).parentElement as HTMLElement;
+
+    fireEvent.drop(tile, { dataTransfer: { files: [file('dragged.jpg')] } });
+
+    expect(screen.getByText('1 photo ready.')).toBeInTheDocument();
+  });
+
+  it('offers the camera as its own action rather than forcing it', () => {
+    // `capture` on the main input forced the camera on a phone, which is what stopped a
+    // consumer attaching a receipt they had already saved to their gallery.
+    render(<LodgeFlow live backend={backend()} />);
+    expect(galleryInput().hasAttribute('capture')).toBe(false);
+    expect(screen.getByRole('button', { name: /take a photo now/i })).toBeInTheDocument();
+  });
+});

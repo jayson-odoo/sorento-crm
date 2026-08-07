@@ -31,11 +31,15 @@ import {
   ArrowLeft,
   Camera,
   Check,
+  Clipboard,
+  FileText,
   Loader2,
   MapPin,
   RefreshCw,
   ShieldCheck,
   Sparkles,
+  Upload,
+  X,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -376,36 +380,163 @@ function StepUpload({
 }) {
   const [files, setFiles] = useState<File[]>([]);
   const [count, setCount] = useState(0);
+  const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const cameraRef = useRef<HTMLInputElement | null>(null);
 
   const ready = live ? files.length : count;
+
+  /**
+   * APPEND, never replace. The first version assigned `setFiles(Array.from(...))` on every
+   * change, so a consumer who picked the receipt and then went back for a photo of the fault
+   * silently lost the receipt - and the count still said "1 photo ready", which is the worst
+   * kind of wrong because it looks right.
+   *
+   * Deduped on name + size + last-modified: pasting the same screenshot twice, or picking a
+   * file already chosen, is a slip rather than an intention.
+   */
+  const addFiles = useCallback((incoming: File[]) => {
+    if (!incoming.length) return;
+    setFiles((current) => {
+      const seen = new Set(current.map((f) => `${f.name}:${f.size}:${f.lastModified}`));
+      const fresh = incoming.filter(
+        (f) => !seen.has(`${f.name}:${f.size}:${f.lastModified}`),
+      );
+      return fresh.length ? [...current, ...fresh] : current;
+    });
+  }, []);
+
+  /**
+   * Paste. A receipt arrives as a WhatsApp screenshot more often than as a file, and on a
+   * desktop the shortest path from "it is on my screen" to "it is in the form" is Ctrl+V.
+   * Bound to the window rather than to an input because there is nothing here to focus.
+   */
+  useEffect(() => {
+    if (!live) return undefined;
+    const onPaste = (event: ClipboardEvent) => {
+      const pasted = Array.from(event.clipboardData?.files ?? []);
+      if (!pasted.length) return;
+      event.preventDefault();
+      addFiles(pasted);
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [live, addFiles]);
 
   return (
     <section className="flex flex-col gap-4">
       <p className="text-sm text-muted-foreground">
         Take a photo of your receipt and of the problem. We will read the rest ourselves.
       </p>
-      {/* `capture="environment"` opens the rear camera straight away on a phone, which is
-          where every one of these arrives from. `accept` keeps the gallery to images and
-          PDFs so a consumer cannot pick something the extractor will silently drop. */}
+
+      {/* No `capture` here: this input is the gallery-and-files path, and `capture` forces
+          the camera on a phone, which is what stopped consumers attaching a receipt they
+          had already saved. The camera is its own button below, so both paths exist. */}
       <input
         ref={inputRef}
         type="file"
         multiple
         accept="image/*,application/pdf"
+        className="hidden"
+        onChange={(e) => {
+          addFiles(Array.from(e.target.files ?? []));
+          // Reset, or picking the SAME file again fires no change event at all.
+          e.target.value = '';
+        }}
+      />
+      <input
+        ref={cameraRef}
+        type="file"
+        accept="image/*"
         capture="environment"
         className="hidden"
-        onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+        onChange={(e) => {
+          addFiles(Array.from(e.target.files ?? []));
+          e.target.value = '';
+        }}
       />
-      <button
-        type="button"
-        onClick={() => (live ? inputRef.current?.click() : setCount((c) => c + 1))}
-        className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed px-4 py-10 text-center transition-colors hover:bg-muted/50"
+
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          if (live) addFiles(Array.from(e.dataTransfer.files ?? []));
+        }}
+        className={`rounded-xl border-2 border-dashed transition-colors ${
+          dragging ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+        }`}
       >
-        <Camera className="size-8 text-muted-foreground" />
-        <span className="text-sm font-medium">Add a photo</span>
-        <span className="text-xs text-muted-foreground">Receipt, invoice, or the fault itself</span>
-      </button>
+        <button
+          type="button"
+          onClick={() => (live ? inputRef.current?.click() : setCount((c) => c + 1))}
+          className="flex w-full flex-col items-center gap-2 px-4 py-10 text-center"
+        >
+          <Camera className="size-8 text-muted-foreground" />
+          <span className="text-sm font-medium">Add a photo</span>
+          <span className="text-xs text-muted-foreground">
+            Receipt, invoice, or the fault itself
+          </span>
+          <span className="mt-1 flex flex-wrap items-center justify-center gap-3 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <Upload className="size-3" />
+              Drag and drop
+            </span>
+            <span className="flex items-center gap-1">
+              <Clipboard className="size-3" />
+              Or paste
+            </span>
+          </span>
+        </button>
+      </div>
+
+      {live ? (
+        <Button
+          type="button"
+          variant="outline"
+          className="h-11"
+          onClick={() => cameraRef.current?.click()}
+        >
+          <Camera className="mr-2 size-4" />
+          Take a photo now
+        </Button>
+      ) : null}
+
+      {/* What was actually attached. "15 photos ready" with no list is unverifiable: a
+          consumer cannot tell whether the receipt is among them, and cannot drop the one
+          they picked by mistake. */}
+      {live && files.length > 0 ? (
+        <ul className="flex flex-col gap-2">
+          {files.map((file, index) => (
+            <li
+              key={`${file.name}-${file.size}-${file.lastModified}`}
+              className="flex items-center gap-2 rounded-md border px-3 py-2"
+            >
+              <FileText className="size-4 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate text-sm" title={file.name}>
+                {file.name}
+              </span>
+              {/* One click, deliberately. Nothing has been uploaded yet, so this is undo of
+                  a mis-pick rather than deletion of a record - the confirmation rule guards
+                  destroying something that exists, and taxing a correction here would just
+                  make people submit the wrong photo. */}
+              <button
+                type="button"
+                aria-label={`Remove ${file.name}`}
+                className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted"
+                onClick={() => setFiles((current) => current.filter((_, i) => i !== index))}
+              >
+                <X className="size-4" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
       {ready > 0 ? (
         <p className="text-sm text-muted-foreground">
           {ready} photo{ready === 1 ? '' : 's'} ready.

@@ -206,6 +206,28 @@ export async function createServiceJob(payload: {
 }
 
 /**
+ * Raise a job for a case. The body names the case and NOTHING else.
+ *
+ * The Site is read off the case server-side (AC-B3): a complaint routinely carries the
+ * dealer's shop in `customer_address` alongside the house the fault is in, and posting the
+ * address this page happened to display would make that decision in a second place.
+ */
+export async function raiseServiceJobFromSource(
+  sourceEntityType: string,
+  sourceEntityId: string,
+): Promise<ServiceJob> {
+  const response = await apiFetch(`${BASE}/from-source`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      source_entity_type: sourceEntityType,
+      source_entity_id: sourceEntityId,
+    }),
+  });
+  return readJson<ServiceJob>(response, 'Failed to raise the service job.');
+}
+
+/**
  * AC-F5. Both fields, or the backend refuses with `service_job_date_required` /
  * `service_job_agreement_required`. The caller surfaces that message as-is.
  */
