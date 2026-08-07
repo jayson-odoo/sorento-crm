@@ -381,6 +381,21 @@ _PORTAL_CONSUMER_LODGE: list[ExtractFieldSpec] = [
         ),
         examples=["KCS-2112-0054", "CS002629", "NV20-2-008850", "IV01029"],
     ),
+    # TRANSCRIBE, do not convert. The model is good at reading paper and unreliable at
+    # calendar arithmetic: asked for ISO directly it turned a receipt printed 03/08/2026
+    # into 2026-03-03. So it copies the characters and `_derive_purchase_date` does the
+    # conversion deterministically, day-first, in code that can be tested.
+    ExtractFieldSpec(
+        name="purchase_date_printed",
+        label="Purchase date, as printed",
+        kind="text",
+        note=(
+            "The date EXACTLY as printed on the receipt, character for character. Do NOT "
+            "convert or reformat it: copy '03/08/2026' as '03/08/2026'. Return nothing at "
+            "all if no date is legible."
+        ),
+        examples=["16/10/2025", "03/08/2026"],
+    ),
     ExtractFieldSpec(
         name="purchase_date",
         label="Purchase date",

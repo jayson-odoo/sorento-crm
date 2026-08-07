@@ -63,6 +63,7 @@ class SystemSettingUpdate(BaseModel):
     n8n_attachment_webhook_url: Optional[str] = None
     n8n_crm_chat_outbound_webhook_url: Optional[str] = None
     n8n_stock_inquiry_revise_webhook_url: Optional[str] = None
+    google_maps_api_key: Optional[str] = None
     purchase_request_default_approver_user_id: Optional[str] = None
     sponsorship_form_default_approver_user_id: Optional[str] = None
     # AI assistant trace (M2) retention + payload caps.
@@ -157,6 +158,12 @@ async def get_settings(
                 "n8n_stock_inquiry_revise_webhook_url": getattr(
                     settings, "n8n_stock_inquiry_revise_webhook_url", None
                 )
+                if settings
+                else None,
+                # Returned in plain text on purpose. A Maps JavaScript key reaches the
+                # browser either way, so masking it here would imply a protection that
+                # does not exist and would stop an admin checking which key is in force.
+                "google_maps_api_key": getattr(settings, "google_maps_api_key", None)
                 if settings
                 else None,
                 "complaint_do_delivered_notify_tiers": getattr(

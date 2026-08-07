@@ -66,6 +66,7 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
     n8nCrmChatOutboundWebhookUrl: (raw.n8n_crm_chat_outbound_webhook_url as string | null) ?? null,
     n8nStockInquiryReviseWebhookUrl:
       (raw.n8n_stock_inquiry_revise_webhook_url as string | null) ?? null,
+    googleMapsApiKey: (raw.google_maps_api_key as string | null) ?? null,
     complaintDoDeliveredNotifyTiers:
       (raw.complaint_do_delivered_notify_tiers as string) ?? '1,2',
     handlingLockEnabledTypes: Array.isArray(raw.handling_lock_enabled_types)
@@ -145,6 +146,7 @@ function createDefaultSettings(): SystemSetting {
     n8nAttachmentWebhookUrl: null,
     n8nCrmChatOutboundWebhookUrl: null,
     n8nStockInquiryReviseWebhookUrl: null,
+    googleMapsApiKey: null,
     notifyStockEmail: false,
     notifyStockWeb: false,
     notifyStockThreshold: 0,

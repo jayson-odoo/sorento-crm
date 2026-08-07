@@ -48,6 +48,9 @@ export interface SystemSetting {
   n8nCrmChatOutboundWebhookUrl?: string | null;
   /** Webhook for public rejected stock inquiry revise requests. */
   n8nStockInquiryReviseWebhookUrl?: string | null;
+  /** Google Maps BROWSER key. Not a secret - it reaches the page by design, and is
+   *  protected by an HTTP-referrer restriction on the Google side. */
+  googleMapsApiKey?: string | null;
 
   socialFacebook?: string | null;
   socialTwitter?: string | null;

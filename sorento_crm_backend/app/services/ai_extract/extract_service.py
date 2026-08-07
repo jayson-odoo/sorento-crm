@@ -22,9 +22,11 @@ import io
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Iterable
 
 from pydantic import BaseModel
@@ -876,7 +878,72 @@ class AIExtractService:
                     canonical=derived,
                     source="product_master",
                 )
+        # Dates: the model transcribes, this converts. Runs last so it overrides whatever
+        # the model put in `purchase_date` when a printed string is available.
+        derived_date = self._derive_purchase_date(values.get("purchase_date_printed"))
+        if derived_date:
+            if values.get("purchase_date") != derived_date:
+                logger.info(
+                    "ai_extract corrected purchase_date %r -> %r from printed %r",
+                    values.get("purchase_date"),
+                    derived_date,
+                    values.get("purchase_date_printed"),
+                )
+            values["purchase_date"] = derived_date
+            per_field["purchase_date"] = ExtractFieldMeta(
+                raw=values.get("purchase_date_printed"),
+                canonical=derived_date,
+                source="date_normalised",
+            )
         return values, per_field
+
+    @staticmethod
+    def _derive_purchase_date(printed: Any) -> str | None:
+        """Malaysian receipt date -> ISO, DAY FIRST, deterministically.
+
+        Asked for ISO directly the model turned `03/08/2026` into `2026-03-03`, and a
+        wrong purchase date is not a cosmetic error: every warranty verdict is computed
+        from it, so the case silently comes out covered or not covered on a date nobody
+        typed. Prompt guidance already said DD/MM and did not hold, which is the point -
+        this is arithmetic, and arithmetic belongs in code that can be tested.
+
+        Day-first is the rule, not a guess: these are Malaysian receipts. `03/08/2026` is
+        3 August. Where day-first is impossible (`13/08/2026` read as month 13) the two
+        are swapped, because a printed `13` cannot be a month and month-first is then the
+        only reading that exists.
+        """
+        if printed is None:
+            return None
+        text = str(printed).strip()
+        if not text:
+            return None
+
+        # Already ISO, and unambiguous: trust it.
+        iso = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})$", text)
+        if iso:
+            year, month, day = (int(g) for g in iso.groups())
+            return AIExtractService._safe_iso(year, month, day)
+
+        parts = re.match(r"^(\d{1,2})\s*[/\-.]\s*(\d{1,2})\s*[/\-.]\s*(\d{2,4})$", text)
+        if not parts:
+            return None
+        first, second, year_raw = (int(g) for g in parts.groups())
+        year = year_raw if year_raw > 99 else 2000 + year_raw
+
+        # Day first. Swap only when that reading cannot exist.
+        day, month = first, second
+        if month > 12 and day <= 12:
+            day, month = month, day
+        return AIExtractService._safe_iso(year, month, day)
+
+    @staticmethod
+    def _safe_iso(year: int, month: int, day: int) -> str | None:
+        try:
+            return date(year, month, day).isoformat()
+        except ValueError:
+            # An impossible date is worth nothing. Returning None leaves the field blank,
+            # and a blank date is a question CS asks rather than a wrong warranty verdict.
+            return None
 
     def _derive_product_type_csv(self, codes_csv: str) -> str:
         codes = [c.strip() for c in codes_csv.split(",") if c.strip()]

@@ -309,6 +309,10 @@ class SystemSetting(Base):
     n8n_attachment_webhook_url = Column(Text, nullable=True)
     n8n_crm_chat_outbound_webhook_url = Column(Text, nullable=True)
     n8n_stock_inquiry_revise_webhook_url = Column(Text, nullable=True)
+    # Google Maps BROWSER key for the consumer lodge map picker. Not a secret: a Maps
+    # JavaScript key is delivered to the page by definition, so it is protected by an
+    # HTTP-referrer restriction on the Google side, never by hiding it here.
+    google_maps_api_key = Column(Text, nullable=True)
 
     # Procurement: when set, "Send for approval" can skip the approver dialog and email the default user.
     purchase_request_default_approver_user_id = Column(

@@ -25,6 +25,7 @@ const IntegrationsSchema = z.object({
   n8nAttachmentWebhookUrl: z.string(),
   n8nCrmChatOutboundWebhookUrl: z.string(),
   n8nStockInquiryReviseWebhookUrl: z.string(),
+  googleMapsApiKey: z.string(),
 });
 
 type IntegrationsForm = z.infer<typeof IntegrationsSchema>;
@@ -39,6 +40,7 @@ export default function IntegrationsSettingsPage() {
       n8nAttachmentWebhookUrl: settings.n8nAttachmentWebhookUrl ?? '',
       n8nCrmChatOutboundWebhookUrl: settings.n8nCrmChatOutboundWebhookUrl ?? '',
       n8nStockInquiryReviseWebhookUrl: settings.n8nStockInquiryReviseWebhookUrl ?? '',
+      googleMapsApiKey: settings.googleMapsApiKey ?? '',
     },
   });
 
@@ -47,6 +49,7 @@ export default function IntegrationsSettingsPage() {
       n8nAttachmentWebhookUrl: settings.n8nAttachmentWebhookUrl ?? '',
       n8nCrmChatOutboundWebhookUrl: settings.n8nCrmChatOutboundWebhookUrl ?? '',
       n8nStockInquiryReviseWebhookUrl: settings.n8nStockInquiryReviseWebhookUrl ?? '',
+      googleMapsApiKey: settings.googleMapsApiKey ?? '',
     });
   }, [settings, form]);
 
@@ -61,6 +64,7 @@ export default function IntegrationsSettingsPage() {
             values.n8nCrmChatOutboundWebhookUrl.trim() || null,
           n8n_stock_inquiry_revise_webhook_url:
             values.n8nStockInquiryReviseWebhookUrl.trim() || null,
+          google_maps_api_key: values.googleMapsApiKey.trim() || null,
         }),
       });
       if (!response.ok) {
@@ -137,6 +141,30 @@ export default function IntegrationsSettingsPage() {
                       {...field}
                     />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="googleMapsApiKey"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Google Maps browser key</FormLabel>
+                  <FormControl>
+                    <Input placeholder="AIza…" autoComplete="off" {...field} />
+                  </FormControl>
+                  {/* Shown in plain text on purpose. A Maps JavaScript key is delivered
+                      to every page that draws a map, so it cannot be secret - masking it
+                      here would imply a protection that does not exist and would stop an
+                      admin checking which key is in force. Restrict it in Google Cloud
+                      (HTTP referrers + Maps JavaScript / Places / Geocoding only), which
+                      is the control that actually works. */}
+                  <p className="text-xs text-muted-foreground">
+                    Draws the map on the consumer &ldquo;report a problem&rdquo; journey. This key
+                    is public by design - restrict it in Google Cloud by HTTP referrer and
+                    API. Leave blank to fall back to typed address fields with no map.
+                  </p>
                   <FormMessage />
                 </FormItem>
               )}
