@@ -58,6 +58,9 @@ class ReadResult:
     unmapped_headers: list[str] = field(default_factory=list)
     missing_columns: list[str] = field(default_factory=list)
     total_rows: int = 0
+    #: Rows carrying neither an item code nor a quantity. Captions and spacers rather than
+    #: failed lines, counted so a big number is visible instead of being silently dropped.
+    layout_rows: int = 0
     # Per-row fields the DIFF does not care about but the WRITE does: counterparty code,
     # unit cost, currency. Kept in a side map keyed by `Line.row_ref` rather than added to
     # `Line`, because `outstanding_diff` is deliberately document-agnostic and adding
@@ -218,6 +221,17 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
         item = _clean(rec.get(item_key := "item_code"))
         qty = _to_float(rec.get(qty_field))
 
+        # A row with no item AND no quantity states nothing, so it is layout, not an error.
+        # The AutoCount detail listing puts an "ITEM PACKAGE :" caption above each package
+        # and leaves the item and quantity cells empty: 9,144 of them in the client's own
+        # 81,361-row export. Reporting each as a failed row buries the handful of rows that
+        # really did fail under nine thousand that were never lines at all. Counted, so the
+        # skip is visible rather than silent. A row that names a quantity but no item is
+        # still a problem - that is the totals row, or a genuine gap.
+        if not item and (qty is None or qty == 0):
+            result.layout_rows += 1
+            continue
+
         missing = [f for f, v in ((doc_field, doc), (item_key, item)) if not v]
         if qty is None:
             missing.append(qty_field)
@@ -226,13 +240,25 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
                 row_number, f"missing {', '.join(missing)}", value=doc or item))
             continue
 
-        if doc_type == PO:
-            # The spec allows either "quantity received" or an outstanding quantity. When
-            # received is present the outstanding figure is the difference; a report that
-            # already nets it simply has no received column.
-            received = _to_float(rec.get("qty_received"))
-            if received is not None:
-                qty = qty - received
+        # Three real file shapes, resolved in a fixed order of preference rather than by
+        # column position. Getting this wrong is not cosmetic: reading ORDERED as
+        # OUTSTANDING inflates committed demand on every partly-delivered line, and inflates
+        # every buy computed from it, on a file that imports perfectly cleanly.
+        #
+        #   1. the remaining quantity stated outright  -> use it
+        #   2. quantity plus what has already gone out -> the difference
+        #   3. a single netted quantity column         -> use it as-is
+        #
+        # The purchase-order path has always done (2) with `qty_received`; this is the same
+        # rule, named, and extended to the sales-order side which needed it for the
+        # AutoCount detail listing (Qty + Transfered Qty + Remaining Qty).
+        remaining = _to_float(rec.get("qty_remaining"))
+        fulfilled_field = "qty_received" if doc_type == PO else "qty_delivered"
+        fulfilled = _to_float(rec.get(fulfilled_field))
+        if remaining is not None:
+            qty = remaining
+        elif fulfilled is not None:
+            qty = qty - fulfilled
 
         if qty <= 0:
             # Nothing outstanding is not an error - it is a line that belongs in the

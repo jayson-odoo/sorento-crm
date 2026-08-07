@@ -4,12 +4,14 @@ The fixtures are xlsx files, not dicts, because the parsing is half the risk: da
 as datetimes, quantities as strings with separators, headers in an order nobody agreed, and
 a column nobody told us about.
 
-Provenance, stated plainly: no genuine AutoCount export exists yet - it is the deliverable
-requested in `documentation/plans/scm/scm-autocount-extract-spec.md` before day one. These
-fixtures are built to that spec using the real Tuju Residence figures used throughout the
-plan and the golden tests (SO397450, SRTWC8613-RL 135 due 1 Jul and 72 due 3 Aug). When the
-client's real export lands, it replaces these and any header differences become alias rows,
-not code changes - which is the whole reason headers are resolved through a table.
+Provenance, stated plainly: these fixtures are built to
+`documentation/plans/scm/scm-autocount-extract-spec.md` using the real Tuju Residence figures
+used throughout the plan and the golden tests (SO397450, SRTWC8613-RL 135 due 1 Jul and 72
+due 3 Aug). They are KEPT rather than replaced now that the client's genuine export has
+arrived (7 Aug 2026), because they are the only fixtures that carry outstanding quantities -
+every line of the real file is fully delivered. The real one is exercised alongside them in
+`test_autocount_so_detail_reader.py`, and its header differences became alias rows rather
+than code changes, which is the whole reason headers are resolved through a table.
 """
 from __future__ import annotations
 

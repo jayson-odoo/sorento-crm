@@ -149,9 +149,20 @@ def seed_scm_module_data() -> None:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
+    # 338 adds the AutoCount detail-listing wording, including the `qty_delivered` /
+    # `qty_remaining` columns that stop `Qty` being read as the outstanding figure. A later
+    # migration adding aliases has to be replayed here too, or a create_all database resolves
+    # the old wording only and the client's real export is rejected on it.
+    spec_338 = importlib.util.spec_from_file_location(
+        "_scm_seed_338", versions / "338_scm_autocount_so_detail_aliases.py"
+    )
+    module_338 = importlib.util.module_from_spec(spec_338)
+    spec_338.loader.exec_module(module_338)
+
     with engine.begin() as conn:
         aliases = module.seed_import_field_aliases(conn)
         policies = module.seed_priority_policy(conn)
+        aliases += module_338.seed(conn)
     log.info("scm module data seeded -> aliases=%d priority_policy=%d", aliases, policies)
 
 
