@@ -2925,6 +2925,15 @@ def process_container_status_import(
             skipped_rows=counts["unchanged"] + counts["skipped"],
         )
         outcome.flush()
+
+        # Publish the retained workbook as a Container Status attachment so
+        # "send me the container status" has an answer. Best-effort by design:
+        # the import has already succeeded, and failing to catalogue a document
+        # must not report that success as a failure.
+        from app.services.container_status_document import publish_import_source
+
+        publish_import_source(db, job)
+
         _write_import_audit(
             db,
             entity_type="inbound_shipment",

@@ -78,6 +78,50 @@ async def list_clearance_checkpoints(
     }
 
 
+@router.get("/container-status/latest")
+async def download_latest_container_status(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """A signed link to the most recently imported Container Status workbook.
+
+    The import retains the original upload, but only on the job row - reachable
+    through Import Job Details, and owner-only, so a colleague who did not run the
+    import could not get the sheet. This serves the latest one to anyone who can
+    see packing lists, which is who needs it.
+
+    404 when nothing has been imported yet: an empty answer is honest, and the
+    caller can say "no workbook has been uploaded" rather than showing a dead link.
+    """
+    try:
+        from app.services.container_status_document import latest_document
+        from app.services.storage_router import resolve_signed_url
+
+        doc = latest_document(db)
+        if not doc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No Container Status workbook has been imported yet.",
+            )
+
+        url = resolve_signed_url(doc["key"], provider=doc.get("provider"), expires_in=3600)
+        if not url:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Could not generate a download link for the workbook.",
+            )
+        return {
+            "url": url,
+            "filename": doc["filename"],
+            "size": doc["size"],
+            "uploaded_at": doc["uploaded_at"],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.post("/container-status-import", status_code=status.HTTP_202_ACCEPTED)
 async def import_container_status(
     file: UploadFile = File(..., description="Container Status workbook (.xlsx / .xls / .xlsm)."),

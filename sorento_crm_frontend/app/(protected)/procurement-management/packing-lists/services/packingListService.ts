@@ -240,3 +240,33 @@ export async function getClearanceCheckpoints(): Promise<ClearanceCheckpoint[]> 
   const body = await response.json();
   return body.checkpoints ?? [];
 }
+
+/**
+ * A signed link to the most recently imported Container Status workbook.
+ *
+ * The import retains the original upload against the job row, which is owner-only
+ * and buried in Import Job Details - so a colleague who did not run the import
+ * could not get the sheet. This serves the latest one to anyone who can see
+ * packing lists.
+ */
+export interface LatestContainerStatusDocument {
+  url: string;
+  filename: string;
+  size: number | null;
+  uploaded_at: string | null;
+}
+
+export async function getLatestContainerStatusDocument(): Promise<LatestContainerStatusDocument> {
+  const response = await apiFetch(
+    '/api/v1/procurement/packing-lists/container-status/latest',
+  );
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(
+        response,
+        'No Container Status workbook has been imported yet',
+      ),
+    );
+  }
+  return response.json();
+}

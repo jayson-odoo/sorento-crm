@@ -14,7 +14,9 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Plus, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react';
+import { ChevronRight, Download, Plus, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react';
+import { toast } from 'sonner';
+import { getLatestContainerStatusDocument } from '../services/packingListService';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -102,6 +104,25 @@ export default function PackingListsList() {
     });
     const qs = search ? `?${search}` : '';
     router.push(`/procurement-management/packing-lists/${packingListId}${qs}`);
+  };
+
+  /** Open the latest imported workbook in a new tab.
+   *
+   * The link is signed and short-lived, so it is fetched on click rather than
+   * rendered as an href - a stale URL in the DOM would 403 by the time anyone
+   * used it. A toast carries the "nothing imported yet" case, which is a normal
+   * state before the first import, not an error worth a dialog. */
+  const handleDownloadContainerStatus = async () => {
+    try {
+      const doc = await getLatestContainerStatusDocument();
+      window.open(doc.url, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Could not fetch the Container Status workbook',
+      );
+    }
   };
 
   const columns = useMemo<ColumnDef<PackingList>[]>(() => {
@@ -356,6 +377,12 @@ export default function PackingListsList() {
                 label: 'Refresh',
                 icon: RefreshCw,
                 onClick: () => void refetch(),
+              },
+              {
+                key: 'download-container-status',
+                label: 'Download Container Status (latest)',
+                icon: Download,
+                onClick: () => void handleDownloadContainerStatus(),
               },
               {
                 key: 'import-container-status',
