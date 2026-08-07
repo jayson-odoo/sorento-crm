@@ -35,7 +35,7 @@ import { extractApiError } from '@/lib/api-client';
 import type { UploadTestResult } from '../components/UploadTestVerdict';
 
 /** Which of the two feeds a dialog is driving. */
-export type HistoryImportKind = 'purchase-history' | 'order-inquiry';
+export type HistoryImportKind = 'purchase-history' | 'order-inquiry' | 'sales-history';
 
 /** What the resolver did after an apply - the pairing may have been claimed months ago. */
 export interface OrderLinkResolution {
@@ -142,6 +142,65 @@ export function testOrderInquiry(file: File): Promise<UploadTestResult> {
 /** Write the order book. Idempotent on the document number, so a re-upload is safe. */
 export function applyPurchaseHistory(file: File): Promise<PurchaseHistoryResult> {
   return post('/api/v1/scm/purchase-history/apply', file, 'Failed to apply the upload');
+}
+
+/**
+ * The sales book, as HISTORY.
+ *
+ * Absorbed lines are written closed and fully delivered, so they contribute nothing to
+ * committed demand: the client's 11,275-document export left `committed_v` and
+ * `net_position_v` byte-identical. The counts worth reading before confirming are
+ * `outstanding_lines` (above zero means the file still holds real commitments, which belong
+ * to the outstanding channel) and the unknown item / debtor counts.
+ */
+export interface SalesHistoryPreview {
+  ok: boolean;
+  orders: number;
+  lines: number;
+  total_rows: number;
+  layout_rows: number;
+  /** Rendered strings, the same shape every upload dialog shows. */
+  problems: string[];
+  unmapped_headers: string[];
+  missing_columns: string[];
+  non_stock_lines: number;
+  unknown_items: string[];
+  unknown_item_count: number;
+  unknown_debtors: string[];
+  unknown_debtor_count: number;
+  unknown_locations: string[];
+  outstanding_lines: number;
+  date_from: string | null;
+  date_to: string | null;
+}
+
+export interface SalesHistoryResult extends SalesHistoryPreview {
+  orders_created: number;
+  orders_updated: number;
+  orders_unchanged: number;
+  lines_created: number;
+  lines_updated: number;
+  lines_unchanged: number;
+  /** Documents this upload settled that still had quantity owed. Never silent. */
+  orders_with_open_lines_closed: number;
+  /**
+   * Documents another feed already owns lines on, so two AutoCount exports disagree about
+   * them. Left completely untouched and named here, because which export is current is a
+   * question about the client's data rather than something an upload should answer by
+   * arriving second.
+   */
+  conflicted_orders: string[];
+  conflicted_order_count: number;
+}
+
+/** What this sales book WOULD absorb. Writes nothing. */
+export function previewSalesHistory(file: File): Promise<SalesHistoryPreview> {
+  return post('/api/v1/scm/sales-history/preview', file, 'Failed to read the file');
+}
+
+/** Absorb the sales book. Same -> skip, different -> update, new -> create. */
+export function applySalesHistory(file: File): Promise<SalesHistoryResult> {
+  return post('/api/v1/scm/sales-history/apply', file, 'Failed to apply the upload');
 }
 
 /** What this sheet WOULD write. Writes nothing. */

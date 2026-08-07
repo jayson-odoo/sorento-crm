@@ -39,6 +39,7 @@ import { UploadDataMenu } from './UploadDataMenu';
 import type {
   OrderInquiryResult,
   PurchaseHistoryResult,
+  SalesHistoryResult,
 } from '../services/purchaseHistoryService';
 import { PlanAssistant } from './PlanAssistant';
 import { PlanMethodologySheet } from './PlanMethodologySheet';
@@ -209,14 +210,18 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
    * The pairing is reported because it is the half nothing else would say: an upload can
    * complete a claim made by a file somebody else uploaded weeks ago.
    */
-  const curationApplied = (result: PurchaseHistoryResult | OrderInquiryResult) => {
+  const curationApplied = (
+    result: PurchaseHistoryResult | OrderInquiryResult | SalesHistoryResult,
+  ) => {
     void queryClient.invalidateQueries({ queryKey: todayRunKey });
     void queryClient.invalidateQueries({ queryKey: runHistoryKey });
     const written =
       'orders_created' in result
         ? `${result.orders_created} order${result.orders_created === 1 ? '' : 's'} imported`
         : `${result.locations_written} location${result.locations_written === 1 ? '' : 's'} written`;
-    const linked = result.links.resolved;
+    // The sales book claims no order links - it is the demand record, not the pairing - so
+    // its result carries no `links` and the toast says only what was written.
+    const linked = 'links' in result ? result.links.resolved : 0;
     toast.success(
       linked
         ? `${written}, ${linked} order link${linked === 1 ? '' : 's'} resolved.`

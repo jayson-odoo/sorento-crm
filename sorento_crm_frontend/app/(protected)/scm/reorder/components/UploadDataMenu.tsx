@@ -21,6 +21,7 @@ import type {
   HistoryImportKind,
   OrderInquiryResult,
   PurchaseHistoryResult,
+  SalesHistoryResult,
 } from '../services/purchaseHistoryService';
 
 /**
@@ -45,16 +46,23 @@ const OUTSTANDING: ReadonlyArray<readonly [OutstandingImportKind, string, string
 
 const CURATION: ReadonlyArray<readonly [HistoryImportKind, string, string]> = [
   ['purchase-history', 'Purchase history', 'Past orders, for last cost and slow movers'],
+  ['sales-history', 'Sales history', 'Past sales orders. Never counted as demand'],
   ['order-inquiry', 'Order inquiry sheet', 'Stock locations and purchase-order links'],
 ] as const;
 
 function isHistoryChannel(channel: Channel): channel is HistoryImportKind {
-  return channel === 'purchase-history' || channel === 'order-inquiry';
+  return (
+    channel === 'purchase-history'
+    || channel === 'order-inquiry'
+    || channel === 'sales-history'
+  );
 }
 
 export interface UploadDataMenuProps {
   onOutstandingApplied?: (result: OutstandingApplyResult) => void;
-  onHistoryApplied?: (result: PurchaseHistoryResult | OrderInquiryResult) => void;
+  onHistoryApplied?: (
+    result: PurchaseHistoryResult | OrderInquiryResult | SalesHistoryResult,
+  ) => void;
 }
 
 export function UploadDataMenu({

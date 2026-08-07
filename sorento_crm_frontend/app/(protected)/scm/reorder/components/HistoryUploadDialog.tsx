@@ -28,6 +28,10 @@ import {
   type OrderLinkResolution,
   type PurchaseHistoryPreview,
   type PurchaseHistoryResult,
+  type SalesHistoryPreview,
+  type SalesHistoryResult,
+  previewSalesHistory,
+  applySalesHistory,
 } from '../services/purchaseHistoryService';
 import { CountTile } from './UploadCountTile';
 import { UploadTestVerdict } from './UploadTestVerdict';
@@ -55,6 +59,13 @@ const COPY: Record<
     // lead time: that is measured to the goods receipt and this file carries none.
     description: 'Past orders, for last cost and slow movers. Never counted as incoming stock.',
     dropzoneLabel: 'Purchase Order Listing file',
+  },
+  'sales-history': {
+    title: 'Upload sales history',
+    // What it does to the plan, in one line. The second sentence is the whole point of the
+    // channel: the same file through the outstanding upload would be demand.
+    description: 'Past sales orders, for the demand record. Never counted as demand.',
+    dropzoneLabel: 'Sales Order Listing file',
   },
   'order-inquiry': {
     title: 'Upload order inquiry sheet',
@@ -185,6 +196,91 @@ function HistorySummary({
   );
 }
 
+/**
+ * The sales book. Two things it says that no other channel does.
+ *
+ * `Still owed` above zero means the file is not purely history: those lines carry real
+ * outstanding quantity, they will be absorbed as finished business anyway, and the
+ * outstanding channel is where they belong. `Settled with quantity owed` is the same fact
+ * from the other side after a write - documents this upload closed that still owed
+ * something. Both are shown even at zero, because a figure that appears only when it is bad
+ * teaches nobody where to look.
+ */
+function SalesHistorySummary({
+  data,
+  applied,
+}: {
+  data: SalesHistoryPreview;
+  applied?: SalesHistoryResult;
+}) {
+  return (
+    <div className="space-y-4">
+      <div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+          <CountTile label="Orders" value={data.orders} />
+          <CountTile label="Lines" value={data.lines} />
+          <CountTile label="Charge lines" value={data.non_stock_lines} />
+          <CountTile label="Still owed" value={data.outstanding_lines} />
+        </div>
+        <p className="mt-1.5 text-2xs text-muted-foreground">
+          {dateText(data.date_from)} to {dateText(data.date_to)}.{' '}
+          {data.layout_rows.toLocaleString()}{' '}
+          {plural(data.layout_rows, 'row is', 'rows are')} a package caption or spacer.
+        </p>
+      </div>
+
+      {applied ? (
+        <div>
+          {/* Created / updated / unchanged, side by side. Unchanged is a real outcome and
+              shown as one: an upload of an unchanged book reporting nothing at all looks
+              like it failed. */}
+          <div className="grid grid-cols-3 gap-2">
+            <CountTile label="Orders created" value={applied.orders_created} />
+            <CountTile label="Orders updated" value={applied.orders_updated} />
+            <CountTile label="Orders unchanged" value={applied.orders_unchanged} />
+            <CountTile label="Lines created" value={applied.lines_created} />
+            <CountTile label="Lines updated" value={applied.lines_updated} />
+            <CountTile label="Lines unchanged" value={applied.lines_unchanged} />
+          </div>
+          <p className="mt-1.5 text-2xs text-muted-foreground">
+            {applied.orders_with_open_lines_closed.toLocaleString()}{' '}
+            {plural(applied.orders_with_open_lines_closed, 'order', 'orders')} settled while
+            still owing something.
+          </p>
+        </div>
+      ) : null}
+
+      {applied ? (
+        <ChipList
+          title="Left alone: another upload owns these"
+          items={applied.conflicted_orders}
+          total={applied.conflicted_order_count}
+          hint="This file says they are fully delivered and another upload says they are still open. Nothing was changed on them - decide which export is current."
+        />
+      ) : null}
+
+      <ChipList
+        title="Items we do not hold"
+        items={data.unknown_items}
+        total={data.unknown_item_count}
+        hint="These lines are skipped. Nothing is created in the product catalogue from an upload."
+      />
+      <ChipList
+        title="Customers we do not hold"
+        items={data.unknown_debtors}
+        total={data.unknown_debtor_count}
+        hint="The orders are still absorbed, with the debtor code and printed name kept on them so the link can be made later."
+      />
+      <ChipList
+        title="Locations we do not hold"
+        items={data.unknown_locations}
+        total={data.unknown_locations.length}
+        hint="Those lines are absorbed without a location rather than guessing one."
+      />
+    </div>
+  );
+}
+
 function InquirySummary({
   data,
   applied,
@@ -241,7 +337,7 @@ export interface HistoryUploadDialogProps {
   onOpenChange: (open: boolean) => void;
   kind: HistoryImportKind;
   /** Fired once the write succeeds, so the page can refresh what it derives from it. */
-  onApplied?: (result: PurchaseHistoryResult | OrderInquiryResult) => void;
+  onApplied?: (result: PurchaseHistoryResult | OrderInquiryResult | SalesHistoryResult) => void;
 }
 
 export function HistoryUploadDialog({
@@ -251,16 +347,32 @@ export function HistoryUploadDialog({
   onApplied,
 }: HistoryUploadDialogProps) {
   const isHistory = kind === 'purchase-history';
+  const isSales = kind === 'sales-history';
   const copy = COPY[kind];
 
   const upload = useTwoStepUpload<
-    PurchaseHistoryPreview | OrderInquiryPreview,
-    PurchaseHistoryResult | OrderInquiryResult
+    PurchaseHistoryPreview | OrderInquiryPreview | SalesHistoryPreview,
+    PurchaseHistoryResult | OrderInquiryResult | SalesHistoryResult
   >({
     open,
-    preview: (file) => (isHistory ? previewPurchaseHistory(file) : previewOrderInquiry(file)),
-    apply: (file) => (isHistory ? applyPurchaseHistory(file) : applyOrderInquiry(file)),
-    test: (file) => (isHistory ? testPurchaseHistory(file) : testOrderInquiry(file)),
+    preview: (file) =>
+      isSales
+        ? previewSalesHistory(file)
+        : isHistory
+          ? previewPurchaseHistory(file)
+          : previewOrderInquiry(file),
+    apply: (file) =>
+      isSales
+        ? applySalesHistory(file)
+        : isHistory
+          ? applyPurchaseHistory(file)
+          : applyOrderInquiry(file),
+    // No Test for the sales book: the route has no `validate_only`, because apply is already
+    // a reconcile (same -> skip) rather than an append, so a preview IS the dry run. Offering
+    // a Test that ran a different code path would be the dishonest option.
+    test: isSales
+      ? undefined
+      : (file) => (isHistory ? testPurchaseHistory(file) : testOrderInquiry(file)),
     onApplied,
   });
 
@@ -313,7 +425,12 @@ export function HistoryUploadDialog({
 
           {shown && shown.ok ? (
             <>
-              {isHistory ? (
+              {isSales ? (
+                <SalesHistorySummary
+                  data={shown as SalesHistoryPreview}
+                  applied={result ? (result as SalesHistoryResult) : undefined}
+                />
+              ) : isHistory ? (
                 <HistorySummary
                   data={shown as PurchaseHistoryPreview}
                   applied={result ? (result as PurchaseHistoryResult) : undefined}
@@ -324,7 +441,9 @@ export function HistoryUploadDialog({
                   applied={result ? (result as OrderInquiryResult) : undefined}
                 />
               )}
-              {result ? <LinkOutcome links={result.links} /> : null}
+              {result && !isSales ? (
+                <LinkOutcome links={(result as PurchaseHistoryResult).links} />
+              ) : null}
             </>
           ) : null}
         </DialogBody>

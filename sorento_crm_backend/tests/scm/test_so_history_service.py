@@ -186,9 +186,30 @@ def test_re_uploading_the_same_file_creates_nothing_a_second_time(db, chain):
 
     assert (first["orders_created"], first["lines_created"]) == (1, 2)
     assert (second["orders_created"], second["lines_created"]) == (0, 0)
-    assert second["orders_updated"] == 1
+    # Same -> SKIP, and skipping is reported as its own outcome. An upload that reported
+    # "1 order updated, 2 lines updated" after changing nothing tells the uploader nothing
+    # about what their file did, and it touches `updated_at` on rows that did not change.
+    assert (second["orders_updated"], second["lines_updated"]) == (0, 0)
+    assert (second["orders_unchanged"], second["lines_unchanged"]) == (1, 2)
     _order, lines = _lines(db, chain["so"])
     assert len(lines) == 2
+
+
+def test_a_changed_line_is_updated_rather_than_added_beside_the_old_one(db, chain):
+    """Different -> UPDATE, the middle case of the rule.
+
+    The same document re-exported with a corrected quantity. One line, restated - not two
+    lines summing to fifteen, which is what any append-only feed would leave behind.
+    """
+    svc.apply(db, _wb([_row(chain, Qty=10, **{"Transfered Qty": 10})]))
+    db.flush()
+
+    out = svc.apply(db, _wb([_row(chain, Qty=5, **{"Transfered Qty": 5})]))
+    db.flush()
+
+    assert (out["lines_created"], out["lines_updated"], out["lines_unchanged"]) == (0, 1, 0)
+    _order, lines = _lines(db, chain["so"])
+    assert [float(ln.qty_ordered) for ln in lines] == [5.0]
 
 
 def test_the_same_item_repeated_on_one_order_stays_several_lines(db, chain):
@@ -214,23 +235,82 @@ def test_the_same_item_repeated_on_one_order_stays_several_lines(db, chain):
     assert again["lines_created"] == 0
 
 
-def test_an_order_raised_in_the_system_is_never_touched_by_this_feed(db, chain):
-    """A live commitment somebody is working must not be closed by a history upload.
+def test_a_document_another_feed_owns_is_reported_as_a_conflict_not_absorbed(db, chain):
+    """Two AutoCount exports disagreeing is a question about their data, not ours.
 
-    269 of the client's 11,275 documents already exist in the system. Refreshing those from a
-    2020 export would close open lines and delete the demand the plan is built on.
+    269 of the client's 11,275 documents are open in the Order Inquiry sheet with 430,108
+    units still owed, while this listing reports every one of them fully delivered. One of
+    the two exports is stale.
+
+    Answering that by upload order is the worst option available, and it was tried: settling
+    those headers removed 430,108 units of committed demand from the plan and left each
+    document holding two sets of lines, the original open ones and the imported closed ones.
+    Both effects looked exactly like a successful import.
     """
     live = SalesOrder(id=_u(), so_number=chain["so"], status="open",
-                      source_system="raised_by_hand")
+                      source_system="scm_order_inquiry")
     db.add(live)
     db.flush()
+    db.add(SalesOrderLine(id=_u(), sales_order_id=str(live.id),
+                          product_id=str(chain["p1"].id), qty_ordered=4, qty_delivered=0,
+                          line_status="open", source_system="scm_order_inquiry"))
+    db.flush()
+    before = float(db.execute(
+        text("SELECT COALESCE(SUM(committed),0) FROM scm.committed_v")).scalar())
 
     out = svc.apply(db, _wb([_row(chain)]))
     db.flush()
 
-    assert (out["orders_created"], out["lines_created"]) == (0, 0)
+    assert out["conflicted_order_count"] == 1
+    assert chain["so"] in out["conflicted_orders"], "the document has to be NAMED, not counted"
+    assert (out["orders_created"], out["orders_updated"], out["lines_created"]) == (0, 0, 0)
+
     db.refresh(live)
-    assert live.status == "open", "a live order was closed by a history upload"
+    assert live.status == "open", "a conflicted document was settled anyway"
+    _order, lines = _lines(db, chain["so"])
+    assert len(lines) == 1, "a conflicted document was given a second set of lines"
+    after = float(db.execute(
+        text("SELECT COALESCE(SUM(committed),0) FROM scm.committed_v")).scalar())
+    assert after == before, "a conflicted document lost its committed demand"
+
+
+def test_a_document_this_feed_owns_is_still_reconciled_normally(db, chain):
+    """GUARD: "leave conflicts alone" must not become "never update anything".
+
+    A document this feed wrote before is its own, so the same/different/new rule applies to
+    it in full - otherwise the conflict rule would quietly disable re-uploads.
+    """
+    svc.apply(db, _wb([_row(chain, Qty=10, **{"Transfered Qty": 10})]))
+    db.flush()
+
+    out = svc.apply(db, _wb([_row(chain, Qty=7, **{"Transfered Qty": 7})]))
+    db.flush()
+
+    assert out["conflicted_order_count"] == 0
+    assert out["lines_updated"] == 1
+    _order, lines = _lines(db, chain["so"])
+    assert [float(ln.qty_ordered) for ln in lines] == [7.0]
+
+
+def test_a_document_already_matching_the_file_is_left_completely_alone(db, chain):
+    """GUARD: "reconcile everything" must not become "rewrite everything".
+
+    Without this, the rule above would be satisfied by an implementation that updates every
+    document on every upload, which is indistinguishable from the append-only feed it
+    replaced right up until somebody reads the audit trail.
+    """
+    svc.apply(db, _wb([_row(chain)]))
+    db.flush()
+    _order, lines = _lines(db, chain["so"])
+    stamp = lines[0].updated_at
+
+    out = svc.apply(db, _wb([_row(chain)]))
+    db.flush()
+
+    assert out["orders_unchanged"] == 1
+    assert out["orders_with_open_lines_closed"] == 0
+    _order, lines = _lines(db, chain["so"])
+    assert lines[0].updated_at == stamp, "an unchanged line had its updated_at touched"
 
 
 # --------------------------------------------------------------------------- #
