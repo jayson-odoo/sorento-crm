@@ -209,7 +209,17 @@ class InboundShipmentCreate(InboundShipmentBase):
     shipment_lines: Optional[List[InboundShipmentLineCreate]] = None
 
 
-class InboundShipmentUpdate(BaseModel):
+class InboundShipmentUpdate(ClearanceFields):
+    """Everything editable on a packing list, INCLUDING the clearance fields.
+
+    They are here because the workbook is not the only way these dates arrive:
+    when the import has not run, or a liner publishes a revision between imports,
+    someone has to be able to type the date in. Without them on this schema the
+    PUT accepted the payload and silently dropped it - `update_shipment` setattrs
+    whatever `exclude_unset` yields, so a field absent from the schema never
+    reaches the row and the save looks successful.
+    """
+
     supplier_id: Optional[str] = None
     shipment_date: Optional[date] = None
     estimated_arrival_date: Optional[date] = None

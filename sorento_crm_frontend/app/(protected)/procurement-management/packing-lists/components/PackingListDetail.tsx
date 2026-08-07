@@ -30,6 +30,7 @@ import { getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/a
 import { toast } from 'sonner';
 import ComplaintLinkAttachmentBrowserDialog from '@/app/(protected)/complaint-management/complaints/components/ComplaintLinkAttachmentBrowserDialog';
 import ClearanceDeliveryCard from './ClearanceDeliveryCard';
+import { CLEARANCE_ATTRIBUTE_FIELDS } from '../forms/packing-list-schema';
 
 interface PackingListDetailProps {
   packingListId: string;
@@ -418,6 +419,41 @@ export default function PackingListDetail({
                 <p className="font-medium">{packingList.notes}</p>
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        {/* The non-date clearance attributes. Rendered here because the edit form
+            can set them and this tab is where their read-only counterpart belongs:
+            the timeline above covers the DATES, and a field you can type but never
+            see afterwards reads as a save that did not work.
+
+            Always rendered, every row, even when empty - per the CRUD standard a
+            section is never hidden on missing data, and "-" is the honest answer
+            for a container that has not cleared yet. */}
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle>Clearance Details</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {CLEARANCE_ATTRIBUTE_FIELDS.map((f) => {
+                const value = (packingList as unknown as Record<string, unknown>)[f.name];
+                return (
+                  <div key={f.name} className="min-w-0">
+                    <p className="text-sm text-muted-foreground">{f.label}</p>
+                    <p className="font-medium break-words">
+                      {value === null || value === undefined || value === '' ? '-' : String(value)}
+                    </p>
+                  </div>
+                );
+              })}
+              <div className="min-w-0">
+                {/* Provenance, not an editable attribute - it says which workbook
+                    tab the row came from, so it is shown but never typed. */}
+                <p className="text-sm text-muted-foreground">Source sheet</p>
+                <p className="font-medium break-words">{packingList.source_sheet || '-'}</p>
+              </div>
+            </div>
           </CardContent>
         </Card>
         </TabsContent>

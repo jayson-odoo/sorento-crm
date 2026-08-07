@@ -37,6 +37,7 @@ class AttributeAccess(BaseModel):
     field: str
     agent_code: str | None = None
     #: "allowed" | "not_gated" | "agent_not_assigned" | "field_not_allowed"
+    #: | "contact_not_found"
     outcome: str
     reason: str | None = None
 

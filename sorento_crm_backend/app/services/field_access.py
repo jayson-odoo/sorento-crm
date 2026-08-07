@@ -17,6 +17,8 @@ function but not this field" are different admin actions:
     ALLOWED             visible
     AGENT_NOT_ASSIGNED  the contact does not hold the agent that owns this field
     FIELD_NOT_ALLOWED   the contact holds the agent, but not this field
+    CONTACT_NOT_FOUND   no contact matched at all, so no grant was ever consulted
+                        (usually a space_id from a different workspace)
 
 **Only registered fields are gated.** `GATED_FIELDS` lists what is protectable per
 resource; anything absent from it is always visible. That is what keeps every
@@ -125,6 +127,11 @@ ALLOWED = "allowed"
 AGENT_NOT_ASSIGNED = "agent_not_assigned"
 FIELD_NOT_ALLOWED = "field_not_allowed"
 NOT_GATED = "not_gated"
+#: The caller named a contact we cannot find. Distinct from AGENT_NOT_ASSIGNED
+#: because the fix is completely different: reporting "assign the agent" for a
+#: contact that already holds it sends an admin to a screen where everything
+#: already looks correct. Usually a `space_id` from the wrong workspace.
+CONTACT_NOT_FOUND = "contact_not_found"
 
 
 @dataclass(frozen=True)
@@ -153,6 +160,12 @@ _REASONS = {
     AGENT_NOT_ASSIGNED: (
         "This contact does not hold the agent that owns this field. Assign the "
         "agent to the contact, then allow the field on it."
+    ),
+    CONTACT_NOT_FOUND: (
+        "No contact matches this contact_id. If a space_id was supplied, check it "
+        "belongs to the same workspace as the contact - a mismatched pair resolves "
+        "to nobody. This is NOT a grant problem: the contact's agents and fields "
+        "were never consulted."
     ),
     FIELD_NOT_ALLOWED: (
         "This contact holds the agent, but this field is not allowed on it. Tick "
@@ -302,19 +315,22 @@ def decide(
     requested = list(fields)
 
     if not contact_id:
-        # No contact in play: nothing to resolve a grant against, so every gated
-        # field is denied for the reason an admin can act on.
+        # No contact in play: nothing to resolve a grant against. Same reason as an
+        # unresolvable one - claiming "the agent is not assigned" would describe a
+        # grant check that never happened.
         return [
-            FieldDecision(f, registry.get(f), NOT_GATED if f not in registry else AGENT_NOT_ASSIGNED)
+            FieldDecision(f, registry.get(f), NOT_GATED if f not in registry else CONTACT_NOT_FOUND)
             for f in requested
         ]
 
     resolved = resolve_contact_id(db, contact_id, space_id)
     if resolved is None:
-        # An unknown contact holds nothing. Same shape as holding no agent, which
-        # is also the right advice: assign the agent (to a contact that exists).
+        # Denied, but say so as its OWN reason. Reporting AGENT_NOT_ASSIGNED here
+        # sends an admin to check grants that were never consulted - and if the
+        # contact does hold the agent, that screen looks perfectly correct, so the
+        # real cause (usually a space_id from another workspace) stays hidden.
         return [
-            FieldDecision(f, registry.get(f), NOT_GATED if f not in registry else AGENT_NOT_ASSIGNED)
+            FieldDecision(f, registry.get(f), NOT_GATED if f not in registry else CONTACT_NOT_FOUND)
             for f in requested
         ]
 

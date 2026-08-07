@@ -16,12 +16,39 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useCreatePackingList, useUpdatePackingList, usePackingList } from '../hooks/usePackingLists';
-import { packingListSchema, type PackingListSchemaType } from '../forms/packing-list-schema';
+import {
+  useCreatePackingList,
+  useUpdatePackingList,
+  usePackingList,
+  useClearanceCheckpoints,
+} from '../hooks/usePackingLists';
+import {
+  packingListSchema,
+  clearanceSchema,
+  CLEARANCE_ATTRIBUTE_FIELDS,
+  type PackingListSchemaType,
+} from '../forms/packing-list-schema';
 import { useSupplierSelectQuery } from '../../suppliers/hooks/useSupplierSelectQuery';
 import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
 import { ProductCombobox } from './ProductCombobox';
 import { SupplierCombobox } from './SupplierCombobox';
+
+/** Every clearance key, straight off the schema - one list, three uses
+ * (defaults, hydration, submit), so none of them can fall behind the others. */
+const CLEARANCE_KEYS = Object.keys(clearanceSchema.shape) as Array<
+  keyof typeof clearanceSchema.shape
+>;
+
+const emptyClearance = () =>
+  Object.fromEntries(CLEARANCE_KEYS.map((k) => [k, ''])) as Record<string, string>;
+
+/** ISO date -> yyyy-mm-dd for <input type="date">; anything else passes through. */
+const toFormValue = (v: unknown): string | number => {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'number') return v;
+  const s = String(v);
+  return /^\d{4}-\d{2}-\d{2}T/.test(s) ? s.slice(0, 10) : s;
+};
 
 interface PackingListFormProps {
   packingListId?: string;
@@ -36,6 +63,9 @@ export default function PackingListForm({
   const isEditMode = !!packingListId;
   const { data: packingList, isLoading: isLoadingPackingList } = usePackingList(packingListId ?? null);
   const { data: suppliers = [] } = useSupplierSelectQuery();
+  // Same source as the read-only timeline, so a checkpoint renamed or
+  // deactivated in config changes both views at once instead of drifting.
+  const { data: checkpoints = [] } = useClearanceCheckpoints();
   const [products, setProducts] = useState<Array<{ id: string; product_code: string; product_name?: string }>>([]);
   const [productSearch, setProductSearch] = useState('');
 
@@ -54,6 +84,7 @@ export default function PackingListForm({
       invoice_number: '',
       shipment_status: 'in_transit',
       shipment_lines: [{ product_id: '', quantity_shipped: 1 }],
+      ...emptyClearance(),
     },
   });
 
@@ -109,6 +140,12 @@ export default function PackingListForm({
               quantity_shipped: l.quantity_shipped,
             }))
           : [{ product_id: '', quantity_shipped: 1 }],
+      ...(Object.fromEntries(
+        CLEARANCE_KEYS.map((k) => [
+          k,
+          toFormValue((packingList as unknown as Record<string, unknown>)[k]),
+        ]),
+      ) as Record<string, string | number>),
     });
     lastInitializedIdRef.current = packingList.id;
   }, [packingList, isEditMode, form]);
@@ -130,6 +167,15 @@ export default function PackingListForm({
             product_id: l.product_id,
             quantity_shipped: l.quantity_shipped,
           })),
+        // Blank clears the field: send null, not undefined. `exclude_unset` on the
+        // backend drops undefined entirely, so omitting it would make a cleared
+        // date impossible to save - it would silently keep its old value.
+        ...Object.fromEntries(
+          CLEARANCE_KEYS.map((k) => {
+            const v = (data as Record<string, unknown>)[k];
+            return [k, v === '' || v === undefined ? null : v];
+          }),
+        ),
       };
 
       if (isEditMode && packingListId) {
@@ -263,6 +309,78 @@ export default function PackingListForm({
                   </FormItem>
                 )}
               />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Clearance & Delivery — the contingency path.
+            The workbook import normally fills these, but it is not the only way
+            they arrive: before the first import, or when a liner revises an ETA
+            between imports, someone types the date in here.
+
+            Checkpoint labels and order come from the SAME config the read-only
+            timeline reads, so renaming or deactivating a checkpoint moves both
+            views together instead of leaving the edit form describing a
+            checkpoint the detail page no longer shows. */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Clearance &amp; Delivery</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Filled by the Container Status import. Enter them by hand when the
+              import has not run, or when a date changed after it did.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {checkpoints.length > 0 && (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {checkpoints.map((cp) => (
+                  <FormField
+                    key={cp.field}
+                    control={form.control}
+                    name={cp.field as keyof PackingListSchemaType}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{cp.label}</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="date"
+                            {...field}
+                            value={(field.value as string) ?? ''}
+                          />
+                        </FormControl>
+                        {cp.caption && (
+                          <p className="text-xs text-muted-foreground">{cp.caption}</p>
+                        )}
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                ))}
+              </div>
+            )}
+
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {CLEARANCE_ATTRIBUTE_FIELDS.map((f) => (
+                <FormField
+                  key={f.name}
+                  control={form.control}
+                  name={f.name as keyof PackingListSchemaType}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{f.label}</FormLabel>
+                      <FormControl>
+                        <Input
+                          type={f.name === 'free_days_available' ? 'number' : 'text'}
+                          min={f.name === 'free_days_available' ? 0 : undefined}
+                          {...field}
+                          value={(field.value as string | number) ?? ''}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ))}
             </div>
           </CardContent>
         </Card>

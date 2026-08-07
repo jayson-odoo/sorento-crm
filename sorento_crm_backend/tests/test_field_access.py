@@ -12,9 +12,11 @@ Four properties carry the whole thing:
    yet". An LLM reading the response narrates a null as the latter, which is a lie
    with the confidence of a fact. (The response gains one additive sibling key,
    `field_access`, carrying the reason; the rows themselves are untouched.)
-2. **A denial says WHICH of two things is wrong** - the agent was never assigned,
-   or it was assigned and this field is not ticked. They need different admin
-   actions, so a bare `false` sends someone to the wrong screen.
+2. **A denial says WHICH thing is wrong** - the contact did not resolve at all,
+   or the agent was never assigned, or it was assigned and this field is not
+   ticked. Each needs a different fix, so a bare `false` sends someone to the
+   wrong screen - and naming the wrong one is worse, because that screen then
+   looks perfectly correct.
 3. **A contact's question is answered with the CONTACT's grants**, never the API
    key's. n8n calls with a privileged act-as user; if that decided it, every
    contact would be entitled the moment n8n asked on their behalf.
@@ -40,6 +42,7 @@ from app.models.access import (
 from app.services.field_access import (
     AGENT_NOT_ASSIGNED,
     ALLOWED,
+    CONTACT_NOT_FOUND,
     FIELD_NOT_ALLOWED,
     GATED_FIELDS,
     NOT_GATED,
@@ -325,11 +328,21 @@ def test_deactivating_the_agent_revokes_everyone_at_once(db):
     assert decision.outcome == AGENT_NOT_ASSIGNED
 
 
-def test_an_unknown_contact_is_denied_rather_than_erroring(db):
+def test_an_unknown_contact_says_so_instead_of_blaming_the_grant(db):
+    """Reporting AGENT_NOT_ASSIGNED here sends an admin to check grants that were
+    never consulted - and when the contact DOES hold the agent, that screen looks
+    perfectly correct, so the real cause stays hidden. Cost a real debugging
+    session: a space_id from another workspace read as "assign the agent"."""
     (decision,) = decide(
         db, resource=RESOURCE, fields=["eta_delay_date"], contact_id="no-such-contact"
     )
-    assert decision.outcome == AGENT_NOT_ASSIGNED
+    assert decision.outcome == CONTACT_NOT_FOUND
+    assert "space_id" in decision.as_dict()["reason"], "name the usual cause"
+
+
+def test_no_contact_supplied_is_also_not_a_grant_problem(db):
+    (decision,) = decide(db, resource=RESOURCE, fields=["eta_delay_date"], contact_id=None)
+    assert decision.outcome == CONTACT_NOT_FOUND
 
 
 def test_a_respond_io_id_resolves_to_the_internal_contact(db):
@@ -662,10 +675,12 @@ def test_space_id_reaches_the_decision(db):
     )
     assert ok.outcome == ALLOWED
 
+    # The wrong workspace resolves to NOBODY - which is a lookup failure, not a
+    # revoked grant. The contact's grants are untouched and still say "allowed".
     (denied,) = decide(
         db, resource=RESOURCE, fields=["eta_date"], contact_id="io-1", space_id="space-B"
     )
-    assert denied.outcome == AGENT_NOT_ASSIGNED
+    assert denied.outcome == CONTACT_NOT_FOUND
 
 
 def test_the_route_passes_space_id_to_the_gate():
