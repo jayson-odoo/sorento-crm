@@ -264,6 +264,12 @@ export interface SalesOrderLine {
   /** Stamped by create-DO-from-SO (soft link, no hard FK). */
   qty_delivered: number;
   uom: string;
+  /** Where this line ships from. Per line: one order can land in two locations. */
+  warehouse_code?: string;
+  /** `open` or `closed`. A closed line is not a commitment however much it still shows. */
+  line_status?: string;
+  /** When this line's quantity is due. Per line, for the same reason as the location. */
+  required_date?: string | null;
 }
 
 export interface SalesOrder {
@@ -283,6 +289,9 @@ export interface SalesOrder {
   total_qty: number;
   /** Undelivered qty = committed demand contributed to the dashboard. */
   committed_qty: number;
+  /** What the order says, and how much of it is still open. */
+  line_count?: number;
+  open_line_count?: number;
   lines: SalesOrderLine[];
   /** Where the order came from - it decides who may edit its figures. `inquiry` = the Order
    *  Inquiry sheet created it, `upload` = CS's outstanding extract, `manual` = keyed in. */
@@ -297,7 +306,7 @@ export interface SalesOrder {
   created_at: string;
 }
 
-export type SalesOrderSource = 'inquiry' | 'upload' | 'manual';
+export type SalesOrderSource = 'inquiry' | 'upload' | 'history' | 'manual';
 
 /** A pairing this order's lines claim, and whether both sides are present. */
 export interface LinkedPurchaseOrder {

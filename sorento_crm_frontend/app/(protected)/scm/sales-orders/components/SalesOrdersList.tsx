@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import {
   ColumnDef,
   PaginationState,
@@ -92,6 +93,7 @@ const SOURCE_FILTER_OPTIONS = [
   { value: '', label: 'All sources' },
   { value: 'inquiry', label: 'Order inquiry' },
   { value: 'upload', label: 'Outstanding upload' },
+  { value: 'history', label: 'Absorbed history' },
   { value: 'manual', label: 'Manual' },
 ];
 
@@ -101,6 +103,10 @@ const WAITING_ON_LIMIT = 2;
 const SOURCE_LABELS: Record<string, string> = {
   inquiry: 'Order inquiry',
   upload: 'Outstanding upload',
+  // 11,006 of the orders in the book were absorbed from a six-year AutoCount export. Calling
+  // one "Manual" claims somebody keyed a 2020 order by hand, and it is the same word the
+  // detail page uses so the two screens cannot disagree about the same row.
+  history: 'Absorbed history',
   manual: 'Manual',
 };
 
@@ -150,6 +156,29 @@ export default function SalesOrdersList() {
 
   const rows = useMemo<SalesOrder[]>(() => data?.data ?? [], [data]);
 
+  // Carried into the detail URL so its prev/next pager walks the SAME filtered, sorted page
+  // the user was reading (same param names as the list GET). Mirrors the purchase-order list.
+  const detailSearch = useMemo(
+    () =>
+      buildDetailSearch(
+        { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery },
+        {
+          status: statusFilter || undefined,
+          priority: priorityFilter || undefined,
+          source: sourceFilter || undefined,
+        },
+      ),
+    [
+      pagination.pageIndex,
+      pagination.pageSize,
+      sorting,
+      searchQuery,
+      statusFilter,
+      priorityFilter,
+      sourceFilter,
+    ],
+  );
+
   const handleSubmit = async (formData: SalesOrderFormData) => {
     if (editing) {
       await updateMut.mutateAsync({ id: editing.id, data: formData });
@@ -167,7 +196,16 @@ export default function SalesOrdersList() {
         header: ({ column }) => <DataGridColumnHeader title="SO number" column={column} />,
         cell: ({ row }) => (
           <div className="flex flex-col">
-            <span className="font-medium">{row.original.so_number}</span>
+            {/* The document number IS the way in, the same as the purchase-order list. The
+                list query rides along so the detail page's prev/next walks the page the
+                user was actually reading. */}
+            <Link
+              href={`/scm/sales-orders/${row.original.id}${detailSearch ? `?${detailSearch}` : ''}`}
+              onClick={(e) => e.stopPropagation()}
+              className="font-medium text-primary hover:underline"
+            >
+              {row.original.so_number}
+            </Link>
             <span className="text-xs text-muted-foreground">{fmtDate(row.original.order_date)}</span>
           </div>
         ),

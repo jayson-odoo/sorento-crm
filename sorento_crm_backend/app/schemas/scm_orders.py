@@ -21,6 +21,12 @@ class SalesOrderLine(BaseModel):
     qty_ordered: float
     qty_delivered: float
     uom: str
+    #: Where this line ships from. Per line: one order can land in two locations.
+    warehouse_code: str = ""
+    #: `open` or `closed`. A closed line is not a commitment however much it still shows.
+    line_status: str = "open"
+    #: When this line's quantity is due. Per line, for the same reason as the location.
+    required_date: Optional[str] = None
 
 
 class SalesOrder(BaseModel):
@@ -37,6 +43,10 @@ class SalesOrder(BaseModel):
     requested_delivery_date: Optional[str] = None
     total_qty: float
     committed_qty: float
+    #: What the order says, and how much of it is still open. Both, because a total that
+    #: silently means "outstanding" reads as an empty order once everything has shipped.
+    line_count: int = 0
+    open_line_count: int = 0
     lines: List[SalesOrderLine]
     #: Where the order came from: `inquiry` (the Order Inquiry sheet created it), `upload`
     #: (CS's outstanding extract), or `manual`. It decides who may edit the figures.

@@ -71,6 +71,13 @@ export async function getSalesOrders(
   return res.json();
 }
 
+/** One sales order with its lines. `linked_purchase_orders` is a LIST-only field. */
+export async function getSalesOrder(id: string): Promise<SalesOrder> {
+  const res = await apiFetch(`${BASE}/${id}`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the sales order'));
+  return res.json();
+}
+
 export async function createSalesOrder(data: SalesOrderFormData): Promise<SalesOrder> {
   const res = await apiFetch(BASE, {
     method: 'POST',

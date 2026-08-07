@@ -5,6 +5,7 @@ import {
   createDoFromSalesOrder,
   createSalesOrder,
   deleteSalesOrder,
+  getSalesOrder,
   getSalesOrders,
   updateSalesOrder,
 } from '../services/salesOrderService';
@@ -36,6 +37,18 @@ export function useSalesOrders(params: UseSalesOrdersParams) {
         source: params.source ?? null,
       }),
     staleTime: 10_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
+/** One sales order, for the detail page. Mirrors `usePurchaseOrder`. */
+export function useSalesOrder(id: string | null) {
+  return useQuery({
+    queryKey: ['scm', 'sales-orders', 'detail', id],
+    queryFn: () => getSalesOrder(id as string),
+    enabled: !!id,
+    staleTime: 5_000,
     refetchOnWindowFocus: false,
     retry: 1,
   });

@@ -29,9 +29,13 @@ _DO_NUMBER_MAX_TRIES = 50
 
 #: Where a sales order came from, as one word a buyer can filter on. `inquiry` is separate
 #: from `upload` because an order the Order Inquiry sheet created is one CS has never seen.
+#: Filter value -> the `source_system` values it selects. `manual` is everything NOT here,
+#: so a source added to `_source_label` and forgotten here would silently fall into Manual -
+#: which is the one label that must never be wrong, since it claims a person keyed the order.
 _SOURCE_SYSTEMS = {
     "inquiry": ("scm_order_inquiry",),
     "upload": ("scm_upload",),
+    "history": ("scm_so_history",),
 }
 
 
@@ -40,6 +44,10 @@ def _source_label(source_system: Optional[str]) -> str:
         return "inquiry"
     if source_system == "scm_upload":
         return "upload"
+    # Absorbed sales history gets its own answer rather than "Manual", which would claim
+    # somebody keyed a 2020 order by hand. Mirrors the purchase-order side's `import`.
+    if source_system == "scm_so_history":
+        return "history"
     return "manual"
 
 
@@ -111,11 +119,15 @@ class SalesOrderService:
         total_qty = 0.0
         committed = 0.0
         lines = []
+        open_lines = 0
         for ln in so.lines:
             qo = float(ln.qty_ordered or 0)
             qd = float(ln.qty_delivered or 0)
+            outstanding = max(qo - qd, 0.0)
             total_qty += qo
-            committed += max(qo - qd, 0.0)
+            committed += outstanding
+            if ln.line_status == "open" and outstanding > 0:
+                open_lines += 1
             lines.append({
                 "id": ln.id,
                 "sku": ln.product.product_code if ln.product else "",
@@ -123,6 +135,16 @@ class SalesOrderService:
                 "qty_ordered": qo,
                 "qty_delivered": qd,
                 "uom": self._uom_for(ln.product) if ln.product else "",
+                # The three the detail page needs and the list does not. Per line, not per
+                # header: one order routinely ships from two locations on two dates, and
+                # folding either onto the header states something the order never said.
+                "warehouse_code": (
+                    ln.warehouse.warehouse_code if ln.warehouse is not None else ""
+                ),
+                "line_status": ln.line_status or "open",
+                "required_date": (
+                    ln.required_date.isoformat() if ln.required_date else None
+                ),
             })
         order_dt = so.order_date or (so.created_at.date() if so.created_at else date.today())
         return {
@@ -141,6 +163,11 @@ class SalesOrderService:
             ),
             "total_qty": total_qty,
             "committed_qty": committed,
+            # What the order SAYS versus what is still owed. Both, because a "Total qty"
+            # reading 0 on a fully delivered order is the label lying - the same rule the
+            # purchase-order detail already follows with `open_qty` / `total_qty`.
+            "line_count": len(lines),
+            "open_line_count": open_lines,
             "lines": lines,
             # Where the order came from. `inquiry` is its own answer because an order Joey's
             # sheet created is one CS has never seen, and a buyer looking at the list is

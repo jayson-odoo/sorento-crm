@@ -209,3 +209,67 @@ def test_create_do_read_only_user_denied(scm_app):
     with TestClient(app) as c:
         res = c.post("/api/v1/scm/sales-orders/does-not-matter/create-do")
     assert res.status_code == 403, res.text
+
+
+# --------------------------------------------------------------------------- #
+# absorbed history is its own source, on the list and on the detail
+# --------------------------------------------------------------------------- #
+
+def test_absorbed_history_is_labelled_history_and_never_manual(scm_app):
+    """`Manual` is the one source label that must never be wrong.
+
+    It claims a person keyed the order. 11,006 of the sales orders in the book were read off
+    a six-year AutoCount export by `so_history_service`, and a source added to the label
+    function but forgotten in the filter map falls silently into Manual - so both halves are
+    asserted here, on one row.
+    """
+    import uuid
+
+    from app.models.order import SalesOrder
+    from app.services.scm.sales_order_service import _SOURCE_SYSTEMS, _source_label
+
+    app, db = _as(scm_app, "purchasing")
+    number = f"ZZTSOH{uuid.uuid4().hex[:8]}".upper()
+    db.add(SalesOrder(id=str(uuid.uuid4()), so_number=number, status="closed",
+                      source_system="scm_so_history"))
+    db.flush()
+
+    assert _source_label("scm_so_history") == "history"
+    # The filter map, so `?source=history` selects it rather than returning nothing.
+    assert "scm_so_history" in _SOURCE_SYSTEMS["history"]
+
+    row = db.query(SalesOrder).filter(SalesOrder.so_number == number).one()
+    from app.services.scm.sales_order_service import SalesOrderService
+
+    assert SalesOrderService(db).serialize(row)["source"] == "history"
+
+
+def test_the_detail_payload_carries_what_the_detail_screen_reads(scm_app):
+    """Per-line location, status and date, plus the two header counts.
+
+    The detail page states them per LINE because one order routinely ships from two locations
+    on two dates; folding either onto the header would state something the order never said.
+    Asserted on the payload rather than in the component, because a component test would pass
+    against a serializer that had quietly stopped sending them.
+    """
+    app, db = _as(scm_app, "purchasing")
+    payload = {
+        "order_type": "dealer",
+        "customer_code": CUSTOMER,
+        "priority": "normal",
+        "lines": [{"sku": SKU, "qty_ordered": 5, "uom": "PCS"}],
+    }
+    created = TestClient(app).post("/api/v1/scm/sales-orders", json=payload)
+    assert created.status_code == 201, created.text
+    so_id = created.json()["id"]
+
+    got = TestClient(app).get(f"/api/v1/scm/sales-orders/{so_id}")
+
+    assert got.status_code == 200, got.text
+    body = got.json()
+    assert body["line_count"] == 1
+    assert body["open_line_count"] == 1
+    line = body["lines"][0]
+    for field in ("warehouse_code", "line_status", "required_date"):
+        assert field in line, f"the detail screen reads {field} and the payload omits it"
+    assert line["line_status"] == "open"
