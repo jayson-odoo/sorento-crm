@@ -322,3 +322,81 @@ def test_every_enum_value_can_be_reached_by_a_customer_phrase(db):
             continue
         missing = [v for v in row.allowed_values if not (row.synonyms or {}).get(v)]
         assert missing == [], f"{key} values with no synonym: {missing}"
+
+
+# --------------------------------------------------------------------------- #
+# #100 user-editable, without losing the anti-drift guarantee
+# --------------------------------------------------------------------------- #
+def test_a_reseed_does_not_touch_a_user_owned_row(db):
+    """The whole point of the `source` flag.
+
+    The seed REPAIRS drift on every deploy so the ranker and the n8n parser cannot
+    disagree about what a value is called. Applied to a row a human owns, that same
+    behaviour silently reverts their edit — the UI would be a lie.
+    """
+    from app.models.product_spec import ProductSpecRegistry
+
+    seed_spec_registry(db)
+    db.add(
+        ProductSpecRegistry(
+            spec_key="zzt_custom",
+            label="Mine",
+            data_type="enum",
+            allowed_values=["a"],
+            synonyms={},
+            user_synonyms={"a": ["ay"]},
+            source="user",
+        )
+    )
+    db.flush()
+
+    seed_spec_registry(db)
+
+    row = _keys(db)["zzt_custom"]
+    assert row.label == "Mine"
+    assert row.user_synonyms == {"a": ["ay"]}
+
+
+def test_a_reseed_still_repairs_a_seeded_row(db):
+    seed_spec_registry(db)
+    row = _keys(db)["mounting"]
+    row.allowed_values = ["nonsense"]
+    row.source = "seed"
+    db.flush()
+
+    seed_spec_registry(db)
+
+    assert "wall_hung" in _keys(db)["mounting"].allowed_values
+
+
+def test_user_words_are_added_to_the_shipped_ones_never_replacing_them(db):
+    """Additive on purpose: a staff edit must not remove a word the parser relies on."""
+    from app.services.product_spec_registry import merged_synonyms
+
+    seed_spec_registry(db)
+    row = _keys(db)["mounting"]
+    shipped = list(row.synonyms["wall_hung"])
+    row.user_synonyms = {"wall_hung": ["hang on the wall lah"]}
+    db.flush()
+
+    merged = merged_synonyms(row)
+
+    assert "hang on the wall lah" in merged["wall_hung"]
+    for word in shipped:
+        assert word in merged["wall_hung"]
+    # The seed-owned column itself is untouched, so the next deploy repairs cleanly.
+    assert "hang on the wall lah" not in row.synonyms["wall_hung"]
+
+
+def test_a_user_word_reaches_the_resolver(db):
+    """An added word has to actually change what a phrase resolves to, or it is decor."""
+    from app.services.product_spec_search import resolve_terms_to_specs
+
+    seed_spec_registry(db)
+    row = _keys(db)["mounting"]
+    row.user_synonyms = {"wall_hung": ["gantung dinding"]}
+    db.flush()
+
+    resolved = {e["key"]: e["value"] for e in resolve_terms_to_specs(db, ["wc gantung dinding"])}
+
+    assert resolved.get("mounting") == "wall_hung"

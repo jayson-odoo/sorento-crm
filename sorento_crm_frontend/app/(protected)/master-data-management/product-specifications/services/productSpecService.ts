@@ -84,6 +84,10 @@ export async function previewSpecSearch(body: {
   free_terms: string[];
   include_accessories?: boolean;
   floor?: number;
+  /** The raw sentence, read semantically. */
+  phrase?: string;
+  /** False to see the literal reading alone, for comparison. */
+  understand?: boolean;
 }): Promise<SpecPreviewResult> {
   const response = await apiFetch('/api/v1/master-data/product-specifications/preview-search', {
     method: 'POST',
@@ -94,4 +98,62 @@ export async function previewSpecSearch(body: {
     throw new Error(await extractApiError(response, 'Spec search preview failed'));
   }
   return response.json();
+}
+
+/** Register a new spec key. Owned by whoever creates it — never seed-repaired. */
+export async function createSpecKey(body: {
+  spec_key: string;
+  label: string;
+  data_type: string;
+  unit?: string | null;
+  allowed_values?: string[];
+  user_synonyms?: Record<string, string[]>;
+  rank_weight?: number;
+  is_active?: boolean;
+}): Promise<SpecRegistryKey> {
+  const response = await apiFetch('/api/v1/master-data/spec-registry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to create the spec key'));
+  }
+  return response.json();
+}
+
+/**
+ * Edit calibration and extend vocabulary. A seeded key's `allowed_values` are
+ * rejected by the API on purpose — they are the chatbot parser's contract.
+ */
+export async function updateSpecKey(
+  specKey: string,
+  body: {
+    label?: string;
+    rank_weight?: number;
+    is_active?: boolean;
+    match_tolerance?: number;
+    match_decay?: number;
+    user_synonyms?: Record<string, string[]>;
+    allowed_values?: string[];
+  },
+): Promise<SpecRegistryKey> {
+  const response = await apiFetch(`/api/v1/master-data/spec-registry/${specKey}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save the spec key'));
+  }
+  return response.json();
+}
+
+export async function deleteSpecKey(specKey: string): Promise<void> {
+  const response = await apiFetch(`/api/v1/master-data/spec-registry/${specKey}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to delete the spec key'));
+  }
 }

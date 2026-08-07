@@ -24,6 +24,9 @@ export default function SpecSearchPreview() {
   const [phrase, setPhrase] = useState('');
   const [specs, setSpecs] = useState<{ key: string; value: string }[]>([]);
   const [includeAccessories, setIncludeAccessories] = useState(false);
+  // Off shows the literal reading alone. Useful for telling "the ranking is wrong"
+  // apart from "the phrase was misunderstood", which look identical from the results.
+  const [semantic, setSemantic] = useState(true);
   const [result, setResult] = useState<SpecPreviewResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +62,10 @@ export default function SpecSearchPreview() {
           // either, and this mirrors what the parser hands over.
           free_terms: phrase.trim() ? [phrase.trim(), ...terms] : [],
           include_accessories: includeAccessories,
+          // Read semantically as well as literally, so a typo or an unusual phrasing
+          // still lands on the right spec.
+          phrase: phrase.trim() || undefined,
+          understand: semantic,
         }),
       );
     } catch (e) {
@@ -141,14 +148,67 @@ export default function SpecSearchPreview() {
           </div>
         )}
 
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={includeAccessories}
-            onChange={(e) => setIncludeAccessories(e.target.checked)}
-          />
-          Include accessories and spare parts
-        </label>
+        <div className="flex flex-wrap items-center gap-5">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={includeAccessories}
+              onChange={(e) => setIncludeAccessories(e.target.checked)}
+            />
+            Include accessories and spare parts
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={semantic}
+              onChange={(e) => setSemantic(e.target.checked)}
+            />
+            Understand the sentence
+            <span className="text-muted-foreground">
+              (off = match words literally)
+            </span>
+          </label>
+        </div>
+
+        {!loading && result?.understanding && (
+          <div className="flex flex-col gap-2 rounded-md border p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                Understood as
+              </span>
+              <Badge
+                variant={result.understanding.source === 'semantic' ? 'success' : 'secondary'}
+                size="sm"
+              >
+                {result.understanding.source === 'semantic'
+                  ? result.understanding.model ?? 'semantic'
+                  : 'literal words only'}
+              </Badge>
+              {result.understanding.elapsed_ms != null && (
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  {result.understanding.elapsed_ms} ms
+                </span>
+              )}
+            </div>
+            {result.understanding.specs.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {result.understanding.specs.map((spec) => (
+                  <Badge key={spec.key} variant="outline" size="sm">
+                    {spec.key.replace(/_/g, ' ')} = {String(spec.value)}
+                  </Badge>
+                ))}
+              </div>
+            ) : (
+              <span className="text-sm text-muted-foreground">
+                No specification recognised — the results below come from the wording
+                alone.
+              </span>
+            )}
+            {result.understanding.notes && (
+              <p className="text-xs text-muted-foreground">{result.understanding.notes}</p>
+            )}
+          </div>
+        )}
 
         {error && (
           <Alert variant="destructive">

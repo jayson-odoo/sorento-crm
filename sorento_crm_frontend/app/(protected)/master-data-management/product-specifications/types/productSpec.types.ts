@@ -91,6 +91,8 @@ export interface SpecPreviewResult {
   floor_missed: boolean;
   top_score: number;
   floor: number;
+  /** Null when the caller passed structured specs rather than a raw phrase. */
+  understanding: SpecUnderstanding | null;
 }
 
 export interface SpecRegistryKey {
@@ -99,8 +101,29 @@ export interface SpecRegistryKey {
   data_type: string;
   unit: string | null;
   allowed_values: string[];
+  /** Seed + user words, already merged. What a customer can actually say. */
   synonyms: Record<string, string[]>;
   applies_when: Record<string, string[]>;
   rank_weight: number | null;
   measured_coverage: number | null;
+  /**
+   * `seed` ships with the product and is repaired on every deploy, so its values
+   * cannot be edited here — only extended. `user` keys are owned by whoever made them.
+   */
+  source: 'seed' | 'user';
+  /** Staff-added phrasings only, i.e. the editable half of `synonyms`. */
+  user_synonyms: Record<string, string[]>;
+  match_tolerance: number;
+  match_decay: number;
+  is_active: boolean;
+}
+
+/** What the phrase was understood to mean, and whether a model was involved. */
+export interface SpecUnderstanding {
+  source: 'semantic' | 'deterministic';
+  model: string | null;
+  elapsed_ms: number | null;
+  specs: { key: string; value: string | number | boolean }[];
+  free_terms: string[];
+  notes: string;
 }

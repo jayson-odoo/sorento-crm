@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 from app.models.product import Product, ProductCategory
 from app.models.product_spec import ProductSpecifications
 from app.services.product_class_signal import resolve_classes_for_term
-from app.services.product_spec_registry import active_registry
+from app.services.product_spec_registry import active_registry, merged_synonyms
 
 # Tuned against the eval baseline, not guessed. Kept here rather than in the registry
 # because they describe the ranker's shape, not the vocabulary.
@@ -111,6 +111,23 @@ _QUANTITY_BINDING_WINDOW = 20
 SELF_SYNONYM_KEY = "_self"
 
 
+def normalise_quantity(text: str) -> float | None:
+    """The first quantity in `text` as millimetres, or None.
+
+    Shared with the semantic extractor: a model told "the unit is mm" will still
+    sometimes echo the customer's own unit back ("8 inch"), so the conversion cannot
+    live only in the deterministic path.
+    """
+    match = _QUANTITY_RE.search(text or "")
+    if not match:
+        return None
+    try:
+        number = float(match.group(1))
+    except (TypeError, ValueError):
+        return None
+    return number * _UNIT_TO_MM.get((match.group(2) or "").lower(), 1.0)
+
+
 def _extract_quantities(haystack: str) -> list[tuple[float, int, int, str]]:
     """Every (value_in_mm, start, end, evidence) in the phrase.
 
@@ -148,7 +165,7 @@ def _resolve_quantities(haystack: str, rows) -> dict[str, float]:
     claimed: dict[str, tuple[int, float]] = {}
 
     for row in numeric_keys:
-        words = [str(w).lower() for w in (row.synonyms or {}).get(SELF_SYNONYM_KEY, [])]
+        words = [str(w).lower() for w in merged_synonyms(row).get(SELF_SYNONYM_KEY, [])]
         for word in words:
             if not word:
                 continue
@@ -184,7 +201,7 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
 
     candidates: list[tuple[int, str, str]] = []
     for row in rows:
-        for value, synonyms in (row.synonyms or {}).items():
+        for value, synonyms in merged_synonyms(row).items():
             # `_self` names the key, not a value. Reading it as one would resolve
             # `thickness = "_self"`.
             if value == SELF_SYNONYM_KEY:

@@ -1,12 +1,14 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getSpecRegistry } from '../services/productSpecService';
 import type { SpecRegistryKey } from '../types/productSpec.types';
+import SpecKeyEditor from './SpecKeyEditor';
 
 /**
  * Every spec key the system knows, and every word that resolves onto it.
@@ -19,6 +21,7 @@ export default function SpecRegistryTable() {
   const [keys, setKeys] = useState<SpecRegistryKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
 
   useEffect(() => {
     getSpecRegistry()
@@ -65,7 +68,8 @@ export default function SpecRegistryTable() {
                   <th className="pb-2 pr-4">Applies to</th>
                   <th className="pb-2 pr-4">Weight</th>
                   <th className="pb-2 pr-4">Seen in</th>
-                  <th className="pb-2">Words that resolve to it</th>
+                  <th className="pb-2 pr-4">Words that resolve to it</th>
+                  <th className="pb-2" />
                 </tr>
               </thead>
               <tbody>
@@ -73,9 +77,22 @@ export default function SpecRegistryTable() {
                   const gate = Object.entries(key.applies_when ?? {});
                   const synonyms = allSynonyms(key);
                   return (
-                    <tr key={key.spec_key} className="border-b last:border-0 align-top">
+                    <Fragment key={key.spec_key}>
+                    <tr className="border-b last:border-0 align-top">
                       <td className="py-2 pr-4 whitespace-nowrap">
-                        <div className="font-medium">{key.label}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{key.label}</span>
+                          {!key.is_active && (
+                            <Badge variant="secondary" size="sm">
+                              Off
+                            </Badge>
+                          )}
+                          {key.source === 'user' && (
+                            <Badge variant="primary" size="sm">
+                              Yours
+                            </Badge>
+                          )}
+                        </div>
                         <div className="font-mono text-xs text-muted-foreground">
                           {key.spec_key}
                         </div>
@@ -97,7 +114,7 @@ export default function SpecRegistryTable() {
                           ? key.measured_coverage.toLocaleString()
                           : '-'}
                       </td>
-                      <td className="py-2">
+                      <td className="py-2 pr-4">
                         {synonyms.length > 0 ? (
                           <div className="flex flex-wrap gap-1">
                             {synonyms.map((word) => (
@@ -117,7 +134,37 @@ export default function SpecRegistryTable() {
                           </span>
                         )}
                       </td>
+                      <td className="py-2 whitespace-nowrap">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setEditing(editing === key.spec_key ? null : key.spec_key)
+                          }
+                        >
+                          {editing === key.spec_key ? 'Close' : 'Edit'}
+                        </Button>
+                      </td>
                     </tr>
+                    {editing === key.spec_key && (
+                      <tr className="border-b bg-muted/10">
+                        <td colSpan={7} className="p-3">
+                          <SpecKeyEditor
+                            specKey={key}
+                            onCancel={() => setEditing(null)}
+                            onSaved={(updated) => {
+                              setKeys((current) =>
+                                current.map((k) =>
+                                  k.spec_key === updated.spec_key ? updated : k,
+                                ),
+                              );
+                              setEditing(null);
+                            }}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   );
                 })}
               </tbody>

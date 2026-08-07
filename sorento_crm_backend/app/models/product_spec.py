@@ -68,6 +68,16 @@ class ProductSpecRegistry(Base):
     # Hand-flippable. A key with no source yet (bowl_count) ships inactive so the
     # parser never extracts it and the ranker never weights it.
     is_active = Column(Boolean, nullable=False, server_default=text("true"), default=True)
+    # `seed` | `user`. The seed REPAIRS drift on every deploy so the CRM ranker and the
+    # n8n parser can never disagree about what a value is called — that guarantee is
+    # why this table exists. A user-created key has no seed to drift from, so it is
+    # never touched. Without the flag, "editable from the UI" and "repaired on deploy"
+    # are the same row fighting each other, and the deploy always wins.
+    source = Column(String(16), nullable=False, server_default=text("'seed'"))
+    # Extra customer phrasings added by staff, merged with (never replacing) the seed's
+    # synonyms at read time. Adding a word for a shipped key is the common case and
+    # should not require taking ownership of the whole row.
+    user_synonyms = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True, onupdate=func.now())
 

@@ -465,6 +465,12 @@ def seed_spec_registry(db: Session, *, commit: bool = False) -> dict:
             created += 1
             continue
 
+        # A row a human took ownership of is never repaired. The anti-drift guarantee
+        # only applies to vocabulary this file shipped; overwriting someone's edit on
+        # every deploy would make the UI a lie.
+        if (row.source or "seed") != "seed":
+            continue
+
         changed = False
         for field, value in values.items():
             if getattr(row, field) != value:
@@ -480,8 +486,30 @@ def seed_spec_registry(db: Session, *, commit: bool = False) -> dict:
     return {"created": created, "updated": updated}
 
 
+def merged_synonyms(row: ProductSpecRegistry) -> dict:
+    """Seed synonyms with the staff-added ones folded in, per value.
+
+    Additive on purpose: staff extend the shipped vocabulary, they do not contradict
+    it, so a word added here can never remove one the n8n parser is relying on.
+    """
+    merged = {value: list(words) for value, words in (row.synonyms or {}).items()}
+    for value, words in (row.user_synonyms or {}).items():
+        existing = merged.setdefault(value, [])
+        for word in words:
+            if word not in existing:
+                existing.append(word)
+    return merged
+
+
 def active_registry(db: Session) -> list[ProductSpecRegistry]:
-    """Active keys only, ordered stably so a cached render is byte-comparable."""
+    """Active keys only, ordered stably so a cached render is byte-comparable.
+
+    Returns live ORM rows, deliberately unmodified: callers that need the customer
+    vocabulary must go through `merged_synonyms(row)`. Folding the merge in here would
+    mean mutating a tracked object on a read path, where a single stray autoflush would
+    write the merged result back over the seed-owned column and quietly destroy the
+    distinction this table just gained.
+    """
     return (
         db.query(ProductSpecRegistry)
         .filter(ProductSpecRegistry.is_active.is_(True))

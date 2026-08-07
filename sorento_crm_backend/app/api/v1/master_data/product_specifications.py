@@ -26,6 +26,7 @@ from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error, handle_not_found
 from app.services.product_class_signal import explain_code
 from app.services.product_spec_search import RELEVANCE_FLOOR, search_specs
+from app.services.product_spec_understanding import understand_phrase
 
 router = APIRouter()
 
@@ -57,6 +58,17 @@ class SpecPreviewRequest(BaseModel):
     floor: Optional[float] = Field(
         default=None,
         description="Override the relevance floor, to see what it is currently hiding.",
+    )
+    phrase: Optional[str] = Field(
+        default=None,
+        description=(
+            "The customer's raw sentence. When present it is read semantically and the "
+            "result is merged with `specs`/`free_terms`."
+        ),
+    )
+    understand: bool = Field(
+        default=True,
+        description="Set false to see the deterministic reading alone, for comparison.",
     )
 
 
@@ -266,10 +278,27 @@ async def preview_spec_search(
     result placed where it did, rather than only that it did.
     """
     try:
+        specs = list(payload.specs)
+        free_terms = list(payload.free_terms)
+        understanding = None
+
+        if payload.phrase and payload.phrase.strip():
+            understanding = understand_phrase(
+                db,
+                payload.phrase,
+                user_id=current_user.get("id"),
+                allow_model=payload.understand,
+            )
+            # A spec the caller pinned by hand always wins: they are looking at the
+            # screen, the model is guessing from one sentence.
+            pinned = {str(e.get("key")) for e in specs if e.get("key")}
+            specs = specs + [e for e in understanding.specs if e["key"] not in pinned]
+            free_terms = free_terms + [t for t in understanding.free_terms if t not in free_terms]
+
         result = search_specs(
             db,
-            specs=payload.specs,
-            free_terms=payload.free_terms,
+            specs=specs,
+            free_terms=free_terms,
             include_accessories=payload.include_accessories,
             floor=payload.floor if payload.floor is not None else RELEVANCE_FLOOR,
         )
@@ -278,6 +307,20 @@ async def preview_spec_search(
             "floor_missed": result["floor_missed"],
             "top_score": result["top_score"],
             "floor": payload.floor if payload.floor is not None else RELEVANCE_FLOOR,
+            # What the phrase was understood to mean, so a wrong result can be blamed
+            # on the reading or on the ranking rather than guessed at.
+            "understanding": (
+                {
+                    "source": understanding.source,
+                    "model": understanding.model,
+                    "elapsed_ms": understanding.elapsed_ms,
+                    "specs": understanding.specs,
+                    "free_terms": understanding.free_terms,
+                    "notes": understanding.notes,
+                }
+                if understanding
+                else None
+            ),
         }
     except Exception as e:
         raise handle_internal_error(str(e))
