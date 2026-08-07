@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -49,6 +50,7 @@ export default function SpecSearchPreview() {
   };
 
   const valueFor = (key: string) => specs.find((s) => s.key === key)?.value ?? '';
+  const pinnedCount = specs.filter((s) => s.value).length;
 
   const run = async () => {
     setLoading(true);
@@ -120,32 +122,52 @@ export default function SpecSearchPreview() {
           </div>
         </div>
 
+        {/*
+          Folded away by default. Once the sentence is understood, these are no longer
+          how you search — they are how you PIN a value to prove the ranker wrong
+          independently of the reading. That is a debugging job, not the main one, and a
+          nine-dropdown band across the top implied otherwise.
+        */}
         {enumKeys.length > 0 && (
-          <div className="flex flex-wrap gap-3">
-            {enumKeys.map((key) => (
-              <div key={key.spec_key} className="min-w-[10rem]">
-                <label
-                  htmlFor={`spec-${key.spec_key}`}
-                  className="text-xs uppercase tracking-wide text-muted-foreground mb-1 block"
-                >
-                  {key.label}
-                </label>
-                <select
-                  id={`spec-${key.spec_key}`}
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
-                  value={valueFor(key.spec_key)}
-                  onChange={(e) => setSpec(key.spec_key, e.target.value)}
-                >
-                  <option value="">Any</option>
-                  {key.allowed_values.map((value) => (
-                    <option key={value} value={value}>
-                      {value.replace(/_/g, ' ')}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ))}
-          </div>
+          <details className="rounded-md border px-3 py-2">
+            <summary className="cursor-pointer text-sm text-muted-foreground">
+              Pin a spec by hand
+              {pinnedCount > 0 && (
+                <Badge variant="primary" size="sm" className="ml-2">
+                  {pinnedCount}
+                </Badge>
+              )}
+            </summary>
+            <p className="text-xs text-muted-foreground mt-2">
+              Overrides what was understood from the phrase, so you can test the ranking
+              on its own.
+            </p>
+            <div className="flex flex-wrap gap-3 mt-3">
+              {enumKeys.map((key) => (
+                <div key={key.spec_key} className="min-w-[10rem]">
+                  <label
+                    htmlFor={`spec-${key.spec_key}`}
+                    className="text-xs uppercase tracking-wide text-muted-foreground mb-1 block"
+                  >
+                    {key.label}
+                  </label>
+                  <select
+                    id={`spec-${key.spec_key}`}
+                    className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                    value={valueFor(key.spec_key)}
+                    onChange={(e) => setSpec(key.spec_key, e.target.value)}
+                  >
+                    <option value="">Any</option>
+                    {key.allowed_values.map((value) => (
+                      <option key={value} value={value}>
+                        {value.replace(/_/g, ' ')}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+          </details>
         )}
 
         <div className="flex flex-wrap items-center gap-5">
@@ -242,9 +264,13 @@ export default function SpecSearchPreview() {
               What the customer would see
             </div>
             {result.candidates.map((candidate, index) => (
-              <div
+              // Straight to that product's Specifications tab. The summary below is only
+              // what the ranker MATCHED on — every other derived value, and the text each
+              // was read from, is one click away.
+              <Link
                 key={candidate.product_id}
-                className="flex flex-col gap-2 rounded-md border p-3 sm:flex-row sm:items-start sm:justify-between"
+                href={`/master-data-management/products/${candidate.product_id}?tab=specifications`}
+                className="flex flex-col gap-2 rounded-md border p-3 transition-colors hover:bg-muted/40 sm:flex-row sm:items-start sm:justify-between"
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
@@ -278,8 +304,12 @@ export default function SpecSearchPreview() {
                     {candidate.score}
                   </span>
                 </div>
-              </div>
+              </Link>
             ))}
+            <p className="text-xs text-muted-foreground">
+              Click any result to see every spec it carries and the text each one was read
+              from.
+            </p>
           </div>
         )}
 

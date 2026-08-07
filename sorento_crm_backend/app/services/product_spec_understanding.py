@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.ai_assistant import AIAssistantUsageLog
+from app.models.product_spec import ProductSpecifications
 from app.services.llm_provider import get_provider
 from app.services.product_spec_registry import active_registry, merged_synonyms
 from app.services.product_spec_search import (
@@ -66,8 +67,11 @@ descriptions of a thing rather than its name ("the pipe goes into the wall" = a 
 "pipe goes into the floor" = an S-trap).
 - For numeric specs return a plain number in the unit stated for that key. Convert if \
 the customer used another unit (8 inch = 203.2 mm).
-- Put words that carry meaning but map onto no spec — a brand, a model name, a room, a \
-colour you were not given — into free_terms.
+- A brand name or a product class IS a specification whenever it appears in the list \
+you were given. Return it, even when the customer says nothing else — "cabana wc" is a \
+brand and a class, not an empty enquiry.
+- Put words that carry meaning but map onto no spec — a model name, a room, a colour \
+you were not given — into free_terms.
 - If the customer is not describing a product at all, return empty lists.
 
 Reply with JSON only:
@@ -89,10 +93,43 @@ class Understanding:
     elapsed_ms: int | None = None
 
 
-def _vocabulary(db: Session) -> tuple[list[dict], dict[str, Any]]:
-    """The registry rendered for a prompt, plus an index to validate replies against."""
+# An open-vocabulary key has no closed list in the registry because its values come from
+# the catalog and grow with it (`class`, `brand`). Sourcing them at prompt time is the
+# only way the model can recognise one: told merely that `brand` is an enum with no
+# values, it cannot know "sorento" is a brand, and correctly answers that the word maps
+# to nothing. Capped because a prompt is not a catalog dump.
+_OPEN_VOCABULARY_LIMIT = 60
+
+
+def open_vocabulary_values(db: Session, spec_key: str) -> list[str]:
+    """Distinct stored values for a key — simply what the catalog holds.
+
+    Read from the derived specs rather than from `product_categories` so it stays true
+    for any open key, not only the two that happen to come from a category today.
+
+    Deliberately NOT cached in the process. A DISTINCT over JSONB across 22,805 rows
+    costs ~160ms per key, which is tempting to memoise, but a cache keyed on the spec
+    key alone is wrong the moment more than one database is involved — it would serve
+    one database's brands to another's queries, silently. Against the 1.5-2.5s model
+    call this sits behind, the query is not the thing worth optimising, and a wrong
+    vocabulary is not worth 300ms.
+    """
+    rows = (
+        db.query(ProductSpecifications.values[spec_key]["value"].astext)
+        .filter(ProductSpecifications.values.has_key(spec_key))  # noqa: W601 - JSONB op
+        .distinct()
+        .limit(_OPEN_VOCABULARY_LIMIT)
+        .all()
+    )
+    return sorted({value for (value,) in rows if value})
+
+
+def _vocabulary(db: Session) -> tuple[list[dict], dict[str, Any], dict[str, list[str]]]:
+    """The registry rendered for a prompt, an index to validate replies against, and
+    the catalog-sourced values for any open-vocabulary key."""
     described: list[dict] = []
     index: dict[str, Any] = {}
+    open_values: dict[str, list[str]] = {}
 
     for row in active_registry(db):
         synonyms = merged_synonyms(row)
@@ -105,6 +142,12 @@ def _vocabulary(db: Session) -> tuple[list[dict], dict[str, Any]]:
             entry["unit"] = row.unit
         if row.allowed_values:
             entry["allowed_values"] = list(row.allowed_values)
+        elif row.data_type == "enum":
+            # Open vocabulary: hand the model what the catalog actually holds.
+            catalog_values = open_vocabulary_values(db, row.spec_key)
+            if catalog_values:
+                entry["allowed_values"] = catalog_values
+                open_values[row.spec_key] = catalog_values
         # Synonyms are what a customer might say. `_self` names the measurement itself
         # ("thickness", "trap"), the rest name a value ("wall hung", "double bowl").
         customer_words = sorted(
@@ -120,10 +163,10 @@ def _vocabulary(db: Session) -> tuple[list[dict], dict[str, Any]]:
         described.append(entry)
         index[row.spec_key] = row
 
-    return described, index
+    return described, index, open_values
 
 
-def _coerce(row, value: Any) -> Any | None:
+def _coerce(row, value: Any, open_values: list[str] | None = None) -> Any | None:
     """Force a model's value into the shape the catalog stores, or reject it.
 
     Rejection is the important half. A value the registry does not recognise is
@@ -149,15 +192,17 @@ def _coerce(row, value: Any) -> Any | None:
     if not text:
         return None
 
-    allowed = list(row.allowed_values or [])
+    allowed = list(row.allowed_values or []) or list(open_values or [])
     if not allowed:
-        # Open vocabularies (`class`, `brand`) are sourced from the catalog, so there
-        # is no closed list to check against. Pass the text through.
+        # Nothing to check against — the key is open and the catalog is empty for it.
         return text
 
-    lowered = text.lower().replace(" ", "_")
+    # Enum slugs use underscores ("wall_hung") but catalog-sourced values keep their own
+    # spacing and casing ("American Standard"), so both readings are tried and the
+    # CATALOG's spelling is what gets returned.
+    variants = {text.lower(), text.lower().replace(" ", "_"), text.lower().replace("_", " ")}
     for candidate in allowed:
-        if str(candidate).lower() == lowered:
+        if str(candidate).lower() in variants:
             return candidate
 
     # Give the model's phrasing one chance against the synonym table before dropping it.
@@ -171,7 +216,9 @@ def _coerce(row, value: Any) -> Any | None:
     return None
 
 
-def _validate(payload: dict, index: dict[str, Any]) -> tuple[list[dict], list[str], str]:
+def _validate(
+    payload: dict, index: dict[str, Any], open_values: dict[str, list[str]] | None = None
+) -> tuple[list[dict], list[str], str]:
     specs: list[dict] = []
     seen: set[str] = set()
 
@@ -185,7 +232,7 @@ def _validate(payload: dict, index: dict[str, Any]) -> tuple[list[dict], list[st
             continue
         if key in seen:
             continue
-        value = _coerce(row, item.get("value"))
+        value = _coerce(row, item.get("value"), (open_values or {}).get(key))
         if value is None:
             continue
         specs.append({"key": key, "value": value})
@@ -248,7 +295,7 @@ def understand_phrase(
     if provider is None:
         return fallback
 
-    described, index = _vocabulary(db)
+    described, index, open_values = _vocabulary(db)
     messages = [
         {"role": "system", "content": _SYSTEM_PROMPT},
         {
@@ -276,7 +323,9 @@ def understand_phrase(
         return fallback
 
     elapsed_ms = int((time.monotonic() - started) * 1000)
-    specs, free_terms, notes = _validate(payload if isinstance(payload, dict) else {}, index)
+    specs, free_terms, notes = _validate(
+        payload if isinstance(payload, dict) else {}, index, open_values
+    )
 
     # The model supplements the literal reading, it does not replace it. If a synonym
     # matched outright, that is not something a model should be able to talk us out of.
