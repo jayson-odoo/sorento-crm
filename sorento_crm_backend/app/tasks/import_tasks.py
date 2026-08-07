@@ -1527,36 +1527,50 @@ _GRN_SPO_COLUMN_CANDIDATES = (
     "from document number",
 )
 
-# `picking_headers.spo_number` / the line-level SPO are SCALAR: one SPO, matched
-# against one allocation via `_spo_match_key`. AutoCount will happily put every
-# SPO a GRN was received against into the one "Transfer from" cell
-# ("SPO-2026/06-0020, SPO-2026/06-0021, ...").
+# AutoCount puts every SPO a GRN was received against into the ONE "Transfer
+# from" cell ("SPO-2026/06-0020, SPO-2026/06-0021, ..."), which overflowed the
+# old varchar(50) and aborted the import. Migration 314 widened
+# `picking_headers.spo_number` to 255 so the header can SAY which SPOs it covers.
 _GRN_SPO_SEPARATORS = re.compile(r"[,;\n\r]+|\s{2,}")
-# Storage width of `picking_headers.spo_number` / `spo_allocations.spo_number`.
-_SPO_NUMBER_MAX_LEN = 50
+# Storage width of `picking_headers.spo_number` after migration 314.
+_SPO_NUMBER_MAX_LEN = 255
 
 
 def _split_spo_cell(raw: Any) -> list[str]:
     """Split a GRN SPO cell into its individual SPO numbers.
 
     One value in, one value out for the normal case; a multi-SPO GRN yields the
-    full list so the caller can decide (see `_single_spo_or_none`).
+    full list (see `_header_spo_display` and `_single_spo_or_none`).
     """
     if raw is None:
         return []
     return [part.strip() for part in _GRN_SPO_SEPARATORS.split(str(raw)) if part.strip()]
 
 
+def _header_spo_display(raw: Any) -> Optional[str]:
+    """What `picking_headers.spo_number` stores: every SPO the GRN covers.
+
+    Normalized to a single ", "-joined form so the same cell always stores the
+    same string regardless of which separator AutoCount exported.
+
+    This column is DISPLAY for the multi-SPO case. Matching is scalar and stays
+    scalar - `_spo_match_key`, `procurement_service._normalize_spo_number` and the
+    packing-list grouping all compare ONE normalized SPO - so a joined value
+    equals no single SPO and can never false-link. The per-line SPO
+    (`_single_spo_or_none`) is what drives allocation matching.
+    """
+    parts = _split_spo_cell(raw)
+    if not parts:
+        return None
+    return ", ".join(parts)
+
+
 def _single_spo_or_none(raw: Any) -> Optional[str]:
     """The one SPO number in a GRN SPO cell, or None when there is not exactly one.
 
-    A GRN received against several SPOs has no single owner, so the scalar column
-    stays NULL and the per-line SPO carries the truth (`effective_spo` already
-    prefers the line value and splits its groups by it). Storing the joined blob
-    instead did two bad things: it overflowed `varchar(50)` and aborted the
-    import, and where it fit it silently matched NO allocation and NO packing
-    list, because every consumer normalizes the column as a single SPO
-    (`_spo_match_key`, `procurement_service._spo_group_key`).
+    Used where the value FEEDS MATCHING (the per-line SPO): a GRN line received
+    against several SPOs names no single allocation, so it stays unlinked rather
+    than carrying a joined string that `_spo_match_key` can never match.
     """
     parts = _split_spo_cell(raw)
     if len(parts) != 1:
@@ -1626,11 +1640,10 @@ def _run_grn_listing_import_core(
         doc_num = _find(row, "doc number", "doc. no.", "doc. number", "doc number ", "grn number")
         grn_number = (doc_num and str(doc_num).strip()) or None
         transfer_from = _find(row, *_GRN_SPO_COLUMN_CANDIDATES)
-        spo_parts = _split_spo_cell(transfer_from)
-        # Multi-SPO GRN → header stays NULL; the per-line SPO carries the truth.
-        spo_number = _single_spo_or_none(transfer_from)
-        # Report what the sheet said, not what we stored, so a skip is diagnosable.
-        identity = {"grn_number": grn_number, "spo_number": ", ".join(spo_parts) or None}
+        # Every SPO the GRN covers, normalized. Display for the multi-SPO case;
+        # allocation matching runs off the per-line SPO.
+        spo_number = _header_spo_display(transfer_from)
+        identity = {"grn_number": grn_number, "spo_number": spo_number}
         if not grn_number:
             reason = "Missing doc number / GRN number"
             outcome.skip(row=row_idx, code=oc.MISSING_DOC_NO, message=reason, identity=identity)
@@ -1638,9 +1651,9 @@ def _run_grn_listing_import_core(
             _progress(row_idx)
             continue
         if spo_number and len(spo_number) > _SPO_NUMBER_MAX_LEN:
-            # A single SPO this long is bad source data, not a multi-SPO cell.
+            # Past 255 even the widened column cannot hold it: bad source data.
             # Skip the row with the reason instead of letting Postgres abort the
-            # transaction on a value the column cannot hold.
+            # transaction (which used to take every later row down with it).
             reason = (
                 f"SPO number longer than {_SPO_NUMBER_MAX_LEN} characters: {spo_number[:60]}"
             )
@@ -2067,8 +2080,11 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                     doc_no,
                 )
                 continue
-            _hdr_spo = getattr(header, "spo_number", None)
-            hdr_spo = str(_hdr_spo).strip() if (_hdr_spo is not None and str(_hdr_spo).strip()) else None
+            # The header column may hold EVERY SPO the GRN covers (display form).
+            # Only a single-SPO header can name the allocation for a line, so a
+            # joined header falls back to no SPO rather than to a string that
+            # `_spo_match_key` can never match.
+            hdr_spo = _single_spo_or_none(getattr(header, "spo_number", None))
             effective_spo: Optional[str] = line_spo if line_spo else hdr_spo
             product = products_by_code.get((item_code or "").strip())
             warehouse = warehouses_map.get(normalize_code(location)) if location else None

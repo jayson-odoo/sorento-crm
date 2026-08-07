@@ -235,7 +235,12 @@ class PickingHeader(Base, CompanyScopedMixin):
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     picking_number = Column(String(50), unique=True, nullable=False)
-    spo_number = Column(String(50), nullable=True)
+    # DISPLAY-width, not match-width: a multi-SPO GRN stores every SPO it covers
+    # ("SPO-A, SPO-B") so the list says so instead of showing a dash. Allocation
+    # matching stays scalar (`_spo_match_key` / `_normalize_spo_number` compare ONE
+    # normalized SPO), so a joined value equals no single SPO and never
+    # false-links. Widened by migration 314; see also `_single_spo_or_none`.
+    spo_number = Column(String(255), nullable=True)
     picking_type = Column(String(50), nullable=False)
     source_entity_type = Column(String(50), nullable=True)
     source_entity_id = Column(UUID(as_uuid=False), nullable=True)

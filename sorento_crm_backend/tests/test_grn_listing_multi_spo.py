@@ -9,11 +9,13 @@ The reported failure: GR-001121's "Transfer from" cell held four SPO numbers
 
 Two defects, one cell:
 
-1. `spo_number` is SCALAR - every consumer normalizes it as ONE SPO
-   (`_spo_match_key`, `procurement_service._spo_group_key`). Widening the column
-   would have traded a loud error for a silent one: the joined blob matches no
-   allocation and no packing list. A multi-SPO GRN has no single owner, so the
-   header stays NULL and the per-line SPO carries the truth.
+1. The column was too narrow. Migration 314 widens it to 255 and the header now
+   records EVERY SPO the GRN covers, so the list says "covers these four" instead
+   of showing a dash. That column is DISPLAY for this case: matching is scalar and
+   stays scalar (`_spo_match_key` and `_normalize_spo_number` compare ONE
+   normalized SPO), so a joined value equals no single SPO and cannot false-link.
+   The per-line SPO drives allocation matching, and a multi-SPO line stays
+   unlinked rather than carrying an unmatchable string.
 2. `upsert_grn_header_for_import` commits per row, and the import loop caught the
    exception without rolling back - so every LATER row died with "transaction has
    been rolled back due to a previous exception". One bad cell failed the whole
@@ -29,7 +31,8 @@ import pytest
 
 from app.models.base import set_company_scope
 from app.models.procurement import PickingHeader
-from app.tasks.import_tasks import _run_grn_listing_import_core
+from app.services.procurement_service import _normalize_spo_number, _spo_match_key
+from app.tasks.import_tasks import _SPO_NUMBER_MAX_LEN, _run_grn_listing_import_core
 
 from ._pg_fixture import blank_session, unique_code
 
@@ -65,17 +68,32 @@ def _header(db, picking_number: str) -> PickingHeader:
     )
 
 
-def test_a_multi_spo_grn_imports_with_a_null_header_spo(db):
+def test_a_multi_spo_grn_imports_and_records_every_spo(db):
     grn = unique_code("GR")[:50]
 
     result = _run_grn_listing_import_core(db, _workbook([[grn, "2026-06-25", FOUR_SPOS]]))
 
     assert result["failed"] == 0, result["errors"]
     assert result["successful"] == 1
-    assert _header(db, grn).spo_number is None, (
-        "a GRN received against 4 SPOs has no single owner; the scalar column must "
-        "stay NULL rather than hold a blob no consumer can match"
+    assert _header(db, grn).spo_number == FOUR_SPOS, (
+        "the header should say which SPOs the GRN covers, not show a dash"
     )
+
+
+def test_a_multi_spo_header_matches_no_single_spo(db):
+    """The reason the width increase is safe: every consumer compares ONE
+    normalized SPO, so a joined value matches nothing rather than the wrong
+    allocation."""
+    grn = unique_code("GR")[:50]
+    _run_grn_listing_import_core(db, _workbook([[grn, "2026-06-25", FOUR_SPOS]]))
+
+    stored = _header(db, grn).spo_number
+    assert stored is not None
+    for one in FOUR_SPOS.split(", "):
+        assert _spo_match_key(stored) != _spo_match_key(one), (
+            f"joined header value collided with the single SPO {one}"
+        )
+        assert _normalize_spo_number(stored) != _normalize_spo_number(one)
 
 
 def test_a_single_spo_grn_still_stores_it(db):
@@ -89,8 +107,9 @@ def test_a_single_spo_grn_still_stores_it(db):
     assert _header(db, grn).spo_number == "SPO-2026/06-0020"
 
 
-def test_semicolon_and_newline_separated_cells_are_split_too(db):
-    """AutoCount is not consistent about the separator it exports."""
+def test_every_separator_normalizes_to_one_stored_form(db):
+    """AutoCount is not consistent about the separator it exports, and the same
+    GRN must not read differently depending on which one it used."""
     semi, newline = unique_code("GR")[:50], unique_code("GR")[:50]
 
     result = _run_grn_listing_import_core(
@@ -104,21 +123,25 @@ def test_semicolon_and_newline_separated_cells_are_split_too(db):
     )
 
     assert result["failed"] == 0, result["errors"]
-    assert _header(db, semi).spo_number is None
-    assert _header(db, newline).spo_number is None
+    expected = "SPO-2026/06-0020, SPO-2026/06-0021"
+    assert _header(db, semi).spo_number == expected
+    assert _header(db, newline).spo_number == expected
 
 
-def test_an_over_length_single_spo_is_skipped_with_a_reason(db):
-    """Not a multi-SPO cell - one absurd value. Skip the row and say why, instead
-    of letting Postgres abort the transaction."""
+def test_a_value_past_the_widened_width_is_skipped_with_a_reason(db):
+    """Past 255 even the widened column cannot hold it. Skip the row and say why,
+    instead of letting Postgres abort the transaction."""
     grn = unique_code("GR")[:50]
-    too_long = "SPO-" + "9" * 60
+    too_long = "SPO-" + "9" * (_SPO_NUMBER_MAX_LEN + 10)
 
     result = _run_grn_listing_import_core(db, _workbook([[grn, "2026-06-25", too_long]]))
 
     assert result["failed"] == 0
     assert result["skipped"] == 1
-    assert any("longer than 50" in d["reason"] for d in result["skipped_rows_detail"])
+    assert any(
+        f"longer than {_SPO_NUMBER_MAX_LEN}" in d["reason"]
+        for d in result["skipped_rows_detail"]
+    )
     assert (
         db.query(PickingHeader).filter(PickingHeader.picking_number == grn).first()
         is None
