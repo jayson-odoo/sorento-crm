@@ -19,7 +19,12 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission
-from app.services.scm import order_inquiry_service, order_link_service, po_history_service
+from app.services.scm import (
+    order_inquiry_service,
+    order_link_service,
+    po_history_service,
+    so_history_service,
+)
 from app.services.scm.upload_intake import read_upload
 
 router = APIRouter()
@@ -83,6 +88,42 @@ async def apply_purchase_history(
     # The notes in this file name sales orders, so an upload can complete a pairing the other
     # side claimed months ago.
     out["links"] = order_link_service.resolve(db)
+    db.commit()
+    return out
+
+
+@router.post("/sales-history/preview")
+async def preview_sales_history(
+    file: UploadFile = File(..., description="AutoCount sales-order detail listing"),
+    _user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """What this sales book would absorb. Writes nothing.
+
+    Read the counts before pressing apply, because two of them decide whether this is even
+    the right channel. `outstanding_lines` above zero means the file still holds real
+    commitments, which belong to the outstanding upload - this one records finished business.
+    `unknown_item_count` and `unknown_debtor_count` say how much of the book will land
+    unattributed.
+    """
+    return so_history_service.preview(db, await read_upload(file))
+
+
+@router.post("/sales-history/apply")
+async def apply_sales_history(
+    file: UploadFile = File(..., description="The same file the preview was taken from"),
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Absorb the sales book as history. Idempotent on the document number.
+
+    Every line is written closed and fully delivered, so absorbed history contributes NOTHING
+    to committed demand: measured on the client's own 11,275-document export, absorbing it
+    left `scm.committed_v` and `scm.net_position_v` byte-identical. A document that already
+    exists and was not created by this feed is left untouched, so a live commitment somebody
+    is working can never be closed by a six-year-old export.
+    """
+    out = so_history_service.apply(db, await read_upload(file), actor=current_user.get("id"))
     db.commit()
     return out
 

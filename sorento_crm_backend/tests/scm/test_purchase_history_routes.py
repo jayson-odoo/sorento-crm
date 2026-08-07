@@ -368,3 +368,66 @@ def test_the_inquiry_sheet_tests_the_same_way(scm_app):
     assert set(body) >= {"valid", "errors", "warnings", "summary"}
     assert body["valid"] is True
     assert body["summary"]["total_rows"] >= 1
+
+
+# --------------------------------------------------------------------------- #
+# sales history: the demand-side twin, over the wire
+# --------------------------------------------------------------------------- #
+
+SO_LISTING = FIXTURES / "autocount_so_detail_excerpt.xlsx"
+
+
+def _so_file():
+    return {"file": ("autocount_so_detail_excerpt.xlsx", SO_LISTING.read_bytes(), _XLSX)}
+
+
+def test_sales_history_preview_reports_the_book_and_writes_nothing(scm_app):
+    """The uploader's look-before-you-leap, on the client's genuine excerpt."""
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    before = db.execute(text("SELECT count(*) FROM sales_orders")).scalar()
+
+    r = TestClient(app).post("/api/v1/scm/sales-history/preview", files=_so_file())
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["orders"] >= 1
+    assert body["missing_columns"] == []
+    # The figure that says which channel this file belongs to.
+    assert body["outstanding_lines"] == 0
+    assert db.execute(text("SELECT count(*) FROM sales_orders")).scalar() == before
+
+
+def test_sales_history_apply_absorbs_the_book_without_creating_demand(scm_app):
+    """The claim the whole feed rests on, asserted end to end rather than in the service.
+
+    `scm.committed_v` is measured across the WHOLE view: a line leaking into committed demand
+    through some join this test does not name would still move the total.
+    """
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    before = float(db.execute(
+        text("SELECT COALESCE(SUM(committed),0) FROM scm.committed_v")).scalar())
+
+    r = TestClient(app).post("/api/v1/scm/sales-history/apply", files=_so_file())
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["orders_created"] >= 1
+    after = float(db.execute(
+        text("SELECT COALESCE(SUM(committed),0) FROM scm.committed_v")).scalar())
+    assert after == before, "absorbing sales history created committed demand"
+    assert db.execute(text(
+        "SELECT count(*) FROM sales_order_lines "
+        "WHERE source_system = 'scm_so_history' AND line_status <> 'closed'"
+    )).scalar() == 0
+
+
+def test_sales_history_apply_needs_the_operator_permission(scm_app):
+    """Reading the plan is one thing; rewriting what it is computed from is another."""
+    app, db, gcu, gcuk = scm_app
+    as_user(app, gcu, gcuk, seed_user(db, None))
+
+    r = TestClient(app).post("/api/v1/scm/sales-history/apply", files=_so_file())
+
+    assert r.status_code == 403, r.text

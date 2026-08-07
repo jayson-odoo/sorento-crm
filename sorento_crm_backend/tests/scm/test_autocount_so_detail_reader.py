@@ -274,11 +274,13 @@ def test_the_clients_file_states_no_outstanding_demand_at_all(resolver):
 def test_the_columns_the_plan_does_not_use_are_reported_as_unmapped(resolver):
     """Silence about a column nobody read is how a file looks understood when it is not.
 
-    Agent, unit price and the discount are real content this channel makes no use of, and the
-    uploader is told rather than left to assume.
+    The salesperson and the discount are real content neither channel makes any use of, and
+    the uploader is told rather than left to assume. `Unit Price` is deliberately NOT here:
+    the history feed carries it as the sales value of the line.
     """
     res = read_workbook(
         (_FIX / "autocount_so_detail_excerpt.xlsx").read_bytes(), SO, resolver)
 
     assert "Agent" in res.unmapped_headers
-    assert "Unit Price" in res.unmapped_headers
+    assert "Discount" in res.unmapped_headers
+    assert "Unit Price" not in res.unmapped_headers

@@ -56,6 +56,9 @@ _ALIASES = [
     ("outstanding_so", "stock_location", "LOCATION", "en"),
     ("outstanding_so", "remark", "NOTE", "en"),
     ("outstanding_so", "remark", "REMARK 1", "en"),
+    # Carried for the HISTORY feed rather than the outstanding one: what a line sold for is
+    # the sales value of the order, and the outstanding book has no use for it.
+    ("outstanding_so", "unit_price", "UNIT PRICE", "en"),
     # The netting column. Spelled both ways on purpose: AutoCount emits the single-R
     # "Transfered", and a hand-corrected export says "Transferred".
     ("outstanding_so", "qty_delivered", "TRANSFERED QTY", "en"),
