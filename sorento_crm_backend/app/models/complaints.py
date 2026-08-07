@@ -89,6 +89,16 @@ class Complaint(Base):
     # a residential Site on the same row. Deriving the Site from the customer record
     # sends a technician to a shop.
     site_address = Column(Text, nullable=True)
+    # The parts `site_address` was composed from. The composed line stays authoritative
+    # for every existing reader (the Service Job copies it, documents print it); these
+    # exist so a postcode can be corrected later without re-parsing prose, and so a
+    # dispatcher can tell "Kajang" from an address.
+    site_address_line1 = Column(Text, nullable=True)
+    site_address_line2 = Column(Text, nullable=True)
+    site_postcode = Column(String(16), nullable=True)
+    site_city = Column(String(120), nullable=True)
+    site_state = Column(String(120), nullable=True)
+    site_country = Column(String(120), nullable=True)
     site_contact_name = Column(Text, nullable=True)
     site_contact_phone = Column(Text, nullable=True)
     # AC-M37 / AC-B21: the pin is what a technician navigates to, so it is Numeric

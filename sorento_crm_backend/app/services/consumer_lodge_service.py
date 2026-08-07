@@ -223,6 +223,31 @@ def lodge_complaint(db: Session, payload: Dict[str, Any]) -> LodgeResult:
             lines=ledger_lines,
         )
 
+def _compose_site_address(payload: dict) -> Optional[str]:
+    """One line from the parts, or whatever the client sent if it sent only a line.
+
+    Composed server-side rather than trusted from the client so the stored one-liner and
+    the stored parts can never disagree - and they would, the first time a screen edited a
+    postcode without rebuilding the sentence. Every existing reader (the Service Job's site
+    copy, printed documents) keeps reading one field and needs no change.
+    """
+    parts = [
+        payload.get("site_address_line1"),
+        payload.get("site_address_line2"),
+        " ".join(
+            piece
+            for piece in (payload.get("site_postcode"), payload.get("site_city"))
+            if (piece or "").strip()
+        ),
+        payload.get("site_state"),
+        payload.get("site_country"),
+    ]
+    joined = ", ".join(piece.strip() for piece in parts if (piece or "").strip())
+    # Falls back to the free-text line: a legacy client, and the WhatsApp intake path,
+    # still send only that.
+    return joined or (payload.get("site_address") or None)
+
+
     # --------------------------------------------------------------- the complaint
     complaint = Complaint(
         id=str(uuid.uuid4()),
@@ -234,7 +259,13 @@ def lodge_complaint(db: Session, payload: Dict[str, Any]) -> LodgeResult:
         customer_id=dealer_customer_id,
         # What was REPORTED, never the dealer's address (AC-B3): deriving it from the
         # customer record sends a technician to a shop.
-        site_address=payload.get("site_address"),
+        site_address=_compose_site_address(payload),
+        site_address_line1=payload.get("site_address_line1"),
+        site_address_line2=payload.get("site_address_line2"),
+        site_postcode=payload.get("site_postcode"),
+        site_city=payload.get("site_city"),
+        site_state=payload.get("site_state"),
+        site_country=payload.get("site_country"),
         site_contact_name=payload.get("full_name"),
         site_contact_phone=profile.phone_e164,
         latitude=payload.get("latitude"),

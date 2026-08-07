@@ -54,6 +54,9 @@ export interface PortalContact {
   /** Business WhatsApp number (digits) for the wa.me escape hatch. */
   whatsapp_number?: string | null;
   impersonation?: PortalImpersonationInfo | null;
+  /** Maps BROWSER key. Public by design, restricted by HTTP referrer in Google Cloud.
+   *  Null means the tenant configured none: typed fields, no map, still submittable. */
+  google_maps_api_key?: string | null;
 }
 
 export interface PortalSubmissionSummary {

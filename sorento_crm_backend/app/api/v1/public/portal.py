@@ -234,6 +234,17 @@ class PortalImpersonationInfo(BaseModel):
     started_at: str
 
 
+def _google_maps_api_key(db: Session) -> Optional[str]:
+    """Best-effort. No key is a portal without a map, never a portal that fails to load."""
+    try:
+        from app.models.user import SystemSetting
+
+        row = db.query(SystemSetting).first()
+        return (getattr(row, "google_maps_api_key", "") or "").strip() or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 class PortalMeResponse(BaseModel):
     contact_id: str
     space_id: str
@@ -243,6 +254,11 @@ class PortalMeResponse(BaseModel):
     portal_slug: Optional[str] = None
     whatsapp_number: Optional[str] = None
     impersonation: Optional[PortalImpersonationInfo] = None
+    # The Maps BROWSER key, so the lodge journey can draw a map the consumer drags a pin
+    # on. Public by design - it reaches the page either way - and restricted by HTTP
+    # referrer in Google Cloud. Null means no map and typed fields only, which is the
+    # honest degradation: the pin never blocks (AC-M38).
+    google_maps_api_key: Optional[str] = None
 
 
 @router.get("/me", response_model=PortalMeResponse)
@@ -293,6 +309,7 @@ def portal_me(
         portal_slug=portal_slug,
         whatsapp_number=service.whatsapp_number_for_contact(contact),
         impersonation=impersonation_info,
+        google_maps_api_key=_google_maps_api_key(db),
     )
 
 

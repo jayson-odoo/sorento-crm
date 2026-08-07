@@ -384,6 +384,20 @@ class AIExtractService:
                 ),
                 code="ai_extract_no_api_key",
             )
+        # Extraction's OWN model, ahead of the assistant's. Receipt OCR and assistant chat
+        # are different jobs: on this tenant the assistant runs gpt-4o-mini, which
+        # transcribed `03/08/2026` as `03/03/2026` from a photograph of a monitor. That is
+        # the model misreading digits, which no prompt or post-processing repairs.
+        override = ""
+        try:
+            from app.models.user import SystemSetting
+
+            row = self.db.query(SystemSetting).first()
+            override = (getattr(row, "ai_extract_model", "") or "").strip() if row else ""
+        except Exception:  # noqa: BLE001 - a settings read must never fail extraction
+            override = ""
+        if override:
+            model_name = override
         if not model_name:
             model_name = "gpt-4o" if provider_name == "openai" else "claude-sonnet-4-6"
         try:
@@ -722,7 +736,13 @@ class AIExtractService:
             " Optionally include a top-level `products` array of "
             "{product_code, product_name, quantity, unit_price, total, notes} "
             "when the document lists line items. Only include `unit_price` and "
-            "`total` when the document actually shows them; omit otherwise."
+            "`total` when the document actually shows them; omit otherwise. "
+            # Malaysian receipts print the quantity with its unit ("1 UNIT", "2 PCS"),
+            # and asked for a bare number the model returned null for every line - so
+            # every complaint came through as quantity 1 whatever the paper said.
+            "`quantity` is a NUMBER with any unit word stripped: '2 UNIT' is 2, "
+            "'1 PCS' is 1, '3 SET' is 3. Return the number even when the unit is "
+            "printed beside it; only omit `quantity` when no count is shown at all."
             if has_line_items
             else " Do NOT include a top-level `products` array — this form has "
             "no line-item table. Distinct product codes belong in the "

@@ -313,6 +313,9 @@ class SystemSetting(Base):
     # JavaScript key is delivered to the page by definition, so it is protected by an
     # HTTP-referrer restriction on the Google side, never by hiding it here.
     google_maps_api_key = Column(Text, nullable=True)
+    # Receipt OCR is a different job from assistant chat, with a different accuracy/cost
+    # trade-off. Blank falls back to gpt-4o rather than to the assistant's model.
+    ai_extract_model = Column(Text, nullable=True)
 
     # Procurement: when set, "Send for approval" can skip the approver dialog and email the default user.
     purchase_request_default_approver_user_id = Column(

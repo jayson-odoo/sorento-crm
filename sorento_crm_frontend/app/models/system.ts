@@ -51,6 +51,9 @@ export interface SystemSetting {
   /** Google Maps BROWSER key. Not a secret - it reaches the page by design, and is
    *  protected by an HTTP-referrer restriction on the Google side. */
   googleMapsApiKey?: string | null;
+  /** Model used for receipt/document extraction. Blank falls back to gpt-4o, NOT to the
+   *  assistant's model: OCR and chat are different jobs. */
+  aiExtractModel?: string | null;
 
   socialFacebook?: string | null;
   socialTwitter?: string | null;

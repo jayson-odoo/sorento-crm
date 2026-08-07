@@ -81,6 +81,7 @@ function LiveLodge({ slug }: { slug: string }) {
       live
       backend={liveLodgeBackend}
       contact={{ phone: contact.phone_number, name: contact.name }}
+      mapsApiKey={contact.google_maps_api_key ?? null}
     />
   );
 }

@@ -55,6 +55,12 @@ import {
 } from './lodgeMocks';
 import { mockLodgeBackend, recheckDealer, type LodgeBackend } from './lodgeBackend';
 import { AttachmentDropzone } from '../AttachmentDropzone';
+import {
+  EMPTY_SITE_ADDRESS,
+  SitePicker,
+  composeSiteAddress,
+  type SiteAddress,
+} from './SitePicker';
 
 type Step = 'upload' | 'confirm' | 'items' | 'fault' | 'place' | 'done';
 
@@ -65,7 +71,6 @@ interface ProofPhoto {
 }
 
 /** Pin state. Three outcomes to draw, not one (AC-M38). */
-type PinState = 'none' | 'locating' | 'set' | 'denied';
 
 const STEP_ORDER: Step[] = ['upload', 'confirm', 'items', 'fault', 'place', 'done'];
 
@@ -74,6 +79,7 @@ export function LodgeFlow({
   backend = mockLodgeBackend,
   live = false,
   contact,
+  mapsApiKey = null,
 }: {
   scenario?: MockScenario;
   /** Who the token says this is. Supplied on the live route so neither the phone nor the
@@ -81,6 +87,8 @@ export function LodgeFlow({
   contact?: { phone: string | null; name: string | null };
   /** Mock by default, so the `?scenario=` demo route keeps working with no token. */
   backend?: LodgeBackend;
+  /** The tenant's Maps browser key, from `/me`. Null means fields only and no map. */
+  mapsApiKey?: string | null;
   /** True on the token-scoped route. Enables the dealer re-check, which needs a real
    *  customer table to match against. */
   live?: boolean;
@@ -88,8 +96,6 @@ export function LodgeFlow({
   const [step, setStep] = useState<Step>('upload');
   const [busy, setBusy] = useState(false);
   const [extract, setExtract] = useState<ExtractResult | null>(null);
-  // Seeded from the mock list so the tiles are never empty while the real ones load. On
-  // the mock backend the fetch resolves to exactly this, so nothing flickers.
   const [dealerEcho, setDealerEcho] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -110,11 +116,10 @@ export function LodgeFlow({
   const [manualItems, setManualItems] = useState<string[]>([]);
   const [fault, setFault] = useState('');
   const [photos, setPhotos] = useState<ProofPhoto[]>([]);
-  const [pin, setPin] = useState<PinState>('none');
   // AC-M37: what a technician navigates to. Deliberately NOT reconciled against the typed
   // address (AC-M39) - the pin is for navigation, the address for documents.
   const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [address, setAddress] = useState('');
+  const [address, setAddress] = useState<SiteAddress>(EMPTY_SITE_ADDRESS);
   const [result, setResult] = useState<LodgeResult | null>(null);
 
   const progress = useMemo(
@@ -199,39 +204,6 @@ export function LodgeFlow({
     [live],
   );
 
-  /**
-   * The map pin. Real geolocation on the live route; a coin flip only in the prototype.
-   *
-   * Denial is a first-class outcome, not an error path - a consumer who refuses location
-   * permission must still be able to lodge (AC-M38) - so the prototype shows both by
-   * flipping. Doing that live would tell a consumer their location was captured when it
-   * was not, and send a technician nowhere.
-   */
-  const askForLocation = useCallback(() => {
-    setPin('locating');
-    if (!live) {
-      window.setTimeout(() => setPin(Math.random() > 0.5 ? 'set' : 'denied'), 900);
-      return;
-    }
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      setPin('denied');
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setCoords({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-        });
-        setPin('set');
-      },
-      // A refusal, a timeout and an unavailable sensor are all the same thing from here:
-      // no pin, carry on with the address.
-      () => setPin('denied'),
-      { enableHighAccuracy: true, timeout: 10_000 },
-    );
-  }, [live]);
-
   const submit = useCallback(async () => {
     setBusy(true);
     setSubmitError(null);
@@ -245,7 +217,15 @@ export function LodgeFlow({
           full_name: fullName || null,
           shop_name: shopName || null,
           purchase_date: purchaseDate || null,
-          site_address: address || null,
+          // Both the composed line and its parts. The server recomposes from the parts,
+          // so the one-liner here is what a client without them would have sent.
+          site_address: composeSiteAddress(address) || null,
+          site_address_line1: address.line1 || null,
+          site_address_line2: address.line2 || null,
+          site_postcode: address.postcode || null,
+          site_city: address.city || null,
+          site_state: address.state || null,
+          site_country: address.country || null,
           latitude: coords?.latitude ?? null,
           longitude: coords?.longitude ?? null,
           defect_description: fault || null,
@@ -374,10 +354,11 @@ export function LodgeFlow({
 
       {step === 'place' ? (
         <StepPlace
-          pin={pin}
           address={address}
           onAddress={setAddress}
-          onLocate={askForLocation}
+          coords={coords}
+          onCoords={setCoords}
+          mapsApiKey={mapsApiKey}
           busy={busy}
           error={submitError}
           onSubmit={submit}
@@ -797,18 +778,20 @@ function StepFault({
 /* ------------------------------------------------------------------ step 5 */
 
 function StepPlace({
-  pin,
   address,
   onAddress,
-  onLocate,
+  coords,
+  onCoords,
+  mapsApiKey,
   busy,
   error,
   onSubmit,
 }: {
-  pin: PinState;
-  address: string;
-  onAddress: (v: string) => void;
-  onLocate: () => void;
+  address: SiteAddress;
+  onAddress: (next: SiteAddress) => void;
+  coords: { latitude: number; longitude: number } | null;
+  onCoords: (next: { latitude: number; longitude: number } | null) => void;
+  mapsApiKey: string | null;
   busy: boolean;
   /** The one refusal the backend issues is consent. It has to be visible: a consumer who
    *  thinks the form silently failed submits again. */
@@ -817,47 +800,14 @@ function StepPlace({
 }) {
   return (
     <section className="flex flex-col gap-4">
-      <label className="flex flex-col gap-1.5">
-        <span className="text-sm font-medium">Where is the item installed?</span>
-        <Textarea
-          value={address}
-          onChange={(e) => onAddress(e.target.value)}
-          placeholder="Address where our technician should go"
-          rows={3}
-        />
-      </label>
-
-      {/* Pin and address are both kept and neither is reconciled (AC-M39): the pin is what
-          the technician navigates to, the address is what appears on documents. Asking a
-          consumer to resolve a disagreement they do not perceive helps nobody. */}
-      <div className="rounded-lg border p-3">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <p className="text-sm font-medium">Drop a pin (optional)</p>
-            <p className="text-xs text-muted-foreground">
-              {pin === 'set'
-                ? 'Pin saved - this is what the technician will navigate to.'
-                : pin === 'denied'
-                  ? 'No problem. We will use the address you typed.'
-                  : 'Helps our technician find you. You can skip this.'}
-            </p>
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 shrink-0"
-            onClick={onLocate}
-            disabled={pin === 'locating'}
-          >
-            {pin === 'locating' ? (
-              <Loader2 className="mr-1.5 size-3 animate-spin" />
-            ) : (
-              <MapPin className="mr-1.5 size-3" />
-            )}
-            {pin === 'set' ? 'Move pin' : 'Use my location'}
-          </Button>
-        </div>
-      </div>
+      <p className="text-sm font-medium">Where is the item installed?</p>
+      <SitePicker
+        address={address}
+        onAddress={onAddress}
+        coords={coords}
+        onCoords={onCoords}
+        apiKey={mapsApiKey}
+      />
 
       {error ? (
         <p
@@ -868,6 +818,9 @@ function StepPlace({
         </p>
       ) : null}
 
+      {/* Nothing here blocks submission (AC-C14, AC-M38). An address a consumer could not
+          complete is still a report CS can chase; a form that will not send is a phone
+          call to the office. */}
       <Button onClick={onSubmit} disabled={busy} className="h-11">
         {busy ? (
           <>

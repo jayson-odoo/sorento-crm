@@ -68,7 +68,17 @@ class LodgeIn(ResolveIn):
     full_name: Optional[str] = None
     purchase_date: Optional[str] = None
     dealer_document_number: Optional[str] = None
+    # The composed one-line address, still authoritative for every existing reader.
     site_address: Optional[str] = None
+    # ...and the parts it was composed from. A single free-text line accepts "kajang" and
+    # calls it an address, which is a van sent to a town; postcode and state are also what
+    # documents need and cannot be recovered from prose afterwards.
+    site_address_line1: Optional[str] = None
+    site_address_line2: Optional[str] = None
+    site_postcode: Optional[str] = None
+    site_city: Optional[str] = None
+    site_state: Optional[str] = None
+    site_country: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     defect_description: Optional[str] = None

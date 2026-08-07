@@ -26,6 +26,7 @@ const IntegrationsSchema = z.object({
   n8nCrmChatOutboundWebhookUrl: z.string(),
   n8nStockInquiryReviseWebhookUrl: z.string(),
   googleMapsApiKey: z.string(),
+  aiExtractModel: z.string(),
 });
 
 type IntegrationsForm = z.infer<typeof IntegrationsSchema>;
@@ -41,6 +42,7 @@ export default function IntegrationsSettingsPage() {
       n8nCrmChatOutboundWebhookUrl: settings.n8nCrmChatOutboundWebhookUrl ?? '',
       n8nStockInquiryReviseWebhookUrl: settings.n8nStockInquiryReviseWebhookUrl ?? '',
       googleMapsApiKey: settings.googleMapsApiKey ?? '',
+      aiExtractModel: settings.aiExtractModel ?? '',
     },
   });
 
@@ -50,6 +52,7 @@ export default function IntegrationsSettingsPage() {
       n8nCrmChatOutboundWebhookUrl: settings.n8nCrmChatOutboundWebhookUrl ?? '',
       n8nStockInquiryReviseWebhookUrl: settings.n8nStockInquiryReviseWebhookUrl ?? '',
       googleMapsApiKey: settings.googleMapsApiKey ?? '',
+      aiExtractModel: settings.aiExtractModel ?? '',
     });
   }, [settings, form]);
 
@@ -65,6 +68,7 @@ export default function IntegrationsSettingsPage() {
           n8n_stock_inquiry_revise_webhook_url:
             values.n8nStockInquiryReviseWebhookUrl.trim() || null,
           google_maps_api_key: values.googleMapsApiKey.trim() || null,
+          ai_extract_model: values.aiExtractModel.trim() || null,
         }),
       });
       if (!response.ok) {
@@ -164,6 +168,25 @@ export default function IntegrationsSettingsPage() {
                     Draws the map on the consumer &ldquo;report a problem&rdquo; journey. This key
                     is public by design - restrict it in Google Cloud by HTTP referrer and
                     API. Leave blank to fall back to typed address fields with no map.
+                  </p>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="aiExtractModel"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Receipt extraction model</FormLabel>
+                  <FormControl>
+                    <Input placeholder="gpt-4o" autoComplete="off" {...field} />
+                  </FormControl>
+                  <p className="text-xs text-muted-foreground">
+                    Reads receipts on the consumer journey. Separate from the AI
+                    assistant&rsquo;s model on purpose: OCR of a photographed receipt and
+                    assistant chat have different accuracy needs, and a cheaper model
+                    misreads digits in dates and product codes. Blank uses gpt-4o.
                   </p>
                   <FormMessage />
                 </FormItem>
