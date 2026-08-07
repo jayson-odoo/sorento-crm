@@ -496,6 +496,7 @@ class AttachmentService:
         entities: Optional[list[str]] = None,
         attachment_ids: Optional[list[str]] = None,
         direct_access_only: Optional[bool] = None,
+        visible_attachment_type_ids: Optional[set[str]] = None,
     ):
         """List attachments. Filter by directory_id when provided. Search by filename when query is provided. is_deleted=True returns trash.
 
@@ -530,6 +531,7 @@ class AttachmentService:
             entities=entities,
             attachment_ids=attachment_ids,
             direct_access_only=direct_access_only,
+            visible_attachment_type_ids=visible_attachment_type_ids,
             with_joinedload=True,
         )
         if q is None:
@@ -571,6 +573,7 @@ class AttachmentService:
         entities: Optional[list[str]] = None,
         attachment_ids: Optional[list[str]] = None,
         direct_access_only: Optional[bool] = None,
+        visible_attachment_type_ids: Optional[set[str]] = None,
         with_joinedload: bool = False,
     ):
         """Build the filtered + sorted attachments query shared by ``list_attachments``
@@ -657,12 +660,21 @@ class AttachmentService:
             else:
                 q = q.filter(Attachment.attachment_type_id == str(type_row.id))
         if direct_access_only:
-            # Restrict to attachment types flagged is_direct_access. A subquery
-            # avoids depending on whether AttachmentType is already joined.
-            direct_type_ids = self.db.query(AttachmentType.id).filter(
-                AttachmentType.is_direct_access.is_(True)
-            )
-            q = q.filter(Attachment.attachment_type_id.in_(direct_type_ids))
+            if visible_attachment_type_ids is not None:
+                # A contact was resolved and holds per-contact grants, so the
+                # visible set is the direct-access baseline WIDENED by those
+                # grants (see contact_attachment_access). Never narrower: the
+                # caller already has the baseline today.
+                q = q.filter(
+                    Attachment.attachment_type_id.in_(list(visible_attachment_type_ids))
+                )
+            else:
+                # Restrict to attachment types flagged is_direct_access. A subquery
+                # avoids depending on whether AttachmentType is already joined.
+                direct_type_ids = self.db.query(AttachmentType.id).filter(
+                    AttachmentType.is_direct_access.is_(True)
+                )
+                q = q.filter(Attachment.attachment_type_id.in_(direct_type_ids))
         if uploaded_by:
             q = q.filter(Attachment.uploaded_by == uploaded_by)
         if uploaded_at_from is not None:
@@ -785,6 +797,7 @@ class AttachmentService:
         entities: Optional[list[str]] = None,
         attachment_ids: Optional[list[str]] = None,
         direct_access_only: Optional[bool] = None,
+        visible_attachment_type_ids: Optional[set[str]] = None,
     ) -> dict:
         """Resolve prev/next neighbours for ``attachment_id`` within the active list
         query.
@@ -819,6 +832,7 @@ class AttachmentService:
             entities=entities,
             attachment_ids=attachment_ids,
             direct_access_only=direct_access_only,
+            visible_attachment_type_ids=visible_attachment_type_ids,
         )
         if filtered_q is not None:
             result = compute_neighbours(_ordered_ids(filtered_q), attachment_id)
@@ -899,6 +913,7 @@ class AttachmentService:
         link_status: Optional[str] = None,
         storage_status: Optional[str] = None,
         direct_access_only: Optional[bool] = None,
+        visible_attachment_type_ids: Optional[set[str]] = None,
     ) -> dict:
         """Unified Drive listing: discriminated folder + file rows in ONE
         server-sorted, server-paginated stream.
@@ -966,6 +981,7 @@ class AttachmentService:
             link_status=link_status,
             storage_status=storage_status,
             direct_access_only=direct_access_only,
+            visible_attachment_type_ids=visible_attachment_type_ids,
         )
         if recursive:
             if normalized_dir:

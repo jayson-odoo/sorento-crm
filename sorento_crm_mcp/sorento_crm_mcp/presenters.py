@@ -491,7 +491,14 @@ def _resource_attachments(rows: list[dict], b: _Builder) -> None:
     # plumbing, not meaningful to the end user. Just the file name + the file.
     for att in rows:
         name = att.get("original_filename") or att.get("stored_filename")
-        b.item(name, [("File Name", name)])
+        # Upload date, because a document class that is RE-uploaded keeps its name:
+        # six revisions of "Container Status 2026.xlsx" render as six identical
+        # items, and the agent cannot say which one is current. Rows already
+        # arrive newest-first, so the date turns that order into something the
+        # agent can state out loud.
+        uploaded = att.get("uploaded_at")
+        day = str(uploaded)[:10] if _filled(uploaded) else None
+        b.item(name, [("File Name", name), ("Uploaded", day)])
         # Strip the type so the delivered attachment carries no "Direct Access" label.
         no_type = {k: v for k, v in att.items() if k != "attachment_type"} if isinstance(att, dict) else att
         b.attach(no_type)

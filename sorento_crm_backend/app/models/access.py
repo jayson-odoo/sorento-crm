@@ -296,6 +296,36 @@ class ContactAgentAccess(Base):
     )
 
 
+class ContactAttachmentType(Base):
+    """Document types a contact may retrieve, beyond the global baseline.
+
+    `attachment_types.is_direct_access` is one boolean for everyone: a type is
+    dealer-downloadable or nobody can reach it. This adds the missing axis, so the
+    Container Status workbook can go to the office without going to dealers.
+
+    Grants only ADD - the baseline is never subtracted from here, so introducing
+    this table cannot take a document away from anyone.
+    """
+    __tablename__ = "contact_attachment_types"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="CASCADE"), nullable=False
+    )
+    attachment_type_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("attachment_types.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    created_by = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("contact_id", "attachment_type_id", name="uq_contact_attachment_type"),
+        Index("ix_contact_attachment_types_contact", "contact_id"),
+    )
+
+
 class AgentFieldAccess(Base):
     """Which fields an agent may reveal, and to whom.
 

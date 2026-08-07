@@ -309,6 +309,27 @@ def test_resource_attachments_no_type_label():
     assert out["attachments"][0]["attachmentType"] is None  # type stripped from the file too
 
 
+def test_resource_attachments_carry_the_upload_date_when_present():
+    """Re-uploaded documents keep one name, so the date is what tells them apart.
+
+    Six revisions of the Container Status workbook are six items reading
+    "Container Status 2026.xlsx". Without a date the agent cannot say which one
+    it is handing over, and rows arrive newest-first for nothing.
+    """
+    out = env("crm_resource_attachments_list", {
+        "data": [
+            {"original_filename": "Container Status 2026.xlsx", "file_path": "http://x/a.xlsx",
+             "uploaded_at": "2026-08-07T03:09:33"},
+            {"original_filename": "Container Status 2026.xlsx", "file_path": "http://x/b.xlsx",
+             "uploaded_at": "2026-08-01T09:00:00"},
+        ],
+    })
+    assert [f["value"] for f in out["items"][0]["fields"]] == [
+        "Container Status 2026.xlsx", "2026-08-07",
+    ]
+    assert out["items"][1]["fields"][1]["value"] == "2026-08-01"
+
+
 def test_portal_link_becomes_action_link():
     out = env("crm_portal_link_get", {"portal_link": "https://portal/x", "label": "Complaint Portal"})
     assert out["action_links"] == [{"label": "Complaint Portal", "url": "https://portal/x", "type": "portal_link"}]

@@ -56,7 +56,12 @@ TOOL_REQUIRED_NARROWING_FILTERS: dict[str, tuple[str, ...]] = {
     # Global document library: never browse the whole library — require at least
     # one narrower (attachment / directory / type / uploader UUID) or empty page.
     "crm_resource_attachments_list": (
-        "attachment_ids", "directory_id", "attachment_type_id", "uploaded_by",
+        "attachment_ids", "directory_id", "attachment_type_id",
+        # By NAME as well as by UUID. An agent answering "send me the container
+        # status list" has the document class, not its UUID, and forcing a
+        # lookup first turns one turn into two - or, more often, into an empty
+        # page the agent narrates as "there is no such document".
+        "attachment_type_code", "uploaded_by",
     ),
 }
 

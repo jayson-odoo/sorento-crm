@@ -262,15 +262,24 @@ CATALOG: tuple[ToolSpec, ...] = (
             "crm_resource_attachments_current_stock_list.\n\n"
             "FILTER BY UUID: `attachment_ids` (canonical attachment UUIDs csv / JSON / repeated), "
             "`directory_id`, `attachment_type_id`, `uploaded_by` (all canonical UUIDs). "
+            "FILTER BY NAME: `attachment_type_code` takes the document class by name "
+            "(e.g. \"Container Status\", \"catalogue\"), case-insensitive - use it when you know "
+            "WHAT KIND of document is wanted but not its UUID. "
             "Set resolve_signed_urls=true to include signed preview/download URLs in the response.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
-            "results to that contact's company/companies; omit both for all-company results."
+            "results to that contact's company/companies; omit both for all-company results.\n\n"
+            "DOCUMENT TYPES: every caller gets the dealer-facing baseline. Passing `contact_id` + "
+            "`space_id` ADDITIONALLY returns document types granted to that contact specifically "
+            "(e.g. the Container Status workbook for office staff). Grants only widen - a contact "
+            "with none sees exactly the baseline, so always pass both when answering on behalf of "
+            "someone."
         ),
         "/api/v1/resource-management/attachments",
         (),
         (
             "page", "limit", "attachment_ids", "sort", "dir",
             "directory_id", "attachment_type_id", "uploaded_by",
+            "attachment_type_code",
             "uploaded_at_from", "uploaded_at_to", "is_deleted", "resolve_signed_urls",
             "contact_id", "space_id",
         ),
