@@ -46,7 +46,7 @@ from sqlalchemy.orm import Session
 
 from app.models.complaints import Complaint, ComplaintProductLine
 from app.models.warranty import WarrantyProductKind
-from app.services import consumer_service
+from app.services import consumer_service, warranty_service
 from app.services.dealer_resolution_service import STATE_RESOLVED, resolve_dealer
 
 logger = logging.getLogger(__name__)
@@ -134,6 +134,31 @@ def _quantity_int(value: Any) -> Optional[int]:
         return None
 
 
+def _compose_site_address(payload: dict) -> Optional[str]:
+    """One line from the parts, or whatever the client sent if it sent only a line.
+
+    Composed server-side rather than trusted from the client so the stored one-liner and
+    the stored parts can never disagree - and they would, the first time a screen edited a
+    postcode without rebuilding the sentence. Every existing reader (the Service Job's site
+    copy, printed documents) keeps reading one field and needs no change.
+    """
+    parts = [
+        payload.get("site_address_line1"),
+        payload.get("site_address_line2"),
+        " ".join(
+            piece
+            for piece in (payload.get("site_postcode"), payload.get("site_city"))
+            if (piece or "").strip()
+        ),
+        payload.get("site_state"),
+        payload.get("site_country"),
+    ]
+    joined = ", ".join(piece.strip() for piece in parts if (piece or "").strip())
+    # Falls back to the free-text line: a legacy client, and the WhatsApp intake path,
+    # still send only that.
+    return joined or (payload.get("site_address") or None)
+
+
 def lodge_complaint(db: Session, payload: Dict[str, Any]) -> LodgeResult:
     """Everything one consumer submission leaves behind.
 
@@ -165,6 +190,20 @@ def lodge_complaint(db: Session, payload: Dict[str, Any]) -> LodgeResult:
         claimed = (raw.get("claimed_text") or "").strip() or None
         model_code = (raw.get("model_code_raw") or "").strip() or None
         kind_code = (raw.get("kind_code") or "").strip() or None
+        if not kind_code:
+            # DERIVE it. The consumer journey stopped asking (the Kind decides warranty
+            # TERMS, so it is Sorento's classification of its own catalogue, not a
+            # homeowner's guess) - and without this the derivation existed only in the
+            # commit message: `kind_code` arrived null, the line failed the ledger's
+            # NOT NULL and no purchase line was written at all. The whole point of the
+            # journey is building that ledger.
+            #
+            # `resolve_kind` needs no `products` row, which is the case that matters:
+            # the codes people actually report resolve to no product (AC-C17).
+            derived = warranty_service.resolve_kind(
+                db, product_code=model_code, product_name=claimed
+            )
+            kind_code = derived.code if derived else None
         resolved.append(
             {
                 "sort_order": index,
@@ -222,31 +261,6 @@ def lodge_complaint(db: Session, payload: Dict[str, Any]) -> LodgeResult:
             or consumer_service.PURCHASE_DATE_SOURCE_STATED,
             lines=ledger_lines,
         )
-
-def _compose_site_address(payload: dict) -> Optional[str]:
-    """One line from the parts, or whatever the client sent if it sent only a line.
-
-    Composed server-side rather than trusted from the client so the stored one-liner and
-    the stored parts can never disagree - and they would, the first time a screen edited a
-    postcode without rebuilding the sentence. Every existing reader (the Service Job's site
-    copy, printed documents) keeps reading one field and needs no change.
-    """
-    parts = [
-        payload.get("site_address_line1"),
-        payload.get("site_address_line2"),
-        " ".join(
-            piece
-            for piece in (payload.get("site_postcode"), payload.get("site_city"))
-            if (piece or "").strip()
-        ),
-        payload.get("site_state"),
-        payload.get("site_country"),
-    ]
-    joined = ", ".join(piece.strip() for piece in parts if (piece or "").strip())
-    # Falls back to the free-text line: a legacy client, and the WhatsApp intake path,
-    # still send only that.
-    return joined or (payload.get("site_address") or None)
-
 
     # --------------------------------------------------------------- the complaint
     complaint = Complaint(
