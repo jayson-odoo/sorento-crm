@@ -19,9 +19,12 @@ workbook is an upload plus a type, not another tool to write and register.
 CIDB dates across every container. Dealers get container answers through
 `crm_incoming_stock_list`, field by field; the raw sheet is internal.
 
-Newest-wins: every import adds a row, and the newest by `uploaded_at` is the current
-one. History is kept rather than overwritten, because "what did the sheet say last
-Tuesday" is a real question when a date is disputed.
+Exactly one live row. Each import publishes the new sheet and TRASHES the previous
+ones (`enforce_single_current`), because the workbook is re-uploaded whole: an older
+copy is not history, it is a stale answer with a current-looking name. Six identical
+"Container Status 2026.xlsx" rows gave entity resolution nothing to choose between.
+Trashed rows are soft-deleted, so a superseded sheet is still recoverable and its
+import job still holds its own retained copy.
 """
 from __future__ import annotations
 
@@ -97,6 +100,60 @@ def ensure_attachment_type(db: Session) -> Optional[str]:
         return None
 
 
+def enforce_single_current(db: Session) -> int:
+    """Trash every Container Status workbook except the newest. Returns how many.
+
+    There is only ever ONE current container status list: the sheet is re-uploaded
+    in full each time, so an older copy is not history, it is a wrong answer that
+    still looks right. Six of them sat in the library after six imports, all named
+    "Container Status 2026.xlsx" and indistinguishable, so an entity resolve had no
+    way to choose - it returned six rows, or the wrong one.
+
+    Keyed on "newest by uploaded_at survives", NOT on an id the caller passes in.
+    Re-publishing an older job (a retry, a backfill re-run) would otherwise name a
+    stale sheet as the keeper and trash the current one - the exact inversion this
+    exists to prevent. Stated as an invariant, it is also idempotent: run it any
+    number of times and the library still holds one live workbook.
+
+    Soft delete, the same trash the UI writes. The bytes and rows stay recoverable
+    and the import jobs are untouched; the copies just leave the library, the MCP
+    tool and entity resolution.
+    """
+    from datetime import datetime
+
+    try:
+        result = db.execute(
+            text(
+                """
+                UPDATE attachments
+                SET is_deleted = true, deleted_at = :now
+                WHERE id IN (
+                    SELECT a.id
+                    FROM attachments a
+                    JOIN attachment_types t ON t.id = a.attachment_type_id
+                    WHERE (t.code = :code OR t.type_name = :name)
+                      AND a.is_deleted = false
+                    -- id as tie-breaker: two workbooks published in the same
+                    -- transaction share `now()` to the microsecond, and without it
+                    -- the "newest" is whichever the planner happens to emit first.
+                    ORDER BY a.uploaded_at DESC, a.id DESC
+                    OFFSET 1
+                )
+                """
+            ),
+            {"now": datetime.utcnow(), "code": TYPE_CODE, "name": TYPE_NAME},
+        )
+        db.commit()
+        count = result.rowcount or 0
+        if count:
+            logger.info("Trashed %s superseded container status workbook(s)", count)
+        return count
+    except Exception:  # noqa: BLE001 - the new row is already published
+        db.rollback()
+        logger.warning("Could not trash superseded container status workbooks", exc_info=True)
+        return 0
+
+
 def publish_import_source(db: Session, job) -> Optional[str]:
     """Register a finished import's retained workbook as an attachment.
 
@@ -116,6 +173,9 @@ def publish_import_source(db: Session, job) -> Optional[str]:
             {"key": key},
         ).fetchone()
         if existing:
+            # Re-run of an already-published job. Re-assert the invariant anyway -
+            # it keeps the newest, so a retry cannot promote this older sheet.
+            enforce_single_current(db)
             return str(existing[0])
 
         type_id = ensure_attachment_type(db)
@@ -156,6 +216,9 @@ def publish_import_source(db: Session, job) -> Optional[str]:
         )
         db.commit()
         logger.info("Published container status workbook as attachment %s", attachment_id)
+        # Only one workbook is ever current. Runs AFTER the commit so a failure here
+        # leaves the new row published rather than rolling it back.
+        enforce_single_current(db)
         return attachment_id
     except Exception:  # noqa: BLE001 - the import already succeeded
         db.rollback()

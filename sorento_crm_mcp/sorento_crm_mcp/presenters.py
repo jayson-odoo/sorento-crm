@@ -498,7 +498,10 @@ def _resource_attachments(rows: list[dict], b: _Builder) -> None:
         # agent can state out loud.
         uploaded = att.get("uploaded_at")
         day = str(uploaded)[:10] if _filled(uploaded) else None
-        b.item(name, [("File Name", name), ("Uploaded", day)])
+        # The id is normally UI noise, but this tool is how a human debugging an
+        # answer finds the row again: identical filenames make every other field
+        # useless for that, and without it there is nothing to quote.
+        b.item(name, [("File Name", name), ("Uploaded", day), ("File ID", att.get("id"))])
         # Strip the type so the delivered attachment carries no "Direct Access" label.
         no_type = {k: v for k, v in att.items() if k != "attachment_type"} if isinstance(att, dict) else att
         b.attach(no_type)
@@ -616,7 +619,11 @@ def _latest_updated(node: Any, depth: int = 0) -> str | None:
     if depth > 6 or not isinstance(node, (dict, list)):
         return best
     if isinstance(node, dict):
-        for key in ("updated_at", "last_updated_at"):
+        # `uploaded_at` counts: an attachment is never edited in place, so the
+        # upload IS its last-updated moment. Without it every document answer
+        # reported `last_updated_at: null` and the agent could not say how fresh
+        # the file it just handed over actually is.
+        for key in ("updated_at", "last_updated_at", "uploaded_at"):
             v = node.get(key)
             if _filled(v) and (best is None or str(v) > best):
                 best = str(v)

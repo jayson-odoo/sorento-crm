@@ -14,7 +14,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Download, Plus, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react';
+import { ChevronRight, Download, Eye, Plus, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { getLatestContainerStatusDocument } from '../services/packingListService';
 import { Button } from '@/components/ui/button';
@@ -36,6 +36,9 @@ import { formatStatusLabel, getStatusBadgeVariant } from '@/lib/status-badge';
 import PackingListDeleteDialog from './packing-list-delete-dialog';
 import PackingListBulkDeleteDialog from './PackingListBulkDeleteDialog';
 import ContainerStatusImportDialog from './ContainerStatusImportDialog';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
 
 export default function PackingListsList() {
   const router = useRouter();
@@ -84,6 +87,8 @@ export default function PackingListsList() {
     useState<PackingList | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewItem, setPreviewItem] = useState<AttachmentPreviewItem | null>(null);
 
   const { data, isLoading, refetch } = usePackingLists({
     pageIndex: pagination.pageIndex,
@@ -106,16 +111,33 @@ export default function PackingListsList() {
     router.push(`/procurement-management/packing-lists/${packingListId}${qs}`);
   };
 
-  /** Open the latest imported workbook in a new tab.
+  /** Open the latest imported workbook, either inline or as a download.
    *
    * The link is signed and short-lived, so it is fetched on click rather than
    * rendered as an href - a stale URL in the DOM would 403 by the time anyone
    * used it. A toast carries the "nothing imported yet" case, which is a normal
-   * state before the first import, not an error worth a dialog. */
-  const handleDownloadContainerStatus = async () => {
+   * state before the first import, not an error worth a dialog.
+   *
+   * Preview reuses the shared AttachmentPreviewModal, which renders xlsx as a
+   * sheet in place. Answering "what does the sheet say" should not cost a
+   * download, an Excel launch and a file left in ~/Downloads. */
+  const openContainerStatus = async (mode: 'preview' | 'download') => {
     try {
       const doc = await getLatestContainerStatusDocument();
-      window.open(doc.url, '_blank', 'noopener,noreferrer');
+      if (mode === 'download') {
+        window.open(doc.url, '_blank', 'noopener,noreferrer');
+        return;
+      }
+      setPreviewItem({
+        id: doc.attachment_id,
+        name: doc.filename,
+        // The signed URL is the cacheable source for the inline render; bytes for
+        // the modal's own Download button come through the authenticated route.
+        url: doc.url,
+        downloadUrl: `/api/v1/resource-management/attachments/${doc.attachment_id}/download`,
+        sizeBytes: doc.size,
+      });
+      setPreviewOpen(true);
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -379,10 +401,16 @@ export default function PackingListsList() {
                 onClick: () => void refetch(),
               },
               {
+                key: 'preview-container-status',
+                label: 'Preview Container Status (latest)',
+                icon: Eye,
+                onClick: () => void openContainerStatus('preview'),
+              },
+              {
                 key: 'download-container-status',
                 label: 'Download Container Status (latest)',
                 icon: Download,
-                onClick: () => void handleDownloadContainerStatus(),
+                onClick: () => void openContainerStatus('download'),
               },
               {
                 key: 'import-container-status',
@@ -423,6 +451,11 @@ export default function PackingListsList() {
       <ContainerStatusImportDialog
         open={importDialogOpen}
         onOpenChange={setImportDialogOpen}
+      />
+      <AttachmentPreviewModal
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        items={previewItem ? [previewItem] : []}
       />
       <PackingListBulkDeleteDialog
         open={bulkDeleteDialogOpen}

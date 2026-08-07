@@ -330,6 +330,40 @@ def test_resource_attachments_carry_the_upload_date_when_present():
     assert out["items"][1]["fields"][1]["value"] == "2026-08-01"
 
 
+def test_resource_attachments_expose_the_row_id():
+    """The one place a human can get the id of the file the agent just sent.
+
+    Identical filenames make every other field useless for finding the row
+    again, so without this a wrong answer cannot be traced to a document.
+    """
+    out = env("crm_resource_attachments_list", {
+        "data": [{
+            "id": "df853300-0000-0000-0000-000000000001",
+            "original_filename": "Container Status 2026.xlsx",
+            "file_path": "http://x/a.xlsx",
+        }],
+    })
+    labels = {f["label"]: f["value"] for f in out["items"][0]["fields"]}
+    assert labels["File ID"] == "df853300-0000-0000-0000-000000000001"
+
+
+def test_uploaded_at_becomes_last_updated_at():
+    """An attachment is never edited in place, so the upload IS its freshness.
+
+    Without this every document answer reported `last_updated_at: null` and the
+    agent could not say how current the file it handed over was.
+    """
+    out = env("crm_resource_attachments_list", {
+        "data": [
+            {"original_filename": "a.xlsx", "file_path": "http://x/a.xlsx",
+             "uploaded_at": "2026-08-01T09:00:00"},
+            {"original_filename": "b.xlsx", "file_path": "http://x/b.xlsx",
+             "uploaded_at": "2026-08-07T03:09:33"},
+        ],
+    })
+    assert out["last_updated_at"] == "2026-08-07T03:09:33"
+
+
 def test_portal_link_becomes_action_link():
     out = env("crm_portal_link_get", {"portal_link": "https://portal/x", "label": "Complaint Portal"})
     assert out["action_links"] == [{"label": "Complaint Portal", "url": "https://portal/x", "type": "portal_link"}]

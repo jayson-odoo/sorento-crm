@@ -250,6 +250,7 @@ export async function getClearanceCheckpoints(): Promise<ClearanceCheckpoint[]> 
  * packing lists.
  */
 export interface LatestContainerStatusDocument {
+  attachment_id: string;
   url: string;
   filename: string;
   size: number | null;

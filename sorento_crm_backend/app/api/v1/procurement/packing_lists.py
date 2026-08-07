@@ -111,6 +111,10 @@ async def download_latest_container_status(
                 detail="Could not generate a download link for the workbook.",
             )
         return {
+            # The attachment id, so the caller can reuse the shared preview /
+            # download surface (which fetches bytes through the authenticated
+            # /attachments/{id}/download route) instead of a second bespoke one.
+            "attachment_id": doc["id"],
             "url": url,
             "filename": doc["filename"],
             "size": doc["size"],
