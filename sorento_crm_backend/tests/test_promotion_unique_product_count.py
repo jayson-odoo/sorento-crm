@@ -154,3 +154,39 @@ def test_the_list_agrees_with_the_detail(db):
         if str(p.id) == str(pid)
     )
     assert detail == listed == 2
+
+
+def test_the_page_costs_one_count_query_not_one_per_promotion(db):
+    """The count must not be issued inside the serializer loop.
+
+    Per-row it was a clean N+1: a 50-row page fired 50 round trips to fetch 50
+    integers. Asserting on the query COUNT (not on wall clock, which is noisy)
+    is what stops it silently regressing back into the loop.
+    """
+    from sqlalchemy import event
+
+    from app.services.marketing_service import PromotionService
+
+    for _ in range(3):
+        pid = _promotion(db)
+        g = _group(db, pid)
+        for _ in range(2):
+            _link(db, pid, _product(db), g)
+    db.commit()
+
+    seen: list[str] = []
+
+    def _record(conn, cursor, statement, params, context, many):
+        if "promotion_products" in statement and "count" in statement.lower():
+            seen.append(statement)
+
+    event.listen(db.get_bind(), "before_cursor_execute", _record)
+    try:
+        PromotionService(db).list_promotions(page=1, limit=50)
+    finally:
+        event.remove(db.get_bind(), "before_cursor_execute", _record)
+
+    assert len(seen) <= 1, (
+        f"{len(seen)} count queries for one page - the count is back inside the "
+        "per-promotion loop"
+    )
