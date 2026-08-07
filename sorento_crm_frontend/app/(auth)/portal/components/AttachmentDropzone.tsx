@@ -175,7 +175,11 @@ export function AttachmentDropzone({
       if (isEditable(target) || isEditable(active)) {
         return;
       }
-      const items = Array.from(e.clipboardData.items);
+      // Defensive: `clipboardData` is always populated by a real browser paste, but a
+      // synthetic event (or a locked-down embedded webview) can arrive without `items`,
+      // and an exception inside a window listener kills the paste for every surface on
+      // the page, not just this one.
+      const items = Array.from(e.clipboardData?.items ?? []);
       const files: File[] = [];
       for (const item of items) {
         if (item.kind === 'file') {

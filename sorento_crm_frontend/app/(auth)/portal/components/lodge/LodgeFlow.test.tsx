@@ -93,17 +93,22 @@ async function reachConfirm({ live = false }: { live?: boolean } = {}) {
  * and "Continue" when it did not - the copy fix from walking the `unmatched` scenario, where
  * asking a consumer to confirm an empty sentence read as a broken screen.
  */
-async function reachKind() {
+/**
+ * The item step lists what the RECEIPT said, not Sorento's 31-kind catalogue. The Kind is
+ * never asked: it decides warranty terms (ADR-0010), so it is Sorento's filing job, derived
+ * from the model code or resolved by CS - not a consumer's guess.
+ */
+async function reachItems() {
   await reachConfirm();
   fireEvent.click(screen.getByRole('button', { name: /yes, that is right|continue/i }));
   await waitFor(() =>
-    expect(screen.getByRole('button', { name: 'Water Closet' })).toBeInTheDocument(),
+    expect(screen.getByText(/which of these has the problem/i)).toBeInTheDocument(),
   );
 }
 
 async function reachSubmit() {
-  await reachKind();
-  fireEvent.click(screen.getByRole('button', { name: 'Water Closet' }));
+  await reachItems();
+  // Every extracted line arrives pre-selected, so the ordinary path is to continue.
   fireEvent.click(screen.getByRole('button', { name: /^continue$/i }));
   // Step 4 (fault + photos) then step 5 (site). Neither gates on content: a consumer who
   // cannot describe the fault must still be able to send the report (AC-C14).
@@ -115,19 +120,69 @@ async function reachSubmit() {
 }
 
 describe('LodgeFlow', () => {
-  it('keeps the tiled chooser usable when the kinds fetch fails', async () => {
+  it('lists the products the receipt named, not a catalogue', async () => {
+    render(<LodgeFlow backend={backend()} />);
+    await reachItems();
+    // What the extraction returned, in the consumer's own receipt's words.
+    expect(screen.getByText(/SRTWC8152 WATER CLOSET/i)).toBeInTheDocument();
+    // And NOT the 31-kind grid this step used to be.
+    expect(screen.queryByRole('button', { name: 'Urinal Bowl' })).not.toBeInTheDocument();
+  });
+
+  it('pre-selects every extracted line so the common case is one tap', async () => {
+    render(<LodgeFlow backend={backend()} />);
+    await reachItems();
+    expect(screen.getByRole('button', { pressed: true })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^continue$/i })).toBeEnabled();
+  });
+
+  it('blocks continuing when the consumer unticks everything', async () => {
+    // A report naming no product is the one state worth refusing: CS has nothing to act on.
+    render(<LodgeFlow backend={backend()} />);
+    await reachItems();
+    fireEvent.click(screen.getByRole('button', { pressed: true }));
+    expect(screen.getByRole('button', { name: /^continue$/i })).toBeDisabled();
+  });
+
+  it('asks the consumer to type what broke when nothing could be read', async () => {
+    // No fallback to the catalogue: somebody who cannot see their product in a list has no
+    // vocabulary to pick one from either, and free text is strictly more information than
+    // a tile chosen by elimination.
     render(
       <LodgeFlow
         backend={backend({
-          kinds: async () => {
-            throw new Error('offline');
-          },
+          extract: async () => ({
+            shop_name_raw: null,
+            dealer: { state: 'unmatched', customer_name: null },
+            purchase_date: null,
+            document_number: null,
+            sorento_order_number: null,
+            lines: [],
+          }),
         })}
       />,
     );
-    // The seeded list stands. An empty grid would leave a consumer with nothing to click
-    // on the one screen that resolves what the receipt could not.
-    await reachKind();
+    // Navigated by hand rather than through `reachConfirm`: that helper waits for "did we
+    // get this right", and the confirm step deliberately drops that sentence when there is
+    // nothing to confirm - asking somebody to agree with an empty summary read as a broken
+    // screen when the `unmatched` scenario was walked.
+    fireEvent.click(screen.getByRole('button', { name: /add a photo/i }));
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /yes, that is right|^continue$/i })).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /yes, that is right|^continue$/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/could not read any products/i)).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole('button', { name: 'Water Closet' })).not.toBeInTheDocument();
+    // And it will not move on with nothing named.
+    expect(screen.getByRole('button', { name: /^continue$/i })).toBeDisabled();
+
+    fireEvent.change(screen.getByPlaceholderText(/the toilet seat/i), {
+      target: { value: 'the flush button' },
+    });
+    expect(screen.getByRole('button', { name: /^continue$/i })).toBeEnabled();
   });
 
   it('re-runs the dealer match when the shop name is corrected', async () => {
@@ -187,82 +242,48 @@ describe('LodgeFlow', () => {
 
 
 /**
- * The photo step, which is where a real consumer either gets their receipt in or gives up.
+ * The photo step now uses the SAME `AttachmentDropzone` as every other portal submission.
  *
- * The first version of this tile assigned `setFiles(Array.from(...))` on every change, so a
- * second pick REPLACED the first. Somebody who attached the receipt and then went back for a
- * photo of the fault lost the receipt, and the counter still said a photo was ready - the
- * worst kind of wrong, because the screen looks correct.
+ * The bespoke tile that used to live here had to re-learn drag-and-drop, clipboard paste,
+ * previews and removal one bug at a time, and had already lost photos once by replacing the
+ * file list instead of appending to it. Those behaviours are the shared component's, and are
+ * tested with it - what belongs HERE is that the lodge journey actually uses it, and that
+ * the files it collects reach extraction.
  */
 describe('lodge photo step', () => {
-  function galleryInput() {
-    return document.querySelectorAll('input[type="file"]')[0] as HTMLInputElement;
-  }
-
-  function file(name: string, contents = 'x') {
-    return new File([contents], name, { type: 'image/jpeg' });
-  }
-
-  it('adds to what is already attached instead of replacing it', () => {
+  it('uses the shared portal attachment component, not a bespoke tile', () => {
     render(<LodgeFlow live backend={backend()} />);
-    const input = galleryInput();
-
-    fireEvent.change(input, { target: { files: [file('receipt.jpg')] } });
-    fireEvent.change(input, { target: { files: [file('fault.jpg')] } });
-
-    expect(screen.getByText('2 photos ready.')).toBeInTheDocument();
-    expect(screen.getByTitle('receipt.jpg')).toBeInTheDocument();
-    expect(screen.getByTitle('fault.jpg')).toBeInTheDocument();
+    // The shared dropzone's affordances. A regression to a hand-rolled input would take
+    // clipboard paste and previews away without failing anything else.
+    expect(screen.getByRole('button', { name: /choose file/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /paste from clipboard/i })).toBeInTheDocument();
   });
 
-  it('accepts a pasted screenshot, which is how most receipts arrive on a desktop', async () => {
+  it('will not extract until a file is actually attached', () => {
     render(<LodgeFlow live backend={backend()} />);
-
-    const pasted = file('screenshot.png');
-    const event = new Event('paste', { bubbles: true, cancelable: true });
-    Object.defineProperty(event, 'clipboardData', { value: { files: [pasted] } });
-    fireEvent(window, event);
-
-    await waitFor(() => expect(screen.getByText('1 photo ready.')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled();
   });
 
-  it('ignores the same file picked twice', () => {
-    render(<LodgeFlow live backend={backend()} />);
-    const input = galleryInput();
-    const same = file('receipt.jpg');
+  it('hands the attached files to extraction', async () => {
+    const extract = vi.fn().mockResolvedValue({
+      shop_name_raw: 'TOTAL HOME DIY SDN BHD',
+      dealer: { state: 'resolved', customer_name: 'TOTAL HOME DIY SDN BHD' },
+      purchase_date: '2025-10-16',
+      document_number: null,
+      sorento_order_number: null,
+      lines: [],
+    });
+    render(<LodgeFlow live backend={backend({ extract })} />);
 
-    fireEvent.change(input, { target: { files: [same] } });
-    fireEvent.change(input, { target: { files: [same] } });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['receipt'], 'receipt.jpg', { type: 'image/jpeg' });
+    fireEvent.change(input, { target: { files: [file] } });
 
-    expect(screen.getByText('1 photo ready.')).toBeInTheDocument();
-  });
+    await waitFor(() => expect(screen.getByRole('button', { name: /continue/i })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
 
-  it('lets a mis-picked photo be removed', () => {
-    render(<LodgeFlow live backend={backend()} />);
-    const input = galleryInput();
-    fireEvent.change(input, { target: { files: [file('receipt.jpg'), file('wrong.jpg')] } });
-    expect(screen.getByText('2 photos ready.')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Remove wrong.jpg' }));
-
-    expect(screen.getByText('1 photo ready.')).toBeInTheDocument();
-    expect(screen.queryByTitle('wrong.jpg')).not.toBeInTheDocument();
-  });
-
-  it('takes files dropped onto the tile', () => {
-    render(<LodgeFlow live backend={backend()} />);
-    const tile = screen.getByRole('button', { name: /add a photo/i }).parentElement as HTMLElement;
-
-    fireEvent.drop(tile, { dataTransfer: { files: [file('dragged.jpg')] } });
-
-    expect(screen.getByText('1 photo ready.')).toBeInTheDocument();
-  });
-
-  it('offers the camera as its own action rather than forcing it', () => {
-    // `capture` on the main input forced the camera on a phone, which is what stopped a
-    // consumer attaching a receipt they had already saved to their gallery.
-    render(<LodgeFlow live backend={backend()} />);
-    expect(galleryInput().hasAttribute('capture')).toBe(false);
-    expect(screen.getByRole('button', { name: /take a photo now/i })).toBeInTheDocument();
+    await waitFor(() => expect(extract).toHaveBeenCalled());
+    const files = extract.mock.calls[0][1] as File[];
+    expect(files.map((f) => f.name)).toEqual(['receipt.jpg']);
   });
 });

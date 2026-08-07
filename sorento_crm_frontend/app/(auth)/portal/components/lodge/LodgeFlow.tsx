@@ -46,17 +46,17 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  MOCK_KINDS,
   mockCheckPhoto,
   type ExtractResult,
   type LodgeResult,
   type MockScenario,
   type PhotoCheck,
-  type ProductKindTile,
+  type ExtractedLine,
 } from './lodgeMocks';
 import { mockLodgeBackend, recheckDealer, type LodgeBackend } from './lodgeBackend';
+import { AttachmentDropzone } from '../AttachmentDropzone';
 
-type Step = 'upload' | 'confirm' | 'kind' | 'fault' | 'place' | 'done';
+type Step = 'upload' | 'confirm' | 'items' | 'fault' | 'place' | 'done';
 
 interface ProofPhoto {
   name: string;
@@ -67,7 +67,7 @@ interface ProofPhoto {
 /** Pin state. Three outcomes to draw, not one (AC-M38). */
 type PinState = 'none' | 'locating' | 'set' | 'denied';
 
-const STEP_ORDER: Step[] = ['upload', 'confirm', 'kind', 'fault', 'place', 'done'];
+const STEP_ORDER: Step[] = ['upload', 'confirm', 'items', 'fault', 'place', 'done'];
 
 export function LodgeFlow({
   scenario = 'resolved',
@@ -90,7 +90,6 @@ export function LodgeFlow({
   const [extract, setExtract] = useState<ExtractResult | null>(null);
   // Seeded from the mock list so the tiles are never empty while the real ones load. On
   // the mock backend the fetch resolves to exactly this, so nothing flickers.
-  const [kinds, setKinds] = useState<ProductKindTile[]>(MOCK_KINDS);
   const [dealerEcho, setDealerEcho] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -102,7 +101,13 @@ export function LodgeFlow({
   // route has no contact and the submit payload needs both.
   const [phone, setPhone] = useState('');
   const [fullName, setFullName] = useState('');
-  const [kindCode, setKindCode] = useState<string | null>(null);
+  // WHICH extracted products are faulty, by index. Replaces the Kind question: the
+  // consumer knows which of their items broke, and does not know - and should never be
+  // asked - what taxonomy Sorento files it under.
+  const [faultyLines, setFaultyLines] = useState<number[]>([]);
+  // What they type when the receipt yielded nothing. Free text on purpose: a consumer who
+  // cannot see a product list has no vocabulary to pick from either.
+  const [manualItems, setManualItems] = useState<string[]>([]);
   const [fault, setFault] = useState('');
   const [photos, setPhotos] = useState<ProofPhoto[]>([]);
   const [pin, setPin] = useState<PinState>('none');
@@ -122,22 +127,6 @@ export function LodgeFlow({
     if (contact?.name) setFullName(contact.name);
   }, [contact?.name, contact?.phone]);
 
-  useEffect(() => {
-    let cancelled = false;
-    backend
-      .kinds()
-      .then((rows) => {
-        // An empty list would leave the consumer with nothing to click, which is worse
-        // than the seeded fallback they already have.
-        if (!cancelled && rows.length) setKinds(rows);
-      })
-      .catch(() => {
-        /* The seeded tiles stand. A failed fetch must not empty the chooser. */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [backend]);
 
   const runExtract = useCallback(async (files: File[] = []) => {
     setBusy(true);
@@ -148,7 +137,11 @@ export function LodgeFlow({
       // `candidate` is a suggestion for CS, not an answer to show the consumer as fact.
       setShopName(data.shop_name_raw ?? '');
       setPurchaseDate(data.purchase_date ?? '');
-      setKindCode(data.lines[0]?.kind_code ?? null);
+      // Default to ALL of them. A receipt is one purchase and the ordinary complaint is
+      // about the thing that broke; pre-selecting everything means a consumer with one
+      // item taps nothing, and a consumer with three unticks the two that are fine.
+      setFaultyLines(data.lines.map((_line, index) => index));
+      setManualItems([]);
       setStep('confirm');
     } finally {
       setBusy(false);
@@ -265,16 +258,34 @@ export function LodgeFlow({
           // question ("which item has the problem?"), and answering it on the consumer's
           // behalf for every other product on the receipt would be a guess wearing a
           // warranty term. CS resolves the rest from `claimed_text`.
-          lines: (extract?.lines?.length
-            ? extract.lines
-            : [{ claimed_text: null, model_code_raw: null, quantity: 1 }]
-          ).map((line, index) => ({
-            claimed_text: line.claimed_text ?? null,
-            model_code_raw: line.model_code_raw ?? null,
-            kind_code: index === 0 ? kindCode : null,
-            quantity: line.quantity ?? 1,
-            fault_description: index === 0 ? fault || null : null,
-          })),
+          //
+          // `kind_code` is never sent. The Kind decides warranty TERMS (ADR-0010), which
+          // makes it Sorento's classification of its own catalogue - derivable from the
+          // model code server-side, and CS's problem when the code resolves to nothing.
+          // Asking a consumer which of 31 categories their broken toilet belongs to was
+          // making them do that filing, and a wrong answer is a warranty term.
+          lines: [
+            ...(extract?.lines ?? []).map((line, index) => ({
+              claimed_text: line.claimed_text ?? null,
+              model_code_raw: line.model_code_raw ?? null,
+              kind_code: null,
+              quantity: line.quantity ?? 1,
+              // The fault is attached to the lines the consumer said are broken. An
+              // untouched line is still sent - it is part of the same purchase and the
+              // ledger needs it - but carries no fault.
+              fault_description: faultyLines.includes(index) ? fault || null : null,
+            })),
+            ...manualItems
+              .map((text) => text.trim())
+              .filter(Boolean)
+              .map((text) => ({
+                claimed_text: text,
+                model_code_raw: null,
+                kind_code: null,
+                quantity: 1,
+                fault_description: fault || null,
+              })),
+          ],
         }),
       );
       setStep('done');
@@ -285,7 +296,7 @@ export function LodgeFlow({
     } finally {
       setBusy(false);
     }
-  }, [address, backend, coords, extract, fault, fullName, kindCode, phone, purchaseDate, shopName]);
+  }, [address, backend, coords, extract, fault, faultyLines, fullName, manualItems, phone, purchaseDate, shopName]);
 
   // Phone-first, because the journey arrives from a WhatsApp link - but it grows with the
   // viewport rather than sitting in a 576px column with empty gutters on a desktop. Still
@@ -329,15 +340,23 @@ export function LodgeFlow({
           onShopNameSettled={recheckShopName}
           dealerEcho={dealerEcho}
           onPurchaseDate={setPurchaseDate}
-          onContinue={() => setStep('kind')}
+          onContinue={() => setStep('items')}
         />
       ) : null}
 
-      {step === 'kind' ? (
-        <StepKind
-          kinds={kinds}
-          selected={kindCode}
-          onSelect={setKindCode}
+      {step === 'items' ? (
+        <StepItems
+          lines={extract?.lines ?? []}
+          faulty={faultyLines}
+          onToggle={(index) =>
+            setFaultyLines((current) =>
+              current.includes(index)
+                ? current.filter((i) => i !== index)
+                : [...current, index],
+            )
+          }
+          manualItems={manualItems}
+          onManualItems={setManualItems}
           onContinue={() => setStep('fault')}
         />
       ) : null}
@@ -378,54 +397,14 @@ function StepUpload({
   onContinue,
 }: {
   busy: boolean;
-  /** On the mock route there is no file picker to open, so a tap just counts a photo. */
+  /** On the mock route there is no upload endpoint, so a tap just counts a photo. */
   live: boolean;
   onContinue: (files: File[]) => void;
 }) {
   const [files, setFiles] = useState<File[]>([]);
   const [count, setCount] = useState(0);
-  const [dragging, setDragging] = useState(false);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const cameraRef = useRef<HTMLInputElement | null>(null);
 
   const ready = live ? files.length : count;
-
-  /**
-   * APPEND, never replace. The first version assigned `setFiles(Array.from(...))` on every
-   * change, so a consumer who picked the receipt and then went back for a photo of the fault
-   * silently lost the receipt - and the count still said "1 photo ready", which is the worst
-   * kind of wrong because it looks right.
-   *
-   * Deduped on name + size + last-modified: pasting the same screenshot twice, or picking a
-   * file already chosen, is a slip rather than an intention.
-   */
-  const addFiles = useCallback((incoming: File[]) => {
-    if (!incoming.length) return;
-    setFiles((current) => {
-      const seen = new Set(current.map((f) => `${f.name}:${f.size}:${f.lastModified}`));
-      const fresh = incoming.filter(
-        (f) => !seen.has(`${f.name}:${f.size}:${f.lastModified}`),
-      );
-      return fresh.length ? [...current, ...fresh] : current;
-    });
-  }, []);
-
-  /**
-   * Paste. A receipt arrives as a WhatsApp screenshot more often than as a file, and on a
-   * desktop the shortest path from "it is on my screen" to "it is in the form" is Ctrl+V.
-   * Bound to the window rather than to an input because there is nothing here to focus.
-   */
-  useEffect(() => {
-    if (!live) return undefined;
-    const onPaste = (event: ClipboardEvent) => {
-      const pasted = Array.from(event.clipboardData?.files ?? []);
-      if (!pasted.length) return;
-      event.preventDefault();
-      addFiles(pasted);
-    };
-    window.addEventListener('paste', onPaste);
-    return () => window.removeEventListener('paste', onPaste);
-  }, [live, addFiles]);
 
   return (
     <section className="flex flex-col gap-4">
@@ -433,113 +412,35 @@ function StepUpload({
         Take a photo of your receipt and of the problem. We will read the rest ourselves.
       </p>
 
-      {/* No `capture` here: this input is the gallery-and-files path, and `capture` forces
-          the camera on a phone, which is what stopped consumers attaching a receipt they
-          had already saved. The camera is its own button below, so both paths exist. */}
-      <input
-        ref={inputRef}
-        type="file"
-        multiple
-        accept="image/*,application/pdf"
-        className="hidden"
-        onChange={(e) => {
-          addFiles(Array.from(e.target.files ?? []));
-          // Reset, or picking the SAME file again fires no change event at all.
-          e.target.value = '';
-        }}
-      />
-      <input
-        ref={cameraRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="hidden"
-        onChange={(e) => {
-          addFiles(Array.from(e.target.files ?? []));
-          e.target.value = '';
-        }}
-      />
-
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragging(false);
-          if (live) addFiles(Array.from(e.dataTransfer.files ?? []));
-        }}
-        className={`rounded-xl border-2 border-dashed transition-colors ${
-          dragging ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
-        }`}
-      >
+      {live ? (
+        /* The SAME component the rest of the portal attaches files with. The first version
+           here was a bespoke tile that had to re-learn drag-and-drop, clipboard paste,
+           previews and removal one bug at a time - and had already lost photos once by
+           replacing the list instead of appending to it. `pendingFiles` mode exists for
+           exactly this case: there is no submission to attach to yet, so the files are held
+           and handed to extraction on Continue. */
+        <AttachmentDropzone
+          kind="complaint"
+          submissionId={null}
+          attachments={[]}
+          onChange={() => {}}
+          disabled={busy}
+          pendingFiles={files}
+          onPendingFilesChange={setFiles}
+        />
+      ) : (
         <button
           type="button"
-          onClick={() => (live ? inputRef.current?.click() : setCount((c) => c + 1))}
-          className="flex w-full flex-col items-center gap-2 px-4 py-10 text-center"
+          onClick={() => setCount((c) => c + 1)}
+          className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed px-4 py-10 text-center transition-colors hover:bg-muted/50"
         >
           <Camera className="size-8 text-muted-foreground" />
           <span className="text-sm font-medium">Add a photo</span>
           <span className="text-xs text-muted-foreground">
-            Receipt, invoice, or the fault itself
-          </span>
-          <span className="mt-1 flex flex-wrap items-center justify-center gap-3 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1">
-              <Upload className="size-3" />
-              Drag and drop
-            </span>
-            <span className="flex items-center gap-1">
-              <Clipboard className="size-3" />
-              Or paste
-            </span>
+            Preview route - no file is uploaded
           </span>
         </button>
-      </div>
-
-      {live ? (
-        <Button
-          type="button"
-          variant="outline"
-          className="h-11"
-          onClick={() => cameraRef.current?.click()}
-        >
-          <Camera className="mr-2 size-4" />
-          Take a photo now
-        </Button>
-      ) : null}
-
-      {/* What was actually attached. "15 photos ready" with no list is unverifiable: a
-          consumer cannot tell whether the receipt is among them, and cannot drop the one
-          they picked by mistake. */}
-      {live && files.length > 0 ? (
-        <ul className="flex flex-col gap-2">
-          {files.map((file, index) => (
-            <li
-              key={`${file.name}-${file.size}-${file.lastModified}`}
-              className="flex items-center gap-2 rounded-md border px-3 py-2"
-            >
-              <FileText className="size-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1 truncate text-sm" title={file.name}>
-                {file.name}
-              </span>
-              {/* One click, deliberately. Nothing has been uploaded yet, so this is undo of
-                  a mis-pick rather than deletion of a record - the confirmation rule guards
-                  destroying something that exists, and taxing a correction here would just
-                  make people submit the wrong photo. */}
-              <button
-                type="button"
-                aria-label={`Remove ${file.name}`}
-                className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted"
-                onClick={() => setFiles((current) => current.filter((_, i) => i !== index))}
-              >
-                <X className="size-4" />
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      )}
 
       {ready > 0 ? (
         <p className="text-sm text-muted-foreground">
@@ -664,53 +565,162 @@ function StepConfirm({
 
 /* ------------------------------------------------------------------ step 3 */
 
-function StepKind({
-  kinds,
-  selected,
-  onSelect,
+/**
+ * Which of YOUR items broke - not which of Sorento's 31 categories it belongs to.
+ *
+ * The receipt has already been read, so the products are known. Showing the full Kind
+ * catalogue here threw that away and asked a consumer to file their own broken toilet into
+ * a taxonomy invented for warranty terms: 31 tiles, four of which begin "Kitchen", to answer
+ * a question they had already answered by photographing the receipt.
+ *
+ * **The Kind is not asked at all any more.** It decides warranty TERMS (ADR-0010), which
+ * makes it Sorento's classification of Sorento's own catalogue - derivable from the model
+ * code server-side, and CS's job when the code resolves to nothing (`SRTWC8152` matches
+ * three variants and resolves to none, AC-C17). A consumer's guess at it is a warranty term
+ * entered by someone with no stake in it being right.
+ *
+ * **No fallback to the catalogue when extraction found nothing.** A consumer who cannot see
+ * their own product in a list has no vocabulary to pick one from either, so they type what
+ * broke in their own words and CS reads it. That is strictly more information than a tile
+ * chosen by elimination.
+ */
+function StepItems({
+  lines,
+  faulty,
+  onToggle,
+  manualItems,
+  onManualItems,
   onContinue,
 }: {
-  kinds: ProductKindTile[];
-  selected: string | null;
-  onSelect: (code: string) => void;
+  lines: ExtractedLine[];
+  faulty: number[];
+  onToggle: (index: number) => void;
+  manualItems: string[];
+  onManualItems: (next: string[]) => void;
   onContinue: () => void;
 }) {
+  const nothingFound = lines.length === 0;
+  const typed = manualItems.filter((text) => text.trim()).length;
+  // Nothing to send on is the one state worth blocking: the report would name no product.
+  const canContinue = nothingFound ? typed > 0 : faulty.length > 0;
+
   return (
     <section className="flex flex-col gap-4">
-      <p className="text-sm text-muted-foreground">Which item has the problem?</p>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {kinds.map((kind) => {
-          const active = selected === kind.code;
-          return (
-            <button
-              key={kind.code}
-              type="button"
-              onClick={() => onSelect(kind.code)}
-              className={`flex min-h-24 flex-col items-center justify-center gap-2 rounded-xl border p-3 text-center transition-colors ${
-                active ? 'border-primary bg-primary/5 ring-2 ring-primary' : 'hover:bg-muted/50'
-              }`}
-            >
-              {/* Text tiles, accepted deliberately: no `consumer_icon` exists for any of the
-                  31 kinds and Sorento is content to ship without artwork.
-
-                  The first draft filled the gap with the label's initial, which was actively
-                  worse than nothing - four tiles rendered "K" (Kitchen Mixer Tap, Kitchen &
-                  Bathroom Cold Tap, Kitchen & Bathroom Mixer Tap, Kitchen Sink) and two "W".
-                  An initial is noise wearing the shape of a signal. Without it the label gets
-                  the whole tile and the distinguishing words are what the eye lands on. */}
-              <span className="text-sm font-medium leading-snug">{kind.label}</span>
-            </button>
-          );
-        })}
-      </div>
-      <Button onClick={onContinue} disabled={!selected} className="h-11">
+      {nothingFound ? (
+        <>
+          <div className="rounded-md border bg-muted/40 p-3">
+            <p className="text-sm font-medium">We could not read any products.</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              The receipt may be blurred or handwritten. Tell us what broke in your own words
+              and we will work it out - nothing is lost.
+            </p>
+          </div>
+          {(manualItems.length ? manualItems : ['']).map((value, index) => (
+            <div key={index} className="flex gap-2">
+              <Input
+                value={value}
+                placeholder="e.g. the toilet seat, or SRTWC8152"
+                onChange={(event) => {
+                  const next = manualItems.length ? [...manualItems] : [''];
+                  next[index] = event.target.value;
+                  onManualItems(next);
+                }}
+              />
+              {manualItems.length > 1 ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  aria-label={`Remove item ${index + 1}`}
+                  onClick={() => onManualItems(manualItems.filter((_, i) => i !== index))}
+                >
+                  <X className="size-4" />
+                </Button>
+              ) : null}
+            </div>
+          ))}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onManualItems([...(manualItems.length ? manualItems : ['']), ''])}
+          >
+            Add another item
+          </Button>
+        </>
+      ) : (
+        <>
+          <p className="text-sm text-muted-foreground">
+            Which of these has the problem? Tap to unselect anything that is fine.
+          </p>
+          <ul className="flex flex-col gap-2">
+            {lines.map((line, index) => {
+              const active = faulty.includes(index);
+              const label = line.claimed_text || line.model_code_raw || 'Item on your receipt';
+              return (
+                <li key={`${line.model_code_raw ?? 'line'}-${index}`}>
+                  <button
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => onToggle(index)}
+                    className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors ${
+                      active ? 'border-primary bg-primary/5 ring-2 ring-primary' : 'hover:bg-muted/50'
+                    }`}
+                  >
+                    <span
+                      className={`flex size-5 shrink-0 items-center justify-center rounded border ${
+                        active ? 'border-primary bg-primary text-primary-foreground' : 'border-input'
+                      }`}
+                    >
+                      {active ? <Check className="size-3.5" /> : null}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block break-words text-sm font-medium">{label}</span>
+                      {line.quantity && line.quantity > 1 ? (
+                        <span className="block text-xs text-muted-foreground">
+                          Quantity {line.quantity}
+                        </span>
+                      ) : null}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onManualItems([...manualItems, ''])}
+          >
+            Something else is broken
+          </Button>
+          {manualItems.map((value, index) => (
+            <div key={`manual-${index}`} className="flex gap-2">
+              <Input
+                value={value}
+                placeholder="e.g. the toilet seat"
+                onChange={(event) => {
+                  const next = [...manualItems];
+                  next[index] = event.target.value;
+                  onManualItems(next);
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                aria-label={`Remove item ${index + 1}`}
+                onClick={() => onManualItems(manualItems.filter((_, i) => i !== index))}
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+          ))}
+        </>
+      )}
+      <Button className="h-11" disabled={!canContinue} onClick={onContinue}>
         Continue
       </Button>
     </section>
   );
 }
-
-/* ------------------------------------------------------------------ step 4 */
 
 function StepFault({
   fault,
