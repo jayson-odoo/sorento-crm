@@ -478,7 +478,7 @@ class PromotionService:
                 pc_subq = (
                     select(
                         PromotionProduct.promotion_id.label("pid"),
-                        func.count(PromotionProduct.id).label("pcnt"),
+                        func.count(func.distinct(PromotionProduct.product_id)).label("pcnt"),
                     )
                     .group_by(PromotionProduct.promotion_id)
                     .subquery()
@@ -601,7 +601,13 @@ class PromotionService:
             [p.id for p in promotions]
         )
         for promotion in promotions:
-            products_count = self.db.query(func.count(PromotionProduct.id)).filter(
+            # DISTINCT product, not row: one product legitimately appears in
+            # several promotion_groups (same item, different bundle price), so a
+            # row count reports 17 under a column headed "Products" when the
+            # promotion covers 12.
+            products_count = self.db.query(
+                func.count(func.distinct(PromotionProduct.product_id))
+            ).filter(
                 PromotionProduct.promotion_id == promotion.id
             ).scalar() or 0
             promotion.products_count = products_count
@@ -814,7 +820,7 @@ class PromotionService:
 
             groups = sorted(promotion.promotion_groups or [], key=lambda g: (g.sort_order, g.created_at))
             promotion.products_count = (
-                self.db.query(func.count(PromotionProduct.id))
+                self.db.query(func.count(func.distinct(PromotionProduct.product_id)))
                 .filter(PromotionProduct.promotion_id == resolved_pid)
                 .scalar()
                 or 0
@@ -846,7 +852,7 @@ class PromotionService:
             for pp in sorted(g.promotion_products or [], key=lambda x: x.created_at):
                 flat.append(pp)
 
-        promotion.products_count = len(flat)
+        promotion.products_count = len({pp.product_id for pp in flat})
         promotion.products = flat
         # Expose sorted groups for API (nested products on each group)
         promotion.promotion_groups = groups
