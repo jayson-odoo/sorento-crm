@@ -1527,6 +1527,42 @@ _GRN_SPO_COLUMN_CANDIDATES = (
     "from document number",
 )
 
+# `picking_headers.spo_number` / the line-level SPO are SCALAR: one SPO, matched
+# against one allocation via `_spo_match_key`. AutoCount will happily put every
+# SPO a GRN was received against into the one "Transfer from" cell
+# ("SPO-2026/06-0020, SPO-2026/06-0021, ...").
+_GRN_SPO_SEPARATORS = re.compile(r"[,;\n\r]+|\s{2,}")
+# Storage width of `picking_headers.spo_number` / `spo_allocations.spo_number`.
+_SPO_NUMBER_MAX_LEN = 50
+
+
+def _split_spo_cell(raw: Any) -> list[str]:
+    """Split a GRN SPO cell into its individual SPO numbers.
+
+    One value in, one value out for the normal case; a multi-SPO GRN yields the
+    full list so the caller can decide (see `_single_spo_or_none`).
+    """
+    if raw is None:
+        return []
+    return [part.strip() for part in _GRN_SPO_SEPARATORS.split(str(raw)) if part.strip()]
+
+
+def _single_spo_or_none(raw: Any) -> Optional[str]:
+    """The one SPO number in a GRN SPO cell, or None when there is not exactly one.
+
+    A GRN received against several SPOs has no single owner, so the scalar column
+    stays NULL and the per-line SPO carries the truth (`effective_spo` already
+    prefers the line value and splits its groups by it). Storing the joined blob
+    instead did two bad things: it overflowed `varchar(50)` and aborted the
+    import, and where it fit it silently matched NO allocation and NO packing
+    list, because every consumer normalizes the column as a single SPO
+    (`_spo_match_key`, `procurement_service._spo_group_key`).
+    """
+    parts = _split_spo_cell(raw)
+    if len(parts) != 1:
+        return None
+    return parts[0]
+
 
 def _run_grn_listing_import_core(
     db,
@@ -1590,11 +1626,25 @@ def _run_grn_listing_import_core(
         doc_num = _find(row, "doc number", "doc. no.", "doc. number", "doc number ", "grn number")
         grn_number = (doc_num and str(doc_num).strip()) or None
         transfer_from = _find(row, *_GRN_SPO_COLUMN_CANDIDATES)
-        spo_number = (transfer_from and str(transfer_from).strip()) or None
-        identity = {"grn_number": grn_number, "spo_number": spo_number}
+        spo_parts = _split_spo_cell(transfer_from)
+        # Multi-SPO GRN → header stays NULL; the per-line SPO carries the truth.
+        spo_number = _single_spo_or_none(transfer_from)
+        # Report what the sheet said, not what we stored, so a skip is diagnosable.
+        identity = {"grn_number": grn_number, "spo_number": ", ".join(spo_parts) or None}
         if not grn_number:
             reason = "Missing doc number / GRN number"
             outcome.skip(row=row_idx, code=oc.MISSING_DOC_NO, message=reason, identity=identity)
+            skipped_rows_detail.append({"row": row_idx, "reason": reason})
+            _progress(row_idx)
+            continue
+        if spo_number and len(spo_number) > _SPO_NUMBER_MAX_LEN:
+            # A single SPO this long is bad source data, not a multi-SPO cell.
+            # Skip the row with the reason instead of letting Postgres abort the
+            # transaction on a value the column cannot hold.
+            reason = (
+                f"SPO number longer than {_SPO_NUMBER_MAX_LEN} characters: {spo_number[:60]}"
+            )
+            outcome.skip(row=row_idx, code=oc.UPSERT_ERROR, message=reason, identity=identity)
             skipped_rows_detail.append({"row": row_idx, "reason": reason})
             _progress(row_idx)
             continue
@@ -1615,6 +1665,15 @@ def _run_grn_listing_import_core(
                 entity_type="picking_header",
             )
         except Exception as e:
+            # `upsert_grn_header_for_import` commits per row, so a failed flush
+            # leaves the session needing a rollback. Without this, every LATER row
+            # dies with "transaction has been rolled back due to a previous
+            # exception" — one bad cell fails the whole file and the job report
+            # blames rows that were fine.
+            try:
+                db.rollback()
+            except Exception:
+                logger.exception("rollback after GRN header upsert failure also failed")
             outcome.fail(
                 row=row_idx,
                 code=oc.UPSERT_ERROR,
@@ -1912,7 +1971,10 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
             location = (_find(row_data, "location", "warehouse", "warehouse code") and str(_find(row_data, "location", "warehouse", "warehouse code")).strip()) or None
             qty_raw = _find(row_data, "qty", "quantity", "qty ")
             line_spo_raw = _find(row_data, *_GRN_SPO_COLUMN_CANDIDATES)
-            line_spo = (str(line_spo_raw).strip() if line_spo_raw is not None else "") or None
+            # Same scalar rule as the header: a multi-SPO cell names no single
+            # allocation, so the line stays unlinked rather than carrying a blob
+            # that `_spo_match_key` can never match.
+            line_spo = _single_spo_or_none(line_spo_raw)
             try:
                 qty = int(float(qty_raw)) if qty_raw is not None else 0
             except (TypeError, ValueError):
