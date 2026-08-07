@@ -5,6 +5,7 @@ import {
   portalBase,
   portalDetailPath,
   portalHomePath,
+  portalLodgePath,
   portalNewPath,
   portalVerifyPath,
   readPortalSlug,
@@ -82,5 +83,12 @@ describe('waMeUrl', () => {
     expect(waMeUrl('+60 12-345 6789', 'Hi, link please')).toBe(
       'https://wa.me/60123456789?text=Hi%2C%20link%20please',
     );
+  });
+
+  it('gives the consumer intake journey its own path, separate from the typed form', () => {
+    // Two doors on purpose: the form asks a dealer to type order numbers they know, the
+    // lodge asks a consumer to photograph a fault they can see. One screen cannot be both.
+    expect(portalLodgePath('S1')).toBe('/portal/c/S1/lodge');
+    expect(portalLodgePath('S1')).not.toBe(portalNewPath('complaint', 'S1'));
   });
 });

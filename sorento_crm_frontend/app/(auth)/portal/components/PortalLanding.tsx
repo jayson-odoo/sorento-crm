@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AlertCircle, Filter, FileText, LogOut, Plus, Star } from 'lucide-react';
+import { AlertCircle, Camera, Filter, FileText, LogOut, Plus, Star } from 'lucide-react';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -51,6 +51,7 @@ import {
 import { complaintStatusLabel, complaintStatusPillClass } from '@/lib/complaint-status';
 import {
   portalDetailPath,
+  portalLodgePath,
   portalNewPath,
   portalVerifyPath,
 } from '../lib/portal-paths';
@@ -495,8 +496,21 @@ function SubmissionList({
 
   return (
     <div className="space-y-3">
-      <div className="flex justify-end">
-        <Button asChild className="h-10">
+      <div className="flex flex-wrap justify-end gap-2">
+        {/* The S3 journey needs a door, or no consumer ever finds it. Deliberately the
+            FIRST action on the complaint tab and the more prominent one: a consumer who
+            can photograph the fault should never be routed into a form that asks for an
+            order number they have never seen. The typed form stays for dealers, who do
+            know theirs. */}
+        {kind === 'complaint' ? (
+          <Button asChild className="h-10">
+            <Link href={portalLodgePath(slug)}>
+              <Camera className="h-4 w-4 mr-2" />
+              Report a problem
+            </Link>
+          </Button>
+        ) : null}
+        <Button asChild variant={kind === 'complaint' ? 'outline' : 'primary'} className="h-10">
           <Link href={portalNewPath(kind, slug)}>
             <Plus className="h-4 w-4 mr-2" />
             New {SUBMISSION_LABELS[kind]}

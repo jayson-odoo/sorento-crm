@@ -78,6 +78,19 @@ export function portalNewPath(kind: string, slug?: string | null): string {
   return `${portalBase(slug)}/${kind}/new`;
 }
 
+/**
+ * The S3 consumer intake journey - photo first, the system reads the rest.
+ *
+ * A SEPARATE door from `portalNewPath('complaint', slug)`, which is the typed dealer form.
+ * They are not two versions of one screen: the form asks a dealer who knows their own order
+ * numbers to type them, and this asks a consumer who knows nothing except what the fault
+ * looks like to photograph it. Collapsing them would make one of those two people do the
+ * other one's job.
+ */
+export function portalLodgePath(slug?: string | null): string {
+  return `${portalBase(slug)}/lodge`;
+}
+
 export function portalDetailPath(kind: string, id: string, slug?: string | null): string {
   return `${portalBase(slug)}/${kind}/${encodeURIComponent(id)}`;
 }
