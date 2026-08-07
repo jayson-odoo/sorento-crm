@@ -287,8 +287,12 @@ export function LodgeFlow({
     }
   }, [address, backend, coords, extract, fault, fullName, kindCode, phone, purchaseDate, shopName]);
 
+  // Phone-first, because the journey arrives from a WhatsApp link - but it grows with the
+  // viewport rather than sitting in a 576px column with empty gutters on a desktop. Still
+  // capped: a single-column form stretched across 1400px puts a label and its input at
+  // opposite ends of the screen.
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-xl flex-col gap-4 px-4 py-6">
+    <div className="mx-auto flex min-h-dvh w-full max-w-xl flex-col gap-4 px-4 py-6 sm:max-w-2xl sm:px-6 lg:max-w-4xl">
       <header className="flex flex-col gap-3">
         <div className="flex items-center gap-2">
           {step !== 'upload' && step !== 'done' ? (

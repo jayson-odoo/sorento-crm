@@ -1,36 +1,90 @@
 'use client';
 
 /**
- * S3 Phase 1 prototype route - the consumer intake journey, on mocks.
+ * `/portal/lodge` - the prototype route, and now a signpost off it.
  *
- * Deliberately OUTSIDE the `/portal/c/[slug]` tree for now: this phase is about tuning the
- * flow and its states, and hanging it off a contact slug would force a real token before a
- * single screen could be reviewed. Phase 2 moves it under the slug tree, where the OTP
- * already establishes who the consumer is.
+ * **It hands you to the live journey when you have an identity.** This route was the S3
+ * Phase 1 prototype: `?scenario=` picks a mocked extraction outcome and a tap on the photo
+ * tile just increments a counter, because there is no backend behind it. That is fine as a
+ * design surface and actively misleading as a destination - somebody who reached it while
+ * holding a portal token attached photos, pressed Continue, and got a mocked warranty
+ * verdict for a complaint that was never filed. Nothing on screen says so.
  *
- * `?scenario=` selects which extraction outcome to exercise. Four are worth walking, and
- * three of them are normal traffic rather than error paths - 68% of receipts resolve, 8%
+ * So: a stored portal token plus a slug means there is a real journey to run, and the
+ * visitor is sent to `/portal/c/{slug}/lodge` instead. The prototype stays reachable
+ * deliberately, for reviewing states without a contact - either with no identity at all, or
+ * explicitly via `?mock=1`, which is the honest way to ask for it.
+ *
+ * `?scenario=` selects which extraction outcome the MOCK exercises. Four are worth walking,
+ * and three of them are normal traffic rather than error paths - 68% of receipts resolve, 8%
  * land mid-band, 24% carry no usable shop name:
  *
- *   /portal/lodge                      resolved     (dealer matched exactly)
- *   /portal/lodge?scenario=candidate   candidate    (matched something, not well enough)
- *   /portal/lodge?scenario=unmatched   unmatched    (no shop name printed at all)
- *   /portal/lodge?scenario=dealer_track dealer track (a Sorento order number was quoted)
+ *   /portal/lodge?mock=1                      resolved     (dealer matched exactly)
+ *   /portal/lodge?mock=1&scenario=candidate   candidate    (matched, not well enough)
+ *   /portal/lodge?mock=1&scenario=unmatched   unmatched    (no shop name printed at all)
+ *   /portal/lodge?mock=1&scenario=dealer_track dealer track (a Sorento order number quoted)
  */
 
-import { Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+
+import { Skeleton } from '@/components/ui/skeleton';
 
 import { LodgeFlow } from '../components/lodge/LodgeFlow';
 import type { MockScenario } from '../components/lodge/lodgeMocks';
+import { readPortalToken } from '../lib/portal-client';
+import { portalLodgePath, readPortalSlug } from '../lib/portal-paths';
 
 const SCENARIOS: MockScenario[] = ['resolved', 'candidate', 'unmatched', 'dealer_track'];
 
 function LodgeContent() {
   const params = useSearchParams();
+  const router = useRouter();
+  const [decided, setDecided] = useState(false);
+
+  const forceMock = params?.get('mock') === '1';
+
+  useEffect(() => {
+    if (forceMock) {
+      setDecided(true);
+      return;
+    }
+    const slug = readPortalSlug();
+    if (readPortalToken() && slug) {
+      // There is a real contact behind this browser, so there is a real complaint to file.
+      // Running the mock here would end in a warranty verdict for nothing.
+      router.replace(portalLodgePath(slug));
+      return;
+    }
+    setDecided(true);
+    // Intentional: decided once, on mount. A redirect mid-journey would be worse than the
+    // prototype it is replacing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (!decided) {
+    return (
+      <div className="mx-auto flex w-full max-w-xl flex-col gap-3 px-4 py-6 sm:max-w-2xl sm:px-6 lg:max-w-4xl">
+        <Skeleton className="h-6 w-40" />
+        <Skeleton className="h-1 w-full" />
+        <Skeleton className="h-48 w-full" />
+      </div>
+    );
+  }
+
   const requested = params?.get('scenario') as MockScenario | null;
   const scenario = requested && SCENARIOS.includes(requested) ? requested : 'resolved';
-  return <LodgeFlow key={scenario} scenario={scenario} />;
+  return (
+    <div className="flex flex-col">
+      {/* Says what this is. The prototype's whole failure mode was looking exactly like
+          the real thing while filing nothing. */}
+      <p className="mx-auto w-full max-w-xl px-4 pt-4 text-xs text-muted-foreground sm:max-w-2xl sm:px-6 lg:max-w-4xl">
+        Preview only - nothing submitted here is saved. Open the portal as a contact to file a
+        real report.
+      </p>
+      <LodgeFlow key={scenario} scenario={scenario} />
+    </div>
+  );
 }
 
 export default function PortalLodgePage() {
