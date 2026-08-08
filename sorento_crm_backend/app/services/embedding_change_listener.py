@@ -10,6 +10,7 @@ from typing import Iterable
 
 from sqlalchemy import event
 
+from app.models.certificate import Certificate
 from app.models.embeddings import EmbeddingQueue
 from app.models.marketing import Promotion, PromotionProduct, PromotionAttachment
 from app.models.procurement import InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine
@@ -195,6 +196,7 @@ def register_embedding_change_listeners() -> None:
     _attach_listeners(PickingLine, "picking_line")
     _attach_listeners(ProductAttachment, "product_attachment")
     _attach_listeners(PromotionAttachment, "promotion_attachment")
+    _attach_listeners(Certificate, "certificate")
     _attach_listeners(Order, "order")
     _attach_listeners(OrderStatus, "order_status")
     _attach_listeners(OrderLine, "order_line")

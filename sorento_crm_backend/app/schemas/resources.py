@@ -52,6 +52,13 @@ class AttachmentTypeBase(BaseModel):
     # the portal upload quota check; admin-editable (was DB-only until 2026-07-28).
     max_count_per_entity: Optional[int] = None
     supports_field_linkage: bool = False
+    # Cert-bearing gate: when true, an upload of this type may file a certificate
+    # (identity + revision + coverage). Without it the ingest guard drops extracted
+    # certificate fields, so the register stays empty.
+    is_certificate: bool = False
+    # Plausibility cap for the extracted validity span, in months. NULL = no cap.
+    # Backs the needs_review rule that catches a hallucinated expiry date.
+    max_validity_months: Optional[int] = None
 
 
 class AttachmentTypeCreate(AttachmentTypeBase):
@@ -65,6 +72,8 @@ class AttachmentTypeUpdate(BaseModel):
     max_file_size_mb: Optional[int] = None
     max_count_per_entity: Optional[int] = None
     supports_field_linkage: Optional[bool] = None
+    is_certificate: Optional[bool] = None
+    max_validity_months: Optional[int] = None
 
 
 class AttachmentTypeResponse(AttachmentTypeBase):
@@ -305,6 +314,9 @@ class AttachmentResponse(AttachmentBase):
     linked_promotions: list[LinkedEntityRef] = []
     linked_form: Optional[LinkedEntityRef] = None
     linked_packing_lists: list[LinkedEntityRef] = []
+    # Certificates this file is a filed revision of. Read-only on the FE: the
+    # link is created by filing the document, not by a user linking two rows.
+    linked_certificates: list[LinkedEntityRef] = []
 
     @field_validator('id', 'uploaded_by', 'deleted_by', 'attachment_type_id', 'entity_id', 'directory_id', mode='before')
     @classmethod

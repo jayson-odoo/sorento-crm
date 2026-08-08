@@ -5,6 +5,7 @@ from sqlalchemy import or_
 from typing import Any, Optional, List
 
 logger = logging.getLogger(__name__)
+from app.models.base import get_company_scope
 from app.models.resources import Attachment, AttachmentType, AttachmentDirectory
 from app.schemas.resources import (
     AttachmentCreate, AttachmentUpdate, AttachmentTypeCreate, AttachmentTypeUpdate,
@@ -1327,11 +1328,51 @@ class AttachmentService:
                 "link_id": None,
             })
 
+        # Certificates. Unlike the four above, this linkage is not a join table a
+        # user maintains: the file IS a revision of the certificate, so the link
+        # exists because the document was filed. The FE renders it read-only for
+        # that reason - unlinking here would leave a revision with no document.
+        # A list, not a single ref: the same PDF can be filed under two
+        # identities (PPS and SPAN both issue against one document).
+        from app.models.certificate import Certificate, CertificateRevision
+
+        linked_certificates = []
+        q = (
+            self.db.query(
+                Certificate.id,
+                Certificate.scheme,
+                Certificate.certificate_number,
+                Certificate.certifying_body,
+                Certificate.title,
+                CertificateRevision.id.label("link_id"),
+                CertificateRevision.revision_no,
+                CertificateRevision.is_current,
+            )
+            .join(CertificateRevision, CertificateRevision.certificate_id == Certificate.id)
+            .filter(CertificateRevision.attachment_id == attachment_id)
+            .order_by(CertificateRevision.revision_no.desc())
+        )
+        for row in q.all():
+            name = " ".join(p for p in (row.scheme, row.certificate_number) if p).strip()
+            # Say WHICH issue this file is, so a superseded document is not
+            # mistaken for the live certificate when read from the attachment.
+            issue = f"Revision {row.revision_no}"
+            if not row.is_current:
+                issue += " (superseded)"
+            subject = (row.title or "").strip() or (row.certifying_body or "").strip()
+            linked_certificates.append({
+                "id": str(row.id),
+                "name": name or str(row.id),
+                "description": " - ".join(p for p in (subject, issue) if p) or None,
+                "link_id": str(row.link_id),
+            })
+
         return {
             "linked_products": linked_products,
             "linked_promotions": linked_promotions,
             "linked_form": linked_form,
             "linked_packing_lists": linked_packing_lists,
+            "linked_certificates": linked_certificates,
         }
 
     def list_attachment_ids_in_directory_subtree(self, root_directory_id: str) -> List[str]:
@@ -1654,7 +1695,31 @@ class AttachmentService:
             attachment_dict["full_directory_path"] = dir_service.get_full_directory_path(directory_id)
         else:
             attachment_dict["full_directory_path"] = None
-        
+
+        # Multi-company: stamp the ACTIVE company on a positively-owned attachment.
+        # Attachments are ``__company_shared__``, so the before_insert auto-stamp
+        # deliberately skips them entirely — every upload, in every company, landed
+        # with company_id NULL. For attachments NULL means SHARED (the predicate is
+        # ``company_id IS NULL OR company_id IN (scope)``), so a file uploaded while
+        # switched into Mocha was visible from Sorento too, and — because
+        # ``scope_to_attachment_company`` pins the n8n binding scope off this column
+        # — the packing list n8n created from it stamped the incumbent company
+        # instead of Mocha.
+        #
+        # "Positively owned" mirrors migration 302's own backfill predicate
+        # (directory_id present, or a product/promotion attachment) translated to
+        # what is knowable at upload time. Form/entity attachments (complaint, PR,
+        # stock inquiry) keep NULL so they stay shared across companies (AC-G3).
+        if attachment_dict.get("company_id") is None:
+            entity_type = (attachment_dict.get("entity_type") or "").strip().lower()
+            positively_owned = bool(directory_id) or entity_type in {"promotion", "product"}
+            if positively_owned:
+                scope = get_company_scope(self.db)
+                # Only an unambiguous single active company may be stamped; UNSET /
+                # all-companies / multi-company stay NULL rather than guess.
+                if isinstance(scope, frozenset) and len(scope) == 1:
+                    attachment_dict["company_id"] = next(iter(scope))
+
         attachment = Attachment(**attachment_dict)
         self.db.add(attachment)
         self.db.commit()

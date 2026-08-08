@@ -2183,6 +2183,7 @@ class ProductAttachmentService:
         product_ids: Optional[list[str]] = None,
         attachment_ids: Optional[list[str]] = None,
         attachment_type_ids: Optional[list[str]] = None,
+        certificate_ids: Optional[list[str]] = None,
         query: Optional[str] = None,
     ):
         """List product attachments with filtering and pagination.
@@ -2259,6 +2260,27 @@ class ProductAttachmentService:
                 )
             )
 
+        if certificate_ids:
+            # "Which products does this certificate cover, and with which file?"
+            # CURRENT revision only, matching REV-3 - the register deletes the
+            # projection rows of a superseded revision precisely so a replaced
+            # document is never served. Restating it here means a stale row left
+            # by a bug still cannot leak out through this filter.
+            # The subquery joins Certificate, so company scope applies
+            # (certificate_revisions carries no company_id of its own).
+            from app.models.certificate import Certificate, CertificateRevision
+
+            cert_attachment_ids = (
+                self.db.query(CertificateRevision.attachment_id)
+                .join(Certificate, Certificate.id == CertificateRevision.certificate_id)
+                .filter(
+                    Certificate.id.in_(certificate_ids),
+                    CertificateRevision.is_current.is_(True),
+                    CertificateRevision.attachment_id.isnot(None),
+                )
+            )
+            q = q.filter(ProductAttachment.attachment_id.in_(cert_attachment_ids))
+
         if user_type:
             q = q.filter(ProductAttachment.attachment.has(Attachment.access_levels.contains([user_type])))
         if contact_access_codes is not None:
@@ -2313,7 +2335,7 @@ class ProductAttachmentService:
         product_attachments = q.offset(offset).limit(limit).all()
 
         payload = {
-            "data": product_attachments,
+            "data": self._stamp_certificate_validity(product_attachments),
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
@@ -2339,6 +2361,37 @@ class ProductAttachmentService:
                 payload["relaxed_axis"] = "entity"
 
         return attach_echo(payload, entity_buckets)
+
+    def _stamp_certificate_validity(self, rows: list) -> list:
+        """Attach ``.certificate`` (derived validity) to each product-attachment row.
+
+        One extra query per page, never per row. A row whose file is not a filed
+        certificate gets ``None``, so the attribute is always set and brochures /
+        spec sheets read exactly as they did before.
+
+        Best-effort: the certificate register must never be able to turn a
+        working attachment listing into a 500.
+        """
+        if not rows:
+            return rows
+        try:
+            from app.services.certificate_query_service import (
+                certificate_validity_for_attachments,
+            )
+
+            by_attachment = certificate_validity_for_attachments(
+                self.db, [str(r.attachment_id) for r in rows if r.attachment_id]
+            )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "certificate validity lookup failed for attachment listing",
+                exc_info=True,
+            )
+            by_attachment = {}
+        for r in rows:
+            r.certificate = by_attachment.get(str(r.attachment_id))
+        return rows
 
     def _attachment_entity_alternatives(
         self,
@@ -2394,6 +2447,7 @@ class ProductAttachmentService:
         ).filter(ProductAttachment.id == product_attachment_id).first()
         if not product_attachment:
             raise handle_not_found("Product Attachment", product_attachment_id)
+        self._stamp_certificate_validity([product_attachment])
         return product_attachment
     
     def create_product_attachment(self, product_attachment_data: ProductAttachmentCreate, created_by: Optional[str] = None):
@@ -2511,4 +2565,4 @@ class ProductAttachmentService:
                         )
                     )
                 )
-        return q.all()
+        return self._stamp_certificate_validity(q.all())

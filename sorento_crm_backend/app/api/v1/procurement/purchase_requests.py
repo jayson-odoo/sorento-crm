@@ -319,10 +319,14 @@ async def update_purchase_request_and_reply(
 @router.post("/{request_id}/set-pending-approval", response_model=PurchaseRequestHeaderResponse)
 async def set_pending_approval(
     request_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission_with_api_key("procurement.purchase_requests.send_for_approval")),
     db: Session = Depends(get_db),
 ):
-    """Set request to pending approval (e.g. from draft or to resend after approved). Clears previous approval data."""
+    """Set request to pending approval (e.g. from draft or to resend after approved). Clears previous approval data.
+
+    Triage action, so it requires `send_for_approval` - the same permission as
+    Reject-at-submitted. It was previously open to any authenticated user, which meant
+    anyone who could view a request could push it into the approval queue."""
     import logging
     logger = logging.getLogger(__name__)
     assert_can_act_on_form(db, request_id, current_user)
@@ -390,7 +394,7 @@ class ApprovalDecisionRequest(BaseModel):
 async def decide_purchase_request_approval(
     request_id: str,
     body: ApprovalDecisionRequest,
-    current_user: dict = Depends(require_permission_with_api_key("procurement.purchase_requests.send_for_approval")),
+    current_user: dict = Depends(require_permission_with_api_key("procurement.purchase_requests.approve")),
     db: Session = Depends(get_db),
 ):
     """Approve or reject a PR / sponsorship form IN-SYSTEM (the form's Approve/Reject
@@ -779,3 +783,61 @@ router.include_router(
         context_builder=_build_purchase_request_chat_context,
     )
 )
+
+
+@router.post("/{request_id}/export/pdf")
+def export_purchase_request_pdf(
+    request_id: str,
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Queue an async PDF export of the printable Purchase Request / Sponsorship Form.
+
+    Exists because the only export was Excel, where a long delivery address
+    stretched a cell to an unusable width when printed. Creates a UserDownload row
+    and enqueues generation; the result appears in the My Downloads drawer.
+    Decoupled from the request path so a slow/failed render (attachments are
+    downloaded and embedded) never blocks the caller. Mirrors
+    POST /procurement/stock-inquiries/{id}/export/pdf.
+    """
+    from app.services.download_service import DownloadService
+    from app.services.queue_service import enqueue_job
+    from app.tasks.export_tasks import generate_purchase_request_pdf
+
+    try:
+        validate_uuid_path(request_id, resource="Request")
+        service = PurchaseRequestService(db)
+        header = service.get_request(request_id, contact_id=None, space_id=None)  # 404 if missing
+
+        is_sponsorship = (getattr(header, "request_type", None) or "") == "sponsorship_form"
+        stem = "sponsorship-form" if is_sponsorship else "purchase-request"
+        number = getattr(header, "request_number", None) or request_id
+
+        download = DownloadService(db).create(
+            user_id=str(current_user["id"]),
+            kind="purchase_request_pdf",
+            source_entity_type="purchase_request",
+            source_entity_id=str(request_id),
+            filename=f"{stem}-{number}.pdf",
+        )
+        try:
+            enqueue_job(
+                generate_purchase_request_pdf,
+                str(download.id),
+                str(request_id),
+                str(current_user["id"]),
+                queue_name="imports",
+                job_timeout=600,
+            )
+        except Exception as e:
+            # Enqueue failed (e.g. Redis down): mark the row failed so the drawer shows it.
+            DownloadService(db).mark_failed(
+                str(download.id), f"Could not queue PDF generation: {e}"
+            )
+            raise handle_internal_error(f"Could not queue PDF generation: {e}")
+
+        return {"download_id": str(download.id), "status": "queued"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))

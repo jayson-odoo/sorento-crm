@@ -2004,7 +2004,7 @@ class OrderService:
         # Resolve "new" and "delivered" status ids (case-insensitive match to status_code)
         status_rows = (
             self.db.query(OrderStatus)
-            .filter(func.lower(OrderStatus.status_code).in_(["new", "delivered"]))
+            .filter(func.lower(OrderStatus.status_code).in_(["new", "delivered", "completed"]))
             .all()
         )
         status_by_code_lower = {str(s.status_code).lower(): s.id for s in status_rows}
@@ -2299,8 +2299,19 @@ class OrderService:
                     for key, value in mapped.items():
                         if key != "order_number":
                             setattr(existing_order, key, value)
-                    # Orders without actual delivery date should be "new"; Tracking will set "delivered" where applicable
-                    if new_status_id:
+                    # Orders without actual delivery date should be "new"; Tracking will set
+                    # "delivered" where applicable. But the Master sheet re-imports the FULL
+                    # order history on every run while the Overall Tracking tab is only a
+                    # partial/rolling window (real import_logs: master_rows routinely far
+                    # exceeds tracking_rows) — resetting unconditionally wiped out a delivery
+                    # already recorded by an earlier run just because this run's Tracking tab
+                    # doesn't happen to include the order again. Only reset when the order
+                    # doesn't already carry a real delivery.
+                    already_delivered = (
+                        existing_order.actual_delivery_date is not None
+                        and str(existing_order.order_status_id or "") in delivered_status_ids
+                    )
+                    if new_status_id and not already_delivered:
                         existing_order.order_status_id = new_status_id
                     existing_order.updated_by = user_id
                     updated += 1

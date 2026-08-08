@@ -146,6 +146,18 @@ def _linked_entities_from_db(
                 matched_by="manual_or_n8n",
             )
         )
+    # Without this a certificate PDF reads as "unlinked" in the upload drawer,
+    # even though filing it created the register row - which is the whole point
+    # of that upload.
+    for c in groups.get("linked_certificates") or []:
+        out.append(
+            LinkedEntity(
+                entity_type="certificate",
+                entity_id=str(c.get("id", "")),
+                display_name=str(c.get("name") or c.get("id", "") or "certificate"),
+                matched_by="manual_or_n8n",
+            )
+        )
     return out
 
 

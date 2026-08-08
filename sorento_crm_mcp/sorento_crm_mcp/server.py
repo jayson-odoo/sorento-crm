@@ -34,7 +34,10 @@ TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {}
 # Without a narrowing key, short-circuit to empty page (and let the agent know
 # via tool description that the param is required).
 TOOL_REQUIRED_NARROWING_FILTERS: dict[str, tuple[str, ...]] = {
-    "crm_master_product_attachments_list": ("product_ids", "attachment_ids"),
+    # certificate_ids is a narrowing key in its own right. Without it listed
+    # here, "the files for this certificate" short-circuits to an empty page
+    # even though the filter itself works - a silent wrong answer.
+    "crm_master_product_attachments_list": ("product_ids", "attachment_ids", "certificate_ids"),
     "crm_marketing_promotion_products_list": ("promotion_ids", "product_ids"),
     "crm_marketing_promotion_attachments_list": ("promotion_ids", "attachment_ids"),
     "crm_order_management_orders_by_product_list": ("product_ids",),

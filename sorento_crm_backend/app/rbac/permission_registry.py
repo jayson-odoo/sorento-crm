@@ -135,6 +135,7 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "product_categories", "Product C
 PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "lookup_sets", "Lookup Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "units_of_measure", "Units of Measure"))
+PERMISSION_REGISTRY.extend(_with_import_export("master_data", "certificates", "Certificates"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_root_causes", "Complaint Root Causes"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_resolutions", "Complaint Resolutions"))
 
@@ -163,7 +164,13 @@ PERMISSION_REGISTRY.extend([
 PERMISSION_REGISTRY.extend(_crud("procurement", "purchase_requests", "Purchase Requests"))
 PERMISSION_REGISTRY.extend(_crud("procurement", "sponsorship_forms", "Sponsorship Forms"))
 PERMISSION_REGISTRY.extend([
-    {"slug": "procurement.purchase_requests.send_for_approval", "name": "Send purchase request / sponsorship form for approval", "description": "Set request to pending approval and send approval link. Also grants Reject before sending for approval (mandatory reason)."},
+    # TRIAGE (before a decision exists): move a submitted request to pending approval,
+    # or reject it outright. Deliberately separate from `.approve` so a sales admin can
+    # triage without gaining the approver's decision on requests already pending.
+    {"slug": "procurement.purchase_requests.send_for_approval", "name": "Send purchase request / sponsorship form for approval", "description": "Triage a SUBMITTED request: change it to pending approval, or reject it before approval (mandatory reason). Does NOT grant the in-system Approve/Reject decision once a request is pending - that is procurement.purchase_requests.approve."},
+    # DECISION (once pending approval): the approver's in-system Approve / Reject, which
+    # is identical in effect to the emailed approval link.
+    {"slug": "procurement.purchase_requests.approve", "name": "Approve / reject purchase request / sponsorship form", "description": "Approver decision on a request that is PENDING APPROVAL: the in-system Approve / Reject buttons, identical in effect to the emailed approval link (same status transition, notifications, form-SLA event and approval automation)."},
     {"slug": "procurement.purchase_requests.process", "name": "Process purchase request / sponsorship form (CS)", "description": "Customer-service action: mark an approved purchase request or sponsorship form as processed by CS (status='processed_by_cs'; closes the customer-service SLA stage)."},
     {"slug": "procurement.purchase_requests.close", "name": "Close purchase request / sponsorship form (CS)", "description": "Customer-service action: close an approved purchase request or sponsorship form that can't be fulfilled (status='closed'; closes the customer-service SLA stage). Separate from Process so it can be granted independently."},
     # PR + SF share the router AND the detail component, so they share one void slug

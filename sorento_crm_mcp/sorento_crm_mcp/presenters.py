@@ -9,7 +9,7 @@ generic renderer instead of per-tool field-mapping code:
       "intro": "Here are the orders I found.",
       "items": [
         {"title": "...", "fields": [{"label": "...", "value": "..."}],
-         "flags": {"discontinued": false, "expired": false,
+         "flags": {"discontinued": false, "expired": false, "expiring_soon": false,
                    "unallocated": false, "partially_allocated": false}}
       ],
       "attachments": [{"url","filename","mimeType","attachmentType"}],
@@ -44,6 +44,7 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_marketing_promotion_products_list",
         "crm_master_products_list",
         "crm_master_product_attachments_list",
+        "crm_certificates_list",
         "crm_resource_attachments_list",
         "crm_inventory_stock_balance_list",
         "crm_forms_management_forms_list",
@@ -61,6 +62,7 @@ _DEFAULT_INTRO = {
     "crm_marketing_promotion_products_list": "Here are the matching promotion products.",
     "crm_master_products_list": "Here are the matching products.",
     "crm_master_product_attachments_list": "Here are the product files I found.",
+    "crm_certificates_list": "Here are the certificates I found.",
     "crm_resource_attachments_list": "Here are the documents I found.",
     "crm_inventory_stock_balance_list": "Stock details found for the requested products.",
     "crm_forms_management_forms_list": "Here are the forms I found.",
@@ -77,6 +79,7 @@ _RESULT_TYPE = {
     "crm_marketing_promotion_products_list": "promotion_products",
     "crm_master_products_list": "products",
     "crm_master_product_attachments_list": "product_attachments",
+    "crm_certificates_list": "certificates",
     "crm_resource_attachments_list": "attachments",
     "crm_inventory_stock_balance_list": "stock",
     "crm_forms_management_forms_list": "forms",
@@ -180,6 +183,7 @@ class _Builder:
         *,
         discontinued=False,
         expired=False,
+        expiring_soon=False,
         unallocated=False,
         partially_allocated=False,
     ) -> None:
@@ -193,6 +197,10 @@ class _Builder:
                 "flags": {
                     "discontinued": bool(discontinued),
                     "expired": bool(expired),
+                    # Mutually exclusive with `expired` — a renewal deadline is
+                    # not a dead document, and collapsing the two would have the
+                    # consumer refuse to serve a certificate that is still valid.
+                    "expiring_soon": bool(expiring_soon),
                     "unallocated": bool(unallocated),
                     "partially_allocated": bool(partially_allocated),
                 },
@@ -471,6 +479,14 @@ def _product_attachments(rows: list[dict], b: _Builder) -> None:
     for r in rows:
         prod = r.get("product") or {}
         att = r.get("attachment") or {}
+        # Cert-bearing rows carry a nested `certificate{}`; every other row has
+        # no such key. Absent key = no Valid Until field and `expired` stays
+        # false, so the 951 Technical Specifications and all Product Photos rows
+        # render exactly as before.
+        cert = r.get("certificate") or {}
+        if not isinstance(cert, dict):
+            cert = {}
+        state = cert.get("validity_state")
         b.item(
             prod.get("product_code"),
             [
@@ -480,10 +496,109 @@ def _product_attachments(rows: list[dict], b: _Builder) -> None:
                 ("Dimensions", _dims(prod)),
                 ("Attachment Type", _att_type(att)),
                 ("File Name", att.get("original_filename") or att.get("stored_filename")),
+                ("Certificate Number", cert.get("certificate_number")),
+                ("Valid Until", cert.get("valid_until")),
+                # Says which of the three states this file is in, so the consumer
+                # never has to compare Valid Until against today itself.
+                ("Validity", _validity_label(state)),
             ],
             discontinued=prod.get("is_discontinued") is True,
+            # Reuses the envelope's EXISTING flags.expired (same mechanism as
+            # _promotions), so the n8n renderer needs no update to say "found
+            # but expired" for a lapsed certificate.
+            expired=cert.get("is_expired") is True,
+            expiring_soon=state == "expiring_soon",
         )
         b.attach(att)
+
+
+def _certificate_file(row: dict) -> dict | None:
+    """The CURRENT revision's file for one certificate row, or None.
+
+    Superseded revisions are never returned (MCP-8): only the revision the row
+    points at is a candidate. Shapes accepted, in order - a nested
+    `current_revision.attachment`, a top-level `attachment`, the `is_current`
+    entry of an expanded `revisions[]`, and finally the signed-url pair the
+    backend adds for `resolve_signed_urls=true`. Returns None when nothing
+    usable is present so the caller emits an EMPTY attachments array rather than
+    a null or broken url entry (MCP-11).
+    """
+    candidates: list[Any] = []
+    current = row.get("current_revision")
+    if isinstance(current, dict):
+        candidates.append(current.get("attachment"))
+    candidates.append(row.get("attachment"))
+    for revision in row.get("revisions") or []:
+        if isinstance(revision, dict) and revision.get("is_current") is True:
+            candidates.append(revision.get("attachment"))
+    for candidate in candidates:
+        if isinstance(candidate, dict) and _filled(
+            candidate.get("file_path") or candidate.get("url")
+        ):
+            return candidate
+
+    url = row.get("download_url") or row.get("preview_url")
+    if _filled(url):
+        return {
+            "url": url,
+            "filename": row.get("attachment_filename")
+            or row.get("original_filename")
+            or row.get("stored_filename"),
+            "mime_type": row.get("mime_type"),
+            "attachment_type": row.get("attachment_type_name"),
+        }
+    return None
+
+
+# The backend's derived validity codes, in the words a person reads. An
+# unmapped code falls through de-slugged rather than being dropped — a state the
+# envelope cannot name is still better than silence about validity.
+_VALIDITY_LABELS = {
+    "valid": "Valid",
+    "expiring_soon": "Expiring soon",
+    "expired": "Expired",
+    "not_yet_valid": "Not yet valid",
+    "unknown": "Unknown",
+}
+
+
+def _validity_label(state: Any) -> str | None:
+    code = str(state or "").strip()
+    if not code:
+        return None
+    known = _VALIDITY_LABELS.get(code)
+    if known:
+        return known
+    words = code.replace("_", " ").replace("-", " ").strip()
+    return words[:1].upper() + words[1:] if words else None
+
+
+def _certificates(rows: list[dict], b: _Builder) -> None:
+    for c in rows:
+        number = c.get("certificate_number")
+        scheme = c.get("scheme")
+        title = " ".join(str(x) for x in (scheme, number) if _filled(x)) or number
+        state = c.get("validity_state")
+        b.item(
+            title,
+            [
+                ("Scheme", scheme),
+                ("Certificate Number", number),
+                ("Certifying Body", c.get("certifying_body")),
+                ("Valid Until", c.get("valid_until")),
+                # Humanized: the raw code (`expiring_soon`) leaked into rendered
+                # WhatsApp/email output.
+                ("Validity", _validity_label(state)),
+                ("Covered Products", c.get("covered_product_count")),
+            ],
+            # Same flags the promotions presenter sets, so an expired certificate
+            # is reported as found-but-expired rather than served as live.
+            expired=c.get("is_expired") is True,
+            expiring_soon=state == "expiring_soon",
+        )
+        current_file = _certificate_file(c)
+        if current_file is not None:
+            b.attach(current_file)
 
 
 def _resource_attachments(rows: list[dict], b: _Builder) -> None:
@@ -605,6 +720,7 @@ _BUILDERS = {
     "crm_marketing_promotion_products_list": _promotion_products,
     "crm_master_products_list": _products,
     "crm_master_product_attachments_list": _product_attachments,
+    "crm_certificates_list": _certificates,
     "crm_resource_attachments_list": _resource_attachments,
     "crm_inventory_stock_balance_list": _stock,
     "crm_forms_management_forms_list": _forms,

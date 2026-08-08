@@ -184,6 +184,14 @@ scheduler = None
 async def startup_event():
     """Startup event: initialize scheduler and audit listeners."""
     global scheduler
+    # Build the storage client once at boot instead of letting the cost land on
+    # the first request this worker happens to serve (see storage_router).
+    try:
+        from app.services.storage_router import warm_backends
+
+        warm_backends()
+    except Exception as e:  # noqa: BLE001 — never block boot on storage config
+        logging.warning("Storage backend warm-up failed: %s", e)
     try:
         from app.services.audit_service import register_audit_listeners
         register_audit_listeners()
