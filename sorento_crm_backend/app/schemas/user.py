@@ -378,6 +378,25 @@ class AgentTeamsUpdate(BaseModel):
     assignments: list[AgentTeamAssignment] | None = None
 
 
+class AgentFieldAccessEntry(BaseModel):
+    """One tick on the "which fields may this agent reveal" checklist."""
+
+    resource: str
+    field_key: str
+    #: `null` with a `contact_id` REMOVES the override, so that contact goes back
+    #: to following the agent. Needed because "explicitly denied" and "inherits a
+    #: denial" are different intentions and an admin must be able to undo the
+    #: first without pretending it was the second.
+    is_allowed: Optional[bool] = True
+    #: Set to write a per-contact exception instead of the agent-wide default.
+    #: Everyone holding the agent follows the default unless overridden here.
+    contact_id: Optional[str] = None
+
+
+class AgentFieldAccessUpdate(BaseModel):
+    fields: list[AgentFieldAccessEntry] | None = None
+
+
 # Contact access type catalog (admin CRUD)
 class ContactAccessTypeBase(BaseModel):
     code: str

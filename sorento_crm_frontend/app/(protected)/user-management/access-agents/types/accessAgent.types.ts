@@ -29,6 +29,10 @@ export interface ContactAgentAccess {
   respond_contact_phone: string;
   respond_contact_name?: string | null;
   agent_id: string;
+  // Denormalized by the API for display; the grid has always rendered these
+  // columns, the type simply never listed them.
+  agent_code?: string | null;
+  agent_name?: string | null;
   is_allowed: boolean;
   valid_from?: Date | null;
   valid_to?: Date | null;

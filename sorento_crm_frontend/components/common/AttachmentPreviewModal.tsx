@@ -12,6 +12,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -190,9 +191,12 @@ export default function AttachmentPreviewModal({
             <DialogTitle className="truncate text-base" title={activeItem?.name}>
               {activeItem?.name}
             </DialogTitle>
-            <p className="text-xs text-muted-foreground">
+            {/* DialogDescription, not a bare <p>: Radix warns (and screen readers
+                get nothing) when DialogContent has no aria-describedby, and the
+                position counter is the description this dialog already had. */}
+            <DialogDescription className="text-xs text-muted-foreground">
               {current + 1} / {items.length}
-            </p>
+            </DialogDescription>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {activeIsImage && (

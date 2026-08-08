@@ -316,15 +316,24 @@ CATALOG: tuple[ToolSpec, ...] = (
             "crm_resource_attachments_current_stock_list.\n\n"
             "FILTER BY UUID: `attachment_ids` (canonical attachment UUIDs csv / JSON / repeated), "
             "`directory_id`, `attachment_type_id`, `uploaded_by` (all canonical UUIDs). "
+            "FILTER BY NAME: `attachment_type_code` takes the document class by name "
+            "(e.g. \"Container Status\", \"catalogue\"), case-insensitive - use it when you know "
+            "WHAT KIND of document is wanted but not its UUID. "
             "Set resolve_signed_urls=true to include signed preview/download URLs in the response.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
-            "results to that contact's company/companies; omit both for all-company results."
+            "results to that contact's company/companies; omit both for all-company results.\n\n"
+            "DOCUMENT TYPES: every caller gets the dealer-facing baseline. Passing `contact_id` + "
+            "`space_id` ADDITIONALLY returns document types granted to that contact specifically "
+            "(e.g. the Container Status workbook for office staff). Grants only widen - a contact "
+            "with none sees exactly the baseline, so always pass both when answering on behalf of "
+            "someone."
         ),
         "/api/v1/resource-management/attachments",
         (),
         (
             "page", "limit", "attachment_ids", "sort", "dir",
             "directory_id", "attachment_type_id", "uploaded_by",
+            "attachment_type_code",
             "uploaded_at_from", "uploaded_at_to", "is_deleted", "resolve_signed_urls",
             "contact_id", "space_id",
         ),
@@ -575,7 +584,16 @@ CATALOG: tuple[ToolSpec, ...] = (
             "SPO numbers, or internal IDs. REQUIRED: at least ONE narrowing filter (product_ids / "
             "shipment_ids / supplier_ids / eta_from / eta_to) or the tool returns an empty page.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
-            "results to that contact's company/companies; omit both for all-company results."
+            "results to that contact's company/companies; omit both for all-company results.\n\n"
+            "CLEARANCE DATES (eta_delay_date, inspection_date, approval_date, gatepass_date, "
+            "loading/etc/etd, liner_code, forwarders, consignee, free_days_available, coa_permit_no) "
+            "are ENTITLEMENT-GATED server-side, FIELD BY FIELD. They appear only when the caller may "
+            "see them: for a contact question, pass `contact_id`; the contact must hold the "
+            "`incoming_stock_enquiries` agent AND have that specific field allowed on it. Holding "
+            "the agent does NOT mean every field. When not permitted the keys are ABSENT from the "
+            "response - absent means 'not permitted', it does NOT mean 'not reached yet'. Never tell "
+            "a user a date is unknown or pending because a key is missing; say you cannot share it. "
+            "A `field_access.denied` block lists what was withheld and why."
         ),
         "/api/v1/incoming-stock/list",
         (),

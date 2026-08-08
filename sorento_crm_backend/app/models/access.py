@@ -296,6 +296,108 @@ class ContactAgentAccess(Base):
     )
 
 
+class ContactAttachmentType(Base):
+    """Document types a contact may retrieve, beyond the global baseline.
+
+    `attachment_types.is_direct_access` is one boolean for everyone: a type is
+    dealer-downloadable or nobody can reach it. This adds the missing axis, so the
+    Container Status workbook can go to the office without going to dealers.
+
+    Grants only ADD - the baseline is never subtracted from here, so introducing
+    this table cannot take a document away from anyone.
+    """
+    __tablename__ = "contact_attachment_types"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="CASCADE"), nullable=False
+    )
+    attachment_type_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("attachment_types.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    created_by = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("contact_id", "attachment_type_id", name="uq_contact_attachment_type"),
+        Index("ix_contact_attachment_types_contact", "contact_id"),
+    )
+
+
+class AgentFieldAccess(Base):
+    """Which fields an agent may reveal, and to whom.
+
+    `ContactAgentAccess` says WHICH FUNCTIONS a contact may use. This says WHICH
+    FIELDS each of those functions may reveal - one level finer, so a sensitive
+    column can be added to an existing answer without minting a whole new agent
+    and re-granting it to the 53 contacts who already hold the function.
+
+    `contact_id` NULL = the agent-wide default, applying to everyone holding the
+    agent. A row WITH a contact overrides that default for that one contact, in
+    either direction (`is_allowed` true grants an exception, false revokes one).
+
+    `agent_code` FKs to `access_agents.code` with ON UPDATE CASCADE rather than to
+    the id: the code is what the resolver, the seeds and the docs all name, and a
+    rename should carry the rows with it.
+
+    Only fields registered in `app.services.field_access.GATED_FIELDS` are
+    consulted; a row for anything else is inert. Absence of a row means DENY.
+    """
+    __tablename__ = "agent_field_access"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    agent_code = Column(
+        Text,
+        ForeignKey("access_agents.code", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+    )
+    #: Namespace for the field keys, so `eta_date` on incoming stock and a future
+    #: `eta_date` on something else never collide.
+    resource = Column(Text, nullable=False)
+    field_key = Column(Text, nullable=False)
+    #: NULL = applies to every contact holding the agent.
+    contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="CASCADE"), nullable=True
+    )
+    is_allowed = Column(Boolean, nullable=False, server_default=text("true"))
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    created_by = Column(Text, nullable=True)
+    #: Who last changed the tick. Separate from `created_by` because every row is
+    #: pre-seeded denied by the bootstrap, so the insert never has a human behind
+    #: it - `created_by` alone would be NULL on every grant anyone ever makes.
+    updated_by = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_agent_field_access_lookup", "resource", "agent_code"),
+        Index("ix_agent_field_access_contact_id", "contact_id"),
+        # Two partial uniques, not one constraint: in Postgres NULLs are distinct,
+        # so a plain UNIQUE over the four columns would happily allow a second
+        # agent-wide row for the same field.
+        Index(
+            "uq_agent_field_access_default",
+            "agent_code",
+            "resource",
+            "field_key",
+            unique=True,
+            postgresql_where=text("contact_id IS NULL"),
+        ),
+        Index(
+            "uq_agent_field_access_override",
+            "agent_code",
+            "resource",
+            "field_key",
+            "contact_id",
+            unique=True,
+            postgresql_where=text("contact_id IS NOT NULL"),
+        ),
+    )
+
+
 class Team(Base):
     """Team of users for round-robin assignment."""
     __tablename__ = "teams"

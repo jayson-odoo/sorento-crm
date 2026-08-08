@@ -242,6 +242,14 @@ async def get_attachments(
     link_status: Optional[str] = Query(None, description="Filter by linkage: 'linked' (referenced by any product/promotion/form/packing-list/field link) or 'unlinked' (orphans)."),
     storage_status: Optional[str] = Query(None, description="Filter by storage accessibility audit: 'accessible', 'missing' (broken/lost object), or 'unchecked'."),
     direct_access_only: bool = Query(False, description="When true, restrict to attachment types flagged is_direct_access (dealer-downloadable documents)."),
+    contact_id: Optional[str] = Query(
+        None,
+        description="Respond contact asking (internal id or respond_io_id). With direct_access_only, WIDENS the visible types by this contact's per-contact grants. Never narrows.",
+    ),
+    space_id: Optional[str] = Query(
+        None,
+        description="Respond.io workspace space_id. Disambiguates contact_id when the same respond_io_id exists in two workspaces.",
+    ),
     resolve_signed_urls: bool = Query(False, description="When false, return stored file_path without CloudFront signing."),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -250,6 +258,8 @@ async def get_attachments(
     try:
         service = AttachmentService(db)
         from app.services.entity_filter_helpers import normalize_entities_query_param
+        from app.services.contact_attachment_access import visible_type_ids
+
         result = service.list_attachments(
             page=page,
             limit=limit,
@@ -272,6 +282,7 @@ async def get_attachments(
             entities=normalize_entities_query_param(entities),
             attachment_ids=parse_uuid_list(attachment_ids, param_name="attachment_ids"),
             direct_access_only=direct_access_only,
+            visible_attachment_type_ids=visible_type_ids(db, contact_id, space_id),
         )
         # Enrich each attachment with uploaded_by_user for display.
         # Batch-resolve users in ONE query to avoid N+1 (was a per-row SELECT).

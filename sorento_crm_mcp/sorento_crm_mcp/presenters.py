@@ -95,6 +95,11 @@ _PASSTHROUGH_KEYS = (
     "fallback_used",
     "alternatives",
     "relaxed_axis",
+    # Which fields were withheld from this caller and why. Without it, `render`
+    # drops a denied field silently and the agent cannot tell "you may not see
+    # this" from "it has not happened yet" - so it guesses, and it guesses the
+    # second one out loud.
+    "field_access",
 )
 
 
@@ -305,6 +310,41 @@ def _orders_by_product(rows: list[dict], b: _Builder) -> None:
         )
 
 
+#: Clearance fields, in the order a person narrates a container's journey, paired
+#: with the label to render. Every one is gated server-side per contact, so the key
+#: is simply ABSENT when this caller may not see it - and `b.item` drops empty
+#: pairs, so a denied field renders as nothing rather than as a blank row.
+#:
+#: These sit AFTER the identity/quantity pairs above them, which are never gated:
+#: product, container, shipment and quantity are the answer itself, and a contact
+#: who may not see a gatepass date must still be told what is arriving.
+#:
+#: ETA is the exception that proves the rule - it IS gateable (an admin can revoke
+#: it) but ships allowed, so it lives in this list rather than the identity block.
+_CLEARANCE_PAIRS = (
+    ("estimated_arrival_date", "ETA"),
+    ("eta_delay_date", "ETA Delay"),
+    ("inspection_date", "CIDB Inspection"),
+    ("approval_date", "CIDB Approval"),
+    ("gatepass_date", "Gatepass"),
+    ("warehouse_arrival_date", "Warehouse Arrival"),
+    ("informed_collection_date", "Collection Informed"),
+    ("collection_date", "Collection"),
+    ("loading_date", "Loading"),
+    ("etc_date", "ETC"),
+    ("etd_date", "ETD"),
+    ("liner_code", "Liner"),
+    ("china_forwarder", "China Forwarder"),
+    ("malaysia_forwarder", "Malaysia Forwarder"),
+    ("consignee", "Consignee"),
+    ("delivery_warehouse", "Delivery Warehouse"),
+    ("free_days_available", "Free Days Available"),
+    ("loc", "Location"),
+    ("stacked", "Stacked"),
+    ("coa_permit_no", "COA Permit No."),
+)
+
+
 def _incoming_list(rows: list[dict], b: _Builder) -> None:
     for s in rows:
         for l in s.get("lines") or []:
@@ -316,11 +356,11 @@ def _incoming_list(rows: list[dict], b: _Builder) -> None:
                     ("Product Name", _distinct_name(l.get("product_code"), l.get("product_name"))),
                     ("Shipment", s.get("shipment_number")),
                     ("Container", s.get("shipping_container_number")),
-                    ("Estimated Arrival Date", s.get("estimated_arrival_date")),
                     ("Batch", l.get("batch_number")),
                     ("Incoming Quantity", l.get("remaining_incoming_quantity")),
                     ("Warehouse Allocations", _wh_alloc(l.get("warehouse_allocations"))),
                     ("Unallocated Quantity", gap),
+                    *((label, s.get(key)) for key, label in _CLEARANCE_PAIRS),
                 ],
                 unallocated=unallocated,
                 partially_allocated=partial,
@@ -566,7 +606,17 @@ def _resource_attachments(rows: list[dict], b: _Builder) -> None:
     # plumbing, not meaningful to the end user. Just the file name + the file.
     for att in rows:
         name = att.get("original_filename") or att.get("stored_filename")
-        b.item(name, [("File Name", name)])
+        # Upload date, because a document class that is RE-uploaded keeps its name:
+        # six revisions of "Container Status 2026.xlsx" render as six identical
+        # items, and the agent cannot say which one is current. Rows already
+        # arrive newest-first, so the date turns that order into something the
+        # agent can state out loud.
+        uploaded = att.get("uploaded_at")
+        day = str(uploaded)[:10] if _filled(uploaded) else None
+        # The id is normally UI noise, but this tool is how a human debugging an
+        # answer finds the row again: identical filenames make every other field
+        # useless for that, and without it there is nothing to quote.
+        b.item(name, [("File Name", name), ("Uploaded", day), ("File ID", att.get("id"))])
         # Strip the type so the delivered attachment carries no "Direct Access" label.
         no_type = {k: v for k, v in att.items() if k != "attachment_type"} if isinstance(att, dict) else att
         b.attach(no_type)
@@ -685,7 +735,11 @@ def _latest_updated(node: Any, depth: int = 0) -> str | None:
     if depth > 6 or not isinstance(node, (dict, list)):
         return best
     if isinstance(node, dict):
-        for key in ("updated_at", "last_updated_at"):
+        # `uploaded_at` counts: an attachment is never edited in place, so the
+        # upload IS its last-updated moment. Without it every document answer
+        # reported `last_updated_at: null` and the agent could not say how fresh
+        # the file it just handed over actually is.
+        for key in ("updated_at", "last_updated_at", "uploaded_at"):
             v = node.get(key)
             if _filled(v) and (best is None or str(v) > best):
                 best = str(v)

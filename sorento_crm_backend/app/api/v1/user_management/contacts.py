@@ -25,6 +25,10 @@ class ContactCompaniesUpdateRequest(BaseModel):
     company_ids: list[str]
 
 
+class ContactAttachmentTypesUpdate(BaseModel):
+    attachment_type_ids: list[str]
+
+
 def _resolve_space_id(db: Session, contact_id: str) -> tuple[RespondContact, str]:
     """Look up contact and resolve its workspace's space_id.
 
@@ -498,6 +502,50 @@ async def set_contact_market_segments(
         return {
             "codes": MarketSegmentService(db).set_contact_segments(contact_id, payload.codes)
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{contact_id}/attachment-types")
+async def get_contact_attachment_types(
+    contact_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Document types this contact may retrieve, on top of the direct-access baseline.
+
+    Returns the whole catalog with a `granted` flag so the dialog can show what is
+    grantable, not only what is granted.
+    """
+    try:
+        from app.services.contact_attachment_access import list_grants
+
+        return list_grants(db, contact_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.put("/{contact_id}/attachment-types")
+async def set_contact_attachment_types(
+    contact_id: str,
+    payload: ContactAttachmentTypesUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Replace this contact's attachment-type grants (empty = baseline only)."""
+    try:
+        from app.services.contact_attachment_access import set_grants
+
+        return set_grants(
+            db,
+            contact_id,
+            payload.attachment_type_ids,
+            actor=str(current_user.get("id") or current_user.get("sub") or ""),
+        )
     except HTTPException:
         raise
     except Exception as e:
