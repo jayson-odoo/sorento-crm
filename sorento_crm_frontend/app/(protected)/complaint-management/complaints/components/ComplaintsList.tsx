@@ -35,6 +35,7 @@ import { getUsersSelect } from '@/services/userSelectService';
 import { useComplaints } from '../hooks/useComplaints';
 import { complaintStatusPillClass, complaintStatusLabel } from '@/lib/complaint-status';
 import type { Complaint } from '../types/complaint.types';
+import { reportedByLabel } from '../lib/complaintAudience';
 import ComplaintBulkDeleteDialog from './ComplaintBulkDeleteDialog';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -186,6 +187,18 @@ export default function ComplaintsList() {
         cell: ({ row }) => row.original.customer_name || '-',
         size: 200,
         meta: { headerTitle: 'Customer Name', skeleton: <Skeleton className="h-4 w-32" /> },
+      },
+      {
+        // Retail and project cases sit in one list, because they are one entity handled
+        // by one team. Without this column they are indistinguishable until you open one:
+        // a retail row just looks like a project row with several empty cells.
+        accessorKey: 'reported_by_role',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Reported By" column={column} />
+        ),
+        cell: ({ row }) => reportedByLabel(row.original.reported_by_role) || '-',
+        size: 130,
+        meta: { headerTitle: 'Reported By', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         accessorKey: 'product_code',

@@ -113,6 +113,19 @@ class ComplaintProductLineBase(BaseModel):
 class ComplaintProductLineResponse(ComplaintProductLineBase):
     id: Optional[str] = None
     sort_order: Optional[int] = None
+    # The consumer half of a line. A retail complaint arrives as words on a phone, so
+    # `product_code` is frequently a guess and `claimed_text` is the only verbatim
+    # record of what the person actually said. Names, never ids: a CS agent reading
+    # this screen cannot act on a UUID (see the cursor rules).
+    claimed_text: Optional[str] = None
+    fault_description: Optional[str] = None
+    defect_type_name: Optional[str] = None
+    kind_name: Optional[str] = None
+    product_name: Optional[str] = None
+    # The purchase this line's cover is computed from (AC-L16). Absent on most lines:
+    # the complaint routinely arrives before any receipt does.
+    purchase_number: Optional[str] = None
+    purchase_date: Optional[date] = None
 
     class Config:
         from_attributes = True
@@ -251,6 +264,36 @@ class ComplaintResponse(ComplaintBase):
     resolution_notified_at: Optional[datetime] = None
     attachments: Optional[list[ComplaintAttachmentResponse]] = []
     product_lines: Optional[list[ComplaintProductLineResponse]] = []
+
+    # --- Who reported it, and where the fault is -----------------------------
+    #
+    # These columns have existed on `complaints` since the after-sales S1 slice, and
+    # the serializer has always put them in its dict - this response model simply never
+    # declared them, so every one was dropped on the way out. The effect was a retail
+    # complaint that rendered as a page of dashes: no site address, no pin, and a
+    # Products table that fell back to splitting a CSV column the consumer journey
+    # never writes.
+    #
+    # `reported_by_role` is the discriminator the detail screen branches on. A retail
+    # case and a project case are the same entity handled by the same team through the
+    # same status graph and the same SLA stages; what differs is which fields mean
+    # anything, and that is a rendering decision, not a storage one.
+    reported_by_role: Optional[str] = None
+    site_address: Optional[str] = None
+    site_address_line1: Optional[str] = None
+    site_address_line2: Optional[str] = None
+    site_postcode: Optional[str] = None
+    site_city: Optional[str] = None
+    site_state: Optional[str] = None
+    site_country: Optional[str] = None
+    site_contact_name: Optional[str] = None
+    site_contact_phone: Optional[str] = None
+    # Decimal, not float: the pin is what a technician navigates to and a float does
+    # not round-trip a coordinate copied between systems.
+    latitude: Optional[Decimal] = None
+    longitude: Optional[Decimal] = None
+    # The WhatsApp burst verbatim. What a human reads when the extraction is wrong.
+    intake_transcript: Optional[str] = None
 
     class Config:
         from_attributes = True

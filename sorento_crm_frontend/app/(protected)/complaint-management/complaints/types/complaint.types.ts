@@ -2,6 +2,17 @@ export interface ComplaintProductLine {
   product_code: string;
   quantity?: string | null;
   product_type?: string | null;
+  /** What the consumer actually said, verbatim. `product_code` on a retail line is
+   *  frequently a guess: `SRTWC8152` matches three real variants and resolves to none
+   *  of them, so this is the only thing an agent can act on when matching fails. */
+  claimed_text?: string | null;
+  /** Per line, not per complaint: two broken items in one visit are two faults. */
+  fault_description?: string | null;
+  defect_type_name?: string | null;
+  kind_name?: string | null;
+  product_name?: string | null;
+  purchase_number?: string | null;
+  purchase_date?: string | null;
 }
 
 export interface ComplaintAttachment {
@@ -72,6 +83,30 @@ export interface Complaint {
   print_count?: number | null;
   product_lines?: ComplaintProductLine[];
   attachments: ComplaintAttachment[];
+
+  /** Who reported the fault. One of end_user / dealer / salesperson / cs / technician,
+   *  or null on the live rows that predate it. The detail screen branches on this. */
+  reported_by_role?: string | null;
+  /** The Site: whatever was REPORTED, never the dealer's own address. A dealer's owner
+   *  reporting a fault in his own home carries a dealer binding and a residential Site
+   *  on the same row. `site_address` is the composed line every document prints; the
+   *  parts exist so a postcode can be corrected without re-parsing prose. */
+  site_address?: string | null;
+  site_address_line1?: string | null;
+  site_address_line2?: string | null;
+  site_postcode?: string | null;
+  site_city?: string | null;
+  site_state?: string | null;
+  site_country?: string | null;
+  site_contact_name?: string | null;
+  site_contact_phone?: string | null;
+  /** The pin a technician navigates to. Never reconciled against the address: the pin
+   *  is for navigation, the address for documents. */
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+  /** The WhatsApp intake burst verbatim, in the order sent. What a human reads when the
+   *  extraction is wrong. */
+  intake_transcript?: string | null;
 }
 
 export interface ComplaintFormData {

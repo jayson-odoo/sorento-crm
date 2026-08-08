@@ -13,6 +13,7 @@ import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_s
 import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tracking/components/ReassignDialog';
 import { useReassignSLATracking } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
 import ResponseAttachmentDropzone from './ResponseAttachmentDropzone';
+import { ComplaintFieldGrid } from './ComplaintFieldGrid';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { VoidBanner } from '@/components/common/VoidBanner';
 import { VoidDialog } from '@/components/common/VoidDialog';
@@ -989,122 +990,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           <CardTitle>Complaint Information</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <p className="text-sm text-muted-foreground">Delivery Order Number</p>
-              <p className="font-medium">{complaint.delivery_order_number || '-'}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Complaint Date</p>
-              <p className="font-medium">
-                {complaint.complaint_date
-                  ? formatDate(new Date(complaint.complaint_date))
-                  : '-'}
-              </p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Customer Type</p>
-              <p className="font-medium">{complaint.customer_type || '-'}</p>
-            </div>
-            {complaint.customer_type_others && (
-              <div>
-                <p className="text-sm text-muted-foreground">Customer Type (Other)</p>
-                <p className="font-medium">{complaint.customer_type_others}</p>
-              </div>
-            )}
-            <div>
-              <p className="text-sm text-muted-foreground">Within Warranty</p>
-              <p className="font-medium">{complaint.within_warranty || '-'}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Defects Discovered</p>
-              <p className="font-medium">{complaint.defects_discovered || '-'}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Complaint Type</p>
-              {complaint.complaint_type ? (
-                <Badge variant="secondary">{complaint.complaint_type}</Badge>
-              ) : (
-                <p className="font-medium">-</p>
-              )}
-            </div>
-            <div className="md:col-span-2">
-              <p className="text-sm text-muted-foreground mb-1">Products</p>
-              {(() => {
-                const lines =
-                  complaint.product_lines && complaint.product_lines.length > 0
-                    ? complaint.product_lines
-                    : (complaint.product_code || '')
-                        .split(',')
-                        .map((c) => c.trim())
-                        .filter(Boolean)
-                        .map((code, i) => ({
-                          product_code: code,
-                          product_type: (complaint.product_type || '').split(',')[i]?.trim() || null,
-                          quantity: (complaint.quantity || '').split(',')[i]?.trim() || null,
-                        }));
-                if (lines.length === 0) {
-                  return <p className="font-medium">-</p>;
-                }
-                return (
-                  <div className="overflow-x-auto rounded-md border">
-                    <table className="w-full text-sm">
-                      <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
-                        <tr>
-                          <th className="px-3 py-2 text-left">Product code</th>
-                          <th className="px-3 py-2 text-left">Product type</th>
-                          <th className="w-24 px-3 py-2 text-left">Qty</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {lines.map((line, i) => (
-                          <tr key={i} className="border-t">
-                            <td className="px-3 py-2 font-medium">{line.product_code}</td>
-                            <td className="px-3 py-2">{line.product_type || '-'}</td>
-                            <td className="px-3 py-2">{line.quantity || '-'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                );
-              })()}
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Salesperson</p>
-              <p className="font-medium">{complaint.salesperson || '-'}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Customer Name</p>
-              <p className="font-medium">{complaint.customer_name || '-'}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Contact Person</p>
-              <p className="font-medium">{complaint.contact_person || '-'}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Contact Number</p>
-              <p className="font-medium">{complaint.contact_number || '-'}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Project Title</p>
-              <p className="font-medium">{complaint.project_title || '-'}</p>
-            </div>
-          </div>
-          {complaint.customer_address && (
-            <div>
-              <p className="text-sm text-muted-foreground">Delivery Address</p>
-              <p className="font-medium">{complaint.customer_address}</p>
-            </div>
-          )}
-          {complaint.defect_description && (
-            <div>
-              <p className="text-sm text-muted-foreground">Defect Description</p>
-              <p className="font-medium whitespace-pre-wrap">
-                {complaint.defect_description}
-              </p>
-            </div>
-          )}
+          <ComplaintFieldGrid complaint={complaint} />
           {complaint.respond_inbox_url && (
             <div>
               <p className="text-sm text-muted-foreground">Respond conversation</p>

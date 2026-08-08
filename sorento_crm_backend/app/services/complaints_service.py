@@ -296,6 +296,7 @@ class ComplaintService:
         handled_by_wa_phone_override=_UNSET,
         rejected_by_wa_phone_override=_UNSET,
         last_responded_by_name_override=_UNSET,
+        line_lookups_override=_UNSET,
     ) -> dict:
         """Serialize complaint with attachments from generic entity_attachment_links table.
 
@@ -372,7 +373,137 @@ class ComplaintService:
         data["root_cause_name"] = getattr(rc, "name", None) if rc is not None else None
         res = getattr(complaint, "resolution", None)
         data["resolution_name"] = getattr(res, "name", None) if res is not None else None
+        lookups = (
+            line_lookups_override
+            if line_lookups_override is not _UNSET
+            else self._batch_product_line_lookups([complaint])
+        )
+        data["product_lines"] = self._serialize_product_lines(complaint, lookups)
         return data
+
+    # Empty maps, so a caller that batched nothing still gets a total function rather
+    # than a KeyError halfway through a page of rows.
+    _EMPTY_LINE_LOOKUPS: dict = {
+        "defect_type": {},
+        "kind": {},
+        "product": {},
+        "purchase": {},
+    }
+
+    def _batch_product_line_lookups(self, complaints: Iterable[Complaint]) -> dict:
+        """Resolve every id a product line carries into a display name, in four queries.
+
+        A consumer line points at a defect type, a warranty kind, a product variant and
+        the purchase its cover is computed from - all by id, and the frontend may show
+        none of them (no UUIDs in the UI). Resolving per line would be four queries per
+        line per row, so the list path batches across the whole page, exactly like the
+        view-token and user-name batches above.
+        """
+        lines = [
+            line
+            for complaint in complaints
+            for line in (getattr(complaint, "product_lines", None) or [])
+        ]
+        if not lines:
+            return dict(self._EMPTY_LINE_LOOKUPS)
+
+        def ids(attr: str) -> set:
+            return {
+                str(getattr(line, attr))
+                for line in lines
+                if getattr(line, attr, None)
+            }
+
+        defect_type_ids = ids("defect_type_id")
+        kind_ids = ids("kind_id")
+        product_ids = ids("product_id")
+        purchase_line_ids = ids("consumer_purchase_line_id")
+
+        defect_types: dict = {}
+        if defect_type_ids:
+            from app.models.lookup import LookupOption
+
+            defect_types = {
+                str(row.id): row.label
+                for row in self.db.query(LookupOption)
+                .filter(LookupOption.id.in_(defect_type_ids))
+                .all()
+            }
+
+        kinds: dict = {}
+        if kind_ids:
+            from app.models.warranty import WarrantyProductKind
+
+            kinds = {
+                str(row.id): row.name
+                for row in self.db.query(WarrantyProductKind)
+                .filter(WarrantyProductKind.id.in_(kind_ids))
+                .all()
+            }
+
+        products: dict = {}
+        if product_ids:
+            products = {
+                str(row.id): row.product_name
+                for row in self.db.query(Product)
+                .filter(Product.id.in_(product_ids))
+                .all()
+            }
+
+        purchases: dict = {}
+        if purchase_line_ids:
+            from app.models.consumers import ConsumerPurchase, ConsumerPurchaseLine
+
+            rows = (
+                self.db.query(
+                    ConsumerPurchaseLine.id,
+                    ConsumerPurchase.purchase_number,
+                    ConsumerPurchase.purchase_date,
+                )
+                .join(ConsumerPurchase, ConsumerPurchaseLine.purchase_id == ConsumerPurchase.id)
+                .filter(ConsumerPurchaseLine.id.in_(purchase_line_ids))
+                .all()
+            )
+            purchases = {
+                str(line_id): {"purchase_number": number, "purchase_date": purchased_on}
+                for line_id, number, purchased_on in rows
+            }
+
+        return {
+            "defect_type": defect_types,
+            "kind": kinds,
+            "product": products,
+            "purchase": purchases,
+        }
+
+    def _serialize_product_lines(self, complaint: Complaint, lookups: dict) -> list[dict]:
+        """One dict per affected product, staff-readable.
+
+        Both halves of the same line: `product_code` is what CS types off a document,
+        `claimed_text` is what a consumer said on a phone, and neither substitutes for
+        the other when a code like SRTWC8152 matches three variants and resolves to none
+        of them (AC-C17).
+        """
+        serialized: list[dict] = []
+        for line in getattr(complaint, "product_lines", None) or []:
+            purchase = lookups["purchase"].get(str(line.consumer_purchase_line_id or "")) or {}
+            serialized.append(
+                {
+                    "id": str(line.id),
+                    "product_code": line.product_code,
+                    "quantity": line.quantity,
+                    "product_type": line.product_type,
+                    "sort_order": line.sort_order,
+                    "claimed_text": line.claimed_text,
+                    "fault_description": line.fault_description,
+                    "defect_type_name": lookups["defect_type"].get(str(line.defect_type_id or "")),
+                    "kind_name": lookups["kind"].get(str(line.kind_id or "")),
+                    "product_name": lookups["product"].get(str(line.product_id or "")),
+                    "purchase_number": purchase.get("purchase_number"),
+                    "purchase_date": purchase.get("purchase_date"),
+                }
+            )
+        return serialized
     
     def _build_list_query(
         self,
@@ -729,10 +860,13 @@ class ComplaintService:
             resolution_ids=resolution_ids,
         )
 
-        from sqlalchemy.orm import joinedload
+        from sqlalchemy.orm import joinedload, selectinload
         q = q.options(
             joinedload(Complaint.root_cause),
             joinedload(Complaint.resolution),
+            # selectinload, not joinedload: lines are a collection, and joining them
+            # multiplies the row count before LIMIT applies.
+            selectinload(Complaint.product_lines),
         )
 
         total = q.count()
@@ -786,10 +920,13 @@ class ComplaintService:
                 return user_name_map.get(str(tracker.handled_by_id))
             return None
 
+        line_lookups = self._batch_product_line_lookups(complaints)
+
         complaint_data = [
             self._serialize_complaint(
                 complaint,
                 links_override=links_map.get(str(complaint.id), []),
+                line_lookups_override=line_lookups,
                 print_count=print_map.get(str(complaint.id), 0),
                 view_url_override=view_url_map.get(str(complaint.id)),
                 assigned_to_name_override=_assigned_name(complaint),

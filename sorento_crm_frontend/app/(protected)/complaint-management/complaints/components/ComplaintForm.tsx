@@ -32,6 +32,7 @@ import { toast } from 'sonner';
 import { ComplaintSchema, type ComplaintSchemaType } from '../forms/complaint-schema';
 import type { ComplaintFormData, ComplaintAttachment } from '../types/complaint.types';
 import ComplaintNavigation from './ComplaintNavigation';
+import { isRetailComplaint } from '../lib/complaintAudience';
 import ComplaintManualAttachmentsSection from './ComplaintManualAttachmentsSection';
 import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
 
@@ -91,6 +92,11 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
   );
   const createMutation = useCreateComplaint();
   const updateMutation = useUpdateComplaint();
+  // Same rule as the detail screen, from the same module: a retail case has no Delivery
+  // Order Number, customer type, salesperson or project title, and showing an editor for
+  // four fields that should stay null invites somebody to fill them in. A NEW complaint
+  // is always project - the retail path is the consumer portal, not this form.
+  const isRetail = isRetailComplaint(complaint);
 
   const form = useForm<ComplaintSchemaType>({
     resolver: zodResolver(ComplaintSchema),
@@ -361,23 +367,25 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
             <CardTitle>Complaint Information</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <FormField
-              control={form.control}
-              name="delivery_order_number"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Delivery Order Number</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="Enter DO number"
-                      {...field}
-                      value={field.value || ''}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {!isRetail && (
+              <FormField
+                control={form.control}
+                name="delivery_order_number"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Delivery Order Number</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="Enter DO number"
+                        {...field}
+                        value={field.value || ''}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
 
             <FormField
               control={form.control}
@@ -433,59 +441,63 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
               )}
             />
 
-            <FormField
-              control={form.control}
-              name="customer_address"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Delivery Address</FormLabel>
-                  <FormControl>
-                    <Textarea
-                      placeholder="Enter delivery address"
-                      {...field}
-                      value={field.value || ''}
-                      rows={3}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {!isRetail && (
+              <FormField
+                control={form.control}
+                name="customer_address"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Delivery Address</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        placeholder="Enter delivery address"
+                        {...field}
+                        value={field.value || ''}
+                        rows={3}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
 
-            <FormField
-              control={form.control}
-              name="customer_type"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Customer Type</FormLabel>
-                  <FormControl>
-                    <LookupBoundField
-                      table="complaints"
-                      column="customer_type"
-                      value={field.value}
-                      onChange={field.onChange}
-                      placeholder="Select customer type"
-                      renderFallback={() => (
-                        <SearchableSelect
-                          key={field.value || 'empty'}
-                          onChange={field.onChange}
-                          value={field.value || ''}
-                          options={[
-                            { value: 'Individual', label: 'Individual' },
-                            { value: 'Dealer', label: 'Dealer' },
-                            { value: 'Corporate', label: 'Corporate' },
-                            { value: 'Government', label: 'Government' },
-                            { value: 'Other', label: 'Other' },
-                          ]}
-                          placeholder="Select customer type"
-                        />
-                      )}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {!isRetail && (
+              <FormField
+                control={form.control}
+                name="customer_type"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Customer Type</FormLabel>
+                    <FormControl>
+                      <LookupBoundField
+                        table="complaints"
+                        column="customer_type"
+                        value={field.value}
+                        onChange={field.onChange}
+                        placeholder="Select customer type"
+                        renderFallback={() => (
+                          <SearchableSelect
+                            key={field.value || 'empty'}
+                            onChange={field.onChange}
+                            value={field.value || ''}
+                            options={[
+                              { value: 'Individual', label: 'Individual' },
+                              { value: 'Dealer', label: 'Dealer' },
+                              { value: 'Corporate', label: 'Corporate' },
+                              { value: 'Government', label: 'Government' },
+                              { value: 'Other', label: 'Other' },
+                            ]}
+                            placeholder="Select customer type"
+                          />
+                        )}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
 
             {form.watch('customer_type')?.toLowerCase() === 'other' && (
               <FormField
@@ -662,32 +674,34 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
               )}
             />
 
-            <FormField
-              control={form.control}
-              name="defects_discovered"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Defects Discovered</FormLabel>
-                  <FormControl>
-                    <LookupBoundField
-                      table="complaints"
-                      column="defects_discovered"
-                      value={field.value}
-                      onChange={field.onChange}
-                      placeholder="Select defect"
-                      renderFallback={() => (
-                        <Input
-                          placeholder="Enter defects discovered"
-                          {...field}
-                          value={field.value || ''}
-                        />
-                      )}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {!isRetail && (
+              <FormField
+                control={form.control}
+                name="defects_discovered"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Defects Discovered</FormLabel>
+                    <FormControl>
+                      <LookupBoundField
+                        table="complaints"
+                        column="defects_discovered"
+                        value={field.value}
+                        onChange={field.onChange}
+                        placeholder="Select defect"
+                        renderFallback={() => (
+                          <Input
+                            placeholder="Enter defects discovered"
+                            {...field}
+                            value={field.value || ''}
+                          />
+                        )}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
 
             <FormField
               control={form.control}
@@ -735,41 +749,45 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
               )}
             />
 
-            <FormField
-              control={form.control}
-              name="salesperson"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Salesperson</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="Enter salesperson name"
-                      {...field}
-                      value={field.value || ''}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {!isRetail && (
+              <FormField
+                control={form.control}
+                name="salesperson"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Salesperson</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="Enter salesperson name"
+                        {...field}
+                        value={field.value || ''}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
 
-            <FormField
-              control={form.control}
-              name="project_title"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Project Title</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="Enter project title"
-                      {...field}
-                      value={field.value || ''}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {!isRetail && (
+              <FormField
+                control={form.control}
+                name="project_title"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Project Title</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="Enter project title"
+                        {...field}
+                        value={field.value || ''}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
           </CardContent>
         </Card>
 
