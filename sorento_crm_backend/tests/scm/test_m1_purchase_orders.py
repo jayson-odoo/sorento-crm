@@ -70,7 +70,9 @@ def test_list_shape_and_lines(scm_app):
         res = c.get("/api/v1/scm/purchase-orders", params={"query": number, "limit": 50})
     assert res.status_code == 200, res.text
     body = res.json()
-    assert set(body) == {"data", "empty", "pagination"}
+    assert {"data", "empty", "pagination"} <= set(body)
+    # Nobody asked for a product, so there is nothing to say about one price.
+    assert body.get("product_cost") is None
     assert body["pagination"]["total"] >= 1
 
     po = next(p for p in body["data"] if p["po_number"] == number)

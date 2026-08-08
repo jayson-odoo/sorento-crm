@@ -173,3 +173,44 @@ def test_no_cost_block_is_returned_when_no_product_was_asked_for(db, world):
     )
 
     assert out["product_cost"] is None
+
+
+# --------------------------------------------------------------------------- #
+# the wire, not just the service
+# --------------------------------------------------------------------------- #
+
+def test_the_response_model_actually_carries_the_cost_block():
+    """The service built `product_cost` correctly and FastAPI dropped it on the way out,
+    because the response model did not declare it. Nothing in the service tests could see
+    that: the field only disappears at serialization.
+
+    Asserted on the model rather than over HTTP, so it needs no principal and no seeded
+    row, and it fails for the one reason that matters - the field is not on the contract.
+    """
+    from app.schemas.scm_orders import PurchaseOrderListResponse
+
+    assert "product_cost" in PurchaseOrderListResponse.model_fields
+
+    built = PurchaseOrderListResponse(
+        data=[],
+        empty=True,
+        pagination={"total": 0, "page": 1},
+        product_cost={
+            "unit_cost": 0.0,
+            "currency": "MYR",
+            "po_number": "202606-S0024",
+            "issue_date": "2026-06-01",
+            "supplier_name": "Kaiping Kaixin",
+        },
+    )
+    dumped = built.model_dump()
+    assert dumped["product_cost"]["unit_cost"] == 0.0, "a free price survived as free"
+    assert dumped["product_cost"]["po_number"] == "202606-S0024"
+
+
+def test_the_cost_block_is_absent_rather_than_zeroed_when_unknown():
+    from app.schemas.scm_orders import PurchaseOrderListResponse
+
+    built = PurchaseOrderListResponse(data=[], empty=True, pagination={"total": 0, "page": 1})
+
+    assert built.model_dump()["product_cost"] is None

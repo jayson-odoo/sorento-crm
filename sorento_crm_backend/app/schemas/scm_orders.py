@@ -148,7 +148,25 @@ class PurchaseOrderPagination(BaseModel):
     page: int
 
 
+class ProductLastCost(BaseModel):
+    """What we last paid for a SKU, and where to check it.
+
+    `unit_cost` of 0 is a price OF zero; the ABSENCE of this whole block is what "we have
+    never bought it" looks like. Keeping those apart is the point of the block existing.
+    """
+
+    unit_cost: float
+    currency: Optional[str] = None
+    po_number: str
+    issue_date: Optional[str] = None
+    supplier_name: Optional[str] = None
+
+
 class PurchaseOrderListResponse(BaseModel):
     data: List[PurchaseOrder]
     empty: bool
     pagination: PurchaseOrderPagination
+    # Present only when the caller narrowed the list to one product. A field missing from
+    # this model is DROPPED from the response however carefully the service builds it -
+    # which is exactly how this one went out silently the first time.
+    product_cost: Optional[ProductLastCost] = None
