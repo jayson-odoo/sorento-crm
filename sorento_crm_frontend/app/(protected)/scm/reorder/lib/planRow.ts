@@ -57,7 +57,16 @@ export interface M8PlanRow {
   type: 'buy';
   order_qty: number;
   original_order_qty: number;
+  /** What the SUPPLIER charges, in `currency`. Shown on the row; never summed. */
   unit_cost: number | null;
+  currency: string | null;
+  /**
+   * The same price in the BUDGET's currency. This is the only figure cash is computed
+   * from: the budget is one pot of ringgit and the book prices mostly in dollars, so
+   * multiplying the supplier's own figure understates a buy roughly fourfold.
+   * Null when the price could not be converted, which means no cash figure at all.
+   */
+  unit_cost_base: number | null;
   net: number | null;
   days_cover: number | null;
   /** Frozen average daily demand the engine used to compute `days_cover`
@@ -77,10 +86,18 @@ export interface M8PlanRow {
   rec: ReorderRecommendation;
 }
 
-/** Cash impact for a row = live qty × unit cost. null when the row is uncosted. */
-export function m8CashImpact(row: Pick<M8PlanRow, 'order_qty' | 'unit_cost'>): number | null {
-  if (row.unit_cost === null) return null;
-  return row.order_qty * row.unit_cost;
+/**
+ * Cash impact for a row = live qty x the price IN THE BUDGET'S CURRENCY.
+ *
+ * Null when there is no convertible price, whether because nobody has priced the item or
+ * because we hold no rate for the money it is priced in. Both park the row in front of a
+ * human, which is right; a face-value number would quietly fund it at a quarter of cost.
+ */
+export function m8CashImpact(
+  row: Pick<M8PlanRow, 'order_qty' | 'unit_cost' | 'unit_cost_base'>,
+): number | null {
+  if (row.unit_cost_base === null || row.unit_cost_base === undefined) return null;
+  return row.order_qty * row.unit_cost_base;
 }
 
 /** Human warehouse label for a rec (never a UUID); a network rec reads "Network". */
@@ -129,6 +146,13 @@ export function recToPlanRow(rec: ReorderRecommendation): M8PlanRow {
     order_qty: orderQty,
     original_order_qty: orderQty,
     unit_cost: rec.unit_cost ?? null,
+    currency: rec.currency ?? rec.supplier?.currency ?? null,
+    // Prefer the run's own frozen cash figure over re-deriving it: it was computed with
+    // the rate the run used, and re-deriving from today's would explain a decision
+    // nobody made. Falls back to the chosen supplier's converted price.
+    unit_cost_base:
+      rec.supplier?.unit_cost_base ??
+      (rec.cash_impact !== null && rec.order_qty ? rec.cash_impact / rec.order_qty : null),
     net: rec.net_position,
     days_cover: rec.days_of_cover,
     forecast_daily_demand: rec.forecast_daily_demand,

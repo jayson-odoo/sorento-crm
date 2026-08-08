@@ -28,10 +28,42 @@ export function fmtSigned(value: number | null | undefined): string {
   return s;
 }
 
-/** Currency valuation. Deferred/uncosted (null) → em dash. */
+/**
+ * The currency every figure on this dashboard is reported in: valuations, the budget,
+ * cash impact. Mirrors `app.services.scm.money.BASE_CURRENCY` on the backend.
+ */
+export const BASE_CURRENCY = 'MYR';
+
+/** Currency valuation, in the base currency. Deferred/uncosted (null) → em dash. */
 export function fmtMoney(value: number | null | undefined): string {
   if (value === null || value === undefined) return EM_DASH;
   return `RM ${moneyFmt.format(value)}`;
+}
+
+const costFmt = new Intl.NumberFormat('en-MY', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+/**
+ * A price in the SUPPLIER's own currency.
+ *
+ * `fmtMoney` hard-codes RM, and the purchase-order book is 8438 lines USD against 4186
+ * MYR: rendering a USD price as "RM 45" is a wrong number printed as a fact, sitting next
+ * to a purchase order that says otherwise. Cents are kept because a unit price of 4.35 is
+ * not 4.
+ *
+ * A row carrying no currency code predates the book having more than one, so its figure
+ * already meant ringgit and reads as base.
+ */
+export function fmtSupplierCost(
+  value: number | null | undefined,
+  currency: string | null | undefined,
+): string {
+  if (value === null || value === undefined) return EM_DASH;
+  const code = (currency || '').trim().toUpperCase() || BASE_CURRENCY;
+  const label = code === BASE_CURRENCY ? 'RM' : code;
+  return `${label} ${costFmt.format(value)}`;
 }
 
 /** Short relative "days ago" for last-movement; null → em dash. */

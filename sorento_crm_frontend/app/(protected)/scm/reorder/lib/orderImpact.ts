@@ -19,6 +19,7 @@
  *
  * Survives Phase 2. Only `summaryOrderMockStore.ts` is deleted.
  */
+import { fmtSupplierCost } from '../../lib/format';
 import type { OrderSummaryRow, SupplierCandidate } from '../types/summaryOrder.types';
 
 /** Days per month used to turn a daily demand rate into months of cover. */
@@ -127,17 +128,15 @@ export function orderQuantityImpact(
 }
 
 /**
- * A cost in the supplier's own currency (AC-C3.4). Deliberately NOT `fmtMoney`,
- * which hard-codes RM: a CNY ex-works cost rendered as RM is a wrong number, not
- * a formatting detail.
+ * A cost in the supplier's own currency (AC-C3.4), for the loading-plan table.
+ *
+ * Delegates to the shared `fmtSupplierCost` so there is one answer to "how is a supplier
+ * price written", and keeps its own empty-string-for-null convention because this one
+ * renders inside a dense grid cell where an em dash is noise.
  */
 export function fmtCost(value: number | null | undefined, currency: string | null): string {
   if (value === null || value === undefined) return '';
-  const amount = value.toLocaleString('en-MY', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-  return currency ? `${currency} ${amount}` : amount;
+  return fmtSupplierCost(value, currency);
 }
 
 /** A signed variance, so a supplier that repriced upward reads as `+`. */

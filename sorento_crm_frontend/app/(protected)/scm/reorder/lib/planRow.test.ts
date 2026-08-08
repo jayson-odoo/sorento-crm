@@ -15,6 +15,7 @@ import {
   splitDispositionRows,
   supplierOptionsFor,
   type M8DispositionRow,
+  type M8PlanRow,
 } from './planRow';
 
 const acme: SupplierChoice = {
@@ -165,12 +166,12 @@ describe('supplierOptionsFor — costed swap options only', () => {
   });
 });
 
-describe('m8CashImpact — live qty × unit cost', () => {
-  it('multiplies live qty by unit cost', () => {
-    expect(m8CashImpact({ order_qty: 320, unit_cost: 42 })).toBe(13440);
+describe('m8CashImpact - live qty x the price in the budget currency', () => {
+  it('multiplies live qty by the converted unit cost', () => {
+    expect(m8CashImpact({ order_qty: 320, unit_cost: 42, unit_cost_base: 42 })).toBe(13440);
   });
   it('is null when the row is uncosted', () => {
-    expect(m8CashImpact({ order_qty: 320, unit_cost: null })).toBeNull();
+    expect(m8CashImpact({ order_qty: 320, unit_cost: null, unit_cost_base: null })).toBeNull();
   });
 });
 
@@ -242,5 +243,44 @@ describe('splitDispositionRows (M8-F18 actionable vs FYI hold)', () => {
     const { actionable, hold } = splitDispositionRows([drow('a', 'hold'), drow('b', 'hold')]);
     expect(actionable).toHaveLength(0);
     expect(hold).toHaveLength(2);
+  });
+});
+
+describe('m8CashImpact - the live cash figure is in the budget currency', () => {
+  // The budget is one pot of ringgit. A USD row costed at its face value consumes a
+  // quarter of what it really does, so a buyer sliding the budget "funds" a plan they
+  // cannot pay for. The row therefore carries BOTH prices: what the supplier charges,
+  // and what it converts to.
+
+  const row = (over: Partial<M8PlanRow> = {}): Pick<
+    M8PlanRow,
+    'order_qty' | 'unit_cost' | 'unit_cost_base'
+  > => ({
+    order_qty: 10,
+    unit_cost: 45,
+    unit_cost_base: 198,
+    ...over,
+  });
+
+  it('converts before multiplying, so 10 x USD 45 is 1980 not 450', () => {
+    expect(m8CashImpact(row())).toBe(1980);
+  });
+
+  it('is unchanged for a price already in the budget currency', () => {
+    expect(m8CashImpact(row({ unit_cost: 190, unit_cost_base: 190 }))).toBe(1900);
+  });
+
+  it('has no figure when the price could not be converted', () => {
+    // Face value here would be a wrong number that funds; null is the honest answer and
+    // parks the row in front of a human.
+    expect(m8CashImpact(row({ unit_cost_base: null }))).toBeNull();
+  });
+
+  it('has no figure when nobody has priced the item', () => {
+    expect(m8CashImpact(row({ unit_cost: null, unit_cost_base: null }))).toBeNull();
+  });
+
+  it('costs a free item at zero rather than calling it unknown', () => {
+    expect(m8CashImpact(row({ unit_cost: 0, unit_cost_base: 0 }))).toBe(0);
   });
 });

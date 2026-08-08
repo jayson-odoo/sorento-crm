@@ -371,8 +371,9 @@ describe('ReorderExplanationDialog - why this supplier, and where its cost came 
   it('names the supplier it beat and the saving per unit', () => {
     render(<ReorderExplanationDialog rec={cheapest()} open onOpenChange={() => {}} />);
 
+    // Cents kept: a per-unit saving of 0.50 rounded to "RM 1" would be a doubling.
     expect(
-      screen.getByText(/cheapest.*RM 4 per unit under Kaiping Kaixin/i),
+      screen.getByText(/cheapest.*RM 4\.00 per unit under Kaiping Kaixin/i),
     ).toBeInTheDocument();
   });
 
@@ -437,5 +438,120 @@ describe('ReorderExplanationDialog - why this supplier, and where its cost came 
     render(<ReorderExplanationDialog rec={r} open onOpenChange={() => {}} />);
 
     expect(screen.queryByText(/No supplier cost/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('ReorderExplanationDialog - two prices, two currencies', () => {
+  // The purchase-order book is 8438 lines USD against 4186 MYR, and 892 of the 1051 SKUs
+  // with more than one priced supplier have those suppliers in DIFFERENT currencies. So
+  // the popup that explains "we chose this one because it is cheaper" has to say cheaper
+  // IN WHAT, or it is asserting a comparison it did not make.
+
+  const crossCurrency = (over: Partial<ReorderRecommendation> = {}) =>
+    rec({
+      supplier: {
+        supplier_code: 'SUP-USD',
+        supplier_name: 'Acme Sanitary Sdn Bhd',
+        unit_cost: 45,
+        currency: 'USD',
+        unit_cost_base: 198,
+        base_currency: 'MYR',
+        rate_to_base: 4.4,
+        rate_as_of: '2026-08-01',
+        unit_cost_source: 'last_po',
+        unit_cost_ref: '202606-S0024',
+        lead_time_days: 30,
+        composite_score: 70,
+        is_primary: false,
+      },
+      alternatives: [
+        {
+          supplier_code: 'SUP-MYR',
+          supplier_name: 'Kaiping Kaixin',
+          unit_cost: 210,
+          currency: 'MYR',
+          unit_cost_base: 210,
+          base_currency: 'MYR',
+          lead_time_days: 45,
+          composite_score: 90,
+          is_primary: true,
+        },
+      ],
+      supplier_selection: 'lowest_cost',
+      supplier_reason: {
+        basis: 'lowest_cost',
+        runner_up: 'Kaiping Kaixin',
+        runner_up_cost: 210,
+        runner_up_currency: 'MYR',
+        runner_up_cost_base: 210,
+        compared_in: 'MYR',
+        missing_rates: [],
+        saving_per_unit: 12,
+      },
+      ...over,
+    });
+
+  it("shows the chosen supplier's price in the currency it will be paid in", () => {
+    render(<ReorderExplanationDialog rec={crossCurrency()} open onOpenChange={() => {}} />);
+
+    expect(screen.getAllByText(/USD 45\.00/).length).toBeGreaterThan(0);
+    // and never as ringgit, which would be a quarter of the real price
+    expect(screen.queryByText(/^RM 45$/)).not.toBeInTheDocument();
+  });
+
+  it('shows what that price converts to, and at what rate', () => {
+    // Otherwise "USD 45 beat MYR 210" reads as a mistake rather than a conversion.
+    render(<ReorderExplanationDialog rec={crossCurrency()} open onOpenChange={() => {}} />);
+
+    expect(screen.getByText(/RM 198\.00/)).toBeInTheDocument();
+    expect(screen.getByText(/4\.4/)).toBeInTheDocument();
+  });
+
+  it('lists the alternative in its own currency too', () => {
+    render(<ReorderExplanationDialog rec={crossCurrency()} open onOpenChange={() => {}} />);
+
+    expect(screen.getAllByText(/RM 210\.00/).length).toBeGreaterThan(0);
+  });
+
+  it('quotes the saving in the currency the comparison was made in', () => {
+    render(<ReorderExplanationDialog rec={crossCurrency()} open onOpenChange={() => {}} />);
+
+    expect(screen.getByText(/RM 12\.00 per unit under Kaiping Kaixin/i)).toBeInTheDocument();
+  });
+
+  it('does not claim a cheapest when no price could be converted', () => {
+    // Two prices in two currencies we hold no rates for cannot be ranked on cost at all.
+    const r = crossCurrency({
+      supplier_reason: {
+        basis: 'no_comparable_cost',
+        runner_up: 'Kaiping Kaixin',
+        missing_rates: ['CNY', 'EUR'],
+        saving_per_unit: null,
+      },
+    });
+    render(<ReorderExplanationDialog rec={r} open onOpenChange={() => {}} />);
+
+    expect(screen.queryByText(/cheapest/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/no exchange rate/i)).toBeInTheDocument();
+  });
+
+  it('names the currency whose rate is missing, so the buyer knows what to add', () => {
+    const r = crossCurrency({
+      supplier_reason: {
+        basis: 'lowest_cost',
+        runner_up: 'Kaiping Kaixin',
+        missing_rates: ['CNY'],
+        saving_per_unit: null,
+      },
+    });
+    render(<ReorderExplanationDialog rec={r} open onOpenChange={() => {}} />);
+
+    expect(screen.getByText(/CNY/)).toBeInTheDocument();
+  });
+
+  it('says nothing about rates when every price converted', () => {
+    render(<ReorderExplanationDialog rec={crossCurrency()} open onOpenChange={() => {}} />);
+
+    expect(screen.queryByText(/no exchange rate/i)).not.toBeInTheDocument();
   });
 });

@@ -155,9 +155,11 @@ describe('CashResultsGrid — Days cover drill reconciliation (M8-A2/A3)', () =>
     useExplainDemand.mockReturnValue(demand(null));
     renderGrid(recToPlanRow(rec()));
     fireEvent.click(screen.getByLabelText('Explain runway'));
-    expect(screen.getByText('Coefficient of variation')).toBeInTheDocument();
-    // the CV value cell is an em dash (—), never 0.00
-    expect(docText()).not.toContain('0.00');
+    const label = screen.getByText('Coefficient of variation');
+    // Asserted on the CV cell itself, not the whole document: prices elsewhere on the row
+    // legitimately carry cents ("RM 100.00"), and a document-wide check for "0.00" fails
+    // on those without the CV cell being wrong at all.
+    expect(label.nextElementSibling?.textContent).toBe('\u2014');
   });
 });
 

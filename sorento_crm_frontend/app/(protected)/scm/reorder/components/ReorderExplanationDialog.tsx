@@ -41,7 +41,15 @@ import { CoverageTimelinePanel } from './CoverageTimelinePanel';
 import type { AskTurn } from '../types/explainer.types';
 import { xyzLabel } from '../../lib/health';
 import type { XyzClass } from '../../types/scm.types';
-import { EM_DASH, fmtDate, fmtInt, fmtMoney, fmtPct } from '../../lib/format';
+import {
+  BASE_CURRENCY,
+  EM_DASH,
+  fmtDate,
+  fmtInt,
+  fmtMoney,
+  fmtPct,
+  fmtSupplierCost,
+} from '../../lib/format';
 import { ConfidenceBadge } from '../../components/HealthIndicators';
 import type {
   RankFactor,
@@ -283,9 +291,11 @@ function SupplierScoreDetail({
   selected: boolean;
   chosen: SupplierChoice | null;
 }) {
+  // Compared in base currency, because subtracting a USD price from a ringgit one
+  // produces a number that looks like money and is not.
   const costDelta =
-    !selected && chosen?.unit_cost != null && s.unit_cost != null
-      ? s.unit_cost - chosen.unit_cost
+    !selected && chosen?.unit_cost_base != null && s.unit_cost_base != null
+      ? s.unit_cost_base - chosen.unit_cost_base
       : null;
   const leadDelta =
     !selected && chosen?.lead_time_days != null && s.lead_time_days != null
@@ -342,7 +352,11 @@ function SupplierScoreDetail({
                   .join(' · ') || undefined
               }
             />
-            <DetailLine label="Unit cost" value={fmtMoney(s.unit_cost)} />
+            <DetailLine
+              label="Unit cost"
+              value={fmtSupplierCost(s.unit_cost, s.currency)}
+              sub={convertedNote(s)}
+            />
             {s.moq != null && s.moq > 0 ? (
               <DetailLine label="Min order" value={fmtInt(s.moq)} />
             ) : null}
@@ -355,7 +369,7 @@ function SupplierScoreDetail({
                 {costDelta != null ? (
                   <span className={cn(costDelta > 0 ? 'text-scm-stockout' : 'text-scm-incoming')}>
                     {costDelta > 0 ? '+' : ''}
-                    {fmtMoney(costDelta)}
+                    {fmtSupplierCost(costDelta, chosen?.base_currency)}
                   </span>
                 ) : null}
                 {costDelta != null && leadDelta != null ? ', ' : ''}
@@ -375,6 +389,25 @@ function SupplierScoreDetail({
 }
 
 
+/**
+ * "and that is RM X at the rate we used" - said only when the supplier prices in something
+ * other than the base currency, because on a ringgit price it would be noise.
+ *
+ * Without it, "USD 45 beat MYR 210" reads as an arithmetic mistake rather than a
+ * conversion, and a buyer cannot check the decision they are being asked to approve.
+ */
+function convertedNote(s: SupplierChoice): string | undefined {
+  if (s.missing_rate_currency) {
+    return `No exchange rate on file for ${s.missing_rate_currency}, so this price could not be compared.`;
+  }
+  const base = s.base_currency ?? BASE_CURRENCY;
+  const code = (s.currency || '').trim().toUpperCase();
+  if (!code || code === base || s.unit_cost_base == null) return undefined;
+  const rate = s.rate_to_base != null ? ` at ${s.rate_to_base}` : '';
+  const asOf = s.rate_as_of ? ` (${fmtDate(s.rate_as_of)})` : '';
+  return `${fmtSupplierCost(s.unit_cost_base, base)}${rate}${asOf}`;
+}
+
 /** Why this supplier, in words, from the reason frozen at run time.
  *
  * "Chosen by lowest cost" named the RULE and stopped there. What a buyer checks is which
@@ -393,25 +426,41 @@ function SupplierReason({ rec }: { rec: ReorderRecommendation }) {
         ? 'Cost is the contract price on the product record, not a purchase we have made.'
         : null;
 
+  const comparedIn = reason?.compared_in ?? BASE_CURRENCY;
+  const missing = reason?.missing_rates ?? [];
+
   let why: string | null = null;
   if (reason?.basis === 'only_supplier') {
     why = 'The only supplier linked to this item.';
+  } else if (reason?.basis === 'no_comparable_cost') {
+    // Every candidate priced in money we hold no rate for. Ranking them by cost would be
+    // a claim we cannot support, so the popup says what happened instead of inventing it.
+    why = 'No supplier price could be compared, so this one was not chosen on cost.';
   } else if (reason?.basis === 'lowest_cost' && reason.runner_up) {
     why =
       reason.saving_per_unit != null
-        ? `Cheapest of the linked suppliers: ${fmtMoney(
+        ? `Cheapest of the linked suppliers: ${fmtSupplierCost(
             reason.saving_per_unit,
+            comparedIn,
           )} per unit under ${reason.runner_up}.`
-        : `Cheapest of the priced suppliers. ${reason.runner_up} has no cost on record, so the gap is unknown.`;
+        : `Cheapest of the priced suppliers. ${reason.runner_up} has no cost we could compare, so the gap is unknown.`;
   } else if (rec.supplier_selection) {
     why = `Chosen by ${SELECTION_LABEL[rec.supplier_selection] ?? rec.supplier_selection}.`;
   }
 
-  if (!why && !paid) return null;
+  // Named, not implied: a buyer cannot add a rate they were never told was missing.
+  const rateGap = missing.length
+    ? `No exchange rate on file for ${missing.join(', ')}, so ${
+        missing.length > 1 ? 'those prices were' : 'that price was'
+      } left out of the comparison.`
+    : null;
+
+  if (!why && !paid && !rateGap) return null;
   return (
     <div className="space-y-0.5 text-xs text-muted-foreground">
       {why ? <div>{why}</div> : null}
       {paid ? <div>{paid}</div> : null}
+      {rateGap ? <div>{rateGap}</div> : null}
     </div>
   );
 }
@@ -462,7 +511,17 @@ function SupplierBlock({ rec }: { rec: ReorderRecommendation }) {
                   </Badge>
                 ) : null}
               </span>
-              <span className="text-right tabular-nums">{fmtMoney(s.unit_cost)}</span>
+              <span className="text-right tabular-nums">
+                <span className="block">{fmtSupplierCost(s.unit_cost, s.currency)}</span>
+                {/* The converted figure sits under the price rather than inside a popover:
+                    it is the number the ranking used, so "USD 45 beat MYR 210" has to be
+                    checkable without a second click. */}
+                {convertedNote(s) ? (
+                  <span className="block text-2xs font-normal text-muted-foreground">
+                    {convertedNote(s)}
+                  </span>
+                ) : null}
+              </span>
               <span className="text-right tabular-nums">
                 {s.lead_time_days != null ? `${fmtInt(s.lead_time_days)}d` : EM_DASH}
               </span>

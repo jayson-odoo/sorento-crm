@@ -82,6 +82,18 @@ export interface SupplierChoice {
   unit_cost_ref?: string | null;
   unit_cost_at?: string | null;
   currency?: string | null;
+  /**
+   * The same price restated in `base_currency`, which is the figure the ranking actually
+   * used. Both travel: the supplier's own price is what the PO will say, and this is what
+   * makes two suppliers in two currencies comparable at all.
+   */
+  unit_cost_base?: number | null;
+  base_currency?: string | null;
+  rate_to_base?: number | null;
+  rate_as_of?: string | null;
+  /** Set when this candidate's currency has no rate on file, so its price could not be
+   *  compared. It never wins on a small number; the buyer is told which rate to add. */
+  missing_rate_currency?: string | null;
   /** Lead time (measured M2 → declared → policy default). null when unknown. */
   lead_time_days: number | null;
   /** Composite performance score 0–100 (M2). null when no sample. */
@@ -203,9 +215,27 @@ export interface ReorderRecommendation {
    * compare against, so "cheaper" would be a fabrication.
    */
   supplier_reason?: {
-    basis: 'lowest_cost' | 'best_score' | 'primary' | 'only_supplier' | 'no_supplier' | string;
+    basis:
+      | 'lowest_cost'
+      | 'best_score'
+      | 'primary'
+      | 'only_supplier'
+      | 'no_supplier'
+      /** Every candidate was priced in money we hold no rate for, so nothing was ranked
+       *  on cost and saying "cheapest" would be a claim we cannot support. */
+      | 'no_comparable_cost'
+      | string;
     runner_up?: string | null;
+    /** The runner-up's price as the SUPPLIER quotes it, in `runner_up_currency`. */
     runner_up_cost?: number | null;
+    runner_up_currency?: string | null;
+    /** The same price restated in `compared_in`, which is the figure the ranking used. */
+    runner_up_cost_base?: number | null;
+    /** The currency both prices were converted into before being compared. */
+    compared_in?: string | null;
+    /** Currencies among the candidates that have no rate on file, so the buyer knows
+     *  which rate to add rather than deducing it from a row that will not fund. */
+    missing_rates?: string[] | null;
     saving_per_unit?: number | null;
   } | null;
 
@@ -214,10 +244,29 @@ export interface ReorderRecommendation {
   // `funding_status`, which is applied LIVE at view-time against the slid budget
   // (M4-D2/D3). Non-buy rows (disposition / exception) leave these null — they
   // don't participate in cash ranking or funding.
-  /** Landed unit cost driving cash_impact; null for an uncosted SKU (margin dropped). */
+  /** What the SUPPLIER charges, in `currency`. This is the figure the PO will carry. */
   unit_cost: number | null;
-  /** order_qty × unit_cost, in RM; null when the SKU is uncosted. */
+  /** The currency `unit_cost` is quoted in. Null reads as the base currency. */
+  currency?: string | null;
+  /**
+   * What the buy draws from the budget, ALWAYS in `base_currency`.
+   *
+   * Deliberately in different money from `unit_cost`: the budget is one pot of ringgit,
+   * and a USD buy counted at face value understates it roughly fourfold. Null when the
+   * price could not be converted, which is `cost_status`.
+   */
   cash_impact: number | null;
+  base_currency?: string | null;
+  /** The rate this run used, frozen, so the figures still explain themselves later. */
+  rate_to_base?: number | null;
+  rate_as_of?: string | null;
+  /**
+   * Why there is no cash figure, when there is none. `no_cost` (nobody has ever priced
+   * it) and `no_rate` (priced, in money we cannot convert) are fixed on two different
+   * screens, so one label would send half the rows to the wrong one.
+   */
+  cost_status?: 'ok' | 'no_cost' | 'no_rate' | null;
+  missing_rate_currencies?: string[];
   /** 1-based rank by frozen rank_score (1 = fund first). null on non-buy rows. */
   rank: number | null;
   /** Sequential 1..N position WITHIN its displayed section (funded / deferred),

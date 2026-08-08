@@ -36,7 +36,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { cn } from '@/lib/utils';
 import { ConfidenceBadge } from '../../components/HealthIndicators';
-import { EM_DASH, fmtDoc, fmtInt, fmtMoney, fmtSigned } from '../../lib/format';
+import { EM_DASH, fmtDoc, fmtInt, fmtMoney, fmtSigned, fmtSupplierCost } from '../../lib/format';
 import { useReorderRecommendations } from '../hooks/useReorderRun';
 import type {
   AllocationLine,
@@ -197,7 +197,8 @@ function SupplierCell({ rec }: { rec: ReorderRecommendation }) {
           {rec.supplier.supplier_name}
         </div>
         <div className="text-xs text-muted-foreground tabular-nums">
-          {fmtMoney(rec.supplier.unit_cost)} · {fmtInt(rec.supplier.lead_time_days)}d lead
+          {fmtSupplierCost(rec.supplier.unit_cost, rec.supplier.currency)} ·{' '}
+          {fmtInt(rec.supplier.lead_time_days)}d lead
         </div>
       </div>
       {others.length ? (
@@ -242,7 +243,9 @@ function SupplierCell({ rec }: { rec: ReorderRecommendation }) {
                           </Badge>
                         ) : null}
                       </span>
-                      <span className="text-right tabular-nums">{fmtMoney(s.unit_cost)}</span>
+                      <span className="text-right tabular-nums">
+                        {fmtSupplierCost(s.unit_cost, s.currency)}
+                      </span>
                       <span className="text-right tabular-nums">{fmtInt(s.lead_time_days)}d</span>
                       <span className="text-right">
                         <ScoreDot score={s.composite_score} />

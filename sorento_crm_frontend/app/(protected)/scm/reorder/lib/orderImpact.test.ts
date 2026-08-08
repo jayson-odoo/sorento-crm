@@ -115,7 +115,10 @@ describe('orderQuantityImpact - degenerate quantities', () => {
 describe('cost formatting - ex-works in the supplier currency (AC-C3.4)', () => {
   it('never renders a CNY cost as RM', () => {
     expect(fmtCost(128.4, 'CNY')).toBe('CNY 128.40');
-    expect(fmtCost(88, 'MYR')).toBe('MYR 88.00');
+    // Ringgit reads as RM everywhere on this dashboard, which is what the rest of it
+    // already prints. The rule being defended is that a CNY cost never reads as ringgit,
+    // not that the base currency gets a second spelling.
+    expect(fmtCost(88, 'MYR')).toBe('RM 88.00');
   });
 
   it('signs the ordered-to-incoming variance, so a reprice upward reads as +', () => {

@@ -24,7 +24,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { cn } from '@/lib/utils';
-import { EM_DASH, fmtDecimal, fmtInt, fmtMoney, fmtSigned } from '../../lib/format';
+import { EM_DASH, fmtDecimal, fmtInt, fmtMoney, fmtSigned, fmtSupplierCost } from '../../lib/format';
 import { m8CashImpact, type M8PlanRow } from '../lib/planRow';
 import { useExplainDemand, useExplainNet } from '../hooks/useDrills';
 
@@ -196,6 +196,19 @@ function DrillLoading() {
 
 /** Net drill - components + the open SOs behind committed (M8-A1). Fetched lazily
  *  from `explain-net` when the popover opens. */
+/**
+ * Why this row has no cash figure. Two different problems, fixed on two different screens:
+ * nobody has ever priced the item, or it is priced in money we hold no rate for. One
+ * label would send half of them to the wrong place.
+ */
+function costUnavailableReason(row: M8PlanRow): string {
+  if (row.unit_cost === null) return 'No supplier cost on record';
+  const code = (row.currency || '').trim().toUpperCase();
+  return code
+    ? `No exchange rate on file for ${code}, so this cost cannot be compared or funded`
+    : 'No supplier cost on record';
+}
+
 function NetDrill({ row }: { row: M8PlanRow }) {
   const { data: nb, isLoading, isError } = useExplainNet(row.id, true);
   if (isLoading) {
@@ -724,7 +737,11 @@ function PlanRow({
       {/* cash impact - hover shows qty x unit cost */}
       <div
         className="px-1 py-2 text-right tabular-nums"
-        title={cash === null ? 'No supplier cost on record' : `${fmtInt(row.order_qty)} x ${fmtMoney(row.unit_cost)}`}
+        title={
+          cash === null
+            ? costUnavailableReason(row)
+            : `${fmtInt(row.order_qty)} x ${fmtSupplierCost(row.unit_cost, row.currency)}`
+        }
       >
         {cash === null ? <span className="text-muted-foreground">{EM_DASH}</span> : fmtMoney(cash)}
       </div>
@@ -768,7 +785,7 @@ function PlanRow({
                 {row.supplier.name}
               </span>
               <span className="block truncate text-2xs text-muted-foreground">
-                {row.unit_cost === null ? 'no cost' : fmtMoney(row.unit_cost)} ·{' '}
+                {row.unit_cost === null ? 'no cost' : fmtSupplierCost(row.unit_cost, row.currency)} ·{' '}
                 {fmtInt(row.supplier.lead_time_days)}d lead
               </span>
             </button>

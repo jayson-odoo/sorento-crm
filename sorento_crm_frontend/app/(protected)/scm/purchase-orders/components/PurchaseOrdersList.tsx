@@ -34,7 +34,7 @@ import { BulkActionsMenu } from '../../components/BulkActionsMenu';
 import { OutstandingUploadDialog } from '../../reorder/components/OutstandingUploadDialog';
 import type { OutstandingApplyResult } from '../../reorder/services/outstandingImportService';
 import { buildPoBulkActions } from '../lib/poBulkActions';
-import { fmtDate, fmtInt, fmtMoney } from '../../lib/format';
+import { fmtDate, fmtInt, fmtMoney, fmtSupplierCost } from '../../lib/format';
 import type { PurchaseOrder, PurchaseOrderStatus } from '../../types/scm.types';
 
 type BadgeDef = { variant: 'secondary' | 'primary' | 'warning' | 'success'; label: string };
@@ -342,7 +342,10 @@ export default function PurchaseOrdersList() {
                 <span>
                   Last paid{' '}
                   <span className="font-medium tabular-nums">
-                    {fmtMoney(lastCost.unit_cost)}
+                    {/* In the currency the order was written in. The book is 8438 lines
+                        USD against 4186 MYR, so "RM 45" against a USD purchase order is a
+                        wrong number, not a formatting detail. */}
+                    {fmtSupplierCost(lastCost.unit_cost, lastCost.currency)}
                   </span>{' '}
                   for <span className="font-medium">{productFilter}</span>
                   {lastCost.supplier_name ? ` from ${lastCost.supplier_name}` : ''} on{' '}
