@@ -345,7 +345,7 @@ class PickingHeader(Base, CompanyScopedMixin):
     # ("SPO-A, SPO-B") so the list says so instead of showing a dash. Allocation
     # matching stays scalar (`_spo_match_key` / `_normalize_spo_number` compare ONE
     # normalized SPO), so a joined value equals no single SPO and never
-    # false-links. Widened by migration 314; see also `_single_spo_or_none`.
+    # false-links. Widened by migration 317; see also `_single_spo_or_none`.
     spo_number = Column(String(255), nullable=True)
     picking_type = Column(String(50), nullable=False)
     source_entity_type = Column(String(50), nullable=True)

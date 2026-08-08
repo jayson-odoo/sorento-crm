@@ -1562,10 +1562,10 @@ _GRN_SPO_COLUMN_CANDIDATES = (
 
 # AutoCount puts every SPO a GRN was received against into the ONE "Transfer
 # from" cell ("SPO-2026/06-0020, SPO-2026/06-0021, ..."), which overflowed the
-# old varchar(50) and aborted the import. Migration 314 widened
+# old varchar(50) and aborted the import. Migration 317 widened
 # `picking_headers.spo_number` to 255 so the header can SAY which SPOs it covers.
 _GRN_SPO_SEPARATORS = re.compile(r"[,;\n\r]+|\s{2,}")
-# Storage width of `picking_headers.spo_number` after migration 314.
+# Storage width of `picking_headers.spo_number` after migration 317.
 _SPO_NUMBER_MAX_LEN = 255
 
 

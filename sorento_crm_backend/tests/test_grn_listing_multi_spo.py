@@ -9,7 +9,7 @@ The reported failure: GR-001121's "Transfer from" cell held four SPO numbers
 
 Two defects, one cell:
 
-1. The column was too narrow. Migration 314 widens it to 255 and the header now
+1. The column was too narrow. Migration 317 widens it to 255 and the header now
    records EVERY SPO the GRN covers, so the list says "covers these four" instead
    of showing a dash. That column is DISPLAY for this case: matching is scalar and
    stays scalar (`_spo_match_key` and `_normalize_spo_number` compare ONE

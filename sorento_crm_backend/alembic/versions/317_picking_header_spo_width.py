@@ -19,14 +19,14 @@ value used for allocation matching.
 this is bad source data the importer should reject with a stated reason rather
 than store.
 
-Revision ID: 314_picking_header_spo_width
-Revises: 313_purchase_request_pic
+Revision ID: 317_picking_header_spo_width
+Revises: 316_merge_container_status
 """
 import sqlalchemy as sa
 from alembic import op
 
-revision = "314_picking_header_spo_width"
-down_revision = "313_purchase_request_pic"
+revision = "317_picking_header_spo_width"
+down_revision = "316_merge_container_status"
 branch_labels = None
 depends_on = None
 
