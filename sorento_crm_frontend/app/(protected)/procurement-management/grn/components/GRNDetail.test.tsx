@@ -96,6 +96,44 @@ describe('GRNDetail header', () => {
     expect(screen.getByTestId('delete-dialog')).toBeInTheDocument();
   });
 
+  it('names who created the GRN and where it came from', () => {
+    grnMock.mockReturnValue({
+      data: {
+        ...GRN,
+        created_by_label: 'Datun',
+        source_system: 'import',
+        import_filename: 'GRN Listing 06.08.2026 am.xlsx',
+      },
+      isLoading: false,
+    });
+    render(<GRNDetail grnId="grn-1" />);
+
+    expect(screen.getByText(/Datun/)).toBeInTheDocument();
+    expect(screen.getByText(/Excel import/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/GRN Listing 06\.08\.2026 am\.xlsx/),
+    ).toBeInTheDocument();
+  });
+
+  it('says Unknown rather than hiding the section on an unattributed GRN', () => {
+    // Rows created before provenance was recorded. An absent section reads as
+    // "no such concept"; "Unknown" reads as "we do not know", which is the truth.
+    render(<GRNDetail grnId="grn-1" />);
+
+    expect(screen.getByText('Created by')).toBeInTheDocument();
+    expect(screen.getByText('Unknown')).toBeInTheDocument();
+  });
+
+  it('labels an integration-created GRN as the integration, not a person', () => {
+    grnMock.mockReturnValue({
+      data: { ...GRN, created_by_label: null, source_system: 'external_api' },
+      isLoading: false,
+    });
+    render(<GRNDetail grnId="grn-1" />);
+
+    expect(screen.getByText(/AutoCount \/ n8n integration/)).toBeInTheDocument();
+  });
+
   it('still exposes the status changes it always did', async () => {
     render(<GRNDetail grnId="grn-1" />);
 
