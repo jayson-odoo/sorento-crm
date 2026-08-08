@@ -293,11 +293,11 @@ function InquirySummary({
       <div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
           <CountTile label="Rows" value={data.rows} />
+          {/* Both figures, always. The book restates an instalment across its month, roll-up
+              and snapshot tabs, so a reader shown only the smaller number reads the drop as
+              rows lost. */}
+          <CountTile label="Scheduled deliveries" value={data.instalments} />
           <CountTile label="Matched" value={data.lines_matched} />
-          <CountTile
-            label={applied ? 'Locations written' : 'With a location'}
-            value={applied ? applied.locations_written : data.with_location}
-          />
           <CountTile
             label={applied ? 'Links claimed' : 'PO links'}
             value={applied ? applied.claims_written : data.po_claims}
@@ -312,6 +312,20 @@ function InquirySummary({
             : ''}
           .
         </p>
+        {data.rows_restating_an_instalment > 0 ? (
+          <p className="mt-1 text-2xs text-muted-foreground">
+            {data.rows_restating_an_instalment.toLocaleString()}{' '}
+            {plural(data.rows_restating_an_instalment, 'row', 'rows')} restate a delivery
+            another sheet already lists, counted once.
+          </p>
+        ) : null}
+        {applied && applied.lines_withdrawn > 0 ? (
+          <p className="mt-1 text-2xs text-muted-foreground">
+            {applied.lines_withdrawn.toLocaleString()}{' '}
+            {plural(applied.lines_withdrawn, 'delivery', 'deliveries')} this sheet no longer
+            lists {plural(applied.lines_withdrawn, 'was', 'were')} withdrawn.
+          </p>
+        ) : null}
       </div>
 
       <ChipList

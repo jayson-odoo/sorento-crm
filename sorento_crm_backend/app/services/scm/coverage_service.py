@@ -69,6 +69,7 @@ from app.services.scm.coverage_timeline import (
     is_use_stock,
     resolve_sources,
 )
+from app.services.scm.demand import is_open_demand, qty_of as demand_qty_of
 from app.services.scm.reorder_engine import resolve_policy_for_sku
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 
@@ -357,6 +358,7 @@ class CoverageService:
                 SalesOrderLine.product_id,
                 SalesOrderLine.qty_ordered,
                 SalesOrderLine.qty_delivered,
+                SalesOrderLine.qty_required,
                 SalesOrderLine.required_date,
                 SalesOrder.requested_delivery_date,
                 SalesOrder.so_number,
@@ -373,8 +375,7 @@ class CoverageService:
                 SalesOrderLine.product_id.in_(pids),
                 SalesOrderLine.warehouse_id.in_(wh_ids),
                 SalesOrder.status == "open",
-                SalesOrderLine.line_status == "open",
-                SalesOrderLine.qty_ordered > SalesOrderLine.qty_delivered,
+                is_open_demand(),
             )
             .all()
         )
@@ -385,14 +386,14 @@ class CoverageService:
                 SalesOrderLine.product_id,
                 SalesOrderLine.qty_ordered,
                 SalesOrderLine.qty_delivered,
+                SalesOrderLine.qty_required,
             )
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .filter(
                 SalesOrderLine.product_id.in_(pids),
                 SalesOrderLine.warehouse_id.is_(None),
                 SalesOrder.status == "open",
-                SalesOrderLine.line_status == "open",
-                SalesOrderLine.qty_ordered > SalesOrderLine.qty_delivered,
+                is_open_demand(),
             )
             .all()
         )
@@ -401,7 +402,7 @@ class CoverageService:
         undated: dict[str, list[UndatedDemand]] = {}
         for r in rows:
             pid = str(r.product_id)
-            outstanding = float(r.qty_ordered or 0) - float(r.qty_delivered or 0)
+            outstanding = demand_qty_of(r)
             if outstanding <= 0:
                 continue
             when = r.required_date or r.requested_delivery_date
@@ -430,8 +431,7 @@ class CoverageService:
         unplaceable: dict[str, float] = {}
         for r in unplaceable_rows:
             pid = str(r.product_id)
-            qty = float(r.qty_ordered or 0) - float(r.qty_delivered or 0)
-            unplaceable[pid] = unplaceable.get(pid, 0.0) + qty
+            unplaceable[pid] = unplaceable.get(pid, 0.0) + demand_qty_of(r)
 
         keys = set(events) | set(undated) | set(unplaceable)
         return {

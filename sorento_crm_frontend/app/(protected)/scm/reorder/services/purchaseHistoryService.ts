@@ -77,6 +77,15 @@ export interface OrderInquiryPreview {
   rows: number;
   sheets_read: string[];
   sheets_skipped: string[];
+  /**
+   * Distinct scheduled deliveries the sheet describes: `(sales order, item, delivery date)`.
+   * Lower than `rows`, and that is the point. The book states one instalment on a month tab, a
+   * roll-up tab covering that month and a dated working snapshot, so the row count is not the
+   * amount of demand.
+   */
+  instalments: number;
+  /** Rows absorbed into an instalment already stated on another sheet. */
+  rows_restating_an_instalment: number;
   lines_matched: number;
   lines_unmatched: number;
   /** Named, so somebody can see WHICH sales orders have not been uploaded yet. */
@@ -91,6 +100,10 @@ export interface OrderInquiryPreview {
 export interface OrderInquiryResult extends OrderInquiryPreview {
   locations_written: number;
   claims_written: number;
+  lines_created: number;
+  lines_refreshed: number;
+  /** Instalments this feed had written that the sheet no longer states. */
+  lines_withdrawn: number;
   links: OrderLinkResolution;
 }
 

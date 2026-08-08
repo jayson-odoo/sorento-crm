@@ -340,6 +340,18 @@ class SalesOrderLine(Base, CompanyScopedMixin):
     # carries several, so the header's requested_delivery_date cannot drive netting.
     # Without this the Coverage Timeline has no time axis at all (ADR-0011).
     required_date = Column(Date, nullable=True)
+    # What purchasing should plan for, when that is not simply what is still owed to the
+    # customer. NULL means nobody has said otherwise, so the netting falls back to
+    # `qty_ordered - qty_delivered`. Set by the Order Inquiry feed, which is CS stating the
+    # quantity they want covered; kept apart from `qty_ordered` so a sales-order amendment
+    # and a purchasing decision cannot overwrite one another.
+    qty_required = Column(Numeric(15, 4), nullable=True)
+    # Where this line stands in purchasing. `not_reviewed` (nobody has looked at it yet, and
+    # it still counts as demand), `needs_purchase` (CS says buy it, nothing placed),
+    # `ordered` (a purchase order covers it), `covered` (CS ruled it out).
+    purchasing_status = Column(
+        String(24), default="not_reviewed", server_default="not_reviewed", nullable=False
+    )
     line_status = Column(String(50), default="open", nullable=False)
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)

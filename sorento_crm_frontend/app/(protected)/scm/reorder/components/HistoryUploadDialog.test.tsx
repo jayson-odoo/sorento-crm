@@ -100,6 +100,8 @@ function inquiryPreview(over: Partial<OrderInquiryPreview> = {}): OrderInquiryPr
     ok: true,
     problems: [],
     rows: 105,
+    instalments: 88,
+    rows_restating_an_instalment: 17,
     sheets_read: ['Sheet1'],
     sheets_skipped: [],
     lines_matched: 71,
@@ -118,6 +120,9 @@ function inquiryResult(over: Partial<OrderInquiryResult> = {}): OrderInquiryResu
     ...inquiryPreview(),
     locations_written: 71,
     claims_written: 62,
+    lines_created: 88,
+    lines_refreshed: 0,
+    lines_withdrawn: 3,
     links: LINKS,
     ...over,
   };
@@ -428,5 +433,42 @@ describe('HistoryUploadDialog - order inquiry', () => {
       .getByText('12')).toBeInTheDocument();
     expect(within(within(section).getByText('Still waiting').closest('[data-slot="count-tile"]')!)
       .getByText('78')).toBeInTheDocument();
+  });
+});
+
+describe('HistoryUploadDialog - one delivery, stated on many sheets', () => {
+  it('shows the row count AND the number of scheduled deliveries', async () => {
+    // The customer's book carries a month tab, a roll-up tab covering that month and dated
+    // working snapshots, so 15,797 rows describe 8,272 deliveries. Showing only the smaller
+    // figure reads as rows lost; showing only the larger one is the bug we just fixed.
+    renderDialog('order-inquiry');
+    await choose('inquiry.xlsx');
+
+    const rows = (await screen.findByText('Rows')).closest('[data-slot="count-tile"]')!;
+    expect(within(rows).getByText('105')).toBeInTheDocument();
+    const deliveries = screen
+      .getByText('Scheduled deliveries')
+      .closest('[data-slot="count-tile"]')!;
+    expect(within(deliveries).getByText('88')).toBeInTheDocument();
+  });
+
+  it('says how many rows restated a delivery another sheet already lists', async () => {
+    renderDialog('order-inquiry');
+    await choose('inquiry.xlsx');
+
+    expect(
+      await screen.findByText(/17 rows restate a delivery another sheet already lists/),
+    ).toBeInTheDocument();
+  });
+
+  it('says what it withdrew, once applied', async () => {
+    // Deleting demand silently is the one thing an import must never do.
+    renderDialog('order-inquiry');
+    await choose('inquiry.xlsx');
+    fireEvent.click(confirmButton());
+
+    expect(
+      await screen.findByText(/3 deliveries this sheet no longer lists were withdrawn/),
+    ).toBeInTheDocument();
   });
 });
