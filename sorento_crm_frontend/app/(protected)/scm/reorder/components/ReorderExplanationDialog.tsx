@@ -437,12 +437,22 @@ function SupplierReason({ rec }: { rec: ReorderRecommendation }) {
     // a claim we cannot support, so the popup says what happened instead of inventing it.
     why = 'No supplier price could be compared, so this one was not chosen on cost.';
   } else if (reason?.basis === 'lowest_cost' && reason.runner_up) {
+    // "RM 10.47 per unit under X" read as "it costs RM 10.47 at X" - the saving was taken
+    // for the price and the beaten supplier for the chosen one, which is the exact opposite
+    // of what happened. Name the gap as a gap, name the supplier it is measured against, and
+    // give that supplier's own comparable price so the subtraction is checkable on screen.
+    const runnerUpCost =
+      reason.runner_up_cost_base != null
+        ? ` at ${fmtSupplierCost(reason.runner_up_cost_base, comparedIn)}`
+        : reason.runner_up_cost != null
+          ? ` at ${fmtSupplierCost(reason.runner_up_cost, reason.runner_up_currency)}`
+          : '';
     why =
       reason.saving_per_unit != null
         ? `Cheapest of the linked suppliers: ${fmtSupplierCost(
             reason.saving_per_unit,
             comparedIn,
-          )} per unit under ${reason.runner_up}.`
+          )} per unit less than the next best, ${reason.runner_up}${runnerUpCost}.`
         : `Cheapest of the priced suppliers. ${reason.runner_up} has no cost we could compare, so the gap is unknown.`;
   } else if (rec.supplier_selection) {
     why = `Chosen by ${SELECTION_LABEL[rec.supplier_selection] ?? rec.supplier_selection}.`;

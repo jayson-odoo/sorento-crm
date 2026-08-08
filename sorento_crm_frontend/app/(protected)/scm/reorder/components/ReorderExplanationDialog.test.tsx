@@ -372,8 +372,19 @@ describe('ReorderExplanationDialog - why this supplier, and where its cost came 
     render(<ReorderExplanationDialog rec={cheapest()} open onOpenChange={() => {}} />);
 
     // Cents kept: a per-unit saving of 0.50 rounded to "RM 1" would be a doubling.
+    // "less than the next best", never "under": the earlier wording read as the chosen
+    // price being RM 4.00 AT Kaiping Kaixin, which is the saving mistaken for the price
+    // and the beaten supplier mistaken for the chosen one.
     expect(
-      screen.getByText(/cheapest.*RM 4\.00 per unit under Kaiping Kaixin/i),
+      screen.getByText(/cheapest.*RM 4\.00 per unit less than the next best, Kaiping Kaixin/i),
+    ).toBeInTheDocument();
+  });
+
+  it('quotes the beaten supplier’s own price, so the subtraction is checkable', () => {
+    render(<ReorderExplanationDialog rec={cheapest()} open onOpenChange={() => {}} />);
+
+    expect(
+      screen.getByText(/less than the next best, Kaiping Kaixin at RM 12\.00/i),
     ).toBeInTheDocument();
   });
 
@@ -516,7 +527,11 @@ describe('ReorderExplanationDialog - two prices, two currencies', () => {
   it('quotes the saving in the currency the comparison was made in', () => {
     render(<ReorderExplanationDialog rec={crossCurrency()} open onOpenChange={() => {}} />);
 
-    expect(screen.getByText(/RM 12\.00 per unit under Kaiping Kaixin/i)).toBeInTheDocument();
+    // In MYR, the currency the ranking happened in - never in the winner's USD, where
+    // "USD 12.00" would understate the gap by a factor of the rate.
+    expect(
+      screen.getByText(/RM 12\.00 per unit less than the next best, Kaiping Kaixin at RM 210\.00/i),
+    ).toBeInTheDocument();
   });
 
   it('does not claim a cheapest when no price could be converted', () => {
