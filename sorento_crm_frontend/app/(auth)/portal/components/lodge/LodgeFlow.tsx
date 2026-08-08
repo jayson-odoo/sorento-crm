@@ -229,6 +229,11 @@ export function LodgeFlow({
           latitude: coords?.latitude ?? null,
           longitude: coords?.longitude ?? null,
           defect_description: fault || null,
+          // Every file the consumer uploaded on step one, already stored server-side when
+          // it was read. Sent so the receipt and the photo of the fault end up ON the
+          // complaint: before this they were posted to a model and dropped, and a
+          // consumer who photographed their receipt got a complaint with no receipt on it.
+          attachment_ids: extract?.attachment_ids ?? [],
           // EVERY extracted line, not just the first. A receipt with a toilet and a tap
           // on it is one purchase covering two products, and sending only `lines[0]`
           // silently dropped the rest - the ledger then records half a sale, and the

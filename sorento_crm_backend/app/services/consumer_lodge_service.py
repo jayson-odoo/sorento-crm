@@ -47,6 +47,7 @@ from sqlalchemy.orm import Session
 from app.models.complaints import Complaint, ComplaintProductLine
 from app.models.warranty import WarrantyProductKind
 from app.services import consumer_service, warranty_service
+from app.services.portal_intake_uploads import link_uploads_to_entity
 from app.services.dealer_resolution_service import STATE_RESOLVED, resolve_dealer
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,26 @@ def _quantity_int(value: Any) -> Optional[int]:
         return max(1, int(value))
     except (TypeError, ValueError):
         return None
+
+
+def _proof_attachment_id(payload: dict) -> Optional[str]:
+    """Which uploaded file is the proof of purchase.
+
+    An explicit choice always wins. Failing that, ONE uploaded file with a readable
+    purchase date on it is unambiguous - there is nothing else it could be - so the
+    purchase record points at it and CS can open the receipt the date came from.
+
+    With two or more files it stays null. A consumer photographs the receipt AND the
+    cracked basin, and nothing here can tell which is which; picking the first would
+    file a photo of a bathroom floor as proof of purchase, and `proof_attachment_id` is
+    read as evidence. Null means "CS attaches it", which is a task. A wrong one is a
+    wrong record nobody knows to check.
+    """
+    explicit = (payload.get("proof_attachment_id") or "").strip()
+    if explicit:
+        return explicit
+    uploaded = [str(a).strip() for a in (payload.get("attachment_ids") or []) if str(a).strip()]
+    return uploaded[0] if len(uploaded) == 1 else None
 
 
 def _compose_site_address(payload: dict) -> Optional[str]:
@@ -245,7 +266,7 @@ def lodge_complaint(db: Session, payload: Dict[str, Any]) -> LodgeResult:
             customer_id=dealer_customer_id,
             dealer_document_number=payload.get("dealer_document_number"),
             consumer_profile_id=str(profile.id),
-            proof_attachment_id=payload.get("proof_attachment_id"),
+            proof_attachment_id=_proof_attachment_id(payload),
             # Deliberately NO registration_source, which leaves `registered_at` NULL for
             # `ensure_registration_on_complaint` to stamp as `auto_on_complaint`.
             #
@@ -330,6 +351,20 @@ def lodge_complaint(db: Session, payload: Dict[str, Any]) -> LodgeResult:
             )
         )
     db.flush()
+
+    # The photos the consumer took, onto the complaint they took them for.
+    #
+    # `/ai-extract` stored these on step one and handed back their ids; this is where they
+    # stop being loose files and become part of a record. Everything is linked, not just
+    # whatever looked like a receipt: the shot of the cracked basin is the evidence a
+    # technician needs, and the receipt the extractor could not read is exactly the one CS
+    # has to open by hand.
+    link_uploads_to_entity(
+        db,
+        entity_type="complaint",
+        entity_id=str(complaint.id),
+        attachment_ids=[str(a) for a in (payload.get("attachment_ids") or [])],
+    )
 
     _assign_number(db, complaint)
     db.commit()

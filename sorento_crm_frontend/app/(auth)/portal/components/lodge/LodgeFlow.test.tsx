@@ -51,6 +51,7 @@ function backend(overrides: Partial<LodgeBackend> = {}): LodgeBackend {
       purchase_date: '2025-10-16',
       document_number: 'KCS-2112-0054',
       sorento_order_number: null,
+      attachment_ids: [],
       lines: [
         {
           claimed_text: 'SRTWC8152 WATER CLOSET',
@@ -157,6 +158,7 @@ describe('LodgeFlow', () => {
             purchase_date: null,
             document_number: null,
             sorento_order_number: null,
+            attachment_ids: [],
             lines: [],
           }),
         })}
@@ -271,6 +273,7 @@ describe('lodge photo step', () => {
       purchase_date: '2025-10-16',
       document_number: null,
       sorento_order_number: null,
+      attachment_ids: [],
       lines: [],
     });
     render(<LodgeFlow live backend={backend({ extract })} />);

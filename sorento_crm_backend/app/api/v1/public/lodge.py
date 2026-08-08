@@ -83,6 +83,12 @@ class LodgeIn(ResolveIn):
     longitude: Optional[float] = None
     defect_description: Optional[str] = None
     proof_attachment_id: Optional[str] = None
+    # What the consumer uploaded on step one, already stored by `/ai-extract`. Sent back
+    # here so the evidence lands on the complaint. Kept SEPARATE from
+    # `proof_attachment_id`, which names the one file the purchase record treats as proof:
+    # a consumer photographs a receipt AND the crack in the basin, and calling the second
+    # one proof of purchase would be a lie the warranty engine reads.
+    attachment_ids: List[str] = Field(default_factory=list)
 
 
 def _kind_payload(row: WarrantyProductKind) -> Dict[str, Any]:

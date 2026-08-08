@@ -23,7 +23,6 @@ import { formatDate } from '@/lib/helpers';
 
 import {
   complaintAudience,
-  formatPin,
   pinMapsUrl,
   reportedByLabel,
   siteAddressLines,
@@ -138,9 +137,13 @@ function ProductLinesTable({
                         )}
                       </>
                     ) : (
-                      // Not an error: a complaint routinely arrives before any receipt
-                      // does, and blocking intake on one is exactly what AC-C14 forbids.
-                      <span className="text-muted-foreground">No receipt yet</span>
+                      // "Not matched", never "no receipt". The consumer very often DID
+                      // upload one - it is in Linked Attachments below - and what is
+                      // missing is the purchase RECORD this line's cover computes from,
+                      // because the date could not be read or the product did not resolve
+                      // to a warranty kind. Telling CS there is no receipt when one is on
+                      // the page sends them looking for a file they already have.
+                      <span className="text-muted-foreground">Not matched</span>
                     )}
                   </td>
                 </>
@@ -158,7 +161,6 @@ function ProductLinesTable({
 
 function SiteSection({ complaint }: { complaint: Complaint }) {
   const addressLines = siteAddressLines(complaint);
-  const pin = formatPin(complaint.latitude, complaint.longitude);
   const mapsUrl = pinMapsUrl(complaint.latitude, complaint.longitude);
   return (
     <div className="rounded-md border p-3">
@@ -193,10 +195,9 @@ function SiteSection({ complaint }: { complaint: Complaint }) {
           </Link>
         )}
       </div>
-      {/* The pin is never reconciled against the address: the pin is what a technician
-          navigates to, the address is what documents print. Showing both, plainly, is
-          what lets a dispatcher notice when they disagree. */}
-      {pin && <p className="mt-2 text-xs text-muted-foreground">Pin {pin}</p>}
+      {/* The coordinates themselves are deliberately NOT printed. Nobody reads a lat/lng
+          off a screen and nobody can correct one by hand; the "Open pin" link above is
+          the whole of what a dispatcher does with it. */}
       {(complaint.site_contact_name || complaint.site_contact_phone) && (
         <p className="mt-2 text-sm">
           <span className="text-muted-foreground">Contact on site: </span>

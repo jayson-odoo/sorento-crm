@@ -131,6 +131,11 @@ class ExtractResult(BaseModel):
     usage: TokenUsage = TokenUsage()
     model: str | None = None
     provider: str | None = None
+    # The files themselves, kept regardless of what was read out of them. A caller that
+    # later creates a record passes these back so the evidence ends up on it. Empty when
+    # the caller did not ask for retention, or when storage was unavailable - retention
+    # is best-effort and never blocks the extraction it rides along with.
+    attachment_ids: list[str] = []
 
 
 # ---- Inputs ---------------------------------------------------------------

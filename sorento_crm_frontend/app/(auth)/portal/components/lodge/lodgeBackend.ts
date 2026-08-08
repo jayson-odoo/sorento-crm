@@ -90,6 +90,9 @@ export function mapExtractToLodge(result: AIExtractResult): ExtractResult {
     document_number: text('dealer_document_number'),
     sorento_order_number: text('sorento_order_number'),
     lines,
+    // Carried through untouched. What the extractor could read has no bearing on which
+    // files were kept - the receipt it failed on is the one CS most needs to open.
+    attachment_ids: result.attachment_ids ?? [],
   };
 }
 
@@ -126,6 +129,10 @@ export const liveLodgeBackend: LodgeBackend = {
       document_number: null,
       sorento_order_number: null,
       lines: [],
+      // Overwritten below when the call succeeded: an extraction that read nothing off a
+      // photo still stored the photo, and losing it here would discard the evidence in
+      // exactly the case where a human has to look at it.
+      attachment_ids: [],
     };
     if (!files || files.length === 0) return empty;
     try {

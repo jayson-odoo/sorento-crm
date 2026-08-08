@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.api.v1.public.portal import get_portal_token
 from app.database import get_db
 from app.models.portal import PortalToken
+from app.services.portal_intake_uploads import store_portal_upload
 from app.services.ai_extract.extract_service import (
     AIExtractService,
     ExtractFile,
@@ -111,9 +112,28 @@ async def ai_extract(
             )
         )
 
+    # Store BEFORE extracting. The upload is evidence first and model input second: a
+    # consumer who photographs a receipt has handed over the only proof of their purchase
+    # date, and until now these bytes were read, sent to a model and dropped. Whether the
+    # extractor recognises a receipt is a judgement about the file, never a reason to keep
+    # or lose it - the ones it reads worst are exactly the ones a human most needs to see.
+    stored = [
+        store_portal_upload(
+            db,
+            contact_id=token.contact_id,
+            filename=item.filename,
+            content_type=item.mime,
+            data=item.data,
+        )
+        for item in payload
+    ]
+    attachment_ids = [item.attachment_id for item in stored if item is not None]
+    if attachment_ids:
+        db.commit()
+
     service = AIExtractService(db)
     try:
-        return service.extract(
+        result = service.extract(
             form_key,
             payload,
             user_id=None,
@@ -121,3 +141,8 @@ async def ai_extract(
         )
     except KeyError:
         raise handle_validation_error(f"Unknown form_key: {form_key}")
+    # Set after the call rather than threaded through the service: retention is the
+    # endpoint's concern (it owns the request's files and its transaction), and the
+    # extractor has no business knowing where its input was filed.
+    result.attachment_ids = attachment_ids
+    return result

@@ -25,7 +25,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, MapPin } from 'lucide-react';
+import { Loader2, MapPin, Search } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -71,6 +71,47 @@ export const MALAYSIAN_STATES = [
 ];
 
 export type Coords = { latitude: number; longitude: number };
+
+/** One prediction from Google's autocomplete, reduced to what the list renders. */
+export interface PlaceSuggestion {
+  placeId: string;
+  primary: string;
+  secondary: string;
+}
+
+/** True when the consumer has typed nothing into the address at all.
+ *
+ * Decides whether a dropped pin fills the fields outright or has to ask first. With an
+ * empty form there is nothing to lose and asking is friction; with anything typed, the
+ * typed value is a person's own answer and silently replacing it is the behaviour that
+ * makes people stop touching the map.
+ */
+export function isAddressBlank(address: SiteAddress): boolean {
+  return !['line1', 'line2', 'postcode', 'city', 'state']
+    .map((key) => (address[key as keyof SiteAddress] || '').trim())
+    .some(Boolean);
+}
+
+/** What changes if a proposed address were applied, as field labels.
+ *
+ * Shown so the question is answerable. "Use this address?" beside a one-line summary asks
+ * somebody to diff two addresses in their head; naming the fields that would change makes
+ * it a decision instead of a guess.
+ */
+export function changedFields(current: SiteAddress, next: Partial<SiteAddress>): string[] {
+  const LABELS: Array<[keyof SiteAddress, string]> = [
+    ['line1', 'Address line 1'],
+    ['line2', 'Address line 2'],
+    ['postcode', 'Postcode'],
+    ['city', 'City'],
+    ['state', 'State'],
+  ];
+  return LABELS.filter(([key]) => {
+    const proposed = (next[key] || '').trim();
+    if (!proposed) return false;
+    return proposed !== (current[key] || '').trim();
+  }).map(([, label]) => label);
+}
 
 /** One line from the parts, matching what the server composes. Used for the preview only. */
 export function composeSiteAddress(address: SiteAddress): string {
@@ -128,27 +169,42 @@ declare global {
   }
 }
 
-/** Load the Maps script once per page, however many components ask for it. */
+/**
+ * Load the Maps script once per page, however many components ask for it.
+ *
+ * **`loading=async` requires `callback=`.** That pairing is the whole of this function.
+ * `loading=async` is Google's supported bootstrap and the only form that does not log a
+ * performance warning, but it changes what `onload` means: the script fires `onload`
+ * before the constructors exist, and `google.maps.Map` is still `undefined` at that
+ * moment. Measured on a working key - `Map`, `Geocoder` and `places` are all undefined at
+ * `onload` and all present once the named callback runs. Resolving on `onload` therefore
+ * made a perfectly good key report "The map could not load" every time.
+ *
+ * The callback name is fixed rather than unique per call: the promise below is already a
+ * per-page singleton, so a second name would only exist to be leaked.
+ */
 function loadGoogleMaps(apiKey: string): Promise<void> {
   if (typeof window === 'undefined') return Promise.resolve();
-  if (window.google?.maps) return Promise.resolve();
+  // Constructors present means a previous load already finished - including one from
+  // another component on the page.
+  if (typeof window.google?.maps?.Map === 'function') return Promise.resolve();
   if (window.__sorentoMapsLoader__) return window.__sorentoMapsLoader__;
 
   window.__sorentoMapsLoader__ = new Promise<void>((resolve, reject) => {
+    const CALLBACK = '__sorentoMapsReady__';
+    (window as unknown as Record<string, unknown>)[CALLBACK] = () => resolve();
     const script = document.createElement('script');
-    // `loading=async` is Google's supported bootstrap. Without it the API logs a performance
-    // warning on every load, which is noise in the console we check for real regressions.
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&loading=async`;
+    script.src =
+      `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}` +
+      `&libraries=places&loading=async&callback=${CALLBACK}`;
     script.async = true;
-    script.defer = true;
-    script.onload = () => resolve();
-    script.onerror = () => {
-      // Clear the cached promise so a later attempt can retry - a restricted key that gets
-      // fixed in Google Cloud should not need a page reload to start working.
-      window.__sorentoMapsLoader__ = undefined;
-      reject(new Error('maps_script_failed'));
-    };
+    script.onerror = () => reject(new Error('maps_script_failed'));
     document.head.appendChild(script);
+  }).catch((error) => {
+    // Clear the cached promise so a later attempt can retry - a restricted key that gets
+    // fixed in Google Cloud should not need a page reload to start working.
+    window.__sorentoMapsLoader__ = undefined;
+    throw error;
   });
   return window.__sorentoMapsLoader__;
 }
@@ -175,9 +231,62 @@ export function SitePicker({ address, onAddress, coords, onCoords, apiKey }: Sit
 
   const set = (patch: Partial<SiteAddress>) => onAddress({ ...address, ...patch });
 
-  /** Reverse-geocode and fill the fields. Best-effort: a failure leaves the pin and the
-   *  typed fields exactly as they were. */
-  const fillFromCoords = useCallback(
+  // What the last pin move resolved to, held as a PROPOSAL rather than applied.
+  //
+  // The previous version filled only fields that were still empty, so the first drop
+  // populated the form and every drop after it did nothing at all - no fill, no message,
+  // no way to tell whether the map had even understood the new position. Moving a pin and
+  // seeing nothing happen reads as broken.
+  //
+  // Now the resolved address is always shown, and applying it is the consumer's call
+  // (AC-M39: the pin and the address are both kept and never auto-reconciled). The one
+  // exception is a blank form, where there is nothing to overwrite and asking is pure
+  // friction.
+  const [proposal, setProposal] = useState<{
+    formatted: string;
+    parsed: Partial<SiteAddress>;
+    applied: boolean;
+  } | null>(null);
+
+  // The address search. Its own state because the box is a search, not a form field:
+  // what is typed here is a query, and the answer is one of the suggestions.
+  const [searchText, setSearchText] = useState('');
+  const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([]);
+  const [searching, setSearching] = useState(false);
+  const sessionToken = useRef<GoogleMaps>(null);
+
+  // The address, reachable from callbacks that outlive the render they were created in.
+  //
+  // The map's `click` and `dragend` listeners are registered ONCE, when the map is built,
+  // and they hold whatever closure existed at that moment - which is the first render,
+  // where the address is still empty. Reading `address` directly from those callbacks
+  // meant every pin move after the first still believed the form was blank, so it
+  // auto-applied over answers the consumer had already given instead of asking. Caught in
+  // a live walk: searching for an address filled the fields, and the very next pin drop
+  // silently overwrote them.
+  const addressRef = useRef(address);
+  useEffect(() => {
+    addressRef.current = address;
+  }, [address]);
+
+  const applyParsed = useCallback(
+    (parsed: Partial<SiteAddress>) => {
+      const current = addressRef.current;
+      onAddress({
+        line1: parsed.line1 ?? current.line1,
+        line2: parsed.line2 ?? current.line2,
+        postcode: parsed.postcode ?? current.postcode,
+        city: parsed.city ?? current.city,
+        state: parsed.state ?? current.state,
+        country: parsed.country || current.country || 'Malaysia',
+      });
+    },
+    [onAddress],
+  );
+
+  /** Reverse-geocode a pin and offer what it found. Best-effort: a failure leaves the pin
+   *  and the typed fields exactly as they were. */
+  const describeCoords = useCallback(
     (next: Coords) => {
       const maps = window.google?.maps;
       if (!maps) return;
@@ -185,26 +294,21 @@ export function SitePicker({ address, onAddress, coords, onCoords, apiKey }: Sit
       geocoder.geocode(
         { location: { lat: next.latitude, lng: next.longitude } },
         (results: any[], status: string) => { // eslint-disable-line @typescript-eslint/no-explicit-any
-          if (status !== 'OK' || !results?.length) return;
-          const parsed = addressFromGeocode(
-            results[0].address_components ?? [],
-            results[0].formatted_address ?? '',
-          );
-          // Never blank a field the consumer already filled: the geocoder is often
-          // close-but-wrong here, and overwriting a corrected postcode with its guess is
-          // the one thing that would make people stop touching the map.
-          onAddress({
-            line1: address.line1 || parsed.line1 || '',
-            line2: address.line2 || parsed.line2 || '',
-            postcode: address.postcode || parsed.postcode || '',
-            city: address.city || parsed.city || '',
-            state: address.state || parsed.state || '',
-            country: address.country || parsed.country || 'Malaysia',
-          });
+          if (status !== 'OK' || !results?.length) {
+            setProposal(null);
+            return;
+          }
+          const formatted = results[0].formatted_address ?? '';
+          const parsed = addressFromGeocode(results[0].address_components ?? [], formatted);
+          // Read through the ref, not the closure: this runs from a listener registered
+          // once at map build time (see `addressRef`).
+          const autoApply = isAddressBlank(addressRef.current);
+          if (autoApply) applyParsed(parsed);
+          setProposal({ formatted, parsed, applied: autoApply });
         },
       );
     },
-    [address, onAddress],
+    [applyParsed],
   );
 
   const placePin = useCallback(
@@ -216,9 +320,103 @@ export function SitePicker({ address, onAddress, coords, onCoords, apiKey }: Sit
         mapObj.current.setCenter(position);
         if (markerObj.current) markerObj.current.setPosition(position);
       }
-      fillFromCoords(next);
+      describeCoords(next);
     },
-    [fillFromCoords, onCoords],
+    [describeCoords, onCoords],
+  );
+
+  /**
+   * Address predictions as the consumer types.
+   *
+   * Uses the LEGACY `AutocompleteService`, deliberately. The modern
+   * `AutocompleteSuggestion` runs on Places API (New), which is a separate product that
+   * has to be enabled and billed on its own; on a key with only Maps JS, Geocoding and
+   * the classic Places API enabled it fails with "API key not valid", which reads as a
+   * broken key rather than a missing subscription. The legacy service works on the
+   * enablement this tenant already has.
+   */
+  const fetchSuggestions = useCallback((input: string) => {
+    const maps = window.google?.maps;
+    const query = input.trim();
+    if (!maps?.places?.AutocompleteService || query.length < 3) {
+      setSuggestions([]);
+      return;
+    }
+    if (!sessionToken.current && maps.places.AutocompleteSessionToken) {
+      // One token per search-then-pick. Google bills the whole sequence as a single
+      // session; without it every keystroke is charged as its own request.
+      sessionToken.current = new maps.places.AutocompleteSessionToken();
+    }
+    setSearching(true);
+    new maps.places.AutocompleteService().getPlacePredictions(
+      {
+        input: query,
+        // Malaysia only. A Malaysian consumer searching "jalan sl 1" should not have to
+        // scroll past a street in Jakarta.
+        componentRestrictions: { country: 'my' },
+        sessionToken: sessionToken.current ?? undefined,
+      },
+      (predictions: any[] | null) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+        setSearching(false);
+        setSuggestions(
+          (predictions ?? []).slice(0, 5).map((p) => ({
+            placeId: p.place_id,
+            primary: p.structured_formatting?.main_text ?? p.description ?? '',
+            secondary: p.structured_formatting?.secondary_text ?? '',
+          })),
+        );
+      },
+    );
+  }, []);
+
+  // Debounced, because this is billed per request and a Malaysian address is long enough
+  // that firing on every keystroke would multiply the cost of one search by twenty.
+  useEffect(() => {
+    const handle = setTimeout(() => fetchSuggestions(searchText), 350);
+    return () => clearTimeout(handle);
+  }, [searchText, fetchSuggestions]);
+
+  /**
+   * Take a chosen suggestion: move the pin there AND fill the fields.
+   *
+   * Applied outright, unlike a dragged pin. Picking a specific address off a list is an
+   * unambiguous statement of intent - there is nothing to ask about - whereas nudging a
+   * marker is as likely to be someone fine-tuning where the van should stop.
+   */
+  const chooseSuggestion = useCallback(
+    (suggestion: PlaceSuggestion) => {
+      const maps = window.google?.maps;
+      if (!maps) return;
+      setSuggestions([]);
+      setSearchText('');
+      // Resolved through the Geocoder by place id rather than through PlacesService: it
+      // returns `address_components` in the exact shape `addressFromGeocode` already
+      // parses, and it needs no map div to construct.
+      new maps.Geocoder().geocode(
+        { placeId: suggestion.placeId },
+        (results: any[], status: string) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+          // The session ends with the pick, whatever the outcome.
+          sessionToken.current = null;
+          if (status !== 'OK' || !results?.length) return;
+          const formatted = results[0].formatted_address ?? '';
+          const parsed = addressFromGeocode(results[0].address_components ?? [], formatted);
+          applyParsed(parsed);
+          setProposal({ formatted, parsed, applied: true });
+          const location = results[0].geometry?.location;
+          if (location) {
+            const next = { latitude: location.lat(), longitude: location.lng() };
+            onCoords(next);
+            if (mapObj.current) {
+              const position = { lat: next.latitude, lng: next.longitude };
+              mapObj.current.setCenter(position);
+              mapObj.current.setZoom(17);
+              if (markerObj.current) markerObj.current.setPosition(position);
+            }
+          }
+        },
+      );
+    },
+    [applyParsed, onCoords],
   );
 
   // Build the map once the script is in.
@@ -301,8 +499,52 @@ export function SitePicker({ address, onAddress, coords, onCoords, apiKey }: Sit
     );
   };
 
+  const pendingFields = proposal && !proposal.applied ? changedFields(address, proposal.parsed) : [];
+
   return (
     <div className="flex flex-col gap-4">
+      {/* Search first, because it is the fastest way to a correct address and the one
+          people already know how to use. Typing the fields by hand still works, and so
+          does the pin; this is the shortcut, not a gate. */}
+      {apiKey && mapState !== 'failed' ? (
+        <div className="relative">
+          <span className="text-sm font-medium">Search for your address</span>
+          <div className="relative mt-1.5">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              placeholder="Start typing, e.g. Jalan SL 1 Bandar Sungai Long"
+              className="pl-9"
+              autoComplete="off"
+            />
+            {searching ? (
+              <Loader2 className="absolute right-3 top-1/2 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+            ) : null}
+          </div>
+          {suggestions.length > 0 ? (
+            <ul className="absolute z-20 mt-1 w-full overflow-hidden rounded-md border bg-popover shadow-md">
+              {suggestions.map((suggestion) => (
+                <li key={suggestion.placeId}>
+                  <button
+                    type="button"
+                    className="flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-accent"
+                    onClick={() => chooseSuggestion(suggestion)}
+                  >
+                    <span className="text-sm font-medium">{suggestion.primary}</span>
+                    {suggestion.secondary ? (
+                      <span className="text-xs text-muted-foreground">
+                        {suggestion.secondary}
+                      </span>
+                    ) : null}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="flex flex-col gap-1.5 sm:col-span-2">
           <span className="text-sm font-medium">Address line 1</span>
@@ -404,7 +646,52 @@ export function SitePicker({ address, onAddress, coords, onCoords, apiKey }: Sit
           </div>
         ) : null}
 
-
+        {/* What the pin resolved to. Always shown once there is one, whether or not it
+            was applied - a marker that moves and says nothing is a marker that looks
+            broken, which is what this screen did before. */}
+        {proposal ? (
+          <div className="mt-3 rounded-md border bg-muted/40 p-3">
+            <p className="text-xs text-muted-foreground">This pin is at</p>
+            <p className="mt-0.5 text-sm font-medium break-words">{proposal.formatted}</p>
+            {proposal.applied ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                We filled in the address above. Change anything that is not right.
+              </p>
+            ) : pendingFields.length > 0 ? (
+              <>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Use it? This would change {pendingFields.join(', ')}.
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-8"
+                    onClick={() => {
+                      applyParsed(proposal.parsed);
+                      setProposal({ ...proposal, applied: true });
+                    }}
+                  >
+                    Use this address
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8"
+                    onClick={() => setProposal(null)}
+                  >
+                    Keep what I typed
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <p className="mt-1 text-xs text-muted-foreground">
+                This matches the address above.
+              </p>
+            )}
+          </div>
+        ) : null}
       </div>
     </div>
   );

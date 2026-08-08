@@ -82,9 +82,11 @@ describe('a retail complaint', () => {
     expect(screen.getByText('43000 Kajang')).toBeInTheDocument();
   });
 
-  it('shows the pin and links it out, because that is what a van navigates to', () => {
+  it('links the pin out without printing the coordinates', () => {
+    // Nobody reads a lat/lng off a screen or corrects one by hand; opening it in Maps is
+    // the whole of what a dispatcher does with a pin.
     render(<ComplaintFieldGrid complaint={RETAIL} />);
-    expect(screen.getByText('Pin 3.11843, 101.60210')).toBeInTheDocument();
+    expect(screen.queryByText(/3\.11843/)).toBeNull();
     expect(screen.getByRole('link', { name: /Open pin/ })).toHaveAttribute(
       'href',
       'https://www.google.com/maps/search/?api=1&query=3.11843%2C101.60210',
@@ -98,7 +100,7 @@ describe('a retail complaint', () => {
       <ComplaintFieldGrid complaint={complaint({ reported_by_role: 'end_user' })} />,
     );
     expect(screen.getByText(/No site address was captured/)).toBeInTheDocument();
-    expect(screen.queryByText(/^Pin /)).toBeNull();
+    expect(screen.queryByRole('link', { name: /Open pin/ })).toBeNull();
   });
 
   it('shows what the customer called the item beside the code', () => {
@@ -111,11 +113,13 @@ describe('a retail complaint', () => {
     expect(screen.getByText('Water Closet')).toBeInTheDocument();
   });
 
-  it('says a receipt is simply not in yet, which is not an error', () => {
-    // A complaint routinely arrives before any receipt does, and blocking intake on one
-    // is exactly what AC-C14 forbids.
+  it('says the purchase is not matched, never that there is no receipt', () => {
+    // The consumer very often DID upload one - it is in Linked Attachments - and what is
+    // missing is the purchase RECORD the cover computes from. "No receipt" sends CS
+    // looking for a file that is already on the page.
     render(<ComplaintFieldGrid complaint={RETAIL} />);
-    expect(screen.getByText('No receipt yet')).toBeInTheDocument();
+    expect(screen.getByText('Not matched')).toBeInTheDocument();
+    expect(screen.queryByText(/No receipt/)).toBeNull();
   });
 
   it('shows a matched purchase when there is one', () => {
@@ -134,7 +138,7 @@ describe('a retail complaint', () => {
       />,
     );
     expect(screen.getByText('CP2026-0001')).toBeInTheDocument();
-    expect(screen.queryByText('No receipt yet')).toBeNull();
+    expect(screen.queryByText('Not matched')).toBeNull();
   });
 
   it('offers the original message separately from what was made of it', () => {

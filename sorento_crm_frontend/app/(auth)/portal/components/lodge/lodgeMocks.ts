@@ -61,6 +61,9 @@ export interface ExtractResult {
   /** Set only on the dealer track, where the order resolves everything (AC-C13). */
   sorento_order_number: string | null;
   lines: ExtractedLine[];
+  /** Ids of the files as stored server-side. Empty on the mock route, which uploads
+   *  nothing. */
+  attachment_ids: string[];
 }
 
 /** The tiled chooser reads these. 31 in production; a representative set here. */
@@ -108,6 +111,8 @@ export const MOCK_EXTRACTS: Record<MockScenario, ExtractResult> = {
     purchase_date: '2025-10-16',
     document_number: 'KCS-2112-0054',
     sorento_order_number: null,
+    // The mock route uploads nothing, so there is never a stored file to link.
+    attachment_ids: [],
     lines: [
       {
         claimed_text: 'SRTWC8152 WATER CLOSET',
@@ -126,6 +131,8 @@ export const MOCK_EXTRACTS: Record<MockScenario, ExtractResult> = {
     purchase_date: '2023-02-11',
     document_number: 'CS002629',
     sorento_order_number: null,
+    // The mock route uploads nothing, so there is never a stored file to link.
+    attachment_ids: [],
     lines: [
       {
         claimed_text: 'WC189-G2 TOILET BOWL',
@@ -144,6 +151,8 @@ export const MOCK_EXTRACTS: Record<MockScenario, ExtractResult> = {
     purchase_date: null,
     document_number: 'B10-2-26050837',
     sorento_order_number: null,
+    // The mock route uploads nothing, so there is never a stored file to link.
+    attachment_ids: [],
     lines: [
       {
         claimed_text: 'TAP SET',
@@ -161,6 +170,8 @@ export const MOCK_EXTRACTS: Record<MockScenario, ExtractResult> = {
     purchase_date: '2026-04-29',
     document_number: null,
     sorento_order_number: '202604-0348',
+    // The mock route uploads nothing, so there is never a stored file to link.
+    attachment_ids: [],
     lines: [
       {
         claimed_text: 'SRTWC8517-200 WATER CLOSET',

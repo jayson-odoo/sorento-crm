@@ -690,6 +690,10 @@ export interface AIExtractResult {
   usage: AIExtractTokenUsage;
   model?: string | null;
   provider?: string | null;
+  /** The uploaded files, stored by the endpoint before extraction ran. Sent back on
+   *  submit so the evidence lands on the record - the extractor's opinion of a file is
+   *  never what decides whether it is kept. */
+  attachment_ids?: string[];
 }
 
 export const AI_EXTRACT_FORM_KEYS: Record<PortalSubmissionKind, string> = {
@@ -806,6 +810,11 @@ export interface LodgeSubmitInput extends Record<string, unknown> {
   longitude?: number | null;
   defect_description?: string | null;
   proof_attachment_id?: string | null;
+  /** Everything the consumer uploaded, linked to the complaint on submit. Separate from
+   *  `proof_attachment_id`, which names the ONE file the purchase record treats as proof:
+   *  a photo of a cracked basin is evidence, but calling it proof of purchase would be a
+   *  lie the warranty engine reads. */
+  attachment_ids?: string[];
   lines: LodgeLineInput[];
 }
 
