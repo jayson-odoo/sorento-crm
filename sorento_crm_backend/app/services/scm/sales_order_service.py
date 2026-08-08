@@ -52,6 +52,23 @@ def _source_label(source_system: Optional[str]) -> str:
     return "manual"
 
 
+def _order_by(sort_cols: dict, sort: Optional[str], direction: str) -> list:
+    """The sort, always made total by `id`.
+
+    11,006 of the orders in this book share ONE `created_at`: they were absorbed in a single
+    import. Ordering on that column alone leaves their relative order up to the planner, so
+    "the 26th record" is a different row from one query to the next - which is how a detail
+    pager steps to a correct neighbour and then reports a position taken from a different
+    shuffle of the same rows, and how a row can appear on two pages or neither.
+
+    `id` is arbitrary but it is STABLE, which is the whole requirement.
+    """
+    col = sort_cols.get(sort or "", SalesOrder.created_at)
+    if direction == "asc":
+        return [col.asc(), SalesOrder.id.asc()]
+    return [col.desc(), SalesOrder.id.desc()]
+
+
 class SalesOrderService:
     def __init__(self, db: Session):
         self.db = db
@@ -309,8 +326,7 @@ class SalesOrderService:
             "priority": SalesOrder.priority,
             "created_at": SalesOrder.created_at,
         }
-        col = sort_cols.get(sort or "", SalesOrder.created_at)
-        q = q.order_by(col.desc() if direction != "asc" else col.asc())
+        q = q.order_by(*_order_by(sort_cols, sort, direction))
         total = q.count()
         rows = q.offset((page - 1) * limit).limit(limit).all()
         return {

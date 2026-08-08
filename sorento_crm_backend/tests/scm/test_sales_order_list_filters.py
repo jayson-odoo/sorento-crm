@@ -191,3 +191,51 @@ def test_the_filters_combine(db, world):
     )
 
     assert got == {want.so_number}
+
+
+# --------------------------------------------------------------------------- #
+# a stable order, or paging is meaningless
+# --------------------------------------------------------------------------- #
+
+def test_the_sort_is_always_made_total_by_id():
+    """Asserted on the ORDER BY rather than on returned rows.
+
+    With a handful of seeded rows Postgres happens to return a consistent order, so a test
+    that compares two fetches passes whether or not the tiebreaker exists. The rule is what
+    has to hold: whatever column the caller sorts on, `id` follows it.
+    """
+    from app.models.order import SalesOrder
+    from app.services.scm.sales_order_service import _order_by
+
+    cols = {"so_number": SalesOrder.so_number, "order_date": SalesOrder.order_date}
+
+    for sort in (None, "", "so_number", "order_date", "unknown-column"):
+        for direction in ("asc", "desc"):
+            clause = _order_by(cols, sort, direction)
+            assert len(clause) == 2, f"no tiebreaker for sort={sort!r} dir={direction}"
+            assert "sales_orders.id" in str(clause[-1]), (
+                f"the tiebreaker for sort={sort!r} dir={direction} is not the id"
+            )
+            # Both halves point the same way, or the second page of a descending list is
+            # ordered against the first.
+            assert str(clause[0]).endswith(direction.upper() if direction == "asc" else "DESC")
+            assert str(clause[-1]).endswith("ASC" if direction == "asc" else "DESC")
+
+
+def test_page_one_and_page_two_partition_the_result(db, world):
+    """The consequence the rule exists for: no row on both pages, none on neither."""
+    when = date(2026, 3, 1)
+    for _ in range(6):
+        _order(db, world, when=when, customer=world["acme"])
+
+    def ids(page: int) -> list[str]:
+        out = SalesOrderService(db).list(
+            page=page, limit=3, sort=None, direction="desc",
+            query=MARKER, status=None, priority=None,
+        )
+        return [row["id"] for row in out["data"]]
+
+    first, second = ids(1), ids(2)
+
+    assert not set(first) & set(second), "a row appears on both pages"
+    assert len(set(first) | set(second)) == 6, "a row appears on neither page"
