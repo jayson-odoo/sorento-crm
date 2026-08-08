@@ -136,7 +136,9 @@ function loadGoogleMaps(apiKey: string): Promise<void> {
 
   window.__sorentoMapsLoader__ = new Promise<void>((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places`;
+    // `loading=async` is Google's supported bootstrap. Without it the API logs a performance
+    // warning on every load, which is noise in the console we check for real regressions.
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&loading=async`;
     script.async = true;
     script.defer = true;
     script.onload = () => resolve();
@@ -220,15 +222,27 @@ export function SitePicker({ address, onAddress, coords, onCoords, apiKey }: Sit
   );
 
   // Build the map once the script is in.
+  //
+  // Guarded by a REF, not by `mapState`. Keying the effect on state it also sets was a
+  // race that hung the map on a spinner forever: setting 'loading' changed a dependency,
+  // React ran the cleanup for the in-flight attempt (`cancelled = true`), re-ran the
+  // effect, and the re-run bailed out because the state was no longer 'idle'. When the
+  // script finally arrived the only attempt that could have built the map had already
+  // been told to stand down. Nothing errored; it just never finished.
+  const startedRef = useRef(false);
   useEffect(() => {
-    if (!apiKey || mapState !== 'idle') return;
+    if (!apiKey || startedRef.current) return;
+    startedRef.current = true;
     setMapState('loading');
     let cancelled = false;
     loadGoogleMaps(apiKey)
       .then(() => {
         if (cancelled || !mapRef.current) return;
         const maps = window.google?.maps;
-        if (!maps) {
+        // `window.google.maps` is truthy the moment the bootstrap runs, but the modern
+        // loader fetches the constructors separately - so `maps.Map` can still be
+        // undefined here, and calling it would throw inside a promise chain.
+        if (!maps || typeof maps.Map !== 'function') {
           setMapState('failed');
           return;
         }
@@ -265,7 +279,7 @@ export function SitePicker({ address, onAddress, coords, onCoords, apiKey }: Sit
     };
     // Built once. Re-running on every coords change would rebuild the map under the pin.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiKey, mapState]);
+  }, [apiKey]);
 
   const useMyLocation = () => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) return;
@@ -380,18 +394,17 @@ export function SitePicker({ address, onAddress, coords, onCoords, apiKey }: Sit
           <div className="relative mt-3">
             <div ref={mapRef} className="h-64 w-full rounded-md bg-muted" />
             {mapState !== 'ready' ? (
-              <div className="absolute inset-0 flex items-center justify-center rounded-md bg-muted/60">
+              <div
+                data-testid="site-map-spinner"
+                className="absolute inset-0 flex items-center justify-center rounded-md bg-muted/60"
+              >
                 <Loader2 className="size-5 animate-spin text-muted-foreground" />
               </div>
             ) : null}
           </div>
         ) : null}
 
-        {coords ? (
-          <p className="mt-2 text-xs text-muted-foreground">
-            {coords.latitude.toFixed(5)}, {coords.longitude.toFixed(5)}
-          </p>
-        ) : null}
+
       </div>
     </div>
   );

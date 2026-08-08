@@ -858,10 +858,6 @@ function StepDone({ result }: { result: LodgeResult }) {
           <span className="min-w-0">{result.warranty.summary}</span>
         </p>
       </div>
-
-      <p className="text-sm text-muted-foreground">
-        We will message you here as things progress. You do not need to chase anyone.
-      </p>
     </section>
   );
 }

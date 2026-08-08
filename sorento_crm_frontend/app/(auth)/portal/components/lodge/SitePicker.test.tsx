@@ -15,8 +15,8 @@
  * The map itself is not tested here: it is Google's canvas, unmockable in jsdom, and
  * asserting that a script tag was appended would test the loader rather than the outcome.
  */
-import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 
 import {
   EMPTY_SITE_ADDRESS,
@@ -128,5 +128,63 @@ describe('SitePicker without a key', () => {
     expect(MALAYSIAN_STATES).toHaveLength(16);
     expect(MALAYSIAN_STATES).toContain('Selangor');
     expect(MALAYSIAN_STATES).toContain('W.P. Kuala Lumpur');
+  });
+});
+
+describe('the map that hung on a spinner', () => {
+  afterEach(() => {
+    delete (window as unknown as Record<string, unknown>).google;
+    delete (window as unknown as Record<string, unknown>).__sorentoMapsLoader__;
+  });
+
+  function fakeMaps() {
+    class Fake {
+      setCenter() {}
+      setPosition() {}
+      addListener() {}
+    }
+    return { Map: Fake, Marker: Fake, Geocoder: Fake };
+  }
+
+  function renderWithKey() {
+    return render(
+      <SitePicker
+        address={EMPTY_SITE_ADDRESS}
+        onAddress={() => {}}
+        coords={null}
+        onCoords={() => {}}
+        apiKey="test-key"
+      />,
+    );
+  }
+
+  it('builds the map once the script is in, instead of spinning forever', async () => {
+    // The bug: the build effect was keyed on `mapState`, which it also set. Setting
+    // 'loading' changed a dependency, so React ran the cleanup for the in-flight attempt
+    // (`cancelled = true`) and re-ran the effect, which bailed because the state was no
+    // longer 'idle'. When the script arrived, the only attempt that could have built the
+    // map had been told to stand down. Nothing errored - the spinner just never stopped.
+    //
+    // Maps already being on `window` is the fast path through the loader, so this exercises
+    // exactly the resolve-then-build sequence the race lost.
+    (window as unknown as { google: unknown }).google = { maps: fakeMaps() };
+    renderWithKey();
+    expect(screen.getByTestId('site-map-spinner')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId('site-map-spinner')).toBeNull());
+  });
+
+  it('gives up visibly when the namespace loads without its constructors', async () => {
+    // `window.google.maps` is truthy the moment the bootstrap script runs, but the modern
+    // loader fetches the constructors separately. Calling `new maps.Map()` too early throws
+    // inside a promise chain, which reads as another silent hang. A stated failure at least
+    // tells the consumer the address alone is enough.
+    (window as unknown as { google: unknown }).google = { maps: {} };
+    renderWithKey();
+    await waitFor(() =>
+      expect(
+        screen.getByText('The map could not load. The address above is enough.'),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId('site-map-spinner')).toBeNull();
   });
 });
