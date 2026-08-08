@@ -26,6 +26,7 @@ from app.schemas.scm_reorder import (
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.scm import reorder_run_service as svc
+from app.services.scm.money import BASE_CURRENCY
 
 router = APIRouter()
 
@@ -287,6 +288,7 @@ def list_recommendations(
                rr.days_of_cover, rr.rounded_qty, rr.recommended_qty, rr.confidence_band,
                rr.allocation, rr.inputs,
                rr.rank, rr.rank_score, rr.unit_cost, rr.cash_impact, rr.funding_status,
+               rr.currency, rr.rate_to_base, rr.rate_as_of,
                p.product_code, p.product_name,
                w.warehouse_code, w.warehouse_name,
                su.supplier_code, su.supplier_name
@@ -394,6 +396,9 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
         "confidence": r["confidence_band"],
         "sample_size": int(inp.get("sample_size") or 0),
         "supplier": inp.get("supplier"),
+        # Why this supplier and not the runner-up, frozen at run time. Without it the
+        # "why this one" popup has nothing to render, which is how it first shipped.
+        "supplier_reason": inp.get("supplier_reason"),
         "alternatives": inp.get("alternatives") or [],
         "is_exception": bool(inp.get("is_exception")),
         "disposition_action": inp.get("disposition_action"),
@@ -415,8 +420,26 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
         "policy_type": inp.get("policy_type"),
         "supplier_selection": inp.get("selection"),
         # --- M4 cash co-pilot (buy rows only; non-buy leave these null) ---
+        # `unit_cost` is what the SUPPLIER charges, in `currency`. `cash_impact` is what the
+        # buy draws from the budget, always in `base_currency`. They are deliberately in
+        # different money, so both are labelled: an unlabelled 45 beside an unlabelled 1980
+        # reads as an arithmetic error.
         "unit_cost": _f(r["unit_cost"]) if is_buy else None,
+        "currency": (r["currency"] if is_buy else None),
         "cash_impact": _f(r["cash_impact"]) if is_buy else None,
+        "base_currency": BASE_CURRENCY if is_buy else None,
+        "rate_to_base": _f(r["rate_to_base"]) if is_buy else None,
+        "rate_as_of": (r["rate_as_of"].isoformat()
+                       if is_buy and r["rate_as_of"] else None),
+        # Why there is no cash figure, when there is none: `no_cost` (nobody has ever
+        # priced it) and `no_rate` (priced, in money we cannot convert) send the buyer to
+        # two different screens, so "needs cost" alone would send half of them to the
+        # wrong one.
+        "cost_status": _cost_status(r, inp, is_buy),
+        "missing_rate_currencies": (
+            list((inp.get("supplier_reason") or {}).get("missing_rates") or [])
+            if is_buy else []
+        ),
         "rank": int(r["rank"]) if (is_buy and r["rank"] is not None) else None,
         "rank_score": _f(r["rank_score"]) if is_buy else None,
         "funding_status": _funding_status(r, is_buy, funding_by_id),
@@ -428,6 +451,23 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
             (inp.get("market_factor") or {}).get("summary") if is_buy else None
         ),
     }
+
+
+def _cost_status(r, inp: dict, is_buy: bool) -> Optional[str]:
+    """`ok`, `no_cost`, or `no_rate` - which of the two reasons a buy has no cash figure.
+
+    Both currently land in the same `needs_cost` funding bucket, which is right (a human
+    has to look at them either way), but the fix differs: one is "buy it once so we know
+    what it costs", the other is "enter a rate for CNY". A single label would send half the
+    rows to the wrong screen.
+    """
+    if not is_buy:
+        return None
+    if r["cash_impact"] is not None:
+        return "ok"
+    if r["unit_cost"] is None:
+        return "no_cost"
+    return "no_rate"
 
 
 def _funding_status(r, is_buy: bool,

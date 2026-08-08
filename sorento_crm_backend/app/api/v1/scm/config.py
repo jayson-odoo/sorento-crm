@@ -13,7 +13,7 @@ import uuid
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -22,7 +22,7 @@ from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.schemas.scm_dashboard import DeadStockDays, DeadStockDaysUpdate
 from app.services.error_handler import AppException
-from app.services.scm import cash_budget_service
+from app.services.scm import cash_budget_service, currency_rate_service
 from app.services.scm.reorder_policy import (
     DEFAULT_DEAD_STOCK_DAYS,
     global_policy_row,
@@ -135,3 +135,59 @@ def put_cash_budget(
         actor=current_user.get("id"),
     )
 
+
+
+# ===========================================================================
+# exchange rates - what makes two prices comparable
+# ===========================================================================
+
+class CurrencyRateWrite(BaseModel):
+    #: What one unit of this currency is worth in the base currency. Must be positive:
+    #: a zero rate would price every item in that currency at nothing.
+    rate_to_base: float = Field(..., gt=0)
+    #: When the rate was true. Shown beside every converted figure so a buyer reading a
+    #: six-month-old rate can see that is what they are reading.
+    as_of: Optional[date] = None
+    note: Optional[str] = Field(None, max_length=255)
+
+
+@router.get("/config/currency-rates")
+def get_currency_rates(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The rates on file, plus the currencies the purchase-order book prices in that have
+    none.
+
+    Read on the dashboard slug because the plan is where the consequence shows up: a
+    supplier priced in a currency with no rate cannot be ranked on cost or funded, and this
+    is the list that tells the buyer which rate to add.
+    """
+    return currency_rate_service.list_rates(db)
+
+
+@router.put("/config/currency-rates/{currency}")
+def put_currency_rate(
+    currency: str,
+    body: CurrencyRateWrite,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(_MANAGE),
+):
+    """Create or update one currency's rate. Unchanged input is left alone rather than
+    rewritten, so `updated_at` keeps meaning "somebody checked this"."""
+    return currency_rate_service.upsert_rate(
+        db, currency, body.rate_to_base, as_of=body.as_of, note=body.note,
+        actor=(current_user or {}).get("id"),
+    )
+
+
+@router.delete("/config/currency-rates/{currency}", status_code=204)
+def delete_currency_rate(
+    currency: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """Remove a rate. Prices in that currency go back to being unrankable, which is the
+    honest consequence and shows on the plan as "no rate for X"."""
+    currency_rate_service.delete_rate(db, currency)
+    return Response(status_code=204)

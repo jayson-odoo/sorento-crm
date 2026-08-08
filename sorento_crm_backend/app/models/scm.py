@@ -235,9 +235,16 @@ class ReorderRecommendation(Base, CompanyScopedMixin):
     days_of_cover = Column(Numeric, nullable=True)
     recommended_qty = Column(Numeric, nullable=True)
     rounded_qty = Column(Numeric, nullable=True)
+    #: What the SUPPLIER charges, in `currency`. This is the figure a PO will carry.
     unit_cost = Column(Numeric(12, 2), nullable=True)
+    #: What the buy costs in the BASE currency, always. The budget is one pot of ringgit, so
+    #: a USD line summed into it at its face value understates the cash fourfold.
     cash_impact = Column(Numeric(15, 2), nullable=True)
     currency = Column(String(3), nullable=True)
+    #: The rate this run used, frozen, so a plan printed today still explains its own
+    #: figures after somebody updates the rate tomorrow.
+    rate_to_base = Column(Numeric(18, 6), nullable=True)
+    rate_as_of = Column(Date, nullable=True)
     urgency_score = Column(Numeric, nullable=True)
     priority_score = Column(Numeric, nullable=True)
     rank_score = Column(Numeric, nullable=True)  # M4 (cash stage, frozen)
@@ -978,5 +985,37 @@ class LoadingPlanLine(Base, CompanyScopedMixin):
             "status IN ('allocated', 'partial', 'deferred', 'unmeasured')",
             name="ck_scm_loading_plan_line_status",
         ),
+        {"schema": "scm"},
+    )
+
+
+class CurrencyRate(Base):
+    """What one unit of a currency is worth in the base currency (`money.BASE_CURRENCY`).
+
+    The purchase-order book prices in four currencies, and most SKUs with more than one
+    priced supplier have those suppliers in different ones, so nothing can be ranked or
+    summed until they are expressed in the same money.
+
+    One row per currency, holding the rate in force NOW. History is deliberately absent: a
+    planning run freezes the rate it used onto its own recommendations, so an old plan
+    explains itself without this table remembering. The base currency has no row - it is 1
+    by definition, and a stored 1 is a number somebody can edit to something else.
+    """
+    __tablename__ = "currency_rate"
+
+    currency = Column(String(3), primary_key=True)
+    rate_to_base = Column(Numeric(18, 6), nullable=False)
+    #: When this rate was true. Shown next to every converted figure, because a buyer
+    #: reading a six-month-old rate should be able to see that is what they are reading.
+    as_of = Column(Date, nullable=True)
+    note = Column(String(255), nullable=True)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(),
+                        onupdate=func.now(), nullable=False)
+    updated_by = Column(UUID(as_uuid=False), nullable=True)
+
+    __table_args__ = (
+        # A non-positive rate would zero out a real cost or invert it. The service refuses
+        # one too; this holds when something writes around the service.
+        CheckConstraint("rate_to_base > 0", name="ck_currency_rate_positive"),
         {"schema": "scm"},
     )

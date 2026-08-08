@@ -41,6 +41,7 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.scm.money import BASE_CURRENCY, Rate, load_rates, to_base
 from app.services.scm.reorder_policy import (
     DEFAULT_DEAD_STOCK_DAYS,
     DEFAULT_OVERSTOCK_DAYS,
@@ -114,6 +115,27 @@ def _policy_matches(p: dict[str, Any], product_id: str, abc_xyz_cell: Optional[s
     return False
 
 
+def price_in_base(supplier: dict, rates: dict[str, Rate]) -> dict:
+    """Stamp a candidate with its price expressed in the base currency.
+
+    Two prices cannot be ranked until they are in the same money, and the book prices in
+    four currencies. This adds the comparable figure WITHOUT touching `unit_cost` /
+    `currency`, which stay as what the supplier charges and what the PO will say.
+
+    A price we cannot convert gets `unit_cost_base = None` and `missing_rate_currency` set,
+    so the ranking can hold it back from winning on a small number and the buyer is told
+    which rate to enter. Mutates and returns the dict, because callers build these rows in
+    a list comprehension and a copy here would silently drop later edits.
+    """
+    conv = to_base(_num(supplier.get("unit_cost")), supplier.get("currency"), rates)
+    supplier["unit_cost_base"] = conv.amount
+    supplier["base_currency"] = BASE_CURRENCY
+    supplier["rate_to_base"] = conv.rate
+    supplier["rate_as_of"] = conv.as_of
+    supplier["missing_rate_currency"] = conv.missing_currency
+    return supplier
+
+
 def select_supplier(suppliers: list[dict], *,
                     selection: str = DEFAULT_SUPPLIER_SELECTION) -> dict:
     """Pick the sourcing supplier + attach ranked alternatives (AC-M3.5/3.6).
@@ -131,41 +153,74 @@ def select_supplier(suppliers: list[dict], *,
     if not suppliers:
         return {"chosen": None, "alternatives": [], "exception": "no_supplier",
                 "reason": {"basis": "no_supplier"}}
+    # Ranking happens on the base-currency price, so a candidate nobody has priced yet gets
+    # priced here with no rates: one carrying no currency is already in base money and is
+    # unaffected (the pure-maths callers, whose figures are all one currency), while a
+    # foreign price a caller supplied no rate for correctly becomes unrankable rather than
+    # being compared at face value.
+    for s in suppliers:
+        if "unit_cost_base" not in s:
+            price_in_base(s, {})
     ranked = sorted(suppliers, key=lambda s: _supplier_sort_key(s, selection))
     chosen = ranked[0]
     alternatives = [{
         "supplier_id": s.get("supplier_id"),
         "supplier_name": s.get("supplier_name"),
         "unit_cost": _num(s.get("unit_cost")),
+        "currency": s.get("currency"),
+        # The converted figure travels with the original so the popup can show both, and
+        # so a reader can see WHICH number the ranking actually used.
+        "unit_cost_base": _num(s.get("unit_cost_base")),
+        "base_currency": s.get("base_currency") or BASE_CURRENCY,
+        "missing_rate_currency": s.get("missing_rate_currency"),
         "unit_cost_source": s.get("unit_cost_source"),
         "lead_time_days": _num(s.get("lead_time_days")),
         "composite_score": _num(s.get("composite_score")),
     } for s in ranked[1:]]
     return {"chosen": chosen, "alternatives": alternatives, "exception": None,
-            "reason": _selection_reason(chosen, ranked[1:], selection)}
+            "reason": _selection_reason(chosen, ranked[1:], selection, ranked)}
 
 
-def _selection_reason(chosen: dict, losers: list[dict], selection: str) -> dict:
+def _selection_reason(chosen: dict, losers: list[dict], selection: str,
+                      all_candidates: Optional[list[dict]] = None) -> dict:
     """Why this supplier, in a shape the decision popup can render without re-deriving it.
 
-    Stated rather than implied, and never over-stated: with nothing to compare against,
-    "chosen because cheaper" is a fabrication, so a lone supplier says `only_supplier`. A
-    saving is quoted only when BOTH costs are known - the gap to an unpriced runner-up is
-    unknowable, not infinite.
+    Stated rather than implied, and never over-stated:
+
+    * With nothing to compare against, "chosen because cheaper" is a fabrication, so a lone
+      supplier says `only_supplier`.
+    * A saving is quoted only when BOTH prices converted to the base currency. The gap to an
+      unpriced runner-up is unknowable, and the gap to an unconvertible one is worse than
+      unknowable - subtracting 10 CNY from 190 MYR produces a number that looks like money.
+    * When NOTHING could be converted, `lowest_cost` is a claim we cannot support, so the
+      basis reads `no_comparable_cost` and the missing currencies are named.
     """
+    pool = all_candidates if all_candidates is not None else ([chosen] + list(losers))
+    missing = sorted({s.get("missing_rate_currency") for s in pool
+                      if s.get("missing_rate_currency")})
+
     if not losers:
-        return {"basis": "only_supplier", "runner_up": None, "saving_per_unit": None}
+        return {"basis": "only_supplier", "runner_up": None, "saving_per_unit": None,
+                "compared_in": BASE_CURRENCY, "missing_rates": missing}
+
+    comparable = [s for s in pool if _num(s.get("unit_cost_base")) is not None]
+    basis = selection
+    if selection == "lowest_cost" and not comparable:
+        basis = "no_comparable_cost"
+
     runner_up = losers[0]
-    reason = {
-        "basis": selection,
+    ours, theirs = _num(chosen.get("unit_cost_base")), _num(runner_up.get("unit_cost_base"))
+    return {
+        "basis": basis,
         "runner_up": runner_up.get("supplier_name"),
         "runner_up_cost": _num(runner_up.get("unit_cost")),
-        "saving_per_unit": None,
+        "runner_up_currency": runner_up.get("currency"),
+        "runner_up_cost_base": theirs,
+        "compared_in": BASE_CURRENCY,
+        "missing_rates": missing,
+        "saving_per_unit": (round(theirs - ours, 4)
+                            if ours is not None and theirs is not None else None),
     }
-    ours, theirs = _num(chosen.get("unit_cost")), _num(runner_up.get("unit_cost"))
-    if ours is not None and theirs is not None:
-        reason["saving_per_unit"] = round(theirs - ours, 4)
-    return reason
 
 
 def _supplier_sort_key(s: dict, selection: str):
@@ -173,7 +228,10 @@ def _supplier_sort_key(s: dict, selection: str):
     sc = _num(s.get("composite_score"))
     # present-first (0), then higher score first (negate)
     sc_key = (0, -sc) if sc is not None else (1, 0.0)
-    uc = _num(s.get("unit_cost"))
+    # Rank on the BASE-currency price, never the supplier's own figure: 45 USD is not
+    # cheaper than 190 MYR, and a price in a currency we hold no rate for is not a bargain
+    # at 10 - it is unknown, so it sorts with the unpriced rather than ahead of everything.
+    uc = _num(s.get("unit_cost_base"))
     uc_key = (0, uc) if uc is not None else (1, 0.0)   # present-first, lower cost first
     # Final deterministic tiebreak: two suppliers tied on every ranking factor must
     # resolve to the SAME winner every call (never DB row order). supplier_id is stable.
@@ -573,11 +631,16 @@ def last_purchase_costs(db: Session, product_id: str) -> dict[str, dict]:
 
 
 def load_supplier_candidates(db: Session, product_id: str,
-                             *, default_lead: float = DEFAULT_LEAD_TIME_DAYS) -> list[dict]:
+                             *, default_lead: float = DEFAULT_LEAD_TIME_DAYS,
+                             rates: Optional[dict[str, Rate]] = None) -> list[dict]:
     """Assemble the SKU's suppliers for ``select_supplier``, folding in the M2 measured
     lead-time / composite / variance (supplier×product row preferred, supplier-level
     fallback). Each dict carries declared + measured lead so ``lead_time`` precedence
-    can be applied downstream.
+    can be applied downstream, plus the price restated in the base currency so the
+    candidates are actually comparable.
+
+    ``rates`` is threaded in by the run (one read for thousands of SKUs) and read from the
+    DB when a caller resolves a single SKU on its own.
     """
     rows = db.execute(text(
         "SELECT ps.supplier_id, su.supplier_code, su.supplier_name, "
@@ -588,6 +651,7 @@ def load_supplier_candidates(db: Session, product_id: str,
         "ORDER BY ps.supplier_id"          # deterministic load order (stable tie input)
     ), {"pid": product_id}).mappings().all()
     paid = last_purchase_costs(db, product_id)
+    rates = load_rates(db) if rates is None else rates
     # A supplier we have BOUGHT this item from is a supplier for it, whether or not anybody
     # kept the `product_suppliers` row up to date. 3,070 such pairs exist in the customer's
     # book, each with a price we paid, and every one of them was invisible to the plan. They
@@ -633,7 +697,7 @@ def load_supplier_candidates(db: Session, product_id: str,
         declared_lead = r["standard_lead_time_days"]
         lt_val, lt_src = lead_time(_num(measured_lead), _num(declared_lead),
                                    default=default_lead)
-        out.append({
+        out.append(price_in_base({
             "supplier_id": r["supplier_id"],
             "supplier_code": r["supplier_code"],
             "supplier_name": r["supplier_name"],
@@ -654,7 +718,7 @@ def load_supplier_candidates(db: Session, product_id: str,
             "composite_score": _num(perf.get("composite_score")) if perf else None,
             "supplier_sample_size": (perf.get("sample_size") if perf else None),
             "supplier_confidence": (perf.get("confidence") if perf else None),
-        })
+        }, rates))
     return out
 
 
@@ -675,11 +739,13 @@ def _supplier_perf(db: Session, supplier_id: str, product_id: str) -> Optional[d
 
 def resolve_supplier_for_sku(db: Session, product_id: str, *,
                              selection: str = DEFAULT_SUPPLIER_SELECTION,
-                             default_lead: float = DEFAULT_LEAD_TIME_DAYS) -> dict:
+                             default_lead: float = DEFAULT_LEAD_TIME_DAYS,
+                             rates: Optional[dict[str, Rate]] = None) -> dict:
     """DB-backed ``select_supplier``: read the SKU's product_suppliers + M2 scores and
     pick the sourcing supplier (or flag the no-supplier exception)."""
-    return select_supplier(load_supplier_candidates(db, product_id, default_lead=default_lead),
-                           selection=selection)
+    return select_supplier(
+        load_supplier_candidates(db, product_id, default_lead=default_lead, rates=rates),
+        selection=selection)
 
 
 def resolve_policy_for_sku(db: Session, product_id: str,

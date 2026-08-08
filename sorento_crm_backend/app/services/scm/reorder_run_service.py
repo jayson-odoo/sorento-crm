@@ -38,6 +38,13 @@ from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.scm import cash_ranking
 from app.services.scm import reorder_engine as eng
+from app.services.scm.money import (
+    BASE_CURRENCY,
+    Rate,
+    load_rates,
+    normalize_currency,
+    to_base,
+)
 from app.services.scm.reorder_policy import (
     DEFAULT_DEAD_STOCK_DAYS,
     DEFAULT_OVERSTOCK_DAYS,
@@ -326,12 +333,17 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
         last_buy = _last_purchase_map(db, [r["product_id"] for r in rows])
         wh_meta = {str(r["warehouse_id"]): (r["warehouse_code"], r["warehouse_name"]) for r in rows}
 
+        # One read for the whole run. Every supplier price is restated in the base
+        # currency against THIS map, so a rate edited mid-run cannot make two SKUs in the
+        # same plan disagree about what a dollar is worth.
+        rates = load_rates(db)
+
         if run.buy_scope == "network":
             recs = _plan_network(db, run_id, rows, policies, today, last_move, wh_meta,
-                                 last_buy=last_buy)
+                                 last_buy=last_buy, rates=rates)
         else:
             recs = _plan_per_warehouse(db, run_id, rows, policies, today, last_move,
-                                       wh_meta, last_buy=last_buy)
+                                       wh_meta, last_buy=last_buy, rates=rates)
 
         # M4 cash stage — compute + FREEZE each buy's rank_score / rank / rank_factors
         # (funded/deferred is computed live at view-time against a budget, not here).
@@ -531,7 +543,8 @@ def _pool_map(db: Session, rows: list[dict]) -> dict[str, str]:
 def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: list[dict],
                         today: date, last_move: dict,
                         wh_meta: Optional[dict] = None,
-                        last_buy: Optional[dict] = None) -> list[ReorderRecommendation]:
+                        last_buy: Optional[dict] = None,
+                        rates: Optional[dict] = None) -> list[ReorderRecommendation]:
     """Plan each SKU against each fulfilment POOL, not each warehouse.
 
     A shortage in one bin is covered from the shared pool its site draws on before it is
@@ -545,6 +558,8 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
     aggregating them away would hide the very thing they exist to surface.
     """
     recs: list[ReorderRecommendation] = []
+    # Read once for the whole plan, never once per SKU.
+    rates = load_rates(db) if rates is None else rates
     wh_meta = wh_meta or {str(r["warehouse_id"]): (r["warehouse_code"], r["warehouse_name"])
                           for r in rows}
     pool_of = _pool_map(db, rows)
@@ -555,7 +570,7 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
         by_product.setdefault(str(r["product_id"]), []).append(r)
 
     for pid, prows in by_product.items():
-        cands = eng.load_supplier_candidates(db, pid)
+        cands = eng.load_supplier_candidates(db, pid, rates=rates)
         computed: list[dict] = []
         for r in prows:
             c = _compute_cell(db, r, policies, cands, today, last_move, last_buy)
@@ -707,10 +722,15 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
         var_lt = _fnum(chosen.get("lead_time_variance"))
         unit_cost = _fnum(chosen.get("unit_cost"))
         currency = chosen.get("currency")
+        # The rate the candidate was priced with, carried through so the cash figure and
+        # the frozen row use the SAME rate the ranking used.
+        rate_to_base = _fnum(chosen.get("rate_to_base"))
+        rate_as_of = chosen.get("rate_as_of")
     else:
         lead = float(tog["lead_time_default_days"])
         lead_src = "default"
         moq = order_multiple = var_lt = unit_cost = currency = None
+        rate_to_base = rate_as_of = None
 
     ss, ss_used, ss_fallback = eng.safety_stock(
         ss_method, demand_rate=demand_rate, safety_days=safety_days,
@@ -757,6 +777,7 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
         "lead": lead, "lead_src": lead_src, "moq": moq,
         "order_multiple": order_multiple, "var_lt": var_lt,
         "unit_cost": unit_cost, "currency": currency,
+        "rate_to_base": rate_to_base, "rate_as_of": rate_as_of,
         "ss": ss, "ss_used": ss_used, "ss_fallback": ss_fallback,
         "rop": rop, "oup": oup, "triggered": triggered, "reason_label": reason_label,
         "recommended": recommended, "rounded": rounded, "doc": doc,
@@ -816,14 +837,16 @@ def _emit_cell(run_id: str, row: dict, c: dict,
 
 def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dict],
                   today: date, last_move: dict, wh_meta: dict,
-                  last_buy: Optional[dict] = None) -> list[ReorderRecommendation]:
+                  last_buy: Optional[dict] = None,
+                  rates: Optional[dict] = None) -> list[ReorderRecommendation]:
     recs: list[ReorderRecommendation] = []
+    rates = load_rates(db) if rates is None else rates
     by_product: dict[str, list[dict]] = {}
     for r in rows:
         by_product.setdefault(str(r["product_id"]), []).append(r)
 
     for pid, prows in by_product.items():
-        cands = eng.load_supplier_candidates(db, pid)
+        cands = eng.load_supplier_candidates(db, pid, rates=rates)
         # per-warehouse cells (drive disposition + transfer flags + allocation demand)
         computed = [_compute_cell(db, r, policies, cands, today, last_move, last_buy)
                     for r in prows]
@@ -934,6 +957,8 @@ def _network_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
         "moq": moq, "order_multiple": order_multiple, "var_lt": None,
         "unit_cost": _fnum(chosen.get("unit_cost")) if chosen else None,
         "currency": chosen.get("currency") if chosen else None,
+        "rate_to_base": _fnum(chosen.get("rate_to_base")) if chosen else None,
+        "rate_as_of": chosen.get("rate_as_of") if chosen else None,
         "ss": agg["safety_stock"], "ss_used": "fixed_days", "ss_fallback": None,
         "rop": agg["reorder_point"], "oup": target_oup, "triggered": triggered,
         "reason_label": reason_label,
@@ -976,9 +1001,11 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
     reason = reason_enum or _reason_enum(c["policy_type"])
     label = reason_label if reason_label is not None else c.get("reason_label")
     unit_cost = c.get("unit_cost")
-    cash_impact = None
-    if rec_type == "buy" and rounded is not None and unit_cost is not None:
-        cash_impact = float(rounded) * float(unit_cost)
+    rate = c.get("rate_to_base")
+    rate_as_of = c.get("rate_as_of")
+    cash_impact = (_cash_impact_in_base(rounded, unit_cost, c.get("currency"),
+                                        rate, rate_as_of)
+                   if rec_type == "buy" else None)
 
     inputs = {
         "reason": reason,
@@ -1042,6 +1069,10 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         unit_cost=unit_cost,
         cash_impact=cash_impact,
         currency=c.get("currency"),
+        # Frozen so a plan printed today still explains its own figures after somebody
+        # updates the rate tomorrow.
+        rate_to_base=rate,
+        rate_as_of=rate_as_of,
         confidence_band=c.get("confidence"),
         triggered_reason=(label[:100] if label else None),
         allocation=allocation,
@@ -1072,6 +1103,14 @@ def _supplier_choice(cand: Optional[dict]) -> Optional[dict]:
             cand["unit_cost_at"].isoformat() if cand.get("unit_cost_at") else None
         ),
         "currency": cand.get("currency"),
+        # The same price restated in the base currency, which is the figure the ranking
+        # actually used. Both travel so the popup can show what we pay AND what it costs
+        # us to compare, and so a missing rate is visible rather than inferred from a gap.
+        "unit_cost_base": _fnum(cand.get("unit_cost_base")),
+        "base_currency": cand.get("base_currency") or BASE_CURRENCY,
+        "rate_to_base": _fnum(cand.get("rate_to_base")),
+        "rate_as_of": (cand["rate_as_of"].isoformat() if cand.get("rate_as_of") else None),
+        "missing_rate_currency": cand.get("missing_rate_currency"),
         "lead_time_days": _fnum(cand.get("lead_time_days")),
         "composite_score": _fnum(cand.get("composite_score")),
         "is_primary": bool(cand.get("is_primary")),
@@ -1122,6 +1161,28 @@ def _reason_enum(policy_type: Optional[str]) -> str:
     if policy_type in ("reorder_point", "periodic_review", "min_max"):
         return policy_type
     return "reorder_point"
+
+
+def _cash_impact_in_base(rounded, unit_cost, currency, rate, rate_as_of) -> Optional[float]:
+    """What this buy draws from the budget, in the BASE currency, or nothing.
+
+    The budget is a single pot of ringgit. A USD buy counted at its face value consumes a
+    quarter of what it really costs, so the plan funds more than the money on hand. When the
+    price cannot be converted the honest answer is no figure at all: that lands the buy in
+    the same needs-attention bucket an unpriced buy already lands in, where a human looks at
+    it, rather than in "funded" at a made-up price.
+
+    A recorded zero is a cost OF zero and funds at zero - it is not unknown.
+    """
+    if rounded is None or unit_cost is None:
+        return None
+    code = normalize_currency(currency)
+    rates = ({} if rate is None
+             else {code: Rate(currency=code, rate_to_base=float(rate), as_of=rate_as_of)})
+    conv = to_base(float(unit_cost), code, rates)
+    if conv.amount is None:
+        return None
+    return round(float(rounded) * conv.amount, 2)
 
 
 # ===========================================================================
