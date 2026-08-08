@@ -51,19 +51,6 @@ def create_and_send_webhook(
     style replace-in-place so n8n intake can update the linked row instead of
     duplicate-rejecting (TCK-2026-000020).
     """
-    # A type n8n does not intake must not be sent: it would never be answered,
-    # and the unanswered log is what leaves the upload-activity drawer showing
-    # "Processing" forever. Admin-controlled per type (migration 317).
-    if attachment_type is not None and not getattr(
-        attachment_type, "triggers_n8n_webhook", True
-    ):
-        logger.debug(
-            "Skipping n8n webhook for attachment %s: type %s does not trigger it",
-            getattr(attachment, "id", None),
-            getattr(attachment_type, "type_name", None),
-        )
-        return
-
     n8n_webhook_url = get_n8n_attachment_webhook_url(db)
     if not n8n_webhook_url:
         return

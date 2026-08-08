@@ -59,10 +59,6 @@ class AttachmentTypeBase(BaseModel):
     # Plausibility cap for the extracted validity span, in months. NULL = no cap.
     # Backs the needs_review rule that catches a hallucinated expiry date.
     max_validity_months: Optional[int] = None
-    # When false, an upload of this type does not call the n8n intake webhook and
-    # is left out of the upload-activity drawer. A type n8n never answers would
-    # otherwise show "Processing" forever, waiting on a reply that is not coming.
-    triggers_n8n_webhook: bool = True
 
 
 class AttachmentTypeCreate(AttachmentTypeBase):
@@ -78,7 +74,6 @@ class AttachmentTypeUpdate(BaseModel):
     supports_field_linkage: Optional[bool] = None
     is_certificate: Optional[bool] = None
     max_validity_months: Optional[int] = None
-    triggers_n8n_webhook: Optional[bool] = None
 
 
 class AttachmentTypeResponse(AttachmentTypeBase):
