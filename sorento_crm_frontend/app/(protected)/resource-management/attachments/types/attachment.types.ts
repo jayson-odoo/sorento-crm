@@ -68,6 +68,8 @@ export interface AttachmentType {
   is_certificate?: boolean;
   /** Plausibility ceiling for a certificate's validity span; null = no limit. */
   max_validity_months?: number | null;
+  /** When false, uploads skip the n8n intake webhook and the upload-activity drawer. */
+  triggers_n8n_webhook?: boolean;
   created_at: Date;
 }
 

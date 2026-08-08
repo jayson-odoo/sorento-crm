@@ -27,6 +27,7 @@ export const AttachmentTypeSchema = z.object({
     .nullable()
     .optional(),
   supports_field_linkage: z.boolean().optional(),
+  triggers_n8n_webhook: z.boolean().optional(),
   // The cert-bearing signal. The external attachment endpoint honours the
   // certificate fields on an n8n payload ONLY when the attachment's type has
   // this on, so without it in the UI the register can never be switched on.
