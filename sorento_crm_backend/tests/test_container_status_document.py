@@ -216,7 +216,7 @@ def test_publishing_reuses_the_retained_storage_key(db):
     assert stored.endswith(job.source_file_key)
 
 
-def test_published_file_path_is_a_url_like_every_other_attachment(db):
+def test_published_file_path_is_a_url_like_every_other_attachment(db, monkeypatch):
     """`file_path` is an ADDRESS, not a storage key.
 
     The import retains `source_file_key`, which is a key, but every other
@@ -224,15 +224,43 @@ def test_published_file_path_is_a_url_like_every_other_attachment(db):
     and consumers read the column without resolving it. Publishing the bare key
     put a domain-less string in the MCP envelope that no client could fetch -
     and it read as a signing bug rather than a shape mismatch.
+
+    The CDN is stubbed rather than read from the environment: CI configures no
+    bucket, so asserting the real one would only test the machine.
     """
+    monkeypatch.setattr(
+        "app.services.storage_router.cdn_base_url",
+        lambda provider, key: f"https://cdn.test/{key}",
+    )
     job = _job()
     published = publish_import_source(db, job)
 
     stored = db.execute(
         text("SELECT file_path FROM attachments WHERE id = :id"), {"id": published}
     ).scalar()
-    assert stored.startswith("http"), stored
-    assert stored.endswith(job.source_file_key), "the key is preserved inside the URL"
+    assert stored == f"https://cdn.test/{job.source_file_key}"
+
+
+def test_publish_survives_an_unconfigured_cdn(db, monkeypatch):
+    """Falling back to the key beats losing the document.
+
+    A wrong-looking path is recoverable by a backfill; a publish that raises
+    means the workbook is never catalogued and nobody notices until someone
+    asks for it.
+    """
+    def boom(*_a, **_k):
+        raise RuntimeError("R2_CDN_DOMAIN is not set")
+
+    monkeypatch.setattr("app.services.storage_router.cdn_base_url", boom)
+    job = _job()
+
+    published = publish_import_source(db, job)
+
+    assert published is not None
+    stored = db.execute(
+        text("SELECT file_path FROM attachments WHERE id = :id"), {"id": published}
+    ).scalar()
+    assert stored == job.source_file_key
 
 
 def test_republishing_matches_a_row_stored_as_a_bare_key(db):

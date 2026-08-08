@@ -2904,27 +2904,27 @@ def process_container_status_import(
 
         job_service.complete_job(
             job_id=job_id_str,
-            result={
-                "updated": counts["updated"],
-                "unchanged": counts["unchanged"],
-                # Rows for containers with no packing list. Reported, never silent -
-                # the operator must be able to see where the other rows went.
-                "skipped_no_packing_list": counts["skipped"],
-                "rejected": counts["rejected"],
-                "blocks": len(parsed.blocks),
-                "blank_rows": parsed.blank_row_count,
-                "errors": errors[:50],
-                "warnings": parsed.warnings,
-            },
-            total_rows=total,
-            processed_rows=len(parsed.rows),
-            successful_rows=counts["updated"],
-            failed_rows=counts["rejected"],
-            # Both "nothing changed" and "no packing list to change" are skips as far
-            # as the job counters are concerned.
-            skipped_rows=counts["unchanged"] + counts["skipped"],
+            # The recorder owns the counters, so every counted row is attributed
+            # to a reason (a tally that moves without one is the bug the guard in
+            # tests/test_import_outcome_guard.py exists to prevent). The local
+            # `counts` survive only as the legacy result keys the UI still reads:
+            # "unchanged" and "skipped_no_packing_list" are both skips to the job,
+            # but the operator needs to see WHICH, or a sheet that matched nothing
+            # looks the same as one that changed nothing.
+            result=outcome.finalize(
+                "Container status import completed",
+                total_rows=total,
+                updated=counts["updated"],
+                unchanged=counts["unchanged"],
+                skipped_no_packing_list=counts["skipped"],
+                rejected=counts["rejected"],
+                blocks=len(parsed.blocks),
+                blank_rows=parsed.blank_row_count,
+                errors=errors[:50],
+                warnings=parsed.warnings,
+            ),
+            **outcome.completion_counts(total_rows=total),
         )
-        outcome.flush()
 
         # Publish the retained workbook as a Container Status attachment so
         # "send me the container status" has an answer. Best-effort by design:

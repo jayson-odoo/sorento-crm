@@ -296,7 +296,11 @@ def test_every_company_id_table_is_registered():
     # (`certificate_revisions`, `certificate_products`) are deliberately NOT
     # scoped: they are only ever reached through their certificate, which is
     # scoped, so a second filter would be redundant surface (SEC-2a).
-    assert len(owned) == 35, f"expected 35 owned tables, found {len(owned)}: {sorted(owned)}"
+    # Container status tracking added `shipment_tracking_observations` as the
+    # 36th. Unlike the certificate children this one IS scoped: a carrier
+    # observation names a container, and one tenant's containers must not be
+    # readable through a tenant-agnostic evidence table.
+    assert len(owned) == 36, f"expected 36 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------
