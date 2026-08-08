@@ -47,20 +47,22 @@ import { ReorderStatTiles, type ReorderPlanView } from './ReorderStatTiles';
 import { RunHistoryPanel } from './RunHistoryPanel';
 import { RunPlanningModal, type ManualPlanInputs } from './RunPlanningModal';
 import { SummaryOrderReportView } from './SummaryOrderReportView';
+import { DATE_LOCALE, DATE_PARTS } from '../../lib/format';
 
-/** Parse a naive-UTC ISO string as UTC, then format date / time in Malaysia. */
+/** Parse a naive-UTC ISO string as UTC, then format date / time in Malaysia.
+ *
+ *  Date parts come from `lib/format` rather than being restated, so the plan header cannot
+ *  drift from the dd/mm/yyyy every other screen uses. */
 function labelsFor(startedAt: string | null): { date: string; time: string } {
   if (!startedAt) return { date: '', time: '' };
   const hasTz = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(startedAt);
   const d = new Date(hasTz ? startedAt : `${startedAt}Z`);
   if (Number.isNaN(d.getTime())) return { date: startedAt, time: '' };
-  const date = new Intl.DateTimeFormat('en-MY', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
+  const date = new Intl.DateTimeFormat(DATE_LOCALE, {
+    ...DATE_PARTS,
     timeZone: 'Asia/Kuala_Lumpur',
   }).format(d);
-  const time = new Intl.DateTimeFormat('en-MY', {
+  const time = new Intl.DateTimeFormat('en-GB', {
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,

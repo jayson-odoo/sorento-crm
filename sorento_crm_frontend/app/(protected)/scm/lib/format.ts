@@ -79,13 +79,28 @@ export function fmtPct(ratio: number | null | undefined, dp = 0): string {
 }
 
 /** Absolute short date (e.g. incoming PO ETA). null → em dash. */
+/**
+ * The one date shape this product uses: `dd/mm/yyyy`.
+ *
+ * Exported so every other SCM formatter (the coverage timeline's day label, the plan
+ * header's run stamp) builds on the SAME parts rather than restating them. Three copies of
+ * "a date" is how one screen came to read `07 Jan 2020` while the rest of the app read
+ * `07/01/2020`, and a reader cannot tell a deliberate difference from an accidental one.
+ *
+ * `en-GB` because it orders day before month, which is what Malaysia writes; `2-digit` on
+ * both because `7/1/2020` is ambiguous to anybody who reads month-first.
+ */
+export const DATE_PARTS = {
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+} as const;
+
+export const DATE_LOCALE = 'en-GB';
+
 export function fmtDate(iso: string | null | undefined): string {
   if (!iso) return EM_DASH;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return EM_DASH;
-  return d.toLocaleDateString('en-MY', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
+  return d.toLocaleDateString(DATE_LOCALE, DATE_PARTS);
 }

@@ -9,6 +9,7 @@
  * Survives Phase 2. Only `coverageMockStore.ts` is deleted.
  */
 import type { CoverageRow, CoverageShortfall } from '../types/coverage.types';
+import { DATE_LOCALE, DATE_PARTS } from '../../lib/format';
 
 /** One month heading plus the rows underneath it. `key` is null for the opening row. */
 export interface CoverageMonthGroup {
@@ -21,10 +22,8 @@ export interface CoverageMonthGroup {
 
 const MONTH_FMT = new Intl.DateTimeFormat('en-MY', { month: 'short', year: 'numeric' });
 
-const DAY_FMT = new Intl.DateTimeFormat('en-MY', {
-  day: '2-digit',
-  month: 'short',
-  year: 'numeric',
+const DAY_FMT = new Intl.DateTimeFormat(DATE_LOCALE, {
+  ...DATE_PARTS,
   timeZone: 'UTC',
 });
 
@@ -36,7 +35,7 @@ export function monthLabel(isoDate: string): string {
 }
 
 /**
- * `2026-08-03` -> `03 Aug 2026`.
+ * `2026-08-03` -> `03/08/2026`.
  *
  * Built on `Date.UTC` and formatted in UTC on purpose. An event date is a plain
  * calendar date with no time and no zone; running it through a local-timezone
@@ -51,7 +50,7 @@ export function dayLabel(isoDate: string | null): string {
 }
 
 /**
- * `2026-08-03T09:12:00` -> `03 Aug 2026, 09:12`.
+ * `2026-08-03T09:12:00` -> `03/08/2026, 09:12`.
  *
  * Rendered as written, with NO conversion: `computed_at` is already naive Malaysia
  * wall-clock (see `coverage.types.ts`). Passing it to `formatDateTimeInMalaysia`,
