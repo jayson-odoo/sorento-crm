@@ -95,10 +95,6 @@ export default function ComplaintServiceJobsSection({
               Service Jobs
               <Badge variant="secondary">{rows.length}</Badge>
             </CardTitle>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Somebody going to the site. The site is taken from what this complaint reported,
-              not from the customer record.
-            </p>
           </div>
           <Button
             className="shrink-0"
@@ -118,23 +114,14 @@ export default function ComplaintServiceJobsSection({
             </p>
           ) : rows.length === 0 ? (
             <div className="py-6 text-center">
-              <p className="text-sm text-muted-foreground">
-                No service job yet. Nobody has been sent to this site.
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Raising one puts it on the{' '}
-                <Link className="underline" href="/complaint-management/service-jobs">
-                  dispatch board
-                </Link>{' '}
-                as proposed, waiting for a date the customer agrees to.
-              </p>
+              <p className="text-sm text-muted-foreground">No service job yet.</p>
             </div>
           ) : (
             <div className="flex flex-col gap-2">
               {rows.map((job) => (
                 <Link
                   key={job.id}
-                  href="/complaint-management/service-jobs"
+                  href={`/complaint-management/service-jobs/${job.id}`}
                   className="flex flex-col gap-1 rounded-md border p-3 transition-colors hover:bg-accent sm:flex-row sm:items-center sm:justify-between"
                 >
                   <span className="flex min-w-0 flex-col">

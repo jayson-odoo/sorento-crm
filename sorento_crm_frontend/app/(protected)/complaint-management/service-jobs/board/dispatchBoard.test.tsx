@@ -21,16 +21,16 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import DispatchBoardPage from './page';
-import { formatDuration, type BoardGroup, type StalledJob } from './services/serviceJobService';
+import { formatDuration, type BoardGroup, type StalledJob } from '../services/serviceJobService';
 
 const getDispatchBoard = vi.fn();
 const getStalledJobs = vi.fn();
 const listTechnicians = vi.fn();
 const getServiceJob = vi.fn();
 
-vi.mock('./services/serviceJobService', async () => {
-  const actual = await vi.importActual<typeof import('./services/serviceJobService')>(
-    './services/serviceJobService',
+vi.mock('../services/serviceJobService', async () => {
+  const actual = await vi.importActual<typeof import('../services/serviceJobService')>(
+    '../services/serviceJobService',
   );
   return {
     ...actual,
@@ -112,7 +112,7 @@ describe('dispatch board', () => {
     await waitFor(() => expect(screen.getByText('SV26/08-0001')).toBeInTheDocument());
     expect(screen.getByText('Unassigned')).toBeInTheDocument();
     // Nobody is working that day, and the board says so with a next step.
-    expect(screen.getByText(/Nobody is assigned any work/i)).toBeInTheDocument();
+    expect(screen.getByText(/Nobody assigned today/i)).toBeInTheDocument();
   });
 
   it('states the elapsed time on a stalled job', async () => {

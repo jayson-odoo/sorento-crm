@@ -15,7 +15,7 @@
  * 403 on the cost panel is an ordinary outcome for a dispatcher, not an error to shout about.
  */
 import { apiFetch } from '@/lib/api';
-import { extractApiError } from '@/lib/api-client';
+import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 
 const BASE = '/api/v1/complaints-management/service-jobs';
 const TECHNICIANS = '/api/v1/complaints-management/technicians';
@@ -186,6 +186,40 @@ export async function getJobsForSource(
 export async function getServiceJob(id: string): Promise<ServiceJob> {
   const response = await apiFetch(`${BASE}/${id}`);
   return readJson<ServiceJob>(response, 'Failed to load the service job.');
+}
+
+export interface ServiceJobListResult {
+  data: ServiceJob[];
+  pagination: { total: number; page: number; limit: number };
+  empty: boolean;
+}
+
+/**
+ * Every job, regardless of which day it is on.
+ *
+ * The board is a day. A job proposed with no date yet - the state every job starts in -
+ * belongs to no day, and a job confirmed for last Tuesday leaves the board as soon as it
+ * moves on. Both then read as "it disappeared", which is what this list exists to stop.
+ */
+export async function listServiceJobs(params: {
+  page?: number;
+  limit?: number;
+  query?: string;
+  status?: string[];
+  sort?: string;
+  dir?: string;
+}): Promise<ServiceJobListResult> {
+  const search = buildDataGridParams(
+    {
+      pageIndex: (params.page ?? 1) - 1,
+      pageSize: params.limit ?? 50,
+      searchQuery: params.query ?? '',
+      sorting: params.sort ? [{ id: params.sort, desc: params.dir !== 'asc' }] : [],
+    },
+    params.status?.length ? { status: params.status.join(',') } : undefined,
+  );
+  const response = await apiFetch(`${BASE}/?${search.toString()}`);
+  return readJson<ServiceJobListResult>(response, 'Failed to load service jobs.');
 }
 
 // ------------------------------------------------------------------ writes

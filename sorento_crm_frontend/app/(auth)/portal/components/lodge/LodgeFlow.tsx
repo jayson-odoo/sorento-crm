@@ -204,6 +204,30 @@ export function LodgeFlow({
     [live],
   );
 
+  /** Start a fresh report, keeping only what the token already told us.
+   *
+   * A full reset rather than a route change: the contact's name and phone come from the
+   * token and asking for them again would be asking for something we know. Everything
+   * else is about ONE broken item and none of it carries over - a second complaint that
+   * inherited the first one's receipt, products and fault would be a duplicate wearing a
+   * new number.
+   */
+  const reset = useCallback(() => {
+    setResult(null);
+    setSubmitError(null);
+    setExtract(null);
+    setDealerEcho(null);
+    setShopName('');
+    setPurchaseDate('');
+    setFaultyLines([]);
+    setManualItems([]);
+    setFault('');
+    setPhotos([]);
+    setCoords(null);
+    setAddress(EMPTY_SITE_ADDRESS);
+    setStep('upload');
+  }, []);
+
   const submit = useCallback(async () => {
     setBusy(true);
     setSubmitError(null);
@@ -370,7 +394,9 @@ export function LodgeFlow({
         />
       ) : null}
 
-      {step === 'done' && result ? <StepDone result={result} /> : null}
+      {step === 'done' && result ? (
+        <StepDone result={result} onReportAnother={reset} />
+      ) : null}
     </div>
   );
 }
@@ -842,7 +868,13 @@ function StepPlace({
 
 /* ------------------------------------------------------------------ step 6 */
 
-function StepDone({ result }: { result: LodgeResult }) {
+function StepDone({
+  result,
+  onReportAnother,
+}: {
+  result: LodgeResult;
+  onReportAnother: () => void;
+}) {
   return (
     <section className="flex flex-col gap-4">
       <div className="flex flex-col items-center gap-2 py-6 text-center">
@@ -863,6 +895,13 @@ function StepDone({ result }: { result: LodgeResult }) {
           <span className="min-w-0">{result.warranty.summary}</span>
         </p>
       </div>
+
+      {/* A consumer with two broken items has two complaints to make, and the previous
+          version of this screen was a dead end: the only way on was the browser's back
+          button, which walks back into a submitted form. */}
+      <Button variant="outline" onClick={onReportAnother}>
+        Report another problem
+      </Button>
     </section>
   );
 }

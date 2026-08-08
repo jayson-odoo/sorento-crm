@@ -37,6 +37,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.service_jobs import (
@@ -523,6 +524,74 @@ def dispatch_board(
         groups.values(),
         key=lambda row: (row["day"], row["technician_name"] or ""),
     )
+
+
+def list_jobs(
+    db: Session,
+    *,
+    page: int = 1,
+    limit: int = 50,
+    query: Optional[str] = None,
+    status_keys: Optional[List[str]] = None,
+    sort_field: str = "created_at",
+    sort_dir: str = "desc",
+) -> Dict[str, Any]:
+    """Every service job, findable without knowing which day it is on.
+
+    The dispatch board answers "who is working today", which is the right question for a
+    dispatcher at 8am and the wrong one for everybody else. It filters on
+    `scheduled_from` inside a single day, so a job proposed with no date yet - the state
+    every job starts in - appeared on no day at all, and a job confirmed for last Tuesday
+    vanished the moment the board moved on. Raising a job and then being unable to find it
+    again is the bug that reads as "it disappeared".
+
+    So this is the plain list: no date window, no grouping, every state included.
+    """
+    q = db.query(ServiceJob)
+
+    if query:
+        like = f"%{query.strip()}%"
+        q = q.filter(
+            or_(
+                ServiceJob.job_number.ilike(like),
+                ServiceJob.site_address.ilike(like),
+                ServiceJob.site_contact_name.ilike(like),
+                ServiceJob.site_contact_phone.ilike(like),
+            )
+        )
+
+    if status_keys:
+        ids = [
+            row.id for key in status_keys if (row := _status_by_key(db, key)) is not None
+        ]
+        # An unknown key filters to nothing rather than silently returning everything: a
+        # typo in a saved filter must not look like "no filter applied".
+        q = q.filter(ServiceJob.status_id.in_(ids or [None]))
+
+    SORTABLE = {
+        "created_at": ServiceJob.created_at,
+        "job_number": ServiceJob.job_number,
+        "scheduled_from": ServiceJob.scheduled_from,
+        "updated_at": ServiceJob.updated_at,
+    }
+    column = SORTABLE.get(sort_field, ServiceJob.created_at)
+    # NULLs last on both directions. A job with no date yet is the one most likely to need
+    # attention, but sorting BY date it does not have puts it in an arbitrary place;
+    # keeping it at the end means the ordering is at least honest.
+    ordering = column.desc().nullslast() if sort_dir == "desc" else column.asc().nullslast()
+
+    total = q.count()
+    rows = (
+        q.order_by(ordering, ServiceJob.id.asc())
+        .offset(max(0, (page - 1) * limit))
+        .limit(limit)
+        .all()
+    )
+    return {
+        "data": rows,
+        "pagination": {"total": total, "page": page, "limit": limit},
+        "empty": total == 0,
+    }
 
 
 def stalled_jobs(db: Session, *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:

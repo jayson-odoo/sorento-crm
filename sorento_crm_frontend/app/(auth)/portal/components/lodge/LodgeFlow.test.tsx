@@ -290,3 +290,38 @@ describe('lodge photo step', () => {
     expect(files.map((f) => f.name)).toEqual(['receipt.jpg']);
   });
 });
+
+/**
+ * The confirmation screen was a dead end.
+ *
+ * A consumer with a broken toilet AND a broken tap has two complaints to make, and the only
+ * way on from "We have your report" was the browser's back button - which walks back into a
+ * form that has already been submitted. One tap should start a clean second report.
+ */
+describe('lodge confirmation', () => {
+  it('offers to report another problem', async () => {
+    render(<LodgeFlow backend={backend()} />);
+    await reachSubmit();
+    fireEvent.click(screen.getByRole('button', { name: /submit/i }));
+
+    await screen.findByText(/we have your report/i);
+    expect(
+      screen.getByRole('button', { name: /report another problem/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('starts the next report clean rather than carrying the last one over', async () => {
+    // A second complaint that inherited the first one's receipt, products and fault would
+    // be a duplicate wearing a new number.
+    render(<LodgeFlow backend={backend()} />);
+    await reachSubmit();
+    fireEvent.click(screen.getByRole('button', { name: /submit/i }));
+    await screen.findByText(/we have your report/i);
+
+    fireEvent.click(screen.getByRole('button', { name: /report another problem/i }));
+
+    // Back at step one, which is the upload prompt, with the confirmation gone.
+    expect(await screen.findByText(/take a photo of your receipt/i)).toBeInTheDocument();
+    expect(screen.queryByText(/we have your report/i)).not.toBeInTheDocument();
+  });
+});

@@ -101,6 +101,9 @@ export function ServiceJobPanel({ job, technicians, open, onOpenChange }: Servic
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['service-job-board'] });
     queryClient.invalidateQueries({ queryKey: ['service-job-stalls'] });
+    // The list too. A job acted on from its own page would otherwise still read its old
+    // status when you navigate back to the list that sent you there.
+    queryClient.invalidateQueries({ queryKey: ['service-jobs-list'] });
     // The OPEN panel too. Without this the board behind it updates while the dialog in
     // front of it still shows the old status and still offers the action just taken -
     // which reads as the action having failed, and invites pressing it again.

@@ -1,299 +1,159 @@
 'use client';
 
 /**
- * The dispatch board - a day, and the people working it.
+ * Every service job, findable without knowing which day it is on.
  *
- * Deliberately what a dispatcher already draws on paper: no availability grid, no skills
- * matrix, no geo-clustering, no capacity optimiser. Every one of those needs data Sorento
- * does not collect, and would produce confident schedules out of guesses.
- *
- * **Unassigned is the first column, always rendered.** A confirmed job nobody is going to is
- * the single most important thing on this screen, and a board that only shows technicians
- * groups it out of existence - which is exactly how it gets missed until the consumer calls.
- * It renders even when empty, per the CRUD standard's "always render every section".
- *
- * **Stalls sit above the board, not inside it.** A job past its date and still Proposed has
- * nobody behind it and no column to belong to; putting it in a technician's day would imply
- * somebody is handling it. A CONFIRMED job past its date is deliberately NOT a stall - it has
- * an agreed date and an accountable technician, and listing it would bury the real ones.
+ * The dispatch board answers "who is working today". That is the right question at 8am and
+ * the wrong one every other time: it filters on a single day's `scheduled_from`, so a job
+ * proposed with no date yet - the state every job starts in - is on no day at all, and a
+ * job confirmed for last Tuesday leaves the board the moment it moves on. Raise a job, look
+ * for it tomorrow, and it has vanished. This list is where it lives.
  */
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { CalendarRange } from 'lucide-react';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
-import { ServiceJobPanel } from './components/ServiceJobPanel';
 import {
   SERVICE_JOB_STATUS_LABELS,
   formatDuration,
-  getDispatchBoard,
-  getServiceJob,
-  getStalledJobs,
-  listTechnicians,
-  type BoardGroup,
-  type BoardJob,
+  listServiceJobs,
+  type ServiceJobStatusKey,
 } from './services/serviceJobService';
 
-function toDayString(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
+const STATUS_OPTIONS = [
+  { value: '', label: 'Any status' },
+  ...Object.entries(SERVICE_JOB_STATUS_LABELS).map(([value, label]) => ({ value, label })),
+];
 
-function shiftDay(day: string, delta: number): string {
-  const date = new Date(`${day}T00:00:00`);
-  date.setDate(date.getDate() + delta);
-  return toDayString(date);
-}
+export default function ServiceJobsPage() {
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('');
 
-function timeOf(iso: string | null): string {
-  if (!iso) return '';
-  const date = new Date(iso);
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-}
-
-function JobCard({ job, onOpen }: { job: BoardJob; onOpen: (id: string) => void }) {
-  return (
-    <button
-      type="button"
-      onClick={() => onOpen(job.service_job_id)}
-      className="w-full rounded-md border p-3 text-left transition-colors hover:bg-accent"
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span className="truncate text-sm font-medium" title={job.job_number ?? ''}>
-          {job.job_number ?? 'Unnumbered'}
-        </span>
-        <span className="shrink-0 text-xs text-muted-foreground">
-          {timeOf(job.scheduled_from)}
-        </span>
-      </div>
-      <div className="mt-1 truncate text-xs text-muted-foreground" title={job.site_address ?? ''}>
-        {job.site_address ?? 'No site recorded'}
-      </div>
-      <div className="mt-2">
-        <span className={`${STATUS_PILL_BASE} ${statusPillClass(job.status_key)}`}>
-          {job.status_key ? SERVICE_JOB_STATUS_LABELS[job.status_key] : 'Unknown'}
-        </span>
-      </div>
-    </button>
-  );
-}
-
-function BoardColumn({
-  title,
-  subtitle,
-  jobs,
-  onOpen,
-}: {
-  title: string;
-  subtitle?: string;
-  jobs: BoardJob[];
-  onOpen: (id: string) => void;
-}) {
-  return (
-    <Card className="flex min-w-[260px] flex-1 flex-col">
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center justify-between gap-2 text-sm">
-          <span className="truncate" title={title}>
-            {title}
-          </span>
-          <Badge variant="secondary">{jobs.length}</Badge>
-        </CardTitle>
-        {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2">
-        {jobs.length === 0 ? (
-          <p className="py-6 text-center text-xs text-muted-foreground">Nothing scheduled.</p>
-        ) : (
-          jobs.map((job) => <JobCard key={job.service_job_id} job={job} onOpen={onOpen} />)
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-export default function DispatchBoardPage() {
-  const [day, setDay] = useState(() => toDayString(new Date()));
-  const [openJobId, setOpenJobId] = useState<string | null>(null);
-
-  const board = useQuery({
-    queryKey: ['service-job-board', day],
+  const jobs = useQuery({
+    queryKey: ['service-jobs-list', search, status],
     queryFn: () =>
-      getDispatchBoard({ dateFrom: `${day}T00:00:00`, dateTo: `${shiftDay(day, 1)}T00:00:00` }),
+      listServiceJobs({
+        query: search.trim() || undefined,
+        status: status ? [status] : undefined,
+        limit: 100,
+      }),
   });
 
-  const stalls = useQuery({
-    queryKey: ['service-job-stalls'],
-    queryFn: getStalledJobs,
-  });
-
-  const technicians = useQuery({
-    queryKey: ['service-job-technicians'],
-    queryFn: () => listTechnicians({ isActive: true }),
-  });
-
-  const selected = useQuery({
-    queryKey: ['service-job', openJobId],
-    queryFn: () => getServiceJob(openJobId as string),
-    enabled: Boolean(openJobId),
-  });
-
-  const groups: BoardGroup[] = board.data ?? [];
-  const unassigned = useMemo(
-    () => groups.filter((group) => group.technician_id === null).flatMap((group) => group.jobs),
-    [groups],
-  );
-  const assigned = useMemo(
-    () => groups.filter((group) => group.technician_id !== null),
-    [groups],
-  );
+  const rows = jobs.data?.data ?? [];
 
   return (
-    <div className="flex flex-col gap-6 p-4 sm:p-6">
+    <div className="flex flex-col gap-4 p-4 sm:p-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-xl font-semibold break-words">Dispatch board</h1>
-          <p className="text-sm text-muted-foreground">
-            One day, and the people working it. Drag-free on purpose: a job moves by confirming a
-            date and assigning somebody, not by landing in a column.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="icon" onClick={() => setDay(shiftDay(day, -1))}>
-            <ChevronLeft className="size-4" />
-          </Button>
-          <Input
-            type="date"
-            className="w-auto"
-            value={day}
-            onChange={(event) => setDay(event.target.value)}
+        <h1 className="min-w-0 text-xl font-semibold break-words">Service Jobs</h1>
+        <Button variant="outline" asChild className="shrink-0">
+          <Link href="/complaint-management/service-jobs/board">
+            <CalendarRange className="mr-1.5 size-4" />
+            Dispatch board
+          </Link>
+        </Button>
+      </div>
+
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search job number, site or contact"
+          className="sm:max-w-sm"
+        />
+        <div className="sm:w-52">
+          <SearchableSelect
+            value={status}
+            onChange={setStatus}
+            options={STATUS_OPTIONS}
+            placeholder="Any status"
           />
-          <Button variant="outline" size="icon" onClick={() => setDay(shiftDay(day, 1))}>
-            <ChevronRight className="size-4" />
-          </Button>
-          <Button variant="outline" onClick={() => setDay(toDayString(new Date()))}>
-            Today
-          </Button>
         </div>
       </div>
 
-      {/* Always rendered, per the CRUD standard: an empty stall list is information. */}
       <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-sm">
-            <AlertTriangle className="size-4 text-amber-600" />
-            Stalled jobs
-            <Badge variant="secondary">{stalls.data?.length ?? 0}</Badge>
-          </CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Past their date and still proposed: nobody has agreed a time. A confirmed job past its
-            date is not listed here - it has a date and an accountable technician.
-          </p>
-        </CardHeader>
-        <CardContent>
-          {stalls.isLoading ? (
-            <Skeleton className="h-16 w-full" />
-          ) : (stalls.data?.length ?? 0) === 0 ? (
-            <p className="py-4 text-center text-sm text-muted-foreground">
-              No stalled jobs. Every proposed job is still within its date.
+        <CardContent className="p-0">
+          {jobs.isLoading ? (
+            <div className="p-4">
+              <Skeleton className="h-24 w-full" />
+            </div>
+          ) : jobs.isError ? (
+            <p className="p-8 text-center text-sm text-muted-foreground">
+              {(jobs.error as Error)?.message ?? 'Failed to load service jobs.'}
+            </p>
+          ) : rows.length === 0 ? (
+            // Jobs are raised FROM a case, never here, so there is no Add button to offer:
+            // pointing at one that does not exist is worse than saying nothing.
+            <p className="p-8 text-center text-sm text-muted-foreground">
+              {search || status ? 'No service jobs match.' : 'No service jobs yet.'}
             </p>
           ) : (
             <div className="overflow-x-auto">
-              <div className="flex flex-col gap-2">
-                {stalls.data?.map((stall) => (
-                  <button
-                    key={stall.service_job_id}
-                    type="button"
-                    onClick={() => setOpenJobId(stall.service_job_id)}
-                    className="flex flex-col gap-1 rounded-md border border-amber-200 bg-amber-50 p-3 text-left transition-colors hover:bg-amber-100 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    {/* Two blocks, not two inline spans: side by side the number and the
-                        address run together into "SV26/08-00035 Lorong Bukit" for anything
-                        reading the text rather than the margin - a screen reader, a test,
-                        or a 375px screen. */}
-                    <span className="flex min-w-0 flex-col">
-                      <span className="text-sm font-medium">
-                        {stall.job_number ?? 'Unnumbered'}
-                      </span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {stall.site_address ?? 'No site recorded'}
-                      </span>
-                    </span>
-                    <span className="shrink-0 text-xs font-medium text-amber-800">
-                      stalled {formatDuration(stall.stalled_seconds)}
-                    </span>
-                  </button>
-                ))}
-              </div>
+              <table className="w-full text-sm">
+                <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th className="px-4 py-2 text-left">Job</th>
+                    <th className="px-4 py-2 text-left">Site</th>
+                    <th className="px-4 py-2 text-left">Scheduled</th>
+                    <th className="px-4 py-2 text-left">Attended in</th>
+                    <th className="px-4 py-2 text-left">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((job) => (
+                    <tr key={job.id} className="border-t hover:bg-accent/50">
+                      <td className="px-4 py-2 font-medium">
+                        <Link
+                          href={`/complaint-management/service-jobs/${job.id}`}
+                          className="text-primary hover:underline"
+                        >
+                          {job.job_number ?? 'Unnumbered'}
+                        </Link>
+                      </td>
+                      <td
+                        className="max-w-xs truncate px-4 py-2"
+                        title={job.site_address ?? ''}
+                      >
+                        {job.site_address ?? '-'}
+                      </td>
+                      <td className="px-4 py-2">
+                        {job.scheduled_from ? (
+                          formatDateTimeInMalaysia(job.scheduled_from)
+                        ) : (
+                          // The commonest state, and not a gap in the data: nobody has
+                          // agreed a time yet, which is exactly what Proposed means.
+                          <span className="text-muted-foreground">Not scheduled</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-muted-foreground">
+                        {job.attend_seconds !== null ? formatDuration(job.attend_seconds) : '-'}
+                      </td>
+                      <td className="px-4 py-2">
+                        <span
+                          className={`${STATUS_PILL_BASE} ${statusPillClass(job.status_key)}`}
+                        >
+                          {job.status_key
+                            ? SERVICE_JOB_STATUS_LABELS[job.status_key as ServiceJobStatusKey]
+                            : 'Unknown'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </CardContent>
       </Card>
-
-      {board.isLoading ? (
-        <div className="flex gap-4">
-          <Skeleton className="h-64 flex-1" />
-          <Skeleton className="h-64 flex-1" />
-        </div>
-      ) : board.isError ? (
-        <Card>
-          <CardContent className="py-8 text-center text-sm text-muted-foreground">
-            {(board.error as Error)?.message ?? 'Failed to load the board.'}
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="flex flex-col gap-4 lg:flex-row lg:overflow-x-auto">
-          {/* First and always present. See the module note. */}
-          <BoardColumn
-            title="Unassigned"
-            subtitle="Confirmed, with nobody going."
-            jobs={unassigned}
-            onOpen={setOpenJobId}
-          />
-          {assigned.map((group) => (
-            <BoardColumn
-              key={`${group.day}-${group.technician_id}`}
-              title={group.technician_name ?? 'Technician'}
-              jobs={group.jobs}
-              onOpen={setOpenJobId}
-            />
-          ))}
-          {assigned.length === 0 && (
-            <Card className="flex min-w-[260px] flex-1 items-center justify-center">
-              <CardContent className="py-10 text-center text-sm text-muted-foreground">
-                Nobody is assigned any work on this day.
-                <br />
-                <Link className="underline" href="/complaint-management/technicians">
-                  Manage technicians
-                </Link>
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      )}
-
-      {openJobId && selected.data && (
-        <ServiceJobPanel
-          // Keyed, so opening a second job remounts rather than inheriting the first
-          // job's half-typed date and "agreed by" text.
-          key={selected.data.id}
-          job={selected.data}
-          technicians={technicians.data ?? []}
-          open={Boolean(openJobId)}
-          onOpenChange={(next) => {
-            if (!next) setOpenJobId(null);
-          }}
-        />
-      )}
     </div>
   );
 }

@@ -439,8 +439,13 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/complaint-management/complaints',
       },
       {
-        title: 'Dispatch Board',
+        title: 'Service Jobs',
         path: '/complaint-management/service-jobs',
+        permission: 'complaint_management.service_jobs.view',
+      },
+      {
+        title: 'Dispatch Board',
+        path: '/complaint-management/service-jobs/board',
         permission: 'complaint_management.service_jobs.view',
       },
       {
@@ -1316,8 +1321,13 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/complaint-management/complaints',
       },
       {
-        title: 'Dispatch Board',
+        title: 'Service Jobs',
         path: '/complaint-management/service-jobs',
+        permission: 'complaint_management.service_jobs.view',
+      },
+      {
+        title: 'Dispatch Board',
+        path: '/complaint-management/service-jobs/board',
         permission: 'complaint_management.service_jobs.view',
       },
       {

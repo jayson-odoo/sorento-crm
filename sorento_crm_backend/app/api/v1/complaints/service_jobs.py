@@ -150,6 +150,44 @@ def _serialize(db: Session, job) -> Dict[str, Any]:
 # -------------------------------------------------------------------- reads
 
 
+@router.get("/")
+async def list_service_jobs(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    query: Optional[str] = Query(None),
+    status: Optional[str] = Query(None, description="Comma-separated status keys."),
+    sort: str = Query("created_at"),
+    dir: str = Query("desc"),
+    current_user: dict = Depends(require_permission_with_api_key(VIEW_PERMISSION)),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Every job, findable without knowing which day it sits on.
+
+    The board answers "who is working today". A job proposed with no date yet - the state
+    every job starts in - is on no day at all, and a job confirmed for last Tuesday leaves
+    the board the moment it moves on. Both then look like they vanished.
+    """
+    try:
+        keys = [part.strip() for part in (status or "").split(",") if part.strip()]
+        result = service_job_service.list_jobs(
+            db,
+            page=page,
+            limit=limit,
+            query=query,
+            status_keys=keys or None,
+            sort_field=sort,
+            sort_dir=(dir or "desc").lower(),
+        )
+        return {
+            **result,
+            "data": [_serialize(db, job) for job in result["data"]],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/board")
 async def get_dispatch_board(
     date_from: datetime = Query(...),
