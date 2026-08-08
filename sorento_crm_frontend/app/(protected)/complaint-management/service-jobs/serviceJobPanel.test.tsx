@@ -101,8 +101,11 @@ describe('service job panel', () => {
   it('offers the confirm section on a proposed job', () => {
     renderPanel(job('proposed'));
     expect(screen.getByText('Confirm the visit')).toBeInTheDocument();
-    // A date alone is explicitly not enough, and the panel says so before anybody tries.
-    expect(screen.getByText(/A date alone is not a confirmation/i)).toBeInTheDocument();
+    // Both inputs, because a date alone is explicitly not a confirmation (AC-F5). The
+    // panel no longer carries a paragraph saying so - the server's refusal names which
+    // half is missing, and stating it in advance was copy on a screen that has fields.
+    expect(screen.getByLabelText(/Date and time/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Agreed by/i)).toBeInTheDocument();
   });
 
   it('does not offer an arrival on a proposed job', () => {

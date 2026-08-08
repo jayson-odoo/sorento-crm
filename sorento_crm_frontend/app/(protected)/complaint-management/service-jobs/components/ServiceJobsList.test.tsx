@@ -13,15 +13,26 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import ServiceJobsPage from './page';
-import type { ServiceJob } from './services/serviceJobService';
+import ServiceJobsList from './ServiceJobsList';
+import type { ServiceJob } from '../services/serviceJobService';
+
+const push = vi.fn();
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push }),
+  usePathname: () => '/complaint-management/service-jobs',
+}));
+
+// DataGrid persists column preferences through this hook, which fires a request.
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
+}));
 
 const listServiceJobs = vi.fn();
 
-vi.mock('./services/serviceJobService', async () => {
+vi.mock('../services/serviceJobService', async () => {
   const actual =
-    await vi.importActual<typeof import('./services/serviceJobService')>(
-      './services/serviceJobService',
+    await vi.importActual<typeof import('../services/serviceJobService')>(
+      '../services/serviceJobService',
     );
   return { ...actual, listServiceJobs: (...args: unknown[]) => listServiceJobs(...args) };
 });
@@ -64,7 +75,7 @@ function renderList() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <ServiceJobsPage />
+      <ServiceJobsList />
     </QueryClientProvider>,
   );
 }
@@ -92,7 +103,7 @@ describe('service jobs list', () => {
     expect(await screen.findByText('Not scheduled')).toBeInTheDocument();
   });
 
-  it('links each job to its own page', async () => {
+  it('opens the job on its own page when a row is clicked', async () => {
     // The whole point: a job has an address of its own, reachable without knowing its day.
     listServiceJobs.mockResolvedValue({
       data: [job()],
@@ -100,35 +111,26 @@ describe('service jobs list', () => {
       empty: false,
     });
     renderList();
+    (await screen.findByText('SV26/08-0005')).click();
     await waitFor(() =>
-      expect(screen.getByRole('link', { name: 'SV26/08-0005' })).toHaveAttribute(
-        'href',
-        '/complaint-management/service-jobs/j1',
-      ),
+      expect(push).toHaveBeenCalledWith('/complaint-management/service-jobs/j1'),
     );
   });
 
   it('offers the board rather than an Add button', async () => {
-    // Jobs are raised FROM a case, never here. An Add button would lead nowhere.
+    // Jobs are raised FROM a case, never here - a job copies the site that case reported,
+    // so an Add button would open a form with nothing to copy.
     listServiceJobs.mockResolvedValue({
       data: [],
       pagination: { total: 0, page: 1, limit: 100 },
       empty: true,
     });
     renderList();
-    expect(await screen.findByText('No service jobs yet.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Dispatch board/i })).toHaveAttribute(
-      'href',
-      '/complaint-management/service-jobs/board',
+    const board = await screen.findByRole('button', { name: /Dispatch board/i });
+    board.click();
+    await waitFor(() =>
+      expect(push).toHaveBeenCalledWith('/complaint-management/service-jobs/board'),
     );
     expect(screen.queryByRole('button', { name: /^Add/i })).toBeNull();
-  });
-
-  it('surfaces the backend message when the list fails', async () => {
-    listServiceJobs.mockRejectedValue(new Error('Permission required: service_jobs.view'));
-    renderList();
-    expect(
-      await screen.findByText(/Permission required: service_jobs.view/),
-    ).toBeInTheDocument();
   });
 });

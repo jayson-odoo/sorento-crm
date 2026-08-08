@@ -369,6 +369,15 @@ def lodge_complaint(db: Session, payload: Dict[str, Any]) -> LodgeResult:
     _assign_number(db, complaint)
     db.commit()
 
+    # Tell them we have it, on the channel they already use.
+    #
+    # The "All done" screen is not an acknowledgement: a consumer closes the tab, and an
+    # hour later has nothing to show that anything happened - no number, no thread, no way
+    # back in. The receipt they photographed and the fault they described are on OUR side
+    # of a form they can no longer see. A message with the reference is the thing they
+    # keep, and it is the same thread CS will answer in.
+    _acknowledge(db, complaint)
+
     return LodgeResult(
         complaint_id=str(complaint.id),
         complaint_number=complaint.complaint_number,
@@ -378,6 +387,75 @@ def lodge_complaint(db: Session, payload: Dict[str, Any]) -> LodgeResult:
         dealer_name=match.customer_name or match.printed_name,
         warranty=_assess(db, str(complaint.id)),
     )
+
+
+def acknowledgement_text(complaint: Complaint) -> str:
+    """What the consumer receives the moment their report lands.
+
+    Deliberately short and deliberately specific. The reference is the whole point - it is
+    what they quote back, and what turns "I reported something once" into a record both
+    sides can find. No warranty verdict here even when one exists: cover is assessed
+    against a purchase date that is frequently unreadable at this moment, and a verdict
+    sent by message is read as a decision, not as a first guess CS may correct.
+    """
+    reference = complaint.complaint_number or "your report"
+    return (
+        f"We have your report. Reference {reference}. "
+        "Our team will confirm your warranty and come back to you here."
+    )
+
+
+def _acknowledge(db: Session, complaint: Complaint) -> None:
+    """Send the acknowledgement, best-effort, AFTER the complaint is committed.
+
+    Never raises. The complaint is already saved at this point, so an exception here would
+    hand the consumer a failure for something that actually succeeded - and their retry
+    would lodge a second complaint. A missed message is a nuisance; a duplicate report is
+    a wasted van (post-commit side effects are best-effort, per the module's own rule).
+    """
+    contact_id = getattr(complaint, "contact_id", None)
+    if not contact_id:
+        return
+    try:
+        from app.models.access import RespondContact
+        from app.services.queue_service import enqueue_job
+        from app.tasks.respond_io_tasks import send_complaint_respond_message
+
+        # The Respond.io id, never the internal `respond_contacts.id`: the send API and the
+        # inbox URL both key on `respond_io_id`, and passing the internal id silently
+        # addresses nobody.
+        identifier = (
+            db.query(RespondContact.respond_io_id)
+            .filter(RespondContact.id == contact_id)
+            .scalar()
+        )
+        if not identifier:
+            logger.info(
+                "No respond_io_id for contact %s; complaint %s lodged without an "
+                "acknowledgement message.",
+                contact_id,
+                complaint.id,
+            )
+            return
+
+        enqueue_job(
+            send_complaint_respond_message,
+            str(complaint.id),
+            str(identifier),
+            acknowledgement_text(complaint),
+            "",  # no CRM sender: this is the system acknowledging receipt, not an agent
+            None,
+            getattr(complaint, "space_id", None),
+            None,
+            queue_name="respond_io",
+            job_timeout=180,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Could not enqueue the lodge acknowledgement for complaint %s: %s",
+            complaint.id,
+            exc,
+        )
 
 
 def _assign_number(db: Session, complaint: Complaint) -> None:

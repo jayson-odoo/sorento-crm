@@ -36,7 +36,6 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -148,17 +147,21 @@ export function ServiceJobPanel({ job, technicians, open, onOpenChange }: Servic
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-2xl">
+        {/* `aria-describedby={undefined}` because there is no description to point at:
+            the header used to carry a sentence explaining what a service job is, which is
+            the kind of copy that belongs in the docs, not on the screen. */}
+        <DialogContent className="max-w-2xl" aria-describedby={undefined}>
           <DialogHeader>
-            <DialogTitle className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            {/* The pill sits BESIDE the title, not pushed to the far edge. `justify-between`
+                drove it under the dialog's own close button, so the two overlapped and the
+                X was the thing you hit when aiming at the status. `pe-8` keeps the whole
+                row clear of the close button at every width. */}
+            <DialogTitle className="flex flex-wrap items-center gap-2 pe-8">
               <span className="min-w-0 break-words">{job.job_number ?? 'Service job'}</span>
               <span className={`${STATUS_PILL_BASE} ${statusPillClass(job.status_key)}`}>
                 {job.status_key ? SERVICE_JOB_STATUS_LABELS[job.status_key] : 'Unknown'}
               </span>
             </DialogTitle>
-            <DialogDescription>
-              Raised from a {job.source_entity_type.replace(/_/g, ' ')}.
-            </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-4 sm:grid-cols-2">
@@ -182,10 +185,10 @@ export function ServiceJobPanel({ job, technicians, open, onOpenChange }: Servic
 
           {allowed.includes('confirm') && (
             <div className="rounded-md border p-4">
-              <div className="mb-1 text-sm font-medium">Confirm the visit</div>
-              <p className="mb-3 text-xs text-muted-foreground">
-                A date alone is not a confirmation. Record who agreed it, or the job stays proposed.
-              </p>
+              {/* Both inputs are required and the server says so if either is missing
+                  (AC-F5). A paragraph restating that in advance is the explanation the
+                  refusal already gives, only sooner and to everyone. */}
+              <div className="mb-3 text-sm font-medium">Confirm the visit</div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <Label htmlFor="scheduled-from">Date and time</Label>
@@ -218,11 +221,7 @@ export function ServiceJobPanel({ job, technicians, open, onOpenChange }: Servic
 
           {allowed.includes('assign') && (
             <div className="rounded-md border p-4">
-              <div className="mb-1 text-sm font-medium">Send a technician</div>
-              <p className="mb-3 text-xs text-muted-foreground">
-                Each dispatch is a new attempt. Re-assigning after a rejection keeps the first one
-                in history.
-              </p>
+              <div className="mb-3 text-sm font-medium">Send a technician</div>
               <div className="flex flex-col gap-3 sm:flex-row">
                 <SearchableSelect
                   className="sm:flex-1"

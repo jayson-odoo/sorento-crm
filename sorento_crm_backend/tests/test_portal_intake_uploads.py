@@ -157,3 +157,51 @@ class TestWhichFileIsTheProof:
         # Otherwise a payload carrying one real id and one empty string reads as
         # "ambiguous" and silently drops the proof.
         assert _proof_attachment_id({"attachment_ids": ["real", "  "]}) == "real"
+
+
+class TestTheAcknowledgement:
+    """The "All done" screen is not an acknowledgement.
+
+    A consumer closes the tab and an hour later has nothing: no number, no thread, no way
+    back in. The receipt they photographed is on our side of a form they can no longer
+    see. A message carrying the reference is the thing they keep.
+    """
+
+    def test_it_quotes_the_reference_the_consumer_will_be_asked_for(self):
+        from app.models.complaints import Complaint
+        from app.services.consumer_lodge_service import acknowledgement_text
+
+        text = acknowledgement_text(Complaint(complaint_number="CMP2026-0027"))
+        assert "CMP2026-0027" in text
+
+    def test_it_still_says_something_when_numbering_failed(self):
+        # Numbering is best-effort (an unconfigured rule must not block a lodgement), so a
+        # complaint can genuinely have no number. "Reference None" would be worse than a
+        # message with no reference at all.
+        from app.models.complaints import Complaint
+        from app.services.consumer_lodge_service import acknowledgement_text
+
+        text = acknowledgement_text(Complaint(complaint_number=None))
+        assert "None" not in text
+        assert "your report" in text
+
+    def test_it_states_no_warranty_verdict(self):
+        """Cover is assessed from a purchase date that is often unreadable at this moment.
+
+        A verdict delivered by message reads as a decision rather than a first guess CS
+        may correct, and taking one back is worse than never sending it.
+        """
+        from app.models.complaints import Complaint
+        from app.services.consumer_lodge_service import acknowledgement_text
+
+        text = acknowledgement_text(Complaint(complaint_number="CMP2026-0027")).lower()
+        for word in ("covered", "not covered", "expired", "warranty is"):
+            assert word not in text
+
+    def test_a_complaint_with_no_contact_is_not_an_error(self, db):
+        # Portal lodgements always have a contact; the WhatsApp track may not. Neither is
+        # a reason to fail a complaint that is already committed.
+        from app.models.complaints import Complaint
+        from app.services.consumer_lodge_service import _acknowledge
+
+        _acknowledge(db, Complaint(id="x", complaint_number="ZZT-1", contact_id=None))

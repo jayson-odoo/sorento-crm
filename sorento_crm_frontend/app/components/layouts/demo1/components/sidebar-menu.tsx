@@ -1,6 +1,6 @@
 'use client';
 
-import { JSX, useCallback, useMemo } from 'react';
+import { JSX, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useSession } from 'next-auth/react';
@@ -24,6 +24,7 @@ import {
   AccordionMenuSubTrigger,
 } from '@/components/ui/accordion-menu';
 import { Badge } from '@/components/ui/badge';
+import { collectMenuPaths, createMatchPath } from '@/lib/menu-active-path';
 import { QuickAccessBlock } from './quick-access-block';
 import { MenuItemPinButton } from './menu-item-pin-button';
 
@@ -124,11 +125,14 @@ export function SidebarMenu() {
     isSuperadmin,
   ]);
 
-  // Memoize matchPath to prevent unnecessary re-renders
-  const matchPath = useCallback(
-    (path: string): boolean =>
-      path === pathname || (path.length > 1 && pathname.startsWith(path)),
-    [pathname],
+  // Built from the WHOLE menu, not per item. The old rule was a bare `startsWith`, which
+  // lit up every ancestor at once: standing on the dispatch board highlighted both
+  // "Dispatch Board" and "Service Jobs", because one path is a literal prefix of the
+  // other. Deciding that needs to know which other entries also match, so the matcher is
+  // built once from every rendered path.
+  const matchPath = useMemo(
+    () => createMatchPath(pathname, collectMenuPaths(effectiveMenu)),
+    [pathname, effectiveMenu],
   );
 
   // Global classNames for consistent styling
