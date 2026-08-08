@@ -42,3 +42,7 @@ docker-compose.yml
 # Private keys (security audit 2026-06-29 — never commit)
 *.pem
 private_key.pem
+
+# Pre-trial snapshot written by scripts/container_status_trial.py - holds live
+# clearance data, and is per-environment. Keep it on the box, out of the repo.
+sorento_crm_backend/scripts/container_status_trial_snapshot.json
