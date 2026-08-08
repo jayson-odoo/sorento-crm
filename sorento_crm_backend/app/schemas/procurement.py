@@ -523,6 +523,13 @@ class PickingHeaderResponse(PickingHeaderBase):
     picking_lines: Optional[List[PickingLineResponse]] = None
     lines_count: Optional[int] = 0
     items_count: Optional[int] = 0
+    # Provenance: how this GRN got here. `source_system` is 'ui' | 'import' |
+    # 'external_api'; the two labels are resolved server-side because the UI must
+    # never print a UUID. All None for rows created before this was recorded,
+    # which reads as "unknown" rather than guessing an author.
+    source_system: Optional[str] = None
+    created_by_label: Optional[str] = None
+    import_filename: Optional[str] = None
     
     class Config:
         from_attributes = True

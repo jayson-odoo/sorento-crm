@@ -39,6 +39,13 @@ const STATUS_OPTIONS = [
   { value: 'rejected', label: 'Rejected' },
 ] as const;
 
+/** How the GRN reached the system, in words a user recognises. */
+const GRN_SOURCE_LABELS: Record<string, string> = {
+  ui: 'created in the system',
+  import: 'Excel import',
+  external_api: 'AutoCount / n8n integration',
+};
+
 export default function GRNDetail({ grnId }: GRNDetailProps) {
   const router = useRouter();
   const { data: grn, isLoading } = useGRN(grnId);
@@ -213,6 +220,28 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
               <p className="font-medium">{grn.notes}</p>
             </div>
           )}
+          {/* Provenance. Always rendered, including the unknown case: the question
+              "who created this GRN, and into which company" had no answer on the
+              page at all, which is what made a mis-companied upload untraceable.
+              An explicit "Unknown" is the honest answer for rows that predate the
+              recording - better than an absent section that reads as "no data". */}
+          <div className="border-t pt-4">
+            <p className="text-sm text-muted-foreground">Created by</p>
+            <p className="font-medium">
+              {grn.created_by_label ?? 'Unknown'}
+              {grn.source_system && (
+                <span className="text-muted-foreground font-normal">
+                  {' '}
+                  ({GRN_SOURCE_LABELS[grn.source_system] ?? grn.source_system})
+                </span>
+              )}
+            </p>
+            {grn.import_filename && (
+              <p className="text-sm text-muted-foreground mt-1">
+                Imported from <span className="font-medium">{grn.import_filename}</span>
+              </p>
+            )}
+          </div>
         </CardContent>
       </Card>
 

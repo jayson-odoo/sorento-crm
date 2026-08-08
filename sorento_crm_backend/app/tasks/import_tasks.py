@@ -1617,11 +1617,17 @@ def _run_grn_listing_import_core(
     job_service: Optional[JobService] = None,
     job_id_str: Optional[str] = None,
     outcome: Optional[ImportOutcome] = None,
+    created_by: Optional[str] = None,
+    import_job_db_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Parse GRN listing Excel and run upsert loop. Returns counts and errors. Caller must commit or rollback.
 
     ``outcome`` records per-row attribution. The validation preview passes a
     non-persisting recorder so preview and import speak the same reason codes.
+
+    ``created_by`` / ``import_job_db_id`` are stamped onto headers this run
+    CREATES, so a GRN can say who imported it and from which file. The preview
+    passes neither (it writes nothing).
     """
     import openpyxl
 
@@ -1701,14 +1707,33 @@ def _run_grn_listing_import_core(
         except Exception:
             picking_date = date.today()
         try:
-            proc.upsert_grn_header_for_import(grn_number, spo_number, picking_date)
+            header, was_created = proc.upsert_grn_header_for_import(
+                grn_number,
+                spo_number,
+                picking_date,
+                created_by=created_by,
+                import_job_id=import_job_db_id,
+            )
+            # Report which of the two actually happened. Reporting every success as
+            # `created` made the last person to re-run a file look like the author
+            # of every GRN in it, which is what made "who created this GRN"
+            # unanswerable from import_job_rows.
             outcome.success(
                 row=row_idx,
-                code=oc.CREATED,
-                message=f"GRN header saved: {grn_number}",
+                code=oc.CREATED if was_created else oc.UPDATED,
+                # `outcome` is the column a query filters on and it defaults to
+                # "created", so it has to be set alongside `code` or the two
+                # disagree and the filter still lies.
+                outcome=oc.OUTCOME_CREATED if was_created else oc.OUTCOME_UPDATED,
+                message=(
+                    f"GRN header created: {grn_number}"
+                    if was_created
+                    else f"GRN header updated: {grn_number}"
+                ),
                 value=grn_number,
                 identity=identity,
                 entity_type="picking_header",
+                entity_id=str(header.id),
             )
         except Exception as e:
             # `upsert_grn_header_for_import` commits per row, so a failed flush
@@ -1914,7 +1939,15 @@ def process_grn_listing_import(db_job_id: str, file_data: bytes, filename: str, 
     try:
         job_service.start_job(job_id_str)
         result = _run_grn_listing_import_core(
-            db, file_data, job_service=job_service, job_id_str=job_id_str, outcome=outcome
+            db,
+            file_data,
+            job_service=job_service,
+            job_id_str=job_id_str,
+            outcome=outcome,
+            # Provenance for the headers this run creates: the uploader, and the
+            # job (which carries the file name and the company snapshot).
+            created_by=user_id,
+            import_job_db_id=str(getattr(job, "id", "") or "") or None,
         )
         if "error" in result:
             job_service.fail_job(job_id_str, result["error"])
