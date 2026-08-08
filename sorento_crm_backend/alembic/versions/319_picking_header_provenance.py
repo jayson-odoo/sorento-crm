@@ -24,15 +24,15 @@ No backfill. Historical rows genuinely do not know, and inventing an author from
 the nearest import job would bake in exactly the wrong guess this migration
 exists to stop. They stay NULL, which reads as "unknown" rather than as a lie.
 
-Revision ID: 318_picking_header_provenance
-Revises: 317_picking_header_spo_width
+Revision ID: 319_picking_header_provenance
+Revises: 318_attachment_type_n8n_webhook
 """
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import UUID
 
-revision = "318_picking_header_provenance"
-down_revision = "317_picking_header_spo_width"
+revision = "319_picking_header_provenance"
+down_revision = "318_attachment_type_n8n_webhook"
 branch_labels = None
 depends_on = None
 
