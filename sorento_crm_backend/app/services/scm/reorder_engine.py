@@ -53,7 +53,12 @@ DEFAULT_LEAD_TIME_DAYS = 30
 DEFAULT_SERVICE_LEVEL = 0.95
 DEFAULT_REVIEW_PERIOD_DAYS = 30
 DEFAULT_FORECAST_WINDOW_DAYS = 90
-DEFAULT_SUPPLIER_SELECTION = "primary"
+# Cost leads. The business buys the same item from more than one supplier on 5,995 of its
+# products, and the instruction is plain: "we should pick the cheapest one if got multiple
+# suppliers". `is_primary` stays in the key as the tiebreak, so a nominated supplier still
+# wins a tie on price - it just no longer wins on nomination alone. Overridable per policy
+# via the `supplier_selection` toggle (`primary` / `best_score` / `lowest_cost`).
+DEFAULT_SUPPLIER_SELECTION = "lowest_cost"
 
 # Most-specific-wins ordering for policy resolution (SKU beats cell beats class beats global).
 _SCOPE_RANK = {"sku": 3, "abc_xyz_cell": 2, "product_class": 1, "global": 0}
@@ -124,16 +129,43 @@ def select_supplier(suppliers: list[dict], *,
     lead_time_days, composite_score}.
     """
     if not suppliers:
-        return {"chosen": None, "alternatives": [], "exception": "no_supplier"}
+        return {"chosen": None, "alternatives": [], "exception": "no_supplier",
+                "reason": {"basis": "no_supplier"}}
     ranked = sorted(suppliers, key=lambda s: _supplier_sort_key(s, selection))
     chosen = ranked[0]
     alternatives = [{
         "supplier_id": s.get("supplier_id"),
+        "supplier_name": s.get("supplier_name"),
         "unit_cost": _num(s.get("unit_cost")),
+        "unit_cost_source": s.get("unit_cost_source"),
         "lead_time_days": _num(s.get("lead_time_days")),
         "composite_score": _num(s.get("composite_score")),
     } for s in ranked[1:]]
-    return {"chosen": chosen, "alternatives": alternatives, "exception": None}
+    return {"chosen": chosen, "alternatives": alternatives, "exception": None,
+            "reason": _selection_reason(chosen, ranked[1:], selection)}
+
+
+def _selection_reason(chosen: dict, losers: list[dict], selection: str) -> dict:
+    """Why this supplier, in a shape the decision popup can render without re-deriving it.
+
+    Stated rather than implied, and never over-stated: with nothing to compare against,
+    "chosen because cheaper" is a fabrication, so a lone supplier says `only_supplier`. A
+    saving is quoted only when BOTH costs are known - the gap to an unpriced runner-up is
+    unknowable, not infinite.
+    """
+    if not losers:
+        return {"basis": "only_supplier", "runner_up": None, "saving_per_unit": None}
+    runner_up = losers[0]
+    reason = {
+        "basis": selection,
+        "runner_up": runner_up.get("supplier_name"),
+        "runner_up_cost": _num(runner_up.get("unit_cost")),
+        "saving_per_unit": None,
+    }
+    ours, theirs = _num(chosen.get("unit_cost")), _num(runner_up.get("unit_cost"))
+    if ours is not None and theirs is not None:
+        reason["saving_per_unit"] = round(theirs - ours, 4)
+    return reason
 
 
 def _supplier_sort_key(s: dict, selection: str):
@@ -504,6 +536,42 @@ def load_net_position(db: Session, product_id: str,
     return [dict(r) for r in db.execute(text(sql), params).mappings().all()]
 
 
+def last_purchase_costs(db: Session, product_id: str) -> dict[str, dict]:
+    """What we last PAID for this SKU, per supplier: {supplier_id: {cost, currency, ref, at}}.
+
+    Evidence beats a typed figure. `product_suppliers.unit_cost` is a contract or a quote
+    somebody entered; a purchase-order line is money that actually moved, so where both exist
+    the order wins.
+
+    Per SUPPLIER, never pooled. A price we paid supplier A does not price a buy from
+    supplier B - putting it there would read as a quote from B, and it is not one.
+
+    A line recording 0 is a price OF zero, and is kept: 637 lines in the customer's own order
+    book are exactly that. Only the ABSENCE of a line means unknown, and unknown is `None`.
+    Ordered by issue date with the row's own creation time as the tiebreak, because a book
+    imported in one go shares an issue date and the order among those would otherwise be up
+    to the planner.
+    """
+    rows = db.execute(text(
+        "SELECT DISTINCT ON (po.supplier_id) po.supplier_id, pol.unit_cost, "
+        "       COALESCE(pol.currency, po.currency) AS currency, "
+        "       po.po_number, po.issue_date "
+        "FROM purchase_order_lines pol "
+        "JOIN purchase_orders po ON po.id = pol.purchase_order_id "
+        "WHERE pol.product_id = :pid AND pol.unit_cost IS NOT NULL "
+        "ORDER BY po.supplier_id, po.issue_date DESC NULLS LAST, pol.created_at DESC"
+    ), {"pid": product_id}).mappings().all()
+    return {
+        str(r["supplier_id"]): {
+            "cost": _num(r["unit_cost"]),
+            "currency": r["currency"],
+            "ref": r["po_number"],
+            "at": r["issue_date"],
+        }
+        for r in rows
+    }
+
+
 def load_supplier_candidates(db: Session, product_id: str,
                              *, default_lead: float = DEFAULT_LEAD_TIME_DAYS) -> list[dict]:
     """Assemble the SKU's suppliers for ``select_supplier``, folding in the M2 measured
@@ -519,9 +587,48 @@ def load_supplier_candidates(db: Session, product_id: str,
         "WHERE ps.product_id = :pid "
         "ORDER BY ps.supplier_id"          # deterministic load order (stable tie input)
     ), {"pid": product_id}).mappings().all()
+    paid = last_purchase_costs(db, product_id)
+    # A supplier we have BOUGHT this item from is a supplier for it, whether or not anybody
+    # kept the `product_suppliers` row up to date. 3,070 such pairs exist in the customer's
+    # book, each with a price we paid, and every one of them was invisible to the plan. They
+    # join as candidates carrying no contract terms - no MOQ, no declared lead - so the lead
+    # time falls back to measured-then-default exactly as it does for a contract row with a
+    # blank lead.
+    known = {str(r["supplier_id"]) for r in rows}
+    extra = [sid for sid in paid if sid not in known]
+    if extra:
+        rows = list(rows) + [
+            dict(er) for er in db.execute(text(
+                "SELECT su.id AS supplier_id, su.supplier_code, su.supplier_name, "
+                "       NULL::numeric AS standard_lead_time_days, NULL::numeric AS moq, "
+                "       NULL::numeric AS order_multiple, NULL::numeric AS unit_cost, "
+                "       NULL::varchar AS currency, FALSE AS is_primary_supplier, "
+                "       NULL::numeric AS lead_time_variability_days "
+                "FROM suppliers su WHERE su.id = ANY(CAST(:ids AS uuid[])) ORDER BY su.id"
+            ), {"ids": extra}).mappings().all()
+        ]
     out: list[dict] = []
     for r in rows:
         perf = _supplier_perf(db, r["supplier_id"], product_id)
+        # The cascade, in one place: what we last paid this supplier, else the contract
+        # figure, else nothing. `unit_cost_source` travels with it so a buyer can tell a
+        # quote from a receipt, and `None` stays None rather than becoming a free item.
+        last = paid.get(str(r["supplier_id"]))
+        if last is not None and last["cost"] is not None:
+            unit_cost = last["cost"]
+            cost_source = "last_po"
+            cost_currency = last["currency"] or r["currency"]
+            cost_ref, cost_at = last["ref"], last["at"]
+        elif _num(r["unit_cost"]) is not None:
+            unit_cost = _num(r["unit_cost"])
+            cost_source = "contract"
+            cost_currency = r["currency"]
+            cost_ref = cost_at = None
+        else:
+            unit_cost = None
+            cost_source = None
+            cost_currency = r["currency"]
+            cost_ref = cost_at = None
         measured_lead = perf.get("avg_lead_time_days") if perf else None
         declared_lead = r["standard_lead_time_days"]
         lt_val, lt_src = lead_time(_num(measured_lead), _num(declared_lead),
@@ -531,8 +638,11 @@ def load_supplier_candidates(db: Session, product_id: str,
             "supplier_code": r["supplier_code"],
             "supplier_name": r["supplier_name"],
             "is_primary": bool(r["is_primary_supplier"]),
-            "unit_cost": _num(r["unit_cost"]),
-            "currency": r["currency"],
+            "unit_cost": unit_cost,
+            "unit_cost_source": cost_source,
+            "unit_cost_ref": cost_ref,
+            "unit_cost_at": cost_at,
+            "currency": cost_currency,
             "moq": _num(r["moq"]),
             "order_multiple": _num(r["order_multiple"]),
             "declared_lead_time_days": _num(declared_lead),

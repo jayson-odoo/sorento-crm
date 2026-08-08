@@ -635,7 +635,9 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
     # the recommendation names a place a buyer recognises.
     anchor = next((r for r in prows if str(r["warehouse_id"]) == pool_id), prows[0])
     agg_cell = _network_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq,
-                                 order_multiple, prows, policy_type=policy_type,
+                                 order_multiple, prows,
+                                 supplier_reason=sel.get("reason"),
+                                 policy_type=policy_type,
                                  min_override=min_override, max_override=max_override,
                                  target_oup=target_oup, triggered=triggered,
                                  reason_label=reason_label, recommended=recommended,
@@ -761,6 +763,7 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
         "disposition": disp, "confidence": conf, "sample_size": sample_size,
         # Carried so the reason can quote the actual age rather than assert one.
         "last_purchase_days": lb_days,
+        "supplier_reason": sel.get("reason"),
         "selection": tog["supplier_selection"],
         "overstock": bool(disp and disp["type"] == "overstock"),
         "short": net < rop,
@@ -869,7 +872,9 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
 
         first = prows[0]
         agg_cell = _network_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq,
-                                     order_multiple, prows, policy_type=policy_type,
+                                     order_multiple, prows,
+                                     supplier_reason=sel.get("reason"),
+                                     policy_type=policy_type,
                                      min_override=min_override, max_override=max_override,
                                      target_oup=target_oup, triggered=triggered,
                                      reason_label=reason_label, recommended=recommended,
@@ -901,7 +906,8 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
 
 
 def _network_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_multiple,
-                      prows, *, policy_type: str, min_override: Optional[float],
+                      prows, *, supplier_reason: Optional[dict] = None,
+                      policy_type: str, min_override: Optional[float],
                       max_override: Optional[float], target_oup: float, triggered: bool,
                       reason_label: Optional[str], recommended: float,
                       rounded: float) -> dict:
@@ -917,6 +923,7 @@ def _network_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
     supplier_adequate = bool(chosen) and (chosen.get("supplier_confidence") in ("high", "medium"))
     return {
         "policy": policy, "chosen": chosen, "alt_choices": alt_choices,
+        "supplier_reason": supplier_reason,
         "demand_rate": agg_demand, "net": agg["agg_net"], "on_hand": None, "cv": None,
         "policy_type": policy_type,
         "service_level": float(policy.get("service_level") or eng.DEFAULT_SERVICE_LEVEL),
@@ -1004,6 +1011,9 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         "sample_size": c.get("sample_size"),
         "supplier": _supplier_choice(chosen) if chosen else None,
         "alternatives": c.get("alt_choices") or [],
+        # Why this supplier and not the runner-up, frozen at run time so the popup states
+        # the reason rather than re-deriving it from figures that may since have moved.
+        "supplier_reason": c.get("supplier_reason"),
         "disposition_action": disposition_action,
         "transfer_flag": transfer_flag,
         "is_exception": rec_type == "exception",
@@ -1053,6 +1063,15 @@ def _supplier_choice(cand: Optional[dict]) -> Optional[dict]:
         "supplier_code": cand.get("supplier_code"),
         "supplier_name": cand.get("supplier_name"),
         "unit_cost": _fnum(cand.get("unit_cost")),
+        # Where the figure came from, so a buyer can tell a quote from a receipt:
+        # `last_po` (what we paid, with the order number and date beside it), `contract`
+        # (a typed figure on product_suppliers), or absent when nobody knows.
+        "unit_cost_source": cand.get("unit_cost_source"),
+        "unit_cost_ref": cand.get("unit_cost_ref"),
+        "unit_cost_at": (
+            cand["unit_cost_at"].isoformat() if cand.get("unit_cost_at") else None
+        ),
+        "currency": cand.get("currency"),
         "lead_time_days": _fnum(cand.get("lead_time_days")),
         "composite_score": _fnum(cand.get("composite_score")),
         "is_primary": bool(cand.get("is_primary")),

@@ -19,7 +19,7 @@ import uuid
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.procurement import (
@@ -27,7 +27,9 @@ from app.models.procurement import (
     PickingLine,
     PurchaseOrder,
     PurchaseOrderLine,
+    Supplier,
 )
+from app.models.product import Product
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 
@@ -158,12 +160,24 @@ class PurchaseOrderService:
         )
 
     def list(self, page: int, limit: int, sort: Optional[str], direction: str,
-             query: Optional[str], status: Optional[str], supplier: Optional[str]) -> dict:
-        from app.models.procurement import Supplier
-
+             query: Optional[str], status: Optional[str], supplier: Optional[str],
+             *, product_code: Optional[str] = None) -> dict:
         q = self._base_query()
         if status:
             q = q.filter(PurchaseOrder.status == status)
+        if product_code:
+            # EXISTS, not a join: an order that carries the item on two lines is one order,
+            # and a join would list it twice and count it twice.
+            code = product_code.strip().lower()
+            q = q.filter(
+                self.db.query(PurchaseOrderLine.id)
+                .join(Product, Product.id == PurchaseOrderLine.product_id)
+                .filter(
+                    PurchaseOrderLine.purchase_order_id == PurchaseOrder.id,
+                    func.lower(func.btrim(Product.product_code)) == code,
+                )
+                .exists()
+            )
         if supplier:
             q = q.filter(PurchaseOrder.supplier.has(Supplier.supplier_code == supplier))
         if query:
@@ -189,6 +203,48 @@ class PurchaseOrderService:
             "data": [self.serialize(po, gr_refs.get(po.id)) for po in rows],
             "empty": total == 0,
             "pagination": {"total": total, "page": page},
+            # "which orders" and "what did we pay" are one question. Answered beside the
+            # list rather than left for the reader to work out from the rows, which they
+            # cannot do anyway once the orders spill past the first page.
+            "product_cost": self._last_purchase(product_code) if product_code else None,
+        }
+
+    def _last_purchase(self, product_code: str) -> Optional[dict]:
+        """The most recent priced line for this SKU, from any supplier.
+
+        A recorded 0 is a price and is returned as 0. Only the absence of a line is
+        unknown, and unknown is None - the two are different answers and this screen is
+        where a buyer tells them apart.
+        """
+        row = (
+            self.db.query(
+                PurchaseOrderLine.unit_cost,
+                PurchaseOrderLine.currency,
+                PurchaseOrder.po_number,
+                PurchaseOrder.issue_date,
+                Supplier.supplier_name,
+            )
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .join(Product, Product.id == PurchaseOrderLine.product_id)
+            .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
+            .filter(
+                func.lower(func.btrim(Product.product_code)) == product_code.strip().lower(),
+                PurchaseOrderLine.unit_cost.isnot(None),
+            )
+            .order_by(
+                PurchaseOrder.issue_date.desc().nullslast(),
+                PurchaseOrderLine.created_at.desc(),
+            )
+            .first()
+        )
+        if row is None:
+            return None
+        return {
+            "unit_cost": float(row.unit_cost),
+            "currency": row.currency,
+            "po_number": row.po_number,
+            "issue_date": row.issue_date.isoformat() if row.issue_date else None,
+            "supplier_name": row.supplier_name,
         }
 
     def get_one(self, po_id: str) -> Optional[dict]:
