@@ -59,7 +59,12 @@ TOOL_REQUIRED_NARROWING_FILTERS: dict[str, tuple[str, ...]] = {
     # Global document library: never browse the whole library — require at least
     # one narrower (attachment / directory / type / uploader UUID) or empty page.
     "crm_resource_attachments_list": (
-        "attachment_ids", "directory_id", "attachment_type_id", "uploaded_by",
+        "attachment_ids", "directory_id", "attachment_type_id",
+        # By NAME as well as by UUID. An agent answering "send me the container
+        # status list" has the document class, not its UUID, and forcing a
+        # lookup first turns one turn into two - or, more often, into an empty
+        # page the agent narrates as "there is no such document".
+        "attachment_type_code", "uploaded_by",
     ),
 }
 
@@ -117,6 +122,11 @@ TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
     "crm_resource_attachments_catalogue": {"attachment_type_code": "catalogue"},
     # Resource library list is hard-pinned to dealer-downloadable (direct-access)
     # types — it only ever surfaces files flagged is_direct_access.
+    # Deliberately NOT resolve_signed_urls: the tool returns the bare storage key
+    # ("import-sources/<uuid>/Container Status 2026.xlsx") and n8n signs it on the
+    # way out. Signing here would mint a 1-hour URL at list time that expires on
+    # its own schedule, for every row, whether or not the file is ever sent.
+    # A caller that wants a ready-to-open link passes resolve_signed_urls=true.
     "crm_resource_attachments_list": {"direct_access_only": "true"},
 }
 

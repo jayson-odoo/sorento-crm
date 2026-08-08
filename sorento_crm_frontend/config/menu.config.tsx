@@ -709,6 +709,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         superadminOnly: true,
       },
       {
+        title: 'Tracking Validation',
+        path: '/system-management/tracking-validation',
+        superadminOnly: true,
+      },
+      {
         title: 'Audit Logs',
         path: '/system-management/audit-logs',
         superadminOnly: true,
@@ -1566,6 +1571,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Import Logs',
         path: '/system-management/import-logs',
+        superadminOnly: true,
+      },
+      {
+        title: 'Tracking Validation',
+        path: '/system-management/tracking-validation',
         superadminOnly: true,
       },
       {

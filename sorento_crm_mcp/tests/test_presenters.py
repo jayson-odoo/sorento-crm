@@ -309,6 +309,61 @@ def test_resource_attachments_no_type_label():
     assert out["attachments"][0]["attachmentType"] is None  # type stripped from the file too
 
 
+def test_resource_attachments_carry_the_upload_date_when_present():
+    """Re-uploaded documents keep one name, so the date is what tells them apart.
+
+    Six revisions of the Container Status workbook are six items reading
+    "Container Status 2026.xlsx". Without a date the agent cannot say which one
+    it is handing over, and rows arrive newest-first for nothing.
+    """
+    out = env("crm_resource_attachments_list", {
+        "data": [
+            {"original_filename": "Container Status 2026.xlsx", "file_path": "http://x/a.xlsx",
+             "uploaded_at": "2026-08-07T03:09:33"},
+            {"original_filename": "Container Status 2026.xlsx", "file_path": "http://x/b.xlsx",
+             "uploaded_at": "2026-08-01T09:00:00"},
+        ],
+    })
+    assert [f["value"] for f in out["items"][0]["fields"]] == [
+        "Container Status 2026.xlsx", "2026-08-07",
+    ]
+    assert out["items"][1]["fields"][1]["value"] == "2026-08-01"
+
+
+def test_resource_attachments_expose_the_row_id():
+    """The one place a human can get the id of the file the agent just sent.
+
+    Identical filenames make every other field useless for finding the row
+    again, so without this a wrong answer cannot be traced to a document.
+    """
+    out = env("crm_resource_attachments_list", {
+        "data": [{
+            "id": "df853300-0000-0000-0000-000000000001",
+            "original_filename": "Container Status 2026.xlsx",
+            "file_path": "http://x/a.xlsx",
+        }],
+    })
+    labels = {f["label"]: f["value"] for f in out["items"][0]["fields"]}
+    assert labels["File ID"] == "df853300-0000-0000-0000-000000000001"
+
+
+def test_uploaded_at_becomes_last_updated_at():
+    """An attachment is never edited in place, so the upload IS its freshness.
+
+    Without this every document answer reported `last_updated_at: null` and the
+    agent could not say how current the file it handed over was.
+    """
+    out = env("crm_resource_attachments_list", {
+        "data": [
+            {"original_filename": "a.xlsx", "file_path": "http://x/a.xlsx",
+             "uploaded_at": "2026-08-01T09:00:00"},
+            {"original_filename": "b.xlsx", "file_path": "http://x/b.xlsx",
+             "uploaded_at": "2026-08-07T03:09:33"},
+        ],
+    })
+    assert out["last_updated_at"] == "2026-08-07T03:09:33"
+
+
 def test_portal_link_becomes_action_link():
     out = env("crm_portal_link_get", {"portal_link": "https://portal/x", "label": "Complaint Portal"})
     assert out["action_links"] == [{"label": "Complaint Portal", "url": "https://portal/x", "type": "portal_link"}]
@@ -325,3 +380,99 @@ def test_empty_result_envelope():
 
 def test_invalid_json_returns_raw_unchanged():
     assert present_response("crm_master_products_list", "not json") == "not json"
+
+
+# ---------------------------------------------------------------- field access
+
+
+def _incoming_row(**clearance):
+    """One shipment row as `/incoming-stock/list` returns it, plus whatever
+    clearance fields this caller was permitted."""
+    return {
+        "shipment_number": "SHP-1",
+        "shipping_container_number": "SEGU4008631",
+        "estimated_arrival_date": "2026-07-08",
+        "lines": [
+            {
+                "product_code": "SRTWB7109",
+                "product_name": "Basin Mixer",
+                "batch_number": "B-1",
+                "remaining_incoming_quantity": 12,
+                "warehouse_allocations": [
+                    {"warehouse_code": "BRW", "allocated_quantity": 12}
+                ],
+            }
+        ],
+        **clearance,
+    }
+
+
+def test_render_shows_the_clearance_fields_a_caller_may_see():
+    """The render view had a hardcoded field list that never included any of them,
+    so an entitled contact still got nothing."""
+    out = env("crm_incoming_stock_list", {
+        "data": [_incoming_row(eta_delay_date="2026-07-12", liner_code="CMA")],
+    })
+
+    fields = {f["label"]: f["value"] for f in out["items"][0]["fields"]}
+    assert fields["ETA"] == "2026-07-08"
+    assert fields["ETA Delay"] == "2026-07-12"
+    assert fields["Liner"] == "CMA"
+
+
+def test_render_omits_a_field_the_caller_may_not_see():
+    """The backend strips denied keys, so they simply are not in the row. Render
+    must not invent a blank line for them - a labelled empty value reads as "not
+    reached yet"."""
+    out = env("crm_incoming_stock_list", {"data": [_incoming_row()]})
+
+    labels = {f["label"] for f in out["items"][0]["fields"]}
+    assert "ETA" in labels, "ships allowed, so the backend sent it"
+    assert "Gatepass" not in labels
+    assert "ETA Delay" not in labels
+
+
+def test_render_never_gates_the_answer_itself():
+    """Product, container, shipment and quantity are what the contact asked about.
+    A contact who may not see a gatepass date must still be told what is arriving,
+    so none of these may ever be stripped.
+
+    ETA is NOT among them: it is gateable (revocable by an admin) though it ships
+    allowed, so it renders as a clearance pair rather than as identity."""
+    out = env("crm_incoming_stock_list", {"data": [_incoming_row()]})
+
+    fields = {f["label"]: f["value"] for f in out["items"][0]["fields"]}
+    assert fields["Product Code"] == "SRTWB7109"
+    assert fields["Product Name"] == "Basin Mixer"
+    assert fields["Shipment"] == "SHP-1"
+    assert fields["Container"] == "SEGU4008631"
+    assert fields["Incoming Quantity"] == 12
+    assert "BRW" in str(fields["Warehouse Allocations"])
+    assert out["has_result"] is True
+
+
+def test_render_carries_the_denial_reason_through():
+    """Without it the agent cannot tell "you may not see this" from "it has not
+    happened yet", so it guesses - and it guesses the second one out loud."""
+    out = env("crm_incoming_stock_list", {
+        "data": [_incoming_row()],
+        "field_access": {
+            "denied": [
+                {
+                    "field": "gatepass_date",
+                    "agent_code": "incoming_stock_enquiries",
+                    "outcome": "field_not_allowed",
+                    "reason": "This contact holds the agent, but this field is not allowed on it.",
+                }
+            ],
+            "note": "Absent does NOT mean the value is unknown or not yet reached.",
+        },
+    })
+
+    assert out["field_access"]["denied"][0]["outcome"] == "field_not_allowed"
+    assert "not yet reached" in out["field_access"]["note"]
+
+
+def test_render_omits_field_access_when_nothing_was_denied():
+    out = env("crm_incoming_stock_list", {"data": [_incoming_row()]})
+    assert "field_access" not in out

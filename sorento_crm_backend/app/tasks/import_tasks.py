@@ -2800,3 +2800,164 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
         )
     finally:
         db.close()
+
+
+def validate_container_status_import(file_data: bytes, filename: str) -> Dict[str, Any]:
+    """Dry run for the container status workbook. Reads only, never writes.
+
+    Returns the shape the shared frontend upload dialog renders:
+    ``{valid, errors[], warnings[], summary{total_rows, would_update, would_create,
+    error_count}}``. Those summary keys are not free choice - the dialog renders
+    exactly those and silently drops anything else.
+    """
+    from app.services.container_status_service import ContainerStatusImportService
+
+    db = SessionLocal()
+    # A preview reads across every company: there is no job snapshot yet, and the
+    # operator needs the true would-update count, not a company-filtered one.
+    set_company_scope(db, None)
+    try:
+        return ContainerStatusImportService(db).validate(file_data)
+    except Exception as exc:  # noqa: BLE001 - a preview must never 500
+        logger.exception("Container status validation failed for %s", filename)
+        return {
+            "valid": False,
+            "errors": [f"Could not validate this workbook: {exc}"],
+            "warnings": [],
+            "summary": {
+                "total_rows": 0,
+                "would_update": 0,
+                "would_create": 0,
+                "error_count": 1,
+            },
+        }
+    finally:
+        db.close()
+
+
+def process_container_status_import(
+    db_job_id: str, file_data: bytes, filename: str, user_id: str
+):
+    """Import the container status workbook onto `inbound_shipments`.
+
+    Update-only: it adds clearance dates to packing lists that ALREADY exist and
+    never creates one, because the sheet carries no lines, supplier or quantities
+    (D32). Rows for containers the system does not have are skipped and counted.
+
+    Matching is on the normalized container number across EVERY shipment status -
+    318 of the 407 rows are archived containers, and their clearance history still
+    belongs on their row. A blank cell never clears, and a row whose values already
+    agree is not touched at all, so a daily re-upload is a genuine no-op rather than
+    407 phantom edits.
+    """
+    from rq import get_current_job
+
+    from app.services.container_status_import import (
+        ContainerStatusParseError,
+        parse_container_status_workbook,
+    )
+    from app.services.container_status_service import ContainerStatusImportService
+
+    db = SessionLocal()
+    _apply_import_job_scope(db, db_job_id)
+    job_service = JobService(db)
+
+    rq_job = get_current_job()
+    rq_job_id = rq_job.id if rq_job else None
+    job = job_service.get_job_by_db_id(db_job_id) if db_job_id else None
+    if not job and rq_job_id:
+        job = job_service.get_job(rq_job_id)
+    if not job:
+        logger.error("Container status import job not found: db_job_id=%s", db_job_id)
+        db.close()
+        return
+
+    job_id_str = str(job.job_id)
+    outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal)
+    try:
+        job_service.start_job(job_id_str)
+
+        try:
+            parsed = parse_container_status_workbook(file_data)
+        except ContainerStatusParseError as exc:
+            # Not a container status sheet at all. Fail the job with the reason
+            # rather than importing zero rows and reporting success.
+            outcome.flush()
+            job_service.fail_job(job_id_str, str(exc))
+            _write_import_audit(
+                db,
+                entity_type="inbound_shipment",
+                label=f"Container status import {filename or ''}".strip(),
+                row_count=0,
+                user_id=user_id,
+                entity_id=job_id_str,
+                status="failed",
+            )
+            return
+
+        service = ContainerStatusImportService(db)
+        counts = service.apply(parsed, user_id=user_id, outcome=outcome)
+        db.commit()
+
+        errors = service._errors_from(parsed)
+        total = len(parsed.rows) + len(parsed.rejected)
+
+        job_service.complete_job(
+            job_id=job_id_str,
+            # The recorder owns the counters, so every counted row is attributed
+            # to a reason (a tally that moves without one is the bug the guard in
+            # tests/test_import_outcome_guard.py exists to prevent). The local
+            # `counts` survive only as the legacy result keys the UI still reads:
+            # "unchanged" and "skipped_no_packing_list" are both skips to the job,
+            # but the operator needs to see WHICH, or a sheet that matched nothing
+            # looks the same as one that changed nothing.
+            result=outcome.finalize(
+                "Container status import completed",
+                total_rows=total,
+                updated=counts["updated"],
+                unchanged=counts["unchanged"],
+                skipped_no_packing_list=counts["skipped"],
+                rejected=counts["rejected"],
+                blocks=len(parsed.blocks),
+                blank_rows=parsed.blank_row_count,
+                errors=errors[:50],
+                warnings=parsed.warnings,
+            ),
+            **outcome.completion_counts(total_rows=total),
+        )
+
+        # Publish the retained workbook as a Container Status attachment so
+        # "send me the container status" has an answer. Best-effort by design:
+        # the import has already succeeded, and failing to catalogue a document
+        # must not report that success as a failure.
+        from app.services.container_status_document import publish_import_source
+
+        publish_import_source(db, job)
+
+        _write_import_audit(
+            db,
+            entity_type="inbound_shipment",
+            label=f"Container status import {filename or ''}".strip(),
+            row_count=len(parsed.rows),
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="partial" if counts["rejected"] else "success",
+        )
+    except Exception as exc:  # noqa: BLE001 - the job must record why it died
+        logger.exception("Container status import job %s failed", job_id_str)
+        db.rollback()
+        # The recorder writes on its own session, so the rows it already
+        # classified survive this rollback.
+        outcome.flush()
+        job_service.fail_job(job_id_str, str(exc))
+        _write_import_audit(
+            db,
+            entity_type="inbound_shipment",
+            label=f"Container status import {filename or ''}".strip(),
+            row_count=0,
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="failed",
+        )
+    finally:
+        db.close()
