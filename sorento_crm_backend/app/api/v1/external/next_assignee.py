@@ -14,6 +14,7 @@ from app.services.company_routing_service import (
     RoutingCompany,
     resolve_routing_company,
 )
+from app.models.base import set_company_scope
 from app.services.sla_service import ConversationSLATrackingService
 from app.services.user_service import AccessAgentService
 
@@ -238,6 +239,20 @@ def _routing_company_for_body(db: Session, body: dict, contact_phone: str) -> Ro
         )
 
 
+def _scope_request_to_company(db: Session, routing_company: RoutingCompany) -> None:
+    """Pin the rest of this request to the COALESCED routing company (AC-F3).
+
+    Deliberately the coalesced company, never the contact's raw company set: an
+    untagged contact coalesces to Sorento here, whereas the request-entry scope
+    resolver would give it ``frozenset()`` = zero rows and strand the call. That
+    difference is the whole reason routing has its own resolver (D6).
+    """
+    try:
+        set_company_scope(db, frozenset({str(routing_company.company_id)}))
+    except Exception:
+        logger.warning("next-assignee: could not pin request company scope", exc_info=True)
+
+
 def _enrich_n8n_response(
     base: dict,
     *,
@@ -330,6 +345,7 @@ async def post_next_assignee(
 
     # S0: resolved and echoed, but team resolution is deliberately NOT keyed on it yet.
     routing_company = _routing_company_for_body(db, body, contact_phone)
+    _scope_request_to_company(db, routing_company)
 
     sla_policy_tier = _resolve_sla_policy_tier_for_next_assignee(db, body)
 
