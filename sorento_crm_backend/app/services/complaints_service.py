@@ -1917,7 +1917,88 @@ class ComplaintService:
 
         self.db.commit()
         self.db.refresh(complaint)
+        self._raise_service_job_if_resolution_requires(complaint, update_data)
         return complaint
+
+    # Non-terminal, i.e. somebody is still going. `cancelled` is deliberately absent: a
+    # called-off visit is not a visit, and treating it as one would leave a complaint whose
+    # only job was cancelled with no way to get another except by hand.
+    _LIVE_JOB_STATUSES = ("proposed", "confirmed", "on_the_way", "arrived", "completed", "verified")
+
+    def _raise_service_job_if_resolution_requires(self, complaint, update_data: dict) -> None:
+        """Raise the visit the chosen resolution implies.
+
+        Agnes picks a resolution; she should not ALSO have to remember which resolutions
+        mean a technician travels. That table lived only in her head, so the visit depended
+        on her recalling it while working a queue - and a missed press is a consumer waiting
+        for a van nobody sent, with nothing on screen looking wrong.
+
+        Runs AFTER the commit and never raises. The resolution is the clinical decision and
+        it is already saved; letting an unconfigured numbering rule or an unseeded status
+        graph propagate would refuse to record what the technical team decided, which is the
+        more valuable of the two facts (AC-V6).
+        """
+        if "resolution_id" not in update_data or not update_data.get("resolution_id"):
+            # Includes clearing the resolution, which never touches an existing job:
+            # un-setting a field is a record correction, cancelling a visit is a phone call
+            # to a consumer, and conflating them strands a technician (AC-V5).
+            return
+        try:
+            from app.models.complaint_master_data import ComplaintResolution
+            from app.models.service_jobs import ServiceJob
+            from app.models.status import Status
+            from app.services import service_job_intake
+
+            resolution = (
+                self.db.query(ComplaintResolution)
+                .filter(ComplaintResolution.id == update_data["resolution_id"])
+                .first()
+            )
+            if resolution is None or not getattr(resolution, "requires_service_job", False):
+                return
+
+            from app.services.service_job_status_graph import SERVICE_JOB_ENTITY_TYPE
+
+            live_status_ids = [
+                row.id
+                for row in self.db.query(Status.id)
+                .filter(
+                    Status.entity_type == SERVICE_JOB_ENTITY_TYPE,
+                    Status.scope_id.is_(None),
+                    Status.key.in_(self._LIVE_JOB_STATUSES),
+                )
+                .all()
+            ]
+            already_going = (
+                self.db.query(ServiceJob.id)
+                .filter(
+                    ServiceJob.source_entity_type == "complaint",
+                    ServiceJob.source_entity_id == str(complaint.id),
+                    ServiceJob.status_id.in_(live_status_ids or [None]),
+                )
+                .first()
+            )
+            if already_going:
+                # AC-V3. Agnes saves a complaint repeatedly - a phone number, a note - and
+                # every save carries the resolution again. A second job reads as a REVISIT
+                # in every report that counts them.
+                return
+
+            service_job_intake.raise_job_for_source(
+                self.db,
+                source_entity_type="complaint",
+                source_entity_id=str(complaint.id),
+            )
+            self.db.commit()
+        except Exception as exc:  # noqa: BLE001
+            self.db.rollback()
+            logging.getLogger(__name__).warning(
+                "Resolution %s requires a service job but one could not be raised for "
+                "complaint %s: %s",
+                update_data.get("resolution_id"),
+                complaint.id,
+                exc,
+            )
 
     def _identifier_from_respond_inbox_url(self, respond_inbox_url: Optional[str]) -> Optional[str]:
         """Resolve contact identifier from respond_inbox_url to a numeric respond_io_id.

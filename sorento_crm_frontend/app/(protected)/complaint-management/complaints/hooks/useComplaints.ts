@@ -109,9 +109,16 @@ export function useUpdateComplaint() {
       id: string;
       data: Partial<ComplaintFormData>;
     }) => updateComplaint(id, data),
-    onSuccess: () => {
+    onSuccess: (_result, { id }) => {
       queryClient.invalidateQueries({ queryKey: ['complaints'] });
       queryClient.invalidateQueries({ queryKey: ['complaint'] });
+      // A resolution can now RAISE a service job server-side, so the update changes a
+      // section this mutation never used to touch. Without this the job is created and
+      // the panel still reads "No service job yet" until a manual reload - which looks
+      // exactly like the automation not having worked.
+      queryClient.invalidateQueries({ queryKey: ['complaint-service-jobs', id] });
+      queryClient.invalidateQueries({ queryKey: ['service-jobs-list'] });
+      queryClient.invalidateQueries({ queryKey: ['service-job-board'] });
       toast.success('Complaint updated successfully');
     },
     onError: (error: Error) =>

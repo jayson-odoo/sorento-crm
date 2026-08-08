@@ -111,6 +111,27 @@ export default function ComplaintResolutionsList() {
         ),
       },
       {
+        // Visible in the list, not only inside the edit dialog: which resolutions dispatch
+        // somebody is the thing an admin is checking when they open this screen at all.
+        id: 'requires_service_job',
+        accessorFn: (row) => row.requires_service_job,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Raises Service Job" column={column} />
+        ),
+        size: 170,
+        enableSorting: false,
+        meta: { headerTitle: 'Raises Service Job' },
+        cell: ({ row }) =>
+          row.original.requires_service_job ? (
+            <Badge variant="info" size="sm" appearance="ghost" className="shrink-0">
+              <BadgeDot />
+              Yes
+            </Badge>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+      },
+      {
         id: 'complaint_count',
         accessorFn: (row) => row.complaint_count ?? 0,
         header: ({ column }) => <DataGridColumnHeader title="Complaints" column={column} />,

@@ -33,6 +33,7 @@ const FormSchema = z.object({
   name: z.string().min(1, 'Name is required').max(150),
   description: z.string().max(2000).optional().nullable(),
   is_active: z.boolean(),
+  requires_service_job: z.boolean(),
 });
 
 interface Props {
@@ -48,7 +49,7 @@ export default function ComplaintResolutionFormDialog({ open, onOpenChange, rowI
 
   const form = useForm<z.infer<typeof FormSchema>>({
     resolver: zodResolver(FormSchema),
-    defaultValues: { name: '', description: '', is_active: true },
+    defaultValues: { name: '', description: '', is_active: true, requires_service_job: false },
   });
 
   useEffect(() => {
@@ -58,9 +59,15 @@ export default function ComplaintResolutionFormDialog({ open, onOpenChange, rowI
           name: row.name,
           description: row.description || '',
           is_active: row.is_active,
+        requires_service_job: row.requires_service_job ?? false,
         });
       } else {
-        form.reset({ name: '', description: '', is_active: true });
+        form.reset({
+          name: '',
+          description: '',
+          is_active: true,
+          requires_service_job: false,
+        });
       }
     }
   }, [open, form, rowId, row]);
@@ -71,6 +78,7 @@ export default function ComplaintResolutionFormDialog({ open, onOpenChange, rowI
         name: data.name,
         description: data.description ?? undefined,
         is_active: data.is_active,
+        requires_service_job: data.requires_service_job,
       };
       if (rowId) {
         await updateMutation.mutateAsync({ id: rowId, data: payload });
@@ -120,6 +128,25 @@ export default function ComplaintResolutionFormDialog({ open, onOpenChange, rowI
                     />
                   </FormControl>
                   <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="requires_service_job"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                  <div className="space-y-0.5">
+                    <FormLabel className="text-base">Raises a service job</FormLabel>
+                    {/* One line, because the effect is not guessable from the label alone -
+                        it says what HAPPENS, not what a service job is. */}
+                    <p className="text-xs text-muted-foreground">
+                      Choosing this resolution sends somebody to the site.
+                    </p>
+                  </div>
+                  <FormControl>
+                    <Switch checked={field.value} onCheckedChange={field.onChange} />
+                  </FormControl>
                 </FormItem>
               )}
             />

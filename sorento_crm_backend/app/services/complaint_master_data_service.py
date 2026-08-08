@@ -150,6 +150,11 @@ class ComplaintResolutionService:
                 "name": r.name,
                 "description": r.description,
                 "is_active": r.is_active,
+                # Hand-built dicts silently drop any field not named here - inheriting it
+                # on the response model is NOT enough. The column reached the detail
+                # endpoint and this one returned the schema default, so the list showed
+                # every resolution as not raising a job while the database said otherwise.
+                "requires_service_job": r.requires_service_job,
                 "created_at": r.created_at,
                 "updated_at": r.updated_at,
                 "complaint_count": count_by_id.get(r.id, 0),
