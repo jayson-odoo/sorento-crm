@@ -36,6 +36,11 @@ SO_NUMBER = "SO414033"
 LINKED = ("CWB242", "202605-S0042")
 SPLIT_ITEM = "C-FHSS14"
 LOCATION = "BRW-IB"
+#: The delivery date the fixture states for the first instalment of both items above.
+#: An instalment is keyed by (SO number, item, date), so a seeded line dated anything else
+#: is a different instalment and the sheet correctly declines to match it. Seeding it as
+#: `today + 30` made the test pass on one day of the calendar and fail on the rest.
+INSTALMENT_DATE = date(2026, 9, 14)
 
 
 def _u() -> str:
@@ -102,7 +107,7 @@ def _make_sales_order(db, world) -> SalesOrder:
         db.add(SalesOrderLine(
             id=_u(), sales_order_id=so.id, product_id=product.id,
             qty_ordered=10, qty_delivered=0, line_status="open",
-            required_date=date.today() + timedelta(days=30),
+            required_date=INSTALMENT_DATE,
         ))
     db.flush()
     return so

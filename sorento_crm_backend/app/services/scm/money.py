@@ -20,7 +20,6 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 #: What the budget, the cash figures and every ranked comparison are written in. A constant
@@ -98,14 +97,14 @@ def load_rates(db: Session) -> dict[str, Rate]:
     yet leaves this empty and every foreign price lands in "no rate" rather than silently
     converting at 1.
     """
-    rows = db.execute(text(
-        "SELECT currency, rate_to_base, as_of FROM scm.currency_rate"
-    )).mappings().all()
+    # Read through the MODEL. A schema-qualified `scm.currency_rate` in raw SQL bypasses
+    # search_path and would reach past a test's scratch schema into the real table.
+    from app.models.scm import CurrencyRate
+
     out: dict[str, Rate] = {}
-    for r in rows:
-        code = normalize_currency(r["currency"])
+    for r in db.query(CurrencyRate).all():
+        code = normalize_currency(r.currency)
         if code == BASE_CURRENCY:
             continue
-        out[code] = Rate(currency=code, rate_to_base=float(r["rate_to_base"]),
-                         as_of=r["as_of"])
+        out[code] = Rate(currency=code, rate_to_base=float(r.rate_to_base), as_of=r.as_of)
     return out

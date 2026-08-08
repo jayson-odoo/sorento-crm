@@ -243,3 +243,46 @@ def test_the_alternatives_carry_their_own_cost(db, world):
     sel = eng.select_supplier(list(_candidates(db, world).values()))
 
     assert [a["unit_cost"] for a in sel["alternatives"]] == [12.0]
+
+
+def test_a_purchase_order_with_no_supplier_does_not_become_a_supplier(db, world):
+    """15 lines in the live book sit on an order with no supplier, across 11 products.
+
+    Keying those by the missing supplier produced the literal string "None", which was then
+    passed to `ANY(CAST(:ids AS uuid[]))` and aborted the whole query - so the plan crashed
+    on those SKUs rather than merely knowing less about them. A price we cannot attribute to
+    anybody is not a quote from anybody; it is dropped.
+    """
+    from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+
+    po = PurchaseOrder(id=_u(), po_number=unique_code(MARKER), supplier_id=None,
+                       status="closed", issue_date=date(2026, 6, 1), currency="MYR")
+    db.add(po)
+    db.flush()
+    db.add(PurchaseOrderLine(id=_u(), purchase_order_id=po.id,
+                             product_id=world["product"].id, qty_ordered=1, qty_received=1,
+                             unit_cost=7, currency="MYR", line_status="closed"))
+    db.flush()
+
+    paid = eng.last_purchase_costs(db, str(world["product"].id))
+
+    assert "None" not in paid
+    assert None not in paid
+
+
+def test_the_candidate_list_survives_a_supplier_less_purchase_order(db, world):
+    """The end the user feels: the plan still resolves a supplier for the SKU."""
+    from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+
+    po = PurchaseOrder(id=_u(), po_number=unique_code(MARKER), supplier_id=None,
+                       status="closed", issue_date=date(2026, 6, 1), currency="MYR")
+    db.add(po)
+    db.flush()
+    db.add(PurchaseOrderLine(id=_u(), purchase_order_id=po.id,
+                             product_id=world["product"].id, qty_ordered=1, qty_received=1,
+                             unit_cost=7, currency="MYR", line_status="closed"))
+    db.flush()
+
+    cands = eng.load_supplier_candidates(db, str(world["product"].id))
+
+    assert all(c["supplier_id"] is not None for c in cands)

@@ -616,7 +616,13 @@ def last_purchase_costs(db: Session, product_id: str) -> dict[str, dict]:
         "       po.po_number, po.issue_date "
         "FROM purchase_order_lines pol "
         "JOIN purchase_orders po ON po.id = pol.purchase_order_id "
+        # A price we cannot attribute to anybody is not a quote from anybody. 15 lines in
+        # the customer's book sit on an order with no supplier; keyed by the missing id
+        # they became the literal string "None", which then aborted the candidate query
+        # for all 11 affected products - so the plan CRASHED on those SKUs rather than
+        # merely knowing less about them.
         "WHERE pol.product_id = :pid AND pol.unit_cost IS NOT NULL "
+        "  AND po.supplier_id IS NOT NULL "
         "ORDER BY po.supplier_id, po.issue_date DESC NULLS LAST, pol.created_at DESC"
     ), {"pid": product_id}).mappings().all()
     return {
@@ -659,7 +665,9 @@ def load_supplier_candidates(db: Session, product_id: str,
     # time falls back to measured-then-default exactly as it does for a contract row with a
     # blank lead.
     known = {str(r["supplier_id"]) for r in rows}
-    extra = [sid for sid in paid if sid not in known]
+    # `sid` is cast to uuid[] below, so anything that is not one aborts the query for the
+    # whole SKU rather than being skipped.
+    extra = [sid for sid in paid if sid and sid != "None" and sid not in known]
     if extra:
         rows = list(rows) + [
             dict(er) for er in db.execute(text(

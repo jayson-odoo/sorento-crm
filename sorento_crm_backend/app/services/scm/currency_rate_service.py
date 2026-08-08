@@ -19,17 +19,20 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.models.scm import CurrencyRate
 from app.services.error_handler import AppException
 from app.services.scm.money import BASE_CURRENCY, normalize_currency
+
+# Read and write through the MODEL, never `text("... scm.currency_rate ...")`. A schema-
+# qualified name bypasses search_path, so raw SQL here would reach past a test's scratch
+# schema and touch the real table - the same silent live-data write the blank-schema
+# fixture exists to prevent.
 
 
 def list_rates(db: Session) -> dict:
     """Every rate on file, plus the currencies the book uses that have none."""
-    rows = db.execute(text(
-        "SELECT currency, rate_to_base, as_of, note, updated_at "
-        "FROM scm.currency_rate ORDER BY currency"
-    )).mappings().all()
-    held = {r["currency"] for r in rows}
+    rows = db.query(CurrencyRate).order_by(CurrencyRate.currency).all()
+    held = {r.currency for r in rows}
 
     # What the purchase-order book actually prices in. The line's own currency wins over
     # the order's, matching how the cost cascade reads it.
@@ -72,59 +75,46 @@ def upsert_rate(db: Session, currency: str, rate_to_base: float, *,
                     "item in that currency at nothing.",
         )
 
-    existing = db.execute(text(
-        "SELECT currency, rate_to_base, as_of, note, updated_at "
-        "FROM scm.currency_rate WHERE currency = :c"
-    ), {"c": code}).mappings().first()
+    existing = db.get(CurrencyRate, code)
 
     if existing is not None:
-        same = (float(existing["rate_to_base"]) == value
-                and existing["as_of"] == as_of
-                and (existing["note"] or None) == (note or None))
+        same = (float(existing.rate_to_base) == value
+                and existing.as_of == as_of
+                and (existing.note or None) == (note or None))
         if same:
             return {"action": "unchanged", "rate": _serialize(existing)}
-        db.execute(text(
-            "UPDATE scm.currency_rate "
-            "SET rate_to_base = :v, as_of = :a, note = :n, updated_by = :u, "
-            "    updated_at = CURRENT_TIMESTAMP "
-            "WHERE currency = :c"
-        ), {"v": value, "a": as_of, "n": note, "u": actor, "c": code})
+        existing.rate_to_base = value
+        existing.as_of = as_of
+        existing.note = note
+        existing.updated_by = actor
         db.commit()
-        return {"action": "updated", "rate": _read_one(db, code)}
+        db.refresh(existing)
+        return {"action": "updated", "rate": _serialize(existing)}
 
-    db.execute(text(
-        "INSERT INTO scm.currency_rate (currency, rate_to_base, as_of, note, updated_by) "
-        "VALUES (:c, :v, :a, :n, :u)"
-    ), {"c": code, "v": value, "a": as_of, "n": note, "u": actor})
+    row = CurrencyRate(currency=code, rate_to_base=value, as_of=as_of, note=note,
+                       updated_by=actor)
+    db.add(row)
     db.commit()
-    return {"action": "created", "rate": _read_one(db, code)}
+    db.refresh(row)
+    return {"action": "created", "rate": _serialize(row)}
 
 
 def delete_rate(db: Session, currency: str) -> None:
     """Remove a rate. Every price in that currency becomes unrankable again, which is the
     honest consequence and is visible on the plan as "no rate for X"."""
     code = normalize_currency(currency)
-    deleted = db.execute(text(
-        "DELETE FROM scm.currency_rate WHERE currency = :c"
-    ), {"c": code}).rowcount
-    if not deleted:
+    row = db.get(CurrencyRate, code)
+    if row is None:
         raise AppException(status_code=404, message=f"No rate on file for {code}.")
+    db.delete(row)
     db.commit()
 
 
-def _read_one(db: Session, code: str) -> dict:
-    row = db.execute(text(
-        "SELECT currency, rate_to_base, as_of, note, updated_at "
-        "FROM scm.currency_rate WHERE currency = :c"
-    ), {"c": code}).mappings().first()
-    return _serialize(row) if row else {}
-
-
-def _serialize(r) -> dict:
+def _serialize(r: CurrencyRate) -> dict:
     return {
-        "currency": r["currency"],
-        "rate_to_base": float(r["rate_to_base"]),
-        "as_of": r["as_of"].isoformat() if r["as_of"] else None,
-        "note": r["note"],
-        "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+        "currency": r.currency,
+        "rate_to_base": float(r.rate_to_base),
+        "as_of": r.as_of.isoformat() if r.as_of else None,
+        "note": r.note,
+        "updated_at": r.updated_at.isoformat() if r.updated_at else None,
     }
