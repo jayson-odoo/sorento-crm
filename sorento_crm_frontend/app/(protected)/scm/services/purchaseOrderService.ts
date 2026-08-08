@@ -55,6 +55,21 @@ export interface PurchaseOrderListQuery {
   searchQuery?: string;
   status?: string | null;
   supplier?: string | null;
+  /**
+   * Keep only orders carrying this SKU. The response then also carries `product_cost`:
+   * what we last paid for it, on which order. That is where a buyer checks why a plan
+   * line shows no cost, since the plan now reads its cost from this book.
+   */
+  productCode?: string | null;
+}
+
+/** What we last paid for a SKU. `null` when we have never bought it; a recorded 0 is 0. */
+export interface ProductLastCost {
+  unit_cost: number;
+  currency: string | null;
+  po_number: string;
+  issue_date: string | null;
+  supplier_name: string | null;
 }
 
 /** Client-side list slice over the mock store (search + status filter + paging). */
@@ -80,9 +95,14 @@ function mockPurchaseOrderList(
   };
 }
 
+/** The list, plus the last-paid block when the caller narrowed it to one product. */
+export type PurchaseOrderListResponse = DataGridApiResponse<PurchaseOrder> & {
+  product_cost?: ProductLastCost | null;
+};
+
 export async function getPurchaseOrders(
   params: PurchaseOrderListQuery,
-): Promise<DataGridApiResponse<PurchaseOrder>> {
+): Promise<PurchaseOrderListResponse> {
   if (USE_SLICE_B_MOCKS) return mockPurchaseOrderList(params);
   const sorting = params.sortField
     ? [{ id: params.sortField, desc: params.sortDir === 'desc' }]
@@ -94,7 +114,11 @@ export async function getPurchaseOrders(
       sorting,
       searchQuery: params.searchQuery,
     },
-    { status: params.status ?? undefined, supplier: params.supplier ?? undefined },
+    {
+      status: params.status ?? undefined,
+      supplier: params.supplier ?? undefined,
+      product_code: params.productCode || undefined,
+    },
   );
   const res = await apiFetch(`${BASE}?${sp.toString()}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load purchase orders'));

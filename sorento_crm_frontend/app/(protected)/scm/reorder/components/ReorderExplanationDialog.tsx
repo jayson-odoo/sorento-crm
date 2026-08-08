@@ -41,7 +41,7 @@ import { CoverageTimelinePanel } from './CoverageTimelinePanel';
 import type { AskTurn } from '../types/explainer.types';
 import { xyzLabel } from '../../lib/health';
 import type { XyzClass } from '../../types/scm.types';
-import { EM_DASH, fmtInt, fmtMoney, fmtPct } from '../../lib/format';
+import { EM_DASH, fmtDate, fmtInt, fmtMoney, fmtPct } from '../../lib/format';
 import { ConfidenceBadge } from '../../components/HealthIndicators';
 import type {
   RankFactor,
@@ -374,6 +374,48 @@ function SupplierScoreDetail({
   );
 }
 
+
+/** Why this supplier, in words, from the reason frozen at run time.
+ *
+ * "Chosen by lowest cost" named the RULE and stopped there. What a buyer checks is which
+ * supplier was beaten and by how much, so that is what this says - and only when the run
+ * actually knew it. A saving needs BOTH costs; a lone supplier is not "cheapest".
+ */
+function SupplierReason({ rec }: { rec: ReorderRecommendation }) {
+  const reason = rec.supplier_reason;
+  const chosen = rec.supplier;
+  const paid =
+    chosen?.unit_cost_source === 'last_po' && chosen.unit_cost_ref
+      ? `Cost is what we last paid, on ${chosen.unit_cost_ref}${
+          chosen.unit_cost_at ? ` (${fmtDate(chosen.unit_cost_at)})` : ''
+        }.`
+      : chosen?.unit_cost_source === 'contract'
+        ? 'Cost is the contract price on the product record, not a purchase we have made.'
+        : null;
+
+  let why: string | null = null;
+  if (reason?.basis === 'only_supplier') {
+    why = 'The only supplier linked to this item.';
+  } else if (reason?.basis === 'lowest_cost' && reason.runner_up) {
+    why =
+      reason.saving_per_unit != null
+        ? `Cheapest of the linked suppliers: ${fmtMoney(
+            reason.saving_per_unit,
+          )} per unit under ${reason.runner_up}.`
+        : `Cheapest of the priced suppliers. ${reason.runner_up} has no cost on record, so the gap is unknown.`;
+  } else if (rec.supplier_selection) {
+    why = `Chosen by ${SELECTION_LABEL[rec.supplier_selection] ?? rec.supplier_selection}.`;
+  }
+
+  if (!why && !paid) return null;
+  return (
+    <div className="space-y-0.5 text-xs text-muted-foreground">
+      {why ? <div>{why}</div> : null}
+      {paid ? <div>{paid}</div> : null}
+    </div>
+  );
+}
+
 /** Supplier block: chosen supplier + ranked alternatives (cost / lead / score). */
 function SupplierBlock({ rec }: { rec: ReorderRecommendation }) {
   if (rec.is_exception || !rec.supplier) {
@@ -391,11 +433,7 @@ function SupplierBlock({ rec }: { rec: ReorderRecommendation }) {
   const ranked: SupplierChoice[] = [rec.supplier, ...others];
   return (
     <div className="space-y-2">
-      {rec.supplier_selection ? (
-        <div className="text-xs text-muted-foreground">
-          Chosen by {SELECTION_LABEL[rec.supplier_selection] ?? rec.supplier_selection}.
-        </div>
-      ) : null}
+      <SupplierReason rec={rec} />
       <div className="overflow-hidden rounded-lg border border-border">
         <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 border-b bg-muted/40 px-3 py-1.5 text-2xs font-medium text-muted-foreground">
           <span>Supplier</span>

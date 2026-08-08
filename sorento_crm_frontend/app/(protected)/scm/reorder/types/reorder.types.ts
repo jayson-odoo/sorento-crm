@@ -68,8 +68,20 @@ export type FundingStatus = 'funded' | 'deferred' | 'needs_cost' | null;
 export interface SupplierChoice {
   supplier_code: string;
   supplier_name: string;
-  /** Landed unit cost driving the cash impact. null when uncosted. */
+  /**
+   * Landed unit cost driving the cash impact.
+   *
+   * `null` means UNKNOWN and `0` means free, and they are different answers: an unknown
+   * cost cannot be budgeted and lands in "Needs cost", while a free item funds at zero and
+   * is planned like any other. Do not coalesce one into the other.
+   */
   unit_cost: number | null;
+  /** Where that figure came from: what we last paid, or a contract figure somebody typed. */
+  unit_cost_source?: 'last_po' | 'contract' | null;
+  /** The purchase order the cost was read off, when the source is `last_po`. */
+  unit_cost_ref?: string | null;
+  unit_cost_at?: string | null;
+  currency?: string | null;
   /** Lead time (measured M2 → declared → policy default). null when unknown. */
   lead_time_days: number | null;
   /** Composite performance score 0–100 (M2). null when no sample. */
@@ -181,6 +193,21 @@ export interface ReorderRecommendation {
   policy_type: ReorderReason | null;
   /** Which supplier-selection rule chose the supplier. */
   supplier_selection: 'primary' | 'best_score' | 'lowest_cost' | null;
+  /**
+   * Why this supplier and not the runner-up, frozen at run time.
+   *
+   * Frozen rather than re-derived, because the costs on screen can move after the run and
+   * a reason recomputed from today's figures would explain a decision nobody made.
+   * `saving_per_unit` is present only when BOTH costs were known - the gap to an unpriced
+   * runner-up is unknowable, not infinite - and `only_supplier` means there was nothing to
+   * compare against, so "cheaper" would be a fabrication.
+   */
+  supplier_reason?: {
+    basis: 'lowest_cost' | 'best_score' | 'primary' | 'only_supplier' | 'no_supplier' | string;
+    runner_up?: string | null;
+    runner_up_cost?: number | null;
+    saving_per_unit?: number | null;
+  } | null;
 
   // --- M4 cash co-pilot (buy recommendations only) ----------------------------
   // Frozen at run time (rank_score / rank / rank_factors / cash_impact) except

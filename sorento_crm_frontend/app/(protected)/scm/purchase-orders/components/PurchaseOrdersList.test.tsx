@@ -13,7 +13,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { act, render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 
 class ResizeObserverStub {
   observe() {}
@@ -260,5 +260,105 @@ describe('PurchaseOrdersList - upload the order book', () => {
     expect(refetch).toHaveBeenCalled();
     // 2 + 3 + 1 changed; `unchanged` is not a change.
     expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/6 lines changed/i));
+  });
+});
+
+describe('PurchaseOrdersList — find a SKU and what we last paid for it', () => {
+  // > "in PO can I search this product also ... I want to see its PO and its last purchase
+  // >  price (unit cost), so at least I know if it doesn't appear in planning, I can check
+  // >  from here"
+
+  const openFilters = async () => {
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Filters/ }), { button: 0 });
+    await screen.findByLabelText('Product code');
+  };
+
+  it('sends the product code to the list query', async () => {
+    mockList([po()]);
+    render(<PurchaseOrdersList />);
+    await openFilters();
+
+    fireEvent.change(screen.getByLabelText('Product code'), {
+      target: { value: ' mwc7624-rl-s10 ' },
+    });
+    fireEvent.blur(screen.getByLabelText('Product code'));
+
+    await waitFor(() => {
+      const last = usePurchaseOrders.mock.calls[usePurchaseOrders.mock.calls.length - 1][0];
+      expect(last).toMatchObject({ productCode: 'mwc7624-rl-s10' });
+    });
+  });
+
+  it('reports what we last paid, from whom and on which order', async () => {
+    mockList([po()], {
+      data: {
+        data: [po()],
+        pagination: { page: 1, total: 1 },
+        product_cost: {
+          unit_cost: 42,
+          currency: 'MYR',
+          po_number: '202606-S0024',
+          issue_date: '2026-06-01',
+          supplier_name: 'Kaiping Kaixin',
+        },
+      },
+    });
+    render(<PurchaseOrdersList />);
+    await openFilters();
+    fireEvent.change(screen.getByLabelText('Product code'), { target: { value: 'SKU-1' } });
+    fireEvent.blur(screen.getByLabelText('Product code'));
+
+    const banner = await screen.findByRole('status', { name: 'Last purchase price' });
+    expect(banner).toHaveTextContent('Last paid');
+    expect(banner).toHaveTextContent('RM 42');
+    expect(banner).toHaveTextContent('Kaiping Kaixin');
+    expect(banner).toHaveTextContent('202606-S0024');
+  });
+
+  it('says nobody has ever priced it, which is why the plan has no cost', async () => {
+    // The whole point of the screen for this user: never-bought and bought-for-nothing are
+    // different answers, and a plan line with no cost is explained by the first.
+    mockList([], {
+      data: { data: [], pagination: { page: 1, total: 0 }, product_cost: null },
+    });
+    render(<PurchaseOrdersList />);
+    await openFilters();
+    fireEvent.change(screen.getByLabelText('Product code'), { target: { value: 'SKU-NEW' } });
+    fireEvent.blur(screen.getByLabelText('Product code'));
+
+    const banner = await screen.findByRole('status', { name: 'Last purchase price' });
+    expect(banner).toHaveTextContent(/No purchase order records a price for/i);
+    expect(banner).toHaveTextContent('SKU-NEW');
+  });
+
+  it('reads a recorded zero as free, not as missing', async () => {
+    mockList([po()], {
+      data: {
+        data: [po()],
+        pagination: { page: 1, total: 1 },
+        product_cost: {
+          unit_cost: 0,
+          currency: 'MYR',
+          po_number: '202606-S0024',
+          issue_date: '2026-06-01',
+          supplier_name: 'Kaiping Kaixin',
+        },
+      },
+    });
+    render(<PurchaseOrdersList />);
+    await openFilters();
+    fireEvent.change(screen.getByLabelText('Product code'), { target: { value: 'SKU-FREE' } });
+    fireEvent.blur(screen.getByLabelText('Product code'));
+
+    const banner = await screen.findByRole('status', { name: 'Last purchase price' });
+    expect(banner).toHaveTextContent('RM 0');
+    expect(banner).not.toHaveTextContent(/No purchase order records a price/i);
+  });
+
+  it('shows nothing about cost until a product is asked for', () => {
+    mockList([po()]);
+    render(<PurchaseOrdersList />);
+
+    expect(screen.queryByRole('status', { name: 'Last purchase price' })).toBeNull();
   });
 });

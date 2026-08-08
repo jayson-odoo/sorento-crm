@@ -34,7 +34,7 @@ import { BulkActionsMenu } from '../../components/BulkActionsMenu';
 import { OutstandingUploadDialog } from '../../reorder/components/OutstandingUploadDialog';
 import type { OutstandingApplyResult } from '../../reorder/services/outstandingImportService';
 import { buildPoBulkActions } from '../lib/poBulkActions';
-import { fmtDate, fmtInt } from '../../lib/format';
+import { fmtDate, fmtInt, fmtMoney } from '../../lib/format';
 import type { PurchaseOrder, PurchaseOrderStatus } from '../../types/scm.types';
 
 type BadgeDef = { variant: 'secondary' | 'primary' | 'warning' | 'success'; label: string };
@@ -76,6 +76,12 @@ export default function PurchaseOrdersList() {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  // "Have we ever bought this item, and for how much." The plan now takes its cost from
+  // this book, so when a plan line shows no cost, this is where the buyer finds out why.
+  const [productFilter, setProductFilter] = useState('');
+  // Committed on Enter or blur rather than per keystroke: this filter hits the whole order
+  // book by line, and firing it on every character is a query per letter typed.
+  const [productDraft, setProductDraft] = useState('');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   // Confirm-flow dialog state.
@@ -92,6 +98,7 @@ export default function PurchaseOrdersList() {
     searchQuery,
     status: statusFilter || null,
     supplier: null,
+    productCode: productFilter || null,
   });
 
   const { confirm, createGr } = usePurchaseOrderActions();
@@ -99,7 +106,7 @@ export default function PurchaseOrdersList() {
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
     setRowSelection({});
-  }, [searchQuery, statusFilter]);
+  }, [searchQuery, statusFilter, productFilter]);
 
   const rows = useMemo<PurchaseOrder[]>(() => data?.data ?? [], [data]);
 
@@ -109,9 +116,16 @@ export default function PurchaseOrdersList() {
     () =>
       buildDetailSearch(
         { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery },
-        { status: statusFilter || undefined },
+        { status: statusFilter || undefined, product_code: productFilter || undefined },
       ),
-    [pagination.pageIndex, pagination.pageSize, sorting, searchQuery, statusFilter],
+    [
+      pagination.pageIndex,
+      pagination.pageSize,
+      sorting,
+      searchQuery,
+      statusFilter,
+      productFilter,
+    ],
   );
 
   const columns = useMemo<ColumnDef<PurchaseOrder>[]>(
@@ -257,7 +271,8 @@ export default function PurchaseOrdersList() {
     enableColumnResizing: true,
   });
 
-  const filtersActive = statusFilter ? 1 : 0;
+  const filtersActive = (statusFilter ? 1 : 0) + (productFilter ? 1 : 0);
+  const lastCost = data?.product_cost ?? null;
 
   // Confirm applies to the DRAFT subset of the selection (select-all can include actives).
   const selectedDraftIds = table
@@ -317,6 +332,35 @@ export default function PurchaseOrdersList() {
         emptyMessage="No purchase orders yet. Accept a funded reorder recommendation to draft one."
       >
         <Card>
+          {productFilter ? (
+            <div
+              className="border-b px-5 py-2.5 text-sm"
+              role="status"
+              aria-label="Last purchase price"
+            >
+              {lastCost ? (
+                <span>
+                  Last paid{' '}
+                  <span className="font-medium tabular-nums">
+                    {fmtMoney(lastCost.unit_cost)}
+                  </span>{' '}
+                  for <span className="font-medium">{productFilter}</span>
+                  {lastCost.supplier_name ? ` from ${lastCost.supplier_name}` : ''} on{' '}
+                  {lastCost.po_number}
+                  {lastCost.issue_date ? ` (${fmtDate(lastCost.issue_date)})` : ''}.
+                </span>
+              ) : (
+                // Never bought is a different answer from bought for nothing, and this is
+                // the screen where the buyer tells them apart: a plan line with no cost is
+                // explained by this sentence.
+                <span className="text-muted-foreground">
+                  No purchase order records a price for{' '}
+                  <span className="font-medium text-foreground">{productFilter}</span>, so the
+                  plan has no cost to work from.
+                </span>
+              )}
+            </div>
+          ) : null}
           <CardHeader className="block">
             <DataGridListToolbar
               table={table}
@@ -349,8 +393,26 @@ export default function PurchaseOrdersList() {
                 content: (
                   <div className="space-y-4">
                     <div>
-                      <Label className="mb-1 block">Status</Label>
+                      <Label htmlFor="po-product-code" className="mb-1 block">
+                        Product code
+                      </Label>
+                      <Input
+                        id="po-product-code"
+                        placeholder="e.g. MWC7624-RL-S10"
+                        value={productDraft}
+                        onChange={(e) => setProductDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') setProductFilter(productDraft.trim());
+                        }}
+                        onBlur={() => setProductFilter(productDraft.trim())}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="po-status" className="mb-1 block">
+                        Status
+                      </Label>
                       <SearchableSelect
+                        id="po-status"
                         value={statusFilter}
                         onChange={setStatusFilter}
                         options={STATUS_FILTER_OPTIONS}
@@ -359,7 +421,15 @@ export default function PurchaseOrdersList() {
                     </div>
                     {filtersActive > 0 ? (
                       <div className="flex justify-end">
-                        <Button variant="ghost" size="sm" onClick={() => setStatusFilter('')}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setStatusFilter('');
+                            setProductFilter('');
+                            setProductDraft('');
+                          }}
+                        >
                           Clear filters
                         </Button>
                       </div>

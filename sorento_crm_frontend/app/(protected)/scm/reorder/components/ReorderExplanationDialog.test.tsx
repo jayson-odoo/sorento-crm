@@ -326,3 +326,116 @@ describe('ReorderExplanationDialog', () => {
     expect(screen.getByText('Forecast demand')).toBeInTheDocument(); // derivation still shown
   });
 });
+
+describe('ReorderExplanationDialog - why this supplier, and where its cost came from', () => {
+  // > "should show the alternative supplier with its cost and why we chosen what we have
+  // >  chose because it is cheaper"
+  //
+  // "Chosen by lowest cost" named the RULE. It never said which supplier was beaten or by
+  // how much, which is the part a buyer is actually checking.
+
+  const cheapest = (over: Partial<ReorderRecommendation> = {}) =>
+    rec({
+      supplier: {
+        supplier_code: 'SUP-ACME',
+        supplier_name: 'Acme Sanitary Sdn Bhd',
+        unit_cost: 8,
+        unit_cost_source: 'last_po',
+        unit_cost_ref: '202606-S0024',
+        unit_cost_at: '2026-06-01',
+        lead_time_days: 30,
+        composite_score: 70,
+        is_primary: false,
+      },
+      alternatives: [
+        {
+          supplier_code: 'SUP-DEAR',
+          supplier_name: 'Kaiping Kaixin',
+          unit_cost: 12,
+          unit_cost_source: 'contract',
+          lead_time_days: 45,
+          composite_score: 90,
+          is_primary: true,
+        },
+      ],
+      supplier_selection: 'lowest_cost',
+      supplier_reason: {
+        basis: 'lowest_cost',
+        runner_up: 'Kaiping Kaixin',
+        runner_up_cost: 12,
+        saving_per_unit: 4,
+      },
+      ...over,
+    });
+
+  it('names the supplier it beat and the saving per unit', () => {
+    render(<ReorderExplanationDialog rec={cheapest()} open onOpenChange={() => {}} />);
+
+    expect(
+      screen.getByText(/cheapest.*RM 4 per unit under Kaiping Kaixin/i),
+    ).toBeInTheDocument();
+  });
+
+  it('lists the alternative with its own cost, so the comparison is checkable', () => {
+    render(<ReorderExplanationDialog rec={cheapest()} open onOpenChange={() => {}} />);
+
+    expect(screen.getByText('Kaiping Kaixin')).toBeInTheDocument();
+    expect(screen.getAllByText(/RM 12/).length).toBeGreaterThan(0);
+  });
+
+  it('says the cost is what we last paid, and on which order', () => {
+    // A price we paid and a price somebody typed carry different weight, and the buyer is
+    // entitled to know which one is driving the cash impact.
+    render(<ReorderExplanationDialog rec={cheapest()} open onOpenChange={() => {}} />);
+
+    expect(screen.getByText(/last paid.*202606-S0024/i)).toBeInTheDocument();
+  });
+
+  it('claims no saving when the runner-up has no cost of its own', () => {
+    // The gap to an unpriced supplier is unknowable, not infinite.
+    const r = cheapest({
+      supplier_reason: {
+        basis: 'lowest_cost',
+        runner_up: 'Kaiping Kaixin',
+        runner_up_cost: null,
+        saving_per_unit: null,
+      },
+    });
+    render(<ReorderExplanationDialog rec={r} open onOpenChange={() => {}} />);
+
+    expect(screen.queryByText(/per unit cheaper/i)).not.toBeInTheDocument();
+  });
+
+  it('does not call a lone supplier the cheapest', () => {
+    const r = cheapest({
+      alternatives: [],
+      supplier_reason: { basis: 'only_supplier', runner_up: null, saving_per_unit: null },
+    });
+    render(<ReorderExplanationDialog rec={r} open onOpenChange={() => {}} />);
+
+    expect(screen.getByText(/only supplier linked to this item/i)).toBeInTheDocument();
+    expect(screen.queryByText(/cheapest/i)).not.toBeInTheDocument();
+  });
+
+  it('reads a free item as free, never as missing a cost', () => {
+    // 637 lines in the order book record 0. Free is a price; it funds at zero and plans
+    // like anything else.
+    const r = cheapest({
+      supplier: {
+        supplier_code: 'SUP-ACME',
+        supplier_name: 'Acme Sanitary Sdn Bhd',
+        unit_cost: 0,
+        unit_cost_source: 'last_po',
+        unit_cost_ref: '202606-S0024',
+        lead_time_days: 30,
+        composite_score: 70,
+        is_primary: false,
+      },
+      alternatives: [],
+      supplier_reason: { basis: 'only_supplier', runner_up: null, saving_per_unit: null },
+    });
+    render(<ReorderExplanationDialog rec={r} open onOpenChange={() => {}} />);
+
+    expect(screen.queryByText(/No supplier cost/i)).not.toBeInTheDocument();
+  });
+});
