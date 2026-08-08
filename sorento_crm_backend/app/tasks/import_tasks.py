@@ -51,6 +51,33 @@ from app.schemas.procurement import SPOAllocationCreate
 
 logger = logging.getLogger(__name__)
 
+# Sentinel for "the caller did not tell us its company scope". Distinct from
+# ``None``, which is a REAL scope meaning all companies.
+_SCOPE_NOT_GIVEN = object()
+
+
+def _apply_preview_scope(db, company_scope: Any) -> None:
+    """Give a validation preview the SAME company scope the real import will run at.
+
+    A preview that reads across all companies answers a different question than the
+    import: it resolves products, warehouses and existing headers the scoped import
+    cannot see, so it reports "would succeed" on rows the import then skips as
+    not-found. Preview and import must disagree about nothing.
+
+    The caller is an HTTP route, so it already holds the resolved scope on its own
+    session (``get_company_scope(db)``) — it passes that through rather than us
+    re-deriving it. ``_SCOPE_NOT_GIVEN`` keeps non-HTTP callers (scripts, tests)
+    working system-scoped, with a warning so a route that forgets is visible.
+    """
+    if company_scope is _SCOPE_NOT_GIVEN:
+        logger.warning(
+            "Import validation preview ran with no company scope; reading all companies"
+        )
+        set_company_scope(db, None)
+        return
+    set_company_scope(db, company_scope)
+
+
 def _apply_import_job_scope(db, db_job_id: Optional[str]) -> None:
     """Re-establish the request's company scope on the worker session (multi-company
     isolation, AC-D2/D3/K4).
@@ -1393,8 +1420,14 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
         db.close()
 
 
-def validate_spo_import(file_data: bytes, filename: str) -> Dict[str, Any]:
-    """Run SPO import validation (same parsing and row validation as process_spo_import). No allocations created."""
+def validate_spo_import(
+    file_data: bytes, filename: str, *, company_scope: Any = _SCOPE_NOT_GIVEN
+) -> Dict[str, Any]:
+    """Run SPO import validation (same parsing and row validation as process_spo_import). No allocations created.
+
+    ``company_scope`` is the caller's resolved scope, so the preview reads exactly
+    what the import will read (see ``_apply_preview_scope``).
+    """
     import openpyxl
 
     spo_number = re.sub(r"\.xlsx?$", "", filename or "", flags=re.IGNORECASE).strip()
@@ -1402,7 +1435,7 @@ def validate_spo_import(file_data: bytes, filename: str) -> Dict[str, Any]:
         return {"valid": False, "errors": ["Filename must provide SPO number (e.g. SPO-2025.10-0050.xlsx)"], "warnings": [], "summary": {}}
 
     db = SessionLocal()
-    set_company_scope(db, None)  # validation preview reads across all companies (no job snapshot)
+    _apply_preview_scope(db, company_scope)
     try:
         workbook = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
     except Exception as exc:
@@ -1708,10 +1741,16 @@ def _run_grn_listing_import_core(
     }
 
 
-def validate_grn_listing_import(file_data: bytes) -> Dict[str, Any]:
-    """Run GRN listing validation (same logic as import, then rollback). No DB writes."""
+def validate_grn_listing_import(
+    file_data: bytes, *, company_scope: Any = _SCOPE_NOT_GIVEN
+) -> Dict[str, Any]:
+    """Run GRN listing validation (same logic as import, then rollback). No DB writes.
+
+    Scoped to the caller's company so the preview cannot claim a row would succeed
+    against a header the scoped import will never see (``_apply_preview_scope``).
+    """
     db = SessionLocal()
-    set_company_scope(db, None)  # validation preview reads across all companies (no job snapshot)
+    _apply_preview_scope(db, company_scope)
     try:
         result = _run_grn_listing_import_core(db, file_data)
         db.rollback()
@@ -1733,13 +1772,19 @@ def validate_grn_listing_import(file_data: bytes) -> Dict[str, Any]:
         db.close()
 
 
-def validate_grn_lines_import(file_data: bytes) -> Dict[str, Any]:
-    """Run GRN lines validation: parse file and run grouping-phase checks (same as import). No line creation."""
+def validate_grn_lines_import(
+    file_data: bytes, *, company_scope: Any = _SCOPE_NOT_GIVEN
+) -> Dict[str, Any]:
+    """Run GRN lines validation: parse file and run grouping-phase checks (same as import). No line creation.
+
+    Scoped to the caller's company: product / warehouse / GRN-header lookups here
+    must resolve exactly what the scoped import resolves (``_apply_preview_scope``).
+    """
     import openpyxl
     from app.api.v1.external.utils import normalize_code
 
     db = SessionLocal()
-    set_company_scope(db, None)  # validation preview reads across all companies (no job snapshot)
+    _apply_preview_scope(db, company_scope)
     try:
         workbook = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
     except Exception as exc:
