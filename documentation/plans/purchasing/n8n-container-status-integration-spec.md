@@ -124,6 +124,16 @@ Source of truth: `sorento_crm_mcp/presenters.py` `_CLEARANCE_PAIRS`. **If that t
 table is stale** - re-read it rather than trusting this copy. Sorting and grouping also key off
 `key` (e.g. order by `estimated_arrival_date`), never off display text.
 
+**Stock rows** (`crm_inventory_stock_balance_list`) are keyed too, because a cross-domain
+stock/incoming block sorts across both: `product_code`, `product_name`, `warehouse`,
+`system_location`, `quantity_on_hand`. Note that the last three always render, with `"—"` when
+absent, so the row shape never varies - a consumer projecting on `quantity_on_hand` must expect a
+non-numeric value there and not coerce it to 0.
+
+Which result types are keyed today: `incoming_stock` (both presenters) and `stock`. The rest still
+emit `{label, value}` only. Keying another one is a one-line change per call site now that
+`_Builder.item` takes triples - ask rather than rebuilding a label table.
+
 ### 2.3 The `field_access` block
 
 Present only when something was withheld. Sibling of `items`, never inside a row:
@@ -186,6 +196,12 @@ vocabulary is what is frozen: `incoming: eta`, one value (D25a).
 
 "Send me the container status list" is a **document** request, not a data question. It must reach
 `crm_resource_attachments_list`, not `crm_incoming_stock_list`.
+
+**Naming a container makes it a data question again.** "Container status for ABCD1234" routes to
+INCOMING even though the phrase "container status" appears in it: the document domain owns the
+list / report / sheet / file itself, and a named container is an enquiry about that shipment. The
+phrase alone does not decide the domain (user ruling, 2026-08-09; n8n implements this as a code
+guard rather than prompt text).
 
 ```
 crm_resource_attachments_list
@@ -250,6 +266,13 @@ extend the probe to match it - the same shape `contact_access_types.keywords` al
 "customer"/"homeowner" → `end_user`. Until then n8n must send the literal `"Container Status"`,
 which means the routing words stay hardcoded in the parser prompt - the thing D22 set out to remove.
 
+**Not blocking n8n** as of 2026-08-09: the clone's disallowed-entity-gate disambiguates on
+`canonical_code`. Their finding raises the bar for the eventual CRM fix, though: for a granted
+contact, "container status list" already matches THREE types - `Packing List` and `Stock_List` on
+the word "list", `container_status` on the word "status". So a `keywords` column must **disambiguate
+a multi-way hit**, not merely add aliases; a probe that returns three type ids is a wrong answer
+dressed as a match. Word-level matching alone will not do it.
+
 ### C2 - `attribute` is not a resolvable reference type
 
 D22's plan is that the parser emits the user's raw phrase and the CRM canonicalises it to a field
@@ -259,6 +282,11 @@ has to live in the n8n prompt.
 
 **Fix (CRM side):** register `attribute` as a reference type over `GATED_FIELDS` +
 `FIELD_LABELS`, returning `{field_key, label, resource}`.
+
+**Not blocking n8n** as of 2026-08-09 either: the parser fork enumerates all 20 keys with their
+trigger phrases and emits every key the user asked about, so "has it cleared CIDB" yields both
+`inspection_date` and `approval_date`. That is the interim below, working - it just lives in the
+prompt.
 
 **Until C1 and C2 land**, N1 and N2 are buildable with the vocabulary hardcoded in the parser
 prompt. That works and is worth doing - it is just the 31KB-prompt-edit problem the PLAN wanted to

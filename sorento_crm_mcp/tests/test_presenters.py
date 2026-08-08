@@ -525,6 +525,35 @@ def test_render_key_matches_the_denied_vocabulary():
     assert "collection_date" not in keys and "collection_date" not in denied
 
 
+def test_render_stock_fields_carry_the_key():
+    """A cross-domain stock/incoming block is sorted by quantity and ETA. Both
+    branches matched on display text, and both were dead: `estimated_arrival_date`
+    was relabelled `ETA`, and an incoming row labels its quantity `Incoming
+    Quantity`, not `Quantity On Hand`. Sorting on the key survives both.
+    """
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [{"product_code": "SRTWT107", "product_name": "Basin",
+                  "system_location": "BRW", "system_location_description": "BUKIT RAJA",
+                  "quantity_on_hand": 36}],
+    })
+    by_key = {f["key"]: f["value"] for f in out["items"][0]["fields"] if "key" in f}
+    assert by_key["quantity_on_hand"] == 36
+    assert by_key["product_code"] == "SRTWT107"
+    assert by_key["warehouse"] == "BUKIT RAJA"
+    assert by_key["system_location"] == "BRW"
+
+
+def test_render_stock_keeps_the_key_on_the_placeholder_value():
+    """Warehouse / location / quantity always render, "—" when absent, so the row
+    shape never varies. The key rides along, so a consumer that projects on key
+    still has to expect a non-numeric value there.
+    """
+    out = env("crm_inventory_stock_balance_list", {"data": [{"product_code": "X"}]})
+    by_key = {f["key"]: f["value"] for f in out["items"][0]["fields"] if "key" in f}
+    assert by_key["quantity_on_hand"] == "—"
+    assert by_key["warehouse"] == "—"
+
+
 def test_render_by_product_fields_carry_the_key():
     out = env("crm_incoming_stock_by_product", {
         "data": [{

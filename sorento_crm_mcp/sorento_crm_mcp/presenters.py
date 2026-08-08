@@ -718,11 +718,11 @@ def _stock(rows: list[dict], b: _Builder) -> None:
         b.item(
             product_code,
             [
-                ("Product Code", product_code),
-                ("Product Name", _distinct_name(product_code, product_name)),
-                ("Warehouse", wh_name if _filled(wh_name) else "—"),
-                ("System Location", sysloc if _filled(sysloc) else "—"),
-                ("Quantity On Hand", qoh if qoh is not None else "—"),
+                ("product_code", "Product Code", product_code),
+                ("product_name", "Product Name", _distinct_name(product_code, product_name)),
+                ("warehouse", "Warehouse", wh_name if _filled(wh_name) else "—"),
+                ("system_location", "System Location", sysloc if _filled(sysloc) else "—"),
+                ("quantity_on_hand", "Quantity On Hand", qoh if qoh is not None else "—"),
             ],
             discontinued=is_discontinued,
         )
