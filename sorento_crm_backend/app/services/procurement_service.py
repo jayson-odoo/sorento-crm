@@ -1836,22 +1836,74 @@ class PickingHeaderService:
         ).first()
         if not grn:
             raise handle_not_found("GRN", grn_id)
+        self.attach_provenance_labels(grn)
         return grn
-    
-    def create_grn(self, grn_data: PickingHeaderCreate, created_by: str | None = None):
-        """Create a new GRN with lines."""
+
+    def attach_provenance_labels(self, grn: PickingHeader) -> None:
+        """Stamp human-readable provenance onto the instance for the response.
+
+        The UI must never print a UUID, so the stored ``created_by`` /
+        ``import_job_id`` are resolved here to a person and a file name. Attributes
+        are set on the instance (not columns) and Pydantic reads them off the ORM
+        object; they die with the instance, so nothing can accidentally persist.
+
+        Best-effort: a deleted user or a pruned job leaves the label None rather
+        than failing the GRN read.
+        """
+        grn.created_by_label = None  # type: ignore[attr-defined]
+        grn.import_filename = None  # type: ignore[attr-defined]
+        try:
+            if getattr(grn, "created_by", None):
+                from app.models.user import User
+
+                row = (
+                    self.db.query(User.name, User.email)
+                    .filter(User.id == str(grn.created_by))
+                    .first()
+                )
+                if row is not None:
+                    grn.created_by_label = row[0] or row[1]  # type: ignore[attr-defined]
+            if getattr(grn, "import_job_id", None):
+                from app.models.job import ImportJob
+
+                job_row = (
+                    self.db.query(ImportJob.filename)
+                    .filter(ImportJob.id == str(grn.import_job_id))
+                    .first()
+                )
+                if job_row is not None:
+                    grn.import_filename = job_row[0]  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 - a label is not worth failing the read
+            logger.exception("GRN provenance label lookup failed for %s", grn.id)
+
+    def create_grn(
+        self,
+        grn_data: PickingHeaderCreate,
+        created_by: str | None = None,
+        source_system: str = "ui",
+    ):
+        """Create a new GRN with lines.
+
+        ``source_system`` says which surface wrote it - ``'ui'`` for a staff create,
+        ``'external_api'`` for the n8n / AutoCount ingest. Without it the row cannot
+        distinguish a person from an integration, which is the case that made a
+        wrongly-companied GRN untraceable (the external path leaves no import job
+        and no audit row to bracket).
+        """
         existing = self.db.query(PickingHeader).filter(
             PickingHeader.picking_number == grn_data.picking_number
         ).first()
         if existing:
             raise handle_conflict("Picking number already exists.")
-        
+
         # Create GRN header and lines in transaction
         grn_dict = grn_data.model_dump(exclude={"picking_lines"})
         grn_dict["picking_type"] = "goods_received"
         if not grn_dict.get("picked_by_user_id"):
             grn_dict["picked_by_user_id"] = str(created_by) if created_by else None
-        
+        grn_dict["created_by"] = str(created_by) if created_by else None
+        grn_dict["source_system"] = source_system
+
         grn = PickingHeader(**grn_dict)
         self.db.add(grn)
         self.db.flush()
@@ -2008,8 +2060,27 @@ class PickingHeaderService:
             PickingHeader.picking_type == "goods_received",
         ).first()
 
-    def upsert_grn_header_for_import(self, picking_number: str, spo_number: Optional[str], picking_date: date):
-        """Create or update GRN header by picking_number (idempotent). Returns the header."""
+    def upsert_grn_header_for_import(
+        self,
+        picking_number: str,
+        spo_number: Optional[str],
+        picking_date: date,
+        *,
+        created_by: Optional[str] = None,
+        import_job_id: Optional[str] = None,
+    ) -> tuple[PickingHeader, bool]:
+        """Create or update a GRN header by picking_number (idempotent).
+
+        Returns ``(header, created)``. The caller NEEDS that flag: it used to
+        report every success as ``created``, so the last person to re-run a file
+        looked like the author of every GRN in it - which is exactly what made
+        "who created this GRN" unanswerable.
+
+        Provenance (``created_by`` / ``import_job_id`` / ``source_system``) is
+        written ONLY on insert. A re-import overwrites the mutable fields but must
+        not rewrite authorship, or the answer is lost the first time someone
+        re-uploads the same spreadsheet.
+        """
         existing = self.get_grn_by_picking_number(picking_number)
         if existing:
             existing.spo_number = spo_number
@@ -2017,7 +2088,7 @@ class PickingHeaderService:
             existing.picking_status = "approved"
             self.db.commit()
             self.db.refresh(existing)
-            return existing
+            return existing, False
         grn = PickingHeader(
             picking_number=picking_number,
             spo_number=spo_number,
@@ -2025,11 +2096,14 @@ class PickingHeaderService:
             picking_date=picking_date,
             picking_status="approved",
             inspection_status="pending",
+            created_by=created_by,
+            source_system="import",
+            import_job_id=import_job_id,
         )
         self.db.add(grn)
         self.db.commit()
         self.db.refresh(grn)
-        return grn
+        return grn, True
 
     def upsert_grn_line_for_import(
         self,

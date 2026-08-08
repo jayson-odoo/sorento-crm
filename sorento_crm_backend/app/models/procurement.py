@@ -361,6 +361,23 @@ class PickingHeader(Base, CompanyScopedMixin):
     total_items_discrepancy = Column(Integer, nullable=True)
     total_cost = Column(Numeric(15, 2), nullable=True)
     notes = Column(Text, nullable=True)
+    # Provenance. A GRN can arrive three ways - a staff create, an Excel import, or
+    # the external (n8n / AutoCount) API - and the row itself recorded none of
+    # them, so "who created this GRN, and into which company" could only be
+    # guessed by bracketing `created_at` against import_jobs, which fails outright
+    # for the external path (no job, no user). Written ONCE on insert and never
+    # touched by a re-import, so the answer survives an overwrite.
+    #   created_by      staff user id; NULL for external-API writes
+    #   source_system   'ui' | 'import' | 'external_api'
+    #   import_job_id   the job, when an import wrote it -> file + uploader + the
+    #                   company snapshot that was active
+    created_by = Column(UUID(as_uuid=False), nullable=True)
+    source_system = Column(String(30), nullable=True)
+    import_job_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("import_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     
@@ -371,6 +388,10 @@ class PickingHeader(Base, CompanyScopedMixin):
         Index("ix_picking_headers_picking_number", "picking_number"),
         Index("ix_picking_headers_picking_status", "picking_status"),
         Index("ix_picking_headers_spo_number", "spo_number"),
+        # "what did this job create?" is the question that started this, so it is
+        # indexed; created_by is for filtering a listing by uploader.
+        Index("ix_picking_headers_import_job_id", "import_job_id"),
+        Index("ix_picking_headers_created_by", "created_by"),
     )
 
 
