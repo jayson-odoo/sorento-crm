@@ -1,6 +1,7 @@
 # PLAN - From a lodged retail complaint to a technician at the door
 
-**Status:** Drafted, not started. Supersedes nothing; extends S6 (Service Jobs).
+**Status:** S7a in progress. Extends S6 (Service Jobs).
+**UAC (the contract):** `after-sales/retail-complaint-to-visit-acceptance-criteria.md`
 
 ## Journey (Phase 0)
 
@@ -39,26 +40,32 @@ the conversation.
 | Complaint root cause / resolution master data + pickers | Built |
 | Warranty policy engine (kinds, terms, assessments) | Built, **no admin UI** |
 
-## The one unknown that changes a design
+## The unknown, now settled
 
-**Does Respond.io expose call history through its API?**
+**Does Respond.io expose call history?** Checked against their published documentation
+rather than assumed:
 
-The client in `integration_service.py` uses `v2/contact/*` for contacts, messages,
-conversation status/assignee, channels and templates. There is **no call endpoint in use,
-and I have not confirmed one exists.** Respond.io is a messaging platform; calls may be
-absent entirely, or may appear as events inside `v2/contact/{id}/message/list`.
+- **There is no call-history API.** The v2 surface is contacts, messages, conversation
+  status/assignee, channels and templates. A call cannot be fetched retrospectively.
+- **There IS a `Call Ended` webhook**, one of ten events they emit, carrying the call id,
+  direction, status, timestamps and duration, plus recording / transcript / summary when
+  those are enabled on the workspace. Missed calls carry no recording.
 
-This must be settled by probing the live workspace before slice S8 is designed, because the
-two outcomes are different features:
+So the design is **ingest, not poll** - the same shape as the inbound message webhook we
+already run, which is the cheaper half of the two possibilities and needs no new client.
 
-- **Calls appear in the message list** -> we can link a real call record to the job.
-- **They do not** -> "trigger call" becomes: open the Respond conversation for the contact
-  (a deep link we already build) and have Agnes record the outcome on the job herself. That
-  is still worth building - it keeps the date and the fact of the call on the record - but
-  it is a logged action, not an integration, and it must not be described as one.
+Two consequences worth stating plainly:
 
-Building the optimistic version without checking would produce a call log that silently
-stays empty.
+1. **A call that ends while the webhook is misconfigured is not on the record, and cannot be
+   backfilled.** There is no endpoint to go and ask. So the webhook's health is a real
+   operational dependency, not a nice-to-have, and AC-C3 logs every delivery - matched or
+   not - so a silent misconfiguration is visible.
+2. **Voice Calls must be enabled on Sorento's Respond plan.** That is tenant configuration,
+   not code. If it is not enabled, "Trigger call" still works as a deep link into the
+   conversation and Agnes records the outcome herself; only the automatic call record is
+   lost. The feature degrades rather than breaks.
+
+Sources: respond.io webhooks documentation (event list and Call Ended payload description).
 
 ## Slices
 
