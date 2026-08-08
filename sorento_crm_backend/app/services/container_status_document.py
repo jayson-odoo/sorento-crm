@@ -168,9 +168,19 @@ def publish_import_source(db: Session, job) -> Optional[str]:
     try:
         # Same storage key => same bytes. A row already pointing at it means this job
         # was published before (a retry, or a re-run of the backfill).
+        # Match on the key as a SUFFIX: rows written before this stored the bare
+        # key, rows written now store the CDN URL, and both point at the same
+        # object. Comparing the raw key only would republish every old one as a
+        # duplicate the first time this runs after the change.
         existing = db.execute(
-            text("SELECT id FROM attachments WHERE file_path = :key AND is_deleted = false LIMIT 1"),
-            {"key": key},
+            text(
+                """
+                SELECT id FROM attachments
+                WHERE (file_path = :key OR file_path LIKE :suffix) AND is_deleted = false
+                LIMIT 1
+                """
+            ),
+            {"key": key, "suffix": f"%/{key}"},
         ).fetchone()
         if existing:
             # Re-run of an already-published job. Re-assert the invariant anyway -
@@ -181,6 +191,23 @@ def publish_import_source(db: Session, job) -> Optional[str]:
         type_id = ensure_attachment_type(db)
         if not type_id:
             return None
+
+        provider = getattr(job, "source_file_provider", None) or "s3"
+        # Store the CDN URL, not the raw storage key. `import_jobs.source_file_key`
+        # is a key, but every other attachment row holds the full
+        # "https://<cdn>/<key>" that the upload path writes - and consumers read
+        # `file_path` as an address, not as something to resolve. A bare key here
+        # reached the MCP envelope as a domain-less string that no client can
+        # fetch, and looked like a signing bug rather than a shape mismatch.
+        # Falls back to the key if the CDN is unconfigured: a wrong-looking path
+        # is recoverable, a failed publish loses the document.
+        try:
+            from app.services.storage_router import cdn_base_url
+
+            file_path = cdn_base_url(provider, key) or key
+        except Exception:  # noqa: BLE001
+            logger.warning("Could not build a CDN URL for %s", key, exc_info=True)
+            file_path = key
 
         attachment_id = str(uuid.uuid4())
         filename = getattr(job, "source_filename", None) or getattr(job, "filename", None) or "Container Status.xlsx"
@@ -204,13 +231,13 @@ def publish_import_source(db: Session, job) -> Optional[str]:
                 "type_id": type_id,
                 "orig": filename,
                 "stored": filename,
-                "key": key,
+                "key": file_path,
                 "size": getattr(job, "source_file_size", None),
                 "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 "uploaded_by": getattr(job, "user_id", None),
                 "desc": f"Container Status workbook imported on {getattr(job, 'created_at', '')}".strip(),
                 "levels": __import__("json").dumps(ACCESS_LEVELS),
-                "provider": getattr(job, "source_file_provider", None) or "s3",
+                "provider": provider,
                 "job_id": str(job.id),
             },
         )

@@ -202,14 +202,47 @@ def test_publishing_supersedes_the_previous_one(db):
 
 
 def test_publishing_reuses_the_retained_storage_key(db):
-    """One set of bytes, two references - never a second upload."""
+    """One set of bytes, two references - never a second upload.
+
+    The stored value is the CDN URL, but the key inside it is the import's own
+    retained key: same object, second reference.
+    """
     job = _job()
     published = publish_import_source(db, job)
 
-    key = db.execute(
+    stored = db.execute(
         text("SELECT file_path FROM attachments WHERE id = :id"), {"id": published}
     ).scalar()
-    assert key == job.source_file_key
+    assert stored.endswith(job.source_file_key)
+
+
+def test_published_file_path_is_a_url_like_every_other_attachment(db):
+    """`file_path` is an ADDRESS, not a storage key.
+
+    The import retains `source_file_key`, which is a key, but every other
+    attachment row holds the full "https://<cdn>/<key>" the upload path writes,
+    and consumers read the column without resolving it. Publishing the bare key
+    put a domain-less string in the MCP envelope that no client could fetch -
+    and it read as a signing bug rather than a shape mismatch.
+    """
+    job = _job()
+    published = publish_import_source(db, job)
+
+    stored = db.execute(
+        text("SELECT file_path FROM attachments WHERE id = :id"), {"id": published}
+    ).scalar()
+    assert stored.startswith("http"), stored
+    assert stored.endswith(job.source_file_key), "the key is preserved inside the URL"
+
+
+def test_republishing_matches_a_row_stored_as_a_bare_key(db):
+    """Rows published before the URL change must not republish as duplicates."""
+    job = _job()
+    legacy = _workbook(
+        db, uploaded_at=datetime(2020, 1, 1, 0, 0, 0), key=job.source_file_key
+    )
+
+    assert publish_import_source(db, job) == legacy
 
 
 def test_republishing_an_older_job_does_not_resurrect_it(db):
