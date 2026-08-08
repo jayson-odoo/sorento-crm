@@ -119,13 +119,12 @@ TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
     "crm_resource_attachments_catalogue": {"attachment_type_code": "catalogue"},
     # Resource library list is hard-pinned to dealer-downloadable (direct-access)
     # types — it only ever surfaces files flagged is_direct_access.
-    # Also always sign: unsigned, `file_path` is the bare storage key
-    # ("import-sources/<uuid>/Container Status 2026.xlsx"), which no caller can
-    # fetch. The agent then forwards a dead link and reports success.
-    "crm_resource_attachments_list": {
-        "direct_access_only": "true",
-        "resolve_signed_urls": "true",
-    },
+    # Deliberately NOT resolve_signed_urls: the tool returns the bare storage key
+    # ("import-sources/<uuid>/Container Status 2026.xlsx") and n8n signs it on the
+    # way out. Signing here would mint a 1-hour URL at list time that expires on
+    # its own schedule, for every row, whether or not the file is ever sent.
+    # A caller that wants a ready-to-open link passes resolve_signed_urls=true.
+    "crm_resource_attachments_list": {"direct_access_only": "true"},
 }
 
 # Tools whose responses are blocked / row-filtered to ACTIVE promotions only.
