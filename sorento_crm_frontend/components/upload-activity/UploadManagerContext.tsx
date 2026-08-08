@@ -288,7 +288,14 @@ export function UploadManagerProvider({ children }: { children: ReactNode }) {
 
   const startSession = useCallback(
     (input: StartSessionInput): string => {
-      const sessionId = input.uploadBatchId ?? genId();
+      // Key an import_job session on the JOB id, because that is what the
+      // backend keys its own row on (`session_id = str(job.job_id)`). The merge
+      // in useUploadActivity dedupes on session_id, so a random id here means
+      // the optimistic row and the real one are two different sessions: the
+      // drawer shows the same import twice until a refresh drops the optimistic
+      // half. uploadBatchId still wins for attachment batches, which is what
+      // the backend groups those on.
+      const sessionId = input.uploadBatchId ?? input.importJobId ?? genId();
       const nowIso = new Date().toISOString();
 
       const files: UploadActivityFile[] = input.files.map((f) => ({
