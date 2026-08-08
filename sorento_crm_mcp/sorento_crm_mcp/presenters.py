@@ -179,7 +179,7 @@ class _Builder:
     def item(
         self,
         title: Any,
-        pairs: list[tuple[str, Any]],
+        pairs: list[tuple[Any, ...]],
         *,
         discontinued=False,
         expired=False,
@@ -187,7 +187,22 @@ class _Builder:
         unallocated=False,
         partially_allocated=False,
     ) -> None:
-        fields = [{"label": lbl, "value": val} for lbl, val in pairs if _filled(val)]
+        # A pair is either (label, value) or (key, label, value). The 3-tuple form
+        # carries the CRM field key, which is what a consumer must match on: the
+        # label is display text and two vocabularies for the same field already
+        # disagree (render says "ETC", field_access.FIELD_LABELS says "ETC
+        # (estimated time of container closing)"). The key is also what
+        # `field_access.denied[].field` reports, so a consumer can tell "withheld"
+        # from "not yet reached" by comparing the same token on both sides.
+        # `key` is omitted, never null, when the source key is unknown.
+        fields: list[dict[str, Any]] = []
+        for pair in pairs:
+            key, lbl, val = pair if len(pair) == 3 else (None, *pair)
+            if not _filled(val):
+                continue
+            fields.append(
+                {"label": lbl, "value": val} if key is None else {"key": key, "label": lbl, "value": val}
+            )
         if not fields:
             return
         self.items.append(
@@ -352,15 +367,27 @@ def _incoming_list(rows: list[dict], b: _Builder) -> None:
             b.item(
                 l.get("product_code"),
                 [
-                    ("Product Code", l.get("product_code")),
-                    ("Product Name", _distinct_name(l.get("product_code"), l.get("product_name"))),
-                    ("Shipment", s.get("shipment_number")),
-                    ("Container", s.get("shipping_container_number")),
-                    ("Batch", l.get("batch_number")),
-                    ("Incoming Quantity", l.get("remaining_incoming_quantity")),
-                    ("Warehouse Allocations", _wh_alloc(l.get("warehouse_allocations"))),
-                    ("Unallocated Quantity", gap),
-                    *((label, s.get(key)) for key, label in _CLEARANCE_PAIRS),
+                    ("product_code", "Product Code", l.get("product_code")),
+                    (
+                        "product_name",
+                        "Product Name",
+                        _distinct_name(l.get("product_code"), l.get("product_name")),
+                    ),
+                    ("shipment_number", "Shipment", s.get("shipment_number")),
+                    ("shipping_container_number", "Container", s.get("shipping_container_number")),
+                    ("batch_number", "Batch", l.get("batch_number")),
+                    (
+                        "remaining_incoming_quantity",
+                        "Incoming Quantity",
+                        l.get("remaining_incoming_quantity"),
+                    ),
+                    (
+                        "warehouse_allocations",
+                        "Warehouse Allocations",
+                        _wh_alloc(l.get("warehouse_allocations")),
+                    ),
+                    ("unallocated_quantity", "Unallocated Quantity", gap),
+                    *((key, label, s.get(key)) for key, label in _CLEARANCE_PAIRS),
                 ],
                 unallocated=unallocated,
                 partially_allocated=partial,
@@ -376,14 +403,34 @@ def _incoming_by_product(rows: list[dict], b: _Builder) -> None:
             b.item(
                 p.get("product_code"),
                 [
-                    ("Product Code", p.get("product_code")),
-                    ("Product Name", _distinct_name(p.get("product_code"), p.get("product_name"))),
-                    ("Shipment Container", s.get("shipping_container_number")),
-                    ("Estimated Arrival Date", s.get("estimated_arrival_date")),
-                    ("Batch", s.get("batch_number")),
-                    ("Incoming Quantity", s.get("remaining_incoming_quantity")),
-                    ("Warehouse Allocations", _wh_alloc(s.get("warehouse_allocations"))),
-                    ("Unallocated Quantity", gap),
+                    ("product_code", "Product Code", p.get("product_code")),
+                    (
+                        "product_name",
+                        "Product Name",
+                        _distinct_name(p.get("product_code"), p.get("product_name")),
+                    ),
+                    (
+                        "shipping_container_number",
+                        "Shipment Container",
+                        s.get("shipping_container_number"),
+                    ),
+                    (
+                        "estimated_arrival_date",
+                        "Estimated Arrival Date",
+                        s.get("estimated_arrival_date"),
+                    ),
+                    ("batch_number", "Batch", s.get("batch_number")),
+                    (
+                        "remaining_incoming_quantity",
+                        "Incoming Quantity",
+                        s.get("remaining_incoming_quantity"),
+                    ),
+                    (
+                        "warehouse_allocations",
+                        "Warehouse Allocations",
+                        _wh_alloc(s.get("warehouse_allocations")),
+                    ),
+                    ("unallocated_quantity", "Unallocated Quantity", gap),
                 ],
                 unallocated=unallocated,
                 partially_allocated=partial,

@@ -1,6 +1,6 @@
 # n8n integration spec - container status
 
-**Status:** CRM side merged (PR #105). n8n side unbuilt.
+**Status:** CRM side merged (PR #105), plus `key` on every render field (this branch). n8n side unbuilt.
 **Audience:** whoever edits `sorento-consume-main` and `sub-semantic-parser`.
 **Companion docs:** `PLAN-container-status-tracking.md` (decision log, D15 / D19 / D21 / D22 / D25a),
 `container-status-tracking-acceptance-criteria.md`.
@@ -45,10 +45,10 @@ scoped to that contact's grants. Envelope:
     {
       "title": "SRT-WC-001",
       "fields": [
-        {"label": "Product Code", "value": "SRT-WC-001"},
-        {"label": "Container", "value": "GXYU5106903"},
-        {"label": "ETA", "value": "2026-07-18"},
-        {"label": "Gatepass", "value": "2026-07-22"}
+        {"key": "product_code", "label": "Product Code", "value": "SRT-WC-001"},
+        {"key": "shipping_container_number", "label": "Container", "value": "GXYU5106903"},
+        {"key": "estimated_arrival_date", "label": "ETA", "value": "2026-07-18"},
+        {"key": "gatepass_date", "label": "Gatepass", "value": "2026-07-22"}
       ],
       "flags": {"discontinued": false, "expired": false,
                 "unallocated": false, "partially_allocated": false}
@@ -63,46 +63,66 @@ scoped to that contact's grants. Envelope:
 ```
 
 **`fields` is variable-length.** A field is present only when it is (a) entitled AND (b) non-empty -
-empty pairs are dropped before the item is built. So an absent label means "not entitled OR not
+empty pairs are dropped before the item is built. So an absent key means "not entitled OR not
 reached yet", and the two are told apart only by `field_access` (2.3).
 
-### 2.2 The label vocabulary
+### 2.2 The field vocabulary - match on `key`, never on `label`
 
-These are the exact `label` strings. Match on them; do not re-derive from the underlying column
-names, which n8n never sees.
+Every field of this result type carries `key`, the CRM's canonical field key. **Project on `key`.**
+`label` is display text and is not a stable identifier: two label vocabularies for the same field
+already disagree - the render envelope says `ETC`, `field_access.FIELD_LABELS` says
+`ETC (estimated time of container closing)`, and casing differs on most of the others. Matching on
+label means picking one of the two and being unable to cross-check against the other.
+
+`key` is also exactly what `field_access.denied[].field` reports (2.3), so the entitled / withheld /
+not-reached decision compares the same token on both sides. It survives any label rename, and
+`requested_attributes` (N1) is already expressed in these keys, so no translation table exists
+anywhere.
+
+`key` is **omitted, never null**, where a presenter has no source key (other result types; not the
+case for any `incoming_stock` field). Test for its presence, do not assume it.
 
 **Always present (identity - never gated):**
 
-`Product Code` · `Product Name` · `Shipment` · `Container` · `Batch` · `Incoming Quantity` ·
-`Warehouse Allocations` · `Unallocated Quantity`
+| key | label |
+| --- | --- |
+| `product_code` | `Product Code` |
+| `product_name` | `Product Name` |
+| `shipment_number` | `Shipment` |
+| `shipping_container_number` | `Container` |
+| `batch_number` | `Batch` |
+| `remaining_incoming_quantity` | `Incoming Quantity` |
+| `warehouse_allocations` | `Warehouse Allocations` |
+| `unallocated_quantity` | `Unallocated Quantity` |
 
 **Gated (present only when entitled and filled):**
 
-| label | underlying field | notes |
+| key | label | notes |
 | --- | --- | --- |
-| `ETA` | `estimated_arrival_date` | Ships **allowed** for everyone holding `incoming_stock_enquiries` - today's public answer |
-| `ETA Delay` | `eta_delay_date` | |
-| `CIDB Inspection` | `inspection_date` | |
-| `CIDB Approval` | `approval_date` | |
-| `Gatepass` | `gatepass_date` | |
-| `Warehouse Arrival` | `warehouse_arrival_date` | |
-| `Collection Informed` | `informed_collection_date` | |
-| `Collection` | `collection_date` | |
-| `Loading` | `loading_date` | |
-| `ETC` | `etc_date` | |
-| `ETD` | `etd_date` | |
-| `Liner` | `liner_code` | |
-| `China Forwarder` | `china_forwarder` | |
-| `Malaysia Forwarder` | `malaysia_forwarder` | |
-| `Consignee` | `consignee` | |
-| `Delivery Warehouse` | `delivery_warehouse` | |
-| `Free Days Available` | `free_days_available` | |
-| `Location` | `loc` | |
-| `Stacked` | `stacked` | |
-| `COA Permit No.` | `coa_permit_no` | Note the trailing period |
+| `estimated_arrival_date` | `ETA` | Ships **allowed** for everyone holding `incoming_stock_enquiries` - today's public answer |
+| `eta_delay_date` | `ETA Delay` | |
+| `inspection_date` | `CIDB Inspection` | |
+| `approval_date` | `CIDB Approval` | |
+| `gatepass_date` | `Gatepass` | |
+| `warehouse_arrival_date` | `Warehouse Arrival` | |
+| `informed_collection_date` | `Collection Informed` | |
+| `collection_date` | `Collection` | |
+| `loading_date` | `Loading` | |
+| `etc_date` | `ETC` | |
+| `etd_date` | `ETD` | |
+| `liner_code` | `Liner` | |
+| `china_forwarder` | `China Forwarder` | |
+| `malaysia_forwarder` | `Malaysia Forwarder` | |
+| `consignee` | `Consignee` | |
+| `delivery_warehouse` | `Delivery Warehouse` | |
+| `free_days_available` | `Free Days Available` | |
+| `loc` | `Location` | |
+| `stacked` | `Stacked` | |
+| `coa_permit_no` | `COA Permit No.` | |
 
 Source of truth: `sorento_crm_mcp/presenters.py` `_CLEARANCE_PAIRS`. **If that tuple changes this
-table is stale** - re-read it rather than trusting this copy.
+table is stale** - re-read it rather than trusting this copy. Sorting and grouping also key off
+`key` (e.g. order by `estimated_arrival_date`), never off display text.
 
 ### 2.3 The `field_access` block
 
@@ -140,8 +160,9 @@ vocabulary is what is frozen: `incoming: eta`, one value (D25a).
 
 1. The parser emits the attribute the user asked for, in the CRM's canonical field key
    (`gatepass_date`, `eta_delay_date`, ...) or a raw phrase the CRM canonicalises (see C2, unbuilt).
-2. `sub-get-results` filters the returned `fields` to (identity fields) + (requested attributes),
-   and answers from that projection.
+2. `sub-get-results` filters the returned `fields` **on `f.key`** to (identity fields) + (requested
+   attributes), and answers from that projection. `requested_attributes` and `key` are the same
+   vocabulary, so this is a set intersection with no translation table and nothing to keep in sync.
 3. **No requested attribute → do not dump.** Fall back to the identity block plus `ETA`. A user who
    asks "where is my container" wants a sentence, not a table of 20 dates.
 4. A requested attribute that is **absent** from `fields`:
@@ -201,6 +222,11 @@ original plan.
 ## 4. What the CRM still owes n8n
 
 Both of these are **blockers for N2** as written, and neither is n8n's to fix.
+
+> **Closed: C0 - fields did not carry the field key.** n8n would have had to match on `label` and
+> hold its own label → key table, which needs a canary asserting all 20 labels still resolve against
+> a live response or it is a green that cannot fail. The CRM emits `key` on every field instead
+> (2.2), so the table does not exist and there is nothing to keep in step.
 
 ### C1 - `attachment_type` resolution is exact-match only
 
