@@ -10,7 +10,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { TodayRun } from '../services/reorderRunService';
 
@@ -141,6 +141,40 @@ describe('ReorderPlanningView — past-run header (M8-D11)', () => {
     // header reads "Plan · <date>, <time>" (started_at 06:00 UTC → 14:00 Asia/KL)
     // and the past-run banner shows — the point is date AND time, not "Today's plan".
     expect(screen.getByText(/Plan · 15\/07\/2026, 14:00/)).toBeInTheDocument();
-    expect(screen.getByText(/You are viewing a past run/i)).toBeInTheDocument();
+    // The banner shows. Which of its two messages appears depends on whether a run has
+    // happened today, which is the subject of the group below.
+    expect(screen.getByText(/No plan has run today/i)).toBeInTheDocument();
+  });
+});
+
+describe('ReorderPlanningView — "Back to today\'s plan" has somewhere to go', () => {
+  // > "is this working cause I can't seemed to click it to go to today's plan"
+  //
+  // It was not. The banner shows whenever the run on screen is not today's, which includes
+  // the case where NO run has happened today - and then "Back to today's plan" set the
+  // selection to null, landed on the same run, and nothing moved. A control that cannot
+  // change anything must not be offered; the page has to say why instead.
+
+  it('does not offer the link when there is no today plan to go back to', () => {
+    stubToday(todayRun({ run_id: 'run-old', is_today: false }));
+    renderView();
+
+    expect(screen.queryByRole('button', { name: /back to today/i })).not.toBeInTheDocument();
+  });
+
+  it('says no plan has run today, rather than calling the newest one a past run', () => {
+    stubToday(todayRun({ run_id: 'run-old', is_today: false }));
+    renderView();
+
+    expect(screen.getByText(/No plan has run today/i)).toBeInTheDocument();
+  });
+
+  it('offers the action that does help: running one now', () => {
+    stubToday(todayRun({ run_id: 'run-old', is_today: false }));
+    renderView();
+
+    fireEvent.click(screen.getByRole('button', { name: /plan now/i }));
+
+    expect(screen.getByText('manual-plan-modal')).toBeInTheDocument();
   });
 });

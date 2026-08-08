@@ -123,6 +123,10 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const { data: cachedExceptions } = usePlanExceptions({ run_id: currentRunId }, false);
   const planExceptionsOpen = cachedExceptions ? cachedExceptions.counts.open_count : null;
   const isPastRun = !!currentItem && !isToday;
+  // Whether a run has actually happened today, which is what decides if there is anywhere
+  // for "Back to today's plan" to go. Distinct from `isToday`, which asks whether the run
+  // ON SCREEN is today's.
+  const hasTodayRun = !!todayData?.is_today;
 
   const plan = useReorderPlan(currentRunId, view === 'buy' && !!currentRunId);
 
@@ -390,23 +394,49 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         isBusy={resetting}
       />
 
+      {/* Two different situations, and offering the same control for both made one of them a
+          dead end: "Back to today's plan" cleared the selection, landed on the same run, and
+          nothing moved. It is offered only when there IS a today plan to return to. */}
       {isPastRun ? (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-sm">
           <History className="size-4 shrink-0 text-primary" aria-hidden />
-          <span className="text-muted-foreground">
-            You are viewing a past run from{' '}
-            <span className="font-medium text-foreground">
-              {dateLabel}, {timeLabel}
-            </span>
-            . Return to today&apos;s plan to make changes.
-          </span>
-          <button
-            type="button"
-            className="ms-auto font-medium text-primary underline-offset-2 hover:underline"
-            onClick={() => setSelectedRun(null)}
-          >
-            Back to today&apos;s plan
-          </button>
+          {hasTodayRun ? (
+            <>
+              <span className="text-muted-foreground">
+                You are viewing a past run from{' '}
+                <span className="font-medium text-foreground">
+                  {dateLabel}, {timeLabel}
+                </span>
+                . Return to today&apos;s plan to make changes.
+              </span>
+              <button
+                type="button"
+                className="ms-auto font-medium text-primary underline-offset-2 hover:underline"
+                onClick={() => setSelectedRun(null)}
+              >
+                Back to today&apos;s plan
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="text-muted-foreground">
+                No plan has run today. This is the most recent one, from{' '}
+                <span className="font-medium text-foreground">
+                  {dateLabel}, {timeLabel}
+                </span>
+                . Stock and demand have moved since, so run one before deciding quantities.
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                className="ms-auto"
+                onClick={() => setModalOpen(true)}
+              >
+                <PlayCircle className="size-4" />
+                Plan now
+              </Button>
+            </>
+          )}
         </div>
       ) : null}
 
