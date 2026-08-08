@@ -20,6 +20,12 @@ interface UseSalesOrdersParams {
   priority: string | null;
   /** Where the order came from: 'inquiry' | 'upload' | 'manual'. Null for all. */
   source?: string | null;
+  /** Order date, inclusive of both ends. ISO `yyyy-mm-dd`. */
+  dateFrom?: string | null;
+  dateTo?: string | null;
+  customerId?: string | null;
+  /** Keep only orders with quantity still owed. `false` narrows nothing. */
+  outstanding?: boolean;
 }
 
 export function useSalesOrders(params: UseSalesOrdersParams) {
@@ -35,6 +41,10 @@ export function useSalesOrders(params: UseSalesOrdersParams) {
         status: params.status,
         priority: params.priority,
         source: params.source ?? null,
+        dateFrom: params.dateFrom ?? null,
+        dateTo: params.dateTo ?? null,
+        customerId: params.customerId ?? null,
+        outstanding: params.outstanding ?? false,
       }),
     staleTime: 10_000,
     refetchOnWindowFocus: false,

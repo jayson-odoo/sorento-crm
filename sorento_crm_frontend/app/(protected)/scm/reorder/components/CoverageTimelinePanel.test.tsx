@@ -145,7 +145,7 @@ describe('CoverageTimelinePanel - a positive closing balance with a real shortfa
   it('states the shortfall quantity and date before any balance', () => {
     withData(SHORTFALL);
     const banner = screen.getByTestId('coverage-shortfall');
-    expect(banner).toHaveTextContent('Short 67 on 03 Aug 2026');
+    expect(banner).toHaveTextContent('Short 67 on 03/08/2026');
     expect(banner).toHaveTextContent('SO-2026-0342');
   });
 
@@ -154,7 +154,7 @@ describe('CoverageTimelinePanel - a positive closing balance with a real shortfa
     const banner = screen.getByTestId('coverage-shortfall');
     // The PO of 200 lands 25 Aug against an order due 3 Aug: 22 days late.
     expect(banner).toHaveTextContent('SH-2026-0442');
-    expect(banner).toHaveTextContent('25 Aug 2026');
+    expect(banner).toHaveTextContent('25/08/2026');
     expect(banner).toHaveTextContent('22 days too late');
   });
 
@@ -163,7 +163,7 @@ describe('CoverageTimelinePanel - a positive closing balance with a real shortfa
     const closing = screen.getByTestId('coverage-closing');
     expect(closing).toHaveTextContent('133');
     // The caption is what stops +133 reading as covered.
-    expect(closing).toHaveTextContent('does not clear the shortfall on 03 Aug 2026');
+    expect(closing).toHaveTextContent('does not clear the shortfall on 03/08/2026');
     // And it is never given the healthy tone.
     expect(closing.querySelector('.text-scm-incoming')).toBeNull();
   });
@@ -239,7 +239,7 @@ describe('CoverageTimelinePanel - undated demand, horizon and transfers', () => 
   it('states the horizon exclusion on screen, never silently (AC-B5)', () => {
     withData(UNDATED);
     expect(
-      screen.getByText(/3 events beyond 31 Jul 2027 excluded \(12-month horizon\)/i),
+      screen.getByText(/3 events beyond 31\/07\/2027 excluded \(12-month horizon\)/i),
     ).toBeInTheDocument();
   });
 
@@ -255,7 +255,7 @@ describe('CoverageTimelinePanel - undated demand, horizon and transfers', () => 
     expect(within(section).getByText('MWH')).toBeInTheDocument();
     expect(within(section).getByText('RM 480')).toBeInTheDocument();
     expect(within(section).getByText('5')).toBeInTheDocument();
-    expect(within(section).getByText('08 Aug 2026')).toBeInTheDocument();
+    expect(within(section).getByText('08/08/2026')).toBeInTheDocument();
     expect(within(section).getByText(/Not counted in the balance above/i)).toBeInTheDocument();
   });
 
@@ -290,6 +290,6 @@ describe('CoverageTimelinePanel - undated demand, horizon and transfers', () => 
   it('renders computed_at as written, without shifting it out of Malaysia time', () => {
     withData(SHORTFALL);
     // The fixture is 2026-08-03T09:12:00, already Malaysia wall-clock.
-    expect(screen.getByTestId('coverage-verdict')).toHaveTextContent('Computed 03 Aug 2026, 09:12');
+    expect(screen.getByTestId('coverage-verdict')).toHaveTextContent('Computed 03/08/2026, 09:12');
   });
 });

@@ -37,6 +37,27 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
+// The row-click handler asks for the router, which is not mounted under jsdom.
+// PARTIAL. The grid and its toolbar reach for other exports of this module, and replacing it
+// wholesale left them undefined - which showed up as a grid stuck on its loading skeleton
+// rather than as an error.
+vi.mock('next/navigation', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/navigation')>()),
+  useRouter: () => ({ push: vi.fn() }),
+  usePathname: () => '/scm/sales-orders',
+  useSearchParams: () => new URLSearchParams(),
+}));
+
+
+
+// The grid asks for the user's saved column order via this hook, which reads the route to
+// build its listing key. With `next/navigation` mocked the hook goes down its fetching path
+// and the grid sits on its loading skeleton, so it is stubbed the same way the detail suite
+// stubs it.
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
+}));
+
 const useSalesOrders = vi.fn();
 vi.mock('../../hooks/useSalesOrders', () => ({
   useSalesOrders: (...a: unknown[]) => useSalesOrders(...a),

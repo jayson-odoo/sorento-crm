@@ -37,27 +37,27 @@ function row(over: Partial<CoverageRow['event']>, balance = 0): CoverageRow {
 
 describe('dayLabel', () => {
   it('renders a plain calendar date without shifting it', () => {
-    expect(dayLabel('2026-07-01')).toBe('01 Jul 2026');
-    expect(dayLabel('2026-08-25')).toBe('25 Aug 2026');
+    expect(dayLabel('2026-07-01')).toBe('01/07/2026');
+    expect(dayLabel('2026-08-25')).toBe('25/08/2026');
     // A date at the start of the month is the one that would slip backwards.
-    expect(dayLabel('2027-01-01')).toBe('01 Jan 2027');
+    expect(dayLabel('2027-01-01')).toBe('01/01/2027');
   });
 
   it('tolerates a full timestamp and returns empty for nothing', () => {
-    expect(dayLabel('2026-08-03T09:12:00')).toBe('03 Aug 2026');
+    expect(dayLabel('2026-08-03T09:12:00')).toBe('03/08/2026');
     expect(dayLabel(null)).toBe('');
   });
 });
 
 describe('computedAtLabel', () => {
   it('renders the wall-clock as written, adding no timezone offset', () => {
-    expect(computedAtLabel('2026-08-03T09:12:00')).toBe('03 Aug 2026, 09:12');
+    expect(computedAtLabel('2026-08-03T09:12:00')).toBe('03/08/2026, 09:12');
     // 09:12 must not become 17:12.
     expect(computedAtLabel('2026-08-03T09:12:00')).not.toContain('17:12');
   });
 
   it('falls back to the date alone when there is no time part', () => {
-    expect(computedAtLabel('2026-08-03')).toBe('03 Aug 2026');
+    expect(computedAtLabel('2026-08-03')).toBe('03/08/2026');
     expect(computedAtLabel(null)).toBe('');
   });
 });
@@ -141,7 +141,7 @@ describe('coverVerdict', () => {
 
 describe('shortfallWhen', () => {
   it('names the date when an event caused the shortfall', () => {
-    expect(shortfallWhen('2026-08-03')).toBe('on 03 Aug 2026');
+    expect(shortfallWhen('2026-08-03')).toBe('on 03/08/2026');
   });
 
   it('says today when the opening balance is already under the floor', () => {

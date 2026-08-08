@@ -143,7 +143,7 @@ describe('DemandDrillPopover - project demand (AC-C2.3)', () => {
     const lines = screen.getByTestId('project-lines');
     expect(within(lines).getByText('Maryam Tuju Residence')).toBeInTheDocument();
     expect(within(lines).getByText(/SO-2026-0311/)).toBeInTheDocument();
-    expect(lines).toHaveTextContent('needed 15 Sept 2026');
+    expect(lines).toHaveTextContent('needed 15/09/2026');
     expect(within(lines).getByText('260')).toBeInTheDocument();
   });
 

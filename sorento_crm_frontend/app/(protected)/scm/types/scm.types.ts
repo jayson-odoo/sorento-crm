@@ -254,6 +254,10 @@ export type SalesOrderStatus =
   | 'open'
   | 'partially_delivered'
   | 'fulfilled'
+  // 11,006 orders absorbed from the AutoCount export land here: read as delivered off a
+  // spreadsheet rather than delivered by this system. The status exists in the data, so it
+  // belongs in the type; `statusBadge` title-cases anything it does not recognise anyway.
+  | 'closed'
   | 'cancelled';
 
 export interface SalesOrderLine {

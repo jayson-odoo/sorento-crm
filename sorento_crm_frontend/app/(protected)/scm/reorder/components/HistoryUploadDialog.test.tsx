@@ -444,11 +444,13 @@ describe('HistoryUploadDialog - one delivery, stated on many sheets', () => {
     renderDialog('order-inquiry');
     await choose('inquiry.xlsx');
 
-    const rows = (await screen.findByText('Rows')).closest('[data-slot="count-tile"]')!;
+    const rows = (await screen.findByText('Rows')).closest(
+      '[data-slot="count-tile"]',
+    ) as HTMLElement;
     expect(within(rows).getByText('105')).toBeInTheDocument();
     const deliveries = screen
       .getByText('Scheduled deliveries')
-      .closest('[data-slot="count-tile"]')!;
+      .closest('[data-slot="count-tile"]') as HTMLElement;
     expect(within(deliveries).getByText('88')).toBeInTheDocument();
   });
 

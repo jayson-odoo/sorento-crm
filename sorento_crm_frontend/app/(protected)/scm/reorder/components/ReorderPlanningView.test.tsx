@@ -140,7 +140,7 @@ describe('ReorderPlanningView — past-run header (M8-D11)', () => {
     expect(screen.queryByText(/Today's plan/)).not.toBeInTheDocument();
     // header reads "Plan · <date>, <time>" (started_at 06:00 UTC → 14:00 Asia/KL)
     // and the past-run banner shows — the point is date AND time, not "Today's plan".
-    expect(screen.getByText(/Plan · 15 Jul 2026, 14:00/)).toBeInTheDocument();
+    expect(screen.getByText(/Plan · 15\/07\/2026, 14:00/)).toBeInTheDocument();
     expect(screen.getByText(/You are viewing a past run/i)).toBeInTheDocument();
   });
 });

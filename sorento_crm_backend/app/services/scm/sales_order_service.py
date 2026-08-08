@@ -22,6 +22,7 @@ from app.models.product import Product, UnitOfMeasure
 from app.models.scm import OrderLinkClaim
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
+from app.services.scm.demand import is_open_demand
 
 # Upper bound on suffix retries when reserving a unique DO number under contention.
 _DO_NUMBER_MAX_TRIES = 50
@@ -236,7 +237,9 @@ class SalesOrderService:
 
     def list(self, page: int, limit: int, sort: Optional[str], direction: str,
              query: Optional[str], status: Optional[str], priority: Optional[str],
-             source: Optional[str] = None) -> dict:
+             source: Optional[str] = None, *,
+             date_from: Optional[date] = None, date_to: Optional[date] = None,
+             customer_code: Optional[str] = None, outstanding: bool = False) -> dict:
         q = self.db.query(SalesOrder).options(
             joinedload(SalesOrder.lines).joinedload(SalesOrderLine.product),
             joinedload(SalesOrder.lines).joinedload(SalesOrderLine.warehouse),
@@ -263,6 +266,36 @@ class SalesOrderService:
             q = q.filter(SalesOrder.status == status)
         if priority:
             q = q.filter(SalesOrder.priority == priority)
+        # Inclusive of both ends, because a person asking for "March" means the 1st and the
+        # 31st. An undated order is excluded from a range rather than swept into one: absorbed
+        # rows can arrive with no date, and putting one in January states a fact we do not have.
+        if date_from:
+            q = q.filter(SalesOrder.order_date >= date_from)
+        if date_to:
+            q = q.filter(SalesOrder.order_date <= date_to)
+        if customer_code:
+            # By CODE, not id. `customer_code` is not unique in this dataset - several legal
+            # entities share a debtor code - so a person picking "Acme" from the dropdown
+            # means every one of them, and filtering by a single id would show part of their
+            # book. Trimmed and case-folded to match `_customer`.
+            q = q.filter(
+                SalesOrder.customer.has(
+                    func.lower(func.btrim(Customer.customer_code))
+                    == customer_code.strip().lower()
+                )
+            )
+        if outstanding:
+            # The SAME rule the netting reads, so "still owed" cannot mean one thing on this
+            # screen and another in the plan. Only when asked for: an unticked box must not
+            # narrow anything, or clearing a filter looks like data appearing on its own.
+            q = q.filter(
+                self.db.query(SalesOrderLine.id)
+                .filter(
+                    SalesOrderLine.sales_order_id == SalesOrder.id,
+                    is_open_demand(),
+                )
+                .exists()
+            )
         if query:
             like = f"%{query}%"
             q = q.filter(

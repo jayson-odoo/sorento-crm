@@ -118,7 +118,7 @@ describe('SummaryOrderReportView - states', () => {
 
   it('states the as-of date the position is quoted at (AC-C2.9)', () => {
     renderView(state({ data: REPORT }));
-    expect(screen.getByText(/As of 03 Aug 2026/)).toBeInTheDocument();
+    expect(screen.getByText(/As of 03\/08\/2026/)).toBeInTheDocument();
   });
 
   it('filters the grid by product or supplier without re-fetching', () => {

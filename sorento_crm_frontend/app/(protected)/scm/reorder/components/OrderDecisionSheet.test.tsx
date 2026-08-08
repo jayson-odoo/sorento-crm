@@ -217,7 +217,7 @@ describe('OrderDecisionSheet - supplier is a choice, not a fixed value (AC-C2.5 
     renderSheet(state({ data: BLUE_SUPPLIERS }));
     const gds = screen.getByTestId('supplier-GDS');
     expect(gds).toHaveTextContent('CNY 128.40');
-    expect(gds).toHaveTextContent('12 Jun 2026');
+    expect(gds).toHaveTextContent('12/06/2026');
     expect(gds).toHaveTextContent('CNY 134.90');
     expect(gds).toHaveTextContent('+CNY 6.50');
     expect(gds).toHaveTextContent('86%');
@@ -261,7 +261,7 @@ describe('OrderDecisionSheet - a stale last PO date is flagged (AC-C2.6)', () =>
     renderSheet(state({ data: STALE_SUPPLIERS }), STALE_ROW);
     const ipm = screen.getByTestId('supplier-IPM');
     expect(within(ipm).getByText('stale')).toBeInTheDocument();
-    expect(screen.getByTestId('last-po-date-IPM')).toHaveTextContent('18 Nov 2021');
+    expect(screen.getByTestId('last-po-date-IPM')).toHaveTextContent('18/11/2021');
     expect(screen.getByTestId('last-po-date-IPM')).toHaveTextContent('1,719 days ago');
   });
 

@@ -8,7 +8,8 @@
  * addressed by id in the path. `uom` is display-only (product base UOM) and is
  * NOT sent on write; the BE stamps it from the product.
  *
- *   GET    /sales-orders            list (page/limit/sort/dir/query/status/priority)
+ *   GET    /sales-orders            list (page/limit/sort/dir/query/status/priority/source,
+                                   date_from/date_to/customer_id/outstanding)
  *   GET    /sales-orders/{id}       single
  *   POST   /sales-orders            create (order_type, customer_code, priority,
  *                                   requested_delivery_date?, lines:[{sku,qty_ordered}])
@@ -34,6 +35,12 @@ export interface SalesOrderListQuery {
   priority?: string | null;
   /** Where the order came from: 'inquiry' | 'upload' | 'manual'. Omit for all. */
   source?: string | null;
+  /** Order date, inclusive of both ends. ISO `yyyy-mm-dd`. */
+  dateFrom?: string | null;
+  dateTo?: string | null;
+  customerId?: string | null;
+  /** Keep only orders with quantity still owed. `false` narrows nothing. */
+  outstanding?: boolean;
 }
 
 /** Strip the display-only `uom` from each line — the BE derives it. */
@@ -64,6 +71,12 @@ export async function getSalesOrders(
       status: params.status ?? undefined,
       priority: params.priority ?? undefined,
       source: params.source ?? undefined,
+      date_from: params.dateFrom || undefined,
+      date_to: params.dateTo || undefined,
+      customer_id: params.customerId || undefined,
+      // Only when ON. Sending `outstanding=false` would put a param on the URL that means
+      // "no filter", which then rides into the detail URL and reads as an active filter.
+      outstanding: params.outstanding ? 'true' : undefined,
     },
   );
   const res = await apiFetch(`${BASE}?${sp.toString()}`);
