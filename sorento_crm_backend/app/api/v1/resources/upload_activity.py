@@ -267,13 +267,18 @@ def get_upload_activity(
     user_id = str(current_user["id"])
     cutoff = since or (datetime.utcnow() - timedelta(days=7))
 
-    # Stock List uploads are background reference-data replacements (stock page
-    # import), not user file-management activity — n8n never "links" them, so
-    # they'd sit in the drawer stuck on "Processing" forever. Exclude the type.
+    # Types n8n does not intake never get a webhook reply, so their rows would
+    # sit on "Processing" forever - the drawer cannot tell "still working" from
+    # "never coming". Skip them.
+    #
+    # This was previously a hardcoded `type_name IN ('Stock List','Stock_List')`.
+    # Same intent, but the property belongs to the TYPE: an admin can now retire
+    # a type from n8n without a code change, and the same flag stops the pointless
+    # webhook at source (migration 317).
     excluded_type_ids = [
         str(t.id)
         for t in db.query(AttachmentType.id)
-        .filter(AttachmentType.type_name.in_(("Stock List", "Stock_List")))
+        .filter(AttachmentType.triggers_n8n_webhook.is_(False))
         .all()
     ]
 

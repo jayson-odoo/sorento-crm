@@ -58,6 +58,7 @@ export default function AttachmentTypeFormDialog({
       max_file_size_mb: 10,
       max_count_per_entity: null,
       supports_field_linkage: false,
+      triggers_n8n_webhook: true,
       is_certificate: false,
       max_validity_months: null,
     },
@@ -75,6 +76,7 @@ export default function AttachmentTypeFormDialog({
           max_file_size_mb: attachmentType.max_file_size_mb,
           max_count_per_entity: attachmentType.max_count_per_entity ?? null,
           supports_field_linkage: attachmentType.supports_field_linkage ?? false,
+          triggers_n8n_webhook: attachmentType.triggers_n8n_webhook ?? true,
           is_certificate: attachmentType.is_certificate ?? false,
           max_validity_months: attachmentType.max_validity_months ?? null,
         });
@@ -86,6 +88,7 @@ export default function AttachmentTypeFormDialog({
           max_file_size_mb: 10,
           max_count_per_entity: null,
           supports_field_linkage: false,
+          triggers_n8n_webhook: true,
           is_certificate: false,
           max_validity_months: null,
         });
@@ -105,6 +108,7 @@ export default function AttachmentTypeFormDialog({
             max_file_size_mb: data.max_file_size_mb,
             max_count_per_entity: data.max_count_per_entity ?? null,
             supports_field_linkage: data.supports_field_linkage ?? false,
+            triggers_n8n_webhook: data.triggers_n8n_webhook ?? true,
             is_certificate: data.is_certificate ?? false,
             max_validity_months: data.max_validity_months ?? null,
           },
@@ -117,6 +121,7 @@ export default function AttachmentTypeFormDialog({
           max_file_size_mb: data.max_file_size_mb,
           max_count_per_entity: data.max_count_per_entity ?? null,
           supports_field_linkage: data.supports_field_linkage ?? false,
+          triggers_n8n_webhook: data.triggers_n8n_webhook ?? true,
           is_certificate: data.is_certificate ?? false,
           max_validity_months: data.max_validity_months ?? null,
         });
@@ -252,6 +257,33 @@ export default function AttachmentTypeFormDialog({
                     <p className="text-xs text-muted-foreground">
                       When on, uploads of this type show the “Linked to / Linked fields” section
                       (e.g. product photos) so files can be tied to a record field.
+                    </p>
+                  </div>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="triggers_n8n_webhook"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-start gap-2 rounded-md border p-3">
+                  <FormControl>
+                    <Checkbox
+                      checked={field.value !== false}
+                      onCheckedChange={(v) => field.onChange(v === true)}
+                    />
+                  </FormControl>
+                  <div className="space-y-0.5">
+                    <FormLabel className="cursor-pointer">
+                      Send uploads to the automation (n8n)
+                    </FormLabel>
+                    <p className="text-xs text-muted-foreground">
+                      On for document types the automation reads and links (product photos,
+                      catalogues, certificates). Turn it OFF for types it never handles - a
+                      background file like a stock list or an imported workbook otherwise waits
+                      on a reply that never comes, and sits on &quot;Processing&quot; in Upload
+                      activity forever.
                     </p>
                   </div>
                 </FormItem>
