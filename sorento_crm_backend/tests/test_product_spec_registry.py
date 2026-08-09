@@ -101,15 +101,20 @@ def test_every_seeded_key_is_active_and_typed(db):
 
 
 def test_measured_numeric_keys_carry_a_unit(db):
-    """Anything measured is in millimetres. A count is not measured, so it has no unit.
+    """A count has no unit; a measurement states the one it is in.
 
     Rendering "2 mm" for a double bowl sink would be worse than wrong: it would embed a
-    dimension phrase into a sentence the ranker compares against real dimensions.
+    dimension phrase into a sentence the ranker compares against real dimensions. The
+    same trap in reverse is why a measurement may no longer assume millimetres - a bin
+    is measured in litres and a pump in horsepower, and calling either "mm" would put
+    8 next to a 800mm basin as though they were the same kind of number.
     """
-    # bar_count and spray_functions join it: towel bars and spray patterns are counted,
-    # not measured. Rendering "3 mm" for a 3-function shower head would put a dimension
-    # phrase into the sentence the ranker compares against real dimensions.
-    counts = {"bowl_count", "bar_count", "spray_functions"}
+    # Counted, not measured: towel bars, bowls, spray patterns, pieces in a set.
+    counts = {"bowl_count", "bar_count", "spray_functions", "piece_count"}
+    # Every unit the vocabulary is allowed to be in. A new one is a deliberate act:
+    # the ranker compares like with like, so a unit nothing normalises is a silent
+    # mismatch rather than an error.
+    units = {"mm", "L", "oz", "hp"}
     seed_spec_registry(db)
     for key, row in _keys(db).items():
         if row.data_type != "numeric":
@@ -117,7 +122,7 @@ def test_measured_numeric_keys_carry_a_unit(db):
         if key in counts:
             assert row.unit is None, key
         else:
-            assert row.unit == "mm", key
+            assert row.unit in units, f"{key} is measured in an undeclared unit: {row.unit}"
 
 
 def test_enum_keys_carry_allowed_values(db):
@@ -696,3 +701,31 @@ def test_a_rule_survives_the_value_it_produces_being_suppressed(client, db):
 
     assert response.status_code == 200, response.text
     assert response.json()["derivation_rules"][0]["value"] == "french_gold"
+
+
+def test_a_release_can_correct_a_rule_it_shipped(db):
+    """The seed must be able to fix its own mistake, not only add to it.
+
+    This is not hypothetical: `has_fixing_screw` matched the bare noun SCREW, so a
+    basin described "**W/O SCREW" - sold WITHOUT one - derived yes. Correcting the
+    pattern put the fixed rule NEXT TO the broken one, first-match-wins kept firing
+    the broken one, and the fix was invisible.
+    """
+    seed_spec_registry(db, commit=False)
+    row = _keys(db)["has_fixing_screw"]
+
+    # Pretend the release before this one shipped the broken pattern, and that a human
+    # added a rule of their own on top.
+    row.derivation_rules = [
+        {"match": "present", "pattern": "SCREW", "value": True, "_seed": True},
+        {"match": "present", "pattern": "MOUNTING KIT", "value": True},
+    ]
+    db.flush()
+
+    seed_spec_registry(db, commit=False)
+    rules = _keys(db)["has_fixing_screw"].derivation_rules
+    patterns = [r["pattern"] for r in rules]
+
+    assert "SCREW" not in patterns, "the superseded seed rule survived and still fires first"
+    assert any("W/O" in p for p in patterns), "the corrected rule was not installed"
+    assert "MOUNTING KIT" in patterns, "a human's own rule must never be removed by a seed"

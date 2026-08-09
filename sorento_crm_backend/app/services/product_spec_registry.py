@@ -128,6 +128,13 @@ SEARCH_POLICY_SEED: list[dict] = [
 ]
 
 
+SEED_RULE_MARKER = "_seed"
+
+
+def _rule_identity(rule: dict) -> tuple:
+    return (str(rule.get("match")), str(rule.get("pattern")), str(rule.get("value")))
+
+
 def _rules_from_shipped_tables() -> dict[str, list[dict]]:
     """Today's hardcoded token tables, as rule rows.
 
@@ -151,6 +158,12 @@ def _rules_from_shipped_tables() -> dict[str, list[dict]]:
         "water_supply": contains(d.WATER_SUPPLY_TOKENS),
         "steel_grade": contains(d.STEEL_GRADE_TOKENS),
         "furniture_type": contains(d.FURNITURE_TOKENS),
+        "piece_count": [
+            {"match": "regex", "pattern": d.PIECE_COUNT_RE.pattern, "capture": 1}
+        ],
+        "capacity_oz": [
+            {"match": "regex", "pattern": d.CAPACITY_OZ_RE.pattern, "capture": 1, "unit": "oz"}
+        ],
         "capacity_litre": [
             {"match": "regex", "pattern": d.CAPACITY_RE.pattern, "capture": 1, "unit": "L"}
         ],
@@ -264,9 +277,14 @@ def _rules_from_shipped_tables() -> dict[str, list[dict]]:
         "has_drainer": [{"match": "present", "pattern": "DRAINER", "value": True}],
         "has_overflow": [{"match": "present", "pattern": r"OVER\s*FLOW", "value": True}],
         "has_fixing_screw": [
-            {"match": "present", "pattern": d._FIXING_SCREW_NOUN, "value": True}
+            {"match": "present", "pattern": d.FIXING_SCREW_RE.pattern, "value": True}
         ],
     }
+    # Stamped here, at the one place shipped rules are built, so every seeded rule is
+    # marked and a human's edit - which never passes through here - never is.
+    for rows in rules.values():
+        for rule in rows:
+            rule[SEED_RULE_MARKER] = True
     return rules
 
 
@@ -428,7 +446,7 @@ SPEC_REGISTRY_SEED: list[dict] = [
         "spec_key": "material",
         "label": "Material",
         "data_type": "enum",
-        "allowed_values": ["stainless_steel", "ceramic", "glass", "pvc", "brass", "acrylic", "abs", "nanograin", "granite"],
+        "allowed_values": ["stainless_steel", "ceramic", "glass", "pvc", "brass", "acrylic", "abs", "nanograin", "granite", "marble"],
         "synonyms": {
             "stainless_steel": ["stainless", "stainless steel", "s/steel", "steel", "inox"],
             "ceramic": ["ceramic", "porcelain"],
@@ -437,6 +455,7 @@ SPEC_REGISTRY_SEED: list[dict] = [
             "abs": ["abs", "abs plastic"],
             "nanograin": ["nanograin", "nano grain", "nano"],
             "granite": ["granite", "granite stone", "quartz"],
+            "marble": ["marble", "marble top", "marmar"],
             "brass": ["brass"],
             "acrylic": ["acrylic"],
         },
@@ -578,6 +597,7 @@ SPEC_REGISTRY_SEED: list[dict] = [
             "dustbin",
             "bottle_trap",
             "water_pump",
+            "hinge",
         ],
         "synonyms": {
             "angle_valve": ["angle valve", "stop valve", "corner valve"],
@@ -619,6 +639,7 @@ SPEC_REGISTRY_SEED: list[dict] = [
             "dustbin": ["dustbin", "waste bin", "rubbish bin", "tong sampah"],
             "bottle_trap": ["bottle trap", "basin trap"],
             "water_pump": ["water pump", "pressure pump", "booster pump", "pam air"],
+            "hinge": ["hinge", "hinges", "cabinet hinge", "door hinge"],
         },
         "measured_coverage": 5075,
         "rank_weight": 3.0,
@@ -805,6 +826,29 @@ SPEC_REGISTRY_SEED: list[dict] = [
         # 1.2m" means to a customer, and nothing beyond half a metre is the same hose.
         "match_tolerance": 100.0,
         "match_decay": 500.0,
+    },
+    {
+        "spec_key": "piece_count",
+        "label": "Pieces in the set",
+        "data_type": "numeric",
+        # A 4-in-1 and a 3-in-1 furniture set can quote the same 580x460x400; this is
+        # the only thing that tells them apart.
+        "synonyms": {"_self": ["in 1", "piece set", "pieces", "set of"]},
+        "measured_coverage": 300,
+        "rank_weight": 3.0,
+        "match_tolerance": 0.0,
+        "match_decay": 1.0,
+    },
+    {
+        "spec_key": "capacity_oz",
+        "label": "Capacity (oz)",
+        "data_type": "numeric",
+        "unit": "oz",
+        "synonyms": {"_self": ["oz", "ounce", "ounces"]},
+        "measured_coverage": 3,
+        "rank_weight": 2.0,
+        "match_tolerance": 1.0,
+        "match_decay": 10.0,
     },
     {
         "spec_key": "capacity_litre",
@@ -1095,17 +1139,22 @@ def seed_spec_registry(db: Session, *, commit: bool = False) -> dict:
         shipped_for_key = _rules_from_shipped_tables().get(key) or []
         if shipped_for_key:
             stored_rules = list(row.derivation_rules or [])
-            seen = {
-                (str(r.get("match")), str(r.get("pattern")), str(r.get("value")))
-                for r in stored_rules
-            }
-            missing = [
+            wanted = {_rule_identity(r) for r in shipped_for_key}
+            # Rules the seed placed carry SEED_RULE_MARKER. That is what lets a later
+            # release CORRECT one: without it the seed could only ever append, so when
+            # `has_fixing_screw` was fixed to stop reading "W/O SCREW" as a yes, the
+            # corrected rule landed next to the broken one and the broken one still
+            # fired first. Anything without the marker is a human's and is left alone.
+            kept = [
                 r
-                for r in shipped_for_key
-                if (str(r.get("match")), str(r.get("pattern")), str(r.get("value"))) not in seen
+                for r in stored_rules
+                if not r.get(SEED_RULE_MARKER) or _rule_identity(r) in wanted
             ]
-            if missing and stored_rules:
-                row.derivation_rules = stored_rules + missing
+            have = {_rule_identity(r) for r in kept}
+            missing = [r for r in shipped_for_key if _rule_identity(r) not in have]
+            merged = kept + missing
+            if stored_rules and merged != stored_rules:
+                row.derivation_rules = merged
                 changed = True
 
         if changed:

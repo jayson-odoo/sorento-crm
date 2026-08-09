@@ -68,6 +68,7 @@ MATERIAL_TOKENS: list[tuple[str, str]] = [
     ("ABS", "abs"),  # 291 - the flyer prints it on every hand bidet and paper holder
     ("NANOGRAIN", "nanograin"),  # 96 - a named sink surface, not a generic composite
     ("GRANITE", "granite"),  # 40
+    ("MARBLE", "marble"),
 ]
 
 # Measured on the live catalog: WALL MOUNT* 513 taps, PILLAR MOUNT* 383, bare PILLAR a
@@ -178,6 +179,9 @@ EXTRA_TYPE_TOKENS: list[tuple[str, str]] = [
     ("DUSTBIN", "dustbin"),  # the flyer's page 16, by litre
     ("WASTE BIN", "dustbin"),
     ("BOTTLE TRAP", "bottle_trap"),
+    ("CABINET HINGES", "hinge"),
+    ("HINGES", "hinge"),
+    ("HINGE", "hinge"),
     ("PRESSURE PUMP", "water_pump"),
     ("BOOSTER PUMP", "water_pump"),
     ("WATER PUMP", "water_pump"),
@@ -206,6 +210,10 @@ FURNITURE_TOKENS: list[tuple[str, str]] = [
     ("TALL CABINET", "tall_cabinet"),
 ]
 
+# "2 IN 1", "3 IN 1", "4 IN 1" - how many pieces the furniture set has, and the only
+# thing separating SRTBF31513 from SRTBF11614 once both quote the same 580x460x400.
+PIECE_COUNT_RE = re.compile(r"\b(\d)\s*IN\s*1\b")
+
 # What a bin, a cistern or a tumbler holds. The flyer's page 16 sells dustbins as
 # "8 litre" and "12 litre" and nothing in the catalogue read it.
 # The bare "12L" form is where the real data is - 6L cisterns, 12L and 20L bins - but
@@ -214,6 +222,9 @@ FURNITURE_TOKENS: list[tuple[str, str]] = [
 CAPACITY_RE = re.compile(
     r"(?<![A-Z0-9])(?<![A-Z]-)(\d+(?:\.\d+)?)\s*(?:LITRES?|LITERS?|LTR|L)\b"
 )
+# The imperial twin of capacity_litre: the flyer's drinkware is sold in ounces.
+CAPACITY_OZ_RE = re.compile(r"(?<![A-Z0-9])(\d+(?:\.\d+)?)\s*OZ\b", re.IGNORECASE)
+
 # Pumps are quoted in horsepower on 48 rows and kilowatts on 14; customers say HP.
 POWER_HP_RE = re.compile(r"(\d+(?:\.\d+)?)\s*HP\b")
 
@@ -494,6 +505,10 @@ FINISH_SUFFIXES: dict[str, str] = {
 # IS the screw set. This key only
 # fires for the former, mirroring how has_drainer excludes a drainer sold as itself.
 _FIXING_SCREW_NOUN = "SCREW"
+# ...and "**W/O SCREW" says the opposite, which the bare noun read as a yes. That put
+# SRTWB890-MBL and SRTWB890 - the same basin, one with the screw and one without - on
+# identical spec profiles.
+FIXING_SCREW_RE = re.compile(r"(?<!W/O )(?<!WITHOUT )SCREW")
 
 # "S-TRAP 300MM" / "S-TRAP:250MM" / "( S- TRAP 250MM )" — the catalog is inconsistent
 # about the separator, so all three are matched. Independent of TRAP_TOKENS: a customer
@@ -557,6 +572,11 @@ def _number(raw: str) -> float | int:
     return int(value) if value.is_integer() else value
 
 
+# A single stated size, for the rows that quote one number instead of LxWxH:
+# "MARBLE TOP BASIN (800MM)". Read as the length, which is the dimension people quote.
+_SINGLE_DIM_RE = re.compile(r"(?<![A-Z0-9X])(\d{2,4})\s*MM\b")
+
+
 def _dimensions(description: str) -> tuple[list[float | int], str] | None:
     match = _DIM_RE.search(description or "")
     if not match:
@@ -565,6 +585,18 @@ def _dimensions(description: str) -> tuple[list[float | int], str] | None:
     if len(numbers) < 2:
         return None
     return numbers, match.group(0)
+
+
+def _single_dimension(description: str) -> tuple[float | int, str] | None:
+    """The one size a row states when it does not state three.
+
+    Only consulted when the LxWxH form found nothing, so a compound size is never
+    reduced to its first number.
+    """
+    match = _SINGLE_DIM_RE.search(description or "")
+    if not match:
+        return None
+    return _number(match.group(1)), match.group(0)
 
 
 class _Derivation:
@@ -938,6 +970,10 @@ def derive(
                 described[key] = number
             if len(numbers) > 3:
                 out.set("thickness", numbers[3], evidence, unit="mm")
+        else:
+            lone = _single_dimension(description)
+            if lone and lone[0] <= MAX_PLAUSIBLE_MM:
+                described["dim_length"], evidence = lone
 
         for key, column_value in stored.items():
             if column_value is not None:
@@ -1034,7 +1070,7 @@ def _apply_scope(out: "DerivedSpec", applies_when: dict[str, dict]) -> None:
 # which kept their old values and reported a successful run. The failure is invisible:
 # the job says "skipped", which is exactly what it says when there is genuinely nothing
 # to do.
-DERIVATION_VERSION = "18"
+DERIVATION_VERSION = "20"
 
 
 def _input_hash(
