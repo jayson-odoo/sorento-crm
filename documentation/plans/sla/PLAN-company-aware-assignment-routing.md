@@ -1,6 +1,14 @@
 # PLAN - Company-aware assignment routing
 
-> Status: GRILLED 2026-08-09, not started. Contract for
+> Status: IMPLEMENTED 2026-08-09 on `feat/company-aware-assignment-routing` (S0-S6).
+> Verified end to end against the dev database: a Sorento contact resolves
+> `company_source: "contact"` and gets an assignee from a phone-only body; a Mocha-tagged
+> contact gets a 404 naming the company rather than a Sorento assignee. Company switching
+> verified in a browser on a production build (Teams list, Access Agents detail).
+>
+> NOT deployed. The migration's DDL was applied to the shared dev database by hand
+> (its `alembic_version` belongs to another lineage), so a real deploy still runs
+> revision `320_company_aware_routing` normally. Contract for
 > `documentation/plans/sla/company-aware-assignment-routing-acceptance-criteria.md`.
 > Read the UAC first; every step below traces to an AC.
 

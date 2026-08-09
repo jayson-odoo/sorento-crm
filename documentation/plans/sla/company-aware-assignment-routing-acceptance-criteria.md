@@ -1,6 +1,7 @@
 # Company-aware assignment routing - acceptance criteria
 
-> Status: GRILLED 2026-08-09, decisions settled with the user, no code written yet.
+> Status: IMPLEMENTED 2026-08-09. Every AC below is covered by a test except where noted
+> in the PLAN. Not deployed.
 > Context: two companies live under the stubbed tenant - Sorento (`SRT`,
 > `00000000-0000-0000-0000-000000000001`) and Mocha (`MOCHA`,
 > `5e2c68f5-1b35-4f1d-a6e0-e904c0d8260f`). Both share one Respond.io workspace and one
