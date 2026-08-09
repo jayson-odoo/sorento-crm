@@ -266,13 +266,13 @@ def list_recommendations(
     sort: Optional[str] = Query(None),
     dir: str = Query("asc"),
     query: Optional[str] = Query(None),
-    type: Optional[str] = Query(None),  # buy | disposition | exception
+    type: Optional[str] = Query(None),  # buy | covered | disposition | exception
     budget: Optional[float] = Query(None, ge=0),  # M4 — live funding what-if
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
     """Paginated recommendations for a completed run (DataGrid). Server-side sort over
-    the allowlisted rec columns; ``type`` filter (buy|disposition|exception); ``query``
+    the allowlisted rec columns; ``type`` filter (buy|covered|disposition|exception); ``query``
     on SKU/product name. Each row carries its frozen inputs (AC-M3.11).
 
     M4: when ``budget`` is supplied, buy rows carry a LIVE ``funding_status``
@@ -283,7 +283,7 @@ def list_recommendations(
 
     where = ["rr.run_id = :rid"]
     params: dict[str, Any] = {"rid": run_id}
-    if type in ("buy", "disposition", "exception"):
+    if type in ("buy", "covered", "disposition", "exception"):
         where.append("rr.rec_type = :type")
         params["type"] = type
     if query:
@@ -378,6 +378,8 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
     inp = r["inputs"] or {}
     is_network = r["warehouse_id"] is None
     is_buy = r["rec_type"] == "buy"
+    # A covered row is priced like a buy so "buy anyway" has a figure beside it.
+    is_priced = r["rec_type"] in ("buy", "covered")
     allocation = None
     if r["allocation"]:
         allocation = [{"warehouse_code": a.get("warehouse_code"),
@@ -399,10 +401,14 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
         "warehouse_id": str(r["warehouse_id"]) if r["warehouse_id"] is not None else None,
         "is_network": is_network,
         "allocation": allocation,
-        "order_qty": _f(r["rounded_qty"]) if r["rec_type"] == "buy" else None,
+        # A ``covered`` row carries a quantity too: it is what buying anyway would cost
+        # you, and without it the choice between stock and a purchase has one side missing.
+        "order_qty": (_f(r["rounded_qty"])
+                      if r["rec_type"] in ("buy", "covered") else None),
         # Pre-rounding order qty (order-up-to − net) so the derivation popup can show
         # the raw figure BEFORE MoQ / pack-multiple rounding lands on `order_qty`.
-        "recommended_qty": _f(r["recommended_qty"]) if r["rec_type"] == "buy" else None,
+        "recommended_qty": (_f(r["recommended_qty"])
+                            if r["rec_type"] in ("buy", "covered") else None),
         "reorder_point": _f(r["reorder_point"]),
         "min_qty": inp.get("min_qty"),
         "max_qty": inp.get("max_qty"),
@@ -419,6 +425,9 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
         "supplier_reason": inp.get("supplier_reason"),
         "alternatives": inp.get("alternatives") or [],
         "is_exception": bool(inp.get("is_exception")),
+        # --- covered rows: the two numbers the stock-or-buy choice turns on ---
+        "covered_committed": inp.get("covered_committed"),
+        "covered_available": inp.get("covered_available"),
         "disposition_action": inp.get("disposition_action"),
         "transfer_flag": inp.get("transfer_flag"),
         # --- frozen derivation inputs (drive the plain-language explanation popup) ---
@@ -442,13 +451,13 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
         # buy draws from the budget, always in `base_currency`. They are deliberately in
         # different money, so both are labelled: an unlabelled 45 beside an unlabelled 1980
         # reads as an arithmetic error.
-        "unit_cost": _f(r["unit_cost"]) if is_buy else None,
-        "currency": (r["currency"] if is_buy else None),
-        "cash_impact": _f(r["cash_impact"]) if is_buy else None,
-        "base_currency": BASE_CURRENCY if is_buy else None,
-        "rate_to_base": _f(r["rate_to_base"]) if is_buy else None,
+        "unit_cost": _f(r["unit_cost"]) if is_priced else None,
+        "currency": (r["currency"] if is_priced else None),
+        "cash_impact": _f(r["cash_impact"]) if is_priced else None,
+        "base_currency": BASE_CURRENCY if is_priced else None,
+        "rate_to_base": _f(r["rate_to_base"]) if is_priced else None,
         "rate_as_of": (r["rate_as_of"].isoformat()
-                       if is_buy and r["rate_as_of"] else None),
+                       if is_priced and r["rate_as_of"] else None),
         # Why there is no cash figure, when there is none: `no_cost` (nobody has ever
         # priced it) and `no_rate` (priced, in money we cannot convert) send the buyer to
         # two different screens, so "needs cost" alone would send half of them to the

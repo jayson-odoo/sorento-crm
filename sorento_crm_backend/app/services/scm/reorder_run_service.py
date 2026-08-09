@@ -631,6 +631,48 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
     return recs
 
 
+def _covered_rec(run_id: str, pool_id: str, prows: list[dict], anchor: dict, agg_cell: dict,
+                 *, moq: Optional[float] = None,
+                 order_multiple: Optional[float] = None) -> Optional[ReorderRecommendation]:
+    """A demand line the pool's own stock covers is a SUGGESTION, never a silent omission.
+
+    An order-inquiry line reaching the plan has already been through CS: they decided this
+    quantity needs buying, having looked at what the branch holds. The engine finding stock
+    in the pool is worth SAYING - "you have 5 at BRW-BB, consider using those" - but it is
+    not the engine's decision to make. Dropping the row means the system quietly chose "use
+    stock" on the planner's behalf, and a CS oversight then has nowhere to surface.
+
+    So: no trigger, but committed demand exists -> a ``covered`` row carrying the quantity
+    that WOULD be bought (the outstanding commitment, rounded to the supplier's terms) plus
+    what the pool holds. The planner picks: use stock, or buy anyway.
+
+    ``None`` when the pool has no committed demand at all - that is genuinely nothing to
+    say, not a decision withheld.
+    """
+    committed = sum(float(r["committed"] or 0.0) for r in prows)
+    if committed <= 0:
+        return None
+    available = sum(float(r["quantity_on_hand"] or 0.0) + float(r["on_order"] or 0.0)
+                    for r in prows)
+    rounded = eng.round_order_qty(committed, moq, order_multiple)
+    cell = dict(agg_cell)
+    # The row's own facts, so the grid states the trade-off without re-deriving it from
+    # figures that may have moved since the run froze.
+    cell["covered_committed"] = committed
+    cell["covered_available"] = available
+    return _build_rec(
+        run_id, "covered", anchor, cell, warehouse_id=pool_id,
+        order_qty=committed, rounded=rounded,
+        reason_label=(f"{_qty_label(available)} available in this pool covers "
+                      f"{_qty_label(committed)} committed"),
+    )
+
+
+def _qty_label(value: float) -> str:
+    """Whole numbers read as whole numbers; a fractional quantity keeps its fraction."""
+    return str(int(value)) if float(value).is_integer() else f"{value:g}"
+
+
 def _emit_pool(db: Session, run_id: str, pool_id: str,
                members: list[tuple[dict, dict]], policies: list[dict], cands: list[dict],
                flags: dict, wh_meta: dict) -> list[ReorderRecommendation]:
@@ -707,6 +749,11 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
                 run_id, "exception", anchor, agg_cell, warehouse_id=pool_id,
                 order_qty=None, rounded=None,
                 reason_label="no linked supplier - cannot source this pool reorder"))
+    else:
+        covered = _covered_rec(run_id, pool_id, prows, anchor, agg_cell,
+                               moq=moq, order_multiple=order_multiple)
+        if covered is not None:
+            recs.append(covered)
 
     # Disposition stays per location: idle stock is a fact about one bin.
     for r, cell in zip(prows, cells):
@@ -1042,9 +1089,12 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
     unit_cost = c.get("unit_cost")
     rate = c.get("rate_to_base")
     rate_as_of = c.get("rate_as_of")
+    # A ``covered`` row is priced too, because "buy anyway" needs a figure to weigh against
+    # using the stock. It is NOT a purchase, so it never reaches the run's cash total or the
+    # Buy count - both of those select rec_type='buy' explicitly.
     cash_impact = (_cash_impact_in_base(rounded, unit_cost, c.get("currency"),
                                         rate, rate_as_of)
-                   if rec_type == "buy" else None)
+                   if rec_type in ("buy", "covered") else None)
 
     inputs = {
         "reason": reason,
@@ -1083,6 +1133,9 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         "disposition_action": disposition_action,
         "transfer_flag": transfer_flag,
         "is_exception": rec_type == "exception",
+        # Only on a ``covered`` row: the two numbers the choice turns on.
+        "covered_committed": _r(c.get("covered_committed")),
+        "covered_available": _r(c.get("covered_available")),
         # frozen display fields (no re-resolution / UUID leak at read time)
         "sku": row["product_code"],
         "product_name": row["product_name"],
@@ -1513,8 +1566,13 @@ def _summarise(recs: list[ReorderRecommendation]) -> dict:
     disposition = sum(1 for r in recs if r.rec_type == "disposition")
     exceptions = sum(1 for r in recs if r.rec_type == "exception")
     total_cash = float(sum(float(r.cash_impact or 0.0) for r in recs if r.rec_type == "buy"))
+    # Demand the pool's stock covers. Counted separately and never folded into `buy`: it is
+    # a decision the planner has not taken yet, and adding it to the Buy tile would report
+    # money as committed that nobody has agreed to spend.
+    covered = sum(1 for r in recs if r.rec_type == "covered")
     return {
         "buy": buy,
+        "covered": covered,
         "disposition": disposition,
         "exceptions": exceptions,
         "total_cash_impact": round(total_cash, 2),
