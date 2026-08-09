@@ -427,6 +427,9 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
         "is_exception": bool(inp.get("is_exception")),
         # --- covered rows: the two numbers the stock-or-buy choice turns on ---
         "covered_committed": inp.get("covered_committed"),
+        # Part of this row's demand arrived with no stated location, so the reader can
+        # weigh it accordingly rather than assuming every unit was located by CS.
+        "unlocated_demand": inp.get("unlocated_demand"),
         "covered_available": inp.get("covered_available"),
         "disposition_action": inp.get("disposition_action"),
         "transfer_flag": inp.get("transfer_flag"),

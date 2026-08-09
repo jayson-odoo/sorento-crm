@@ -608,6 +608,8 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
     for r in rows:
         by_product.setdefault(str(r["product_id"]), []).append(r)
 
+    _apply_unlocated_demand(db, by_product)
+
     for pid, prows in by_product.items():
         cands = eng.load_supplier_candidates(db, pid, rates=rates)
         computed: list[dict] = []
@@ -629,6 +631,63 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
                 recs.extend(_emit_pool(db, run_id, pool_id, members, policies, cands,
                                        flags, wh_meta))
     return recs
+
+
+def _unlocated_demand_map(db: Session, product_ids: list[str]) -> dict[str, float]:
+    """``{product_id: qty}`` of open demand whose sales-order line names no warehouse.
+
+    97% of the customer's open lines are like this. Grouped away by ``scm.committed_v``
+    under a NULL key that ``scm.net_position_v`` then fails to join to itself (``NULL =
+    NULL`` is not true), so this demand was netted against nothing, anywhere, and the
+    products carrying it simply never appeared in a plan.
+    """
+    if not product_ids:
+        return {}
+    co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="uld")
+    rows = db.execute(text(f"""
+        SELECT sol.product_id::text AS pid,
+               SUM(GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
+                            - COALESCE(sol.qty_delivered, 0), 0)) AS qty
+        FROM sales_order_lines sol
+        JOIN sales_orders so ON so.id = sol.sales_order_id
+        WHERE sol.warehouse_id IS NULL
+          AND so.status = 'open' AND sol.line_status = 'open'
+          AND sol.purchasing_status <> 'covered'
+          AND sol.product_id::text = ANY(:pids)
+          {("AND " + co) if co else ""}
+        GROUP BY sol.product_id
+    """), {"pids": [str(p) for p in product_ids], **co_params}).fetchall()
+    return {str(r[0]): float(r[1] or 0.0) for r in rows if float(r[1] or 0.0) > 0}
+
+
+def _apply_unlocated_demand(db: Session, by_product: dict[str, list[dict]]) -> None:
+    """Land each product's unlocated demand on the location that would actually ship it.
+
+    > "all SO line should have warehouse one, no warehouse we can just put it under net"
+
+    Netting it nowhere is what made 1,130,402 units invisible. Netting it everywhere would
+    double-count it against every pool. So it lands on ONE row per product: the location
+    holding the most of that item, which is where the goods would come from, and which is
+    the row a planner recognises. Ties break on warehouse code so a re-run cannot move the
+    demand around, and a product with stock nowhere still gets a row rather than being
+    dropped for a second reason.
+
+    The rows are mutated in place, so everything downstream - netting, trigger, order size,
+    the covered-by-stock suggestion - sees it as ordinary demand at that location. The
+    quantity is stamped on the row so the plan can say where it came from.
+    """
+    unlocated = _unlocated_demand_map(db, list(by_product.keys()))
+    if not unlocated:
+        return
+    for pid, qty in unlocated.items():
+        prows = by_product.get(pid)
+        if not prows:
+            continue
+        target = max(prows, key=lambda r: (float(r["quantity_on_hand"] or 0.0),
+                                           str(r["warehouse_code"] or "")))
+        target["committed"] = float(target["committed"] or 0.0) + qty
+        target["net_position"] = float(target["net_position"] or 0.0) - qty
+        target["unlocated_added"] = qty
 
 
 def _covered_rec(run_id: str, pool_id: str, prows: list[dict], anchor: dict, agg_cell: dict,
@@ -904,6 +963,17 @@ def _emit_cell(run_id: str, row: dict, c: dict,
                                   warehouse_id=str(row["warehouse_id"]),
                                   order_qty=None, rounded=None,
                                   reason_label="no linked supplier — cannot source this reorder"))
+    elif not disp:
+        # Same rule as the pool path: stock covering the demand is a SUGGESTION, and
+        # writing nothing here would silently decide "use stock" for the single-location
+        # case, which is most of the catalogue. A cell already destined for disposition is
+        # excluded - "buy more of this dead stock" is the contradiction the gate above
+        # exists to prevent, and offering it as a choice is the same contradiction.
+        covered = _covered_rec(run_id, str(row["warehouse_id"]), [row], row, c,
+                               moq=_fnum(c.get("moq")),
+                               order_multiple=_fnum(c.get("order_multiple")))
+        if covered is not None:
+            out.append(covered)
 
     # disposition (dead / overstock)
     if disp:
@@ -1136,6 +1206,10 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         # Only on a ``covered`` row: the two numbers the choice turns on.
         "covered_committed": _r(c.get("covered_committed")),
         "covered_available": _r(c.get("covered_available")),
+        # How much of this row's demand arrived with no stated location. A planner looking
+        # at a buy against BRW deserves to know part of it is demand nobody located, since
+        # that is the part most likely to be wrong.
+        "unlocated_demand": _r(row.get("unlocated_added")),
         # frozen display fields (no re-resolution / UUID leak at read time)
         "sku": row["product_code"],
         "product_name": row["product_name"],
