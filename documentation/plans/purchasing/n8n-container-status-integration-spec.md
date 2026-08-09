@@ -209,12 +209,22 @@ crm_resource_attachments_list
   space_id   = <workspace space_id>
 ```
 
-**That is the whole call. Do not resolve a document type first.** `contact_id` is itself a valid
-narrowing filter, and the backend answers a contact-scoped call with (is_direct_access types) UNION
-(the types granted to this contact) - today 9 baseline files plus that contact's grants, so 10 rows
-for someone holding Container Status. Read the file names and pick. A type filter is available
-(`attachment_type_code` by name, `attachment_type_id` by UUID) but is an optimisation, never a
-prerequisite.
+**Pass the document class whenever one resolved.** The person named ONE document, so
+`attachment_type_code: "Container Status"` is what returns that one file. The name, not the UUID:
+the tool takes the class by name, case-insensitive, so nothing has to resolve a type id and there is
+no id to go stale. (`attachment_type_id` still takes a UUID if a caller holds one. It is SINGULAR -
+there is no `attachment_type_ids`.)
+
+**`contact_id` alone is the FALLBACK, for when no class resolved** - "what documents do you have for
+me". It is a valid narrowing filter in its own right, because the backend bounds a contact-scoped
+call to (is_direct_access types) UNION (the types granted to this contact): 9 baseline files plus
+grants, so 10 rows for someone holding Container Status. Before this it had no narrower and returned
+the empty page, which made that question unanswerable.
+
+It is NOT a substitute for naming the class. "Send me the container status list" answered with a
+contact-only call returns 10 files, and a renderer that renders what it is given lists all ten - the
+right document buried in a directory listing, reading as though the question was ignored. Precision
+is the type filter's job; the contact fallback only stops a no-class request dead-ending.
 
 Three things to know, each of which has already caused a wrong answer:
 
@@ -232,8 +242,8 @@ Three things to know, each of which has already caused a wrong answer:
    There is no plural form and no array. An unknown key is dropped, which leaves the call with no
    narrower at all, which trips (1). Tell a short-circuit from a real empty result by
    `fallback_used`: a real backend call carries it, the short-circuit does not.
-   `attachment_type_code: "Container Status"` is the by-name equivalent. Passing only `contact_id`
-   avoids this class of mistake entirely, which is why it is the recommended call.
+   `attachment_type_code: "Container Status"` is the by-name equivalent and avoids the whole class
+   of mistake - no UUID to resolve, no plural to get wrong.
 4. **The type filter alone is not enough.** `visible_type_ids` widens the baseline to
    (is_direct_access types) UNION (types granted to this contact). Container Status is NOT
    is_direct_access, so an ungranted contact gets 0 rows even with the correct parameter. An
