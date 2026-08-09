@@ -131,6 +131,29 @@ def test_same_code_and_tier_in_both_companies_coexist(db):
     assert len(_rows(db, agent_id, mocha)) == 1
 
 
+def test_listing_does_not_leak_the_other_companys_team_sets(db):
+    """The agent detail must show ONLY the active company's team sets.
+
+    The scope filter alone does not cover this: it is applied with
+    with_loader_criteria, which constrains ENTITIES, and this listing selects bare
+    columns (AgentTeam.code, .team_id, ...). A column-only select therefore slips
+    past the filter completely, which is how Sorento's 'purchasing' ladder showed
+    up while the switcher said Mocha.
+    """
+    mocha = _mocha(db)
+    agent_id = _agent(db)
+    sorento_team = _team(db, "ZZT Purchasing Executive", SORENTO)
+    _link(db, agent_id, sorento_team, SORENTO, "zzt_purchasing", 1)
+
+    set_company_scope(db, frozenset({mocha}))
+    rows = AccessAgentService(db).list_agent_teams_with_round_robin_state(agent_id)
+    assert rows == [], f"leaked another company's team sets: {rows}"
+
+    set_company_scope(db, frozenset({SORENTO}))
+    rows = AccessAgentService(db).list_agent_teams_with_round_robin_state(agent_id)
+    assert [r["code"] for r in rows] == ["zzt_purchasing"]
+
+
 def test_tier1_invariant_does_not_fire_across_companies(db):
     """AC-H4 - one person can be tier 1 for Sorento AND tier 1 for Mocha.
 
