@@ -1797,6 +1797,12 @@ class ComplaintService:
 
         complaint = self.get_complaint(complaint_id)
         update_data = complaint_data.model_dump(exclude_unset=True)
+        # Same handling as update_complaint: `product_lines` dumps to a list of plain
+        # dicts, and the setattr loop below would assign them straight onto the ORM
+        # relationship ("'dict' object has no attribute '_sa_instance_state'"). The
+        # edit page posts the whole complaint, lines included, so Update & Reply 500'd
+        # there for any complaint with a product row.
+        explicit_lines = update_data.pop("product_lines", None)
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else complaint.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else complaint.space_id
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
@@ -1821,6 +1827,10 @@ class ComplaintService:
 
         for key, value in update_data.items():
             setattr(complaint, key, value)
+        if explicit_lines is not None:
+            self._apply_explicit_product_lines(complaint, explicit_lines)
+        elif "product_code" in update_data:
+            self._populate_lines_from_legacy_csv(complaint)
         self.db.flush()
 
         complaint.technical_team_response = stored_body
