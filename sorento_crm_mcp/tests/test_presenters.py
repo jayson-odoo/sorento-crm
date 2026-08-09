@@ -476,3 +476,105 @@ def test_render_carries_the_denial_reason_through():
 def test_render_omits_field_access_when_nothing_was_denied():
     out = env("crm_incoming_stock_list", {"data": [_incoming_row()]})
     assert "field_access" not in out
+
+
+def test_render_fields_carry_the_crm_field_key():
+    """A consumer must project on the key, not on the label.
+
+    Two label vocabularies for the same field already disagree - render says
+    "ETC", `field_access.FIELD_LABELS` says "ETC (estimated time of container
+    closing)" - so label matching means picking one and being unable to
+    cross-check the other. The key is stable under any label rename.
+    """
+    out = env("crm_incoming_stock_list", {
+        "data": [_incoming_row(etc_date="2026-06-30", coa_permit_no="COA-9")],
+    })
+
+    by_key = {f["key"]: f for f in out["items"][0]["fields"] if "key" in f}
+    assert by_key["estimated_arrival_date"]["value"] == "2026-07-08"
+    assert by_key["etc_date"]["label"] == "ETC"
+    assert by_key["coa_permit_no"]["value"] == "COA-9"
+    # Identity fields are keyed too - they are just as answerable.
+    assert by_key["product_code"]["value"] == "SRTWB7109"
+    assert by_key["shipping_container_number"]["value"] == "SEGU4008631"
+    assert by_key["remaining_incoming_quantity"]["value"] == 12
+    # Every field of this result type carries one; none is null.
+    assert all(f.get("key") for f in out["items"][0]["fields"])
+
+
+def test_render_key_matches_the_denied_vocabulary():
+    """Absent-and-denied vs absent-and-not-reached is decided by comparing the
+    same token on both sides, so the two must be the same token.
+    """
+    out = env("crm_incoming_stock_list", {
+        "data": [_incoming_row()],
+        "field_access": {
+            "denied": [
+                {"field": "gatepass_date", "agent_code": "a", "outcome": "field_not_allowed"}
+            ],
+            "note": "Absent does NOT mean the value is unknown or not yet reached.",
+        },
+    })
+
+    keys = {f.get("key") for f in out["items"][0]["fields"]}
+    denied = {d["field"] for d in out["field_access"]["denied"]}
+    assert "gatepass_date" in denied
+    assert "gatepass_date" not in keys, "denied is absent from fields, by design"
+    # ...and a field that is simply not reached is in neither set, which is the
+    # third branch: "not recorded", never "I can't share that".
+    assert "collection_date" not in keys and "collection_date" not in denied
+
+
+def test_render_stock_fields_carry_the_key():
+    """A cross-domain stock/incoming block is sorted by quantity and ETA. Both
+    branches matched on display text, and both were dead: `estimated_arrival_date`
+    was relabelled `ETA`, and an incoming row labels its quantity `Incoming
+    Quantity`, not `Quantity On Hand`. Sorting on the key survives both.
+    """
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [{"product_code": "SRTWT107", "product_name": "Basin",
+                  "system_location": "BRW", "system_location_description": "BUKIT RAJA",
+                  "quantity_on_hand": 36}],
+    })
+    by_key = {f["key"]: f["value"] for f in out["items"][0]["fields"] if "key" in f}
+    assert by_key["quantity_on_hand"] == 36
+    assert by_key["product_code"] == "SRTWT107"
+    assert by_key["warehouse"] == "BUKIT RAJA"
+    assert by_key["system_location"] == "BRW"
+
+
+def test_render_stock_keeps_the_key_on_the_placeholder_value():
+    """Warehouse / location / quantity always render, "—" when absent, so the row
+    shape never varies. The key rides along, so a consumer that projects on key
+    still has to expect a non-numeric value there.
+    """
+    out = env("crm_inventory_stock_balance_list", {"data": [{"product_code": "X"}]})
+    by_key = {f["key"]: f["value"] for f in out["items"][0]["fields"] if "key" in f}
+    assert by_key["quantity_on_hand"] == "—"
+    assert by_key["warehouse"] == "—"
+
+
+def test_render_by_product_fields_carry_the_key():
+    out = env("crm_incoming_stock_by_product", {
+        "data": [{
+            "product_code": "SRTWB7109",
+            "product_name": "Basin Mixer",
+            "shipments": [{
+                "shipping_container_number": "SEGU4008631",
+                "estimated_arrival_date": "2026-07-08",
+                "remaining_incoming_quantity": 12,
+                "warehouse_allocations": [{"warehouse_code": "BRW", "allocated_quantity": 12}],
+            }],
+        }],
+    })
+    by_key = {f["key"]: f["value"] for f in out["items"][0]["fields"] if "key" in f}
+    assert by_key["product_code"] == "SRTWB7109"
+    assert by_key["estimated_arrival_date"] == "2026-07-08"
+
+
+def test_render_omits_key_where_the_presenter_has_no_source_key():
+    """`key` is omitted, not emitted as null, so a consumer can test for it."""
+    out = env("crm_order_management_orders_list", {
+        "data": [{"order_number": "202606-1622", "debtor_name": "HANLIM"}],
+    })
+    assert out["items"][0]["fields"][0] == {"label": "Order Number", "value": "202606-1622"}
