@@ -176,6 +176,44 @@ def seed_reference_data() -> None:
             db.close()
 
 
+# This project names revisions descriptively ("313_purchase_request_pic") rather
+# than with alembic's 12-char hashes, and plenty of them run past alembic's own
+# ``version_num VARCHAR(32)``. The long-lived databases were widened at some point
+# (production is varchar(255)), so nobody noticed - but a FRESH database lets
+# alembic create the table at 32 and the stamp then dies:
+#
+#   StringDataRightTruncation: value too long for type character varying(32)
+#   [SQL: INSERT INTO alembic_version (version_num) VALUES ('...')]
+#
+# Create the table at the real width BEFORE alembic can create it at 32, and widen
+# an existing narrow one. Keeps CI, disaster recovery and a genuine incremental
+# ``upgrade head`` all consistent with production.
+ALEMBIC_VERSION_NUM_WIDTH = 255
+
+
+def ensure_alembic_version_width() -> None:
+    """Make ``alembic_version.version_num`` wide enough for our revision ids."""
+    from sqlalchemy import text
+
+    from app.database import engine
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS alembic_version ("
+                f"version_num VARCHAR({ALEMBIC_VERSION_NUM_WIDTH}) NOT NULL "
+                "CONSTRAINT alembic_version_pkc PRIMARY KEY)"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE alembic_version ALTER COLUMN version_num "
+                f"TYPE VARCHAR({ALEMBIC_VERSION_NUM_WIDTH})"
+            )
+        )
+    log.info("alembic_version.version_num at varchar(%s)", ALEMBIC_VERSION_NUM_WIDTH)
+
+
 def stamp_head() -> None:
     """Mark the database as being at the latest revision.
 
@@ -186,6 +224,8 @@ def stamp_head() -> None:
     from alembic.config import Config
 
     from pathlib import Path
+
+    ensure_alembic_version_width()
 
     cfg = Config(str(Path(__file__).resolve().parent.parent / "alembic.ini"))
     command.stamp(cfg, "head")

@@ -146,6 +146,18 @@ def _linked_entities_from_db(
                 matched_by="manual_or_n8n",
             )
         )
+    # Without this a certificate PDF reads as "unlinked" in the upload drawer,
+    # even though filing it created the register row - which is the whole point
+    # of that upload.
+    for c in groups.get("linked_certificates") or []:
+        out.append(
+            LinkedEntity(
+                entity_type="certificate",
+                entity_id=str(c.get("id", "")),
+                display_name=str(c.get("name") or c.get("id", "") or "certificate"),
+                matched_by="manual_or_n8n",
+            )
+        )
     return out
 
 
@@ -255,13 +267,18 @@ def get_upload_activity(
     user_id = str(current_user["id"])
     cutoff = since or (datetime.utcnow() - timedelta(days=7))
 
-    # Stock List uploads are background reference-data replacements (stock page
-    # import), not user file-management activity — n8n never "links" them, so
-    # they'd sit in the drawer stuck on "Processing" forever. Exclude the type.
+    # Types n8n does not intake never get a webhook reply, so their rows would
+    # sit on "Processing" forever - the drawer cannot tell "still working" from
+    # "never coming". Skip them.
+    #
+    # This was previously a hardcoded `type_name IN ('Stock List','Stock_List')`.
+    # Same intent, but the property belongs to the TYPE: an admin can now retire
+    # a type from n8n without a code change, and the same flag stops the pointless
+    # webhook at source (migration 318).
     excluded_type_ids = [
         str(t.id)
         for t in db.query(AttachmentType.id)
-        .filter(AttachmentType.type_name.in_(("Stock List", "Stock_List")))
+        .filter(AttachmentType.triggers_n8n_webhook.is_(False))
         .all()
     ]
 

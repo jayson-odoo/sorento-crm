@@ -184,6 +184,14 @@ scheduler = None
 async def startup_event():
     """Startup event: initialize scheduler and audit listeners."""
     global scheduler
+    # Build the storage client once at boot instead of letting the cost land on
+    # the first request this worker happens to serve (see storage_router).
+    try:
+        from app.services.storage_router import warm_backends
+
+        warm_backends()
+    except Exception as e:  # noqa: BLE001 — never block boot on storage config
+        logging.warning("Storage backend warm-up failed: %s", e)
     try:
         from app.services.audit_service import register_audit_listeners
         register_audit_listeners()
@@ -202,6 +210,15 @@ async def startup_event():
         logging.info("Product spec listeners registered")
     except Exception as e:
         logging.error(f"Failed to register product spec listeners: {str(e)}", exc_info=True)
+    try:
+        # The status engine ships with an empty registry; every entity arrives from
+        # a module. `inbound_shipment` is the first adopter in this repo, and it
+        # registers a CHECKPOINT TIMELINE rather than a single-status graph - see
+        # the module docstring for why there is no `status_id` column.
+        from app.status_engine.entities.inbound_shipment import register as register_inbound_shipment_status
+        register_inbound_shipment_status()
+    except Exception as e:
+        logging.error(f"Failed to register status entities: {str(e)}", exc_info=True)
     # Register task handlers unconditionally so manual "run now" works on API
     # containers even when scheduler ticks are gated to the worker container.
     try:
@@ -239,6 +256,20 @@ async def startup_event():
             _db.close()
     except Exception as e:
         logging.error(f"Failed to sync MCP tool catalog at startup: {str(e)}", exc_info=True)
+
+    try:
+        # Seeds a denied agent_field_access row per gated field, so an admin opens
+        # the screen to a complete checklist. A gate whose fields never appear
+        # anywhere to tick is indistinguishable from a broken feature.
+        from app.database import SessionLocal
+        from app.services import container_status_bootstrap
+        _db = SessionLocal()
+        try:
+            container_status_bootstrap.run(_db)
+        finally:
+            _db.close()
+    except Exception as e:
+        logging.error(f"Container status bootstrap failed: {str(e)}", exc_info=True)
 
     try:
         from app.database import SessionLocal

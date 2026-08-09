@@ -1836,22 +1836,74 @@ class PickingHeaderService:
         ).first()
         if not grn:
             raise handle_not_found("GRN", grn_id)
+        self.attach_provenance_labels(grn)
         return grn
-    
-    def create_grn(self, grn_data: PickingHeaderCreate, created_by: str | None = None):
-        """Create a new GRN with lines."""
+
+    def attach_provenance_labels(self, grn: PickingHeader) -> None:
+        """Stamp human-readable provenance onto the instance for the response.
+
+        The UI must never print a UUID, so the stored ``created_by`` /
+        ``import_job_id`` are resolved here to a person and a file name. Attributes
+        are set on the instance (not columns) and Pydantic reads them off the ORM
+        object; they die with the instance, so nothing can accidentally persist.
+
+        Best-effort: a deleted user or a pruned job leaves the label None rather
+        than failing the GRN read.
+        """
+        grn.created_by_label = None  # type: ignore[attr-defined]
+        grn.import_filename = None  # type: ignore[attr-defined]
+        try:
+            if getattr(grn, "created_by", None):
+                from app.models.user import User
+
+                row = (
+                    self.db.query(User.name, User.email)
+                    .filter(User.id == str(grn.created_by))
+                    .first()
+                )
+                if row is not None:
+                    grn.created_by_label = row[0] or row[1]  # type: ignore[attr-defined]
+            if getattr(grn, "import_job_id", None):
+                from app.models.job import ImportJob
+
+                job_row = (
+                    self.db.query(ImportJob.filename)
+                    .filter(ImportJob.id == str(grn.import_job_id))
+                    .first()
+                )
+                if job_row is not None:
+                    grn.import_filename = job_row[0]  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 - a label is not worth failing the read
+            logger.exception("GRN provenance label lookup failed for %s", grn.id)
+
+    def create_grn(
+        self,
+        grn_data: PickingHeaderCreate,
+        created_by: str | None = None,
+        source_system: str = "ui",
+    ):
+        """Create a new GRN with lines.
+
+        ``source_system`` says which surface wrote it - ``'ui'`` for a staff create,
+        ``'external_api'`` for the n8n / AutoCount ingest. Without it the row cannot
+        distinguish a person from an integration, which is the case that made a
+        wrongly-companied GRN untraceable (the external path leaves no import job
+        and no audit row to bracket).
+        """
         existing = self.db.query(PickingHeader).filter(
             PickingHeader.picking_number == grn_data.picking_number
         ).first()
         if existing:
             raise handle_conflict("Picking number already exists.")
-        
+
         # Create GRN header and lines in transaction
         grn_dict = grn_data.model_dump(exclude={"picking_lines"})
         grn_dict["picking_type"] = "goods_received"
         if not grn_dict.get("picked_by_user_id"):
             grn_dict["picked_by_user_id"] = str(created_by) if created_by else None
-        
+        grn_dict["created_by"] = str(created_by) if created_by else None
+        grn_dict["source_system"] = source_system
+
         grn = PickingHeader(**grn_dict)
         self.db.add(grn)
         self.db.flush()
@@ -2008,8 +2060,27 @@ class PickingHeaderService:
             PickingHeader.picking_type == "goods_received",
         ).first()
 
-    def upsert_grn_header_for_import(self, picking_number: str, spo_number: Optional[str], picking_date: date):
-        """Create or update GRN header by picking_number (idempotent). Returns the header."""
+    def upsert_grn_header_for_import(
+        self,
+        picking_number: str,
+        spo_number: Optional[str],
+        picking_date: date,
+        *,
+        created_by: Optional[str] = None,
+        import_job_id: Optional[str] = None,
+    ) -> tuple[PickingHeader, bool]:
+        """Create or update a GRN header by picking_number (idempotent).
+
+        Returns ``(header, created)``. The caller NEEDS that flag: it used to
+        report every success as ``created``, so the last person to re-run a file
+        looked like the author of every GRN in it - which is exactly what made
+        "who created this GRN" unanswerable.
+
+        Provenance (``created_by`` / ``import_job_id`` / ``source_system``) is
+        written ONLY on insert. A re-import overwrites the mutable fields but must
+        not rewrite authorship, or the answer is lost the first time someone
+        re-uploads the same spreadsheet.
+        """
         existing = self.get_grn_by_picking_number(picking_number)
         if existing:
             existing.spo_number = spo_number
@@ -2017,7 +2088,7 @@ class PickingHeaderService:
             existing.picking_status = "approved"
             self.db.commit()
             self.db.refresh(existing)
-            return existing
+            return existing, False
         grn = PickingHeader(
             picking_number=picking_number,
             spo_number=spo_number,
@@ -2025,11 +2096,14 @@ class PickingHeaderService:
             picking_date=picking_date,
             picking_status="approved",
             inspection_status="pending",
+            created_by=created_by,
+            source_system="import",
+            import_job_id=import_job_id,
         )
         self.db.add(grn)
         self.db.commit()
         self.db.refresh(grn)
-        return grn
+        return grn, True
 
     def upsert_grn_line_for_import(
         self,
@@ -2308,7 +2382,23 @@ class StockInquiryService:
         from app.services.entity_attachment_service import EntityAttachmentService
         self.entity_attachment_service = EntityAttachmentService(db)
 
-    def _get_team_user_ids_for_agent_code(self, agent_code: str) -> List[str]:
+    def _company_for_stock_inquiry(self, inquiry_id: str) -> str:
+        """AC-E4: a stock inquiry routes to its contact's company, else the default.
+
+        ``stock_inquiries`` has no company column, so the submitter contact is the
+        only signal.
+        """
+        from app.models.procurement import StockInquiry
+        from app.services.company_routing_service import company_for_contact
+
+        row = (
+            self.db.query(StockInquiry.contact_id)
+            .filter(StockInquiry.id == str(inquiry_id))
+            .first()
+        )
+        return company_for_contact(self.db, contact_id=str(row[0]) if row and row[0] else None)
+
+    def _get_team_user_ids_for_agent_code(self, agent_code: str, *, company_id: str) -> List[str]:
         """Return user IDs of all teams assigned to the access agent with the given code."""
         from app.services.user_service import AccessAgentService
         from app.models.access import AgentTeam, TeamMember
@@ -2328,7 +2418,7 @@ class StockInquiryService:
         return [str(r[0]) for r in rows if r and r[0]]
 
     def _get_team_user_ids_for_agent_team_assignment(
-        self, agent_code: str, team_assignment_code: str
+        self, agent_code: str, team_assignment_code: str, *, company_id: str
     ) -> List[str]:
         """Return user IDs of the team assigned to the agent with the given team assignment code (e.g. project_sales, purchasing)."""
         from app.services.user_service import AccessAgentService
@@ -2339,7 +2429,7 @@ class StockInquiryService:
         if not agent_id:
             logger.debug("No access agent found for code=%s", agent_code)
             return []
-        team_id = agent_svc.get_team_id_by_code(agent_id, team_assignment_code)
+        team_id = agent_svc.get_team_id_by_code(agent_id, team_assignment_code, company_id=company_id)
         if not team_id:
             logger.debug(
                 "No team assignment found for agent %s with code=%s",
@@ -2351,7 +2441,7 @@ class StockInquiryService:
         return [str(r[0]) for r in rows if r and r[0]]
 
     def _get_team_user_ids_for_agent_tier(
-        self, agent_code: str, tier: int
+        self, agent_code: str, tier: int, *, company_id: str
     ) -> List[str]:
         """Return user IDs of the team assigned to the agent with the given tier (1=initial, 2/3=escalation)."""
         from app.services.user_service import AccessAgentService
@@ -2362,7 +2452,7 @@ class StockInquiryService:
         if not agent_id:
             logger.debug("No access agent found for code=%s", agent_code)
             return []
-        team_id = agent_svc.get_team_id_by_tier(agent_id, tier)
+        team_id = agent_svc.get_team_id_by_tier(agent_id, tier, company_id=company_id)
         if not team_id:
             logger.debug(
                 "No team assignment found for agent %s with tier=%s",
@@ -2373,10 +2463,10 @@ class StockInquiryService:
         rows = self.db.query(TeamMember.user_id).filter(TeamMember.team_id == team_id).all()
         return [str(r[0]) for r in rows if r and r[0]]
 
-    def _get_team_user_ids_for_agent_tier_safe(self, agent_code: str, tier: int) -> List[str]:
+    def _get_team_user_ids_for_agent_tier_safe(self, agent_code: str, tier: int, *, company_id: str) -> List[str]:
         """Tier lookup; returns [] if multiple teams share the same tier (ambiguous) or lookup fails."""
         try:
-            return self._get_team_user_ids_for_agent_tier(agent_code, tier)
+            return self._get_team_user_ids_for_agent_tier(agent_code, tier, company_id=company_id)
         except HTTPException:
             logger.warning(
                 "Tier %s for agent %s is ambiguous or invalid (e.g. multiple team sets at tier %s). "
@@ -2455,18 +2545,20 @@ class StockInquiryService:
         from app.services.notification_service import NotificationService
         from datetime import datetime
 
+        company_id = self._company_for_stock_inquiry(inquiry_id)
+
         if team_assignment_code:
             if team_assignment_code == "project_sales":
                 # Prefer explicit team assignment code over tier 1: multiple tier-1 rows (e.g. purchasing +
                 # project_sales + customer_service) make tier lookup raise conflict or pick the wrong team.
                 user_ids = (
-                    self._get_team_user_ids_for_agent_team_assignment(agent_code, "project_sales")
-                    or self._get_team_user_ids_for_agent_tier_safe(agent_code, 1)
+                    self._get_team_user_ids_for_agent_team_assignment(agent_code, "project_sales", company_id=company_id)
+                    or self._get_team_user_ids_for_agent_tier_safe(agent_code, 1, company_id=company_id)
                 )
             else:
-                user_ids = self._get_team_user_ids_for_agent_team_assignment(agent_code, team_assignment_code)
+                user_ids = self._get_team_user_ids_for_agent_team_assignment(agent_code, team_assignment_code, company_id=company_id)
         else:
-            user_ids = self._get_team_user_ids_for_agent_code(agent_code)
+            user_ids = self._get_team_user_ids_for_agent_code(agent_code, company_id=company_id)
         if not user_ids:
             logger.warning(
                 "No team members found for agent code '%s'%s. Assign a team under Team Assignments (Tier 1 or code project_sales).",
@@ -3745,14 +3837,49 @@ class StockInquiryService:
         self.db.refresh(inquiry)
         return inquiry
 
+    STOCK_INQUIRY_REPLY_PREAMBLE = "There is a response to your stock inquiry"
+
+    @classmethod
+    def compose_stock_inquiry_reply_message(cls, bare_body: str, portal_url: str) -> str:
+        """The contact-facing WhatsApp text for a purchasing reply.
+
+        Composed HERE, not in the frontend. The FE used to build
+        ``f"{preamble}{' ' + view_url}: {body}"``, which produced two defects:
+
+        1. The ``:`` landed immediately after the URL, so WhatsApp's autolinker
+           pulled it into the href and the contact got an invalid link.
+        2. It used the read-only ``/view/stock-inquiry?token=`` page, built on
+           ``window.location.origin`` — whatever host the staff browser was on —
+           instead of the interactive portal link the backend already resolves via
+           ``_stock_inquiry_portal_or_view_url`` for the template's ``portal_url``.
+
+        The URL therefore goes LAST, alone on its own line after a blank line, so
+        no punctuation or word can ever be absorbed into it. The colon stays where
+        it reads correctly: after the preamble.
+        """
+        body = (bare_body or "").strip()
+        url = (portal_url or "").strip()
+        text = f"{cls.STOCK_INQUIRY_REPLY_PREAMBLE}:"
+        if body:
+            text = f"{text}\n{body}"
+        return f"{text}\n\n{url}" if url else text
+
     @staticmethod
     def _bare_stock_inquiry_reply(raw: Optional[str]) -> str:
-        """Strip the FE-composed "There is a response to your stock inquiry
-        {link}: " preamble from a purchasing reply, keeping ONLY the
-        technician's wording for the lean ``update`` template var. The FE sends
-        ``f"There is a response to your stock inquiry{linkPart}: {body}"`` as
-        purchasing_response; the link has no ": " (colon-space), so the last
-        ": " is the body separator. Mirrors complaint reply normalization.
+        """Strip a LEGACY "There is a response to your stock inquiry {link}: "
+        preamble, keeping ONLY the purchasing wording for the lean ``update``
+        template var.
+
+        The frontend no longer composes that string — it posts the bare wording and
+        ``compose_stock_inquiry_reply_message`` builds the outgoing text — so for
+        current clients this is a no-op passthrough. It stays for two inputs that
+        still carry the old shape: a stored ``purchasing_response`` written before
+        the change and re-sent, and any client not yet on the new build. Without it
+        those would stack a second preamble and re-send the stale read-only view
+        link.
+
+        The old link had no ": " (colon-space), so the last ": " is the body
+        separator. Mirrors complaint reply normalization.
         """
         s = (raw or "").strip()
         # Both spellings: the module was renamed Stock Inquiry -> Stock Inquiry, and
@@ -3841,13 +3968,12 @@ class StockInquiryService:
         attachment_sentence = compose_response_attachment_sentence(
             count_staff_attachments(self.db, "stock_inquiry", str(inquiry.id))
         )
+        # The FE now posts only the purchasing wording, so the strip is a no-op;
+        # it still runs so a legacy client (or a re-sent stored row) carrying the old
+        # "{preamble} {view_url}: {body}" shape is normalised instead of stacking a
+        # second preamble and re-sending the stale read-only view link.
         bare_reply = self._bare_stock_inquiry_reply(message_to_send)
-        if attachment_sentence:
-            outgoing_bare = f"{bare_reply}\n{attachment_sentence}"
-            outgoing_text = f"{message_to_send}\n{attachment_sentence}"
-        else:
-            outgoing_bare = bare_reply
-            outgoing_text = message_to_send
+        outgoing_bare = f"{bare_reply}\n{attachment_sentence}" if attachment_sentence else bare_reply
 
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         if transition_to_responded_workflow:
@@ -3903,11 +4029,15 @@ class StockInquiryService:
         # Structured-template vars: bare purchasing_response text (+ attachment
         # sentence, D10) as `update` core + links. Mirrors complaint's bare
         # `stored_body`.
+        # One resolution, shared by the in-window text and the out-of-window
+        # template, so both carry the same interactive portal link.
+        portal_url = self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id))
         reply_extra_vars = {
             "update": outgoing_bare,
-            "portal_url": self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id)),
+            "portal_url": portal_url,
             "view_url": (self._build_stock_inquiry_view_url(str(inquiry.id)) or "").strip(),
         }
+        outgoing_text = self.compose_stock_inquiry_reply_message(outgoing_bare, portal_url)
         self._enqueue_stock_inquiry_respond_message(
             inquiry_id=inquiry_id,
             identifier=identifier,
@@ -5412,6 +5542,7 @@ class PurchaseRequestService:
             request_number=request_number,
             request_date=self._parse_date(payload.date),
             customer_name=payload.customer_name,
+            pic=getattr(payload, "pic", None),
             project_title=payload.project_title,
             purpose=payload.purpose,
             delivery_address=getattr(payload, "delivery_address", None),
@@ -5529,6 +5660,7 @@ class PurchaseRequestService:
         row.request_type = payload.request_type
         row.request_date = self._parse_date(payload.date)
         row.customer_name = payload.customer_name
+        row.pic = getattr(payload, "pic", None)
         row.project_title = payload.project_title
         row.purpose = payload.purpose
         row.delivery_address = getattr(payload, "delivery_address", None)
@@ -5617,22 +5749,31 @@ class PurchaseRequestService:
             )
         return row
 
-    def _get_purchase_request_project_sales_tier1_user_ids(self) -> List[str]:
-        """Members of Tier 1 under team set code project_sales for access agent purchase_request."""
+    def _get_purchase_request_project_sales_tier1_user_ids(
+        self, *, company_id: Optional[str] = None
+    ) -> List[str]:
+        """Members of Tier 1 under team set code project_sales for access agent purchase_request.
+
+        ``company_id`` defaults to Sorento: some callers are generic team lookups with
+        no purchase request in hand. Where the PR is known, pass its contact's company.
+        """
         from app.services.user_service import AccessAgentService
         from app.models.access import TeamMember
 
+        from app.services.company_routing_service import DEFAULT_COMPANY_ID
+
+        company_id = str(company_id or DEFAULT_COMPANY_ID)
         agent_svc = AccessAgentService(self.db)
         agent_id = agent_svc.get_agent_id_by_code("purchase_request")
         if not agent_id:
             logger.debug("No access agent found for code=purchase_request")
             return []
-        team_id = agent_svc.get_team_id_by_tier(agent_id, 1, team_set_code="project_sales")
+        team_id = agent_svc.get_team_id_by_tier(agent_id, 1, team_set_code="project_sales", company_id=company_id)
         if not team_id:
-            team_id = agent_svc.get_team_id_by_code(agent_id, "project_sales")
+            team_id = agent_svc.get_team_id_by_code(agent_id, "project_sales", company_id=company_id)
         if not team_id:
             try:
-                team_id = agent_svc.get_team_id_by_tier(agent_id, 1)
+                team_id = agent_svc.get_team_id_by_tier(agent_id, 1, company_id=company_id)
             except HTTPException:
                 logger.warning(
                     "Tier 1 for agent 'purchase_request' is ambiguous (multiple team sets). "
@@ -5970,6 +6111,7 @@ class PurchaseRequestService:
                 "request_number": getattr(header, "request_number", None),
                 "request_date": request_date.isoformat() if request_date else None,
                 "customer_name": getattr(header, "customer_name", None),
+                "pic": getattr(header, "pic", None),
                 "project_title": getattr(header, "project_title", None),
                 "purpose": getattr(header, "purpose", None),
                 "requested_by": getattr(header, "requested_by", None),
@@ -6835,6 +6977,7 @@ class PurchaseRequestService:
             "request_number": header.request_number,
             "request_type": header.request_type,
             "customer_name": header.customer_name,
+            "pic": header.pic,
             "project_title": header.project_title,
             "purpose": header.purpose,
             "delivery_address": getattr(header, "delivery_address", None),
@@ -6991,6 +7134,7 @@ class PurchaseRequestService:
             "request_number": header.request_number,
             "request_type": header.request_type,
             "customer_name": header.customer_name,
+            "pic": header.pic,
             "project_title": header.project_title,
             "purpose": header.purpose,
             "delivery_address": getattr(header, "delivery_address", None),

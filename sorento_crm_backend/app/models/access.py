@@ -4,6 +4,7 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
+from app.models.base import CompanyScopedMixin
 import uuid
 
 
@@ -296,8 +297,117 @@ class ContactAgentAccess(Base):
     )
 
 
-class Team(Base):
-    """Team of users for round-robin assignment."""
+class ContactAttachmentType(Base):
+    """Document types a contact may retrieve, beyond the global baseline.
+
+    `attachment_types.is_direct_access` is one boolean for everyone: a type is
+    dealer-downloadable or nobody can reach it. This adds the missing axis, so the
+    Container Status workbook can go to the office without going to dealers.
+
+    Grants only ADD - the baseline is never subtracted from here, so introducing
+    this table cannot take a document away from anyone.
+    """
+    __tablename__ = "contact_attachment_types"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="CASCADE"), nullable=False
+    )
+    attachment_type_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("attachment_types.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    created_by = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("contact_id", "attachment_type_id", name="uq_contact_attachment_type"),
+        Index("ix_contact_attachment_types_contact", "contact_id"),
+    )
+
+
+class AgentFieldAccess(Base):
+    """Which fields an agent may reveal, and to whom.
+
+    `ContactAgentAccess` says WHICH FUNCTIONS a contact may use. This says WHICH
+    FIELDS each of those functions may reveal - one level finer, so a sensitive
+    column can be added to an existing answer without minting a whole new agent
+    and re-granting it to the 53 contacts who already hold the function.
+
+    `contact_id` NULL = the agent-wide default, applying to everyone holding the
+    agent. A row WITH a contact overrides that default for that one contact, in
+    either direction (`is_allowed` true grants an exception, false revokes one).
+
+    `agent_code` FKs to `access_agents.code` with ON UPDATE CASCADE rather than to
+    the id: the code is what the resolver, the seeds and the docs all name, and a
+    rename should carry the rows with it.
+
+    Only fields registered in `app.services.field_access.GATED_FIELDS` are
+    consulted; a row for anything else is inert. Absence of a row means DENY.
+    """
+    __tablename__ = "agent_field_access"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    agent_code = Column(
+        Text,
+        ForeignKey("access_agents.code", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+    )
+    #: Namespace for the field keys, so `eta_date` on incoming stock and a future
+    #: `eta_date` on something else never collide.
+    resource = Column(Text, nullable=False)
+    field_key = Column(Text, nullable=False)
+    #: NULL = applies to every contact holding the agent.
+    contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="CASCADE"), nullable=True
+    )
+    is_allowed = Column(Boolean, nullable=False, server_default=text("true"))
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    created_by = Column(Text, nullable=True)
+    #: Who last changed the tick. Separate from `created_by` because every row is
+    #: pre-seeded denied by the bootstrap, so the insert never has a human behind
+    #: it - `created_by` alone would be NULL on every grant anyone ever makes.
+    updated_by = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_agent_field_access_lookup", "resource", "agent_code"),
+        Index("ix_agent_field_access_contact_id", "contact_id"),
+        # Two partial uniques, not one constraint: in Postgres NULLs are distinct,
+        # so a plain UNIQUE over the four columns would happily allow a second
+        # agent-wide row for the same field.
+        Index(
+            "uq_agent_field_access_default",
+            "agent_code",
+            "resource",
+            "field_key",
+            unique=True,
+            postgresql_where=text("contact_id IS NULL"),
+        ),
+        Index(
+            "uq_agent_field_access_override",
+            "agent_code",
+            "resource",
+            "field_key",
+            "contact_id",
+            unique=True,
+            postgresql_where=text("contact_id IS NOT NULL"),
+        ),
+    )
+
+
+class Team(Base, CompanyScopedMixin):
+    """A team belongs to exactly one company (D1).
+
+    Company-scoped, so the Teams admin page and every team picker follow the active
+    company switcher. Access agents deliberately are NOT scoped: one agent is a single
+    router serving both brands through two ladders (D8).
+
+    Team of users for round-robin assignment.
+    """
     __tablename__ = "teams"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -306,6 +416,9 @@ class Team(Base):
     # Self-FK for the team hierarchy: a member of a parent team can see + act on the
     # work of all descendant teams (any depth). NULL = top-level. SET NULL on delete
     # so removing a parent re-roots its children rather than cascading them away.
+    # A parent's members can see and act on every descendant team's work at any
+    # depth, so the parent MUST be in the same company - enforced on write in
+    # AccessAgentService, and checked by migration 320 before it locks the column in.
     parent_team_id = Column(
         UUID(as_uuid=False),
         ForeignKey("teams.id", ondelete="SET NULL"),
@@ -357,8 +470,15 @@ class TeamMember(Base):
     )
 
 
-class AgentTeam(Base):
-    """Link access agent to a team set code and optional tier (1=initial, 2/3=escalation)."""
+class AgentTeam(Base, CompanyScopedMixin):
+    """Link access agent to a team set code and optional tier (1=initial, 2/3=escalation).
+
+    Company-scoped. The explicit ``company_id`` argument on the AccessAgentService
+    resolvers is the loud layer - a missed caller is a TypeError. This auto-filter is
+    the quiet backstop for the ad-hoc ``AgentTeam`` queries scattered through
+    ``sla_service`` that no signature change can reach. Background readers must set an
+    explicit scope (``scheduler_session``), or they see nothing.
+    """
     __tablename__ = "agent_teams"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -387,20 +507,25 @@ class AgentTeam(Base):
         Index("ix_agent_teams_team_id", "team_id"),
         Index("ix_agent_teams_code", "code"),
         Index("ix_agent_teams_tier", "tier"),
-        # For non-tier assignments (legacy), keep one row per (agent, code).
+        # Company is part of both keys: the same (code, tier) under two companies is
+        # the whole point of the feature, and the pre-company keys rejected exactly
+        # that. Must stay in step with migration 320 - the scratch-schema test
+        # fixtures build their indexes from HERE, not from the migration, so a
+        # divergence shows up as a duplicate-key error in tests that pass in prod.
         Index(
-            "uq_agent_teams_agent_code_tier_null",
+            "uq_agent_teams_agent_code_company_tier_null",
             "agent_id",
             "code",
+            "company_id",
             unique=True,
             postgresql_where=(tier.is_(None)),
         ),
-        # For tiered assignments, allow one row per (agent, code, tier).
         Index(
-            "uq_agent_teams_agent_code_tier_not_null",
+            "uq_agent_teams_agent_code_company_tier",
             "agent_id",
             "code",
             "tier",
+            "company_id",
             unique=True,
             postgresql_where=(tier.is_not(None)),
         ),

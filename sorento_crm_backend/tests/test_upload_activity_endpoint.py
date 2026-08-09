@@ -93,7 +93,9 @@ def _add_attachment(
     return attachment_id
 
 
-def _add_attachment_type(db: Session, type_name: str) -> str:
+def _add_attachment_type(
+    db: Session, type_name: str, *, triggers_n8n_webhook: bool = True
+) -> str:
     from app.models.resources import AttachmentType
 
     type_id = str(uuid.uuid4())
@@ -103,6 +105,7 @@ def _add_attachment_type(db: Session, type_name: str) -> str:
             type_name=type_name,
             allowed_extensions="xls,xlsx,xlsm",
             max_file_size_mb=10,
+            triggers_n8n_webhook=triggers_n8n_webhook,
         )
     )
     db.commit()
@@ -147,11 +150,16 @@ def test_returns_empty_when_no_attachments(client):
 
 
 def test_stock_list_uploads_excluded_from_feed(client):
-    """Stock List replacements are background reference-data uploads — they
+    """Stock List replacements are background reference-data uploads - they
     never get an n8n 'linked' callback, so they must not appear in the drawer
-    (they'd be stuck on Processing forever). Untyped uploads still show."""
+    (they'd be stuck on Processing forever). Untyped uploads still show.
+
+    The exclusion is now driven by `triggers_n8n_webhook`, not by the type NAME
+    (migration 318), so the type has to opt out explicitly. On a real database
+    the migration does that; a test builds its own row and must say so.
+    """
     c, db = client
-    stock_type_id = _add_attachment_type(db, "Stock_List")
+    stock_type_id = _add_attachment_type(db, "Stock_List", triggers_n8n_webhook=False)
     _add_attachment(
         db,
         filename="stock balance - Macro Version.xlsx",

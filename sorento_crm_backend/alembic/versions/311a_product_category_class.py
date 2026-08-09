@@ -33,7 +33,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision = "311a_product_category_class"
-down_revision = "310_form_sla_skip_stage"
+down_revision = "320_company_aware_routing"
 branch_labels = None
 depends_on = None
 

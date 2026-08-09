@@ -25,6 +25,9 @@ export interface Attachment {
   linked_promotions?: LinkedEntityRef[];
   linked_form?: LinkedEntityRef | null;
   linked_packing_lists?: LinkedEntityRef[];
+  /** Certificates this file is a filed revision of. Read-only: the link
+   *  exists because the document was filed, not because a user made it. */
+  linked_certificates?: LinkedEntityRef[];
   uploaded_by?: string | null;
   uploaded_at: Date;
   created_at: Date;
@@ -61,6 +64,12 @@ export interface AttachmentType {
   /** Max attachments of this type per entity row; null = unlimited. */
   max_count_per_entity?: number | null;
   supports_field_linkage?: boolean;
+  /** Cert-bearing signal: an upload of this type can file a certificate. */
+  is_certificate?: boolean;
+  /** Plausibility ceiling for a certificate's validity span; null = no limit. */
+  max_validity_months?: number | null;
+  /** When false, uploads skip the n8n intake webhook and the upload-activity drawer. */
+  triggers_n8n_webhook?: boolean;
   created_at: Date;
 }
 
@@ -109,6 +118,9 @@ export interface AttachmentResponse {
   linked_promotions?: LinkedEntityRef[];
   linked_form?: LinkedEntityRef | null;
   linked_packing_lists?: LinkedEntityRef[];
+  /** Certificates this file is a filed revision of. Read-only: the link
+   *  exists because the document was filed, not because a user made it. */
+  linked_certificates?: LinkedEntityRef[];
   uploaded_by?: string | null;
   uploaded_at: Date | string;
   created_at?: Date | string;

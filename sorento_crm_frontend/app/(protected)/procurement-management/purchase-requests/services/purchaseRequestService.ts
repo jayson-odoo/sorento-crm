@@ -441,3 +441,27 @@ export async function getPurchaseRequestConversation(
   }
   return response.json();
 }
+
+/**
+ * Queue a printable Purchase Request / Sponsorship Form PDF.
+ *
+ * Exists because the Excel export auto-sizes its columns, so a long delivery
+ * address made the printed sheet unusable. The PDF is fixed-layout.
+ *
+ * Contract:
+ *   POST /api/v1/procurement/purchase-requests/{id}/export/pdf
+ *   200: { download_id, status: 'queued' }
+ *   Rendered by the RQ worker; surfaces in My Downloads.
+ */
+export async function exportPurchaseRequestPdf(
+  id: string,
+): Promise<{ download_id: string; status: string }> {
+  const response = await apiFetch(
+    `/api/v1/procurement/purchase-requests/${id}/export/pdf`,
+    { method: 'POST' },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to start PDF export'));
+  }
+  return response.json();
+}

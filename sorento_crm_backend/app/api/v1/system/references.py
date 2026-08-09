@@ -47,6 +47,7 @@ _RESOLVER_ENTITY_TYPES: frozenset[str] = frozenset({
     "form",
     "attachment",
     "attachment_type",
+    "certificate",
     "brand",
     "category",
 })

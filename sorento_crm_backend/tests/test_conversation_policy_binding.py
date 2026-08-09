@@ -125,7 +125,7 @@ def test_resolve_policy_zero_bindings_returns_none(db):
     tid = _team(db, "T1")
     db.add(AgentTeam(id=str(uuid.uuid4()), agent_id=aid, code="purchasing", team_id=tid, tier=1))
     db.commit()
-    assert AccessAgentService(db).resolve_policy_id_for(aid, "purchasing") is None
+    assert AccessAgentService(db).resolve_policy_id_for(aid, "purchasing", company_id="00000000-0000-0000-0000-000000000001") is None
 
 
 def test_resolve_policy_one_binding_returns_that_id(db):
@@ -135,7 +135,7 @@ def test_resolve_policy_one_binding_returns_that_id(db):
     db.add(AgentTeam(id=str(uuid.uuid4()), agent_id=aid, code="purchasing", team_id=tid, tier=1, policy_id=pid))
     db.add(AgentTeam(id=str(uuid.uuid4()), agent_id=aid, code="purchasing", team_id=tid, tier=2, policy_id=pid))
     db.commit()
-    assert AccessAgentService(db).resolve_policy_id_for(aid, "purchasing") == pid
+    assert AccessAgentService(db).resolve_policy_id_for(aid, "purchasing", company_id="00000000-0000-0000-0000-000000000001") == pid
 
 
 def test_resolve_policy_two_distinct_raises_409(db):
@@ -147,7 +147,7 @@ def test_resolve_policy_two_distinct_raises_409(db):
     db.add(AgentTeam(id=str(uuid.uuid4()), agent_id=aid, code="purchasing", team_id=tid, tier=2, policy_id=p2))
     db.commit()
     with pytest.raises(AppException) as exc:
-        AccessAgentService(db).resolve_policy_id_for(aid, "purchasing")
+        AccessAgentService(db).resolve_policy_id_for(aid, "purchasing", company_id="00000000-0000-0000-0000-000000000001")
     assert exc.value.status_code == 409
 
 

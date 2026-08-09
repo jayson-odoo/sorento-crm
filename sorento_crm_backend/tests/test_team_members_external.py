@@ -95,5 +95,7 @@ def test_tier_passed_through_for_multi_tier_team_code(mock_access, client: TestC
         params={"agent_code": "purchasing", "team_code": "project_sales", "tier": 2},
     )
     assert r.status_code == 200
-    svc.get_team_id_by_tier.assert_called_once_with("agent-1", 2, team_set_code="project_sales")
+    svc.get_team_id_by_tier.assert_called_once_with(
+        "agent-1", 2, team_set_code="project_sales", company_id="00000000-0000-0000-0000-000000000001"
+    )
     svc.list_active_team_members_detail.assert_called_once_with("team-tier2")

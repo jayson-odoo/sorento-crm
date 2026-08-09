@@ -1,5 +1,6 @@
 """Attachments API routes."""
 from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File, Form, Response, Request, BackgroundTasks, Body
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from pydantic import BaseModel
@@ -241,6 +242,14 @@ async def get_attachments(
     link_status: Optional[str] = Query(None, description="Filter by linkage: 'linked' (referenced by any product/promotion/form/packing-list/field link) or 'unlinked' (orphans)."),
     storage_status: Optional[str] = Query(None, description="Filter by storage accessibility audit: 'accessible', 'missing' (broken/lost object), or 'unchecked'."),
     direct_access_only: bool = Query(False, description="When true, restrict to attachment types flagged is_direct_access (dealer-downloadable documents)."),
+    contact_id: Optional[str] = Query(
+        None,
+        description="Respond contact asking (internal id or respond_io_id). With direct_access_only, WIDENS the visible types by this contact's per-contact grants. Never narrows.",
+    ),
+    space_id: Optional[str] = Query(
+        None,
+        description="Respond.io workspace space_id. Disambiguates contact_id when the same respond_io_id exists in two workspaces.",
+    ),
     resolve_signed_urls: bool = Query(False, description="When false, return stored file_path without CloudFront signing."),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -249,6 +258,8 @@ async def get_attachments(
     try:
         service = AttachmentService(db)
         from app.services.entity_filter_helpers import normalize_entities_query_param
+        from app.services.contact_attachment_access import visible_type_ids
+
         result = service.list_attachments(
             page=page,
             limit=limit,
@@ -271,6 +282,7 @@ async def get_attachments(
             entities=normalize_entities_query_param(entities),
             attachment_ids=parse_uuid_list(attachment_ids, param_name="attachment_ids"),
             direct_access_only=direct_access_only,
+            visible_attachment_type_ids=visible_type_ids(db, contact_id, space_id),
         )
         # Enrich each attachment with uploaded_by_user for display.
         # Batch-resolve users in ONE query to avoid N+1 (was a per-row SELECT).
@@ -571,6 +583,7 @@ def _attachment_response_with_linked_entities(service: AttachmentService, attach
     data["linked_promotions"] = [LinkedEntityRef.model_validate(p).model_dump() for p in linked["linked_promotions"]]
     data["linked_form"] = LinkedEntityRef.model_validate(linked["linked_form"]).model_dump() if linked["linked_form"] else None
     data["linked_packing_lists"] = [LinkedEntityRef.model_validate(p).model_dump() for p in linked["linked_packing_lists"]]
+    data["linked_certificates"] = [LinkedEntityRef.model_validate(c).model_dump() for c in linked["linked_certificates"]]
     if linked["linked_products"]:
         data["entity_display_name"] = linked["linked_products"][0]["name"]
     elif linked["linked_promotions"]:
@@ -579,6 +592,11 @@ def _attachment_response_with_linked_entities(service: AttachmentService, attach
         data["entity_display_name"] = linked["linked_form"]["name"]
     elif linked["linked_packing_lists"]:
         data["entity_display_name"] = linked["linked_packing_lists"][0]["name"]
+    # Certificates come LAST in the display-name chain: a certificate PDF is
+    # normally also linked to the products it covers, and the product is the
+    # more useful label. This only wins for a certificate covering nothing.
+    elif linked["linked_certificates"]:
+        data["entity_display_name"] = linked["linked_certificates"][0]["name"]
     else:
         data["entity_display_name"] = service.get_entity_display_name(
             attachment.entity_type, attachment.entity_id
@@ -755,8 +773,10 @@ async def create_attachment(
         # WhatsApp/Meta reject CMYK JPEGs (print-pipeline tech-spec drawings)
         # with a generic "Media upload error". Transcode CMYK/YCCK -> RGB JPEG
         # at the upload boundary so stored bytes are always WhatsApp-safe.
-        file_content, upload_filename, upload_mime = ensure_rgb_image(
-            file_content, upload_filename, upload_mime
+        # CPU-bound — run off the event loop so one upload can't freeze every
+        # other request on this async worker.
+        file_content, upload_filename, upload_mime = await run_in_threadpool(
+            ensure_rgb_image, file_content, upload_filename, upload_mime
         )
 
         # Stock List macro pipeline (docs/plans/PLAN-stock-list-xlsm-macro-upload.md):
@@ -777,8 +797,8 @@ async def create_attachment(
             )
             if is_stock_list_type:
                 try:
-                    file_content, upload_filename, upload_mime = extract_macro_template_xlsx(
-                        file_content, upload_filename, upload_mime
+                    file_content, upload_filename, upload_mime = await run_in_threadpool(
+                        extract_macro_template_xlsx, file_content, upload_filename, upload_mime
                     )
                 except MacroWorkbookError as exc:
                     raise HTTPException(
@@ -789,7 +809,7 @@ async def create_attachment(
         file_size = len(file_content)
 
         # Calculate SHA-256 hash for duplicate detection
-        file_hash = hashlib.sha256(file_content).hexdigest()
+        file_hash = await run_in_threadpool(lambda: hashlib.sha256(file_content).hexdigest())
 
         # Pre-generate the row id so the object key can embed it (uuid-segregated key —
         # collision-proof, independent of the editable name; see
@@ -901,7 +921,11 @@ async def create_attachment(
         provider = default_provider()
         backend = get_backend(provider)
         try:
-            s3_key, _ = backend.upload_file(
+            # Real network PUT via sync boto3 — must not run directly on the event
+            # loop, or one slow/large upload freezes every other request this
+            # worker is holding (the WORKER TIMEOUT / cascading-504 incident).
+            s3_key, _ = await run_in_threadpool(
+                backend.upload_file,
                 file_content=file_content,
                 file_path=s3_file_path,
                 content_type=upload_mime,
@@ -917,9 +941,10 @@ async def create_attachment(
         # Persist only a stable, non-signed CDN URL in DB; signing happens on read.
         stored_file_path = cdn_base_url(provider, s3_key)
         # Grid thumbnail (image uploads only) — small variant so the Files grid
-        # paints a ~320px image instead of the full-resolution original.
-        stored_thumbnail_path = store_thumbnail(
-            backend, provider, s3_key, file_content, upload_mime
+        # paints a ~320px image instead of the full-resolution original. Same
+        # blocking-upload concern as above.
+        stored_thumbnail_path = await run_in_threadpool(
+            store_thumbnail, backend, provider, s3_key, file_content, upload_mime
         )
 
         # Parse access levels for attachment record and webhook (JSON array string expected).
@@ -1135,8 +1160,8 @@ async def replace_latest_stock_list(
         # `.xlsm` → VBA stripped, values-only Template sheet, re-emitted as `.xlsx`
         # so the chatbot/n8n never receives macro bytes. `.xls`/`.xlsx` untouched.
         try:
-            file_content, upload_filename, upload_mime = extract_macro_template_xlsx(
-                file_content, upload_filename, upload_mime
+            file_content, upload_filename, upload_mime = await run_in_threadpool(
+                extract_macro_template_xlsx, file_content, upload_filename, upload_mime
             )
         except MacroWorkbookError as exc:
             raise HTTPException(
@@ -1145,7 +1170,7 @@ async def replace_latest_stock_list(
             )
 
         file_size = len(file_content)
-        file_hash = hashlib.sha256(file_content).hexdigest()
+        file_hash = await run_in_threadpool(lambda: hashlib.sha256(file_content).hexdigest())
         original_filename = upload_filename or "stock_list.xlsx"
         safe_filename = "".join(c for c in original_filename if c.isalnum() or c in (" ", "-", "_", ".")).strip() or "stock_list.xlsx"
         stored_filename = safe_filename
@@ -1160,7 +1185,8 @@ async def replace_latest_stock_list(
         provider = default_provider()
         backend = get_backend(provider)
         try:
-            s3_key, _ = backend.upload_file(
+            s3_key, _ = await run_in_threadpool(
+                backend.upload_file,
                 file_content=file_content,
                 file_path=s3_file_path,
                 content_type=upload_mime,
@@ -1261,9 +1287,13 @@ async def bulk_import_attachments(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid attachment type ID")
 
     zip_content = await file.read()
-    try:
+
+    def _validate_zip() -> None:
         with zipfile.ZipFile(io.BytesIO(zip_content), "r") as zf:
             zf.testzip()
+
+    try:
+        await run_in_threadpool(_validate_zip)
     except zipfile.BadZipFile:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or corrupted ZIP file")
 
@@ -1276,7 +1306,9 @@ async def bulk_import_attachments(
     storage_backend = get_backend(storage_provider)
     storage_key = f"bulk-imports/{_uuid.uuid4().hex}.zip"
     try:
-        storage_backend.upload_file(zip_content, storage_key, content_type="application/zip")
+        await run_in_threadpool(
+            storage_backend.upload_file, zip_content, storage_key, content_type="application/zip"
+        )
     except Exception as exc:
         logger.exception("bulk-import zip upload to storage failed")
         raise HTTPException(

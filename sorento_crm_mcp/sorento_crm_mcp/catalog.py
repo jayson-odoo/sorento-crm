@@ -119,15 +119,69 @@ CATALOG: tuple[ToolSpec, ...] = (
             "INSTALLATION GUIDE / CERTIFICATE for a specific product). FILTER BY UUID: `product_ids` "
             "(canonical product UUIDs), `attachment_ids` (canonical attachment UUIDs), and / or "
             "`attachment_type_ids` (canonical AttachmentType UUIDs — narrows to a doc class such as "
-            "brochure or spec sheet). All three accept csv / JSON list / repeated query params.\n\n"
+            "brochure or spec sheet), and / or `certificate_ids` (canonical Certificate UUIDs — the "
+            "product↔file rows whose file is a filed revision of those certificates; get the UUID from "
+            "crm_certificates_list first). All accept csv / JSON list / repeated query params.\n\n"
+            "CERTIFICATE VALIDITY: a row whose file is a filed certificate carries `certificate` "
+            "with `validity_state` (valid / expiring_soon / expired / not_yet_valid / unknown), "
+            "`valid_until` and `is_current_revision`. NEVER compare dates yourself and never call a "
+            "certificate valid when `certificate` is absent - absent means the file is not a "
+            "certificate at all (a brochure, a spec sheet). Do not hand over a file whose "
+            "`validity_state` is `expired`; say it has lapsed and use crm_certificates_list to find "
+            "whether a renewal has been filed.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/master-data/product-attachments",
         (),
-        ("page", "limit", "sort", "dir", "product_ids", "attachment_ids", "attachment_type_ids", "contact_id", "space_id"),
+        ("page", "limit", "sort", "dir", "product_ids", "attachment_ids", "attachment_type_ids",
+         "certificate_ids", "contact_id", "space_id"),
         domain="products",
-        related_tools=("crm_master_products_list",),
+        related_tools=("crm_master_products_list", "crm_certificates_list"),
+        escalation_team="sales",
+    ),
+    ToolSpec(
+        "crm_certificates_list",
+        (
+            "List product certificates from the certificate register (scheme such as PPS / SPAN, "
+            "certifying body such as IKRAM / JBC, certificate number, validity window, covered products). "
+            "Use this for 'is our PPS certificate still valid', 'when does WCM PC 000321 expire', "
+            "'which certificate covers WC8038', and to deliver the certificate PDF.\n\n"
+            "VALIDITY IS DERIVED, NEVER GUESSED. Every row carries `validity_state` "
+            "(valid | expiring_soon | expired | not_yet_valid | unknown), `is_expired`, "
+            "`days_until_expiry`, `valid_from`, `valid_until` and `covered_product_count`. "
+            "When `is_expired` is true, tell the user the certificate was FOUND but is EXPIRED; never "
+            "present an is_expired row as live, and never answer a validity question from a file name. "
+            "`validity_state=unknown` means the register holds no expiry date: say the expiry is not "
+            "recorded, never that the certificate does not expire.\n\n"
+            "NARROWING FILTERS (all optional; csv / JSON list / repeated where they take ids):\n"
+            "  - `certificate_ids` (canonical certificate UUIDs)\n"
+            "  - `certificate_number` (raw text, normalized server-side: 'PPS 0119', 'pps-0119' and "
+            "'PPS0119' all match the same certificate)\n"
+            "  - `product_ids` (canonical product UUIDs: certificates covering any of them)\n"
+            "  - `scheme` (e.g. PPS, SPAN), `status` (active | archived)\n"
+            "  - `validity_state`, `expiring_within_days` (integer), `valid_on` (YYYY-MM-DD)\n"
+            "  - `needs_review` (true = the register flagged the extracted data for a human)\n\n"
+            "THE SAME NUMBER CAN EXIST UNDER TWO SCHEMES (04124FC is approved under both PPS and SPAN, "
+            "with different expiries). When a number filter returns more than one row, ask which scheme "
+            "rather than answering from the first row.\n\n"
+            "FILES: pass `resolve_signed_urls=true` to get `preview_url` + `download_url` for the CURRENT "
+            "revision's PDF. Superseded revisions are never resolved, so no path can hand out a "
+            "replaced document.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
+        ),
+        "/api/v1/master-data/certificates",
+        (),
+        (
+            "page", "limit", "sort", "dir",
+            "certificate_ids", "certificate_number", "product_ids",
+            "scheme", "status", "validity_state", "expiring_within_days", "valid_on",
+            "needs_review", "resolve_signed_urls",
+            "contact_id", "space_id",
+        ),
+        domain="products",
+        related_tools=("crm_master_product_attachments_list", "crm_master_products_list"),
         escalation_team="sales",
     ),
     # --- lookup sets ---
@@ -260,17 +314,37 @@ CATALOG: tuple[ToolSpec, ...] = (
             "CATALOG / MASTER CATALOGUE PDF / COMPANY BROCHURE / PRICE LIST DOCUMENT requests; for per-SKU "
             "brochures use crm_master_product_attachments_list; for the standing Stock List PDF use "
             "crm_resource_attachments_current_stock_list.\n\n"
-            "FILTER BY UUID: `attachment_ids` (canonical attachment UUIDs csv / JSON / repeated), "
-            "`directory_id`, `attachment_type_id`, `uploaded_by` (all canonical UUIDs). "
+            "WHICH FILTER TO PASS depends on what the person named.\n"
+            "  • They NAMED a kind of document (\"the container status list\", \"the catalogue\") -> "
+            "pass `attachment_type_code` with that name, e.g. \"Container Status\", case-insensitive. "
+            "This is how you return THE document they asked for instead of a directory listing, so "
+            "always pass it when a document class is identifiable. `attachment_type_id` takes the "
+            "same thing as a UUID if you happen to hold one (SINGULAR - there is no "
+            "`attachment_type_ids`), but the name is preferred: no lookup, nothing to get stale.\n"
+            "  • They named a SPECIFIC FILE you already hold the UUID for -> `attachment_ids`. "
+            "Also available: `directory_id`, `uploaded_by` (canonical UUIDs).\n"
+            "  • They named NO document at all -> this tool returns NOTHING, by design. "
+            "`contact_id` alone is NOT a narrowing filter: it scopes the answer to that contact's "
+            "entitlements, but a document request has to name a document, and returning everything "
+            "they may have is a directory listing rather than an answer. Ask which document they "
+            "want instead of guessing.\n"
+            "Pass `contact_id` + `space_id` ALONGSIDE one of the filters above - see DOCUMENT TYPES "
+            "below. They widen WHICH types are visible; they never stand in for the filter.\n"
             "Set resolve_signed_urls=true to include signed preview/download URLs in the response.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
-            "results to that contact's company/companies; omit both for all-company results."
+            "results to that contact's company/companies; omit both for all-company results.\n\n"
+            "DOCUMENT TYPES: every caller gets the dealer-facing baseline. Passing `contact_id` + "
+            "`space_id` ADDITIONALLY returns document types granted to that contact specifically "
+            "(e.g. the Container Status workbook for office staff). Grants only widen - a contact "
+            "with none sees exactly the baseline, so always pass both when answering on behalf of "
+            "someone."
         ),
         "/api/v1/resource-management/attachments",
         (),
         (
             "page", "limit", "attachment_ids", "sort", "dir",
             "directory_id", "attachment_type_id", "uploaded_by",
+            "attachment_type_code",
             "uploaded_at_from", "uploaded_at_to", "is_deleted", "resolve_signed_urls",
             "contact_id", "space_id",
         ),
@@ -521,7 +595,16 @@ CATALOG: tuple[ToolSpec, ...] = (
             "SPO numbers, or internal IDs. REQUIRED: at least ONE narrowing filter (product_ids / "
             "shipment_ids / supplier_ids / eta_from / eta_to) or the tool returns an empty page.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
-            "results to that contact's company/companies; omit both for all-company results."
+            "results to that contact's company/companies; omit both for all-company results.\n\n"
+            "CLEARANCE DATES (eta_delay_date, inspection_date, approval_date, gatepass_date, "
+            "loading/etc/etd, liner_code, forwarders, consignee, free_days_available, coa_permit_no) "
+            "are ENTITLEMENT-GATED server-side, FIELD BY FIELD. They appear only when the caller may "
+            "see them: for a contact question, pass `contact_id`; the contact must hold the "
+            "`incoming_stock_enquiries` agent AND have that specific field allowed on it. Holding "
+            "the agent does NOT mean every field. When not permitted the keys are ABSENT from the "
+            "response - absent means 'not permitted', it does NOT mean 'not reached yet'. Never tell "
+            "a user a date is unknown or pending because a key is missing; say you cannot share it. "
+            "A `field_access.denied` block lists what was withheld and why."
         ),
         "/api/v1/incoming-stock/list",
         (),

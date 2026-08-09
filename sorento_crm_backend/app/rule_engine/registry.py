@@ -10,7 +10,7 @@ The core source registers exactly once (``ensure_core``).
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-from sqlalchemy import Boolean, Date, DateTime, Float, Integer, Numeric
+from sqlalchemy import Boolean, Date, DateTime, Float, Integer, Numeric, func
 from sqlalchemy.orm import Session
 
 FactType = str  # 'string' | 'number' | 'boolean' | 'date' | 'enum' | 'list'
@@ -248,6 +248,124 @@ def _register_core() -> None:
                     "start_date": {"label": "Start date"},
                     "end_date": {"label": "End date"},
                 },
+            ),
+        ],
+    )
+
+    _register_certificate()
+
+
+def _register_certificate() -> None:
+    """Facts for the ``days_before_certificate_expiry`` trigger (REM-6).
+
+    Scoping an expiry automation to one scheme, one certifying body or one
+    company is authored here. Remember the rule-engine trap: an EMPTY tree
+    matches every certificate, it does not match none.
+
+    The three computed facts (validity window, coverage count, review flag) each
+    run their own query, so they are declared as explicit ``FactDef`` rows rather
+    than inferred - and ``resolve_facts(only_keys=...)`` means a rule that never
+    reads them never pays for them.
+    """
+    from app.models.certificate import (
+        Certificate,
+        CertificateProduct,
+        CertificateRevision,
+    )
+    from app.models.company import Company
+
+    def _current_revision(obj: Any, db: Session) -> Any:
+        revision_id = getattr(obj, "current_revision_id", None)
+        if revision_id:
+            return (
+                db.query(CertificateRevision)
+                .filter(CertificateRevision.id == revision_id)
+                .first()
+            )
+        return (
+            db.query(CertificateRevision)
+            .filter(
+                CertificateRevision.certificate_id == getattr(obj, "id", None),
+                CertificateRevision.is_current.is_(True),
+            )
+            .first()
+        )
+
+    def _days_until_expiry(obj: Any, db: Session) -> Optional[int]:
+        from app.services.certificate_service import today_malaysia
+
+        revision = _current_revision(obj, db)
+        valid_until = getattr(revision, "valid_until", None) if revision else None
+        return None if valid_until is None else (valid_until - today_malaysia()).days
+
+    def _needs_review(obj: Any, db: Session) -> bool:
+        revision = _current_revision(obj, db)
+        return bool(getattr(revision, "needs_review", False)) if revision else False
+
+    def _covered_product_count(obj: Any, db: Session) -> int:
+        return (
+            db.query(func.count(CertificateProduct.id))
+            .filter(CertificateProduct.certificate_id == getattr(obj, "id", None))
+            .scalar()
+            or 0
+        )
+
+    def _company_name(obj: Any, db: Session) -> Optional[str]:
+        company_id = getattr(obj, "company_id", None)
+        if not company_id:
+            return None
+        row = db.query(Company.name).filter(Company.id == company_id).first()
+        return row[0] if row else None
+
+    register_fact_source(
+        "certificate",
+        "Certificate",
+        [
+            *infer_facts(
+                Certificate,
+                ["scheme", "certificate_number", "certifying_body", "issuer", "title"],
+                prefix="certificate",
+                overrides={
+                    "scheme": {"label": "Scheme"},
+                    "certificate_number": {"label": "Certificate number"},
+                    "certifying_body": {"label": "Certifying body"},
+                    "issuer": {"label": "Issuer"},
+                    "title": {"label": "Title"},
+                },
+            ),
+            FactDef(
+                key="certificate.status",
+                label="Status",
+                type="enum",
+                resolver=lambda obj, db: getattr(obj, "status", None),
+                options=[
+                    {"value": "active", "label": "Active"},
+                    {"value": "archived", "label": "Archived"},
+                ],
+            ),
+            FactDef(
+                key="certificate.companyName",
+                label="Company",
+                type="string",
+                resolver=_company_name,
+            ),
+            FactDef(
+                key="certificate.daysUntilExpiry",
+                label="Days until expiry",
+                type="number",
+                resolver=_days_until_expiry,
+            ),
+            FactDef(
+                key="certificate.coveredProductCount",
+                label="Covered products",
+                type="number",
+                resolver=_covered_product_count,
+            ),
+            FactDef(
+                key="certificate.needsReview",
+                label="Needs review",
+                type="boolean",
+                resolver=_needs_review,
             ),
         ],
     )

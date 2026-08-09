@@ -64,6 +64,16 @@ export interface GRN {
   updated_at: Date;
   lines_count?: number;
   items_count?: number;
+  /**
+   * How this GRN got here: 'ui' (a staff create), 'import' (an Excel upload) or
+   * 'external_api' (the n8n / AutoCount ingest). Null on rows created before this
+   * was recorded - shown as "Unknown", never guessed.
+   */
+  source_system?: string | null;
+  /** Resolved server-side; the UI never receives the creator's UUID. */
+  created_by_label?: string | null;
+  /** The uploaded spreadsheet, when an import wrote this row. */
+  import_filename?: string | null;
 }
 
 export interface GRNDetail extends GRN {

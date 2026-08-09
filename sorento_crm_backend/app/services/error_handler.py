@@ -50,6 +50,21 @@ def handle_validation_error(message: str) -> AppException:
     )
 
 
+def handle_unprocessable(message: str) -> AppException:
+    """Create a 422 Unprocessable Entity exception.
+
+    For a request that is well-formed but asks for something the data forbids
+    (merging a certificate into itself, or across companies). Several services
+    already raise a bare 422 AppException for exactly this; this is the shared
+    helper so they do not have to.
+    """
+    return AppException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        message=message,
+        code="VALIDATION_ERROR"
+    )
+
+
 def handle_conflict(message: str) -> AppException:
     """Create a 409 Conflict exception."""
     return AppException(

@@ -32,6 +32,7 @@ import { toast } from 'sonner';
 import ContactAccessAgentsTable from './components/ContactAccessAgentsTable';
 import ContactCsRoutingRules from './components/routing/ContactCsRoutingRules';
 import ContactMarketSegmentSection from './components/ContactMarketSegmentSection';
+import ContactAttachmentTypesSection from './components/ContactAttachmentTypesSection';
 import ContactChatHistorySection from './components/ContactChatHistorySection';
 import ContactEditDialog from './components/ContactEditDialog';
 import ContactDeleteDialog from '../components/ContactDeleteDialog';
@@ -62,6 +63,18 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
       if (!response.ok) throw new Error('Failed to fetch contact');
       const data = await response.json();
       return data as RespondContact;
+    },
+    enabled: !!id,
+  });
+
+  // Superadmin-only endpoint; a 403 for anyone else resolves to an empty list
+  // rather than an error toast, so the section simply reads "None" for them.
+  const { data: companies = [], isLoading: companiesLoading } = useQuery({
+    queryKey: ['contact-companies', id],
+    queryFn: async () => {
+      const response = await apiFetch(`/api/user-management/contacts/${id}/companies`);
+      if (!response.ok) return [] as { id: string; name: string }[];
+      return (await response.json()) as { id: string; name: string }[];
     },
     enabled: !!id,
   });
@@ -250,7 +263,32 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                   <p className="font-medium text-muted-foreground">None assigned</p>
                 )}
               </div>
+              {/* Companies decide WHICH ROWS this contact can be told about, before
+                  any field-level access applies. A contact with none is answered
+                  with nothing at all - so when an agent replies "no incoming
+                  stock" for a container that plainly exists, this is the first
+                  field to look at. Worth showing beside the access types rather
+                  than only inside the edit dialog. */}
+              <div>
+                <p className="text-sm text-muted-foreground">Companies</p>
+                {companiesLoading ? (
+                  <Skeleton className="h-5 w-24 mt-1" />
+                ) : companies.length > 0 ? (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {companies.map((c) => (
+                      <Badge key={c.id} variant="secondary" className="font-normal">
+                        {c.name}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="font-medium text-destructive">
+                    None - this contact receives no records
+                  </p>
+                )}
+              </div>
               <ContactMarketSegmentSection contactId={id} />
+              <ContactAttachmentTypesSection contactId={id} />
               <div>
                 <p className="text-sm text-muted-foreground">Respond.io ID</p>
                 <p className="font-medium font-mono text-sm">{contact.respond_io_id ?? <span className="text-muted-foreground">—</span>}</p>

@@ -1,7 +1,7 @@
 """Product schemas."""
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 import uuid
 
@@ -403,6 +403,28 @@ class BulkImportProductsResponse(BaseModel):
     errors: List[str] = []
 
 
+class ProductAttachmentCertificate(BaseModel):
+    """Certificate-register facts for an attachment that IS a filed certificate.
+
+    Present only when the attachment is a certificate revision; a brochure or a
+    spec sheet carries ``certificate: null``. ``validity_state`` is derived on
+    every read from this revision's own window (never stored), so a consumer can
+    say "expired" / "expiring soon" / "valid" without doing date arithmetic and
+    without a scheduler having had to run.
+    """
+    certificate_id: str
+    scheme: Optional[str] = None
+    certificate_number: Optional[str] = None
+    certifying_body: Optional[str] = None
+    valid_from: Optional[date] = None
+    valid_until: Optional[date] = None
+    validity_state: str
+    is_expired: bool = False
+    days_until_expiry: Optional[int] = None
+    # False once a renewal has been filed: this file is a superseded issue.
+    is_current_revision: bool = True
+
+
 class ProductAttachmentResponse(ProductAttachmentBase):
     id: str
     created_at: Optional[datetime] = None
@@ -412,7 +434,8 @@ class ProductAttachmentResponse(ProductAttachmentBase):
     updated_at: Optional[datetime] = None
     product: Optional[ProductSimple] = None
     attachment: Optional[AttachmentSimple] = None
-    
+    certificate: Optional[ProductAttachmentCertificate] = None
+
     @field_validator('id', 'product_id', 'attachment_id', 'created_by', mode='before')
     @classmethod
     def convert_uuid_to_string(cls, v):

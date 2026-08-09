@@ -141,7 +141,9 @@ def test_form_escalate_snapshots_prior_owner(db):
         def __init__(self, *a, **k):
             pass
 
-        def resolve_team_with_tier_fallback(self, agent_id, target_tier, team_set_code=None):
+        def resolve_team_with_tier_fallback(
+            self, agent_id, target_tier, team_set_code=None, *, company_id=None
+        ):
             return ("team-2", 2)
 
         def get_next_assignee(self, agent_id, team_id):

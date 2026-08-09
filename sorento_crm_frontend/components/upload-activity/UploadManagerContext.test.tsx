@@ -100,6 +100,45 @@ describe('UploadManagerContext', () => {
     expect(uploader).toHaveBeenCalledTimes(2);
   });
 
+  it('keys an import_job session on the job id so the BE row replaces it', async () => {
+    // The backend keys its own import_job session on `str(job.job_id)`, and the
+    // drawer merges optimistic + backend rows by session_id. A random id here
+    // shows the same import TWICE until a refresh drops the optimistic half.
+    const { result } = renderHook(() => useUploadManager(), { wrapper });
+
+    let sessionId = '';
+    await act(async () => {
+      sessionId = result.current.startSession({
+        files: [makeFile('container-status-2026.xlsx')],
+        sessionType: 'import_job',
+        importJobId: 'job-abc-123',
+        jobType: 'container_status',
+        uploader: async () => ({ attachment_id: 'job-abc-123' }),
+      });
+    });
+
+    expect(sessionId).toBe('job-abc-123');
+    expect(result.current.state.sessions['job-abc-123']).toBeTruthy();
+  });
+
+  it('still keys an attachment batch on the upload batch id', () => {
+    // uploadBatchId wins: that is what the backend groups attachment rows on.
+    const { result } = renderHook(() => useUploadManager(), { wrapper });
+
+    let sessionId = '';
+    act(() => {
+      sessionId = result.current.startSession({
+        files: [makeFile('a.jpg')],
+        sessionType: 'multi',
+        uploadBatchId: 'batch-1',
+        importJobId: 'job-should-lose',
+        uploader: async () => ({ attachment_id: 'att-1' }),
+      });
+    });
+
+    expect(sessionId).toBe('batch-1');
+  });
+
   it('setDrawerOpen toggles drawer state', () => {
     const { result } = renderHook(() => useUploadManager(), { wrapper });
     expect(result.current.state.isDrawerOpen).toBe(false);

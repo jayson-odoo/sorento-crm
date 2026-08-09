@@ -59,7 +59,11 @@ def seed(db):
 def _patch_assignee_and_notify(monkeypatch, seed):
     from app.services.user_service import AccessAgentService
 
-    monkeypatch.setattr(AccessAgentService, "get_team_id_by_tier", lambda self, a, t, team_set_code=None: "team-1")
+    monkeypatch.setattr(
+        AccessAgentService,
+        "get_team_id_by_tier",
+        lambda self, a, t, team_set_code=None, *, company_id=None: "team-1",
+    )
     monkeypatch.setattr(
         AccessAgentService, "get_next_assignee",
         lambda self, a, t: {"id": seed["user_id"], "respond_user_id": "rid-1"},
