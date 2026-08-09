@@ -123,12 +123,23 @@ def seed(db):
     return {"policy_id": policy_id, "agent_id": agent_id, "users": users}
 
 
-def _tracker(db, seed, *, tier=2, resolved=False, entity="complaint", handled_by=None):
+def _tracker(
+    db, seed, *, tier=2, resolved=False, entity="complaint", handled_by=None, escalated=True
+):
+    """A tracker the lock applies to, i.e. an ESCALATED one.
+
+    The lock keys on ``escalated_at``, not ``current_tier > 1`` (a config may start
+    above tier 1), so a factory that only bumped the tier produced a tracker every
+    claim/take-over route rejected with "This form is not escalated". Pass
+    ``escalated=False`` for the not-escalated case.
+    """
     now = datetime.utcnow()
     t = ConversationSLATracking(
         id=str(uuid.uuid4()),
         policy_id=seed["policy_id"],
         current_tier=tier,
+        escalated_at=(now - timedelta(hours=2)) if escalated else None,
+        escalation_reason="zzt seeded escalation" if escalated else None,
         initiated_at=now - timedelta(hours=5),
         current_tier_started_at=now - timedelta(hours=2),
         due_at=now + timedelta(hours=4),
