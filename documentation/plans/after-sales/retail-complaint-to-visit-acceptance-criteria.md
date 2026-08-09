@@ -3,7 +3,9 @@
 **Companion to:** `PLAN-retail-complaint-to-visit.md`
 **Extends:** `after-sales-warranty-acceptance-criteria.md` (S1-S6 built). This covers what happens
 AFTER a retail complaint lands, up to a technician being sent.
-**Status:** Pre-code. Every AC self-verified end-to-end on the stated side(s) before handoff.
+**Status:** Phase A (S7a) IMPLEMENTED 2026-08-08 - migration 330, verified end to end on a prod
+build. Phase B (S7b) IN BUILD from 2026-08-09; its rulings are recorded below. Phases C and D
+pre-code. Every AC self-verified end-to-end on the stated side(s) before handoff.
 **Decisions:** `adr/0009` (Service Job is requester-agnostic) - `adr/0010` (Warranty Terms scope to Kind) - `adr/0001` (status engine is core).
 **Legend:** `[BE]` pytest - `[FE]` vitest/playwright - `[E2E]` full FE->BE->DB - `[MIG]` migration/data - `[CFG]` tenant-side configuration, not code - `[T]` CI guard.
 
@@ -128,6 +130,111 @@ so get no verdict. The feature is not broken; it is unconfigurable.
 - **AC-P8 [BE]** Given a term or rule is edited, When saved, Then existing
   `warranty_assessments` are NOT recomputed - an assessment is what was decided at the time,
   and silently rewriting history is how a verdict a consumer was told stops matching the record.
+
+### Phase B rulings - decided 2026-08-09, before the gate
+
+Eleven things AC-P1 to AC-P8 leave open. Each is ruled here so the red suite can assert it
+rather than the implementer inventing it.
+
+- **AC-P0a [FE][BE]** The screens live at `/warranty-management/*` under module key
+  `warranty`, with slugs `warranty.*` - NOT under `/master-data-management/*`. Reason:
+  `lib/route-module-map.ts` maps the `/master-data-management` prefix to moduleKey
+  `product`, so a warranty editor placed there is gated by the *product* module. Uninstall
+  warranty and its editor keeps standing; install warranty alone and it is unreachable.
+  `app/modules/runtime/permission_module_map.py` already declares `warranty -> warranty`
+  and nothing uses it yet, which is the mapping this slice is meant to consume.
+  `manifest.ROUTER_PREFIX` and `EXPORT_FILES_FRONTEND` are updated in the same slice, or
+  the module exports a surface it does not carry.
+
+- **AC-P2a [BE][FE]** Given an open-ended policy in force, When an admin publishes the next
+  version through **Supersede**, Then in ONE transaction the incumbent's `effective_to` is
+  set to the day before the new `effective_from` and the new policy is created. Reason:
+  AC-P2's refusal is right, and on its own it turns the screen's main job - publishing
+  version N+1 - into a two-step an admin must perform in the correct order. A refusal with
+  no supported path is a screen that says no to the only thing it exists for.
+
+- **AC-P2b [BE]** Overlap arithmetic is the same arithmetic `policy_in_force` reads by:
+  both ends INCLUSIVE, NULL `effective_to` meaning open-ended. Two policies of the SAME
+  company overlap when `a.from <= coalesce(b.to, infinity)` AND `b.from <= coalesce(a.to,
+  infinity)`. Policies of different companies never overlap each other. The refusal names
+  the other version and its range, because "overlaps an existing policy" is not something
+  an admin can act on.
+
+- **AC-P2c [BE]** No database-level exclusion constraint is added, and the reason is
+  recorded so a later reviewer does not "tighten" this into a deploy outage. The constraint
+  that would express AC-P2b is
+  `EXCLUDE USING gist (company_id WITH =, daterange(effective_from, coalesce(effective_to,
+  'infinity'), '[]') WITH &&)`, which needs **`btree_gist`**. Measured 2026-08-09 on the dev
+  database: installed extensions are `plpgsql`, `pg_trgm`, `vector` only - `btree_gist` is
+  *available* but not installed, and whether `CREATE EXTENSION` is permitted on the managed
+  production instance is not something this slice can verify. A migration that might be
+  refused at deploy time is a worse trade than a service guard on a table with two writers
+  and tens of rows. Revisit as a follow-up once `btree_gist` is confirmed creatable on
+  prod; the service guard and `policy_in_force`'s deterministic tie-break stand until then.
+  (Also measured: exactly ONE policy row exists today, so no overlap is being tolerated -
+  this is a forward-looking guard, not an amnesty for existing data.)
+
+- **AC-P3a [BE][MIG]** The duration/lifetime exclusion (`is_lifetime` XOR a positive
+  `duration_months`) is enforced in the service, and ALSO as a CHECK constraint. Measured
+  2026-08-09: all **41** existing `warranty_terms` rows satisfy it, so the constraint is
+  written. Had any row failed, the constraint would have been dropped from the slice and
+  said so - editing live rows to fit a constraint nobody asked for is not a migration.
+
+- **AC-P6a [BE]** The rule tester runs the PRODUCTION ranking, not a copy of it.
+  `resolve_kind` is refactored to delegate to a new `resolve_kind_match()` that returns the
+  winning match (`_RuleMatch` gains the `rule` that produced it); `resolve_kind` returns
+  `.kind` and its existing contract is unchanged. A tester with its own ranking agrees with
+  production right up to the day it matters.
+
+- **AC-P6b [BE]** The tester accepts an OPTIONAL unsaved candidate rule and ranks it
+  alongside the saved ones, marked as unsaved. AC-P6 says "before saving": the admin's real
+  question is whether the rule they are about to write will win, and a tester that can only
+  see saved rules cannot answer it.
+
+- **AC-P6c [FE]** The tester lists every rule that matched, in rank order, not only the
+  winner. A mapping that wins by one tie-break is a different fact from a mapping that is
+  the only match, and only the second one is safe to stop thinking about.
+
+- **AC-P7a [BE][FE]** The Kinds list carries `rule_count` AND `term_count`, and zero is
+  flagged on both. AC-P7 names only rules; a Kind that no Term covers returns `no_term` for
+  every product that reaches it, which is the same invisible dead end one column further
+  along and the same one-line fix.
+
+- **AC-P8a [BE][FE]** Deleting a Term does not delete assessments:
+  `warranty_assessments.term_id` is ON DELETE SET NULL and the snapshot columns keep the
+  verdict readable without it. The delete confirmation names how many assessments reference
+  the Term, per the repo's confirm-before-destroy rule.
+
+- **AC-P9 [BE]** Terms are reachable only through their Policy
+  (`/warranty-policies/{policy_id}/terms`), and the Policy is loaded FIRST so one outside
+  the caller's company scope 404s. Reason: `WarrantyTerm` is deliberately not
+  company-scoped, because it is only ever reachable through `policy_id` - which makes an
+  unguarded nested route hand another company's terms to anyone who guesses an id.
+
+- **AC-P10 [FE]** The Policies tab names the active company; the Kinds and Rules tabs state
+  that they are shared across companies. This is a scope indicator, not feature prose, and
+  is deliberately exempt from AC-X1: an admin editing a shared vocabulary from inside a
+  company-scoped area will otherwise assume the edit is scoped, and be wrong.
+
+- **AC-P11 [MIG]** Slugs are `warranty.policies.{view,add,edit,delete}` and
+  `warranty.kinds.{view,add,edit,delete}`. Terms ride the policies slug and kind rules ride
+  the kinds slug - a rule has no life apart from the Kind it points at, and a slug nobody
+  will ever grant separately is a slug that rots. Reads take
+  `require_permission_with_api_key`, writes take `require_permission`. Both slugs are
+  granted to the provisioned roles in the same migration that creates them (AC-X4), which
+  means the migration does more than call `sync_permissions` - that seeds the slug and
+  grants nobody.
+
+- **AC-P12 [BE]** Deleting a Kind is REFUSED while any Term or Kind Rule references it, and
+  the refusal names both counts. Reason: `warranty_terms.kind_id` and
+  `warranty_kind_rules.kind_id` are both ON DELETE CASCADE, so the obvious hard delete
+  silently removes warranty promises from every policy at once, and the assessments that
+  quoted them keep a snapshot pointing at a term that no longer exists. A master-data
+  delete must not be able to rewrite the policy document.
+
+- **AC-P13 [FE]** Deleting a Policy DOES cascade its Terms - they have no life apart from
+  it - so the confirmation names how many Terms will go with it. A count is the difference
+  between a considered delete and a discovered one.
 
 ## Phase C - Propose a date, and let the consumer answer (S8)
 
