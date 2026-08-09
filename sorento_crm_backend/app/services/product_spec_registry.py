@@ -150,6 +150,20 @@ def _rules_from_shipped_tables() -> dict[str, list[dict]]:
         "product_type": contains(d.PRODUCT_TYPE_TOKENS),
         "water_supply": contains(d.WATER_SUPPLY_TOKENS),
         "steel_grade": contains(d.STEEL_GRADE_TOKENS),
+        "furniture_type": contains(d.FURNITURE_TOKENS),
+        "is_high_basin": [{"match": "present", "pattern": d.HIGH_BASIN_RE.pattern, "value": True}],
+        "has_filter": [{"match": "present", "pattern": d.FILTER_TAP_RE.pattern, "value": True}],
+        "has_pull_out_shower": [
+            {"match": "present", "pattern": d.PULL_OUT_SHOWER_RE.pattern, "value": True}
+        ],
+        "has_chopping_board": [
+            {"match": "present", "pattern": d.CHOPPING_BOARD_RE.pattern, "value": True}
+        ],
+        "has_dish_rack": [{"match": "present", "pattern": d.DISH_RACK_RE.pattern, "value": True}],
+        "no_overflow": [{"match": "present", "pattern": d.NO_OVERFLOW_RE.pattern, "value": True}],
+        "has_shower_union": [
+            {"match": "present", "pattern": d.SHOWER_UNION_RE.pattern, "value": True}
+        ],
         "spray_functions": [
             {"match": "regex", "pattern": d.FUNCTION_COUNT_RE.pattern, "capture": 1}
         ],
@@ -613,6 +627,82 @@ SPEC_REGISTRY_SEED: list[dict] = [
         },
         "measured_coverage": 264,
         "rank_weight": 2.5,
+    },
+    {
+        "spec_key": "furniture_type",
+        "label": "Furniture type",
+        "data_type": "enum",
+        # 990 cabinets all derived to class "Bathroom Furniture" and nothing else, so a
+        # basin cabinet and a mirror cabinet were the same product to the ranker. The
+        # flyer names them apart on every card.
+        "allowed_values": ["basin_cabinet", "mirror_cabinet", "side_cabinet", "tall_cabinet"],
+        "synonyms": {
+            "basin_cabinet": ["basin cabinet", "vanity", "vanity cabinet", "under basin cabinet"],
+            "mirror_cabinet": ["mirror cabinet", "cabinet mirror", "mirrored cabinet"],
+            "side_cabinet": ["side cabinet", "storage cabinet"],
+            "tall_cabinet": ["tall cabinet", "tall unit", "column cabinet"],
+        },
+        "measured_coverage": 595,
+        "rank_weight": 3.0,
+    },
+    {
+        "spec_key": "is_high_basin",
+        "label": "High basin",
+        "data_type": "boolean",
+        "synonyms": {"true": ["high basin", "tall basin", "vessel height", "high rise"]},
+        "measured_coverage": 100,
+        "rank_weight": 2.5,
+    },
+    {
+        "spec_key": "has_filter",
+        "label": "Water filter",
+        "data_type": "boolean",
+        "synonyms": {"true": ["filter tap", "filter", "with filter", "water filter"]},
+        "measured_coverage": 64,
+        "rank_weight": 2.5,
+    },
+    {
+        "spec_key": "has_pull_out_shower",
+        "label": "Pull-out shower",
+        "data_type": "boolean",
+        "synonyms": {"true": ["pull out shower", "pull-out shower", "pull out spray"]},
+        "measured_coverage": 40,
+        "rank_weight": 2.5,
+    },
+    {
+        "spec_key": "has_chopping_board",
+        "label": "Chopping board",
+        "data_type": "boolean",
+        # What the flyer sells the multifunction sinks on.
+        "synonyms": {"true": ["chopping board", "cutting board", "with board"]},
+        "measured_coverage": 36,
+        "rank_weight": 2.0,
+    },
+    {
+        "spec_key": "has_dish_rack",
+        "label": "Dish rack",
+        "data_type": "boolean",
+        "synonyms": {"true": ["dish rack", "drying rack", "with rack"]},
+        "measured_coverage": 38,
+        "rank_weight": 2.0,
+    },
+    {
+        "spec_key": "no_overflow",
+        "label": "Without overflow",
+        "data_type": "boolean",
+        # The opposite of has_overflow, and stated on its own: a basin sold WITHOUT one
+        # is a different product, not a product missing a fact.
+        "synonyms": {"true": ["without overflow", "no overflow", "w/o overflow"]},
+        "measured_coverage": 40,
+        "rank_weight": 2.0,
+    },
+    {
+        "spec_key": "has_shower_union",
+        "label": "Shower union",
+        "data_type": "boolean",
+        "synonyms": {"true": ["shower union", "union", "wall union"]},
+        "measured_coverage": 54,
+        "rank_weight": 2.0,
     },
     {
         "spec_key": "steel_grade",

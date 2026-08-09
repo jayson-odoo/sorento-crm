@@ -159,6 +159,31 @@ PRODUCT_TYPE_TOKENS: list[tuple[str, str]] = [
     ("BIDET", "bidet"),  # 715
 ]
 
+# Furniture is the weakest page in the flyer test and this is why: a basin cabinet, a
+# mirror cabinet and a side cabinet all derived to class "Bathroom Furniture" and nothing
+# else, so 990 cabinets were mutually indistinguishable. The flyer names them separately
+# on every card.
+FURNITURE_TOKENS: list[tuple[str, str]] = [
+    ("MIRROR CABINET", "mirror_cabinet"),  # 363
+    ("BASIN CABINET", "basin_cabinet"),  # 232
+    ("SIDE CABINET", "side_cabinet"),
+    ("TALL CABINET", "tall_cabinet"),
+]
+
+# A tall basin tap, sold as its own thing on 31 flyer cards and asked for by name.
+HIGH_BASIN_RE = re.compile(r"\bHIGH\s+BASIN\b")
+# Water filter built into the tap.
+FILTER_TAP_RE = re.compile(r"\bFILTER\s+TAP\b")
+# A kitchen tap whose head pulls out as a spray.
+PULL_OUT_SHOWER_RE = re.compile(r"\bPULL[\s-]?OUT\s+SHOWER\b")
+# The sink accessories the flyer sells the multifunction sinks on.
+CHOPPING_BOARD_RE = re.compile(r"\bCHOPPING\s+BOARD\b")
+DISH_RACK_RE = re.compile(r"\bDISH\s+RACK\b")
+# Stated on 40 cards as a selling point, and the opposite of has_overflow - a basin
+# sold WITHOUT one is a different product, not a missing fact.
+NO_OVERFLOW_RE = re.compile(r"\bW/?O\s+OVERFLOW\b|\bWITHOUT\s+OVERFLOW\b")
+SHOWER_UNION_RE = re.compile(r"\bSHOWER\s+UNION\b")
+
 # The steel a sink is made of. 304 vs 201 is the first question a kitchen-sink buyer
 # asks and the biggest price difference on the page: 705 descriptions say 304, 137 say
 # 201, and the flyer prints "S/Steel 304" 218 times.
@@ -957,7 +982,7 @@ def _apply_scope(out: "DerivedSpec", applies_when: dict[str, dict]) -> None:
 # which kept their old values and reported a successful run. The failure is invisible:
 # the job says "skipped", which is exactly what it says when there is genuinely nothing
 # to do.
-DERIVATION_VERSION = "16"
+DERIVATION_VERSION = "17"
 
 
 def _input_hash(
