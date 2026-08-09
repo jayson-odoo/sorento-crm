@@ -216,16 +216,45 @@ class SLAPolicyService:
             raise handle_not_found("SLA Policy", policy_id)
         return policy
     
+    def _write_company_id(self) -> str:
+        """The company a policy written now belongs to.
+
+        `SLAPolicy` is deliberately NOT a `CompanyScopedMixin` (the auto-filter would
+        reach every policy load in the app, including readers that hold a policy id
+        and no company context), so nothing stamps `company_id` on insert for us and
+        this has to be explicit. An X-API-Key caller has scope None (all companies)
+        and no company to infer, so it keeps writing to the incumbent, which is where
+        migration 320 put every pre-multi-company policy.
+        """
+        from app.models.base import get_company_scope
+        from app.services.company_routing_service import DEFAULT_COMPANY_ID
+
+        scope = get_company_scope(self.db)
+        if isinstance(scope, frozenset) and len(scope) == 1:
+            return next(iter(scope))
+        if scope is None:
+            return DEFAULT_COMPANY_ID
+        raise handle_validation_error(
+            "Cannot tell which company this SLA policy belongs to. "
+            "Switch to a company and try again."
+        )
+
     def create_policy(self, policy_data: SLAPolicyCreate):
         """Create a new SLA policy with tiers."""
-        # Scoped read: the code is unique PER COMPANY now, so a global check would
-        # block Mocha from having its own policy with the same code as Sorento's.
-        existing = self.db.query(SLAPolicy).filter(SLAPolicy.code == policy_data.code).first()
+        company_id = self._write_company_id()
+        # The code is unique PER COMPANY, so this check must be too: a global one
+        # blocked Mocha from having its own policy with the same code as Sorento's,
+        # while still claiming the code "already exists in this company".
+        existing = (
+            self.db.query(SLAPolicy)
+            .filter(SLAPolicy.code == policy_data.code, SLAPolicy.company_id == company_id)
+            .first()
+        )
         if existing:
             raise handle_conflict("SLA policy code already exists in this company.")
-        
+
         policy_dict = policy_data.model_dump(exclude={"tiers"})
-        policy = SLAPolicy(**policy_dict)
+        policy = SLAPolicy(**policy_dict, company_id=company_id)
         self.db.add(policy)
         self.db.flush()
         
