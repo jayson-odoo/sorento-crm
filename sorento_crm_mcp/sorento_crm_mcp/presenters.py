@@ -648,6 +648,56 @@ def _certificates(rows: list[dict], b: _Builder) -> None:
             b.attach(current_file)
 
 
+#: Every clearance field's CUSTOMER-facing label, keyed the way the envelope keys
+#: its fields. Derived from `_CLEARANCE_PAIRS`, so it cannot drift from what a
+#: present field renders as.
+#:
+#: Why it ships at all: an absent field carries no label to borrow, so a consumer
+#: saying "not recorded yet" has only the key to name it with. Humanising works by
+#: luck - `gatepass_date` -> "Gatepass" is right, `etd_date` -> "Etd" and
+#: `eta_delay_date` -> "Eta delay" are not, and no heuristic fixes an acronym
+#: without becoming this table. Harvesting the label off a sibling row that DOES
+#: carry the field covers the mixed case, but not the case where no row has it.
+#:
+#: This is the customer register, deliberately: `FIELD_LABELS` backend-side says
+#: "ETC (estimated time of container closing)" for an admin choosing grants, this
+#: says "ETC" for a dealer reading a chat message.
+_CLEARANCE_VOCABULARY = {key: label for key, label in _CLEARANCE_PAIRS}
+
+
+def _annotate_field_access(envelope: dict[str, Any], tool_name: str) -> None:
+    """Give a consumer the labels it needs to name a field it did not receive.
+
+    Both additions are SIBLINGS of `items` and nothing renders them today, so an
+    existing consumer is byte-identical. Putting the vocabulary inside
+    `items[].fields` instead - by letting empty values through - would push ~20
+    blank clearance rows into every incoming envelope, and any renderer that
+    renders what it is given would read them out to a customer. That is the dump
+    this whole design exists to prevent, arriving through the back door.
+
+    `field_vocabulary` is TOP LEVEL, not inside `field_access`, because the case
+    that needs it most has no denial at all: four containers, one carries
+    `eta_delay_date` and three do not. Nothing was withheld, so there is no
+    `field_access` block to hang it off, and the three rows still have to be
+    named out loud.
+    """
+    fa = envelope.get("field_access")
+    if isinstance(fa, dict):
+        denied = fa.get("denied")
+        if isinstance(denied, list):
+            for d in denied:
+                # `label` only where we actually know one - never a humanised
+                # guess, which is what the consumer can already do for itself.
+                if (
+                    isinstance(d, dict)
+                    and "label" not in d
+                    and d.get("field") in _CLEARANCE_VOCABULARY
+                ):
+                    d["label"] = _CLEARANCE_VOCABULARY[d["field"]]
+    if _RESULT_TYPE.get(tool_name) == "incoming_stock":
+        envelope["field_vocabulary"] = dict(_CLEARANCE_VOCABULARY)
+
+
 def _resource_attachments(rows: list[dict], b: _Builder) -> None:
     # No "Type" line — the attachment type (e.g. "Direct Access") is internal
     # plumbing, not meaningful to the end user. Just the file name + the file.
@@ -660,10 +710,14 @@ def _resource_attachments(rows: list[dict], b: _Builder) -> None:
         # agent can state out loud.
         uploaded = att.get("uploaded_at")
         day = str(uploaded)[:10] if _filled(uploaded) else None
-        # The id is normally UI noise, but this tool is how a human debugging an
-        # answer finds the row again: identical filenames make every other field
-        # useless for that, and without it there is nothing to quote.
-        b.item(name, [("File Name", name), ("Uploaded", day), ("File ID", att.get("id"))])
+        # No File ID. It was added here so a human debugging an answer could find
+        # the row again among identically-named files - but `render` is the
+        # CUSTOMER-facing view, and it went straight out to dealers on WhatsApp:
+        # "File ID: 1e900020-dba5-4e34-ae1c-5e0f90380095" under every document,
+        # on every resource-attachment answer, next to the file itself. The uuid
+        # is still on the raw (non-render) response and in the CRM UI, which is
+        # where someone debugging is looking anyway.
+        b.item(name, [("original_filename", "File Name", name), ("uploaded_at", "Uploaded", day)])
         # Strip the type so the delivered attachment carries no "Direct Access" label.
         no_type = {k: v for k, v in att.items() if k != "attachment_type"} if isinstance(att, dict) else att
         b.attach(no_type)
@@ -862,4 +916,5 @@ def present_response(tool_name: str, raw: str) -> str:
     for k in _PASSTHROUGH_KEYS:
         if k in data and _filled(data.get(k)):
             envelope[k] = data[k]
+    _annotate_field_access(envelope, tool_name)
     return json.dumps(envelope)
