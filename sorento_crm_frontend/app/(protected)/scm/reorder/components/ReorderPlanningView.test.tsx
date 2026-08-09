@@ -91,7 +91,8 @@ describe('ReorderPlanningView — opens to today (M8-D3 / M8-C12)', () => {
     expect(screen.getByText('cash-copilot')).toBeInTheDocument();
     expect(screen.getByText('plan-assistant')).toBeInTheDocument();
     // M8-C12 — the disposition card is labelled "Stock allocation"
-    expect(screen.getByText('Stock allocation')).toBeInTheDocument();
+    // Named twice now, deliberately: the tile and the band it opens.
+    expect(screen.getAllByText('Stock allocation').length).toBeGreaterThan(0);
   });
 });
 
@@ -258,5 +259,30 @@ describe('ReorderPlanningView — demand the plan could not net', () => {
     renderView();
 
     expect(screen.queryByText(/arrived with no stock location/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('ReorderPlanningView — one page, not three', () => {
+  // > "if i want to toggle between buy, covered by stock, stock allocation, is very hassle,
+  // >  I want to see all in 1 page"
+
+  it('shows the buys, the covered band and the allocation band together', () => {
+    stubToday(todayRun());
+    renderView();
+
+    expect(screen.getByText('cash-copilot')).toBeInTheDocument();
+    expect(screen.getAllByText('Covered by stock').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Stock allocation').length).toBeGreaterThan(0);
+  });
+
+  it('a tile reveals its band instead of replacing the table', () => {
+    stubToday(todayRun());
+    renderView();
+
+    fireEvent.click(screen.getAllByText('Covered by stock')[0]);
+
+    // The buys are still there: answering "is any of this covered?" must not cost you
+    // your place in the plan.
+    expect(screen.getByText('cash-copilot')).toBeInTheDocument();
   });
 });

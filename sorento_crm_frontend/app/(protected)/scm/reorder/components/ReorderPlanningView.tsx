@@ -39,6 +39,7 @@ import type { ReorderRunHistoryItem } from '../services/reorderRunService';
 import type { OutstandingApplyResult } from '../services/outstandingImportService';
 import { CashCopilotResults } from './CashCopilotResults';
 import { CoveredByStockView } from './CoveredByStockView';
+import { PlanSection } from './PlanSection';
 import { DispositionResultsGrid } from './DispositionResultsGrid';
 import { UploadDataMenu } from './UploadDataMenu';
 import type {
@@ -88,6 +89,27 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(autoOpenRun);
   const [view, setView] = useState<ReorderPlanView>('buy');
+  // Which bands are open. Buy is open on arrival because it is what the page is for; the
+  // other two announce their counts in their headers while folded.
+  const [openSections, setOpenSections] = useState({ covered: false, disposition: false });
+  const coveredRef = useRef<HTMLDivElement>(null);
+  const dispositionRef = useRef<HTMLDivElement>(null);
+
+  /** A tile now REVEALS its band rather than replacing the table. */
+  const selectView = (next: ReorderPlanView) => {
+    if (next === 'covered' || next === 'disposition') {
+      const key = next === 'covered' ? 'covered' : 'disposition';
+      setOpenSections((prev) => ({ ...prev, [key]: true }));
+      setView('buy');
+      const ref = next === 'covered' ? coveredRef : dispositionRef;
+      // After the band has had a frame to expand, otherwise it scrolls to where it was.
+      requestAnimationFrame(() =>
+        ref.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }),
+      );
+      return;
+    }
+    setView(next);
+  };
   // A history-selected run overrides today's; null = show today's default run.
   const [selectedRun, setSelectedRun] = useState<ReorderRunHistoryItem | null>(null);
 
@@ -538,7 +560,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         // constant: this tile rendered a hard-coded 2 on the live page against a real 317.
         orderSummaryPendingCount={orderSummaryPending}
         activeView={view}
-        onSelectView={setView}
+        onSelectView={selectView}
       />
 
       {view === 'covered' ? (
@@ -563,7 +585,11 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         // The weekly sheet Mr Loo decides order quantities on (S3b, AC-C2.1). Reads
         // the SAME run as the plan above, so a past run reports the week it was.
         <SummaryOrderReportView runId={currentRunId} />
-      ) : view === 'buy' ? (
+      ) : (
+        // ONE PAGE. Buy, covered-by-stock and stock allocation are bands of the same plan,
+        // not three screens: swapping the table meant leaving the buys to ask "is any of
+        // this already covered?" and then finding your place again. The tiles now open and
+        // scroll to a band instead of replacing what is on screen.
         <>
           <PlanAssistant
             runId={currentRunId}
@@ -585,13 +611,44 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
               </Button>
             </Card>
           ) : (
+            // Keeps its own Within budget / Over budget collapse and its drag-to-fund: that
+            // interaction is why this grid is hand-rolled rather than a DataGrid, and
+            // folding it into one would have cost the drag.
             <CashCopilotResults plan={plan} />
           )}
+
+          <PlanSection
+            ref={coveredRef}
+            title="Covered by stock"
+            count={covered.data ? covered.data.length : null}
+            hint="the location already holds it - use stock, or buy anyway"
+            open={openSections.covered}
+            onOpenChange={(o) => setOpenSections((s) => ({ ...s, covered: o }))}
+          >
+            <CoveredByStockView
+              runId={currentRunId}
+              rows={covered.data ?? []}
+              isLoading={covered.isLoading}
+              isError={covered.isError}
+              error={covered.error}
+            />
+          </PlanSection>
+
+          <PlanSection
+            ref={dispositionRef}
+            title="Stock allocation"
+            count={actionableDispositions.length}
+            hint="stock to move on, rather than buy"
+            open={openSections.disposition}
+            onOpenChange={(o) => setOpenSections((s) => ({ ...s, disposition: o }))}
+          >
+            {dispositionQuery.isLoading ? (
+              <Skeleton className="h-72 w-full rounded-xl" />
+            ) : (
+              <DispositionResultsGrid rows={dispositionRows} />
+            )}
+          </PlanSection>
         </>
-      ) : dispositionQuery.isLoading ? (
-        <Skeleton className="h-72 w-full rounded-xl" />
-      ) : (
-        <DispositionResultsGrid rows={dispositionRows} />
       )}
 
       <RunHistoryPanel
