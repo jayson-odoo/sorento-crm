@@ -345,6 +345,14 @@ was a real hole in how this repo builds its test schema.
   - **Prevention.** The Supersede dialog states the resulting window for BOTH policies
     before it is confirmed ("Version 15 closes 2026-08-31; Version 16 runs from
     2026-09-01"). A mis-dated supersede is a dialog that did not show its own arithmetic.
+  - **Status codes split by what is actually wrong** (ruled 2026-08-09 after the gate flagged
+    that AC-P26's prose said 422 while the same guard answers 409 elsewhere). An **overlap
+    is 409** - a conflict with a row that already exists, identical on POST, on PATCH and on
+    the AC-P26 reopen, because one guard over one fact must answer with one code or the
+    frontend grows two branches that disagree about the same condition. The **Supersede
+    preconditions are 422** - an already-closed incumbent, or a new `effective_from` at or
+    before the incumbent's - because there the request itself is malformed relative to what
+    it targets, before any existing row is consulted.
   - **Recovery is two steps and both refusals must NAME them.** Deleting the successor is
     already supported and loses nothing (a freshly superseded policy has no Terms yet);
     reopening the incumbent is then unrefused. So the "cannot supersede a closed policy"
