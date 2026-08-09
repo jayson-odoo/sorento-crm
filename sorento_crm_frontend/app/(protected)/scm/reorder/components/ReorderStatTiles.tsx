@@ -74,7 +74,12 @@ function Tile({
       )}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 truncate text-xs font-medium text-muted-foreground">{label}</div>
+        {/* NOT truncated. Seven tiles across one row cut every label to "Covered b..." /
+          "Stock alloc...", so the tiles could not be found by the words they are called by.
+          They wrap onto two rows instead, which costs a little height and nothing else. */}
+      <div className="min-w-0 text-xs font-medium text-muted-foreground" title={label}>
+        {label}
+      </div>
         <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted', iconClass)}>
           <Icon className="size-4.5" aria-hidden />
         </span>
@@ -152,7 +157,7 @@ export function ReorderStatTiles({
   onSelectView: (view: ReorderPlanView) => void;
 }) {
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 xl:grid-cols-7">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
       <Tile
         label="Buy"
         value={fmtInt(buyCount)}
