@@ -1503,18 +1503,24 @@ class AccessAgentService:
         from sqlalchemy import and_
         from sqlalchemy.orm import selectinload
 
+        from app.models.base import company_scope
         from app.services.market_segment_service import segment_key_for
-        # Check agent is linked to this team
-        link = (
-            self.db.query(AgentTeam)
-            .filter(
-                and_(
-                    AgentTeam.agent_id == agent_id,
-                    AgentTeam.team_id == team_id,
+        # Check agent is linked to this team. Read scope-free: `team_id` is passed in
+        # already resolved for the work item's company (by get_team_id_by_tier), so
+        # the ambient company must not veto it - otherwise a caller switched to
+        # another company sees "no available assignee" for a fully staffed team.
+        # The team_id predicate pins one team, hence one company.
+        with company_scope(self.db, None):
+            link = (
+                self.db.query(AgentTeam)
+                .filter(
+                    and_(
+                        AgentTeam.agent_id == agent_id,
+                        AgentTeam.team_id == team_id,
+                    )
                 )
+                .first()
             )
-            .first()
-        )
         if not link:
             return None
         # Get team members (user_ids) in order. Per-team RR opt-out: members with
@@ -1678,16 +1684,20 @@ class AccessAgentService:
         """
         from sqlalchemy import and_
 
-        link = (
-            self.db.query(AgentTeam)
-            .filter(
-                and_(
-                    AgentTeam.agent_id == agent_id,
-                    AgentTeam.team_id == team_id,
+        from app.models.base import company_scope
+
+        # Same reasoning as get_next_assignee: team_id already names the company.
+        with company_scope(self.db, None):
+            link = (
+                self.db.query(AgentTeam)
+                .filter(
+                    and_(
+                        AgentTeam.agent_id == agent_id,
+                        AgentTeam.team_id == team_id,
+                    )
                 )
+                .first()
             )
-            .first()
-        )
         if not link:
             return None
         members = (
@@ -2317,15 +2327,26 @@ class AccessAgentService:
         if tier is None or tier < 1 or tier > 3:
             return None
 
-        query = self.db.query(AgentTeam.team_id).filter(
-            AgentTeam.agent_id == agent_id,
-            AgentTeam.tier == tier,
-            AgentTeam.company_id == str(company_id),
-        )
-        if team_set_code:
-            query = query.filter(AgentTeam.code == team_set_code)
+        # Read the ladder under the company the CALLER named, not the company the
+        # request happens to be switched to. `AgentTeam` is company-scoped, so the
+        # ambient filter would be ANDed on top and silently win: an admin switched to
+        # company B acting on a company-A tracker got an empty ladder and a manual
+        # escalate that 422'd with "No higher-tier team configured" on a ladder that
+        # was fully configured (AC-E3 - the ladder is the tracker's company's).
+        # Safe scope-free: the explicit `company_id` predicate below pins exactly one
+        # company, so suspending the ambient filter cannot widen the result.
+        from app.models.base import company_scope
 
-        rows = query.all()
+        with company_scope(self.db, None):
+            query = self.db.query(AgentTeam.team_id).filter(
+                AgentTeam.agent_id == agent_id,
+                AgentTeam.tier == tier,
+                AgentTeam.company_id == str(company_id),
+            )
+            if team_set_code:
+                query = query.filter(AgentTeam.code == team_set_code)
+
+            rows = query.all()
         if not rows:
             return None
         if len(rows) > 1:

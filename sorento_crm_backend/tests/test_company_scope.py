@@ -278,6 +278,12 @@ _COMPANY_ID_ALLOWLIST = {
     # principal) and the cross-company admin SLA listing. Isolation is enforced where
     # it matters instead - the teams the tracker escalates into ARE scoped.
     "conversation_sla_tracking",
+    # SLA policies are company-owned data, but deliberately filtered by hand
+    # (`sla_service.list_policies` reads the active scope) instead of through the
+    # mixin. The auto-filter reaches every SLAPolicy load anywhere in the app,
+    # including the ~160 tests and background readers that hold a policy id with no
+    # company context at all, and turns each one into an empty result.
+    "sla_policies",
 }
 
 
