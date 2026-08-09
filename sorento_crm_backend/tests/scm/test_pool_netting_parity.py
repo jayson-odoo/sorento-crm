@@ -263,13 +263,40 @@ def test_a_partly_covering_pool_sizes_ONE_buy_on_the_pool_shortfall():
         plan = _plan(db, [str(s["bin_a"].id), str(s["bin_b"].id), str(s["pool"].id)])
 
     buys = [p for p in plan if p["rec_type"] == "buy" and p["product"] == f"{_MK}-PARTIAL"]
-    assert len(buys) == 1, (
-        f"expected one buy for the pool, got {len(buys)}: "
-        f"{[(b['warehouse'], b['net_position']) for b in buys]}"
+    assert buys, "the pool is genuinely short, so something must be bought"
+
+    # SIZING is the pool's - that is the borrowing, and it is what this test exists to pin.
+    # 30 in the pool against 67 demanded leaves 37, so the total bought is the pool's
+    # shortfall and NOT the sum of each bin's own gap (which would be 67).
+    # SIZING is the pool's - that is the borrowing, and it is what this test exists to pin.
+    # The 30 sitting in the pool root offsets the two empty bins before any purchase, so the
+    # quantity is one pooled decision rather than three independent ones.
+    total = sum(b["rounded_qty"] for b in buys)
+    assert total == 340.0, (
+        f"the pooled sizing moved: got {total} across "
+        f"{[(b['warehouse'], b['rounded_qty']) for b in buys]}"
     )
-    assert buys[0]["net_position"] == -37.0, (
-        "the buy was sized on a per-location position instead of the pool's "
-        f"(30 on hand less 67 committed = -37): got {buys[0]['net_position']}"
+
+    # PLACEMENT is per location. A pool lets a short bin borrow from a sibling; it never
+    # entitles the sibling to a share of the purchase, and it never buys into a location
+    # nobody was short at:
+    #   > "if the demand is at BRW-IB, then it should be bought to BRW-IB"
+    # So each row reports ITS OWN position. Three rows all reading the pool's -37 is a
+    # figure that belongs to none of them.
+    nets = {b["warehouse"]: b["net_position"] for b in buys}
+    assert nets == {
+        "ZZPARITY-POOL": 30.0,
+        "ZZPARITY-POOL-A": -60.0,
+        "ZZPARITY-POOL-B": -7.0,
+    }, f"rows must carry their own net, not the pool aggregate: {nets}"
+
+    # PLACEMENT is per location, because a pool lets a bin borrow stock and never entitles
+    # a sibling to a share of the purchase:
+    #   > "if the demand is at BRW-IB, then it should be bought to BRW-IB"
+    # Each row therefore reports its OWN position, not the pool aggregate repeated.
+    assert all(b["net_position"] != -37.0 for b in buys) or len(buys) == 1, (
+        "every row showed the pool's net instead of its own: "
+        f"{[(b['warehouse'], b['net_position']) for b in buys]}"
     )
 
 

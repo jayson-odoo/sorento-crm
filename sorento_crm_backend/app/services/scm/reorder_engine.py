@@ -392,14 +392,26 @@ def allocate(buy_qty: float, warehouses: list[dict]) -> dict[str, int]:
     if total <= total_deficit:
         weights = deficits                              # buy <= Σdeficit -> proportional to deficit
     else:
+        # The rounding surplus (MOQ / pack multiple) goes ONLY to locations that were short.
+        #
+        # > "it won't go to brw-bb, only ordered for brw-bb will go into brw-bb"
+        #
+        # Spreading it velocity-proportionally across every member sent stock to bins sitting
+        # in surplus that had ordered nothing. A pool lets a short bin BORROW from a sibling;
+        # it never entitles the sibling to a share of the purchase.
         surplus = total - total_deficit
-        total_demand = sum(demands)
-        if total_demand > 0:
-            weights = [deficits[i] + surplus * demands[i] / total_demand
-                       for i in range(len(warehouses))]
+        short = [i for i in range(len(warehouses)) if deficits[i] > 0]
+        if not short:
+            # Nothing was short anywhere, so the buy exists purely as a minimum order. There
+            # is no bin that asked for it; spread by demand so it lands where it will move.
+            short = list(range(len(warehouses)))
+        short_demand = sum(demands[i] for i in short)
+        if short_demand > 0:
+            extra = {i: surplus * demands[i] / short_demand for i in short}
         else:
-            even = surplus / len(warehouses)            # no demand signal -> even surplus
-            weights = [deficits[i] + even for i in range(len(warehouses))]
+            even = surplus / len(short)                 # no demand signal -> even among short
+            extra = {i: even for i in short}
+        weights = [deficits[i] + extra.get(i, 0.0) for i in range(len(warehouses))]
     parts = _apportion(total, weights)
     return {warehouses[i]["warehouse_id"]: parts[i] for i in range(len(warehouses))}
 

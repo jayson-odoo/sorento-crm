@@ -41,10 +41,15 @@ def demand_for_recommendation(db: Session, rec_id: str,
 
     # The pool the row was planned against: a location with no pool pointer is its own pool,
     # which is what makes a single-location plan and a pooled one the same query.
+    # The row sits on the location that was short, NOT on the pool root, so the pool is
+    # resolved FROM it: root first, then every member. Reading the row's own id as the pool
+    # returned nothing for a bin, and the breakdown came back empty for exactly the rows
+    # that most need explaining.
     members = [r[0] for r in db.execute(text(
-        "SELECT id::text FROM warehouses "
-        "WHERE COALESCE(pool_warehouse_id, id)::text = :pool"
-    ), {"pool": rec["warehouse_id"]}).fetchall()] if rec["warehouse_id"] else []
+        "SELECT id::text FROM warehouses WHERE COALESCE(pool_warehouse_id, id) = ("
+        "  SELECT COALESCE(pool_warehouse_id, id) FROM warehouses WHERE id::text = :wid"
+        ")"
+    ), {"wid": rec["warehouse_id"]}).fetchall()] if rec["warehouse_id"] else []
 
     # Unlocated demand was attributed to exactly one location per product, so it belongs to
     # this row only when THIS row is the one carrying it.

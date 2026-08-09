@@ -798,11 +798,49 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
                                  reason_label=reason_label, recommended=recommended,
                                  rounded=rounded)
     if triggered and rounded > 0:
-        allocation = _allocation_lines(eng.allocate(rounded, agg["warehouses"]), wh_meta)
+        split = eng.allocate(rounded, agg["warehouses"])
+        allocation = _allocation_lines(split, wh_meta)
         if chosen:
-            recs.append(_build_rec(run_id, "buy", anchor, agg_cell,
-                                   warehouse_id=pool_id, order_qty=recommended,
-                                   rounded=rounded, allocation=allocation))
+            # ONE ROW PER LOCATION THAT ASKED, never one row on the pool root.
+            #
+            # > "if the demand is at BRW-IB, then it should be bought to BRW-IB, the pooling
+            # >  is only relevant if we want to borrow stock from other location"
+            #
+            # The pool decides WHETHER a purchase is needed - a sibling's surplus covers the
+            # shortage first - and never where it lands. Emitting on the root put stock into
+            # a location nobody ordered for, and left the planner asking why BRW was buying
+            # for a BRW-IB order.
+            by_id = {str(r["warehouse_id"]): r for r in prows}
+            cell_by_id = {str(r["warehouse_id"]): c for r, c in zip(prows, cells)}
+            share = _r(rounded) or 0
+            placed = [(wid, qty) for wid, qty in split.items()
+                      if qty and qty > 0 and wid in by_id]
+            for wid, qty in sorted(placed, key=lambda kv: -kv[1]):
+                # `recommended` is the pre-rounding pool figure; each location carries its
+                # OWN share of it so the row's numbers describe the row's own purchase.
+                portion = (float(recommended) * float(qty) / float(share)) if share else None
+                # Sizing is the POOL's (one decision, borrowing included), but the position
+                # columns must describe THIS location. Showing the pool's net on every row
+                # made three rows read as three identical -37s, which is a figure that
+                # belongs to none of them.
+                member = cell_by_id.get(wid) or {}
+                row_cell = dict(agg_cell)
+                for k in ("net", "rop", "demand_rate", "doc"):
+                    if k in member:
+                        row_cell[k] = member[k]
+                recs.append(_build_rec(
+                    run_id, "buy", by_id[wid], row_cell,
+                    warehouse_id=wid, order_qty=portion, rounded=float(qty),
+                    # The split stays on every row: it is how a reader sees that this buy
+                    # was sized against the whole pool, not against this bin alone.
+                    allocation=allocation))
+            if not placed:
+                # The allocator gave the whole buy to a location outside the planned set,
+                # which should not happen. Emitting nothing would drop a triggered buy in
+                # silence, so it lands on the anchor and says so.
+                recs.append(_build_rec(
+                    run_id, "buy", anchor, agg_cell, warehouse_id=pool_id,
+                    order_qty=recommended, rounded=rounded, allocation=allocation))
         else:
             recs.append(_build_rec(
                 run_id, "exception", anchor, agg_cell, warehouse_id=pool_id,
