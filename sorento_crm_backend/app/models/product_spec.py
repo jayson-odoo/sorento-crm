@@ -248,3 +248,59 @@ class ProductSpecException(Base):
             postgresql_where=text("resolved_at IS NULL"),
         ),
     )
+
+
+class ProductFindabilityRun(Base):
+    """One sweep of a flyer, asking every card for its own product.
+
+    Persisted rather than printed because the point is comparison: the number after a
+    vocabulary change only means something next to the number before it. Keyed on the
+    flyer's `source_id`, so the Cabana and Mocha flyers are new rows, not new code.
+    """
+
+    __tablename__ = "product_findability_runs"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_id = Column(String(64), nullable=True)
+    source_label = Column(String(200), nullable=True)
+    # A full flyer takes about half an hour, so the sweep runs in the background and
+    # this is how the screen knows whether it is watching a total or a work in progress.
+    status = Column(String(16), nullable=False, server_default="running")
+    error = Column(Text, nullable=True)
+    # How deep a result still counts as found.
+    window = Column(Integer, nullable=False, server_default=text("25"))
+    cards = Column(Integer, nullable=False, server_default=text("0"))
+    # Found from the card's own printed words - the angle that catches a missing spec.
+    found_by_card = Column(Integer, nullable=False, server_default=text("0"))
+    # Found from every spec the flyer states, together. The best case.
+    found_by_specs = Column(Integer, nullable=False, server_default=text("0"))
+    not_found = Column(Integer, nullable=False, server_default=text("0"))
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+
+class ProductFindabilityResult(Base):
+    """One card, and every way of asking for it."""
+
+    __tablename__ = "product_findability_results"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("product_findability_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    product_code = Column(String(100), nullable=False)
+    # A discontinued code losing to the live one that replaced it is the ranker working.
+    is_discontinued = Column(Boolean, nullable=False, server_default=text("false"))
+    phrase = Column(Text, nullable=False, server_default="")
+    # The easiest question that finds it: "one:product_type", "card", "all", or "none".
+    boundary = Column(String(64), nullable=False, server_default="none")
+    # {"all": 1, "one:finish": null, ...} - every angle and where it landed, so the
+    # screen can show WHICH way of asking failed without re-running the sweep.
+    ranks = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_findability_results_run", "run_id"),
+        Index("ix_findability_results_boundary", "boundary"),
+    )

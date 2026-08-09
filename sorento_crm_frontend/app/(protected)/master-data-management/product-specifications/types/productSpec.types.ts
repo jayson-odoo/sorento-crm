@@ -201,3 +201,28 @@ export interface SpecUnderstanding {
   free_terms: string[];
   notes: string;
 }
+
+export interface FindabilityRun {
+  id: string;
+  run_id?: string;
+  source_label: string | null;
+  window?: number;
+  cards: number;
+  found_by_card: number;
+  found_by_specs: number;
+  not_found: number;
+  /** running | complete | failed — a full flyer takes about half an hour. */
+  status?: string;
+  error?: string | null;
+  created_at?: string | null;
+}
+
+export interface FindabilityResult {
+  product_code: string;
+  is_discontinued: boolean;
+  phrase: string;
+  /** The easiest question that finds it: "one:product_type", "card", "all", "none". */
+  boundary: string;
+  /** Every angle tried, and where the product landed. Null means it never came back. */
+  ranks: Record<string, number | null>;
+}
