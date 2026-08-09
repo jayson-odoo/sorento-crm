@@ -449,6 +449,25 @@ export async function getCoveredRecommendations(
   return out;
 }
 
+/** Resolve a covered-by-stock row: keep the stock, or turn it into a purchase.
+ *
+ *  POST /api/v1/scm/recommendations/{id}/covered-decision  body { choice } */
+export async function decideCoveredRow(
+  recId: string,
+  choice: 'use_stock' | 'buy',
+): Promise<{ choice: string; rec_type: string; status: string }> {
+  const res = await apiFetch(
+    `/api/v1/scm/recommendations/${encodeURIComponent(recId)}/covered-decision`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ choice }),
+    },
+  );
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to record the decision'));
+  return res.json();
+}
+
 /** Persist the chosen budget + funding split to the run ("Apply budget"). */
 export async function applyBudget(runId: string, budget: number): Promise<ApplyBudgetResult> {
   if (USE_M4_MOCKS) {

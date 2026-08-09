@@ -8,6 +8,7 @@ FE contract in ``reorder/services/decisionService.ts``. No UUIDs surface.
 """
 from __future__ import annotations
 
+from pydantic import BaseModel
 from fastapi import APIRouter, Body, Depends
 from sqlalchemy.orm import Session
 
@@ -84,6 +85,24 @@ def adjust(
         payload.reason_text,
         (_user or {}).get("id"),
     )
+    db.commit()
+    return result
+
+
+class CoveredDecisionRequest(BaseModel):
+    """`use_stock` keeps the stock already there; `buy` turns the row into a purchase."""
+    choice: str
+
+
+@router.post("/recommendations/{rec_id}/covered-decision")
+def covered_decision(
+    rec_id: str,
+    payload: CoveredDecisionRequest = Body(...),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_RUN),
+):
+    """Resolve a covered-by-stock row. The engine deliberately does not decide this."""
+    result = svc.decide_covered(db, rec_id, payload.choice, (_user or {}).get("id"))
     db.commit()
     return result
 

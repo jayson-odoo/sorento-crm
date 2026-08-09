@@ -1,5 +1,9 @@
 'use client';
 
+import { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -12,6 +16,8 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { fmtInt, fmtMoney } from '../../lib/format';
+import { decideCoveredRow } from '../services/reorderRunService';
+import { todayRunKey } from '../hooks/useReorderRun';
 import type { ReorderRecommendation } from '../types/reorder.types';
 
 /**
@@ -28,12 +34,36 @@ export function CoveredByStockView({
   isLoading,
   isError,
   error,
+  runId,
 }: {
   rows: ReorderRecommendation[];
   isLoading: boolean;
   isError?: boolean;
   error?: unknown;
+  runId?: string | null;
 }) {
+  const qc = useQueryClient();
+  // Which row is mid-flight, so its two buttons disable together and a double-click cannot
+  // send the opposite decision while the first is still in the air.
+  const [pending, setPending] = useState<string | null>(null);
+
+  const decide = useMutation({
+    mutationFn: ({ id, choice }: { id: string; choice: 'use_stock' | 'buy' }) =>
+      decideCoveredRow(id, choice),
+    onMutate: ({ id }) => setPending(id),
+    onSettled: () => setPending(null),
+    onSuccess: (_res, { choice }) => {
+      // Buying anyway MOVES the row into the buy set, so both lists and the tiles that
+      // count them are stale together.
+      void qc.invalidateQueries({ queryKey: ['scm', 'reorder', 'covered-recs', runId] });
+      void qc.invalidateQueries({ queryKey: ['scm', 'reorder', 'cash-recs', runId] });
+      void qc.invalidateQueries({ queryKey: todayRunKey });
+      toast.success(
+        choice === 'buy' ? 'Moved to the buy plan.' : 'Marked as covered by stock.',
+      );
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'Failed to record the decision'),
+  });
   if (isLoading) {
     return (
       <Card className="space-y-3 p-4">
@@ -84,6 +114,7 @@ export function CoveredByStockView({
               <TableHead className="text-end">Buy anyway</TableHead>
               <TableHead className="text-end">Cost to buy</TableHead>
               <TableHead>Why it is here</TableHead>
+              <TableHead className="text-end">Decide</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -115,6 +146,25 @@ export function CoveredByStockView({
                   title={r.reason_label ?? undefined}
                 >
                   {r.reason_label ?? '-'}
+                </TableCell>
+                <TableCell className="text-end">
+                  <div className="flex justify-end gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={pending === r.id}
+                      onClick={() => decide.mutate({ id: r.id, choice: 'use_stock' })}
+                    >
+                      Use stock
+                    </Button>
+                    <Button
+                      size="sm"
+                      disabled={pending === r.id}
+                      onClick={() => decide.mutate({ id: r.id, choice: 'buy' })}
+                    >
+                      Buy anyway
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}

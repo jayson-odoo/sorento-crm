@@ -557,3 +557,55 @@ def _po_for_rec(db: Session, rec_id: str) -> Optional[PurchaseOrder]:
 
 def _f(v) -> Optional[float]:
     return float(v) if v is not None else None
+
+
+# ===========================================================================
+# covered-by-stock decisions
+# ===========================================================================
+
+def decide_covered(db: Session, rec_id: str, choice: str,
+                   actor: Optional[str] = None) -> dict:
+    """Resolve a ``covered`` row: use the stock that is already there, or buy anyway.
+
+    The engine emits these precisely so it does NOT take this decision. CS has already
+    filtered what needs buying against what the branch holds, so pool stock covering a line
+    is worth saying and is not an answer.
+
+    ``buy`` promotes the row into an ordinary accepted buy rather than inventing a parallel
+    lifecycle: from that moment it is a purchase like any other and flows through Confirm
+    decisions into a draft PO unchanged. It also starts counting in the Buy tile and the
+    cash total at exactly the right moment - when somebody agreed to spend the money.
+
+    ``use_stock`` is terminal and writes no purchase.
+    """
+    rec = (
+        db.query(ReorderRecommendation)
+        .filter(ReorderRecommendation.id == rec_id)
+        .first()
+    )
+    if not rec:
+        raise AppException(status_code=404, message="Recommendation not found.")
+    if rec.rec_type not in ("covered", "buy"):
+        raise AppException(
+            status_code=422,
+            message="Only a covered-by-stock row can be decided this way.",
+        )
+    if choice not in ("use_stock", "buy"):
+        raise AppException(status_code=422, message="Choice must be use_stock or buy.")
+
+    # Already decided one way: re-posting the SAME choice is a no-op rather than an error,
+    # because a double-click must not read as a failure on a decision that did land.
+    if choice == "use_stock":
+        if rec.rec_type == "buy":
+            raise AppException(
+                status_code=422,
+                message="This row has already been turned into a purchase.",
+            )
+        rec.status = "use_stock"
+        db.flush()
+        return {"choice": "use_stock", "rec_type": rec.rec_type, "status": rec.status}
+
+    rec.rec_type = "buy"
+    rec.status = "accepted"
+    db.flush()
+    return {"choice": "buy", "rec_type": rec.rec_type, "status": rec.status}

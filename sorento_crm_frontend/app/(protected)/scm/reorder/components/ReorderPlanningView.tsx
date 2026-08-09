@@ -545,6 +545,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         // Demand the location's own stock covers. A separate view, never merged into the
         // buy grid, so the Buy count and the cash total keep meaning purchases.
         <CoveredByStockView
+          runId={currentRunId}
           rows={covered.data ?? []}
           isLoading={covered.isLoading}
           isError={covered.isError}
