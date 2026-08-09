@@ -45,14 +45,26 @@ def _parse(db: Session, data: bytes) -> PackingReadResult:
 
 
 def _products_by_code(db: Session, codes: set[str]) -> dict[str, dict]:
+    """Catalogue lookup, scoped to the caller's company.
+
+    Raw SQL bypasses the ORM's company filter, and product codes are NOT unique across
+    companies - `BRACD7799CP-ENG` exists twice in this database. Unscoped, this matched
+    whichever row came back first, so a packing list could be received against another
+    company's product and then find no purchase order to draw down, which is how the bug
+    presented: a container that imported cleanly and had nothing to allocate.
+    """
     if not codes:
         return {}
+    from app.services.company_scope_sql import company_sql_predicate
+
+    predicate, params = company_sql_predicate(db, "p.company_id", param_prefix="c")
     rows = db.execute(
         text(
-            "SELECT id, product_code, base_uom_id FROM products "
-            " WHERE upper(product_code) = ANY(:codes)"
+            "SELECT p.id, p.product_code, p.base_uom_id FROM products p "
+            " WHERE upper(p.product_code) = ANY(:codes) "
+            f"   AND {predicate or 'true'}"
         ),
-        {"codes": [c.upper() for c in codes]},
+        {"codes": [c.upper() for c in codes], **params},
     ).mappings().all()
     return {str(r["product_code"]).upper(): dict(r) for r in rows}
 

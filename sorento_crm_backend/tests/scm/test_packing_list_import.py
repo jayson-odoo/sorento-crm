@@ -239,3 +239,44 @@ def test_the_bill_of_lading_reaches_the_shipment():
         svc.apply(db, workbook(rows), supplier_id=str(w.supplier.id))
 
         assert _shipments(db, w)[0].bill_of_lading_number == "BL-991"
+
+
+def test_a_code_another_company_also_uses_resolves_to_ours():
+    """Product codes are not unique across companies, and raw SQL has no company filter.
+
+    Unscoped, the lookup matched whichever row came back first, so a packing list could be
+    received against ANOTHER company's product. It imported cleanly and then had nothing to
+    allocate, because that product has no purchase order of ours to draw down - a failure that
+    looks like missing data rather than the wrong row.
+    """
+    from sqlalchemy import text
+
+    with pg_session() as db:
+        w = World(db)
+        mine = w.product("A")
+        other_company = db.execute(
+            text("SELECT id FROM companies WHERE id <> :sorento LIMIT 1"),
+            {"sorento": "00000000-0000-0000-0000-000000000001"},
+        ).scalar()
+        if other_company is None:
+            pytest.skip("this database has only one company, so there is nothing to confuse")
+
+        # Stamped explicitly: the auto-stamp fills Sorento when company_id is None, which
+        # would collide with `mine` on (company_id, product_code) before the point is made.
+        twin = Product(
+            id=str(uuid.uuid4()), product_code=mine.product_code,
+            product_name=f"{MARKER} twin", category_id=w.cat.id, base_uom_id=w.uom.id,
+            list_price=0, is_active=True, is_discontinued=False,
+            company_id=str(other_company),
+        )
+        db.add(twin)
+        db.flush()
+
+        svc.apply(db, _file(w, [(f"{MARKER}U1", [("A", 3)])]), supplier_id=str(w.supplier.id))
+
+        line = (
+            db.query(InboundShipmentLine)
+            .filter(InboundShipmentLine.shipment_id == _shipments(db, w)[0].id)
+            .one()
+        )
+        assert str(line.product_id) == str(mine.id)

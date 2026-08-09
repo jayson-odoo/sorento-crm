@@ -504,6 +504,43 @@ async def apply_packing_list(
     return out
 
 
+@router.get("/inbound-shipments")
+def list_inbound_shipments(
+    supplier_id: Optional[str] = Query(None),
+    limit: int = Query(25, ge=1, le=100),
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """Containers we have read, newest first.
+
+    The screen had only what the last upload returned, so a refresh emptied it and the work
+    looked lost. A container is read once and decided later, often not in the same sitting.
+    """
+    from app.models.procurement import InboundShipment, InboundShipmentLine
+
+    q = db.query(InboundShipment)
+    if supplier_id:
+        q = q.filter(InboundShipment.supplier_id == supplier_id)
+    rows = q.order_by(InboundShipment.created_at.desc()).limit(limit).all()
+    return {
+        "data": [
+            {
+                "shipment_id": str(r.id),
+                "shipment_number": r.shipment_number,
+                "container_no": r.shipping_container_number,
+                "bl_no": r.bill_of_lading_number,
+                "status": r.shipment_status,
+                "lines": db.query(InboundShipmentLine)
+                .filter(InboundShipmentLine.shipment_id == r.id)
+                .count(),
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+    }
+
+
 @router.get("/inbound-shipments/{shipment_id}/allocation-suggestion")
 def allocation_suggestion(
     shipment_id: str,

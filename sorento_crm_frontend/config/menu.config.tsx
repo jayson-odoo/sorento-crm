@@ -379,6 +379,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'scm.reorder.run',
       },
       {
+        title: 'Incoming Containers',
+        path: '/scm/incoming',
+        permission: 'scm.reorder.run',
+      },
+      {
         title: 'Policies',
         path: '/scm/policies',
         permission: 'scm.policy.manage',

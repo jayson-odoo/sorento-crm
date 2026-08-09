@@ -93,9 +93,16 @@ def _warehouse_names(db: Session, ids: set[str]) -> dict[str, str]:
     ids = {i for i in ids if i}
     if not ids:
         return {}
+    from app.services.company_scope_sql import company_sql_predicate
+
+    predicate, params = company_sql_predicate(db, "w.company_id", param_prefix="c")
     rows = db.execute(
-        text("SELECT id, warehouse_code FROM warehouses WHERE id = ANY(CAST(:ids AS uuid[]))"),
-        {"ids": list(ids)},
+        text(
+            "SELECT w.id, w.warehouse_code FROM warehouses w "
+            " WHERE w.id = ANY(CAST(:ids AS uuid[])) "
+            f"   AND {predicate or 'true'}"
+        ),
+        {"ids": list(ids), **params},
     ).mappings().all()
     return {str(r["id"]): r["warehouse_code"] for r in rows}
 
@@ -106,12 +113,17 @@ def _default_warehouse(db: Session) -> Optional[dict]:
     A shipment allocated to a location whose stock is not available to sell is invisible to
     exactly the people AC-G8 exists for, so the fallback is deliberately the sellable one.
     """
+    from app.services.company_scope_sql import company_sql_predicate
+
+    predicate, params = company_sql_predicate(db, "w.company_id", param_prefix="c")
     row = db.execute(
         text(
-            "SELECT id, warehouse_code FROM warehouses "
-            " WHERE is_active IS TRUE AND counts_as_available IS TRUE "
-            " ORDER BY warehouse_code LIMIT 1"
-        )
+            "SELECT w.id, w.warehouse_code FROM warehouses w "
+            " WHERE w.is_active IS TRUE AND w.counts_as_available IS TRUE "
+            f"   AND {predicate or 'true'} "
+            " ORDER BY w.warehouse_code LIMIT 1"
+        ),
+        params,
     ).mappings().first()
     return dict(row) if row else None
 

@@ -363,3 +363,123 @@ export async function getNoticeDocumentUrl(
   const res = await apiFetch(`/api/v1/scm/supplier-notices/${noticeId}/document`);
   return readJson(res, 'Failed to open the notice document');
 }
+
+/**
+ * S9 - the packing list, and what each container draws down.
+ *
+ * `quantity_to_allocate` is what is LEFT on a line, never the shipped figure again: re-opening
+ * the screen after a partial allocation must not propose the same units twice.
+ */
+export interface AllocationOption {
+  po_line_id: string;
+  po_number: string | null;
+  warehouse_id: string | null;
+  warehouse_code: string | null;
+  outstanding: number;
+  expected_date: string | null;
+  score: number;
+  factors: { key: string; weight: number; value: number | null; present: boolean }[];
+  qty?: number;
+}
+
+export interface AllocationLine {
+  shipment_line_id: string;
+  product_id: string;
+  quantity_shipped: number;
+  quantity_allocated: number;
+  quantity_to_allocate: number;
+  reason: 'only_open_order' | 'highest_priority' | 'no_open_order';
+  suggestion: AllocationOption | null;
+  alternatives: AllocationOption[];
+}
+
+export interface AllocationSuggestion {
+  shipment_id: string;
+  shipment_number: string | null;
+  container_no: string | null;
+  supplier_id: string | null;
+  lines: AllocationLine[];
+}
+
+export interface PackingListBlock {
+  index: number;
+  shipment_number: string;
+  container_no: string | null;
+  bl_no: string | null;
+  lines: number;
+  qty: number;
+  cartons: number | null;
+  unmatched_items: string[];
+}
+
+export interface PackingListPreview {
+  ok: boolean;
+  blocks: PackingListBlock[];
+  block_count: number;
+  line_count: number;
+  rows_read: number;
+  unmatched_item_codes: string[];
+  unmatched_items: number;
+  unmapped_headers: string[];
+  missing_columns: string[];
+  problems: string[];
+}
+
+export async function previewPackingList(file: File): Promise<PackingListPreview> {
+  const body = new FormData();
+  body.append('file', file);
+  const res = await apiFetch('/api/v1/scm/packing-lists/preview', { method: 'POST', body });
+  return readJson<PackingListPreview>(res, 'Failed to read the packing list');
+}
+
+export async function applyPackingList(
+  file: File,
+  opts: { supplierId?: string | null; shipmentDate?: string | null; validateOnly?: boolean } = {},
+): Promise<Record<string, unknown>> {
+  const body = new FormData();
+  body.append('file', file);
+  if (opts.supplierId) body.append('supplier_id', opts.supplierId);
+  if (opts.shipmentDate) body.append('shipment_date', opts.shipmentDate);
+  const qs = opts.validateOnly ? '?validate_only=true' : '';
+  const res = await apiFetch(`/api/v1/scm/packing-lists/apply${qs}`, { method: 'POST', body });
+  return readJson(res, 'Failed to import the packing list');
+}
+
+export async function getAllocationSuggestion(shipmentId: string): Promise<AllocationSuggestion> {
+  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/allocation-suggestion`);
+  return readJson<AllocationSuggestion>(res, 'Failed to work out what this container draws down');
+}
+
+export interface AllocationDecision {
+  shipment_line_id: string;
+  splits: { po_line_id: string | null; warehouse_id: string; qty: number }[];
+}
+
+export async function approveAllocations(
+  shipmentId: string,
+  decisions: AllocationDecision[],
+): Promise<{ allocations_written: number; purchase_order_lines_advanced: number }> {
+  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/allocations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ decisions }),
+  });
+  return readJson(res, 'Failed to approve the allocations');
+}
+
+export interface IncomingShipment {
+  shipment_id: string;
+  shipment_number: string | null;
+  container_no: string | null;
+  bl_no: string | null;
+  status: string | null;
+  lines: number;
+  created_at: string | null;
+}
+
+export async function getIncomingShipments(supplierId?: string | null): Promise<IncomingShipment[]> {
+  const qs = supplierId ? `?supplier_id=${encodeURIComponent(supplierId)}` : '';
+  const res = await apiFetch(`/api/v1/scm/inbound-shipments${qs}`);
+  const body = await readJson<{ data: IncomingShipment[] }>(res, 'Failed to load the containers');
+  return body.data;
+}
