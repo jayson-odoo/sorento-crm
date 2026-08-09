@@ -180,6 +180,17 @@ Sidebar: `config/menu.config.tsx` (**the tree is duplicated - edit both copies**
   tests) is the regression net and must stay green unchanged - not adjusted to fit.
 - **29 unreachable Kinds is a data problem this slice only makes visible.** Seeding the missing
   rules is Sorento's call (open item #27), not this slice's.
+- **There is a SECOND hole upstream of a verdict, and S7b does not close it.** Measured
+  2026-08-09: all **23** `warranty_assessments` rows are verdict `unknown`, every one with the
+  same reason - *"No purchase is linked to this complaint line yet, so there is no purchase date
+  to compute cover from."* Not one of them failed for want of a Kind rule. So configuring the
+  rules is necessary and NOT sufficient: a complaint line with no `consumer_purchase_line_id`
+  has no purchase date, and the engine cannot pick a policy without one. The linkage is the
+  consumer lodge journey's job (S3, which now writes it - there are 7 `consumer_purchases`
+  against 1 `consumer_profile`, all from S3 testing); the 23 legacy rows predate it. Recorded so
+  that "we configured the rules and still get no verdicts" is a known state rather than a
+  surprise, and so nobody widens S7b to chase it. Verifying S7b's effect therefore needs a
+  complaint lodged THROUGH the consumer journey, not one of the 23.
 - **`covered_defect_type_ids` is a `uuid[]` with no FK** (AC-D18). The Term editor can offer a
   defect-type picker but cannot stop a later delete narrowing a Term's scope silently.
 

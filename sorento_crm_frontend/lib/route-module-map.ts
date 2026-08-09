@@ -13,6 +13,7 @@ const LEGACY_ROUTE_MODULE_PREFIXES: { prefix: string; moduleKey: string }[] = [
   { prefix: '/order-management', moduleKey: 'order' },
   { prefix: '/master-data-management', moduleKey: 'product' },
   { prefix: '/complaint-management', moduleKey: 'complaints' },
+  { prefix: '/warranty-management', moduleKey: 'warranty' },
   { prefix: '/sla-management', moduleKey: 'sla' },
   { prefix: '/procurement-management', moduleKey: 'procurement' },
   { prefix: '/inventory-management', moduleKey: 'inventory' },

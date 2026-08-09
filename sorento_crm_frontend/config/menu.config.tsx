@@ -48,6 +48,7 @@ import {
   Share2,
   Shield,
   ShieldUser,
+  ShieldCheck,
   ShoppingBag,
   ShoppingCart,
   SquareMousePointer,
@@ -462,6 +463,20 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Resolutions',
         path: '/complaint-management/complaint-resolutions',
         permission: 'master_data.complaint_resolutions.view',
+      },
+    ],
+  },
+  {
+    // One area, three tabs (Policies / Kinds / Rules). Three sidebar entries
+    // would bury the zero-rule flag that S7b exists to surface.
+    title: 'Warranty Management',
+    icon: ShieldCheck,
+    moduleKey: 'warranty',
+    children: [
+      {
+        title: 'Warranty Configuration',
+        path: '/warranty-management',
+        permissionsAny: ['warranty.policies.view', 'warranty.kinds.view'],
       },
     ],
   },
@@ -1344,6 +1359,20 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Resolutions',
         path: '/complaint-management/complaint-resolutions',
         permission: 'master_data.complaint_resolutions.view',
+      },
+    ],
+  },
+  {
+    // One area, three tabs (Policies / Kinds / Rules). Three sidebar entries
+    // would bury the zero-rule flag that S7b exists to surface.
+    title: 'Warranty Management',
+    icon: ShieldCheck,
+    moduleKey: 'warranty',
+    children: [
+      {
+        title: 'Warranty Configuration',
+        path: '/warranty-management',
+        permissionsAny: ['warranty.policies.view', 'warranty.kinds.view'],
       },
     ],
   },
