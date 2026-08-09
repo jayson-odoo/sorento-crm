@@ -454,7 +454,7 @@ export async function getCoveredRecommendations(
  *  POST /api/v1/scm/recommendations/{id}/covered-decision  body { choice } */
 export async function decideCoveredRow(
   recId: string,
-  choice: 'use_stock' | 'buy',
+  choice: 'use_stock' | 'buy' | 'pending',
 ): Promise<{ choice: string; rec_type: string; status: string }> {
   const res = await apiFetch(
     `/api/v1/scm/recommendations/${encodeURIComponent(recId)}/covered-decision`,

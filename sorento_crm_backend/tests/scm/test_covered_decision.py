@@ -62,7 +62,7 @@ def _state(db, rec_id):
     ), {"i": rec_id}).mappings().first())
 
 
-def test_use_stock_resolves_the_row_without_a_purchase(scm_app):
+def test_use_stock_is_recorded_on_the_row(scm_app):
     _, db, _, _ = scm_app
     db, rec_id = _covered_row(db)
 
@@ -71,26 +71,29 @@ def test_use_stock_resolves_the_row_without_a_purchase(scm_app):
     assert _state(db, rec_id) == {"rec_type": "covered", "status": "use_stock"}
 
 
-def test_buy_anyway_turns_it_into_an_ordinary_accepted_buy(scm_app):
-    # Not a parallel lifecycle: from here it is a purchase like any other and reaches the
-    # draft PO through the path every other buy uses.
+def test_buy_anyway_is_recorded_without_moving_the_row(scm_app):
+    # > "after i click buy anyway, the line just disappeared ... it should stay"
+    # The row keeps its type and its place; only its status changes.
     _, db, _, _ = scm_app
     db, rec_id = _covered_row(db)
 
     dsvc.decide_covered(db, rec_id, "buy")
 
-    assert _state(db, rec_id) == {"rec_type": "buy", "status": "accepted"}
+    assert _state(db, rec_id) == {"rec_type": "covered", "status": "buy"}
 
 
-def test_a_row_already_bought_cannot_be_walked_back_to_using_stock(scm_app):
-    # It is a purchase now, possibly already on a draft PO. Silently reverting it would
-    # leave the order and the plan disagreeing.
+def test_a_decision_can_be_regretted(scm_app):
+    # A decision the planner cannot revisit is worse than none: they cannot tell whether
+    # the click landed, and cannot undo it if it did.
     _, db, _, _ = scm_app
     db, rec_id = _covered_row(db)
-    dsvc.decide_covered(db, rec_id, "buy")
 
-    with pytest.raises(AppException):
-        dsvc.decide_covered(db, rec_id, "use_stock")
+    dsvc.decide_covered(db, rec_id, "buy")
+    dsvc.decide_covered(db, rec_id, "use_stock")
+    assert _state(db, rec_id)["status"] == "use_stock"
+
+    dsvc.decide_covered(db, rec_id, "pending")
+    assert _state(db, rec_id) == {"rec_type": "covered", "status": "proposed"}
 
 
 def test_an_unknown_choice_is_refused(scm_app):

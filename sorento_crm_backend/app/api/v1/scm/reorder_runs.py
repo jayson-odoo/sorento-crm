@@ -306,7 +306,7 @@ def list_recommendations(
                rr.days_of_cover, rr.rounded_qty, rr.recommended_qty, rr.confidence_band,
                rr.allocation, rr.inputs,
                rr.rank, rr.rank_score, rr.unit_cost, rr.cash_impact, rr.funding_status,
-               rr.currency, rr.rate_to_base, rr.rate_as_of,
+               rr.currency, rr.rate_to_base, rr.rate_as_of, rr.status,
                p.product_code, p.product_name,
                w.warehouse_code, w.warehouse_name,
                su.supplier_code, su.supplier_name
@@ -426,6 +426,10 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
         "alternatives": inp.get("alternatives") or [],
         "is_exception": bool(inp.get("is_exception")),
         # --- covered rows: the two numbers the stock-or-buy choice turns on ---
+        # The decision taken on this row, if any. A covered row KEEPS its place in the
+        # list after a decision so it can be changed; without the state the list would
+        # look untouched and the click would read as having done nothing.
+        "decision_status": r["status"],
         "covered_committed": inp.get("covered_committed"),
         # Part of this row's demand arrived with no stated location, so the reader can
         # weigh it accordingly rather than assuming every unit was located by CS.

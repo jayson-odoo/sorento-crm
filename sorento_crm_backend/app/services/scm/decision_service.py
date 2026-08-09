@@ -565,18 +565,17 @@ def _f(v) -> Optional[float]:
 
 def decide_covered(db: Session, rec_id: str, choice: str,
                    actor: Optional[str] = None) -> dict:
-    """Resolve a ``covered`` row: use the stock that is already there, or buy anyway.
+    """Record the planner's answer on a covered-by-stock row, reversibly.
 
-    The engine emits these precisely so it does NOT take this decision. CS has already
-    filtered what needs buying against what the branch holds, so pool stock covering a line
-    is worth saying and is not an answer.
+    > "after i click buy anyway, the line just disappeared ... it should stay on covered by
+    >  stock table, not jumped anywhere, so I still can regret my decision"
 
-    ``buy`` promotes the row into an ordinary accepted buy rather than inventing a parallel
-    lifecycle: from that moment it is a purchase like any other and flows through Confirm
-    decisions into a draft PO unchanged. It also starts counting in the Buy tile and the
-    cash total at exactly the right moment - when somebody agreed to spend the money.
+    So the row NEVER changes ``rec_type`` and never leaves the list. The decision is a
+    ``status`` on it, and either choice can be taken again or swapped: a decision the
+    planner cannot see and cannot revisit is worse than no decision, because they cannot
+    tell whether the click landed.
 
-    ``use_stock`` is terminal and writes no purchase.
+    ``pending`` clears it back to undecided.
     """
     rec = (
         db.query(ReorderRecommendation)
@@ -585,27 +584,15 @@ def decide_covered(db: Session, rec_id: str, choice: str,
     )
     if not rec:
         raise AppException(status_code=404, message="Recommendation not found.")
-    if rec.rec_type not in ("covered", "buy"):
+    if rec.rec_type != "covered":
         raise AppException(
             status_code=422,
             message="Only a covered-by-stock row can be decided this way.",
         )
-    if choice not in ("use_stock", "buy"):
-        raise AppException(status_code=422, message="Choice must be use_stock or buy.")
+    if choice not in ("use_stock", "buy", "pending"):
+        raise AppException(
+            status_code=422, message="Choice must be use_stock, buy or pending.")
 
-    # Already decided one way: re-posting the SAME choice is a no-op rather than an error,
-    # because a double-click must not read as a failure on a decision that did land.
-    if choice == "use_stock":
-        if rec.rec_type == "buy":
-            raise AppException(
-                status_code=422,
-                message="This row has already been turned into a purchase.",
-            )
-        rec.status = "use_stock"
-        db.flush()
-        return {"choice": "use_stock", "rec_type": rec.rec_type, "status": rec.status}
-
-    rec.rec_type = "buy"
-    rec.status = "accepted"
+    rec.status = "proposed" if choice == "pending" else choice
     db.flush()
-    return {"choice": "buy", "rec_type": rec.rec_type, "status": rec.status}
+    return {"choice": choice, "rec_type": rec.rec_type, "status": rec.status}

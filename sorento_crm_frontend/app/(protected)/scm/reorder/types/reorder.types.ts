@@ -268,6 +268,9 @@ export interface ReorderRecommendation {
   cost_status?: 'ok' | 'no_cost' | 'no_rate' | null;
   /** `covered` rows only: the committed demand, and what the location already holds.
    *  The two numbers the use-stock-or-buy choice turns on. */
+  /** The decision taken on a covered row: `use_stock` | `buy` | `proposed` (undecided).
+   *  The row keeps its place in the list after a decision so it can be changed. */
+  decision_status?: string | null;
   covered_committed?: number | null;
   covered_available?: number | null;
   /** How much of this row's demand arrived on a sales-order line naming no warehouse.
