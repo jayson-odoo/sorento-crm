@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, ChevronDown, ChevronRight, RefreshCw, ContactRound, Copy } from 'lucide-react';
 import AccessAgentFormModal from './AccessAgentFormModal';
+import { useCompany } from '@/app/providers/CompanyProvider';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -119,6 +120,7 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
     isRefetching: isRefetchingAgentTeams,
   } = useAgentTeams(accessAgentId);
   const { data: teamsList = [] } = useTeams();
+  const { activeCompany } = useCompany();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
 
@@ -257,7 +259,17 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
       {/* Team Assignments */}
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
-          <CardTitle>Team Assignments</CardTitle>
+          <div className="min-w-0">
+            <CardTitle>Team Assignments</CardTitle>
+            {activeCompany?.name ? (
+              // Team sets are per company: the same agent routes to a different
+              // ladder in each. Without this label an admin reads an empty list as
+              // "this agent has no teams" rather than "none in the company I am in".
+              <p className="text-sm text-muted-foreground mt-1">
+                Showing {activeCompany.name}. Switch company to see its team sets.
+              </p>
+            ) : null}
+          </div>
           <Button
             type="button"
             variant="outline"
@@ -277,7 +289,10 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
         <CardContent>
           {assignments.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground border rounded-lg border-dashed">
-              <p>No team assignments yet.</p>
+              <p>
+                No team assignments
+                {activeCompany?.name ? ` for ${activeCompany.name}` : ''} yet.
+              </p>
               <p className="text-sm mt-1">Edit agent to add assignments.</p>
               <Button variant="outline" size="sm" className="mt-3" onClick={() => setEditModalOpen(true)}>
                 Edit Access Agent

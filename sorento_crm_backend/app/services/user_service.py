@@ -2129,8 +2129,30 @@ class AccessAgentService:
 
         self.db.commit()
 
+    def _active_company_id(self) -> str:
+        """The single company this write applies to.
+
+        An agent's Team Sets screen edits ONE company at a time (the active one), so
+        every write here is scoped to it. Falls back to the incumbent when the scope
+        is not a single company - a system / all-companies caller editing team sets
+        means Sorento, never "all of them at once".
+        """
+        from app.models.base import get_company_scope
+        from app.services.company_routing_service import DEFAULT_COMPANY_ID
+
+        scope = get_company_scope(self.db)
+        if isinstance(scope, frozenset) and len(scope) == 1:
+            return str(next(iter(scope)))
+        return DEFAULT_COMPANY_ID
+
     def set_agent_teams(self, agent_id: str, assignments: list[dict]) -> None:
-        """Replace agent's team links with the given assignments [{code, team_id, tier?}...]."""
+        """Replace THIS COMPANY's team links for the agent with the given assignments.
+
+        Scoped to one company deliberately. The old unscoped delete would wipe the
+        other company's team sets every time an admin saved this screen, because the
+        payload only ever contains the company they are looking at.
+        """
+        company_id = self._active_company_id()
         seen_keys: set[tuple[str, str | int]] = set()
         for a in assignments or []:
             raw_code = a.get("code")
@@ -2163,7 +2185,12 @@ class AccessAgentService:
             if code and policy_id and code not in policy_by_code:
                 policy_by_code[code] = policy_id
 
-        self.db.query(AgentTeam).filter(AgentTeam.agent_id == agent_id).delete()
+        # company_id is filtered EXPLICITLY, not left to the scope filter: whether the
+        # auto-filter reaches a bulk DELETE is a SQLAlchemy detail, and being wrong
+        # about it here deletes the other company's routing.
+        self.db.query(AgentTeam).filter(
+            AgentTeam.agent_id == agent_id, AgentTeam.company_id == company_id
+        ).delete(synchronize_session=False)
         for a in assignments or []:
             raw_code = a.get("code")
             code = str(raw_code).strip() if raw_code is not None else ""
@@ -2177,6 +2204,7 @@ class AccessAgentService:
                     code=code,
                     team_id=team_id,
                     tier=tier,
+                    company_id=company_id,
                     policy_id=policy_by_code.get(code),
                     notify_on_extension=bool(a.get("notify_on_extension", True)),
                 ))
