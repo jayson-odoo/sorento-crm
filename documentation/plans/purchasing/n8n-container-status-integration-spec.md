@@ -299,6 +299,25 @@ Three things to know, each of which has already caused a wrong answer:
 Exactly **one** Container Status workbook is live at any time - each import trashes the previous, so
 this call returns a single row. `Uploaded` and `last_updated_at` carry its date.
 
+**Every attachment carries its own `uploadedAt`**, so a consumer handing over one of several files
+can say how current THAT file is:
+
+```json
+"attachments": [{"url": "...", "filename": "Container Status 2026.xlsx",
+                 "mimeType": "...", "attachmentType": null,
+                 "uploadedAt": "2026-08-08T11:54:05.086571"}]
+```
+
+The envelope's `last_updated_at` is the newest across the whole answer, which says nothing about an
+individual file once more than one comes back. The key is omitted, never null, when the row has no
+upload time.
+
+**All of these are naive Malaysia wall-clock**, like `updated_at` - the sanitizer normalizes
+`uploaded_at` before the presenter sees it. It matters beyond politeness: the `Uploaded` line is the
+DAY of that instant, so a file uploaded after 16:00 MYT (08:00Z) used to render as the previous
+date. No offset suffix, deliberately: an offset-aware string gets re-converted back to UTC by
+n8n/luxon for display, undoing the conversion.
+
 **The render envelope no longer carries `File ID`.** It briefly did, so a human could tell which of
 several identically-named files was sent - but `render` is the CUSTOMER view, and the uuid went out
 on WhatsApp under every document, on every resource-attachment answer, beside the file itself. The

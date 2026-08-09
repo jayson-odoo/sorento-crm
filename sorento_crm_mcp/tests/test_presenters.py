@@ -675,3 +675,30 @@ def test_document_answers_do_not_expose_the_file_uuid():
     assert "1e900020-dba5-4e34-ae1c-5e0f90380095" not in json.dumps(fields)
     # The file itself still ships - that is the answer.
     assert out["attachments"][0]["filename"] == "Container Status 2026.xlsx"
+
+
+def test_each_attachment_carries_its_own_upload_time():
+    """A document class is re-uploaded under the same name, so several entries
+    look identical. The envelope-level `last_updated_at` is the newest across the
+    whole answer and says nothing about an individual file.
+    """
+    out = env("crm_resource_attachments_list", {
+        "data": [
+            {"original_filename": "Container Status 2026.xlsx", "file_path": "https://cdn/new.xlsx",
+             "mime_type": "application/vnd.ms-excel", "uploaded_at": "2026-08-08T11:54:05"},
+            {"original_filename": "Container Status 2026.xlsx", "file_path": "https://cdn/old.xlsx",
+             "mime_type": "application/vnd.ms-excel", "uploaded_at": "2026-07-01T09:00:00"},
+        ],
+    })
+    assert [a["uploadedAt"] for a in out["attachments"]] == [
+        "2026-08-08T11:54:05", "2026-07-01T09:00:00",
+    ]
+    # Envelope keeps the newest of them, which is a different question.
+    assert out["last_updated_at"] == "2026-08-08T11:54:05"
+
+
+def test_attachment_without_an_upload_time_omits_the_key():
+    out = env("crm_resource_attachments_list", {
+        "data": [{"original_filename": "a.pdf", "file_path": "https://cdn/a.pdf"}],
+    })
+    assert "uploadedAt" not in out["attachments"][0]

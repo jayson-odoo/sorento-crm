@@ -228,14 +228,24 @@ class _Builder:
         url = a.get("file_path") or a.get("url")
         if not _filled(url):
             return
-        self.attachments.append(
-            {
-                "url": url,
-                "filename": a.get("stored_filename") or a.get("filename") or a.get("original_filename"),
-                "mimeType": a.get("mime_type") or a.get("mimeType"),
-                "attachmentType": _att_type(a),
-            }
-        )
+        entry = {
+            "url": url,
+            "filename": a.get("stored_filename") or a.get("filename") or a.get("original_filename"),
+            "mimeType": a.get("mime_type") or a.get("mimeType"),
+            "attachmentType": _att_type(a),
+        }
+        # When the file was uploaded, per FILE. A document class is re-uploaded
+        # under the same name - six revisions of "Container Status 2026.xlsx" are
+        # six identical-looking entries - so without this a consumer handing over
+        # one of them cannot say how current it is. The envelope-level
+        # `last_updated_at` is the newest across the whole answer, which says
+        # nothing about the individual file when more than one comes back.
+        # Already Malaysia wall-clock: the sanitizer rewrites `uploaded_at`
+        # before the presenter sees it.
+        uploaded = a.get("uploaded_at")
+        if _filled(uploaded):
+            entry["uploadedAt"] = uploaded
+        self.attachments.append(entry)
 
     def link(self, label: str, url: str, link_type: str = "portal_link") -> None:
         if _filled(url):
