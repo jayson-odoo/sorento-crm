@@ -1,0 +1,251 @@
+"""Turn a multi-block packing list into inbound shipments, one per container.
+
+The writing is NOT done here. `InboundShipmentService.create_shipment` already resolves a
+shipment by number, then by the container triple, then by attachment, updates in place when it
+finds one, and refuses a genuine duplicate of a received packing list. That is AC-G3 and AC-G2
+already satisfied, and re-implementing it beside itself would give the workbook path and the
+n8n PDF path two different ideas of what "the same shipment" means. So this module reads the
+file, decides what each block IS, and hands each one to that service.
+
+What it adds is the part that only exists here:
+
+  * **A shipment number per block.** The file gives one document covering several containers, so
+    the blocks need distinguishing from each other before the duplicate resolver ever sees them.
+    A container number is used when the block has one; a pre-load block that has none is
+    numbered by its position in the file, which is stable across a re-upload of the same file
+    and is the only thing that distinguishes two otherwise identical blank blocks (AC-G3).
+  * **Product resolution.** A code we do not hold is a NAMED problem, never an invented product,
+    because `inbound_shipment_lines.product_id` is NOT NULL and the alternative to naming it is
+    dropping the line silently.
+
+Two-step like every other upload channel here: `preview` and `validate` describe, `apply`
+writes, and `?validate_only=true` returns the same `{valid, errors, warnings, summary}` verdict
+a Test means everywhere else in this system.
+"""
+from __future__ import annotations
+
+from datetime import date
+from typing import Any, Optional
+
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from app.schemas.procurement import InboundShipmentCreate, InboundShipmentLineCreate
+from app.services.error_handler import AppException
+from app.services.scm.packing_list_reader import PackingBlock, PackingReadResult, read_workbook
+from app.services.scm.upload_validation import envelope, named
+
+#: What a block is called when it has no container number of its own. Positional, so the same
+#: file re-uploaded produces the same names and the duplicate resolver recognises them.
+_PRELOAD_PREFIX = "PRELOAD"
+
+
+def _parse(db: Session, data: bytes) -> PackingReadResult:
+    return read_workbook(data, db=db)
+
+
+def _products_by_code(db: Session, codes: set[str]) -> dict[str, dict]:
+    if not codes:
+        return {}
+    rows = db.execute(
+        text(
+            "SELECT id, product_code, base_uom_id FROM products "
+            " WHERE upper(product_code) = ANY(:codes)"
+        ),
+        {"codes": [c.upper() for c in codes]},
+    ).mappings().all()
+    return {str(r["product_code"]).upper(): dict(r) for r in rows}
+
+
+def shipment_number_for(block: PackingBlock, *, source_ref: Optional[str]) -> str:
+    """What this block is called, so two blocks in one file are two shipments.
+
+    A container number when there is one. Otherwise the file's own name plus the block's
+    position: a pre-load list has no container yet (AC-G2), and its blocks are told apart by
+    where they sit in the document. Deriving it rather than generating one is what makes a
+    re-upload land on the same shipments instead of a second set (AC-G3).
+    """
+    if block.container_no:
+        return block.container_no
+    stem = (source_ref or "packing-list").rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    return f"{_PRELOAD_PREFIX}-{stem}-{block.index}"[:100]
+
+
+def _summarise(db: Session, parsed: PackingReadResult, *, source_ref: Optional[str]) -> dict:
+    codes = {ln.item_code for b in parsed.blocks for ln in b.lines}
+    known = _products_by_code(db, codes)
+    unknown = sorted({c for c in codes if c.upper() not in known})
+
+    blocks = [
+        {
+            "index": b.index,
+            "shipment_number": shipment_number_for(b, source_ref=source_ref),
+            "container_no": b.container_no,
+            "bl_no": b.bl_no,
+            "lines": len(b.lines),
+            "qty": b.total_qty,
+            "cartons": b.total_cartons,
+            "unmatched_items": sorted(
+                {ln.item_code for ln in b.lines if ln.item_code.upper() not in known}
+            )[:50],
+        }
+        for b in parsed.blocks
+    ]
+    return {
+        "blocks": blocks,
+        "block_count": len(blocks),
+        "line_count": parsed.line_count,
+        "rows_read": parsed.total_rows,
+        "unmatched_item_codes": unknown[:200],
+        "unmatched_items": len(unknown),
+        "unmapped_headers": parsed.unmapped_headers,
+    }
+
+
+def preview(db: Session, data: bytes, *, source_ref: Optional[str] = None) -> dict:
+    """What this file would create, before anything is written."""
+    parsed = _parse(db, data)
+    out = _summarise(db, parsed, source_ref=source_ref)
+    out["ok"] = parsed.ok
+    out["missing_columns"] = parsed.missing_columns
+    out["problems"] = [p.message for p in parsed.problems][:50]
+    return out
+
+
+def validate(db: Session, data: bytes, *, source_ref: Optional[str] = None) -> dict:
+    """The `{valid, errors, warnings, summary}` verdict a Test means everywhere here."""
+    parsed = _parse(db, data)
+    summary = _summarise(db, parsed, source_ref=source_ref)
+
+    problems: list[str] = [p.message for p in parsed.problems]
+    if parsed.missing_columns:
+        problems.append(
+            "The file does not name "
+            + named(len(parsed.missing_columns), parsed.missing_columns,
+                    one="the column", many="the columns")
+        )
+    elif not parsed.blocks:
+        problems.append("No container block was found in this file.")
+
+    warnings: list[str] = []
+    if summary["unmatched_items"]:
+        warnings.append(
+            "No product matches "
+            + named(summary["unmatched_items"], summary["unmatched_item_codes"],
+                    one="the code", many="the codes")
+            + ". Those lines will not be created."
+        )
+    if parsed.unmapped_headers:
+        warnings.append(
+            "Ignored " + named(len(parsed.unmapped_headers), parsed.unmapped_headers,
+                               one="the column", many="the columns")
+        )
+
+    return envelope(ok=not problems, problems=problems, warnings=warnings, summary=summary)
+
+
+def apply(
+    db: Session,
+    data: bytes,
+    *,
+    supplier_id: Optional[str] = None,
+    shipment_date: Optional[date] = None,
+    source_ref: Optional[str] = None,
+    attachment_id: Optional[str] = None,
+    actor_id: Optional[str] = None,
+) -> dict:
+    """Create or update one inbound shipment per block. Idempotent by construction.
+
+    Idempotent because the shipment NAME is derived from the file rather than generated: the
+    same file uploaded twice resolves to the same shipments and updates them in place, which is
+    AC-G3 and is also what stops a nervous second click doubling a container.
+    """
+    parsed = _parse(db, data)
+    if not parsed.ok:
+        raise AppException(
+            422,
+            "This file could not be read as a packing list.",
+            detail=", ".join(parsed.missing_columns) or "no container block was found",
+        )
+
+    known = _products_by_code(
+        db, {ln.item_code for b in parsed.blocks for ln in b.lines}
+    )
+
+    from app.services.procurement_service import InboundShipmentService
+
+    service = InboundShipmentService(db)
+    created = updated = 0
+    skipped_lines = 0
+    results: list[dict] = []
+
+    for block in parsed.blocks:
+        lines: list[InboundShipmentLineCreate] = []
+        for ln in block.lines:
+            product = known.get(ln.item_code.upper())
+            if product is None:
+                # Named in the summary, never invented: `product_id` is NOT NULL and a made-up
+                # product is worse than a line somebody has to go and fix.
+                skipped_lines += 1
+                continue
+            lines.append(
+                InboundShipmentLineCreate(
+                    product_id=str(product["id"]),
+                    quantity_shipped=int(ln.qty),
+                    uom_id=str(product["base_uom_id"]) if product.get("base_uom_id") else None,
+                    cartons_count=int(ln.cartons) if ln.cartons else 1,
+                )
+            )
+
+        if not lines:
+            results.append(
+                {
+                    "index": block.index,
+                    "shipment_number": shipment_number_for(block, source_ref=source_ref),
+                    "created": False,
+                    "reason": "no line in this block matched a product we hold",
+                }
+            )
+            continue
+
+        payload = InboundShipmentCreate(
+            shipment_number=shipment_number_for(block, source_ref=source_ref),
+            supplier_id=supplier_id,
+            # Required by the schema. The packing list states a container, not a date, so the
+            # caller's date is used and today is the honest fallback for "when we were told".
+            shipment_date=shipment_date or date.today(),
+            shipping_container_number=block.container_no,
+            bill_of_lading_number=block.bl_no,
+            attachment_id=attachment_id,
+            total_items_shipped=int(block.total_qty),
+            total_cartons=int(block.total_cartons) if block.total_cartons else None,
+            shipment_lines=lines,
+        )
+        # `inbound_shipments.created_by` is a UUID column holding a USER ID, unlike the SCM
+        # tables where `created_by` holds the person's name. Passing the name here is a
+        # `invalid input syntax for type uuid` at insert time, so the two never mix.
+        shipment = service.create_shipment(payload, created_by=actor_id)
+        existed = bool(getattr(shipment, "_already_existed", False))
+        created += 0 if existed else 1
+        updated += 1 if existed else 0
+        results.append(
+            {
+                "index": block.index,
+                "shipment_id": str(shipment.id),
+                "shipment_number": shipment.shipment_number,
+                "container_no": shipment.shipping_container_number,
+                "lines": len(lines),
+                "created": not existed,
+            }
+        )
+
+    summary = _summarise(db, parsed, source_ref=source_ref)
+    summary.update(
+        {
+            "shipments_created": created,
+            "shipments_updated": updated,
+            "lines_skipped": skipped_lines,
+            "results": results,
+        }
+    )
+    return summary
