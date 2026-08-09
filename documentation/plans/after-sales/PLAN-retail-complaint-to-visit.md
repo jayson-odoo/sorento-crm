@@ -62,20 +62,24 @@ Mounted in `app/api/v1/__init__.py` under
 `Depends(require_module_enabled_with_api_key("warranty"))`, prefix `/warranty-management`. Reads
 take `require_permission_with_api_key`, writes take `require_permission`.
 
+Status codes (AC-P15): `POST` 201 with the row, `PATCH` 200 with the row, `DELETE` 200.
+Envelope (AC-P14): policies are `ListResponse[T]` = `{data, pagination:{total,page,limit},
+empty}`; everything else is a bare array.
+
 ```
 GET    /api/v1/warranty-management/policies                      DataGrid params -> ListResponse[PolicyResponse]
 POST   /api/v1/warranty-management/policies                      PolicyCreate
-GET    /api/v1/warranty-management/policies/{id}                 PolicyResponse (term_count)
-PATCH  /api/v1/warranty-management/policies/{id}                 PolicyUpdate
+GET    /api/v1/warranty-management/policies/{id}                 PolicyResponse
+PATCH  /api/v1/warranty-management/policies/{id}                 PolicyUpdate; overlap-guarded (AC-P22)
 DELETE /api/v1/warranty-management/policies/{id}                 hard; cascades terms (AC-P13)
-POST   /api/v1/warranty-management/policies/{id}/supersede       PolicyCreate -> {closed, created} (AC-P2a)
+POST   /api/v1/warranty-management/policies/{id}/supersede       PolicyCreate -> {closed, created} (AC-P2a, P21)
 
 GET    /api/v1/warranty-management/policies/{pid}/terms          ?group_by=kind -> terms grouped (AC-P4)
 POST   /api/v1/warranty-management/policies/{pid}/terms          TermCreate
 PATCH  /api/v1/warranty-management/policies/{pid}/terms/{tid}    TermUpdate
 DELETE /api/v1/warranty-management/policies/{pid}/terms/{tid}    hard; assessments survive (AC-P8a)
 
-GET    /api/v1/warranty-management/kinds                         KindResponse[] with rule_count, term_count
+GET    /api/v1/warranty-management/kinds                         KindResponse[]
 POST   /api/v1/warranty-management/kinds                         KindCreate
 PATCH  /api/v1/warranty-management/kinds/{id}                    KindUpdate
 DELETE /api/v1/warranty-management/kinds/{id}                    refused while referenced (AC-P12)
@@ -86,7 +90,15 @@ POST   /api/v1/warranty-management/kind-rules                    RuleCreate
 PATCH  /api/v1/warranty-management/kind-rules/{id}               RuleUpdate
 DELETE /api/v1/warranty-management/kind-rules/{id}
 POST   /api/v1/warranty-management/kind-rules/test               the tester (AC-P6, P6a, P6b, P6c)
+
+GET    /api/v1/warranty-management/defect-types                  {id, label}[] (AC-P18)
 ```
+
+`PolicyResponse` carries `term_count` on the LIST row, `TermResponse` carries
+`assessment_count`, and `KindResponse` carries `rule_count`, `term_count`, `has_no_rules`
+and `has_no_terms` (AC-P16, AC-P17). `defect-types` exists because
+`covered_defect_type_ids` holds `lookup_options.id` values and the existing lookup endpoint
+returns `value` + `label` and never the id.
 
 **Tester request / response**, the one shape worth writing out:
 

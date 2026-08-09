@@ -181,10 +181,17 @@ rather than the implementer inventing it.
   said so - editing live rows to fit a constraint nobody asked for is not a migration.
 
 - **AC-P6a [BE]** The rule tester runs the PRODUCTION ranking, not a copy of it.
-  `resolve_kind` is refactored to delegate to a new `resolve_kind_match()` that returns the
-  winning match (`_RuleMatch` gains the `rule` that produced it); `resolve_kind` returns
-  `.kind` and its existing contract is unchanged. A tester with its own ranking agrees with
-  production right up to the day it matters.
+  **Corrected 2026-08-09 by the red suite, which found the original unbuildable:** a
+  `resolve_kind_match()` returning only the WINNER cannot serve AC-P6c (the full ranked
+  list) or AC-P6b (an unsaved rule ranked among saved ones), so the tester would have had
+  to build the ranked list itself - which is exactly the second ranking this AC exists to
+  forbid. The pinned shape is instead
+  `rank_kind_matches(db, *, product_code=None, category_code=None, product_name=None,
+  extra_rules=()) -> list[_RuleMatch]`, with `resolve_kind_match()` as its head and
+  `resolve_kind()` as `.kind`. `extra_rules` takes transient `WarrantyKindRule` instances
+  and the winning match carries a candidate BY IDENTITY, so the route marks `is_candidate`
+  without a new column or a new field on `_RuleMatch`. `_RuleMatch` gains only `rule`.
+  `resolve_kind`'s existing keyword contract is unchanged.
 
 - **AC-P6b [BE]** The tester accepts an OPTIONAL unsaved candidate rule and ranks it
   alongside the saved ones, marked as unsaved. AC-P6 says "before saving": the admin's real
@@ -206,7 +213,9 @@ rather than the implementer inventing it.
   the Term, per the repo's confirm-before-destroy rule.
 
 - **AC-P9 [BE]** Terms are reachable only through their Policy
-  (`/warranty-policies/{policy_id}/terms`), and the Policy is loaded FIRST so one outside
+  (`/warranty-management/policies/{policy_id}/terms` - path corrected 2026-08-09; the
+  original said `/warranty-policies/...`, which no contract ever pinned), and the Policy is
+  loaded FIRST so one outside
   the caller's company scope 404s. Reason: `WarrantyTerm` is deliberately not
   company-scoped, because it is only ever reachable through `policy_id` - which makes an
   unguarded nested route hand another company's terms to anyone who guesses an id.
@@ -235,6 +244,94 @@ rather than the implementer inventing it.
 - **AC-P13 [FE]** Deleting a Policy DOES cascade its Terms - they have no life apart from
   it - so the confirmation names how many Terms will go with it. A count is the difference
   between a considered delete and a discovered one.
+
+### Phase B corrections - after the red suite (2026-08-09)
+
+Fifteen findings came back from the gate author. AC-P6a and AC-P9 are corrected in place
+above. The rest are ruled here. Three were things the contract simply did not say and one
+was a real hole in how this repo builds its test schema.
+
+- **AC-P14 [BE][FE]** The list envelope is `ListResponse[T]` -
+  `{data, pagination:{total, page, limit}, empty}` - for policies, and a BARE ARRAY for
+  kinds, kinds-select, kind-rules and defect-types. Settled by the code rather than by
+  preference: `app/schemas/common.py::ListResponse` and the frontend's
+  `DataGridApiResponse<T>` (`components/ui/data-grid.tsx:28`) are already the same shape.
+  The Phase 1 prototype's `{data, total}` is wrong and its `listPolicies` sends
+  `buildDataGridParams` while reading a non-`ListResponse` body, which would have broken at
+  wiring time; the prototype changes, not the contract.
+
+- **AC-P15 [BE]** Success codes follow the house routes, not invention: `POST` returns
+  **201** with the row, `PATCH` returns **200** with the row, `DELETE` returns **200**
+  (`complaint_root_causes.py` is the precedent for all three). The prototype's `204` on
+  delete is wrong. Update semantics are PATCH, not PUT, because every `XUpdate` schema in
+  this repo is all-Optional and PUT would imply a whole-row replace it does not do.
+
+- **AC-P16 [BE][FE]** `term_count` sits on the policy LIST row, not only on
+  `GET /policies/{id}`, and `assessment_count` sits on the term row. Reason: AC-P13 and
+  AC-P8a both require a count on a delete confirmation, and the delete is offered from the
+  grid - a count that only exists on the detail response cannot reach the dialog that needs
+  it. The delete endpoints stay `void`; the counts are read BEFORE the delete.
+
+- **AC-P17 [BE]** The Kind row carries explicit `has_no_rules` / `has_no_terms` booleans,
+  not only the two counts. Computing "zero" in a grid cell makes it visible in exactly one
+  place and invisible to export, to MCP and to the AI assistant - which is AC-P7's own
+  disease one layer up. `types/warranty-config.types.ts` gains both fields.
+
+- **AC-P18 [BE]** `GET /warranty-management/defect-types` is part of the contract, guarded
+  by `warranty.policies.view` (it feeds the Term editor, and Terms ride the policies slug).
+  It is load-bearing rather than convenience: `covered_defect_type_ids` is a `uuid[]` of
+  `lookup_options.id`, and the existing `GET /api/v1/lookup/{set_key}/options` returns
+  `value` + `label` and never the id, so without this endpoint the Term editor cannot write
+  a defect scope at all.
+
+- **AC-P19 [BE][MIG]** The XOR CHECK constraint is declared on the MODEL's `__table_args__`
+  **and** in migration 331. Not a belt-and-braces preference - a real hole: CI builds its
+  schema from `Base.metadata.create_all` and then stamps alembic at head without executing
+  a migration body, so a constraint that lives only in the migration exists on a developer
+  machine and on prod and on no test database anywhere. The raw-INSERT test that proves the
+  database rejects a bad row would pass by absence without the model half.
+
+- **AC-P20 [BE]** `duration_months` must be `> 0`. AC-P3 says "either a duration in months
+  or lifetime, never both, never neither" and never excludes zero or negative. A zero-month
+  term tells a customer their cover expired the day they bought it.
+
+- **AC-P21 [BE]** Supersede (AC-P2a) is refused with 422 in two cases the original ruling
+  did not reach: superseding a policy that ALREADY has an `effective_to` (it would either
+  rewrite a closed window or open a calendar gap, and a gap is an `unknown` verdict handed
+  to a customer for no reason), and a new `effective_from` on or before the incumbent's own
+  `effective_from` (it would set `effective_to` earlier than `effective_from` - an inverted
+  window that the overlap check can never catch, because an inverted range overlaps
+  nothing).
+
+- **AC-P22 [BE]** The overlap guard applies to PATCH as well as POST - AC-P2 is phrased
+  around "saving" and an edit is a save. A policy does not overlap ITSELF: an edit that
+  changes no date must not be refused, which is the commonest false positive in this shape
+  of guard.
+
+- **AC-P23 [MIG]** The provisioned roles are named, not left to the implementer:
+  `warranty.policies.view/add/edit` and `warranty.kinds.view/add/edit` are granted to
+  **admin, director, management, manager** (migration 236's precedent); the two `.delete`
+  slugs are granted to **admin and director only**, because deleting a Policy cascades its
+  Terms and deleting a Kind is refused precisely because it would rewrite the policy
+  document. Asserted at the SOURCE level, since CI never executes a migration body and a
+  database assertion would be green locally while proving nothing on the run that gates the
+  merge.
+
+- **AC-P24 [BE]** An unknown `match_type` or an empty `match_value` is refused with 422 at
+  WRITE time, while the engine keeps its existing tolerant READ behaviour (log a warning,
+  match nothing). Both are right at their own layer and the split is recorded here so a
+  later reviewer does not "unify" them: bad data must never stop a complaint being judged,
+  and a rule that can never fire must never be creatable - it is inert, invisible, and
+  exactly the dead end AC-P7 exists to surface.
+
+- **AC-P25 [T]** AC-P0a's backend half is asserted STRUCTURALLY, not behaviourally, and the
+  reason is recorded: `module_guard_strict` defaults to `False`, so
+  `require_module_enabled_with_api_key("warranty")` is a no-op in every test. The mount is
+  proved by an AST check whose detector is itself proved against the existing `complaints`
+  mount in the same run. Every "must not" detector in this slice carries a positive AND a
+  negative control - the gate author's first role-grant detector asked for
+  `"INSERT INTO user_role_permissions" in source.upper()`, which can never match because
+  `.upper()` uppercases the table name too, and it was caught only by its own control.
 
 ## Phase C - Propose a date, and let the consumer answer (S8)
 
