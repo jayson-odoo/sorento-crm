@@ -330,11 +330,12 @@ def test_resource_attachments_carry_the_upload_date_when_present():
     assert out["items"][1]["fields"][1]["value"] == "2026-08-01"
 
 
-def test_resource_attachments_expose_the_row_id():
-    """The one place a human can get the id of the file the agent just sent.
-
-    Identical filenames make every other field useless for finding the row
-    again, so without this a wrong answer cannot be traced to a document.
+def test_resource_attachments_do_not_expose_the_row_id():
+    """Reversed deliberately. The id was added so a human could trace which of
+    several identically-named files the agent sent - but `render` is the
+    CUSTOMER view, and the uuid went out on WhatsApp under every document. The
+    id is still on the raw (non-render) response, which is where someone
+    debugging is looking anyway.
     """
     out = env("crm_resource_attachments_list", {
         "data": [{
@@ -343,8 +344,9 @@ def test_resource_attachments_expose_the_row_id():
             "file_path": "http://x/a.xlsx",
         }],
     })
-    labels = {f["label"]: f["value"] for f in out["items"][0]["fields"]}
-    assert labels["File ID"] == "df853300-0000-0000-0000-000000000001"
+    labels = {f["label"] for f in out["items"][0]["fields"]}
+    assert "File ID" not in labels
+    assert "df853300-0000-0000-0000-000000000001" not in json.dumps(out["items"])
 
 
 def test_uploaded_at_becomes_last_updated_at():
@@ -578,3 +580,98 @@ def test_render_omits_key_where_the_presenter_has_no_source_key():
         "data": [{"order_number": "202606-1622", "debtor_name": "HANLIM"}],
     })
     assert out["items"][0]["fields"][0] == {"label": "Order Number", "value": "202606-1622"}
+
+
+# ------------------------------------------------ absent-field vocabulary
+
+
+def test_denied_entries_gain_the_customer_facing_label():
+    """A denial has to be said out loud: "I can't share the ...". The backend
+    sends the field key and an admin-register label lives elsewhere, so the
+    envelope supplies the CUSTOMER register here.
+    """
+    out = env("crm_incoming_stock_list", {
+        "data": [_incoming_row()],
+        "field_access": {
+            "denied": [
+                {"field": "etc_date", "agent_code": "a", "outcome": "field_not_allowed"},
+                {"field": "gatepass_date", "agent_code": "a", "outcome": "field_not_allowed"},
+            ],
+            "note": "Absent does NOT mean the value is unknown or not yet reached.",
+        },
+    })
+    by_field = {d["field"]: d for d in out["field_access"]["denied"]}
+    # Customer register: "ETC", not FIELD_LABELS' "ETC (estimated time of
+    # container closing)" - this string ends up in a WhatsApp message.
+    assert by_field["etc_date"]["label"] == "ETC"
+    assert by_field["gatepass_date"]["label"] == "Gatepass"
+
+
+def test_denied_entry_keeps_a_label_the_backend_already_sent():
+    out = env("crm_incoming_stock_list", {
+        "data": [_incoming_row()],
+        "field_access": {
+            "denied": [{"field": "etc_date", "label": "Backend Wins", "outcome": "x"}],
+            "note": "n",
+        },
+    })
+    assert out["field_access"]["denied"][0]["label"] == "Backend Wins"
+
+
+def test_incoming_envelope_carries_the_field_vocabulary():
+    """The case that needs it has NO denial: several containers, one carries
+    `eta_delay_date` and the others do not. Nothing was withheld, so there is no
+    `field_access` block to hang a label off, and the absent rows still have to
+    be named. Humanising the key gives "Eta delay" and "Etd"; this gives the
+    labels a present field would have rendered with.
+    """
+    out = env("crm_incoming_stock_list", {"data": [_incoming_row()]})
+    assert "field_access" not in out, "nothing denied, so no denial block"
+    vocab = out["field_vocabulary"]
+    assert vocab["eta_delay_date"] == "ETA Delay"
+    assert vocab["etd_date"] == "ETD"
+    assert vocab["inspection_date"] == "CIDB Inspection"
+
+
+def test_field_vocabulary_matches_what_a_present_field_renders_as():
+    """Derived from `_CLEARANCE_PAIRS`, so the absent wording and the present
+    wording cannot drift into two vocabularies - the exact failure that made
+    label-matching untenable in the first place.
+    """
+    out = env("crm_incoming_stock_list", {
+        "data": [_incoming_row(etc_date="2026-06-30", eta_delay_date="2026-07-12")],
+    })
+    rendered = {f["key"]: f["label"] for f in out["items"][0]["fields"] if "key" in f}
+    vocab = out["field_vocabulary"]
+    for key, label in rendered.items():
+        if key in vocab:
+            assert vocab[key] == label, f"{key} renders as {label!r} but vocabulary says {vocab[key]!r}"
+
+
+def test_vocabulary_is_not_emitted_for_unrelated_result_types():
+    """It is the clearance vocabulary, not a general one. Shipping it on orders
+    or stock would imply those fields exist there.
+    """
+    out = env("crm_inventory_stock_balance_list", {"data": [{"product_code": "X"}]})
+    assert "field_vocabulary" not in out
+
+
+def test_document_answers_do_not_expose_the_file_uuid():
+    """`render` is the CUSTOMER view and goes out on WhatsApp. The File ID row
+    put an internal uuid under every document, next to the file itself.
+    """
+    out = env("crm_resource_attachments_list", {
+        "data": [{
+            "id": "1e900020-dba5-4e34-ae1c-5e0f90380095",
+            "original_filename": "Container Status 2026.xlsx",
+            "uploaded_at": "2026-08-08T06:31:13",
+            "file_path": "https://cdn/x.xlsx",
+            "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }],
+    })
+    fields = out["items"][0]["fields"]
+    labels = [f["label"] for f in fields]
+    assert labels == ["File Name", "Uploaded"]
+    assert "1e900020-dba5-4e34-ae1c-5e0f90380095" not in json.dumps(fields)
+    # The file itself still ships - that is the answer.
+    assert out["attachments"][0]["filename"] == "Container Status 2026.xlsx"

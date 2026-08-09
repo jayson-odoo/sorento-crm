@@ -152,6 +152,33 @@ Present only when something was withheld. Sibling of `items`, never inside a row
 `outcome` is one of `field_not_allowed`, `agent_not_assigned`, `contact_not_found`. The three need
 different admin fixes, which is why they are distinguished - see the PLAN's D38-revised.
 
+Each `denied[]` entry also carries `label`, the CUSTOMER-facing wording, so the refusal can be said
+out loud without the consumer inventing a name for the field.
+
+### 2.4 `field_vocabulary` - naming a field that is not there
+
+Every `incoming_stock` envelope carries a top-level `field_vocabulary`: the full clearance key to
+customer-facing label map, derived from `_CLEARANCE_PAIRS` so it cannot drift from what a PRESENT
+field renders as.
+
+```json
+"field_vocabulary": {"eta_delay_date": "ETA Delay", "etd_date": "ETD",
+                     "inspection_date": "CIDB Inspection", "...": "..."}
+```
+
+It is top level, not inside `field_access`, because the case that needs it has no denial at all:
+four containers, one carries `eta_delay_date` and three do not. Nothing was withheld, so there is no
+`field_access` block, and the three still have to be named. Harvesting the label off a sibling row
+covers the mixed case; nothing covers the case where NO row carries the key, and humanising gives
+"Eta delay" and "Etd".
+
+It is a sibling of `items` and nothing rendered it before, so an existing consumer is unaffected.
+**Do not ask for empty fields inside `items[].fields` instead** - that would put ~20 blank clearance
+rows in every envelope, and a renderer that renders what it is given reads them out to a customer.
+
+Absence is per-ROW (it is data, and differs row to row); denial is per-CONTACT, so it is stated
+once.
+
 **n8n must never turn a denial into a value statement.** "There is no gatepass date yet" is a lie
 when the truth is "you may not see it". Preferred phrasing: *"I can't share the gatepass date -
 please check with the office."* Do not quote `reason` at the contact; it is written for an admin.
@@ -270,8 +297,13 @@ Three things to know, each of which has already caused a wrong answer:
    Pass `resolve_signed_urls=true` if a ready-to-open link is wanted instead.
 
 Exactly **one** Container Status workbook is live at any time - each import trashes the previous, so
-this call returns a single row. `Uploaded` and `last_updated_at` carry its date; `File ID` carries
-the attachment UUID, which is what to quote when a human needs to find the row.
+this call returns a single row. `Uploaded` and `last_updated_at` carry its date.
+
+**The render envelope no longer carries `File ID`.** It briefly did, so a human could tell which of
+several identically-named files was sent - but `render` is the CUSTOMER view, and the uuid went out
+on WhatsApp under every document, on every resource-attachment answer, beside the file itself. The
+id is still on the raw (non-render) response and in the CRM UI, which is where anyone debugging is
+already looking.
 
 ### N3 - the escalation enum
 
