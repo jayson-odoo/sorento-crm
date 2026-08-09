@@ -28,6 +28,7 @@ from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.scm import reorder_run_service as svc
 from app.services.scm import unplanned_demand_service
+from app.services.scm import demand_breakdown_service
 from app.services.scm.money import BASE_CURRENCY
 
 router = APIRouter()
@@ -254,6 +255,22 @@ def get_reorder_run(
         "error": row["error_text"],
         "summary": summary,
     }
+
+
+@router.get("/reorder-runs/{run_id}/recommendations/{rec_id}/demand")
+def recommendation_demand(
+    run_id: str,
+    rec_id: str,
+    limit: int = Query(200, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The open order lines a planned quantity was built from.
+
+    Answers "why is it bought into BRW when I ordered for BRW-IB, and why so many" from the
+    row itself: pooled netting is the reason, and the orders are the evidence."""
+    svc.assert_run_visible(db, run_id)
+    return demand_breakdown_service.demand_for_recommendation(db, rec_id, limit)
 
 
 @router.get("/reorder-runs/{run_id}/recommendations")
