@@ -87,6 +87,23 @@ class ReorderRunTodayResponse(ReorderRunListItem):
     in_progress: bool = False
 
 
+class UnlocatedDemandSample(BaseModel):
+    product_code: str
+    quantity: float
+
+
+class UnlocatedDemandResponse(BaseModel):
+    """Open demand the plan cannot see, because the line names no stock location.
+
+    Planning nets per product AND location, so a line with no warehouse has nothing to net
+    against and produces no recommendation. Reported rather than silently omitted: a plan
+    that leaves out most of the demand without saying so is read as "nothing to buy"."""
+    lines: int = 0
+    products: int = 0
+    quantity: float = 0.0
+    sample: List[UnlocatedDemandSample] = []
+
+
 # --- recommendations grid ---------------------------------------------------
 
 class SupplierChoice(BaseModel):

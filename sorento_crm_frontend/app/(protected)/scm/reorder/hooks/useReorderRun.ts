@@ -10,6 +10,7 @@ import {
   getReorderRun,
   getRecommendations,
   getTodayRun,
+  getUnlocatedDemand,
   listReorderRuns,
   type RecommendationQuery,
 } from '../services/reorderRunService';
@@ -191,6 +192,23 @@ export function useTodayRun() {
     // running has no other way to learn it finished. Poll only while that is true, and
     // stop the moment nothing is in flight.
     refetchInterval: (query) => (query.state.data?.in_progress ? 5_000 : false),
+  });
+}
+
+/** React-query cache key for the unlocated-demand signal. */
+export const unlocatedDemandKey = ['scm', 'reorder', 'unlocated-demand'];
+
+/**
+ * Demand the plan cannot net because the sales-order line names no warehouse. A property
+ * of the demand book, not of any one run, so it is keyed on its own and survives a re-plan.
+ */
+export function useUnlocatedDemand() {
+  return useQuery({
+    queryKey: unlocatedDemandKey,
+    queryFn: () => getUnlocatedDemand(),
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
+    retry: 1,
   });
 }
 

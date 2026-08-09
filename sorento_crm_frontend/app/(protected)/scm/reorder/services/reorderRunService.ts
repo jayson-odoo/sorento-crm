@@ -192,6 +192,27 @@ export async function getTodayRun(): Promise<TodayRun | null> {
   return body ?? null;
 }
 
+/** Open demand the plan cannot net, because the sales-order line names no warehouse.
+ *
+ *  Planning nets per product AND location, so an unlocated line produces no
+ *  recommendation. Reported so the page can say why a product with real committed demand
+ *  is absent from the plan. */
+export interface UnlocatedDemand {
+  lines: number;
+  products: number;
+  quantity: number;
+  sample: { product_code: string; quantity: number }[];
+}
+
+/** GET /api/v1/scm/reorder-runs/unlocated-demand */
+export async function getUnlocatedDemand(): Promise<UnlocatedDemand> {
+  const res = await apiFetch('/api/v1/scm/reorder-runs/unlocated-demand');
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, 'Failed to load unlocated demand'));
+  }
+  return res.json();
+}
+
 /** Raw shape returned by POST /reorder-runs (202). */
 interface ReorderRunAcceptedDto {
   run_id: string;

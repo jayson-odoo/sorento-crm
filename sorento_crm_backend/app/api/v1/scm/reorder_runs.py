@@ -22,10 +22,12 @@ from app.schemas.scm_reorder import (
     ReorderRunListResponse,
     ReorderRunStatusResponse,
     ReorderRunTodayResponse,
+    UnlocatedDemandResponse,
 )
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.scm import reorder_run_service as svc
+from app.services.scm import unplanned_demand_service
 from app.services.scm.money import BASE_CURRENCY
 
 router = APIRouter()
@@ -199,6 +201,21 @@ def get_today_reorder_run(
     item["is_today"] = picked["is_today"]
     item["in_progress"] = bool(picked.get("in_progress"))
     return item
+
+
+# Also above ``/reorder-runs/{run_id}`` - a static segment declared after a path parameter
+# is captured by it.
+@router.get("/reorder-runs/unlocated-demand", response_model=UnlocatedDemandResponse)
+def get_unlocated_demand(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Open demand carrying no stock location, so the plan cannot net it against anything.
+
+    Answers "why is this product not in my planning" for the case the counts alone cannot:
+    the demand is real and committed, and it is invisible because nobody said where it ships
+    from."""
+    return unplanned_demand_service.unlocated_demand(db)
 
 
 @router.get("/reorder-runs/{run_id}", response_model=ReorderRunStatusResponse)

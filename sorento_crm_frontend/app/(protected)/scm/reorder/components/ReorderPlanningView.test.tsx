@@ -17,12 +17,15 @@ import type { TodayRun } from '../services/reorderRunService';
 const useTodayRun = vi.fn();
 const useReorderRun = vi.fn();
 const useAllDispositionRecommendations = vi.fn();
+const useUnlocatedDemand = vi.fn();
 vi.mock('../hooks/useReorderRun', () => ({
   useTodayRun: () => useTodayRun(),
   useReorderRun: () => useReorderRun(),
+  useUnlocatedDemand: () => useUnlocatedDemand(),
   useAllDispositionRecommendations: (...a: unknown[]) => useAllDispositionRecommendations(...a),
   todayRunKey: ['scm', 'reorder', 'today'],
   runHistoryKey: ['scm', 'reorder', 'history'],
+  unlocatedDemandKey: ['scm', 'reorder', 'unlocated-demand'],
 }));
 
 const useReorderPlan = vi.fn();
@@ -73,6 +76,7 @@ beforeEach(() => {
   useTodayRun.mockReset();
   useReorderRun.mockReset().mockReturnValue({ run: null, isRunning: false, isComplete: false, isFailed: false, error: null, start: vi.fn(), reset: vi.fn() });
   useAllDispositionRecommendations.mockReset().mockReturnValue({ data: [], isLoading: false });
+  useUnlocatedDemand.mockReset().mockReturnValue({ data: undefined, isLoading: false });
   useReorderPlan.mockReset().mockReturnValue({ isLoading: false, isError: false, error: null, refetch: vi.fn(), applyProposalLine: vi.fn(), rows: [] });
 });
 
@@ -212,5 +216,43 @@ describe('ReorderPlanningView — a plan being built never empties the page', ()
 
     expect(screen.getByText(/Building the plan/i)).toBeInTheDocument();
     expect(screen.queryByText(/No plan yet/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('ReorderPlanningView — demand the plan could not net', () => {
+  // > "it has a few thousands of committed quantity ... but why when i search
+  // >  MWC7624-RL-S10 in the reorder planning, it does not exist"
+  //
+  // Because the order line names no warehouse, so there is nothing to net it against and
+  // the product simply is not on the grid. Absence reads as "nothing to buy" unless the
+  // page says otherwise.
+
+  it('says how much committed demand is missing and names the biggest', () => {
+    stubToday(todayRun());
+    useUnlocatedDemand.mockReturnValue({
+      data: {
+        lines: 8011,
+        products: 770,
+        quantity: 1130402,
+        sample: [{ product_code: 'MWC7624-RL-S10', quantity: 419 }],
+      },
+      isLoading: false,
+    });
+    renderView();
+
+    expect(screen.getByText('770')).toBeInTheDocument();
+    expect(screen.getByText(/name no stock location/i)).toBeInTheDocument();
+    expect(screen.getByText('MWC7624-RL-S10')).toBeInTheDocument();
+  });
+
+  it('says nothing when every order line names where it ships from', () => {
+    stubToday(todayRun());
+    useUnlocatedDemand.mockReturnValue({
+      data: { lines: 0, products: 0, quantity: 0, sample: [] },
+      isLoading: false,
+    });
+    renderView();
+
+    expect(screen.queryByText(/name no stock location/i)).not.toBeInTheDocument();
   });
 });

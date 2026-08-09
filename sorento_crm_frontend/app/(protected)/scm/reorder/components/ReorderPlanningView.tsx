@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   AlertCircle,
+  AlertTriangle,
   CalendarClock,
   CalendarDays,
   History,
@@ -29,6 +30,7 @@ import {
   useAllDispositionRecommendations,
   useReorderRun,
   useTodayRun,
+  useUnlocatedDemand,
 } from '../hooks/useReorderRun';
 import { useReorderPlan } from '../hooks/useReorderPlan';
 import { decisionsKey } from '../hooks/useDecisions';
@@ -48,7 +50,7 @@ import { ReorderStatTiles, type ReorderPlanView } from './ReorderStatTiles';
 import { RunHistoryPanel } from './RunHistoryPanel';
 import { RunPlanningModal, type ManualPlanInputs } from './RunPlanningModal';
 import { SummaryOrderReportView } from './SummaryOrderReportView';
-import { DATE_LOCALE, DATE_PARTS } from '../../lib/format';
+import { DATE_LOCALE, DATE_PARTS, fmtInt } from '../../lib/format';
 
 /** Parse a naive-UTC ISO string as UTC, then format date / time in Malaysia.
  *
@@ -89,6 +91,9 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
 
   const today = useTodayRun();
   const todayData = today.data ?? null;
+  // A property of the demand book, not of the run on screen, so it is read once here and
+  // shown whichever run the page is looking at.
+  const unlocated = useUnlocatedDemand();
 
   // Manual re-plan runs a live run then swaps the page to today's fresh snapshot.
   const manual = useReorderRun();
@@ -417,6 +422,36 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         onConfirm={doReset}
         isBusy={resetting}
       />
+
+      {/* Demand the plan could not net. It has committed quantity and no location, so it
+          produced no recommendation and the product simply is not on the grid - which reads
+          as "nothing to buy" rather than "we could not tell where it ships from". */}
+      {unlocated.data && unlocated.data.products > 0 ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-sm">
+          <AlertTriangle className="size-4 shrink-0 text-amber-600" aria-hidden />
+          <span className="text-muted-foreground">
+            <span className="font-medium text-foreground tabular-nums">
+              {fmtInt(unlocated.data.products)}
+            </span>{' '}
+            product{unlocated.data.products === 1 ? '' : 's'} with{' '}
+            <span className="font-medium text-foreground tabular-nums">
+              {fmtInt(unlocated.data.quantity)}
+            </span>{' '}
+            units of committed demand are not in this plan: the order lines name no stock
+            location, so there is nothing to net them against.
+            {unlocated.data.sample.length ? (
+              <>
+                {' '}
+                Largest:{' '}
+                <span className="font-medium text-foreground">
+                  {unlocated.data.sample.map((s) => s.product_code).join(', ')}
+                </span>
+                .
+              </>
+            ) : null}
+          </span>
+        </div>
+      ) : null}
 
       {/* A newer plan is being built. Said alongside the plan on screen, not instead of it:
           the numbers below are still the last usable ones, and hiding them would leave the
