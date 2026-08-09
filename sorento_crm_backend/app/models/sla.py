@@ -92,7 +92,18 @@ class ConversationSLATracking(Base):
     # the company governs which ladder is climbed, not who may read the tracker.
     # ORM-nullable / PG-NOT-NULL on purpose, matching the mixin's convention: the
     # scratch-schema fixtures insert before any stamp would fire.
-    company_id = Column(UUID(as_uuid=False), ForeignKey("companies.id"), nullable=True, index=True)
+    # Python-side default, not just the migration's server default: the ORM emits the
+    # column as an explicit NULL when a constructor omits it, so the server default
+    # never fires and the insert dies on NOT NULL. Sorento is the documented fallback
+    # for a tracker with no resolvable company anyway (a ticket has no contact at
+    # all), so defaulting here matches what the resolvers would have produced.
+    company_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("companies.id"),
+        nullable=True,
+        index=True,
+        default="00000000-0000-0000-0000-000000000001",
+    )
     source_entity_type = Column(String(50), nullable=True)  # stock_inquiry | complaint
     # Polymorphic (no FK) but always a uuid — see migration 300.
     source_entity_id = Column(UUID(as_uuid=False), nullable=True)

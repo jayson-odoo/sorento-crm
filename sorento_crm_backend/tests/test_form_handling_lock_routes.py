@@ -45,6 +45,7 @@ from app.models.sla import (
     SLAPolicy,
     SLAPolicyTier,
 )
+from app.models.company import UserCompany
 from app.models.user import SystemSetting, User
 from tests._pg_fixture import blank_session
 
@@ -96,6 +97,16 @@ def seed(db):
     ):
         uid = str(uuid.uuid4())
         db.add(User(id=uid, email=email, name=key, status="ACTIVE"))
+        db.flush()
+        # Team membership and the request company scope both key off a company grant
+        # now (AC-G1), so every seeded actor holds the incumbent company.
+        db.add(
+            UserCompany(
+                id=str(uuid.uuid4()),
+                user_id=uid,
+                company_id="00000000-0000-0000-0000-000000000001",
+            )
+        )
         users[key] = uid
     for uid in (users["assignee"], users["member_a"]):
         db.add(TeamMember(id=str(uuid.uuid4()), team_id=team1, user_id=uid))
@@ -177,9 +188,20 @@ def client(db):
     from app.database import get_db
     from app.dependencies import get_current_user, get_current_user_or_api_key
 
+    from app.models.base import set_company_scope
+    from app.services.company_scope_resolver import apply_company_scope
+
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: dict(_ACTOR)
     app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(_ACTOR)
+    # Auth is faked at the dependency layer, so the REAL scope resolver sees no
+    # Authorization header and resolves UNSET (fail closed) - which now hides every
+    # company-scoped row, teams and agent_teams included. Override it to the same
+    # incumbent the seeded rows carry, so these route tests exercise the handling
+    # lock rather than the scope filter.
+    app.dependency_overrides[apply_company_scope] = lambda: set_company_scope(
+        db, frozenset({"00000000-0000-0000-0000-000000000001"})
+    )
     try:
         yield TestClient(app)
     finally:

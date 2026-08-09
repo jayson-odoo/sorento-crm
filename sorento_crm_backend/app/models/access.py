@@ -507,20 +507,25 @@ class AgentTeam(Base, CompanyScopedMixin):
         Index("ix_agent_teams_team_id", "team_id"),
         Index("ix_agent_teams_code", "code"),
         Index("ix_agent_teams_tier", "tier"),
-        # For non-tier assignments (legacy), keep one row per (agent, code).
+        # Company is part of both keys: the same (code, tier) under two companies is
+        # the whole point of the feature, and the pre-company keys rejected exactly
+        # that. Must stay in step with migration 320 - the scratch-schema test
+        # fixtures build their indexes from HERE, not from the migration, so a
+        # divergence shows up as a duplicate-key error in tests that pass in prod.
         Index(
-            "uq_agent_teams_agent_code_tier_null",
+            "uq_agent_teams_agent_code_company_tier_null",
             "agent_id",
             "code",
+            "company_id",
             unique=True,
             postgresql_where=(tier.is_(None)),
         ),
-        # For tiered assignments, allow one row per (agent, code, tier).
         Index(
-            "uq_agent_teams_agent_code_tier_not_null",
+            "uq_agent_teams_agent_code_company_tier",
             "agent_id",
             "code",
             "tier",
+            "company_id",
             unique=True,
             postgresql_where=(tier.is_not(None)),
         ),

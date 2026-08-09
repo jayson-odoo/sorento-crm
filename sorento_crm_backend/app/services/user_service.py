@@ -2482,6 +2482,73 @@ class TeamService:
                     "Cannot set that parent: it is a descendant of this team (cannot create a cycle)."
                 )
 
+    def _guard_parent_team_company(
+        self, company_id: Optional[str], parent_team_id: Optional[str]
+    ) -> None:
+        """A team's parent must belong to the same company (AC-C7).
+
+        Not cosmetic: ``descendant_team_ids`` grants a parent team's members
+        visibility and act rights over EVERY descendant at any depth, so a
+        cross-company parent hands one brand's staff the other brand's work. This is
+        the write-side half of the check migration 320 performs before locking the
+        column in.
+        """
+        if not parent_team_id:
+            return
+        # Read the parent WITHOUT the company filter. Teams are company-scoped now, so
+        # a scoped read of another company's team returns None, and the guard would
+        # report "not found" for the very case it exists to catch.
+        from app.models.base import company_scope
+
+        with company_scope(self.db, None):
+            parent = self.db.query(Team).filter(Team.id == str(parent_team_id)).first()
+        if parent is None:
+            raise handle_validation_error("Parent team not found.")
+        parent_company = str(getattr(parent, "company_id", "") or "")
+        if company_id and parent_company and parent_company != str(company_id):
+            raise handle_validation_error(
+                "A team's parent must belong to the same company. A parent team's "
+                "members can act on every team below it, so the hierarchy cannot "
+                "cross companies."
+            )
+
+    def _guard_member_company_grant(self, team_id: str, user_id: str) -> None:
+        """A user may only join a team in a company they are granted (AC-G1).
+
+        Membership drives assignment, so a member with no grant for the team's
+        company would be handed work in a company they cannot even open.
+        """
+        from app.models.base import company_scope
+        from app.models.company import Company, UserCompany
+
+        # Scope-free for the same reason as the parent guard: a scoped read of another
+        # company's team returns None, and returning early on None would make this
+        # guard fail OPEN in exactly the cross-company case it is meant to block.
+        with company_scope(self.db, None):
+            team = self.db.query(Team).filter(Team.id == str(team_id)).first()
+        company_id = str(getattr(team, "company_id", "") or "") if team else ""
+        if not company_id:
+            return
+        granted = (
+            self.db.query(UserCompany.id)
+            .filter(
+                UserCompany.user_id == str(user_id),
+                UserCompany.company_id == company_id,
+            )
+            .first()
+        )
+        if granted is None:
+            company = (
+                self.db.query(Company.name, Company.code)
+                .filter(Company.id == company_id)
+                .first()
+            )
+            label = (company[0] or company[1]) if company else company_id
+            raise handle_validation_error(
+                f"That user has no access to {label}. Grant them the company before "
+                "adding them to one of its teams."
+            )
+
     def _member_previews_for(self, team_ids) -> dict:
         """Grouped member preview ({user_id, name}) per team id. One query, no N+1.
 
@@ -2548,6 +2615,13 @@ class TeamService:
         # New team has no id yet, so only the self-parent case is possible here;
         # descendant cycles are impossible until children exist.
         self._guard_parent_team_cycle(None, payload.get("parent_team_id"))
+        # company_id is auto-stamped from the request scope by CompanyScopedMixin's
+        # before_insert, so read it back from the scope rather than the payload.
+        from app.models.base import get_company_scope
+
+        scope = get_company_scope(self.db)
+        stamped = next(iter(scope)) if isinstance(scope, frozenset) and len(scope) == 1 else None
+        self._guard_parent_team_company(stamped, payload.get("parent_team_id"))
         t = Team(**payload)
         self.db.add(t)
         self.db.commit()
@@ -2560,6 +2634,10 @@ class TeamService:
         payload = data.model_dump(exclude_unset=True)
         if "parent_team_id" in payload:
             self._guard_parent_team_cycle(team_id, payload.get("parent_team_id"))
+            self._guard_parent_team_company(
+                str(getattr(t, "company_id", "") or "") or None,
+                payload.get("parent_team_id"),
+            )
         for k, v in payload.items():
             setattr(t, k, v)
         self.db.commit()
@@ -2656,6 +2734,7 @@ class TeamService:
         )
         if existing:
             raise handle_conflict("User is already a member of this team.")
+        self._guard_member_company_grant(team_id, user_id)
         self._validate_tier1_membership_invariant(team_id, user_id)
         m = TeamMember(
             team_id=team_id,

@@ -272,6 +272,12 @@ _COMPANY_ID_ALLOWLIST = {
     "forms",
     "import_logs",
     "audit_logs",
+    # Conversation / form SLA trackers carry the company that decides WHICH escalation
+    # ladder the tracker climbs, not who may read the row. Scoping it would break the
+    # two readers that have no company: the overdue scan (a scheduler tick with no
+    # principal) and the cross-company admin SLA listing. Isolation is enforced where
+    # it matters instead - the teams the tracker escalates into ARE scoped.
+    "conversation_sla_tracking",
 }
 
 
@@ -300,7 +306,13 @@ def test_every_company_id_table_is_registered():
     # 36th. Unlike the certificate children this one IS scoped: a carrier
     # observation names a container, and one tenant's containers must not be
     # readable through a tenant-agnostic evidence table.
-    assert len(owned) == 36, f"expected 36 owned tables, found {len(owned)}: {sorted(owned)}"
+    # Company-aware assignment routing added `teams` and `agent_teams` as the 37th and
+    # 38th. A team belongs to exactly one company, so the Teams page and every team
+    # picker follow the company switcher; `agent_teams` is scoped as the backstop for
+    # the ad-hoc AgentTeam queries in sla_service that the resolvers' required
+    # company_id argument cannot reach. `access_agents` is deliberately NOT here: one
+    # agent is a single router serving both brands through two ladders.
+    assert len(owned) == 38, f"expected 38 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------

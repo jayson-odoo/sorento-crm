@@ -401,9 +401,15 @@ async def post_next_assignee(
         preferred_id = str(preferred_id).strip()
         result = service.get_member_assignee(team_id, preferred_id)
         if result is None:
+            # The team was resolved inside the routing company, so "not a member"
+            # also covers "is a member of the OTHER company's team" (AC-D3). Naming
+            # the company is what makes that case diagnosable from the n8n log.
             raise HTTPException(
                 status_code=404,
-                detail=f"preferred_assignee_id={preferred_id!r} is not a member of the resolved team.",
+                detail=(
+                    f"preferred_assignee_id={preferred_id!r} is not a member of the "
+                    f"resolved team for company {routing_company.company_id!r}."
+                ),
             )
     else:
         # Market-segment scoping. Identity is contact_id when n8n sends one, else the
