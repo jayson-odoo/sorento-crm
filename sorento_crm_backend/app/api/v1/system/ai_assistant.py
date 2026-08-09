@@ -29,6 +29,8 @@ from app.schemas.ai_prompt import (
     PromptVersionsResponse,
     SaveVersionRequest,
     SetLabelRequest,
+    SetAgentModelRequest,
+    SetAgentModelResponse,
     SetLabelResponse,
 )
 from app.services.ai_prompt_registry import PROMPT_KEYS
@@ -302,6 +304,24 @@ def set_ai_assistant_prompt_label(
         user_id=str(user["id"]),
     )
     return SetLabelResponse(labels=labels)
+
+
+@router.post("/ai-assistant/prompts/{name}/model", response_model=SetAgentModelResponse)
+def set_ai_assistant_agent_model(
+    name: str,
+    payload: SetAgentModelRequest,
+    user: dict = Depends(require_permission("system.ai_assistant_settings.edit")),
+    db: Session = Depends(get_db),
+):
+    """Choose which LLM this agent runs on. Blank = the global assistant model."""
+    _ensure_known_prompt(name)
+    result = AIPromptService(db).set_agent_model(
+        name,
+        label=payload.label,
+        provider=payload.provider,
+        model=payload.model,
+    )
+    return SetAgentModelResponse(**result)
 
 
 @router.post("/ai-assistant/prompts/{name}/test", response_model=DryRunResponse)

@@ -69,6 +69,15 @@ def blank_schema_engine():
     if "engine" not in _BLANK:
         from app import models  # noqa: F401  register every model's table
 
+        # `app.models` does not reach the lookup and audit models, and this schema is
+        # emitted ONCE from whatever is registered at that moment. So the table set
+        # depended on which test file ran first: a file importing only app.models built
+        # a schema with no `lookup_bindings`, and a later file importing app.main --
+        # which registers the lookup-validation listener that queries it on every
+        # flush -- then died with UndefinedTable. Every suite passed alone while the
+        # whole run failed, which reads as flakiness rather than as an ordering bug.
+        _globally_required_tables()
+
         name = f"zzt_blank_{uuid.uuid4().hex[:10]}"
         admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
         admin.exec_driver_sql(f'CREATE SCHEMA "{name}"')

@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useCallback, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Edit, Trash2, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -16,6 +16,7 @@ import ProductStockTab from './ProductStockTab';
 import ProductSuppliersTab from './ProductSuppliersTab';
 import ProductPromotionsTab from './ProductPromotionsTab';
 import ProductVariantsTab from './ProductVariantsTab';
+import ProductSpecificationsTab from './ProductSpecificationsTab';
 import { useProductAttachmentsByProduct } from '../../../product-attachments/hooks/useProductAttachments';
 import { getPromotionsByProductId } from '@/app/(protected)/marketing-management/promotions/services/promotionService';
 import ProductDeleteDialog from '../../components/product-delete-dialog';
@@ -29,8 +30,28 @@ interface ProductDetailProps {
 
 export default function ProductDetail({ productId }: ProductDetailProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+
+  // Kept in the URL, not component state: ProductNavigation reads the CURRENT url's
+  // search params when Next/Prev is clicked, so a tab living here is the only way it
+  // survives stepping to a different product without extra plumbing between the two
+  // components.
+  const activeTab = searchParams.get('tab') || 'overview';
+  const handleTabChange = useCallback(
+    (tab: string) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (tab === 'overview') {
+        params.delete('tab');
+      } else {
+        params.set('tab', tab);
+      }
+      const qs = params.toString();
+      router.replace(`${pathname}${qs ? `?${qs}` : ''}`, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
   const { data: product, isLoading } = useProduct(productId);
 
   // Tab badge counts — same hooks the tab content components use, so React
@@ -172,7 +193,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
 
         {/* Main Content - Tabs */}
         <div className="lg:col-span-3">
-          <Tabs defaultValue="overview" className="w-full">
+          <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
             <TabsList className="w-full justify-start overflow-x-auto">
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="stock">Stock</TabsTrigger>
@@ -186,6 +207,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
               <TabsTrigger value="variants">
                 Variants{variantsCount ? ` (${variantsCount})` : ''}
               </TabsTrigger>
+              <TabsTrigger value="specifications">Specifications</TabsTrigger>
               <TabsTrigger value="audit">Audit Trail</TabsTrigger>
             </TabsList>
 
@@ -380,6 +402,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                 variants={product.variants}
                 variantLinkManual={product.variant_link_manual}
               />
+            </TabsContent>
+
+            {/* Tab: Specifications — what spec-search derived from this product */}
+            <TabsContent value="specifications">
+              <ProductSpecificationsTab productId={productId} />
             </TabsContent>
 
             {/* Tab: Audit Trail */}

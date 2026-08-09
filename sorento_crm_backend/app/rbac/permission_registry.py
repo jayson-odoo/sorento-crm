@@ -130,6 +130,9 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "products", "Products"))
 PERMISSION_REGISTRY.append({"slug": "master_data.products.import", "name": "Import Products", "description": "Permission to bulk import products."})
 PERMISSION_REGISTRY.append({"slug": "master_data.products.export", "name": "Export Products", "description": "Permission to export products with dynamic fields."})
 PERMISSION_REGISTRY.append({"slug": "master_data.products.bulk_delete", "name": "Bulk Delete Products", "description": "Permission to bulk delete products."})
+# The spec-search vocabulary. Editing it silently reshapes every future product search
+# for every customer, so it gets its own permission rather than riding on products.edit.
+PERMISSION_REGISTRY.extend(_crud("master_data", "spec_registry", "Spec Registry"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "product_attachments", "Product Attachments"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "product_categories", "Product Categories"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))

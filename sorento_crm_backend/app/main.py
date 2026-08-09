@@ -205,6 +205,12 @@ async def startup_event():
     except Exception as e:
         logging.error(f"Failed to register embedding change listeners: {str(e)}", exc_info=True)
     try:
+        from app.services.product_spec_change_listener import register_product_spec_listeners
+        register_product_spec_listeners()
+        logging.info("Product spec listeners registered")
+    except Exception as e:
+        logging.error(f"Failed to register product spec listeners: {str(e)}", exc_info=True)
+    try:
         # The status engine ships with an empty registry; every entity arrives from
         # a module. `inbound_shipment` is the first adopter in this repo, and it
         # registers a CHECKPOINT TIMELINE rather than a single-status graph - see

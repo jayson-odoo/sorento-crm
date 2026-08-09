@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 # shared knowledge visible under every scope.
 _SOURCE_MODEL_FOR_COMPANY = {
     "product": Product,
+    # product_spec is keyed on product_id, so the product row carries its company.
+    "product_spec": Product,
     "promotion": Promotion,
     "promotion_product": PromotionProduct,
     "promotion_attachment": PromotionAttachment,
@@ -131,6 +133,45 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
             "visibility_scope": "customer",
             "source_updated_at": product.updated_at or product.created_at,
             "metadata": {"category": category.category_name if category else None, "brand": brand.brand_name if brand else None},
+        }
+
+    if source_type == "product_spec":
+        # A SECOND product source type, deliberately not a replacement for "product".
+        # The existing product body embeds the product code twice, the category code,
+        # and the raw description (which contains OTHER products' codes). Rewriting it
+        # in place would change order-filter fuzzy matching and assistant RAG in the
+        # same commit as a new feature. See documentation/adr/0013.
+        #
+        # The body here is the rendered spec sentence and nothing else: built from spec
+        # VALUES, never from products.description, with code-shaped tokens stripped.
+        # That is what keeps the code-only product resolution rule intact while still
+        # allowing semantic search.
+        from app.models.product_spec import ProductSpecifications
+
+        row = (
+            db.query(ProductSpecifications, Product)
+            .join(Product, Product.id == ProductSpecifications.product_id)
+            .filter(ProductSpecifications.product_id == source_id)
+            .first()
+        )
+        if not row:
+            raise ValueError(f"Product specifications not found: {source_id}")
+        spec, product = row
+        if not (spec.rendered_text or "").strip():
+            # An empty sentence embeds to a vector near everything, so the product
+            # would surface for every query. Enqueue is guarded too; this is defence
+            # in depth.
+            raise ValueError(f"Product {source_id} has no spec text to embed")
+        return {
+            "source_key": product.product_code,
+            "title": product.product_code,
+            "body_text": spec.rendered_text,
+            "visibility_scope": "customer",
+            "source_updated_at": spec.updated_at or spec.created_at,
+            "metadata": {
+                "product_code": product.product_code,
+                "spec_keys": sorted((spec.values or {}).keys()),
+            },
         }
 
     if source_type == "promotion":
