@@ -152,6 +152,33 @@ Present only when something was withheld. Sibling of `items`, never inside a row
 `outcome` is one of `field_not_allowed`, `agent_not_assigned`, `contact_not_found`. The three need
 different admin fixes, which is why they are distinguished - see the PLAN's D38-revised.
 
+Each `denied[]` entry also carries `label`, the CUSTOMER-facing wording, so the refusal can be said
+out loud without the consumer inventing a name for the field.
+
+### 2.4 `field_vocabulary` - naming a field that is not there
+
+Every `incoming_stock` envelope carries a top-level `field_vocabulary`: the full clearance key to
+customer-facing label map, derived from `_CLEARANCE_PAIRS` so it cannot drift from what a PRESENT
+field renders as.
+
+```json
+"field_vocabulary": {"eta_delay_date": "ETA Delay", "etd_date": "ETD",
+                     "inspection_date": "CIDB Inspection", "...": "..."}
+```
+
+It is top level, not inside `field_access`, because the case that needs it has no denial at all:
+four containers, one carries `eta_delay_date` and three do not. Nothing was withheld, so there is no
+`field_access` block, and the three still have to be named. Harvesting the label off a sibling row
+covers the mixed case; nothing covers the case where NO row carries the key, and humanising gives
+"Eta delay" and "Etd".
+
+It is a sibling of `items` and nothing rendered it before, so an existing consumer is unaffected.
+**Do not ask for empty fields inside `items[].fields` instead** - that would put ~20 blank clearance
+rows in every envelope, and a renderer that renders what it is given reads them out to a customer.
+
+Absence is per-ROW (it is data, and differs row to row); denial is per-CONTACT, so it is stated
+once.
+
 **n8n must never turn a denial into a value statement.** "There is no gatepass date yet" is a lie
 when the truth is "you may not see it". Preferred phrasing: *"I can't share the gatepass date -
 please check with the office."* Do not quote `reason` at the contact; it is written for an admin.
@@ -205,28 +232,91 @@ guard rather than prompt text).
 
 ```
 crm_resource_attachments_list
-  attachment_type_code = "Container Status"     # or attachment_type_id from resolve-entity
-  contact_id           = <respond contact id>
-  space_id             = <workspace space_id>
+  contact_id = <respond contact id>
+  space_id   = <workspace space_id>
 ```
+
+**Pass the document class.** The person named ONE document, so
+`attachment_type_code: "Container Status"` is what returns that one file. The name, not the UUID:
+the tool takes the class by name, case-insensitive, so nothing has to resolve a type id and there is
+no id to go stale. (`attachment_type_id` still takes a UUID if a caller holds one. It is SINGULAR -
+there is no `attachment_type_ids`.)
+
+**`contact_id` is a SCOPE, never the filter.** It widens which document types are visible (below),
+but it does not satisfy the narrowing requirement: a call carrying only a contact returns nothing,
+without reaching the backend. That is deliberate - a document request has to name a document, and
+answering "what have you got" with everything a contact may hold is a directory listing rather than
+an answer. If no document class resolved, ask which one they want; do not call this tool and read
+out whatever comes back.
 
 Three things to know, each of which has already caused a wrong answer:
 
 1. **A narrowing filter is mandatory.** Without one of `attachment_ids` / `directory_id` /
-   `attachment_type_id` / `attachment_type_code`, the tool returns an empty page **without calling
-   the backend at all**. The MCP log shows no HTTP request, and the agent narrates the empty page as
-   "there is no such document". `attachment_type_code` was added to that list for exactly this flow.
+   `attachment_type_id` / `attachment_type_code` / `uploaded_by`, the tool returns an empty page
+   **without calling the backend at all**. The MCP log shows no HTTP request, and the agent narrates
+   the empty page as "there is no such document". `contact_id` does NOT satisfy this - see above.
 2. **`contact_id` + `space_id` widen, never narrow.** Container Status is not a dealer-facing type,
    so it is returned ONLY for a contact granted it (User Management → contact → Document types).
    Omit them and the response is the 9-file dealer baseline - correct, and not what the office
    asked for.
-3. **URLs are unsigned by design.** `attachments[].url` is the CDN address
+3. **If you do pass a type, it is SINGULAR: `attachment_type_id`, not `attachment_type_ids`.**
+   There is no plural form and no array. An unknown key is dropped, which leaves the call with no
+   narrower at all, which trips (1). `attachment_type_code: "Container Status"` is the by-name
+   equivalent and avoids the whole class of mistake - no UUID to resolve, no plural to get wrong.
+   The matcher is permissive: case-insensitive `code`, then case-insensitive `type_name`, then a
+   catalog/catalogue spelling-variant pass against both.
+
+   **`fallback_used` answers "did we reach the backend", NOT "is this empty legitimate".** It is
+   present on a real call and absent on the no-narrower short-circuit, so it separates those two -
+   and nothing else. In particular a type code that matches NO type does reach the backend and
+   carries it, and still returns zero rows: `resources_service` applies an impossible-id filter on
+   purpose, so a wrong document hint can never leak the wrong files. That is correct behaviour
+   which happens to be indistinguishable from "no such document" - a third empty with a third
+   cause. Do not read `fallback_used` as a legitimacy signal.
+
+   The three empties, all identical to a caller today:
+
+   | cause | reached backend | why empty |
+   | --- | --- | --- |
+   | no recognised narrower | no | the tool refused to browse the library |
+   | type code matches no type | yes | impossible-id filter, deliberate, stops a bad hint leaking |
+   | filter matched nothing | yes | genuinely no such document for this caller |
+4. **The type filter alone is not enough.** `visible_type_ids` widens the baseline to
+   (is_direct_access types) UNION (types granted to this contact). Container Status is NOT
+   is_direct_access, so an ungranted contact gets 0 rows even with the correct parameter. An
+   explicit `attachment_ids` is a different path and bypasses the type gate, which is why
+   "container status for TCNU1851000" worked while "send me the container status list" did not.
+5. **URLs are unsigned by design.** `attachments[].url` is the CDN address
    (`https://<cdn>/import-sources/<uuid>/Container Status 2026.xlsx`); n8n signs on the way out.
    Pass `resolve_signed_urls=true` if a ready-to-open link is wanted instead.
 
 Exactly **one** Container Status workbook is live at any time - each import trashes the previous, so
-this call returns a single row. `Uploaded` and `last_updated_at` carry its date; `File ID` carries
-the attachment UUID, which is what to quote when a human needs to find the row.
+this call returns a single row. `Uploaded` and `last_updated_at` carry its date.
+
+**Every attachment carries its own `uploadedAt`**, so a consumer handing over one of several files
+can say how current THAT file is:
+
+```json
+"attachments": [{"url": "...", "filename": "Container Status 2026.xlsx",
+                 "mimeType": "...", "attachmentType": null,
+                 "uploadedAt": "2026-08-08T11:54:05.086571"}]
+```
+
+The envelope's `last_updated_at` is the newest across the whole answer, which says nothing about an
+individual file once more than one comes back. The key is omitted, never null, when the row has no
+upload time.
+
+**All of these are naive Malaysia wall-clock**, like `updated_at` - the sanitizer normalizes
+`uploaded_at` before the presenter sees it. It matters beyond politeness: the `Uploaded` line is the
+DAY of that instant, so a file uploaded after 16:00 MYT (08:00Z) used to render as the previous
+date. No offset suffix, deliberately: an offset-aware string gets re-converted back to UTC by
+n8n/luxon for display, undoing the conversion.
+
+**The render envelope no longer carries `File ID`.** It briefly did, so a human could tell which of
+several identically-named files was sent - but `render` is the CUSTOMER view, and the uuid went out
+on WhatsApp under every document, on every resource-attachment answer, beside the file itself. The
+id is still on the raw (non-render) response and in the CRM UI, which is where anyone debugging is
+already looking.
 
 ### N3 - the escalation enum
 
@@ -266,8 +356,11 @@ extend the probe to match it - the same shape `contact_access_types.keywords` al
 "customer"/"homeowner" → `end_user`. Until then n8n must send the literal `"Container Status"`,
 which means the routing words stay hardcoded in the parser prompt - the thing D22 set out to remove.
 
-**Not blocking n8n** as of 2026-08-09: the clone's disallowed-entity-gate disambiguates on
-`canonical_code`. Their finding raises the bar for the eventual CRM fix, though: for a granted
+**Still blocking, on the main path** (corrected 2026-08-09 after a production run). The n8n
+disallowed-entity-gate does disambiguate on `canonical_code`, so the narrowing half works - but
+narrowing to the right TYPE is worthless while a type-filtered query cannot be issued under a name
+the tool accepts (see the note below on `attachment_type_id`). "Container status list" is what a
+person actually types, because "list" is in the document's name. Their finding raises the bar for the eventual CRM fix, though: for a granted
 contact, "container status list" already matches THREE types - `Packing List` and `Stock_List` on
 the word "list", `container_status` on the word "status". So a `keywords` column must **disambiguate
 a multi-way hit**, not merely add aliases; a probe that returns three type ids is a wrong answer
@@ -318,3 +411,22 @@ end to end:
 
 A wrong `space_id` resolves to no contact at all and reports `contact_not_found`. If every field
 comes back denied, check the workspace before checking the grants.
+
+### What is NOT covered yet (status 2026-08-09)
+
+Case 2, a genuinely DENIED field, is proven only against synthetic envelopes. It has never been run
+end to end, and two apparent routes to it are not routes:
+
+- **A no-access contact does not substitute.** Tried with contact `457216562`: access control fires
+  at check-access, `get-results` never runs, so there is no envelope to inspect. Access denial and
+  FIELD denial are different mechanisms and only the second is under test here.
+- **Calling the CRM directly bypasses n8n's own credential.** The n8n side holds no CRM credential
+  outside the workflow, so it cannot make the staff-path call that produces a denied envelope.
+
+CRM-side, that call does produce one: `crm_incoming_stock_list` with an ETA window and NO
+`contact_id` takes the staff path, is judged on `procurement.packing_lists.view_clearance`, and a
+principal without it gets all 20 gated fields in `denied[]` while `estimated_arrival_date` still
+ships allowed - a real mixed envelope. Reaching it from n8n needs either that credential or a
+partially-granted contact, and creating one is a production write.
+
+Do not read "we tried a contact with no access" as coverage of field-level denial.

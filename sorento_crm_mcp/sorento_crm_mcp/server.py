@@ -65,6 +65,12 @@ TOOL_REQUIRED_NARROWING_FILTERS: dict[str, tuple[str, ...]] = {
         # lookup first turns one turn into two - or, more often, into an empty
         # page the agent narrates as "there is no such document".
         "attachment_type_code", "uploaded_by",
+        # `contact_id` is deliberately NOT here. It scopes the answer to that
+        # contact's entitlements, which bounds the result to a handful of files -
+        # but a document request has to name a DOCUMENT. A contact-only call
+        # returns everything that contact may have and leaves the caller to pick,
+        # which is a directory listing, not an answer. Asking for nothing must
+        # return nothing.
     ),
 }
 
@@ -578,12 +584,23 @@ def _to_malaysia_iso(value: Any) -> Any:
     return dt.astimezone(_MALAYSIA_TZ).replace(tzinfo=None).isoformat()
 
 
+#: Timestamp keys rewritten to Malaysia wall-clock on every response.
+#:
+#: `uploaded_at` is here because for an attachment it IS the freshness date - the
+#: file is never edited in place, so there is no `updated_at` column on the table
+#: at all. Left in UTC it was wrong twice over: the envelope's `last_updated_at`
+#: reported a UTC instant, and the per-file "Uploaded" line is the DAY of that
+#: instant, so anything uploaded after 16:00 MYT (08:00Z) renders as the previous
+#: date to a Malaysian reader.
+_MALAYSIA_TIME_KEYS = ("updated_at", "uploaded_at")
+
+
 def _normalize_updated_at(value: Any) -> Any:
-    """Recursively rewrite every `updated_at` string to Asia/Kuala_Lumpur ISO 8601.
+    """Recursively rewrite every timestamp in `_MALAYSIA_TIME_KEYS` to Malaysia time.
 
     Applies to every MCP tool response so n8n / the AI assistant render a
-    consistent "last updated" timezone regardless of which tool produced the
-    row. Non-`updated_at` fields are left untouched.
+    consistent timezone regardless of which tool produced the row. Other fields
+    are left untouched.
     """
     if isinstance(value, list):
         return [_normalize_updated_at(item) for item in value]
@@ -591,7 +608,7 @@ def _normalize_updated_at(value: Any) -> Any:
         return value
     out: dict[str, Any] = {}
     for key, raw in value.items():
-        if key == "updated_at":
+        if key in _MALAYSIA_TIME_KEYS:
             out[key] = _to_malaysia_iso(raw)
         elif isinstance(raw, (dict, list)):
             out[key] = _normalize_updated_at(raw)

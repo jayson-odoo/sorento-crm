@@ -122,3 +122,35 @@ async def test_certificate_ids_alone_reaches_the_backend():
         certificate_ids="11111111-1111-4111-8111-111111111111",
     )  # type: ignore[arg-type]
     assert "certificate_ids" in out
+
+
+def test_contact_id_alone_is_not_a_narrowing_filter():
+    """Asking for nothing must return nothing.
+
+    `contact_id` scopes the answer to that contact's entitlements, which bounds
+    the result to a handful of files - but a document request has to name a
+    DOCUMENT. Returning everything a contact may have is a directory listing, not
+    an answer, so the contact is a scope and never the filter.
+    """
+    spec = next(s for s in CATALOG if s.name == "crm_resource_attachments_list")
+    assert "contact_id" in spec.query_params, "still accepted, as a scope"
+    assert "contact_id" not in TOOL_REQUIRED_NARROWING_FILTERS[spec.name]
+
+
+def test_resource_attachments_type_filter_is_singular_only():
+    """There is no `attachment_type_ids`. A caller that sends the plural has its
+    key dropped, ends up with no narrower, and gets the silent empty page above.
+    """
+    spec = next(s for s in CATALOG if s.name == "crm_resource_attachments_list")
+    assert "attachment_type_id" in spec.query_params
+    assert "attachment_type_ids" not in spec.query_params
+    assert "attachment_type_ids" not in TOOL_REQUIRED_NARROWING_FILTERS[spec.name]
+
+
+@pytest.mark.asyncio
+async def test_contact_id_alone_is_short_circuited():
+    """No document named -> empty page, and the backend is never called."""
+    spec = next(s for s in CATALOG if s.name == "crm_resource_attachments_list")
+    fn = _compile_tool(spec)
+    out = await fn(_FakeCtx(_FakeClient()), contact_id="rio_10532f")  # type: ignore[arg-type]
+    assert "rio_10532f" not in out

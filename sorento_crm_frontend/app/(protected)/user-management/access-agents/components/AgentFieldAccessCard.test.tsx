@@ -24,6 +24,10 @@ function setup(data: unknown, state: Partial<{ isLoading: boolean; isError: bool
   return render(<AgentFieldAccessCard agentId="agent-1" />);
 }
 
+// The trigger renders chips once fields are allowed, so it has no stable accessible name.
+const openMenu = () =>
+  fireEvent.click(document.querySelector('[data-slot="searchable-multi-select-trigger"]')!);
+
 beforeEach(() => {
   mockUseFieldAccess.mockReset();
   mockMutate.mockReset();
@@ -40,16 +44,31 @@ describe('AgentFieldAccessCard', () => {
     expect(screen.getByText(/could not load the field list/i)).toBeInTheDocument();
   });
 
-  it('renders every field the agent owns, ticked or not', () => {
+  it('shows the allowed fields on the trigger without opening anything', () => {
     setup({ agent_code: 'incoming_stock_enquiries', fields: FIELDS, overrides: [] });
 
-    const checkboxes = screen.getAllByRole('checkbox');
-    expect(checkboxes).toHaveLength(2);
-    expect(screen.getByText('ETA delay')).toBeInTheDocument();
-    // The denied one is present-and-unticked, not omitted: a field you cannot see
-    // on the screen is a field you cannot grant.
-    expect(screen.getByText('Gatepass')).toBeInTheDocument();
+    const trigger = document.querySelector('[data-slot="searchable-multi-select-trigger"]')!;
+    expect(trigger.textContent).toContain('ETA delay');
     expect(screen.getByText('1 of 2 allowed')).toBeInTheDocument();
+  });
+
+  it('offers every field the agent owns, allowed or not', async () => {
+    setup({ agent_code: 'incoming_stock_enquiries', fields: FIELDS, overrides: [] });
+    openMenu();
+
+    // The denied one is offered-and-unselected, not omitted: a field you cannot see
+    // on the screen is a field you cannot grant.
+    await waitFor(() => expect(screen.getByRole('option', { name: /Gatepass/ })).toBeInTheDocument());
+    expect(screen.getByRole('option', { name: /ETA delay/ })).toBeInTheDocument();
+  });
+
+  it('shows the field key beside the label, because that is what the answer side speaks', async () => {
+    setup({ agent_code: 'incoming_stock_enquiries', fields: FIELDS, overrides: [] });
+    openMenu();
+
+    // `gatepass_date` is the token the MCP envelope keys on and the one
+    // `field_access.denied[].field` reports; the admin-facing label is not.
+    await waitFor(() => expect(screen.getByText('gatepass_date')).toBeInTheDocument());
   });
 
   it('tells the admin the agent restricts nothing when it owns no gated fields', () => {
@@ -57,10 +76,12 @@ describe('AgentFieldAccessCard', () => {
     expect(screen.getByText(/owns no restricted fields/i)).toBeInTheDocument();
   });
 
-  it('only sends the ticks that actually changed', async () => {
+  it('only sends the fields that actually changed', async () => {
     setup({ agent_code: 'incoming_stock_enquiries', fields: FIELDS, overrides: [] });
+    openMenu();
 
-    fireEvent.click(screen.getAllByRole('checkbox')[1]); // tick Gatepass
+    await waitFor(() => expect(screen.getByRole('option', { name: /Gatepass/ })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('option', { name: /Gatepass/ }));
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
     await waitFor(() => expect(mockMutate).toHaveBeenCalledTimes(1));
@@ -72,12 +93,30 @@ describe('AgentFieldAccessCard', () => {
     });
   });
 
+  it('sends a revoke when an allowed field is deselected', async () => {
+    setup({ agent_code: 'incoming_stock_enquiries', fields: FIELDS, overrides: [] });
+    openMenu();
+
+    await waitFor(() => expect(screen.getByRole('option', { name: /ETA delay/ })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('option', { name: /ETA delay/ }));
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => expect(mockMutate).toHaveBeenCalledTimes(1));
+    expect(mockMutate).toHaveBeenCalledWith({
+      agentId: 'agent-1',
+      fields: [{ resource: 'incoming_stock', field_key: 'eta_delay_date', is_allowed: false }],
+    });
+  });
+
   it('cannot save with nothing changed', () => {
     setup({ agent_code: 'incoming_stock_enquiries', fields: FIELDS, overrides: [] });
     expect(screen.getByRole('button', { name: /save/i })).toBeDisabled();
   });
 
-  it('surfaces per-contact exceptions, which the ticks alone would not explain', () => {
+  it('does not render per-contact exceptions, which live on the contact page', () => {
+    // Display only. The overrides are still returned by the API and still written
+    // from the contact's own page - they are what makes `field_access.denied`
+    // able to say "you may not see this" instead of "that has not happened yet".
     setup({
       agent_code: 'incoming_stock_enquiries',
       fields: FIELDS,
@@ -93,13 +132,7 @@ describe('AgentFieldAccessCard', () => {
       ],
     });
 
-    expect(screen.getByText(/per-contact exceptions/i)).toBeInTheDocument();
-    expect(screen.getByText('Ah Seng Hardware')).toBeInTheDocument();
-    expect(screen.getByText(/may not see/i)).toBeInTheDocument();
-  });
-
-  it('hides the exceptions section when there are none', () => {
-    setup({ agent_code: 'incoming_stock_enquiries', fields: FIELDS, overrides: [] });
     expect(screen.queryByText(/per-contact exceptions/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Ah Seng Hardware')).not.toBeInTheDocument();
   });
 });
