@@ -468,6 +468,41 @@ export async function decideCoveredRow(
   return res.json();
 }
 
+/** One order line behind a planned quantity. */
+export interface PlanDemandLine {
+  so_number: string;
+  /** The location the ORDER named, or null when it named none. */
+  warehouse_code: string | null;
+  is_unlocated: boolean;
+  order_type: string | null;
+  demand_class: string | null;
+  order_date: string | null;
+  required_date: string | null;
+  qty: number;
+}
+
+export interface PlanDemand {
+  lines: PlanDemandLine[];
+  total: number;
+  shown: number;
+  committed_total: number;
+  unlocated_total: number;
+  /** Distinct locations the demand actually sits at - the answer to "why this warehouse". */
+  locations: string[];
+}
+
+/** GET /api/v1/scm/reorder-runs/{run}/recommendations/{rec}/demand */
+export async function getRecommendationDemand(
+  runId: string,
+  recId: string,
+): Promise<PlanDemand> {
+  const res = await apiFetch(
+    `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/recommendations/${encodeURIComponent(recId)}/demand`,
+  );
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the demand behind this row'));
+  return res.json();
+}
+
 /** Persist the chosen budget + funding split to the run ("Apply budget"). */
 export async function applyBudget(runId: string, budget: number): Promise<ApplyBudgetResult> {
   if (USE_M4_MOCKS) {

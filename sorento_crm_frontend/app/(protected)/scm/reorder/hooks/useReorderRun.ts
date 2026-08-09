@@ -8,6 +8,7 @@ import {
   getAllDispositionRecommendations,
   getBuyRecommendationsForCash,
   getCoveredRecommendations,
+  getRecommendationDemand,
   getReorderRun,
   getRecommendations,
   getTodayRun,
@@ -264,6 +265,26 @@ export function useCoveredRecommendations(runId: string | null, enabled: boolean
     queryFn: () => getCoveredRecommendations(runId as string),
     enabled: enabled && !!runId,
     staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
+/**
+ * The open order lines a planned quantity was built from. Fetched only when the drill is
+ * opened: the row carries the total, and pulling every contributing line for every row on
+ * load is a cost nobody asked for.
+ */
+export function useRecommendationDemand(
+  runId: string | null,
+  recId: string | null,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ['scm', 'reorder', 'rec-demand', runId, recId],
+    queryFn: () => getRecommendationDemand(runId as string, recId as string),
+    enabled: enabled && !!runId && !!recId,
+    staleTime: 60_000,
     refetchOnWindowFocus: false,
     retry: 1,
   });

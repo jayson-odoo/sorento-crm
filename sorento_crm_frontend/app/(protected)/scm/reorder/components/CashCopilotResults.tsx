@@ -242,6 +242,7 @@ export function CashCopilotResults({ plan }: { plan: M8PlanState }) {
         onDragCancel={() => setActiveRow(null)}
       >
         <CashResultsGrid
+          runId={plan.runId ?? null}
           within={funding.within}
           over={funding.over}
           decisions={decisions}

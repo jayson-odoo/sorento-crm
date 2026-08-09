@@ -28,6 +28,7 @@ import { cn } from '@/lib/utils';
 import { EM_DASH, fmtInt, fmtMoney } from '../../lib/format';
 import { decideCoveredRow } from '../services/reorderRunService';
 import { todayRunKey } from '../hooks/useReorderRun';
+import { PlanDemandPopover } from './PlanDemandPopover';
 import type { ReorderRecommendation } from '../types/reorder.types';
 
 /**
@@ -130,8 +131,12 @@ export function CoveredByStockView({
         header: ({ column }) => <DataGridColumnHeader title="SKU" column={column} />,
         cell: ({ row }) => (
           <div className="min-w-0">
-            <div className="truncate font-medium" title={row.original.sku}>
-              {row.original.sku}
+            <div className="flex items-center gap-1.5">
+              <span className="truncate font-medium" title={row.original.sku}>
+                {row.original.sku}
+              </span>
+              {/* Which orders this committed figure is actually made of. */}
+              <PlanDemandPopover runId={runId ?? null} recId={row.original.id} />
             </div>
             {/* The part of this demand nobody located: the part most likely to be wrong. */}
             {row.original.unlocated_demand ? (
@@ -271,7 +276,7 @@ export function CoveredByStockView({
         meta: { headerTitle: 'Decide', headerClassName: 'text-end' },
       },
     ],
-    [decide, optimistic, pending],
+    [decide, optimistic, pending, runId],
   );
 
   const table = useReactTable({

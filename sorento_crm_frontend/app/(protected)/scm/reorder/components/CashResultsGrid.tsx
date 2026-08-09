@@ -27,6 +27,7 @@ import { cn } from '@/lib/utils';
 import { EM_DASH, fmtDecimal, fmtInt, fmtMoney, fmtSigned, fmtSupplierCost } from '../../lib/format';
 import { m8CashImpact, type M8PlanRow } from '../lib/planRow';
 import { useExplainDemand, useExplainNet } from '../hooks/useDrills';
+import { PlanDemandPopover } from './PlanDemandPopover';
 
 /**
  * SCM M8 (slice C) - ONE table, two draggable sections (Within budget / Over
@@ -584,6 +585,7 @@ export interface RowPoLink {
 
 /** One data row - draggable between sections; renders inline cells + decisions. */
 function PlanRow({
+  runId,
   row,
   section,
   decision,
@@ -594,6 +596,8 @@ function PlanRow({
   handlers,
   onOpenDetail,
 }: {
+  /** The run the row belongs to, so the demand drill can fetch its order lines. */
+  runId?: string | null;
   row: M8PlanRow;
   section: 'within' | 'over';
   decision: M8RowDecision;
@@ -674,6 +678,9 @@ function PlanRow({
           <span className="truncate font-medium" title={row.sku}>
             {row.sku}
           </span>
+          {/* Which orders this quantity is actually for. Answers "why is it bought into
+              BRW when I ordered for BRW-IB, and why so many" from the row itself. */}
+          <PlanDemandPopover runId={runId ?? null} recId={row.id} />
           {isPinned ? (
             <Badge variant="primary" appearance="light" size="xs">
               pinned
@@ -918,6 +925,7 @@ export function CashResultsGrid({
   budgetHeader,
   handlers,
   onOpenDetail,
+  runId,
 }: {
   within: M8PlanRow[];
   over: M8PlanRow[];
@@ -932,6 +940,8 @@ export function CashResultsGrid({
   handlers: RowHandlers;
   /** Open the recommendation detail view for a row (M8-C10). */
   onOpenDetail?: (row: M8PlanRow) => void;
+  /** The run on screen, threaded to each row's demand drill. */
+  runId?: string | null;
 }) {
   // Each section collapses independently so the user can fold the table away and
   // scroll to the run-history list below (M8-D10).
@@ -1057,6 +1067,7 @@ export function CashResultsGrid({
             {visibleWithin.length ? (
               visibleWithin.map((row) => (
                 <PlanRow
+            runId={runId}
                   key={row.id}
                   row={row}
                   section="within"
@@ -1101,6 +1112,7 @@ export function CashResultsGrid({
             {visibleOver.length ? (
               visibleOver.map((row) => (
                 <PlanRow
+            runId={runId}
                   key={row.id}
                   row={row}
                   section="over"
