@@ -8,6 +8,7 @@ import {
   CalendarClock,
   CalendarDays,
   History,
+  Loader2,
   PlayCircle,
   RotateCcw,
 } from 'lucide-react';
@@ -126,7 +127,13 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   // Whether a run has actually happened today, which is what decides if there is anywhere
   // for "Back to today's plan" to go. Distinct from `isToday`, which asks whether the run
   // ON SCREEN is today's.
-  const hasTodayRun = !!todayData?.is_today;
+  const hasTodayRun = !!todayData?.is_today && todayData.status === 'completed';
+  // A plan is being built in the background. Independent of what is on screen: the run
+  // shown is a completed one whenever one exists, so this is only ever an addition to the
+  // page, never a reason to empty it.
+  const planInProgress = !!todayData?.in_progress;
+  // The one case where there is nothing to show: the first plan ever is still running.
+  const buildingFirstPlan = planInProgress && !!todayData && todayData.status !== 'completed';
 
   const plan = useReorderPlan(currentRunId, view === 'buy' && !!currentRunId);
 
@@ -338,6 +345,23 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
     );
   }
 
+  // The first plan ever is still being built. There is no snapshot to fall back on, so the
+  // page says what is happening rather than "No plan yet", which reads as nothing running
+  // and invites the user to start a second one.
+  if (buildingFirstPlan) {
+    return (
+      <Card className="flex flex-col items-center gap-3 p-12 text-center">
+        <span className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+          <Loader2 className="size-6 animate-spin" aria-hidden />
+        </span>
+        <div className="text-base font-semibold">Building the plan</div>
+        <p className="max-w-md text-sm text-muted-foreground">
+          Started {dateLabel} at {timeLabel}. This page updates on its own when it finishes.
+        </p>
+      </Card>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -393,6 +417,19 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         onConfirm={doReset}
         isBusy={resetting}
       />
+
+      {/* A newer plan is being built. Said alongside the plan on screen, not instead of it:
+          the numbers below are still the last usable ones, and hiding them would leave the
+          planner with nothing to work from while they wait. */}
+      {planInProgress ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm">
+          <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden />
+          <span className="text-muted-foreground">
+            A new plan is being built. The figures below are from the last completed one until
+            it finishes.
+          </span>
+        </div>
+      ) : null}
 
       {/* Two different situations, and offering the same control for both made one of them a
           dead end: "Back to today's plan" cleared the selection, landed on the same run, and

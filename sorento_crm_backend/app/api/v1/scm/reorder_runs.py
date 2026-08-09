@@ -197,6 +197,7 @@ def get_today_reorder_run(
             code_by_id[wr["id"]] = wr["warehouse_code"]
     item = _list_item(row, code_by_id, _costed_buy_counts(db, [str(row["id"])]))
     item["is_today"] = picked["is_today"]
+    item["in_progress"] = bool(picked.get("in_progress"))
     return item
 
 

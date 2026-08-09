@@ -934,6 +934,10 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
             # screen - which is a view OF a run - filters by a run id no batch carries and
             # shows nothing for ever, while the rows sit in the table.
             current = reorder_run_service.today_or_latest_run(db)
+            # A run still being built contradicts nothing yet, so the batch would hang off a
+            # plan that has no rows to disagree with. Only a completed plan can be contradicted.
+            if current and current["row"].get("status") != "completed":
+                current = None
             batch = plan_exception_service.generate_batch(
                 db,
                 run_id=str(current["row"]["id"]) if current else None,

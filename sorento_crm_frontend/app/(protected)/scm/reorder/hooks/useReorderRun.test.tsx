@@ -186,6 +186,7 @@ const TODAY_RUN = {
   started_at: '2026-07-17T06:00:00',
   finished_at: '2026-07-17T06:00:08',
   is_today: true,
+  in_progress: false,
   summary: { buy_count: 4, disposition_count: 1, exception_count: 0, total_cash_impact: 9000, recommendation_count: 5 },
 };
 

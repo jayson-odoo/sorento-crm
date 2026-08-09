@@ -78,8 +78,13 @@ class ReorderRunTodayResponse(ReorderRunListItem):
     """The run the reorder page opens to without knowing an id (M8-D3/D4): today's
     scheduled snapshot when present, else the most-recent completed run (the last
     available snapshot). ``is_today`` tells the FE whether the header may say
-    "Today's plan" or must show that run's date + time (M8-D11)."""
+    "Today's plan" or must show that run's date + time (M8-D11).
+
+    ``in_progress`` is a SEPARATE fact from the run being returned: a plan started today
+    that has not finished yet. The run shown is always a completed one, so the page keeps
+    the last usable snapshot on screen while it says a newer plan is being built."""
     is_today: bool = False
+    in_progress: bool = False
 
 
 # --- recommendations grid ---------------------------------------------------

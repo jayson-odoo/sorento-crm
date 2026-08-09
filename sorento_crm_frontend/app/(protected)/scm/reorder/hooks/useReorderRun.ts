@@ -187,6 +187,10 @@ export function useTodayRun() {
     refetchOnWindowFocus: false,
     staleTime: 10_000,
     retry: 1,
+    // A plan is built by a background worker, so the page that opened while one was
+    // running has no other way to learn it finished. Poll only while that is true, and
+    // stop the moment nothing is in flight.
+    refetchInterval: (query) => (query.state.data?.in_progress ? 5_000 : false),
   });
 }
 

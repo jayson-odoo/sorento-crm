@@ -170,6 +170,26 @@ def _resolve_warehouse_ids(db: Session, warehouse_codes: Optional[list[str]]) ->
 _KL_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 
 
+def _run_in_progress(db: Session, today: date) -> bool:
+    """True when a run started today is still queued or running.
+
+    Separate from the run being shown so the page can say "a plan is being built" WHILE it
+    keeps showing the last one. The two facts are independent: the newest completed run and
+    whether a newer one is on its way.
+    """
+    co, co_params = company_sql_predicate(db, "company_id", param_prefix="cip")
+    co_clause = f"AND {co}" if co else ""
+    row = db.execute(text(f"""
+        SELECT 1
+        FROM scm.reorder_run
+        WHERE status IN ('queued', 'running')
+          AND ((started_at AT TIME ZONE 'utc') AT TIME ZONE 'Asia/Kuala_Lumpur')::date = :today
+          {co_clause}
+        LIMIT 1
+    """), {"today": today, **co_params}).first()
+    return row is not None
+
+
 def today_or_latest_run(db: Session, today: Optional[date] = None) -> Optional[dict]:
     """Pick the run the reorder page opens to WITHOUT knowing an id (M8-D3/D4).
 
@@ -191,17 +211,21 @@ def today_or_latest_run(db: Session, today: Optional[date] = None) -> Optional[d
     # another company's plan wearing this company's chrome.
     co, co_params = company_sql_predicate(db, "company_id", param_prefix="ctr")
     co_clause = f"AND {co}" if co else ""
+    # COMPLETED, not merely "not failed". A run that is still going has no recommendations, so
+    # opening the page on it renders an empty plan and the words "No plan yet" while a perfectly
+    # good snapshot sits behind it. That is what a queued job with no worker looks like from the
+    # planner's chair: they press Plan now, the page empties, and yesterday's plan is gone.
     row = db.execute(text(f"""
         SELECT {cols}
         FROM scm.reorder_run
-        WHERE status <> 'failed'
+        WHERE status = 'completed'
           AND ((started_at AT TIME ZONE 'utc') AT TIME ZONE 'Asia/Kuala_Lumpur')::date = :today
           {co_clause}
         ORDER BY started_at DESC NULLS LAST, created_at DESC
         LIMIT 1
     """), {"today": today, **co_params}).mappings().first()
     if row is not None:
-        return {"row": dict(row), "is_today": True}
+        return {"row": dict(row), "is_today": True, "in_progress": _run_in_progress(db, today)}
     # Same ordering key as dashboard_service._latest_completed_run_id so both surfaces
     # reference the SAME latest-completed run (the dashboard's ROP source and this page).
     row = db.execute(text(f"""
@@ -213,13 +237,28 @@ def today_or_latest_run(db: Session, today: Optional[date] = None) -> Optional[d
         LIMIT 1
     """), co_params).mappings().first()
     if row is None:
-        return None
+        # Nothing has ever completed. If a first plan is being built RIGHT NOW, that is a
+        # better answer than "No plan yet", which reads as "nothing is happening" and invites
+        # the user to start a second one. Only reached when there is no completed run to
+        # prefer, so an unfinished run still never hides a usable snapshot.
+        row = db.execute(text(f"""
+            SELECT {cols}
+            FROM scm.reorder_run
+            WHERE status IN ('queued', 'running')
+              AND ((started_at AT TIME ZONE 'utc') AT TIME ZONE 'Asia/Kuala_Lumpur')::date = :today
+              {co_clause}
+            ORDER BY started_at DESC NULLS LAST, created_at DESC
+            LIMIT 1
+        """), {"today": today, **co_params}).mappings().first()
+        if row is None:
+            return None
+        return {"row": dict(row), "is_today": True, "in_progress": True}
     started = row["started_at"]
     is_today = bool(
         started is not None
         and started.replace(tzinfo=ZoneInfo("UTC")).astimezone(_KL_TZ).date() == today
     )
-    return {"row": dict(row), "is_today": is_today}
+    return {"row": dict(row), "is_today": is_today, "in_progress": _run_in_progress(db, today)}
 
 
 def assert_run_visible(db: Session, run_id: str) -> None:

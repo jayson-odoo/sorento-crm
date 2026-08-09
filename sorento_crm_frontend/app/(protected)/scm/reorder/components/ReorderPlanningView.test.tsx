@@ -51,6 +51,7 @@ const todayRun = (over: Partial<TodayRun> = {}): TodayRun => ({
   started_at: '2026-07-15T06:00:00',
   finished_at: '2026-07-15T06:00:08',
   is_today: true,
+  in_progress: false,
   summary: { buy_count: 7, disposition_count: 3, exception_count: 0, total_cash_impact: 125000, recommendation_count: 10 },
   ...over,
 });
@@ -176,5 +177,40 @@ describe('ReorderPlanningView — "Back to today\'s plan" has somewhere to go', 
     fireEvent.click(screen.getByRole('button', { name: /plan now/i }));
 
     expect(screen.getByText('manual-plan-modal')).toBeInTheDocument();
+  });
+});
+
+describe('ReorderPlanningView — a plan being built never empties the page', () => {
+  // > "i think there is some conflict in backend, cuse I just can't retrieve any data"
+  //
+  // The job had been enqueued with no worker draining it, so a run sat unfinished all day.
+  // The page picked it as today's plan, found no recommendations on it, and showed nothing
+  // while 101 completed snapshots sat behind it. An unfinished run is now a banner, not the
+  // plan.
+
+  it('keeps showing the last completed plan and says a new one is being built', () => {
+    stubToday(todayRun({ in_progress: true }));
+    renderView();
+
+    expect(screen.getByText(/Today's plan/)).toBeInTheDocument();
+    expect(screen.getByText(/A new plan is being built/i)).toBeInTheDocument();
+    expect(screen.getByText(/from the last completed one/i)).toBeInTheDocument();
+  });
+
+  it('says nothing about building when every run has finished', () => {
+    stubToday(todayRun());
+    renderView();
+
+    expect(screen.queryByText(/A new plan is being built/i)).not.toBeInTheDocument();
+  });
+
+  it('says the first plan is being built rather than "No plan yet"', () => {
+    // Nothing has ever completed, so there is no snapshot to fall back on. "No plan yet"
+    // would read as nothing running and invite a second run.
+    stubToday(todayRun({ status: 'running', finished_at: null, summary: null, in_progress: true }));
+    renderView();
+
+    expect(screen.getByText(/Building the plan/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No plan yet/i)).not.toBeInTheDocument();
   });
 });

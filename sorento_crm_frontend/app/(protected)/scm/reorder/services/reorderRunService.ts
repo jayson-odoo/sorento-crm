@@ -177,6 +177,10 @@ export interface ReorderRunHistoryPage {
  *  header reads "Today's plan" vs that run's date+time. Same row shape as history. */
 export interface TodayRun extends ReorderRunHistoryItem {
   is_today: boolean;
+  /** A plan started today that has not finished. Independent of the run returned, which is
+   *  always a completed one while any completed one exists - so the page keeps the last
+   *  usable snapshot on screen and says a newer plan is being built. */
+  in_progress: boolean;
 }
 
 /** Load the default run for the page — `null` when no run exists yet (fresh
