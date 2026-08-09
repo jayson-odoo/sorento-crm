@@ -190,6 +190,13 @@ Stated up front so the gate cannot be met by tightening a metric until it passes
   silently start rendering something else.
 - **AC-E5** `[E2E]` Given the real flyer, When it is seeded and published, Then a dealer sees
   promotional prices and a consumer sees their own, from one document.
+  DONE (2026-08-09), in `tests/test_dealer_kit_pdf_render.py::test_one_published_document_prices_itself_for_the_audience_it_is_for`
+  - real Chromium against the prod frontend build, a real backend process and Postgres. The
+  export audience is the only surface on which two readers meet the same published document:
+  the public catalogue route renders with a hardcoded `ANONYMOUS` viewer. The seed itself is
+  proved against the real flyer excerpt in AC-E1 to AC-E4; this asserts on a page whose two
+  figures are chosen, because seeding here would price REAL product rows in a copy of
+  production. Reasoning and the mutation table are in `PLAN-flyer-seeding.md`.
 
 ## Group F — Artwork (S7.5)
 

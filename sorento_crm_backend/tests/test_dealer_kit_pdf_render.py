@@ -9,7 +9,7 @@ These drive headless Chromium at a real print page, so they need a frontend.
 An absent one is a FAILURE, not a skip: see `_require_a_reachable_frontend`.
 Run with the stack up:
 
-    DEALER_KIT_PRINT_BASE_URL=http://localhost:3020 pytest tests/test_dealer_kit_pdf_render.py
+    DEALER_KIT_PRINT_BASE_URL=http://localhost:3040 pytest tests/test_dealer_kit_pdf_render.py
 """
 from __future__ import annotations
 
@@ -22,16 +22,16 @@ from app.services.dealer_kit import collection_service, export_service, page_ser
 from app.tasks import dealer_kit_export_tasks as task
 from tests._pg_fixture import unique_code
 
-PRINT_BASE = os.environ.get("DEALER_KIT_PRINT_BASE_URL", "http://localhost:3020")
+PRINT_BASE = os.environ.get("DEALER_KIT_PRINT_BASE_URL", "http://localhost:3040")
 
 # ONE statement of where the frontend is, for the probe below AND for the task
 # that actually drives the browser.
 #
-# There were two, and they disagreed. This file defaults to :3020; the task
+# There were two, and they disagreed. This file defaults to :3040; the task
 # defaults to :3000 (`dealer_kit_export_tasks.DEFAULT_PRINT_BASE`) and reads the
 # variable from `os.environ`, which pytest never populates - nothing in the test
 # path calls `load_dotenv`, so the value sitting in `.env` is invisible here. The
-# result was the worst possible shape: the probe found :3020 up and let the tests
+# result was the worst possible shape: the probe found :3040 up and let the tests
 # run, then every render went to :3000, found nothing, and failed 60 seconds
 # later with "timed out waiting for [data-dk-print-ready='true']" - which reads
 # like a broken print page rather than a URL nobody set. All seven failed that
@@ -60,14 +60,36 @@ def committed_db():
 
     session = SessionLocal()
     set_company_scope(session, frozenset({"00000000-0000-0000-0000-000000000001"}))
-    created: dict[str, list] = {"pages": [], "products": [], "categories": [], "uoms": [], "designs": []}
+    created: dict[str, list] = {
+        "pages": [],
+        "products": [],
+        "categories": [],
+        "uoms": [],
+        "designs": [],
+        # Tracked for the same reason as everything else here, and the reason is
+        # not bookkeeping: an untracked promotion is a live offer left in a copy
+        # of the production database, which is a price somebody could be quoted.
+        "promotions": [],
+    }
     try:
         yield session, created
     finally:
         try:
             from app.models.dealer_kit import Page, TileTemplate
+            from app.models.marketing import Promotion, PromotionGroup, PromotionProduct
             from app.models.product import Product, ProductCategory, UnitOfMeasure
             from app.models.download import UserDownload
+
+            # Discard anything the test flushed but never committed, BEFORE
+            # deleting a thing. Otherwise the `commit()` at the end of this block
+            # flushes those pending rows too - and a test that died between
+            # `flush()` and `commit()` leaves rows referencing the very products
+            # about to be deleted, so the INSERT violates a foreign key, the
+            # WHOLE teardown transaction rolls back, and every row the test
+            # created survives in a copy of the production database. Observed:
+            # two pages, two products and two designs left behind by a test that
+            # raised a KeyError one line after `flush()`.
+            session.rollback()
 
             # Pages cascade to versions, labels, collections and export
             # requests; downloads cascade to their export request.
@@ -78,6 +100,20 @@ def committed_db():
                 session.query(Page).filter(Page.id == page_id).delete(
                     synchronize_session=False
                 )
+            # Children before parents, explicitly. The FKs are ON DELETE CASCADE,
+            # so deleting the promotion alone would work - but a bulk ORM delete
+            # does not run the ORM cascade, and relying on the database's to
+            # reach rows nobody named is how an "it cleaned up" turns into an
+            # orphan the day a constraint changes. Scoped to the ids THIS run
+            # created: never a pattern, never a LIKE, never a whole table.
+            if created["promotions"]:
+                for model in (PromotionProduct, PromotionGroup):
+                    session.query(model).filter(
+                        model.promotion_id.in_(created["promotions"])
+                    ).delete(synchronize_session=False)
+                session.query(Promotion).filter(
+                    Promotion.id.in_(created["promotions"])
+                ).delete(synchronize_session=False)
             for model, key in (
                 (TileTemplate, "designs"),
                 (Product, "products"),
@@ -123,14 +159,14 @@ These are the ONLY tests that prove an exported PDF matches the brochure, so
 they must not disappear quietly. To run them:
 
     cd sorento_crm_frontend && npm ci --force && npm run build && npm start
-    # `npm start` serves on :3000; use `PORT=3020 npm start` to match the
+    # `npm start` serves on :3000; use `PORT=3040 npm start` to match the
     # DEALER_KIT_PRINT_BASE_URL default below.
 
     # Chromium is driven from a spawned subprocess, so the browser binary must
     # exist for the backend interpreter:
     python -m playwright install chromium
 
-    DEALER_KIT_PRINT_BASE_URL=http://localhost:3020 pytest tests/test_dealer_kit_pdf_render.py
+    DEALER_KIT_PRINT_BASE_URL=http://localhost:3040 pytest tests/test_dealer_kit_pdf_render.py
 
 The print page also fetches the backend directly, so :8000 (or whatever
 NEXT_PUBLIC_API_URL was baked into the frontend build) has to be up too, with
@@ -204,7 +240,9 @@ def _product(db, created, list_price=Decimal("1290.00")):
     return product
 
 
-def _page_with_products(db, created, *, product_count: int = 1, profile=None):
+def _page_with_products(
+    db, created, *, product_count: int = 1, profile=None, list_price=Decimal("1290.00")
+):
     """A published page carrying one collection block bound to its products.
 
     ``product_count`` fills the tile row: a document that overflows the paper
@@ -215,11 +253,16 @@ def _page_with_products(db, created, *, product_count: int = 1, profile=None):
     rendered PDF identifies which tile it came from. With every tile priced the
     same, a price that has been carried onto the next page by a fold is
     indistinguishable from the one that belongs there.
+
+    ``list_price`` moves that ladder's first rung. A test comparing two audiences
+    reads the list price as its CONTROL - "this copy really is a populated
+    document" - and a control has to be a figure chosen for this test, not the
+    default every other test in the file also prints.
     """
     from app.services.dealer_kit import tile_template_service
 
     products = [
-        _product(db, created, list_price=Decimal("1290.00") + index)
+        _product(db, created, list_price=Decimal(list_price) + index)
         for index in range(product_count)
     ]
     product = products[0]
@@ -274,6 +317,49 @@ def _page_with_products(db, created, *, product_count: int = 1, profile=None):
     )
     page_service.move_label(db, page.id, "published", version_id=version.id, user_id=None)
     return page, product, products
+
+
+def _promotion_on_page(db, created, page, product, *, access_levels, promo_price):
+    """A live offer on ``product``, linked to ``page`` as the brochure's promotion.
+
+    A page carries at most one promotion (PLAN D5) and the promotion carries the
+    audiences, so "who may see this price" is a property of the OFFER, not of the
+    line - which is why a second audience needs a second page rather than a
+    second line.
+
+    The window is left unbounded at both ends: an offer that ends today reads the
+    same as one restricted to an audience, and this test must fail for exactly
+    one reason.
+    """
+    from app.models.marketing import Promotion, PromotionGroup, PromotionProduct
+
+    promotion = Promotion(
+        description=f"ZZT offer {unique_code('promo')}",
+        is_active=True,
+        access_levels=list(access_levels),
+    )
+    db.add(promotion)
+    db.flush()
+    # `promotion_products.promotion_group_id` is NOT NULL, so the group is not
+    # optional scaffolding.
+    group = PromotionGroup(
+        promotion_id=promotion.id, group_name=f"ZZT group {unique_code('g')}"
+    )
+    db.add(group)
+    db.flush()
+    db.add(
+        PromotionProduct(
+            promotion_id=promotion.id,
+            promotion_group_id=group.id,
+            product_id=product.id,
+            promo_selling_price=Decimal(promo_price),
+        )
+    )
+    created["promotions"].append(promotion.id)
+    db.commit()
+
+    page_service.set_promotion(db, page.id, promotion.id)
+    return promotion
 
 
 def _render(db, page_id, audience, show_invoice_price, *, landscape=False, paper="A4"):
@@ -728,3 +814,119 @@ def test_a_staff_export_and_a_consumer_export_of_one_page_differ(committed_db):
     # Same document, same toggle - only the audience differs.
     assert "777.77" in staff_text, "staff copy should carry the invoice price"
     assert "777.77" not in consumer_text, "consumer copy must NOT carry it"
+
+
+# AC-E5. Figures chosen so neither can be found by accident: the offer is not a
+# substring of the list price, nor the list price of the offer, and nothing else
+# in the document is money. `1,290.00` - the fixture default every other test
+# here uses - would have made the control assertion ("the consumer copy really
+# does carry the list price") pass on a figure that is not distinctive.
+_LIST_PRICE = Decimal("8642.00")
+_OFFER_PRICE = Decimal("4231.00")
+_LIST_TEXT = "MYR 8,642.00"
+_OFFER_TEXT = "MYR 4,231.00"
+
+
+@pytest.mark.parametrize(
+    ("access_levels", "entitled", "excluded"),
+    [
+        (["dealer"], "dealer", "consumer"),
+        # The mirror, and it earns its runtime by catching a fault the dealer row
+        # cannot: a gate that lets ONE audience past whatever the promotion says.
+        # Measured, not assumed. With `_may_see_offer` given an early
+        # `if "dealer" in viewer.access_codes: return True`, the dealer row still
+        # PASSES - a dealer-only offer reaching a dealer is the answer it wanted -
+        # and only this row fails, on the dealer copy carrying a price restricted
+        # to end users. A transposed `_AUDIENCE_ACCESS_CODES` is a different
+        # fault and the dealer row does catch that one on its own.
+        (["end_user"], "consumer", "dealer"),
+    ],
+)
+def test_one_published_document_prices_itself_for_the_audience_it_is_for(
+    committed_db, access_levels, entitled, excluded
+):
+    """AC-E5: a dealer sees the promotional price and a consumer sees their own.
+
+    ONE page, ONE published version, ONE linked promotion, rendered twice. The
+    document stores no figure at all (AC-G1) - the price is resolved per viewer
+    at render time - so this is the only place the property can be observed: two
+    files, same source, different money.
+
+    Distinct from the gate item above it. That one moves `is_staff`, which
+    decides the INVOICE price; this one moves `access_codes`, which is what
+    `pricing._may_see_offer` reads to decide an OFFER. Different columns,
+    different function, and the invoice test passes unchanged with offer gating
+    entirely broken.
+
+    **Not seeded from the real flyer, deliberately.** AC-E5 says "given the real
+    flyer", and the seed is genuinely exercised against the committed three-page
+    excerpt of it in `test_dealer_kit_flyer_seed.py` (AC-E1..E4). It cannot be
+    exercised HERE. This file needs rows a live backend and a live browser can
+    read, so it commits to the real database - which locally is a copy of
+    production - while the seeder matches the codes actually printed on the
+    paper (SRTJC8037 and friends). Seeding the flyer here would therefore hang a
+    promotion off real products at prices nobody set, on a document whose
+    figures come from live master data (46% of which is `list_price = 0.00`), so
+    there would be no distinctive number left to assert. It also needs an upload
+    route, faked storage and a blank scratch schema, none of which the running
+    stack shares.
+
+    So the seed is proved where the seed lives, and what E5 uniquely adds - two
+    audiences, one published document, two sets of money - is proved here on a
+    page built by hand, where both figures are chosen and neither can collide.
+    """
+    db, created = committed_db
+    page, product, _products = _page_with_products(db, created, list_price=_LIST_PRICE)
+    promotion = _promotion_on_page(
+        db,
+        created,
+        page,
+        product,
+        access_levels=access_levels,
+        promo_price=_OFFER_PRICE,
+    )
+
+    entitled_pdf, _ = _render(db, page.id, entitled, False)
+    excluded_pdf, _ = _render(db, page.id, excluded, False)
+
+    entitled_text = _pdf_text(entitled_pdf)
+    excluded_text = _pdf_text(excluded_pdf)
+
+    # The audience the offer is priced for gets the offer, beside the list price
+    # it strikes through - a tile handed only the offer could not show the saving.
+    assert product.product_code in entitled_text, (
+        f"the {entitled} copy did not print the product at all"
+    )
+    assert _OFFER_TEXT in entitled_text, (
+        f"the {entitled} copy should carry the promotional price {_OFFER_TEXT}"
+    )
+    assert _LIST_TEXT in entitled_text, (
+        f"the {entitled} copy should still carry the list price {_LIST_TEXT} to "
+        "strike through"
+    )
+
+    # CONTROL, asserted BEFORE the absence: an empty PDF lacks the offer figure
+    # trivially, and would sail through the assertion this test exists for. The
+    # other copy has to be a real, populated document first.
+    assert product.product_code in excluded_text, (
+        f"the {excluded} copy is not a populated document - it did not print the "
+        "product, so its lack of the offer proves nothing"
+    )
+    assert _LIST_TEXT in excluded_text, (
+        f"the {excluded} copy should carry the list price {_LIST_TEXT}: an offer "
+        "they may not have falls back to list, it does not blank the tile"
+    )
+
+    # The point. Absence, not hiding: neither the figure nor the fact that an
+    # offer exists may be recovered from the file.
+    assert _OFFER_TEXT not in excluded_text, (
+        f"the {excluded} copy carries {_OFFER_TEXT}, a price the promotion is "
+        f"restricted to {access_levels}"
+    )
+    assert promotion.id not in excluded_text, (
+        f"the {excluded} copy names the id of an offer it may not have"
+    )
+    assert promotion.description not in excluded_text, (
+        f"the {excluded} copy names an offer it may not have: "
+        f"{promotion.description!r}"
+    )

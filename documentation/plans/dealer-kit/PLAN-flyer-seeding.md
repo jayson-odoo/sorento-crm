@@ -16,8 +16,12 @@ rows that already exist. See the S7.4 outcome note at the foot of this file.
 S7.4 FRONTEND is DONE: the three step review screen at `/dealer-kit/flyer-readings`, wired
 to the real API, green on 80 vitest cases and 3 playwright specs
 (`e2e/dealer-kit-flyer-seeding.spec.ts`). The E2E half of AC-E5 - the seed produces a
-version no reader can reach - is covered there; the dealer-vs-consumer half is already
-pinned by `e2e/dealer-kit-offer-pricing.spec.ts`. See the S7.4 FE outcome note at the foot.
+version no reader can reach - is covered there. The dealer-vs-consumer half was recorded
+here as "already pinned by `e2e/dealer-kit-offer-pricing.spec.ts`", which was WRONG: that
+spec grants its promotion to `['end_user', 'dealer']`, so both audiences see the same
+offer and it never shows the two differing. AC-E5 is now closed in
+`tests/test_dealer_kit_pdf_render.py` - see the AC-E5 outcome note at the foot.
+See also the S7.4 FE outcome note at the foot.
 LINK B of the fidelity gate is DONE: `score_seed` in
 `app/services/dealer_kit/flyer_fidelity.py` scores the seeded document against the reading
 it was built from, green on 23 tests (`tests/test_dealer_kit_flyer_seed_fidelity.py`)
@@ -336,9 +340,9 @@ and `test_reseeding_writes_a_new_version_and_brand_new_collections` fails on the
 overlapping. Reverted, both pass. The membership assertion is deliberately ordered before
 the id assertion so a future reuse fails on the damage it does rather than on bookkeeping.
 
-**Left open:** AC-E5 (`[E2E]`, dealer and consumer prices from one published document) needs
-the review screen and a browser, and is not faked with a backend test. The review screen
-itself, the FE half of S7.4, is next.
+**Left open at the time:** AC-E5 (`[E2E]`, dealer and consumer prices from one published
+document) needs the review screen and a browser, and is not faked with a backend test. The
+review screen itself, the FE half of S7.4, is next. **Closed on 2026-08-09, see below.**
 
 ---
 
@@ -391,3 +395,58 @@ absent from the master with trigram suggestions from 72% to 100%, 27 dimension c
 of which 1 conflicts, 2 codes printed on two pages. The seed produced 3 sections, 17
 printed rows and 36 products, with no label on the version and a 4xx from the public
 catalogue - which is AC-E2 observed rather than asserted.
+
+---
+
+## AC-E5 outcome (2026-08-09)
+
+**Proved in `tests/test_dealer_kit_pdf_render.py`, not in a Playwright spec**, because that
+file is where the property is observable: real headless Chromium against the prod frontend
+build, against a real FastAPI process, against Postgres. The public catalogue route
+(`app/api/v1/public/catalogue.py`) renders with a hardcoded `ANONYMOUS` viewer and there is
+no signed-in dealer view of a page, so the export AUDIENCE is the only surface today on
+which a dealer and a consumer read the same published document.
+
+One page, one published version, one linked promotion, rendered twice. The document stores
+no figure at all (AC-G1), so the two files are the only place the difference exists.
+
+**Distinct from the neighbouring gate item.** `test_a_staff_export_and_a_consumer_export_of_one_page_differ`
+moves `is_staff`, which decides the INVOICE price. This one moves `access_codes`, which is
+what `pricing._may_see_offer` reads to decide an OFFER. Different columns, different
+function: the invoice test passes unchanged with offer gating entirely broken.
+
+**Both parametrised rows earn their runtime, and which fault each catches was measured.**
+
+| Mutation | dealer row | mirror row |
+|---|---|---|
+| `_AUDIENCE_ACCESS_CODES` dealer/consumer transposed | FAILS | FAILS |
+| `_may_see_offer` given an early `if "dealer" in viewer.access_codes: return True` | passes | FAILS |
+
+The mirror row is therefore not symmetry: it is the only row that catches a gate letting one
+audience past whatever the promotion says. An earlier draft of its comment claimed it existed
+to catch the transposition, which the measurement above disproves, and the comment was
+corrected to what the runs actually show.
+
+**Read narrowly on one point, deliberately.** The AC says "given the real flyer". The seed is
+exercised against the committed excerpt of the real flyer in `test_dealer_kit_flyer_seed.py`
+(AC-E1..E4); it cannot be exercised here. This file commits to the real database so a
+separate backend process and a separate browser can read the rows, and locally that database
+is a copy of production, while the seeder matches the codes actually printed on the paper.
+Seeding here would hang a promotion off REAL product rows at prices nobody set, on a document
+whose figures come from live master data (46% of which is `list_price = 0.00`), leaving no
+distinctive figure to assert. So the seed is proved where the seed lives, and what E5
+uniquely adds - two audiences, one document, two sets of money - is proved on a page where
+both figures are chosen.
+
+**Two defects fixed on the way, neither part of the AC:**
+
+- `committed_db` leaked rows into the production copy. A test dying between `flush()` and
+  `commit()` left pending rows on the session; teardown's own `commit()` then re-INSERTed
+  them AFTER deleting the products they referenced, the FK failed, and the whole teardown
+  transaction rolled back, so everything the test created survived. Reproduced, then fixed
+  with a `session.rollback()` as teardown's first statement. Promotions are now tracked and
+  deleted children-first.
+- The frontend port was wrong in two places. `.env` and this test file both said `:3020`,
+  which is the `spec-search` worktree's frontend and has no `/c/print` route at all. Renders
+  went next door and died on a print-ready timeout a minute later, which reads like a broken
+  print page rather than a wrong address. This worktree is **3040 / 8040**.
