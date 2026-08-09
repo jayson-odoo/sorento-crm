@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision = "311l_spec_registry_suppressed_values"
+revision = "311l_spec_suppressed_values"
 down_revision = "311k_spec_registry_suppressed_synonyms"
 branch_labels = None
 depends_on = None

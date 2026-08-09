@@ -26,7 +26,11 @@ class ProductSpecRegistry(Base):
 
     __tablename__ = "product_spec_registry"
 
-    spec_key = Column(String(64), primary_key=True)
+    # Surrogate uuid PK, per ADR-PRODUCT-STANDARDS: the polymorphic key columns can
+    # only be typed uuid if every id is one. `spec_key` stays the key people use - it is
+    # unique, it just is not the primary key.
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    spec_key = Column(String(64), nullable=False, unique=True)
     label = Column(String(150), nullable=False)
     # enum | numeric | boolean. Drives extraction (an enum is matched against
     # allowed_values, a numeric is parsed and compared with tolerance).
@@ -137,7 +141,11 @@ class ProductFlyerText(Base):
 
     __tablename__ = "product_flyer_text"
 
-    product_code = Column(String(100), primary_key=True)
+    # Surrogate uuid PK, per ADR-PRODUCT-STANDARDS: the polymorphic key columns can
+    # only be typed uuid if every id is one. `product_code` stays the key people use - it is
+    # unique, it just is not the primary key.
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    product_code = Column(String(100), nullable=False, unique=True)
     # Which flyer, in words a person recognises ("SORENTO A3 FLYER 2025-2026").
     source_label = Column(String(200), nullable=False)
     source_id = Column(String(64), nullable=True)
@@ -157,7 +165,11 @@ class ProductSpecSearchPolicy(Base):
 
     __tablename__ = "product_spec_search_policy"
 
-    policy_key = Column(String(64), primary_key=True)
+    # Surrogate uuid PK, per ADR-PRODUCT-STANDARDS: the polymorphic key columns can
+    # only be typed uuid if every id is one. `policy_key` stays the key people use - it is
+    # unique, it just is not the primary key.
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    policy_key = Column(String(64), nullable=False, unique=True)
     label = Column(String(150), nullable=False)
     value = Column(Numeric(10, 3), nullable=False)
     # Shown next to the field. A number with no explanation gets tuned by guesswork.
@@ -177,10 +189,15 @@ class ProductSpecifications(Base):
 
     __tablename__ = "product_specifications"
 
+    # Surrogate uuid PK, per ADR-PRODUCT-STANDARDS: the polymorphic key columns can
+    # only be typed uuid if every id is one. `product_id` stays the key people use - it is
+    # unique, it just is not the primary key.
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     product_id = Column(
         UUID(as_uuid=False),
         ForeignKey("products.id", ondelete="CASCADE"),
-        primary_key=True,
+        nullable=False,
+        unique=True,
     )
     # {"diameter": {"value": 407, "unit": "mm"}, "material": {"value": "ceramic"}}
     values = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))

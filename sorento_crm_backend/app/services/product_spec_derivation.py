@@ -66,6 +66,8 @@ MATERIAL_TOKENS: list[tuple[str, str]] = [
     ("BRASS", "brass"),
     ("PVC", "pvc"),
     ("ABS", "abs"),  # 291 - the flyer prints it on every hand bidet and paper holder
+    ("NANOGRAIN", "nanograin"),  # 96 - a named sink surface, not a generic composite
+    ("GRANITE", "granite"),  # 40
 ]
 
 # Measured on the live catalog: WALL MOUNT* 513 taps, PILLAR MOUNT* 383, bare PILLAR a
@@ -92,7 +94,11 @@ MOUNTING_TOKENS: list[tuple[str, str]] = [
     ("PILLAR MOUNTED", "pillar_mounted"),
     ("PILLAR MOUNT", "pillar_mounted"),
     ("PILLAR", "pillar_mounted"),
+    ("SEMI RECESSED", "semi_recessed"),  # 66
+    ("SEMI-RECESSED", "semi_recessed"),
     ("CONCEALED", "concealed"),
+    # The counterpart of concealed, and stated as its own selling point on 118 rows.
+    ("EXPOSED", "exposed"),
     ("PEDESTAL", "pedestal"),
 ]
 
@@ -159,16 +165,62 @@ PRODUCT_TYPE_TOKENS: list[tuple[str, str]] = [
     ("BIDET", "bidet"),  # 715
 ]
 
+# The nouns a salesperson says out loud that had no derivation at all. Counts are
+# word-boundary matches on the live description column.
+EXTRA_TYPE_TOKENS: list[tuple[str, str]] = [
+    ("SEAT COVER", "toilet_seat"),  # 291
+    ("TOILET SEAT", "toilet_seat"),
+    ("URINAL", "urinal"),  # 158
+    ("TOILET BRUSH", "toilet_brush"),  # 172 BRUSH, nearly all of them toilet brushes
+    ("SQUATTING PAN", "squatting_pan"),  # 30
+    ("SQUAT PAN", "squatting_pan"),
+    ("TOWEL RING", "towel_ring"),  # 74
+    ("DUSTBIN", "dustbin"),  # the flyer's page 16, by litre
+    ("WASTE BIN", "dustbin"),
+    ("BOTTLE TRAP", "bottle_trap"),
+    ("PRESSURE PUMP", "water_pump"),
+    ("BOOSTER PUMP", "water_pump"),
+    ("WATER PUMP", "water_pump"),
+    # These read as new nouns but the catalogue already has a type for them; deriving
+    # them to a second value would split one aisle across two answers.
+    ("STOP VALVE", "angle_valve"),  # 44
+    ("SOAP HOLDER", "soap_dispenser"),
+    ("SOAP DISH", "soap_dispenser"),
+    ("FLOOR DRAIN", "floor_grating"),
+    ("CORNER SHELF", "corner_basket"),
+    ("TOWEL RACK", "towel_bar"),
+    ("GLASS SHELF", "towel_shelf"),
+]
+
+# Specific readings run before the generic nouns below them, so "TOILET SEAT" is never
+# answered by a bare "TOILET".
+PRODUCT_TYPE_TOKENS = EXTRA_TYPE_TOKENS + PRODUCT_TYPE_TOKENS
+
 # Furniture is the weakest page in the flyer test and this is why: a basin cabinet, a
 # mirror cabinet and a side cabinet all derived to class "Bathroom Furniture" and nothing
 # else, so 990 cabinets were mutually indistinguishable. The flyer names them separately
 # on every card.
 FURNITURE_TOKENS: list[tuple[str, str]] = [
-    ("MIRROR CABINET", "mirror_cabinet"),  # 363
     ("BASIN CABINET", "basin_cabinet"),  # 232
     ("SIDE CABINET", "side_cabinet"),
     ("TALL CABINET", "tall_cabinet"),
 ]
+
+# What a bin, a cistern or a tumbler holds. The flyer's page 16 sells dustbins as
+# "8 litre" and "12 litre" and nothing in the catalogue read it.
+# The bare "12L" form is where the real data is - 6L cisterns, 12L and 20L bins - but
+# the same letters end a product code (SRTKS1008L, CB F-809L). Requiring that no letter
+# or digit precede the number keeps the bins and drops the codes.
+CAPACITY_RE = re.compile(
+    r"(?<![A-Z0-9])(?<![A-Z]-)(\d+(?:\.\d+)?)\s*(?:LITRES?|LITERS?|LTR|L)\b"
+)
+# Pumps are quoted in horsepower on 48 rows and kilowatts on 14; customers say HP.
+POWER_HP_RE = re.compile(r"(\d+(?:\.\d+)?)\s*HP\b")
+
+# A shower with a temperature valve - asked for by name, and 44 rows say so.
+THERMOSTATIC_RE = re.compile(r"\bTHERMOSTATIC\b")
+# A shower set on a height-adjustable rail, which is what "sliding" means here.
+SLIDING_RAIL_RE = re.compile(r"\bSLIDING\b")
 
 # A tall basin tap, sold as its own thing on 31 flyer cards and asked for by name.
 HIGH_BASIN_RE = re.compile(r"\bHIGH\s+BASIN\b")
@@ -982,7 +1034,7 @@ def _apply_scope(out: "DerivedSpec", applies_when: dict[str, dict]) -> None:
 # which kept their old values and reported a successful run. The failure is invisible:
 # the job says "skipped", which is exactly what it says when there is genuinely nothing
 # to do.
-DERIVATION_VERSION = "17"
+DERIVATION_VERSION = "18"
 
 
 def _input_hash(

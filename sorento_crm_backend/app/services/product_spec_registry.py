@@ -151,6 +151,18 @@ def _rules_from_shipped_tables() -> dict[str, list[dict]]:
         "water_supply": contains(d.WATER_SUPPLY_TOKENS),
         "steel_grade": contains(d.STEEL_GRADE_TOKENS),
         "furniture_type": contains(d.FURNITURE_TOKENS),
+        "capacity_litre": [
+            {"match": "regex", "pattern": d.CAPACITY_RE.pattern, "capture": 1, "unit": "L"}
+        ],
+        "power_hp": [
+            {"match": "regex", "pattern": d.POWER_HP_RE.pattern, "capture": 1, "unit": "hp"}
+        ],
+        "is_thermostatic": [
+            {"match": "present", "pattern": d.THERMOSTATIC_RE.pattern, "value": True}
+        ],
+        "has_sliding_rail": [
+            {"match": "present", "pattern": d.SLIDING_RAIL_RE.pattern, "value": True}
+        ],
         "is_high_basin": [{"match": "present", "pattern": d.HIGH_BASIN_RE.pattern, "value": True}],
         "has_filter": [{"match": "present", "pattern": d.FILTER_TAP_RE.pattern, "value": True}],
         "has_pull_out_shower": [
@@ -416,13 +428,15 @@ SPEC_REGISTRY_SEED: list[dict] = [
         "spec_key": "material",
         "label": "Material",
         "data_type": "enum",
-        "allowed_values": ["stainless_steel", "ceramic", "glass", "pvc", "brass", "acrylic", "abs"],
+        "allowed_values": ["stainless_steel", "ceramic", "glass", "pvc", "brass", "acrylic", "abs", "nanograin", "granite"],
         "synonyms": {
             "stainless_steel": ["stainless", "stainless steel", "s/steel", "steel", "inox"],
             "ceramic": ["ceramic", "porcelain"],
             "glass": ["glass", "tempered glass"],
             "pvc": ["pvc", "plastic"],
             "abs": ["abs", "abs plastic"],
+            "nanograin": ["nanograin", "nano grain", "nano"],
+            "granite": ["granite", "granite stone", "quartz"],
             "brass": ["brass"],
             "acrylic": ["acrylic"],
         },
@@ -441,6 +455,10 @@ SPEC_REGISTRY_SEED: list[dict] = [
             "counter_top",
             "under_counter",
             "pillar_mounted",
+            "concealed",
+            "counter_top",
+            "semi_recessed",
+            "exposed",
         ],
         "synonyms": {
             "wall_hung": ["wall hung", "wall mounted", "wall mount", "hang on wall"],
@@ -452,6 +470,8 @@ SPEC_REGISTRY_SEED: list[dict] = [
             # 383 taps say PILLAR MOUNTED and 220 more just say PILLAR. In this catalog
             # the word always describes where the tap is fixed, which is why it moved
             # out of control_type.
+            "semi_recessed": ["semi recessed", "semi-recessed", "half recessed"],
+            "exposed": ["exposed", "exposed shower", "surface mounted"],
             "pillar_mounted": ["pillar mounted", "pillar mount", "pillar tap", "pillar"],
         },
         "measured_coverage": 3289,
@@ -549,6 +569,15 @@ SPEC_REGISTRY_SEED: list[dict] = [
             "tumbler",
             "mirror",
             "bidet",
+            # Nouns the flyer sells by name that derived to nothing at all.
+            "toilet_seat",
+            "urinal",
+            "toilet_brush",
+            "squatting_pan",
+            "towel_ring",
+            "dustbin",
+            "bottle_trap",
+            "water_pump",
         ],
         "synonyms": {
             "angle_valve": ["angle valve", "stop valve", "corner valve"],
@@ -582,6 +611,14 @@ SPEC_REGISTRY_SEED: list[dict] = [
             "tumbler": ["tumbler", "toothbrush holder"],
             "mirror": ["mirror", "led mirror", "bathroom mirror"],
             "bidet": ["bidet", "hand bidet", "bidet spray", "shattaf", "jet spray"],
+            "toilet_seat": ["toilet seat", "seat cover", "wc seat", "seat and cover"],
+            "urinal": ["urinal", "urinal bowl"],
+            "toilet_brush": ["toilet brush", "brush holder", "wc brush"],
+            "squatting_pan": ["squatting pan", "squat pan", "jamban cangkung"],
+            "towel_ring": ["towel ring", "ring towel holder"],
+            "dustbin": ["dustbin", "waste bin", "rubbish bin", "tong sampah"],
+            "bottle_trap": ["bottle trap", "basin trap"],
+            "water_pump": ["water pump", "pressure pump", "booster pump", "pam air"],
         },
         "measured_coverage": 5075,
         "rank_weight": 3.0,
@@ -635,15 +672,33 @@ SPEC_REGISTRY_SEED: list[dict] = [
         # 990 cabinets all derived to class "Bathroom Furniture" and nothing else, so a
         # basin cabinet and a mirror cabinet were the same product to the ranker. The
         # flyer names them apart on every card.
-        "allowed_values": ["basin_cabinet", "mirror_cabinet", "side_cabinet", "tall_cabinet"],
+        # No mirror_cabinet here: product_type already answers for it, and holding one
+        # fact in two keys lets a mirror cabinet score the same thing twice.
+        "allowed_values": ["basin_cabinet", "side_cabinet", "tall_cabinet"],
         "synonyms": {
             "basin_cabinet": ["basin cabinet", "vanity", "vanity cabinet", "under basin cabinet"],
-            "mirror_cabinet": ["mirror cabinet", "cabinet mirror", "mirrored cabinet"],
             "side_cabinet": ["side cabinet", "storage cabinet"],
             "tall_cabinet": ["tall cabinet", "tall unit", "column cabinet"],
         },
         "measured_coverage": 595,
         "rank_weight": 3.0,
+    },
+    {
+        "spec_key": "is_thermostatic",
+        "label": "Thermostatic",
+        "data_type": "boolean",
+        "synonyms": {"true": ["thermostatic", "temperature control", "constant temperature"]},
+        "measured_coverage": 44,
+        "rank_weight": 2.5,
+    },
+    {
+        "spec_key": "has_sliding_rail",
+        "label": "Sliding rail",
+        "data_type": "boolean",
+        # "Sliding" in this catalogue always means a height-adjustable shower rail.
+        "synonyms": {"true": ["sliding", "sliding bar", "sliding rail", "adjustable rail"]},
+        "measured_coverage": 148,
+        "rank_weight": 2.0,
     },
     {
         "spec_key": "is_high_basin",
@@ -750,6 +805,30 @@ SPEC_REGISTRY_SEED: list[dict] = [
         # 1.2m" means to a customer, and nothing beyond half a metre is the same hose.
         "match_tolerance": 100.0,
         "match_decay": 500.0,
+    },
+    {
+        "spec_key": "capacity_litre",
+        "label": "Capacity",
+        "data_type": "numeric",
+        "unit": "L",
+        # The flyer's page 16 sells dustbins as 8 litre and 12 litre and nothing read it.
+        "synonyms": {"_self": ["litre", "liter", "capacity", "volume", "size in litre"]},
+        "measured_coverage": 74,
+        "rank_weight": 2.5,
+        # A litre either side is the same bin to a customer; five litres is not.
+        "match_tolerance": 1.0,
+        "match_decay": 5.0,
+    },
+    {
+        "spec_key": "power_hp",
+        "label": "Power",
+        "data_type": "numeric",
+        "unit": "hp",
+        "synonyms": {"_self": ["horsepower", "hp", "power", "motor"]},
+        "measured_coverage": 48,
+        "rank_weight": 2.5,
+        "match_tolerance": 0.1,
+        "match_decay": 0.5,
     },
     {
         "spec_key": "is_frameless",
