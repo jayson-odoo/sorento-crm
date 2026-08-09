@@ -124,20 +124,17 @@ async def test_certificate_ids_alone_reaches_the_backend():
     assert "certificate_ids" in out
 
 
-def test_resource_attachments_accepts_contact_id_alone_as_a_narrower():
-    """A contact IS a narrowing filter, and the one a caller always has.
+def test_contact_id_alone_is_not_a_narrowing_filter():
+    """Asking for nothing must return nothing.
 
-    The backend answers a contact-scoped call with (is_direct_access types) UNION
-    (types granted to this contact) - a handful of documents, not the library. So
-    "send me the container status list" needs no type resolution first. Requiring
-    one meant a missed resolution left the call with no narrower at all, which
-    returns an empty page WITHOUT calling the backend, which reads as "there is no
-    such document" about a document that exists.
+    `contact_id` scopes the answer to that contact's entitlements, which bounds
+    the result to a handful of files - but a document request has to name a
+    DOCUMENT. Returning everything a contact may have is a directory listing, not
+    an answer, so the contact is a scope and never the filter.
     """
     spec = next(s for s in CATALOG if s.name == "crm_resource_attachments_list")
-    assert "contact_id" in spec.query_params
-    assert "contact_id" in TOOL_REQUIRED_NARROWING_FILTERS[spec.name]
-    assert "contact_id" in spec.description
+    assert "contact_id" in spec.query_params, "still accepted, as a scope"
+    assert "contact_id" not in TOOL_REQUIRED_NARROWING_FILTERS[spec.name]
 
 
 def test_resource_attachments_type_filter_is_singular_only():
@@ -151,9 +148,9 @@ def test_resource_attachments_type_filter_is_singular_only():
 
 
 @pytest.mark.asyncio
-async def test_contact_id_alone_reaches_the_backend():
-    """Not short-circuited: the request must actually carry the contact."""
+async def test_contact_id_alone_is_short_circuited():
+    """No document named -> empty page, and the backend is never called."""
     spec = next(s for s in CATALOG if s.name == "crm_resource_attachments_list")
     fn = _compile_tool(spec)
     out = await fn(_FakeCtx(_FakeClient()), contact_id="rio_10532f")  # type: ignore[arg-type]
-    assert "contact_id" in out
+    assert "rio_10532f" not in out

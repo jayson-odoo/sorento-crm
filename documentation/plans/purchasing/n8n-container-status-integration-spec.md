@@ -236,31 +236,25 @@ crm_resource_attachments_list
   space_id   = <workspace space_id>
 ```
 
-**Pass the document class whenever one resolved.** The person named ONE document, so
+**Pass the document class.** The person named ONE document, so
 `attachment_type_code: "Container Status"` is what returns that one file. The name, not the UUID:
 the tool takes the class by name, case-insensitive, so nothing has to resolve a type id and there is
 no id to go stale. (`attachment_type_id` still takes a UUID if a caller holds one. It is SINGULAR -
 there is no `attachment_type_ids`.)
 
-**`contact_id` alone is the FALLBACK, for when no class resolved** - "what documents do you have for
-me". It is a valid narrowing filter in its own right, because the backend bounds a contact-scoped
-call to (is_direct_access types) UNION (the types granted to this contact): 9 baseline files plus
-grants, so 10 rows for someone holding Container Status. Before this it had no narrower and returned
-the empty page, which made that question unanswerable.
-
-It is NOT a substitute for naming the class. "Send me the container status list" answered with a
-contact-only call returns 10 files, and a renderer that renders what it is given lists all ten - the
-right document buried in a directory listing, reading as though the question was ignored. Precision
-is the type filter's job; the contact fallback only stops a no-class request dead-ending.
+**`contact_id` is a SCOPE, never the filter.** It widens which document types are visible (below),
+but it does not satisfy the narrowing requirement: a call carrying only a contact returns nothing,
+without reaching the backend. That is deliberate - a document request has to name a document, and
+answering "what have you got" with everything a contact may hold is a directory listing rather than
+an answer. If no document class resolved, ask which one they want; do not call this tool and read
+out whatever comes back.
 
 Three things to know, each of which has already caused a wrong answer:
 
-1. **A narrowing filter is mandatory, and `contact_id` counts as one.** Without one of
-   `contact_id` / `attachment_ids` / `directory_id` / `attachment_type_id` / `attachment_type_code`,
-   the tool returns an empty page **without calling the backend at all**. The MCP log shows no HTTP
-   request, and the agent narrates the empty page as "there is no such document". Since a
-   contact-scoped call is already bounded by that contact's grants, passing the contact is both the
-   simplest call and a sufficient one.
+1. **A narrowing filter is mandatory.** Without one of `attachment_ids` / `directory_id` /
+   `attachment_type_id` / `attachment_type_code` / `uploaded_by`, the tool returns an empty page
+   **without calling the backend at all**. The MCP log shows no HTTP request, and the agent narrates
+   the empty page as "there is no such document". `contact_id` does NOT satisfy this - see above.
 2. **`contact_id` + `space_id` widen, never narrow.** Container Status is not a dealer-facing type,
    so it is returned ONLY for a contact granted it (User Management → contact → Document types).
    Omit them and the response is the 9-file dealer baseline - correct, and not what the office

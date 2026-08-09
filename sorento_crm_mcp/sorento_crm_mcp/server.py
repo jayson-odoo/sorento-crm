@@ -65,19 +65,12 @@ TOOL_REQUIRED_NARROWING_FILTERS: dict[str, tuple[str, ...]] = {
         # lookup first turns one turn into two - or, more often, into an empty
         # page the agent narrates as "there is no such document".
         "attachment_type_code", "uploaded_by",
-        # A CONTACT is a narrower in its own right, and the one a caller always
-        # has. The backend answers a contact-scoped call with (is_direct_access
-        # types) UNION (the types granted to this contact) - today 9 files plus
-        # whatever that contact was granted, not the library. So "send me the
-        # container status list" needs no type lookup at all: pass the contact,
-        # get the handful of documents they may have, pick from those.
-        #
-        # Requiring a type UUID here was the trap. The caller had to resolve one
-        # first, and a resolution that missed - or a name this tool does not take
-        # - left the call with no narrower, which returns an empty page WITHOUT
-        # calling the backend, which the agent then narrates as "there is no such
-        # document" about a document that plainly exists.
-        "contact_id",
+        # `contact_id` is deliberately NOT here. It scopes the answer to that
+        # contact's entitlements, which bounds the result to a handful of files -
+        # but a document request has to name a DOCUMENT. A contact-only call
+        # returns everything that contact may have and leaves the caller to pick,
+        # which is a directory listing, not an answer. Asking for nothing must
+        # return nothing.
     ),
 }
 
