@@ -209,6 +209,15 @@ class _RuleMatch:
     specificity: int
     matched_length: int
     kind_code: str
+    # The rule that produced this match (AC-P6a). Carried rather than re-derived:
+    # the tester has to name WHICH rule decided a Kind - "Water Closet from an
+    # explicit model list" and "Water Closet from a category rule that catches
+    # everything" are the difference between a working mapping and a lucky one -
+    # and re-deriving it from kind + match_type would be a second ranking.
+    #
+    # It is the OBJECT, not its id, so an unsaved candidate rule (AC-P6b, which has
+    # no id at all) is recognisable by identity without a marker field here.
+    rule: WarrantyKindRule
 
     @property
     def sort_key(self):
@@ -261,6 +270,116 @@ def _matched_length(rule: WarrantyKindRule, product_code: str, category_code: st
     return None
 
 
+def rank_kind_matches(
+    db: Session,
+    *,
+    product_code: Optional[str] = None,
+    category_code: Optional[str] = None,
+    product_name: Optional[str] = None,
+    extra_rules: Iterable[WarrantyKindRule] = (),
+) -> List[_RuleMatch]:
+    """Every rule that matches, ranked by the one production order (AC-P6a).
+
+    THE ranking. `resolve_kind_match` is its head and `resolve_kind` is that
+    head's `.kind`, so the rule tester and the entitlement engine cannot answer
+    from two different orders - two implementations that agree today diverge on
+    the first tie-break somebody adjusts in one of them.
+
+    Rules are ranked in Python rather than in SQL. There are tens of them, the
+    ranking is four-deep, and two of the four match types (a comma-separated
+    enumeration, a substring of a name) cannot be expressed as an index-using
+    predicate anyway. Doing it here keeps the whole precedence order readable in
+    one place.
+
+    `extra_rules` are TRANSIENT `WarrantyKindRule` instances - the tester's unsaved
+    candidate (AC-P6b). They are never added to the session, not even briefly: any
+    flush later in the request would write a rule nobody saved, which would then
+    start deciding real complaints. They are ranked by the same `sort_key` as the
+    saved ones rather than appended, because "would my new rule win" is the only
+    question the tester exists to answer.
+
+    A candidate whose `kind_id` names nothing, or names an inactive Kind, simply
+    contributes no match: the field is a dropdown the frontend can send stale, and
+    a tester that raises on it fails at exactly the moment it is being trusted.
+    """
+    code = (product_code or "").strip().lower()
+    category = (category_code or "").strip().lower()
+    name = (product_name or "").strip().lower()
+    if not (code or category or name):
+        return []
+
+    pairs = [
+        (rule, kind)
+        for rule, kind in (
+            db.query(WarrantyKindRule, WarrantyProductKind)
+            .join(WarrantyProductKind, WarrantyProductKind.id == WarrantyKindRule.kind_id)
+            .filter(WarrantyProductKind.is_active.isnot(False))
+            .all()
+        )
+    ]
+
+    candidates = [rule for rule in (extra_rules or ()) if rule is not None]
+    if candidates:
+        wanted = {rule.kind_id for rule in candidates if rule.kind_id is not None}
+        by_id = (
+            {
+                kind.id: kind
+                for kind in db.query(WarrantyProductKind)
+                .filter(WarrantyProductKind.id.in_(list(wanted)))
+                .filter(WarrantyProductKind.is_active.isnot(False))
+                .all()
+            }
+            if wanted
+            else {}
+        )
+        for rule in candidates:
+            kind = by_id.get(rule.kind_id)
+            if kind is not None:
+                pairs.append((rule, kind))
+
+    matches: List[_RuleMatch] = []
+    for rule, kind in pairs:
+        length = _matched_length(rule, code, category, name)
+        if length is None:
+            continue
+        matches.append(
+            _RuleMatch(
+                kind=kind,
+                priority=rule.priority or 0,
+                specificity=_SPECIFICITY_RANK.get(
+                    (rule.match_type or "").strip().lower(), _UNRANKED
+                ),
+                matched_length=length,
+                kind_code=(kind.code or ""),
+                rule=rule,
+            )
+        )
+
+    matches.sort(key=lambda m: m.sort_key)
+    return matches
+
+
+def resolve_kind_match(
+    db: Session,
+    *,
+    product_code: Optional[str] = None,
+    category_code: Optional[str] = None,
+    product_name: Optional[str] = None,
+) -> Optional[_RuleMatch]:
+    """The winning match, or None - the head of `rank_kind_matches` (AC-P6a).
+
+    Carries the RULE as well as the Kind, which is what lets the tester say how a
+    mapping was reached instead of only what it reached.
+    """
+    matches = rank_kind_matches(
+        db,
+        product_code=product_code,
+        category_code=category_code,
+        product_name=product_name,
+    )
+    return matches[0] if matches else None
+
+
 def resolve_kind(
     db: Session,
     *,
@@ -275,46 +394,16 @@ def resolve_kind(
     the entire justification for the Kind layer. An unmatched code returns None
     rather than raising - nothing in this journey blocks.
 
-    Rules are ranked in Python rather than in SQL. There are tens of them, the
-    ranking is four-deep, and two of the four match types (a comma-separated
-    enumeration, a substring of a name) cannot be expressed as an index-using
-    predicate anyway. Doing it here keeps the whole precedence order readable in
-    one place.
+    A one-line accessor over `resolve_kind_match` since S7b. Its keyword contract
+    is unchanged: every caller passes these three by name.
     """
-    code = (product_code or "").strip().lower()
-    category = (category_code or "").strip().lower()
-    name = (product_name or "").strip().lower()
-    if not (code or category or name):
-        return None
-
-    rows = (
-        db.query(WarrantyKindRule, WarrantyProductKind)
-        .join(WarrantyProductKind, WarrantyProductKind.id == WarrantyKindRule.kind_id)
-        .filter(WarrantyProductKind.is_active.isnot(False))
-        .all()
+    match = resolve_kind_match(
+        db,
+        product_code=product_code,
+        category_code=category_code,
+        product_name=product_name,
     )
-
-    matches: List[_RuleMatch] = []
-    for rule, kind in rows:
-        length = _matched_length(rule, code, category, name)
-        if length is None:
-            continue
-        matches.append(
-            _RuleMatch(
-                kind=kind,
-                priority=rule.priority or 0,
-                specificity=_SPECIFICITY_RANK.get(
-                    (rule.match_type or "").strip().lower(), _UNRANKED
-                ),
-                matched_length=length,
-                kind_code=(kind.code or ""),
-            )
-        )
-
-    if not matches:
-        return None
-    matches.sort(key=lambda m: m.sort_key)
-    return matches[0].kind
+    return match.kind if match else None
 
 
 # --------------------------------------------------------------------------- #

@@ -363,6 +363,41 @@ was a real hole in how this repo builds its test schema.
     carried permanently to reverse a mistake that is two supported steps away - and a
     stored "previous value" column is a second copy of a fact that drifts from the first.
 
+### Phase B corrections - after the implementation (2026-08-09)
+
+- **AC-P27 [BE][T]** AC-P3a's CHECK constraint does not merely duplicate a service rule: it
+  makes two behaviours the ENGINE deliberately tolerates unwritable through the ORM, and
+  both of them stay. `_judge_term` answers `unknown` for a term with neither a duration nor
+  lifetime ("a half-entered term is one forgotten field away... `unknown` is the only honest
+  answer") and lets lifetime win over a duration that was also filled in. Their two tests in
+  `test_warranty_engine.py` now fail at SEEDING, not at any assertion - the constraint
+  rejects the row the test exists to ask a question about.
+
+  Ruled: **the two tests are re-seeded so they bypass the constraint, and their assertions
+  are not touched.** The engine's tolerance is defence, and defence must survive the guard
+  that makes it rare: 41 rows were written before this constraint existed, a future
+  migration or a direct database write can still produce these shapes, and a constraint that
+  is dropped one day leaves the branches as the only thing standing. A branch unreachable
+  through the ORM today is not unreachable in the database. The tests' subject is what the
+  engine ANSWERS about a bad row; the seeding mechanism is incidental to that, so changing
+  it preserves exactly what they pin.
+
+  Rejected: narrowing AC-P3a to forbid only lifetime-plus-duration (fixes one test, not the
+  other, and reopens the hole the AC names), and dropping the constraint from the model
+  (AC-P19 exists specifically to forbid that, and five guards pin it).
+
+  This is the SAME layer split already ruled for match types in AC-P24, now applying to
+  terms: **strict at write, tolerant at read.** Recorded here so a later reviewer does not
+  read those two branches as dead code and delete them.
+
+- **AC-P28 [T]** The gate contradicted itself on Supersede's success code: three tests
+  supersede an open-ended incumbent with identical inputs, and one asserted 200 while two
+  asserted 201. Ruled **201** - Supersede creates a policy, and AC-P15 says POST returns 201
+  while carving out no exception. The single 200 assertion is corrected. Recorded rather
+  than quietly fixed, because a self-contradictory gate is the one failure mode that lets an
+  implementer pick whichever answer is convenient, and this one was caught only because the
+  implementer refused to choose.
+
 ## Phase C - Propose a date, and let the consumer answer (S8)
 
 **Prerequisite [CFG]:** Voice Calls must be enabled on the Sorento Respond.io workspace, and

@@ -53,6 +53,7 @@ import uuid
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     Date,
     DateTime,
@@ -215,6 +216,25 @@ class WarrantyTerm(Base):
     __table_args__ = (
         UniqueConstraint(
             "policy_id", "kind_id", "part_name", name="uq_warranty_terms_policy_kind_part"
+        ),
+        # AC-P3a / AC-P19. Lifetime OR a positive number of months, never both and
+        # never neither. A term that records neither answers `unknown` on every
+        # complaint forever; a zero-month term tells a customer their cover expired
+        # on the day they bought it.
+        #
+        # Declared HERE as well as in migration 331 on purpose: CI builds its schema
+        # from `Base.metadata.create_all` and then stamps alembic at head without
+        # executing a migration body, so a constraint that lives only in the
+        # migration exists on a developer machine and on prod and on no test
+        # database anywhere.
+        #
+        # `duration_months IS NOT NULL` is spelled out rather than left to
+        # `duration_months > 0`: a CHECK passes when it evaluates to NULL, so the
+        # shorter form would silently ADMIT the neither-nor row it exists to refuse.
+        CheckConstraint(
+            "(is_lifetime AND duration_months IS NULL) OR "
+            "(NOT is_lifetime AND duration_months IS NOT NULL AND duration_months > 0)",
+            name="ck_warranty_terms_duration_xor_lifetime",
         ),
         Index("ix_warranty_terms_policy_kind", "policy_id", "kind_id"),
     )

@@ -24,7 +24,12 @@ DESCRIPTION = "Warranty policies, terms, product kinds and stored warranty asses
 DEPENDENCIES = ("base", "consumers", "complaints")
 IS_CORE = False
 VERSION = "1.0.0"
-ROUTER_PREFIX = None
+# S7b gave the module an HTTP surface: the configuration editor at
+# /api/v1/warranty-management/*. It is mounted by hand in app/api/v1/__init__.py
+# (hence its presence in discovery.LEGACY_REGISTERED_PREFIXES); this constant is what
+# the App Store's install / export path reads, and leaving it None would claim the
+# module carries no routes while it serves four.
+ROUTER_PREFIX = "/warranty-management"
 ROUTER_TAGS = ("warranty",)
 GUARD_KEY = "warranty"
 USE_API_KEY_GUARD = True
@@ -33,7 +38,24 @@ EXPORT_FILES_BACKEND = (
     "app/models/warranty.py",
     "app/services/warranty_service.py",
     "app/services/warranty_assessment_service.py",
+    "app/services/warranty_config_service.py",
+    "app/schemas/warranty_config.py",
+    "app/api/v1/warranty/__init__.py",
+    "app/api/v1/warranty/policies.py",
+    "app/api/v1/warranty/terms.py",
+    "app/api/v1/warranty/kinds.py",
+    "app/api/v1/warranty/kind_rules.py",
     "scripts/seed_warranty_policy_v15.py",
 )
-EXPORT_FILES_FRONTEND = ()
+# The configuration screens (AC-P0a). A module that exports routes it has no screens
+# for installs a surface nobody can reach.
+EXPORT_FILES_FRONTEND = (
+    "app/(protected)/warranty-management/page.tsx",
+    "app/(protected)/warranty-management/policies/[id]/page.tsx",
+    "app/(protected)/warranty-management/components/",
+    "app/(protected)/warranty-management/hooks/",
+    "app/(protected)/warranty-management/lib/",
+    "app/(protected)/warranty-management/services/",
+    "app/(protected)/warranty-management/types/",
+)
 EXPORT_PURGE_FN = "app.modules.warranty.purge.purge"

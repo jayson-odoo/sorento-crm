@@ -80,6 +80,7 @@ import importlib.util
 import inspect
 import pathlib
 import uuid
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
@@ -382,6 +383,55 @@ def _simple_case(
     policy = _policy(db, effective_from=effective_from, effective_to=effective_to)
     term = _term(db, policy, kind, part_name, **term_kw)
     return kind, policy, term
+
+
+@contextmanager
+def _without_the_xor_constraint(db):
+    """Seed a term shape the DATABASE refuses but the ENGINE must still answer about
+    (AC-P27).
+
+    S7b added `ck_warranty_terms_duration_xor_lifetime` (AC-P3a / AC-P19) to
+    `WarrantyTerm.__table_args__`, so a term with neither a duration nor lifetime -
+    and one with both - can no longer be written through the ORM. Two tests below
+    exist precisely to ask what the engine ANSWERS about those rows, and after the
+    constraint they failed at `_term()`'s flush, never at an assertion.
+
+    **Strict at write, tolerant at read** - the same layer split AC-P24 already ruled
+    for match types. The constraint stops an admin creating a term that can never be
+    judged; `_judge_term`'s two branches are DEFENCE, and defence must outlive the
+    guard that makes it rare:
+
+      - 41 `warranty_terms` rows were written before this constraint existed;
+      - a seed script, a migration backfill and a psql session all bypass the
+        service, and a future migration can drop the constraint entirely;
+      - a branch unreachable through the ORM today is not unreachable in the
+        database, and if the guard ever goes these branches are the only thing left.
+
+    So the seeding mechanism changes and the assertions do not. Used by exactly two
+    tests; anything else wanting this is describing a shape the product forbids.
+
+    Contained by the transaction, not by this helper. `blank_session` runs every test
+    inside one outer transaction that is rolled back at teardown, and Postgres DDL is
+    transactional - so the DROP dies with the test that issued it and the next test
+    meets the constraint again. It is deliberately NOT re-added on the way out:
+    re-adding validates existing rows, and the row this helper exists to seed is
+    exactly the one that would fail that validation.
+
+    That containment was verified rather than assumed, by running both tests below
+    together with `test_warranty_config_guards.py`'s raw-INSERT rejection test in the
+    same session and confirming the third still gets its CheckViolation. A leak here
+    would silently disarm the guard for every test that ran afterwards - the same
+    shape as the shared-metadata leak in PRINCIPLES.md's sqlite ruling, where the
+    breakage surfaced only in a full-suite run, in a file that touched nothing
+    related.
+    """
+    db.execute(
+        sa.text(
+            "ALTER TABLE warranty_terms "
+            "DROP CONSTRAINT IF EXISTS ck_warranty_terms_duration_xor_lifetime"
+        )
+    )
+    yield
 
 
 def _only(result):
@@ -1176,7 +1226,8 @@ def test_a_term_with_neither_a_duration_nor_lifetime_is_unknown(db):
     ``unknown`` is the only honest answer, and it must not raise.
     """
     resolve = _resolve()
-    kind, _, _ = _simple_case(db, duration_months=None, is_lifetime=False)
+    with _without_the_xor_constraint(db):
+        kind, _, _ = _simple_case(db, duration_months=None, is_lifetime=False)
     entry = _only(
         resolve(db, kind_id=kind.id, purchase_date=date(2024, 1, 1), as_of=date(2024, 6, 1))
     )
@@ -1191,7 +1242,8 @@ def test_a_lifetime_term_ignores_a_duration_that_was_also_filled_in(db):
     """Both fields set is contradictory data. Lifetime wins - it is the longer promise
     and the one the policy document actually prints."""
     resolve = _resolve()
-    kind, _, _ = _simple_case(db, is_lifetime=True, duration_months=12)
+    with _without_the_xor_constraint(db):
+        kind, _, _ = _simple_case(db, is_lifetime=True, duration_months=12)
     entry = _only(
         resolve(db, kind_id=kind.id, purchase_date=date(2010, 1, 1), as_of=date(2026, 1, 1))
     )

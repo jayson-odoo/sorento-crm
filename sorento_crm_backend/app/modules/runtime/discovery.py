@@ -119,6 +119,7 @@ LEGACY_REGISTERED_PREFIXES = {
     "/user-management", "/integrations/logs",
     "/integration-management/integration-logs", "/notifications", "/list-query",
     "/auth", "/system", "/system/modules", "/external", "/public",
+    "/warranty-management",
 }
 
 

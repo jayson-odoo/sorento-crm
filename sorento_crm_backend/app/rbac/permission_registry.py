@@ -403,6 +403,17 @@ PERMISSION_REGISTRY.extend([
 ])
 
 
+# Warranty configuration (S7b, AC-P11). TWO resources, not four: Terms ride the
+# policies slug and Kind Rules ride the kinds slug, because a Term has no life apart
+# from the Policy that dates it and a rule has none apart from the Kind it points at
+# - and a slug nobody will ever grant separately is a slug that rots.
+#
+# `warranty` maps to the `warranty` module in permission_module_map, so uninstalling
+# the module takes the permission's meaning with it.
+PERMISSION_REGISTRY.extend(_crud("warranty", "policies", "Warranty Policies"))
+PERMISSION_REGISTRY.extend(_crud("warranty", "kinds", "Warranty Product Kinds"))
+
+
 # Service jobs (S6). Three slugs, and the split is about who is trusted with what,
 # not about screen count.
 #

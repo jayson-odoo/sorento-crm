@@ -28,6 +28,7 @@ from app.api.v1 import (
     tickets,
     downloads,
     scm,
+    warranty,
 )
 from app.api.v1.system import modules_runtime, rule_facts, companies as system_companies
 from app.api.v1.assistant import record_context as assistant_record_context
@@ -226,6 +227,17 @@ api_router.include_router(
     prefix="/tickets-management",
     tags=["tickets"],
     dependencies=[Depends(require_module_enabled_with_api_key("tickets"))],
+)
+
+# Warranty configuration — policies, terms, product kinds and the kind rules that
+# reach them. Its own module key on purpose (AC-P0a): under /master-data-management
+# the editor would be gated by the PRODUCT module, so it would survive uninstalling
+# warranty and vanish when the product module went.
+api_router.include_router(
+    warranty.router,
+    prefix="/warranty-management",
+    tags=["warranty"],
+    dependencies=[Depends(require_module_enabled_with_api_key("warranty"))],
 )
 
 # Supply Chain & Inventory Optimisation (SCM) — reorder dashboard, SO/PO surfaces.

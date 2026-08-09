@@ -710,7 +710,7 @@ def test_supersede_closes_the_incumbent_the_day_before_and_creates_the_new_polic
             f"{POLICIES}/{incumbent['id']}/supersede",
             json=_policy_body(version="ZZT-V16", effective_from="2026-01-01"),
         )
-    assert response.status_code == 200, response.text
+    assert response.status_code == CREATED, response.text
     body = response.json()
     assert body["closed"]["id"] == incumbent["id"]
     assert body["closed"]["effective_to"] == "2025-12-31", (
