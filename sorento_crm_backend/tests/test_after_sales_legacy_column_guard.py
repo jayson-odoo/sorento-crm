@@ -11,11 +11,12 @@ Three families:
 1. **Columns AC-B1 and AC-M37 forbid.** ``party_kind``, ``door_answered_at`` and
    ``site_maps_url``. Each is something a plausible implementation adds and nothing
    else would catch.
-2. **The AC-B13 deferral.** ``technician_id`` and a stub ``technicians`` table are
-   both out of scope for S1 and S6 owns them. These two guards are the only tests in
-   the after-sales suite that S6 **deletes** rather than satisfies; both say so in
-   their failure message, so the S6 implementer is not left guessing whether a red
-   here is a regression.
+2. **The AC-B13 binding, after S6.** S1 deferred ``technician_id`` and a stub
+   ``technicians`` table to S6, and expected S6 to delete both guards. S6 built the
+   real ``technicians`` table, so that guard is gone (its coverage moved to
+   ``test_service_jobs_foundation.py``) - but it bound the technician the other way
+   round, as ``technicians.respond_contact_id``, so the ``respond_contacts`` half is
+   still true and is kept, re-stated as the one-side-only invariant it now is.
 3. **The legacy-reader inventory (AC-B6a, AC-B9).** See the note below - both of
    those ACs are wrong as written, and this list is why.
 
@@ -61,7 +62,6 @@ import re
 
 import pytest
 
-from app.database import Base
 from app.models.access import RespondContact
 from app.models.complaints import Complaint
 
@@ -164,36 +164,36 @@ def test_site_maps_url_is_never_created():
     )
 
 
-def test_s1_does_not_stub_the_deferred_technician_binding():
-    """AC-B13. S1 ships two bindings; S6 adds the third with the table it points at.
+def test_the_technician_binding_lives_on_technicians_not_on_respond_contacts():
+    """AC-B13, re-stated once S6 landed. **Kept deliberately, not deleted.**
 
-    **S6 DELETES THIS TEST.** It is not a permanent invariant, it is a slice
-    boundary. A red here means either S1 over-reached or S6 landed without removing
-    the guard - check which before "fixing" it.
+    S1 wrote this as a slice boundary ("S6 deletes this test"), on the assumption
+    that S6 would add ``respond_contacts.technician_id``. S6 landed the binding the
+    OTHER way round: ``technicians.respond_contact_id`` (``app/models/service_jobs.py``,
+    TEXT to match ``respond_contacts.id``, UNIQUE so one contact is one technician).
+    So the absence this asserts is still true, and deleting it would throw away a
+    true statement - it now says the binding has exactly ONE side. A second,
+    reverse column would be a duplicate binding that nothing keeps in step.
 
-    The reason the deferral is the right call and not just sequencing convenience: a
-    stub ``technicians`` table would be a half-defined core entity that S6 then has
-    to migrate rather than design, and a nullable FK added later is cheap and purely
-    additive. The order the binding will slot into is already pinned, as data, by
-    ``test_after_sales_parties.py::test_kind_precedence_is_declared_as_data``, so
-    deferring the column costs no decision.
+    Its companion, the "no ``technicians`` table" guard, HAS been deleted: S6 built
+    the real table and it is covered by
+    ``test_service_jobs_foundation.py`` (the model exists, references no ``users``
+    row, carries ``respond_contact_id`` + ``phone``, and distinguishes employee from
+    contractor).
+
+    **Open, flagged rather than decided here:**
+    ``party_service.BINDING_FOR_KIND["technician"]`` still names ``technician_id``
+    and reads it with a defensive ``getattr``, so with S6's direction
+    ``derive_contact_kind`` can never return ``"technician"``. Resolving that is
+    either a change to the derivation (query ``technicians``) or a reversal of S6's
+    direction - a design decision, not a repair. If it is ever resolved by adding
+    ``respond_contacts.technician_id``, delete this test in that same commit.
     """
     assert "technician_id" not in {c.key for c in RespondContact.__table__.columns}, (
-        "respond_contacts.technician_id is out of scope for S1 (AC-B13). If S6 has "
-        "landed, delete this test and the technicians guard below."
-    )
-
-
-def test_s1_does_not_stub_a_technicians_table():
-    """AC-B13, the other half. No table either.
-
-    **S6 DELETES THIS TEST** (AC-F6 creates the real entity, bound to a
-    respond_contact, with no ``users`` row per technician).
-    """
-    assert "technicians" not in Base.metadata.tables, (
-        "A technicians table appeared. S1 must not stub it (AC-B13); S6 designs it "
-        "(AC-F6). If S6 has landed, delete this test and the technician_id guard "
-        "above."
+        "respond_contacts.technician_id must not exist: S6 bound the technician as "
+        "technicians.respond_contact_id (UNIQUE). Two columns for one binding is a "
+        "second source of truth. If the derivation was deliberately reversed onto "
+        "respond_contacts, delete this test in the same commit."
     )
 
 

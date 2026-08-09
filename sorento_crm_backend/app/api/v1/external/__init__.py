@@ -62,6 +62,7 @@ router.include_router(
     complaint_intake.router,
     prefix="/complaint-intake",
     tags=["external"],
+    dependencies=[Depends(require_external_permission(EXTERNAL_ENDPOINT_PERMISSIONS["complaint-intake"]))],
 )
 router.include_router(
     ingest.ingest_router,

@@ -120,6 +120,11 @@ EXTERNAL_ENDPOINT_PERMISSIONS: dict[str, str] = {
     "entity-attachments": "resource.attachments.upload",
     "presigned-url": "integration.storage.presign",
     "view-link": "integration.storage.presign",
+    # Complaints
+    # S5's WhatsApp burst intake creates a real Complaint, so it takes the same
+    # slug a human filing one takes -- an integration must not be able to write a
+    # complaint on a grant no person would need.
+    "complaint-intake": "complaint_management.complaints.add",
     # Marketing / forms / tickets
     "promotions": "marketing.promotions.add",
     "forms": "forms.forms.add",

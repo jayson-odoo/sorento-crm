@@ -1097,23 +1097,66 @@ def test_a_contact_cannot_read_another_contacts_evidence(db):
 
 
 # =================================================================== AC-F2c-4
-# A contact cannot be addressed through notifications.user_id.
+# A contact cannot be addressed through notifications.user_id. Since S4 that is
+# enforced by respond_contact_id + the XOR recipient check, not by user_id being
+# NOT NULL.
 
 
 def test_the_notification_table_cannot_hold_a_contact():
-    """The constraint that shapes the whole notification half of F2c, asserted so the
-    reason for the separate contact path is on the record.
+    """The constraint that shapes the whole notification half of F2c - **restated for S4**.
 
-    ``user_id`` is NOT NULL, so there is no "no user" notification; and it carries NO
-    foreign key, so writing a ``respond_contacts.id`` there succeeds, persists, and
-    produces a row addressed to a principal that will never log in.
+    As written for F2c this said ``user_id`` is NOT NULL and carries no foreign key,
+    so writing a ``respond_contacts.id`` there succeeds, persists, and produces a row
+    addressed to a principal that will never log in. That is why the contact path had
+    to be a different path.
+
+    **S4 (AC-H1/AC-H2, migration 320) made the recipient two-valued** and the first
+    half expired: ``user_id`` is now NULLABLE, because a contact-addressed
+    notification has no user. The original *intent* did not expire, and this is now
+    how it is enforced - positively, rather than by the absence of a key:
+
+    * ``respond_contact_id`` exists, TEXT, with a real FK onto ``respond_contacts.id``
+      (uuid was refused onto a text primary key - AC-H1a). A contact now has its own
+      column, so nothing has to smuggle one into ``user_id``.
+    * ``notifications_recipient_present`` is an XOR, so a row is addressable by
+      EXACTLY ONE of the two. Both set would fan out to two different people
+      depending on which query read it first; neither set is undeliverable.
+
+    ``user_id`` still carries no foreign key, and that is asserted below unchanged -
+    if it ever gains one pointing at ``users.id``, update this test, but nothing here
+    may start relying on the absence of that key to address a contact.
     """
-    column = Notification.__table__.columns["user_id"]
-    assert column.nullable is False
-    assert list(column.foreign_keys) == [], (
+    columns = Notification.__table__.columns
+    user_id = columns["user_id"]
+    # Nullable since S4: the contact-addressed row has no user. Asserted rather than
+    # dropped so a silent revert to NOT NULL (which would make every contact
+    # notification unwritable) is caught here.
+    assert user_id.nullable is True
+    assert list(user_id.foreign_keys) == [], (
         "notifications.user_id gained a foreign key. If it now points at users.id "
         "this test should be updated - but nothing here should be relying on the "
         "absence of that key to smuggle a contact id in."
+    )
+
+    # The positive half: a contact has its own column, with a real key onto the
+    # contact table, so the smuggling this test was written about has a legitimate
+    # destination and no reason to happen.
+    contact_id = columns["respond_contact_id"]
+    assert contact_id.nullable is True
+    assert [fk.column.table.name for fk in contact_id.foreign_keys] == [
+        "respond_contacts"
+    ], "notifications.respond_contact_id must key onto respond_contacts (AC-H1a)."
+
+    # ...and exactly one of the two is set, so a row can never address both.
+    checks = {
+        c.name
+        for c in Notification.__table__.constraints
+        if getattr(c, "sqltext", None) is not None
+    }
+    assert "notifications_recipient_present" in checks, (
+        "The XOR recipient check is gone. Without it a notification can name a user "
+        "AND a contact, and the delivery fan-out and the outbox renderer each pick a "
+        "different recipient."
     )
 
 

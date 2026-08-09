@@ -37,6 +37,7 @@ from app.database import get_db  # noqa: E402
 from app.models.access import RespondContact  # noqa: E402
 from app.models.complaints import Complaint  # noqa: E402
 
+from ._external_auth import external_permissions_granted  # noqa: E402
 from ._pg_fixture import TEST_PREFIX, blank_session  # noqa: E402
 
 BASE = "/api/v1/external/complaint-intake/submit"
@@ -54,7 +55,13 @@ def stack():
         app.dependency_overrides[get_db] = _override_get_db
         app.dependency_overrides[get_external_api_user] = lambda: {"id": "system"}
         try:
-            with TestClient(app) as c:
+            # The route is mounted behind `complaint_management.complaints.add`. This
+            # suite is about the transaction the route runs, not about authorization,
+            # and the blank schema holds no grants to answer the lookup with -- so say
+            # so explicitly rather than depend on there being no check. Enforcement is
+            # covered by test_external_permission_guard and
+            # test_external_permission_coverage.
+            with external_permissions_granted(), TestClient(app) as c:
                 yield c, db
         finally:
             app.dependency_overrides.clear()
