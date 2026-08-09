@@ -1158,7 +1158,14 @@ def seed_spec_registry(db: Session, *, commit: bool = False) -> dict:
             # Derivation is first-match-wins, so a more specific token added later
             # ("DRAIN PIPE" before "BOTTLE TRAP") is inert if it is merely appended:
             # "300MM DRAIN PIPE FOR 32MM BOTTLE TRAP" kept deriving the trap.
-            human = [r for r in kept if not r.get(SEED_RULE_MARKER)]
+            # A stored rule identical to one the seed ships IS the seed's, marker or
+            # not: rules written before the marker existed carry nothing, and treating
+            # them as a human's kept every shipped rule twice and in the wrong order.
+            human = [
+                r
+                for r in kept
+                if not r.get(SEED_RULE_MARKER) and _rule_identity(r) not in wanted
+            ]
             merged = human + list(shipped_for_key)
             if stored_rules and merged != stored_rules:
                 row.derivation_rules = merged
