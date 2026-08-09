@@ -598,6 +598,8 @@ SPEC_REGISTRY_SEED: list[dict] = [
             "bottle_trap",
             "water_pump",
             "hinge",
+            "drain_pipe",
+            "stop_cock",
         ],
         "synonyms": {
             "angle_valve": ["angle valve", "stop valve", "corner valve"],
@@ -640,6 +642,8 @@ SPEC_REGISTRY_SEED: list[dict] = [
             "bottle_trap": ["bottle trap", "basin trap"],
             "water_pump": ["water pump", "pressure pump", "booster pump", "pam air"],
             "hinge": ["hinge", "hinges", "cabinet hinge", "door hinge"],
+            "drain_pipe": ["drain pipe", "waste pipe", "extension pipe"],
+            "stop_cock": ["stop cock", "stopcock", "isolating valve"],
         },
         "measured_coverage": 5075,
         "rank_weight": 3.0,
@@ -1150,9 +1154,12 @@ def seed_spec_registry(db: Session, *, commit: bool = False) -> dict:
                 for r in stored_rules
                 if not r.get(SEED_RULE_MARKER) or _rule_identity(r) in wanted
             ]
-            have = {_rule_identity(r) for r in kept}
-            missing = [r for r in shipped_for_key if _rule_identity(r) not in have]
-            merged = kept + missing
+            # Seed rules go back in SHIPPED order, not the order they were added.
+            # Derivation is first-match-wins, so a more specific token added later
+            # ("DRAIN PIPE" before "BOTTLE TRAP") is inert if it is merely appended:
+            # "300MM DRAIN PIPE FOR 32MM BOTTLE TRAP" kept deriving the trap.
+            human = [r for r in kept if not r.get(SEED_RULE_MARKER)]
+            merged = human + list(shipped_for_key)
             if stored_rules and merged != stored_rules:
                 row.derivation_rules = merged
                 changed = True

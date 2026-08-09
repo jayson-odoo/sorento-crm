@@ -25,7 +25,11 @@ from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.services.product_class_signal import backfill_category_signals
 from app.services.product_spec_derivation import derive_for_code
 from app.services.product_spec_registry import seed_spec_registry
-from app.services.product_spec_search import resolve_terms_to_specs, search_specs
+from app.services.product_spec_search import (
+    _numeric_score,
+    resolve_terms_to_specs,
+    search_specs,
+)
 from tests._pg_fixture import blank_session
 
 _REFS: dict = {}
@@ -1072,3 +1076,18 @@ def test_a_bare_number_still_means_about_that_size(db):
     )
 
     assert "ZZT-WB-590" in codes
+
+
+def test_the_nearer_of_two_matches_ranks_first():
+    """Both answer the question; the one they actually named comes first.
+
+    SRTSCBD701 is 500mm and SRTSCBD702 is 495mm, and the tolerance covers 5mm. Both
+    scored a flat 1.0, so the order between them was arbitrary - and a customer asking
+    for 495 could be shown 500 instead, with the product they named nowhere.
+    """
+    exact = _numeric_score(495.0, 495.0, tolerance=10.0, decay=50.0)
+    near = _numeric_score(495.0, 500.0, tolerance=10.0, decay=50.0)
+
+    assert exact > near, "an exact size must outrank a merely tolerable one"
+    # ...but only just: closeness orders equals, it does not outweigh a whole spec.
+    assert near > 0.9, "a size inside the tolerance still fully matches"

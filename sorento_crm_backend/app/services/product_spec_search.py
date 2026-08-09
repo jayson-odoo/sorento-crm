@@ -57,16 +57,28 @@ MAX_CANDIDATES = 5
 RELEVANCE_FLOOR = 1.5
 
 
+# Inside the tolerance band, how much of the score closeness is allowed to decide.
+# Small on purpose: it orders products that all genuinely match, and must never
+# outweigh a product matching one more spec.
+_EXACTNESS_MARGIN = 0.02
+
+
 def _numeric_score(target: float, actual: float, tolerance: float, decay: float) -> float:
     """1.0 within `tolerance` of the target, then decaying to 0 at `decay`.
 
     `decay <= 0` means exact-or-nothing. That is the correct shape for a COUNT: two
     bowls and one bowl are not "nearly the same", however small the arithmetic
     difference looks next to a millimetre scale.
+
+    Within the band, nearer still ranks higher. Flat 1.0 made a 500mm and a 495mm seat
+    cover indistinguishable when the customer asked for 495 - both matched, so the
+    order between them was arbitrary, and the one they named could lose.
     """
     distance = abs(float(target) - float(actual))
     if distance <= tolerance:
-        return 1.0
+        if distance == 0 or tolerance <= 0:
+            return 1.0
+        return 1.0 - _EXACTNESS_MARGIN * (distance / tolerance)
     if decay <= 0:
         return 0.0
     return max(0.0, 1.0 - (distance / decay))
@@ -472,7 +484,9 @@ def search_specs(
                 if gain > 0:
                     score += numeric_boost * weight * gain
                     evidence += numeric_boost * weight * gain
-                    if gain == 1.0:
+                    # Anywhere inside the tolerance band counts as answering the
+                    # question. Closeness only orders the products that all do.
+                    if gain >= 1.0 - _EXACTNESS_MARGIN:
                         matched.append(key)
                 else:
                     # Stated, stored, and outside the window entirely. A number can

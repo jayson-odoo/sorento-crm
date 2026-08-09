@@ -31,8 +31,15 @@ _TABLES = [
 ]
 
 
+def _has_column(bind, table: str, column: str) -> bool:
+    return column in {c["name"] for c in sa.inspect(bind).get_columns(table)}
+
+
 def upgrade() -> None:
+    bind = op.get_bind()
     for table, natural_key, unique_name in _TABLES:
+        if _has_column(bind, table, "id"):
+            continue
         op.add_column(
             table,
             sa.Column(
@@ -48,6 +55,26 @@ def upgrade() -> None:
         op.drop_constraint(f"{table}_pkey", table, type_="primary")
         op.create_primary_key(f"{table}_pkey", table, ["id"])
         op.create_unique_constraint(unique_name, table, [natural_key])
+
+    # Last migration in the chain, so the ORM model finally matches the table and the
+    # vocabulary can be seeded from its single source rather than duplicated here as
+    # INSERT statements. 311b used to do this and could not: it runs before the columns
+    # the model selects exist.
+    from sqlalchemy.orm import Session
+
+    from app.services.product_spec_registry import seed_search_policy, seed_spec_registry
+
+    session = Session(bind=op.get_bind())
+    try:
+        result = seed_spec_registry(session)
+        seed_search_policy(session)
+        session.flush()
+        print(
+            f"[311m] spec registry: {result['created']} created, "
+            f"{result['updated']} vocabulary repairs"
+        )
+    finally:
+        session.close()
 
 
 def downgrade() -> None:
