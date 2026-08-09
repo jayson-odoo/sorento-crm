@@ -21,7 +21,11 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission
 from app.models.scm import ContainerSize, LoadingPlan
-from app.services.scm import loading_plan_service, supplier_inventory_service
+from app.services.scm import (
+    loading_plan_service,
+    supplier_inventory_service,
+    supplier_notice_service,
+)
 from app.services.scm.upload_intake import read_upload
 
 router = APIRouter()
@@ -30,6 +34,12 @@ router = APIRouter()
 # from, so it sits behind the operator permission rather than the read one.
 _WRITE = require_permission("scm.reorder.run")
 _READ = require_permission("scm.dashboard.view")
+
+
+def _actor(user: Optional[dict]) -> Optional[str]:
+    """The caller's human name, never their id - same rule as every other SCM provenance."""
+    user = user or {}
+    return user.get("name") or user.get("email") or None
 
 
 def _plan_or_404(db: Session, plan_id: str) -> LoadingPlan:
@@ -361,3 +371,56 @@ def delete_loading_plan(
     plan = _plan_or_404(db, plan_id)
     db.delete(plan)
     db.commit()
+
+
+# --------------------------------------------------------------------------- #
+# supplier notice (S8)
+# --------------------------------------------------------------------------- #
+
+
+@router.post("/loading-plans/{plan_id}/notices", status_code=status.HTTP_201_CREATED)
+def approve_loading_plan(
+    plan_id: str,
+    _user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Approve the plan and tell the supplier: one action, every channel (AC-F1).
+
+    Behind the operator permission, not the read one: this sends mail to an outside party.
+    """
+    _plan_or_404(db, plan_id)
+    return supplier_notice_service.approve_and_notify(
+        db, plan_id, actor=_actor(_user)
+    )
+
+
+@router.get("/loading-plans/{plan_id}/notices")
+def list_plan_notices(
+    plan_id: str,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    _plan_or_404(db, plan_id)
+    rows = supplier_notice_service.list_for_plan(db, plan_id)
+    return {"data": rows, "total": len(rows)}
+
+
+@router.get("/supplier-notices")
+def list_supplier_notices(
+    supplier_id: str = Query(...),
+    limit: int = Query(50, ge=1, le=200),
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    rows = supplier_notice_service.list_for_supplier(db, supplier_id, limit=limit)
+    return {"data": rows, "total": len(rows)}
+
+
+@router.get("/supplier-notices/{notice_id}/document")
+def supplier_notice_document(
+    notice_id: str,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """A short-lived link to the document, so Ms Tee can send it by hand too (AC-F3)."""
+    return supplier_notice_service.document_url(db, notice_id)

@@ -90,6 +90,38 @@ def world(db):
     return {"products": products, "warehouse": wh, "cat": cat, "uom": uom}
 
 
+def _clear_sales_orders(db, numbers) -> None:
+    """Remove any sales order the FIXTURE names, so the test starts from the state it describes.
+
+    These tests are about what happens when a sales order does NOT yet exist, or exists only as
+    the SO book wrote it. The fixture uses real order numbers, so on a database restored from
+    production every one of them is already there, imported by this very feed - "before the
+    sales order" is then not true, nothing is created, and three tests fail for a reason that
+    has nothing to do with the code. `so_number` is unique per company, so adopting the row is
+    not enough either: the feed would own it and rewrite its lines.
+
+    Everything here runs inside a transaction the fixture rolls back, so the real orders are
+    untouched.
+    """
+    ids = [
+        r[0]
+        for r in db.query(SalesOrder.id).filter(SalesOrder.so_number.in_(list(numbers))).all()
+    ]
+    if not ids:
+        return
+    db.query(SalesOrderLine).filter(SalesOrderLine.sales_order_id.in_(ids)).delete(
+        synchronize_session=False
+    )
+    db.query(SalesOrder).filter(SalesOrder.id.in_(ids)).delete(synchronize_session=False)
+    db.flush()
+
+
+def _fixture_so_numbers(db) -> set[str]:
+    parsed = inquiry.read_order_inquiry(FIXTURE.read_bytes())
+    instalments, _ = inquiry._instalments(parsed)
+    return {r.so_number for r in instalments if r.so_number}
+
+
 def _make_sales_order(db, world) -> SalesOrder:
     customer = Customer(
         id=_u(), customer_code=f"{MARKER}-{uuid.uuid4().hex[:8]}"[:30],
@@ -97,6 +129,7 @@ def _make_sales_order(db, world) -> SalesOrder:
     )
     db.add(customer)
     db.flush()
+    _clear_sales_orders(db, {SO_NUMBER})
     so = SalesOrder(
         id=_u(), so_number=SO_NUMBER, customer_id=customer.id, status="open",
         order_type="project", order_date=date.today() - timedelta(days=5),
@@ -176,6 +209,9 @@ def test_purchase_order_uploaded_before_the_sales_order(db, world):
     case where a claim genuinely has to outlive a missing document, and it is the one worth
     proving here.
     """
+    # The premise of the test, made true rather than assumed: on a database restored from
+    # production this order already exists and the claim would resolve on the first pass.
+    _clear_sales_orders(db, {SO_NUMBER})
     _make_purchase_order(db, world, LINKED[1])
     db.add(OrderLinkClaim(
         id=_u(), so_number=SO_NUMBER, po_number=LINKED[1], item_code=None,
@@ -311,6 +347,7 @@ def test_every_resolvable_row_now_lands_because_the_sheet_creates_the_order(db, 
     still becomes nothing, because `product_id` is NOT NULL and the alternative is inventing
     a product. That half is pinned in `test_order_inquiry_creates_demand.py`.
     """
+    _clear_sales_orders(db, _fixture_so_numbers(db))
     out = inquiry.apply(db, FIXTURE.read_bytes())
 
     assert out["orders_created"] >= 1, "the sheet is a demand feed now, not an annotation"

@@ -276,6 +276,31 @@ before commit.
 - Bilingual document generator in the supplier's own layout, plus download.
 - Integration log per attempt, success or failure, mirroring `_send_and_log`.
 
+> **Two decisions S8 forces, settled here so a builder does not have to.**
+>
+> **1. The notice snapshots the plan; the plan stays re-runnable.** `scm.loading_plan` has no
+> plan-level status at all today, and `PATCH /loading-plans/{id}` deliberately rewrites its lines
+> in place so a different container count is one decision rather than a second plan (AC-E6). The
+> obvious move - freeze the plan on approval - would take that away and leave a dead row behind
+> every time Ms Tee changes her mind after sending. So approval does not lock anything: the
+> notice copies the lines it was built from into `supplier_notice_lines`. What was sent stays
+> readable however the plan moves afterwards, which is the property `LoadingPlan`'s own docstring
+> asks for and nothing currently provides. Re-running a plan after a notice went out is allowed,
+> and the notice history is what says the two now differ.
+>
+> **2. Email keeps ONE producer, so the outbox learns to carry an attachment.**
+> `app/tasks/email_outbox_tasks.py` declares itself the single producer of SMTP traffic, and it
+> owns the backoff, the rate limiter and the per-event enable switch. `send_mime_email` already
+> accepts attachments; the outbox is the only path that cannot pass them. Sending the notice
+> directly would fork SMTP into two producers to gain one attachment. Instead `email_outbox`
+> gains a nullable attachment reference (provider, storage key, filename) and `_attempt_send`
+> resolves the bytes at drain time. Generic, so the next document-bearing email needs no second
+> mechanism, and the notice PDF is stored exactly once whether it is emailed, downloaded, or both.
+>
+> Consequence worth stating: the document is generated and stored BEFORE the send is queued. A
+> notice with no document is never sent, and a supplier with no email address still gets a
+> notice record and a downloadable document (AC-F3) rather than a failure.
+
 **S9. Packing list and SPO allocation** (UAC G) - the `po_line_id` migration moved into S0
 - Multi-block workbook importer: one inbound shipment per container block. Blank container
   number and bill of lading are valid. Duplicate identity must not depend on container number

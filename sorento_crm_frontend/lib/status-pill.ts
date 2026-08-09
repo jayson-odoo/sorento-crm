@@ -23,6 +23,14 @@ const STATUS_PILL_CLASS: Record<string, string> = {
   // Voided = form was cancelled/annulled after creation. Neutral gray (muted),
   // deliberately NOT red — voiding is administrative, not an error/rejection.
   voided: 'bg-gray-200 text-gray-600',
+  // Outbound delivery (supplier notices, and anything else that leaves the building). Added
+  // here rather than as a local vocabulary so "failed" is the same red everywhere; falling back
+  // to neutral would have rendered a failed send as calmly as a queued one.
+  sent: 'bg-emerald-100 text-emerald-800',
+  failed: 'bg-red-100 text-red-800',
+  // Skipped is an outcome, not an error: nothing could send, and the reason is stated beside
+  // it. Gray for the same reason `voided` is gray.
+  skipped: 'bg-gray-200 text-gray-600',
 };
 
 /** Base classes for the pill chip (shape + sizing); pair with statusPillClass(). */

@@ -3,12 +3,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
+  approveLoadingPlan,
   createLoadingPlan,
   deleteLoadingPlan,
   getContainerSizes,
   getFulfilmentSuppliers,
   getLoadingPlan,
   getLoadingPlans,
+  getPlanNotices,
   getSupplierStock,
   getUnfinishedStock,
   updateLoadingPlan,
@@ -112,6 +114,32 @@ export function useDeleteLoadingPlan(supplierId: string | null) {
     onSuccess: () => {
       invalidate(supplierId);
       toast.success('Loading plan deleted.');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/** S8 - the notices produced by approving a plan, and the one action that produces them. */
+export function usePlanNotices(planId: string | null) {
+  return useQuery({
+    queryKey: [...KEY, 'notices', planId],
+    queryFn: () => getPlanNotices(planId as string),
+    enabled: !!planId,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useApproveLoadingPlan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (planId: string) => approveLoadingPlan(planId),
+    onSuccess: (out, planId) => {
+      qc.invalidateQueries({ queryKey: [...KEY, 'notices', planId] });
+      // Say what actually happened per channel. "Notice sent" when the supplier has no address
+      // on file would be the screen telling the user something untrue.
+      const sent = out.notices.filter((n) => n.status === 'sent').length;
+      if (sent) toast.success(`Notice sent on ${sent === 1 ? '1 channel' : `${sent} channels`}.`);
+      else toast.warning('Notice created. No channel could send it, so send the document by hand.');
     },
     onError: (e: Error) => toast.error(e.message),
   });

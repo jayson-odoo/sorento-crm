@@ -312,3 +312,54 @@ export async function getFulfilmentSuppliers(): Promise<{ value: string; label: 
   );
   return rows.map((s) => ({ value: s.id, label: s.supplier_name }));
 }
+
+/**
+ * S8 - what a supplier was told, on which channel, and when.
+ *
+ * `skipped` is an outcome, not a failure. A supplier with no address on file, and the chat
+ * channel that has nothing to send to yet, both land there with a reason, and the document is
+ * still produced so it can be sent by hand.
+ */
+export interface SupplierNotice {
+  id: string;
+  supplier_id: string;
+  supplier_name: string | null;
+  loading_plan_id: string | null;
+  notice_type: string;
+  channel: 'email' | 'chat';
+  recipient: string | null;
+  status: 'pending' | 'sent' | 'failed' | 'skipped';
+  status_reason: string | null;
+  sent_at: string | null;
+  attempt_count: number;
+  last_error: string | null;
+  document_filename: string | null;
+  has_document: boolean;
+  container_type: string | null;
+  container_count: number | null;
+  planned_cbm: number | null;
+  line_count: number;
+  production_line_count: number;
+  created_at: string | null;
+  created_by: string | null;
+}
+
+export async function approveLoadingPlan(
+  planId: string,
+): Promise<{ notices: SupplierNotice[]; document_filename: string }> {
+  const res = await apiFetch(`/api/v1/scm/loading-plans/${planId}/notices`, { method: 'POST' });
+  return readJson(res, 'Failed to send the supplier notice');
+}
+
+export async function getPlanNotices(planId: string): Promise<SupplierNotice[]> {
+  const res = await apiFetch(`/api/v1/scm/loading-plans/${planId}/notices`);
+  const body = await readJson<{ data: SupplierNotice[] }>(res, 'Failed to load the notices');
+  return body.data;
+}
+
+export async function getNoticeDocumentUrl(
+  noticeId: string,
+): Promise<{ url: string; filename: string | null }> {
+  const res = await apiFetch(`/api/v1/scm/supplier-notices/${noticeId}/document`);
+  return readJson(res, 'Failed to open the notice document');
+}

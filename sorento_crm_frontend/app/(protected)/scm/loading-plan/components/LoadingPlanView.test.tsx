@@ -54,6 +54,10 @@ vi.mock('../../hooks/useFulfilment', () => ({
   useRerunLoadingPlan: () => ({ mutate: rerun, isPending: false, data: rerunResult }),
   useStockListApplied: () => vi.fn(),
   useDeleteLoadingPlan: () => ({ mutate: vi.fn(), isPending: false }),
+  // S8's panel renders inside this view. Its own behaviour is covered in
+  // SupplierNoticePanel.test.tsx; here it only has to not explode.
+  usePlanNotices: () => ({ data: [], isLoading: false }),
+  useApproveLoadingPlan: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 let buildResult: unknown = undefined;

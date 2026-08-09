@@ -42,6 +42,7 @@ import type {
   LoadingPlanLine,
 } from '../../services/fulfilmentService';
 import { StockListUploadDialog } from './StockListUploadDialog';
+import { SupplierNoticePanel } from './SupplierNoticePanel';
 import { RankFactorsPopover } from './RankFactorsPopover';
 
 /**
@@ -453,6 +454,11 @@ export function LoadingPlanView() {
               </Card>
             </DataGrid>
           ) : null}
+
+          {/* Step 3 of Ms Tee's journey. Rendered whenever there is a plan, and empty until
+              something has been sent, so "nothing has gone out yet" is a state she can see
+              rather than infer from an absent section. */}
+          {plan ? <SupplierNoticePanel planId={plan.id} /> : null}
 
           {unfinished.data?.length ? (
             <Card className="p-4">
