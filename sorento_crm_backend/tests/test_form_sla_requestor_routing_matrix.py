@@ -65,7 +65,7 @@ def orch(monkeypatch):
     monkeypatch.setattr(
         AccessAgentService,
         "resolve_team_with_tier_fallback",
-        lambda self, agent_id, tier, team_set_code=None: ("team-1", 1),
+        lambda self, agent_id, tier, team_set_code=None, *, company_id=None: ("team-1", 1),
     )
     monkeypatch.setattr(
         AccessAgentService, "get_next_assignee", lambda self, agent_id, team_id: dict(RR_ASSIGNEE)

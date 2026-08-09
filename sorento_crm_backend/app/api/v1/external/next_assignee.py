@@ -1,4 +1,5 @@
 """External endpoint for n8n: get next assignee by round-robin for (agent_id, team_id)."""
+import logging
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,8 +9,16 @@ from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.models.sla import SLAPolicy, SLAPolicyTier
 from app.services.calendar_service import CalendarService
+from app.services.company_routing_service import (
+    DEFAULT_COMPANY_ID,
+    RoutingCompany,
+    resolve_routing_company,
+)
+from app.models.base import set_company_scope
 from app.services.sla_service import ConversationSLATrackingService
 from app.services.user_service import AccessAgentService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -85,10 +94,13 @@ def _tier_level_from_body(body: dict) -> Optional[int]:
         return None
 
 
-def _resolve_round_robin_team_id(service: AccessAgentService, agent_id: str, body: dict) -> str:
+def _resolve_round_robin_team_id(
+    service: AccessAgentService, agent_id: str, body: dict, *, company_id: str
+) -> str:
     """
-    Resolve team_id for round-robin. Cursors are per (agent_id, team_id); the same team_code
-    on multiple tiers must use tier (or tier_level) with team_code so we advance the correct team.
+    Resolve team_id for round-robin within ONE company. Cursors are per (agent_id, team_id);
+    the same team_code on multiple tiers must use tier (or tier_level) with team_code so we
+    advance the correct team.
     """
     team_id = body.get("team_id")
     if team_id is not None and str(team_id).strip():
@@ -105,11 +117,13 @@ def _resolve_round_robin_team_id(service: AccessAgentService, agent_id: str, bod
 
     tier_level = _tier_level_from_body(body)
     if tier_level is not None:
-        tid = service.get_team_id_by_tier(agent_id, tier_level, team_set_code=code_eff)
+        tid = service.get_team_id_by_tier(
+            agent_id, tier_level, team_set_code=code_eff, company_id=company_id
+        )
         if tid:
             return tid
 
-    ids = service.list_team_ids_for_agent_code(agent_id, code_eff)
+    ids = service.list_team_ids_for_agent_code(agent_id, code_eff, company_id=company_id)
     if len(ids) > 1:
         raise HTTPException(
             status_code=400,
@@ -121,9 +135,14 @@ def _resolve_round_robin_team_id(service: AccessAgentService, agent_id: str, bod
     if len(ids) == 1:
         return ids[0]
 
+    # Naming the company matters: without it this reads as "the agent is misconfigured"
+    # when the real cause is that this company has no team for that code yet (AC-C5).
     raise HTTPException(
         status_code=404,
-        detail=f"No team found for agent and team_code={code_eff!r}",
+        detail=(
+            f"No team found for agent and team_code={code_eff!r} in company "
+            f"{company_id!r}. Configure that company's team set before routing to it."
+        ),
     )
 
 
@@ -208,6 +227,42 @@ def _tracking_is_assigned(tracking: Any) -> bool:
     return True
 
 
+def _routing_company_for_body(db: Session, body: dict, contact_phone: str) -> RoutingCompany:
+    """Resolve the routing company, degrading to Sorento on ANY failure (AC-J1).
+
+    ``resolve_routing_company`` already swallows its own errors; this second net is
+    here because routing must survive even an import-time / signature-level breakage
+    of the resolver. A conversation nobody is assigned is worse than a wrong company.
+    """
+    try:
+        return resolve_routing_company(
+            db,
+            company_code=body.get("company_code"),
+            contact_id=body.get("contact_id") or body.get("respond_io_id"),
+            space_id=body.get("space_id"),
+            phone=contact_phone,
+        )
+    except Exception:
+        logger.warning("next-assignee: routing company resolution failed", exc_info=True)
+        return RoutingCompany(
+            company_id=DEFAULT_COMPANY_ID, company_code=None, source="default"
+        )
+
+
+def _scope_request_to_company(db: Session, routing_company: RoutingCompany) -> None:
+    """Pin the rest of this request to the COALESCED routing company (AC-F3).
+
+    Deliberately the coalesced company, never the contact's raw company set: an
+    untagged contact coalesces to Sorento here, whereas the request-entry scope
+    resolver would give it ``frozenset()`` = zero rows and strand the call. That
+    difference is the whole reason routing has its own resolver (D6).
+    """
+    try:
+        set_company_scope(db, frozenset({str(routing_company.company_id)}))
+    except Exception:
+        logger.warning("next-assignee: could not pin request company scope", exc_info=True)
+
+
 def _enrich_n8n_response(
     base: dict,
     *,
@@ -215,12 +270,15 @@ def _enrich_n8n_response(
     is_already_assigned: bool,
     conversation_assignee: Optional[dict] = None,
     sla_policy_tier: Optional[dict] = None,
+    routing_company: Optional[RoutingCompany] = None,
 ) -> dict:
     status_flags: list[str] = []
     if not is_working_hours:
         status_flags.append("non_working_hours")
     if is_already_assigned:
         status_flags.append("already_assigned")
+    if routing_company is not None and routing_company.ambiguous:
+        status_flags.append("ambiguous_company")
 
     if is_working_hours and not is_already_assigned:
         message = "Within working hours; conversation not yet assigned in CRM."
@@ -237,6 +295,10 @@ def _enrich_n8n_response(
     out = {**base}
     if sla_policy_tier is not None:
         out.update(sla_policy_tier)
+    if routing_company is not None:
+        out["company_id"] = routing_company.company_id
+        out["company_code"] = routing_company.company_code
+        out["company_source"] = routing_company.source
     out["is_working_hours"] = is_working_hours
     out["is_already_assigned"] = is_already_assigned
     out["status_flags"] = status_flags
@@ -291,6 +353,10 @@ async def post_next_assignee(
             detail="contact_phone_number (or contact_phone) is required.",
         )
 
+    # S0: resolved and echoed, but team resolution is deliberately NOT keyed on it yet.
+    routing_company = _routing_company_for_body(db, body, contact_phone)
+    _scope_request_to_company(db, routing_company)
+
     sla_policy_tier = _resolve_sla_policy_tier_for_next_assignee(db, body)
 
     calendar = CalendarService(db)
@@ -324,7 +390,9 @@ async def post_next_assignee(
     if not agent_id:
         raise HTTPException(status_code=400, detail="agent_id or agent_code is required")
 
-    team_id = _resolve_round_robin_team_id(service, str(agent_id).strip(), body)
+    team_id = _resolve_round_robin_team_id(
+        service, str(agent_id).strip(), body, company_id=routing_company.company_id
+    )
 
     # Preferred-assignee override: skip round-robin, go straight to the named member.
     # n8n discovers valid ids via GET /external/team-members. Cursor is NOT advanced.
@@ -333,22 +401,30 @@ async def post_next_assignee(
         preferred_id = str(preferred_id).strip()
         result = service.get_member_assignee(team_id, preferred_id)
         if result is None:
+            # The team was resolved inside the routing company, so "not a member"
+            # also covers "is a member of the OTHER company's team" (AC-D3). Naming
+            # the company is what makes that case diagnosable from the n8n log.
             raise HTTPException(
                 status_code=404,
-                detail=f"preferred_assignee_id={preferred_id!r} is not a member of the resolved team.",
+                detail=(
+                    f"preferred_assignee_id={preferred_id!r} is not a member of the "
+                    f"resolved team for company {routing_company.company_id!r}."
+                ),
             )
     else:
-        # Opt-in market-segment scoping. Absent contact_id -> call with the original
-        # arity -> pure round-robin on the '' cursor, byte-identical to prior behaviour.
-        contact_segments: Optional[set[str]] = None
-        contact_ref = body.get("contact_id") or body.get("respond_io_id")
-        if contact_ref is not None and str(contact_ref).strip():
-            from app.services.market_segment_service import MarketSegmentService
+        # Market-segment scoping. Identity is contact_id when n8n sends one, else the
+        # phone it always sends (AC-B1) - keying on contact_id alone left the filter
+        # dead on the only path production actually uses. An untagged / unknown
+        # contact still resolves to no segments, i.e. the unfiltered '' cursor.
+        from app.services.market_segment_service import MarketSegmentService
 
-            resolved = MarketSegmentService(db).resolve_contact_segments(
-                str(contact_ref).strip(), body.get("space_id")
-            )
-            contact_segments = resolved or None
+        contact_ref = body.get("contact_id") or body.get("respond_io_id")
+        resolved = MarketSegmentService(db).resolve_contact_segments(
+            respond_io_id=str(contact_ref).strip() if contact_ref else None,
+            space_id=body.get("space_id"),
+            phone=contact_phone,
+        )
+        contact_segments: Optional[set[str]] = resolved or None
         if contact_segments:
             result = service.get_next_assignee(agent_id, team_id, contact_segments)
         else:
@@ -364,4 +440,5 @@ async def post_next_assignee(
         is_already_assigned=is_already_assigned,
         conversation_assignee=conversation_assignee,
         sla_policy_tier=sla_policy_tier,
+        routing_company=routing_company,
     )

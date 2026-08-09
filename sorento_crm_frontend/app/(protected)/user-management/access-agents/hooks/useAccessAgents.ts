@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useCompany } from '@/app/providers/CompanyProvider';
 import { toast } from 'sonner';
 import { buildDataGridParams } from '@/lib/api-client';
 import {
@@ -140,8 +141,14 @@ export function useDeleteContactAgentAccess() {
 }
 
 export function useAgentTeams(agentId: string | null) {
+  // The active company is part of the KEY, not just an invalidation trigger.
+  // invalidateQueries() only refetches MOUNTED queries, so an agent detail that
+  // was not open during a company switch keeps its old payload and serves it on
+  // the next visit - the other company's team sets under this company's label.
+  // A distinct key per company makes that impossible rather than unlikely.
+  const { activeCompany } = useCompany();
   return useQuery({
-    queryKey: ['agent-teams', agentId],
+    queryKey: ['agent-teams', agentId, activeCompany?.id ?? null],
     queryFn: () => {
       if (!agentId) throw new Error('Agent ID is required');
       return getAgentTeams(agentId);
@@ -170,8 +177,10 @@ export function useSetAgentTeams() {
 }
 
 export function useTeams() {
+  // Teams are company-scoped, so the picker must not serve another company's list.
+  const { activeCompany } = useCompany();
   return useQuery({
-    queryKey: ['teams-list'],
+    queryKey: ['teams-list', activeCompany?.id ?? null],
     queryFn: () => getTeams(),
     staleTime: 1000 * 60 * 2,
     retry: 1,

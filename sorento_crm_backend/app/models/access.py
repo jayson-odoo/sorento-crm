@@ -4,6 +4,7 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
+from app.models.base import CompanyScopedMixin
 import uuid
 
 
@@ -398,8 +399,15 @@ class AgentFieldAccess(Base):
     )
 
 
-class Team(Base):
-    """Team of users for round-robin assignment."""
+class Team(Base, CompanyScopedMixin):
+    """A team belongs to exactly one company (D1).
+
+    Company-scoped, so the Teams admin page and every team picker follow the active
+    company switcher. Access agents deliberately are NOT scoped: one agent is a single
+    router serving both brands through two ladders (D8).
+
+    Team of users for round-robin assignment.
+    """
     __tablename__ = "teams"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -408,6 +416,9 @@ class Team(Base):
     # Self-FK for the team hierarchy: a member of a parent team can see + act on the
     # work of all descendant teams (any depth). NULL = top-level. SET NULL on delete
     # so removing a parent re-roots its children rather than cascading them away.
+    # A parent's members can see and act on every descendant team's work at any
+    # depth, so the parent MUST be in the same company - enforced on write in
+    # AccessAgentService, and checked by migration 320 before it locks the column in.
     parent_team_id = Column(
         UUID(as_uuid=False),
         ForeignKey("teams.id", ondelete="SET NULL"),
@@ -459,8 +470,15 @@ class TeamMember(Base):
     )
 
 
-class AgentTeam(Base):
-    """Link access agent to a team set code and optional tier (1=initial, 2/3=escalation)."""
+class AgentTeam(Base, CompanyScopedMixin):
+    """Link access agent to a team set code and optional tier (1=initial, 2/3=escalation).
+
+    Company-scoped. The explicit ``company_id`` argument on the AccessAgentService
+    resolvers is the loud layer - a missed caller is a TypeError. This auto-filter is
+    the quiet backstop for the ad-hoc ``AgentTeam`` queries scattered through
+    ``sla_service`` that no signature change can reach. Background readers must set an
+    explicit scope (``scheduler_session``), or they see nothing.
+    """
     __tablename__ = "agent_teams"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -489,20 +507,25 @@ class AgentTeam(Base):
         Index("ix_agent_teams_team_id", "team_id"),
         Index("ix_agent_teams_code", "code"),
         Index("ix_agent_teams_tier", "tier"),
-        # For non-tier assignments (legacy), keep one row per (agent, code).
+        # Company is part of both keys: the same (code, tier) under two companies is
+        # the whole point of the feature, and the pre-company keys rejected exactly
+        # that. Must stay in step with migration 320 - the scratch-schema test
+        # fixtures build their indexes from HERE, not from the migration, so a
+        # divergence shows up as a duplicate-key error in tests that pass in prod.
         Index(
-            "uq_agent_teams_agent_code_tier_null",
+            "uq_agent_teams_agent_code_company_tier_null",
             "agent_id",
             "code",
+            "company_id",
             unique=True,
             postgresql_where=(tier.is_(None)),
         ),
-        # For tiered assignments, allow one row per (agent, code, tier).
         Index(
-            "uq_agent_teams_agent_code_tier_not_null",
+            "uq_agent_teams_agent_code_company_tier",
             "agent_id",
             "code",
             "tier",
+            "company_id",
             unique=True,
             postgresql_where=(tier.is_not(None)),
         ),

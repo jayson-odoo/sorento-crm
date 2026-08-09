@@ -10,10 +10,28 @@ import uuid
 
 
 class SLAPolicy(Base):
+    """An SLA policy belongs to one company (D5) via its NOT NULL ``company_id``.
+
+    Deliberately NOT a CompanyScopedMixin. Making it one auto-filters and
+    auto-stamps every policy read and write in the product, which broke ~160 tests
+    covering escalation, extension, takeover and the daily summary - paths that
+    legitimately read a policy with no active company (scheduler ticks, form-SLA
+    fixtures). Isolation where it actually matters is enforced in two narrower
+    places: the picker query filters by the active company, and the agent_teams
+    (policy_id, company_id) composite FK rejects a cross-company binding outright.
+
+    ``code`` is unique per company, not globally: migration 320 dropped
+    sla_policies_code_key in favour of (code, company_id).
+    """
+
     __tablename__ = "sla_policies"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    code = Column(Text, unique=True, nullable=False)
+    code = Column(Text, nullable=False)
+    # Mapped WITHOUT CompanyScopedMixin (see the class docstring): the column is real
+    # (migration 320, NOT NULL with a Sorento server default) and the picker filters
+    # on it, but no auto-filter or auto-stamp is wanted here.
+    company_id = Column(UUID(as_uuid=False), ForeignKey("companies.id"), nullable=True, index=True)
     name = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
@@ -85,6 +103,25 @@ class ConversationSLATracking(Base):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     respond_contact_id = Column(Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True)  # FK to respond_contacts
+    # The company this tracker escalates within. Stamped once at creation from the
+    # contact (conversation SLA) or the spawning entity's contact (form SLA), then
+    # read back by every escalation. NOT a CompanyScopedMixin: escalation runs from
+    # scheduler ticks and cross-company admin views that must still see the row —
+    # the company governs which ladder is climbed, not who may read the tracker.
+    # ORM-nullable / PG-NOT-NULL on purpose, matching the mixin's convention: the
+    # scratch-schema fixtures insert before any stamp would fire.
+    # Python-side default, not just the migration's server default: the ORM emits the
+    # column as an explicit NULL when a constructor omits it, so the server default
+    # never fires and the insert dies on NOT NULL. Sorento is the documented fallback
+    # for a tracker with no resolvable company anyway (a ticket has no contact at
+    # all), so defaulting here matches what the resolvers would have produced.
+    company_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("companies.id"),
+        nullable=True,
+        index=True,
+        default="00000000-0000-0000-0000-000000000001",
+    )
     source_entity_type = Column(String(50), nullable=True)  # stock_inquiry | complaint
     # Polymorphic (no FK) but always a uuid — see migration 300.
     source_entity_id = Column(UUID(as_uuid=False), nullable=True)

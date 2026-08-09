@@ -37,8 +37,20 @@ def db():
 
 
 def _user(db, name) -> str:
+    from app.models.company import UserCompany
+
     uid = str(uuid.uuid4())
     db.add(User(id=uid, email=f"{name}@x.com", name=name, status="ACTIVE"))
+    db.flush()  # the grant below FKs to users.id
+    # Team membership now requires a grant for the team's company (AC-G1), so a user
+    # that can be added to a Sorento team must hold Sorento.
+    db.add(
+        UserCompany(
+            id=str(uuid.uuid4()),
+            user_id=uid,
+            company_id="00000000-0000-0000-0000-000000000001",
+        )
+    )
     db.commit()
     return uid
 

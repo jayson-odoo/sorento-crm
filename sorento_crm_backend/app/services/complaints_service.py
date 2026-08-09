@@ -895,7 +895,24 @@ class ComplaintService:
             isolated.close()
         return token_value
 
-    def _get_complaint_handler_user_ids(self) -> List[str]:
+    def _company_for_complaint(self, complaint_id: str) -> str:
+        """AC-E4: a complaint routes to its contact's company, else the default.
+
+        ``complaints`` has no company column of its own, so the contact is the only
+        signal - which is exactly why the contact is the designated source rather
+        than the ambient request scope.
+        """
+        from app.models.complaints import Complaint
+        from app.services.company_routing_service import company_for_contact
+
+        row = (
+            self.db.query(Complaint.contact_id)
+            .filter(Complaint.id == str(complaint_id))
+            .first()
+        )
+        return company_for_contact(self.db, contact_id=str(row[0]) if row and row[0] else None)
+
+    def _get_complaint_handler_user_ids(self, *, company_id: str) -> List[str]:
         """
         Members of the Tier 1 Complaint team under Access Agent code `complaint`.
 
@@ -912,12 +929,16 @@ class ComplaintService:
             log.debug("No access agent found for code=complaint")
             return []
 
-        team_id = agent_svc.get_team_id_by_tier(agent_id, 1, team_set_code="complaint")
+        team_id = agent_svc.get_team_id_by_tier(
+            agent_id, 1, team_set_code="complaint", company_id=company_id
+        )
         if not team_id:
-            team_id = agent_svc.get_team_id_by_code(agent_id, "complaint")
+            team_id = agent_svc.get_team_id_by_code(
+                agent_id, "complaint", company_id=company_id
+            )
         if not team_id:
             try:
-                team_id = agent_svc.get_team_id_by_tier(agent_id, 1)
+                team_id = agent_svc.get_team_id_by_tier(agent_id, 1, company_id=company_id)
             except HTTPException:
                 log.warning(
                     "Tier 1 for agent 'complaint' is ambiguous (multiple team sets). "
@@ -1120,7 +1141,9 @@ class ComplaintService:
         from app.services.notification_service import NotificationService
 
         logger = logging.getLogger(__name__)
-        user_ids = self._get_complaint_handler_user_ids()
+        user_ids = self._get_complaint_handler_user_ids(
+            company_id=self._company_for_complaint(complaint_id)
+        )
         if not user_ids:
             logger.warning(
                 "No team members found for agent 'complaint' Tier 1 under team set code 'complaint'. "
@@ -1260,7 +1283,9 @@ class ComplaintService:
                 tiers.append(t)
         return tuple(tiers) or (1, 2)
 
-    def _get_complaint_team_user_ids_tiers(self, tiers: tuple[int, ...] = (1, 2)) -> List[str]:
+    def _get_complaint_team_user_ids_tiers(
+        self, tiers: tuple[int, ...] = (1, 2), *, company_id: str
+    ) -> List[str]:
         """Union of members across the given tiers of agent ``complaint`` (set ``complaint``).
 
         Used for replacement-DO delivery notifications which fan out to both Tier 1
@@ -1276,7 +1301,9 @@ class ComplaintService:
         team_ids: list[str] = []
         for tier in tiers:
             try:
-                tid = agent_svc.get_team_id_by_tier(agent_id, tier, team_set_code="complaint")
+                tid = agent_svc.get_team_id_by_tier(
+                    agent_id, tier, team_set_code="complaint", company_id=company_id
+                )
             except HTTPException:
                 tid = None
             if tid:
@@ -1343,7 +1370,8 @@ class ComplaintService:
 
         logger = logging.getLogger(__name__)
         user_ids = self._get_complaint_team_user_ids_tiers(
-            self._complaint_do_delivered_notify_tiers()
+            self._complaint_do_delivered_notify_tiers(),
+            company_id=self._company_for_complaint(complaint_id),
         )
         if not user_ids:
             logger.warning(
@@ -1769,6 +1797,12 @@ class ComplaintService:
 
         complaint = self.get_complaint(complaint_id)
         update_data = complaint_data.model_dump(exclude_unset=True)
+        # Same handling as update_complaint: `product_lines` dumps to a list of plain
+        # dicts, and the setattr loop below would assign them straight onto the ORM
+        # relationship ("'dict' object has no attribute '_sa_instance_state'"). The
+        # edit page posts the whole complaint, lines included, so Update & Reply 500'd
+        # there for any complaint with a product row.
+        explicit_lines = update_data.pop("product_lines", None)
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else complaint.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else complaint.space_id
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
@@ -1793,6 +1827,10 @@ class ComplaintService:
 
         for key, value in update_data.items():
             setattr(complaint, key, value)
+        if explicit_lines is not None:
+            self._apply_explicit_product_lines(complaint, explicit_lines)
+        elif "product_code" in update_data:
+            self._populate_lines_from_legacy_csv(complaint)
         self.db.flush()
 
         complaint.technical_team_response = stored_body
