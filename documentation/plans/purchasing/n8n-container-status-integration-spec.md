@@ -350,3 +350,22 @@ end to end:
 
 A wrong `space_id` resolves to no contact at all and reports `contact_not_found`. If every field
 comes back denied, check the workspace before checking the grants.
+
+### What is NOT covered yet (status 2026-08-09)
+
+Case 2, a genuinely DENIED field, is proven only against synthetic envelopes. It has never been run
+end to end, and two apparent routes to it are not routes:
+
+- **A no-access contact does not substitute.** Tried with contact `457216562`: access control fires
+  at check-access, `get-results` never runs, so there is no envelope to inspect. Access denial and
+  FIELD denial are different mechanisms and only the second is under test here.
+- **Calling the CRM directly bypasses n8n's own credential.** The n8n side holds no CRM credential
+  outside the workflow, so it cannot make the staff-path call that produces a denied envelope.
+
+CRM-side, that call does produce one: `crm_incoming_stock_list` with an ETA window and NO
+`contact_id` takes the staff path, is judged on `procurement.packing_lists.view_clearance`, and a
+principal without it gets all 20 gated fields in `denied[]` while `estimated_arrival_date` still
+ships allowed - a real mixed envelope. Reaching it from n8n needs either that credential or a
+partially-granted contact, and creating one is a production write.
+
+Do not read "we tried a contact with no access" as coverage of field-level denial.
