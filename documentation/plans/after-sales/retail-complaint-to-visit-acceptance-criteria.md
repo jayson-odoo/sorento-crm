@@ -270,7 +270,10 @@ was a real hole in how this repo builds its test schema.
   `GET /policies/{id}`, and `assessment_count` sits on the term row. Reason: AC-P13 and
   AC-P8a both require a count on a delete confirmation, and the delete is offered from the
   grid - a count that only exists on the detail response cannot reach the dialog that needs
-  it. The delete endpoints stay `void`; the counts are read BEFORE the delete.
+  it. The counts are read BEFORE the delete. The delete endpoints answer **200 with a
+  `{"message": ...}` body**, per `complaint_root_causes.py`; "void" describes the FE, which
+  ignores the body, not the wire. A genuinely empty 200 is a JSON parse error in some HTTP
+  clients.
 
 - **AC-P17 [BE]** The Kind row carries explicit `has_no_rules` / `has_no_terms` booleans,
   not only the two counts. Computing "zero" in a grid cell makes it visible in exactly one
@@ -332,6 +335,25 @@ was a real hole in how this repo builds its test schema.
   negative control - the gate author's first role-grant detector asked for
   `"INSERT INTO user_role_permissions" in source.upper()`, which can never match because
   `.upper()` uppercases the table name too, and it was caught only by its own control.
+
+- **AC-P26 [BE][FE]** There is **no undo for Supersede**, and the recovery path from a
+  mis-dated one is prevention plus two supported steps, not a third endpoint. The gate
+  author found that AC-P21's refusal leaves no way back: reopening a closed window means
+  PATCHing `effective_to` to null, which AC-P22 then refuses while a successor exists.
+  That refusal is CORRECT - the successor really does overlap - so the fix is not to relax
+  it. Ruled instead:
+  - **Prevention.** The Supersede dialog states the resulting window for BOTH policies
+    before it is confirmed ("Version 15 closes 2026-08-31; Version 16 runs from
+    2026-09-01"). A mis-dated supersede is a dialog that did not show its own arithmetic.
+  - **Recovery is two steps and both refusals must NAME them.** Deleting the successor is
+    already supported and loses nothing (a freshly superseded policy has no Terms yet);
+    reopening the incumbent is then unrefused. So the "cannot supersede a closed policy"
+    error names the version that closed it, and the "would overlap" error on reopening
+    names the successor and says to delete it first.
+  - **Why not an undo endpoint.** Reversing a supersede exactly needs the predecessor link
+    and the incumbent's PREVIOUS `effective_to` stored on the row, which is schema growth
+    carried permanently to reverse a mistake that is two supported steps away - and a
+    stored "previous value" column is a second copy of a fact that drifts from the first.
 
 ## Phase C - Propose a date, and let the consumer answer (S8)
 

@@ -69,7 +69,7 @@ empty}`; everything else is a bare array.
 ```
 GET    /api/v1/warranty-management/policies                      DataGrid params -> ListResponse[PolicyResponse]
 POST   /api/v1/warranty-management/policies                      PolicyCreate
-GET    /api/v1/warranty-management/policies/{id}                 PolicyResponse
+GET    /api/v1/warranty-management/policies/{id}                 PolicyResponse (same schema as the list row)
 PATCH  /api/v1/warranty-management/policies/{id}                 PolicyUpdate; overlap-guarded (AC-P22)
 DELETE /api/v1/warranty-management/policies/{id}                 hard; cascades terms (AC-P13)
 POST   /api/v1/warranty-management/policies/{id}/supersede       PolicyCreate -> {closed, created} (AC-P2a, P21)
@@ -99,6 +99,13 @@ GET    /api/v1/warranty-management/defect-types                  {id, label}[] (
 and `has_no_terms` (AC-P16, AC-P17). `defect-types` exists because
 `covered_defect_type_ids` holds `lookup_options.id` values and the existing lookup endpoint
 returns `value` + `label` and never the id.
+
+Every id-bearing relation is ALSO returned resolved, because the repo forbids a UUID on
+screen: `PolicyResponse.source_attachment_name`, `TermResponse.kind_code` / `kind_name` /
+`covered_defect_type_labels`, `RuleResponse.kind_code` / `kind_name`. Two shapes the
+original block left open and Phase 1 pinned: `?group_by=kind` answers
+`{groups: [{kind: {id,code,name}, terms: TermResponse[]}], total}`, and
+`deciding_rule.id` is NULLABLE - an unsaved candidate rule (AC-P6b) has no id yet.
 
 **Tester request / response**, the one shape worth writing out:
 
