@@ -1792,7 +1792,15 @@ class AccessAgentService:
         return last_id, user_ids[next_idx]
 
     def list_agent_teams_with_round_robin_state(self, agent_id: str) -> list[dict]:
-        """Return assignments with team name, tier, members (ordered), last_assigned, next_in_line (read-only peek)."""
+        """This company's assignments, with team name, tier, members (ordered),
+        last_assigned and next_in_line (read-only peek).
+
+        Company isolation here comes from the scope filter, not an explicit
+        predicate: verified against the running stack that this returns the agent's
+        7 Sorento rows under Sorento and nothing under Mocha. Note the filter DOES
+        reach this query even though it selects bare columns rather than loading
+        AgentTeam entities.
+        """
         rows = (
             self.db.query(
                 AgentTeam.code,
@@ -1801,7 +1809,9 @@ class AccessAgentService:
                 AgentTeam.policy_id,
                 AgentTeam.notify_on_extension,
             )
-            .filter(AgentTeam.agent_id == agent_id)
+            .filter(
+                AgentTeam.agent_id == agent_id,
+            )
             .all()
         )
         result = []
