@@ -11,6 +11,7 @@ this system.
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -22,7 +23,9 @@ from app.database import get_db
 from app.dependencies import require_permission
 from app.models.scm import ContainerSize, LoadingPlan
 from app.services.scm import (
+    allocation_suggestion_service,
     loading_plan_service,
+    packing_list_service,
     supplier_inventory_service,
     supplier_notice_service,
 )
@@ -424,3 +427,106 @@ def supplier_notice_document(
 ):
     """A short-lived link to the document, so Ms Tee can send it by hand too (AC-F3)."""
     return supplier_notice_service.document_url(db, notice_id)
+
+
+# --------------------------------------------------------------------------- #
+# packing list and SPO allocation (S9)
+# --------------------------------------------------------------------------- #
+
+
+class AllocationSplit(BaseModel):
+    po_line_id: Optional[str] = Field(
+        None, description="Which Supply PO line this draws down. Null when it draws down none."
+    )
+    warehouse_id: str = Field(..., description="Where the quantity lands")
+    qty: float = Field(..., gt=0)
+
+
+class AllocationDecision(BaseModel):
+    shipment_line_id: str
+    splits: list[AllocationSplit] = Field(
+        ..., min_length=1, description="One or more, and they must sum to what shipped"
+    )
+
+
+class AllocationApproval(BaseModel):
+    decisions: list[AllocationDecision] = Field(..., min_length=1)
+
+
+@router.post("/packing-lists/preview")
+async def preview_packing_list(
+    file: UploadFile = File(..., description="The pre-load list or packing list"),
+    _user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Every container block the file holds, and what each would create. Writes nothing."""
+    return packing_list_service.preview(
+        db, await read_upload(file), source_ref=file.filename
+    )
+
+
+@router.post("/packing-lists/apply")
+async def apply_packing_list(
+    file: UploadFile = File(..., description="The same file the preview was taken from"),
+    supplier_id: Optional[str] = Form(None),
+    shipment_date: Optional[str] = Form(None),
+    validate_only: bool = Query(
+        False,
+        description="Test the file and write nothing. Returns {valid, errors, warnings, summary}.",
+    ),
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """One inbound shipment per container block. Re-uploading the same file updates in place."""
+    data = await read_upload(file)
+    if validate_only:
+        return packing_list_service.validate(db, data, source_ref=file.filename)
+
+    parsed_date = None
+    if shipment_date:
+        try:
+            parsed_date = date.fromisoformat(shipment_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="shipment_date must be YYYY-MM-DD",
+            )
+
+    out = packing_list_service.apply(
+        db,
+        data,
+        supplier_id=supplier_id,
+        shipment_date=parsed_date,
+        source_ref=file.filename,
+        actor_id=current_user.get("id"),
+    )
+    db.commit()
+    return out
+
+
+@router.get("/inbound-shipments/{shipment_id}/allocation-suggestion")
+def allocation_suggestion(
+    shipment_id: str,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """Per shipment line, the proposed Supply PO line and location, with its alternatives."""
+    return allocation_suggestion_service.suggest(db, shipment_id)
+
+
+@router.post("/inbound-shipments/{shipment_id}/allocations")
+def approve_allocations(
+    shipment_id: str,
+    body: AllocationApproval,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Write the allocations and advance the purchase orders, in one action (AC-G6)."""
+    out = allocation_suggestion_service.approve(
+        db,
+        shipment_id,
+        [d.model_dump() for d in body.decisions],
+        actor_id=current_user.get("id"),
+    )
+    db.commit()
+    return out
