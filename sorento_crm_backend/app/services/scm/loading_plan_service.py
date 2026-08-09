@@ -44,6 +44,7 @@ from app.services.scm.cash_ranking import (
     allocate_capacity,
     rank_score,
 )
+from app.services.scm import priority
 
 #: Millimetres cubed in a cubic metre - product dimensions are held in mm.
 _MM3_PER_M3 = 1_000_000_000.0
@@ -183,102 +184,14 @@ def _supplier_stock(db: Session, supplier_id: str) -> dict[str, dict]:
     return out
 
 
-def _active_policy(db: Session) -> Optional[PriorityPolicy]:
-    return (
-        db.query(PriorityPolicy)
-        .filter(PriorityPolicy.is_active.is_(True))
-        .order_by(PriorityPolicy.created_at)
-        .first()
-    )
-
-
-def _demand_class_by_po(db: Session, po_numbers: set[str]) -> dict[str, str]:
-    """The demand class of the sales orders each purchase order is feeding.
-
-    Through `scm.order_link_claim`, which is where the SO<->PO pairing lives. A purchase
-    order nobody has claimed against has no class, and the factor is then absent rather than
-    guessed - the graceful-degrade rule the ranking already follows.
-    """
-    if not po_numbers:
-        return {}
-    from app.services.company_scope_sql import company_sql_predicate
-
-    predicate, params = company_sql_predicate(db, "c.company_id", param_prefix="p")
-    rows = db.execute(
-        text(
-            f"""
-            SELECT c.po_number, so.demand_class, count(*) AS n
-              FROM scm.order_link_claim c
-              JOIN sales_orders so ON so.so_number = c.so_number
-             WHERE c.po_number = ANY(:nums)
-               AND so.demand_class IS NOT NULL
-               AND {predicate or 'true'}
-             GROUP BY c.po_number, so.demand_class
-             ORDER BY c.po_number, n DESC
-            """
-        ),
-        {"nums": list(po_numbers), **params},
-    ).mappings().all()
-    out: dict[str, str] = {}
-    for r in rows:
-        out.setdefault(str(r["po_number"]), str(r["demand_class"]))
-    return out
-
-
-# --------------------------------------------------------------------------- #
-# ranking
-# --------------------------------------------------------------------------- #
-
-
-def _sequence_values(candidates: list[dict]) -> dict[str, float]:
-    """1.0 for the oldest purchase-order document, sliding to 0.0 for the newest.
-
-    Document SEQUENCE, not date: two orders raised the same day still have an order, and it
-    is the one Ms Tee reads off the list. Ties share a value, so a same-day pair is not split
-    by an accident of row order.
-    """
-    ordered: list[str] = []
-    for c in candidates:
-        key = str(c.get("po_number") or "")
-        if key not in ordered:
-            ordered.append(key)
-    n = len(ordered)
-    if n <= 1:
-        return {k: 1.0 for k in ordered}
-    return {k: 1.0 - (i / (n - 1)) for i, k in enumerate(ordered)}
-
-
-def _date_values(candidates: list[dict], key: str) -> dict[str, Optional[float]]:
-    """Sooner is higher, over the span present in this candidate set."""
-    dates = [c[key] for c in candidates if c.get(key)]
-    if not dates:
-        return {}
-    lo, hi = min(dates), max(dates)
-    span = (hi - lo).days or 1
-    return {
-        str(c["po_line_id"]): (1.0 - ((c[key] - lo).days / span)) if c.get(key) else None
-        for c in candidates
-    }
-
-
-def _factors_for(
-    weights: dict[str, float],
-    *,
-    sequence: Optional[float],
-    demand_weight: Optional[float],
-    need_by: Optional[float],
-    age: Optional[float],
-) -> list[Factor]:
-    values = {
-        "po_document_sequence": sequence,
-        "demand_class": demand_weight,
-        "need_by_date": need_by,
-        "document_age": age,
-    }
-    return [
-        Factor(key=k, weight=float(weights.get(k, 0.0) or 0.0), value=v, present=v is not None)
-        for k, v in values.items()
-    ]
+# Ranking is the Fulfilment Priority policy, and it lives in `scm/priority.py` because the SPO
+# allocation suggestion ranks the same purchase-order lines by the same policy (AC-H5). These
+# names are kept as thin aliases so the code below still reads in the plan's own vocabulary.
+_active_policy = priority.active_policy
+_demand_class_by_po = priority.demand_class_by_po
+_sequence_values = priority.sequence_values
+_date_values = priority.date_values
+_factors_for = priority.factors_for
 
 
 # --------------------------------------------------------------------------- #
