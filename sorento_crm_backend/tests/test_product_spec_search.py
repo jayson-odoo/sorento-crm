@@ -1107,3 +1107,78 @@ def test_a_two_tone_product_answers_for_either_finish():
     # A scalar keeps behaving exactly as it did.
     assert _states("chrome", "chrome")
     assert not _states("chrome", "black")
+
+
+def test_a_labelled_size_is_read_as_the_dimension_it_names(db):
+    """"L750 x W165 x H247mm" is how the flyer prints a size, and how a salesperson
+    quoting a card says it. The letter states which dimension it is, so reading it is
+    not the guess the binder deliberately refuses to make - it is the statement.
+
+    188 flyer cards use this form and none of them reached a dimension key.
+    """
+    seed_spec_registry(db)
+    resolved = {
+        e["key"]: e["value"]
+        for e in resolve_terms_to_specs(db, ["Grab Bar. L750 x W165 x H247mm. ABS"])
+    }
+
+    assert resolved.get("dim_length") == 750.0
+    assert resolved.get("dim_width") == 165.0
+    assert resolved.get("dim_height") == 247.0
+
+
+def test_a_millimetre_never_becomes_a_count(db):
+    """"grab bar 750mm" was a search for a bar with 750 bars.
+
+    `bar_count` has no unit, so it counts things, and "bar" sat next to the number. The
+    false bind did not merely add noise - a count mismatch PENALISES, so every real grab
+    bar was pushed down for not having 750 of them.
+    """
+    seed_spec_registry(db)
+    resolved = {
+        e["key"]: e["value"] for e in resolve_terms_to_specs(db, ["grab bar 750mm"])
+    }
+
+    assert "bar_count" not in resolved
+    assert resolved.get("product_type") == "grab_bar"
+
+    # A real count still binds.
+    counted = {
+        e["key"]: e["value"] for e in resolve_terms_to_specs(db, ["towel bar 2 bars"])
+    }
+    assert counted.get("bar_count") == 2.0
+
+
+def test_a_number_already_spoken_for_is_not_also_a_measurement(db):
+    """"S/Steel 304" states a grade. 304 is not then free to be a length.
+
+    Found while fixing the case above it: once "Length 23" was rejected as too small to
+    be millimetres, 304 was the next number near the word "length", so the steel grade
+    silently became the towel bar's length.
+    """
+    seed_spec_registry(db)
+    resolved = {
+        e["key"]: e["value"]
+        for e in resolve_terms_to_specs(db, ["Towel Bar. Length 23 . S/Steel 304. Matt Black"])
+    }
+
+    assert resolved.get("steel_grade") == "304"
+    assert "dim_length" not in resolved, "the grade was read as a measurement"
+
+
+def test_a_size_with_no_unit_is_not_assumed_to_be_millimetres(db):
+    """The flyer prints towel bars as "Length 23", meaning inches.
+
+    Read as millimetres it asks for a 23mm towel bar, which penalises every real one.
+    Limited to the three envelope dimensions on purpose: an 8mm thickness is ordinary.
+    """
+    seed_spec_registry(db)
+
+    bare = {e["key"]: e["value"] for e in resolve_terms_to_specs(db, ["towel bar length 23"])}
+    assert "dim_length" not in bare
+
+    stated = {e["key"]: e["value"] for e in resolve_terms_to_specs(db, ["basin length 500mm"])}
+    assert stated.get("dim_length") == 500.0
+
+    thin = {e["key"]: e["value"] for e in resolve_terms_to_specs(db, ["thickness 8"])}
+    assert thin.get("thickness") == 8.0, "a small measurement that is not an envelope is fine"

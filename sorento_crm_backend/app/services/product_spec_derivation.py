@@ -187,6 +187,9 @@ EXTRA_TYPE_TOKENS: list[tuple[str, str]] = [
     ("DRAIN PIPE", "drain_pipe"),
     ("STOP COCK", "stop_cock"),
     ("STOPCOCK", "stop_cock"),
+    ("SHOWER SEAT", "shower_seat"),
+    ("HANDRAIL", "handrail"),
+    ("HAND RAIL", "handrail"),
     ("BOTTLE TRAP", "bottle_trap"),
     ("CABINET HINGES", "hinge"),
     ("HINGES", "hinge"),
@@ -1117,7 +1120,7 @@ def _apply_scope(out: "DerivedSpec", applies_when: dict[str, dict]) -> None:
 # which kept their old values and reported a successful run. The failure is invisible:
 # the job says "skipped", which is exactly what it says when there is genuinely nothing
 # to do.
-DERIVATION_VERSION = "25"
+DERIVATION_VERSION = "26"
 
 
 def _input_hash(

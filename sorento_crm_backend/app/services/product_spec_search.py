@@ -194,7 +194,43 @@ def _extract_quantities(haystack: str) -> list[tuple[float, int, int, str]]:
     return found
 
 
-def _resolve_quantities(haystack: str, rows) -> dict[str, float]:
+# The flyer states a size as "L750 x W165 x H247mm" and a salesperson quoting a card
+# says the same thing. The letter IS the statement of which dimension it is, so reading
+# it is not the guess the binder below refuses to make.
+_LABELLED_DIM_RE = re.compile(r"(?<![A-Za-z0-9])([LWHlwh])\s*(\d+(?:\.\d+)?)\s*(?:mm)?\b")
+_LABEL_TO_KEY = {"l": "dim_length", "w": "dim_width", "h": "dim_height"}
+
+# The largest number that can still be a COUNT. A key with no unit counts things -
+# towel bars, bowls, ways - and "grab bar 750mm" was binding 750 to bar_count because
+# the word "bar" sat next to it. A product with 750 bars does not exist, and the false
+# bind then PENALISED every real grab bar for not having 750 of them.
+_MAX_PLAUSIBLE_COUNT = 12
+
+# The smallest an OVERALL product dimension can plausibly be, in millimetres. The flyer
+# prints towel bars as "Length 23", meaning inches, and a bare number is read as
+# millimetres - so the card's own words asked for a 23mm towel bar and penalised every
+# real one. Deliberately limited to the three envelope dimensions: an 8mm thickness or a
+# 32mm trap is a perfectly ordinary measurement.
+_MIN_PLAUSIBLE_ENVELOPE_MM = 50
+_ENVELOPE_KEYS = {"dim_length", "dim_width", "dim_height"}
+
+
+# Did the customer say what unit they meant?
+_HAS_UNIT_RE = re.compile(r"(mm|cm|m|inch|inches|in|\"|”|'')\s*$", re.IGNORECASE)
+
+
+def _labelled_dimensions(haystack: str) -> dict[str, float]:
+    """Sizes the phrase labels for itself: L750 x W165 x H247mm."""
+    found: dict[str, float] = {}
+    for match in _LABELLED_DIM_RE.finditer(haystack):
+        key = _LABEL_TO_KEY[match.group(1).lower()]
+        found.setdefault(key, float(match.group(2)))
+    return found
+
+
+def _resolve_quantities(
+    haystack: str, rows, consumed: list[tuple[int, int]] | None = None
+) -> dict[str, float]:
     """Bind numbers in the phrase onto the numeric key whose own word sits nearest.
 
     Nothing here guesses. A quantity is only claimed when a key's synonym is within
@@ -204,7 +240,18 @@ def _resolve_quantities(haystack: str, rows) -> dict[str, float]:
     is exactly the kind of guess that puts a wrong product in front of a customer.
     """
     quantities = _extract_quantities(haystack)
-    if not quantities:
+    # Numbers another spec already claimed in words. "S/Steel 304" states a steel grade,
+    # and once the towel bar's own "Length 23" was rejected as too small to be
+    # millimetres, 304 was the next number near the word "length" - so the grade became
+    # the length. A number can only mean one thing.
+    if consumed:
+        quantities = [
+            q
+            for q in quantities
+            if not any(start <= q[1] and q[2] <= end for start, end in consumed)
+        ]
+    labelled = _labelled_dimensions(haystack)
+    if not quantities and not labelled:
         return {}
 
     numeric_keys = [r for r in rows if r.data_type == "numeric"]
@@ -220,11 +267,30 @@ def _resolve_quantities(haystack: str, rows) -> dict[str, float]:
                     # Distance from the word to the number, in either direction.
                     distance = start - anchor.end() if start >= anchor.end() else anchor.start() - end
                     if 0 <= distance <= _QUANTITY_BINDING_WINDOW:
+                        # A key with no unit counts things. 750 is not a count of
+                        # anything, and binding it anyway turned "grab bar 750mm" into
+                        # a search for a bar with 750 bars.
+                        if row.unit is None and (
+                            value > _MAX_PLAUSIBLE_COUNT or value != int(value)
+                        ):
+                            continue
+                        # Stated without a unit and too small to be millimetres: the
+                        # number is in some other unit and we do not know which.
+                        if (
+                            row.spec_key in _ENVELOPE_KEYS
+                            and value < _MIN_PLAUSIBLE_ENVELOPE_MM
+                            and not _HAS_UNIT_RE.search(_evidence)
+                        ):
+                            continue
                         current = claimed.get(row.spec_key)
                         if current is None or distance < current[0]:
                             claimed[row.spec_key] = (distance, value)
 
-    return {key: value for key, (_, value) in claimed.items()}
+    resolved = {key: value for key, (_, value) in claimed.items()}
+    # A size the phrase labelled for itself wins: "L750" says length outright, where the
+    # binder above only ever inferred it from a nearby word.
+    resolved.update(labelled)
+    return resolved
 
 
 def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
@@ -246,6 +312,9 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
     rows = active_registry(db)
 
     candidates: list[tuple[int, str, str]] = []
+    # Where a spec was stated in words, so a number inside those words is not also
+    # free to be read as a measurement.
+    spoken_spans: dict[tuple[str, str], list[tuple[int, int]]] = {}
     for row in rows:
         for value, synonyms in merged_synonyms(row).items():
             # `_self` names the key, not a value. Reading it as one would resolve
@@ -256,8 +325,12 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
                 phrase = str(synonym).lower().strip()
                 if not phrase:
                     continue
-                if re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", haystack):
+                hits = list(re.finditer(rf"(?<!\w){re.escape(phrase)}(?!\w)", haystack))
+                if hits:
                     candidates.append((len(phrase), row.spec_key, value))
+                    spoken_spans.setdefault((row.spec_key, value), []).extend(
+                        (m.start(), m.end()) for m in hits
+                    )
 
     # One value per key: the longest phrase that matched wins, so a specific reading
     # beats a generic one that happens to be a substring of the same words.
@@ -286,7 +359,12 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
     # direct statement, a nearby number is an inference about which measurement was
     # meant.
     already = {entry["key"] for entry in resolved}
-    for key, value in _resolve_quantities(haystack, rows).items():
+    consumed = [
+        span
+        for key, (_, value) in best.items()
+        for span in spoken_spans.get((key, value), [])
+    ]
+    for key, value in _resolve_quantities(haystack, rows, consumed).items():
         if key not in already:
             resolved.append({"key": key, "value": value})
 
