@@ -220,7 +220,17 @@ Three things to know, each of which has already caused a wrong answer:
    so it is returned ONLY for a contact granted it (User Management → contact → Document types).
    Omit them and the response is the 9-file dealer baseline - correct, and not what the office
    asked for.
-3. **URLs are unsigned by design.** `attachments[].url` is the CDN address
+3. **The type filter is SINGULAR: `attachment_type_id`, not `attachment_type_ids`.** There is no
+   plural form and no array. An unknown key is dropped, which leaves the call with no narrower at
+   all, which trips (1) - an empty page with no backend call, narrated as "there is no such
+   document". Tell the two apart by `fallback_used`: a real backend call carries it, the
+   short-circuit does not. `attachment_type_code: "Container Status"` is the by-name equivalent.
+4. **The type filter alone is not enough.** `visible_type_ids` widens the baseline to
+   (is_direct_access types) UNION (types granted to this contact). Container Status is NOT
+   is_direct_access, so an ungranted contact gets 0 rows even with the correct parameter. An
+   explicit `attachment_ids` is a different path and bypasses the type gate, which is why
+   "container status for TCNU1851000" worked while "send me the container status list" did not.
+5. **URLs are unsigned by design.** `attachments[].url` is the CDN address
    (`https://<cdn>/import-sources/<uuid>/Container Status 2026.xlsx`); n8n signs on the way out.
    Pass `resolve_signed_urls=true` if a ready-to-open link is wanted instead.
 
@@ -266,8 +276,11 @@ extend the probe to match it - the same shape `contact_access_types.keywords` al
 "customer"/"homeowner" → `end_user`. Until then n8n must send the literal `"Container Status"`,
 which means the routing words stay hardcoded in the parser prompt - the thing D22 set out to remove.
 
-**Not blocking n8n** as of 2026-08-09: the clone's disallowed-entity-gate disambiguates on
-`canonical_code`. Their finding raises the bar for the eventual CRM fix, though: for a granted
+**Still blocking, on the main path** (corrected 2026-08-09 after a production run). The n8n
+disallowed-entity-gate does disambiguate on `canonical_code`, so the narrowing half works - but
+narrowing to the right TYPE is worthless while a type-filtered query cannot be issued under a name
+the tool accepts (see the note below on `attachment_type_id`). "Container status list" is what a
+person actually types, because "list" is in the document's name. Their finding raises the bar for the eventual CRM fix, though: for a granted
 contact, "container status list" already matches THREE types - `Packing List` and `Stock_List` on
 the word "list", `container_status` on the word "status". So a `keywords` column must **disambiguate
 a multi-way hit**, not merely add aliases; a probe that returns three type ids is a wrong answer
