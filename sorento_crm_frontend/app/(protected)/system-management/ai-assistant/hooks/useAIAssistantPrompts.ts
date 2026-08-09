@@ -7,9 +7,11 @@ import {
   getPromptVersions,
   listPromptKeys,
   saveVersion,
+  setAgentModel,
   setLabel,
   type DryRunPayload,
   type SaveVersionPayload,
+  type SetAgentModelPayload,
   type SetLabelPayload,
 } from '../services/aiPromptsService';
 
@@ -54,6 +56,17 @@ export function useSetLabel(name: string) {
     mutationFn: (payload: SetLabelPayload) => setLabel(name, payload),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: versionsKey(name) });
+      void qc.invalidateQueries({ queryKey: KEYS });
+    },
+  });
+}
+
+/** Point one agent at one LLM. Invalidates the key list so the table reflects it. */
+export function useSetAgentModel(name: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: SetAgentModelPayload) => setAgentModel(name, payload),
+    onSuccess: () => {
       void qc.invalidateQueries({ queryKey: KEYS });
     },
   });

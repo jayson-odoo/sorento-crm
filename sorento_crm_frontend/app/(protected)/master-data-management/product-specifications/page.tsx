@@ -14,9 +14,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
-import ProductSpecsList from './components/ProductSpecsList';
-import SpecRegistryTable from './components/SpecRegistryTable';
-import SpecSearchPreview from './components/SpecSearchPreview';
+import SpecWorkbench from './components/SpecWorkbench';
 
 export const metadata: Metadata = {
   title: 'Product Specifications',
@@ -47,11 +45,7 @@ export default async function ProductSpecificationsPage() {
       </Container>
 
       <Container>
-        <div className="flex flex-col gap-5">
-          <SpecSearchPreview />
-          <SpecRegistryTable />
-          <ProductSpecsList />
-        </div>
+        <SpecWorkbench />
       </Container>
     </>
   );

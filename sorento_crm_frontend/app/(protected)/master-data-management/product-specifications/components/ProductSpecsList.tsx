@@ -161,18 +161,13 @@ export default function ProductSpecsList() {
                         <td className="py-2 pr-4 whitespace-nowrap">{row.brand_hint ?? '-'}</td>
                         <td className="py-2 pr-4 tabular-nums">
                           {row.spec_count}
-                          {row.is_accessory && (
-                            <Badge variant="secondary" size="sm" className="ml-2">
-                              Accessory
-                            </Badge>
-                          )}
                           {row.is_discontinued && (
-                            <Badge variant="warning" size="sm" className="ml-2">
+                            <Badge variant="warning" size="sm" className="ml-2" appearance="light" shape="circle">
                               Discontinued
                             </Badge>
                           )}
                           {row.open_exceptions > 0 && (
-                            <Badge variant="destructive" size="sm" className="ml-2">
+                            <Badge variant="destructive" size="sm" className="ml-2" appearance="light" shape="circle">
                               {row.open_exceptions} to check
                             </Badge>
                           )}

@@ -29,6 +29,8 @@ export const MOCK_PROMPT_KEYS: PromptKeySummary[] = [
     latest_version: 1,
     updated_at: NOW,
     updated_by_name: 'System (seed)',
+    provider: null,
+    model: null,
   },
   {
     name: 'router',
@@ -41,6 +43,8 @@ export const MOCK_PROMPT_KEYS: PromptKeySummary[] = [
     latest_version: 2,
     updated_at: NOW,
     updated_by_name: 'Jayson',
+    provider: null,
+    model: null,
   },
   {
     name: 'agent_system',
@@ -53,6 +57,8 @@ export const MOCK_PROMPT_KEYS: PromptKeySummary[] = [
     latest_version: 1,
     updated_at: NOW,
     updated_by_name: 'System (seed)',
+    provider: null,
+    model: null,
   },
   {
     name: 'synthesizer',
@@ -65,6 +71,8 @@ export const MOCK_PROMPT_KEYS: PromptKeySummary[] = [
     latest_version: 1,
     updated_at: NOW,
     updated_by_name: 'System (seed)',
+    provider: null,
+    model: null,
   },
   {
     name: 'planner',
@@ -77,6 +85,8 @@ export const MOCK_PROMPT_KEYS: PromptKeySummary[] = [
     latest_version: 1,
     updated_at: NOW,
     updated_by_name: 'System (seed)',
+    provider: null,
+    model: null,
   },
   {
     name: 'semantic_compressor',
@@ -89,6 +99,8 @@ export const MOCK_PROMPT_KEYS: PromptKeySummary[] = [
     latest_version: 1,
     updated_at: NOW,
     updated_by_name: 'System (seed)',
+    provider: null,
+    model: null,
   },
   {
     name: 'validator',
@@ -101,6 +113,8 @@ export const MOCK_PROMPT_KEYS: PromptKeySummary[] = [
     latest_version: 1,
     updated_at: NOW,
     updated_by_name: 'System (seed)',
+    provider: null,
+    model: null,
   },
   {
     name: 'clarifier',
@@ -113,6 +127,8 @@ export const MOCK_PROMPT_KEYS: PromptKeySummary[] = [
     latest_version: 1,
     updated_at: NOW,
     updated_by_name: 'System (seed)',
+    provider: null,
+    model: null,
   },
   {
     name: 'judge',
@@ -125,6 +141,8 @@ export const MOCK_PROMPT_KEYS: PromptKeySummary[] = [
     latest_version: 1,
     updated_at: NOW,
     updated_by_name: 'System (seed)',
+    provider: null,
+    model: null,
   },
 ];
 
