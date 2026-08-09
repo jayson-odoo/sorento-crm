@@ -52,11 +52,14 @@ def _fixtures(db):
     misc = ProductCategory(id=str(uuid.uuid4()), category_code="SRTPART", category_name="SRTPART")
     uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code="ZZT-PCS", uom_name="Piece")
     brand = Brand(id=str(uuid.uuid4()), brand_code="ZZT-SRT", brand_name="Sorento")
+    # A brand the category prefix cannot express. 1,934 live rows sit in a SRT-*/CB-*
+    # category while carrying a different brand_id, so the two really do disagree.
+    other = Brand(id=str(uuid.uuid4()), brand_code="ZZT-OTH", brand_name="OTHERS")
     # A second company, because product_code is unique PER COMPANY: the live catalog
     # holds every model twice, once per company, which is exactly what the fan-out
     # test needs to exercise.
     second = Company(id=str(uuid.uuid4()), name="ZZT Second Co", code="ZZT2")
-    db.add_all([cat, cat_wb, misc, uom, brand, second])
+    db.add_all([cat, cat_wb, misc, uom, brand, other, second])
     db.flush()
     backfill_category_signals(db)
     _REFS.update(
@@ -66,6 +69,7 @@ def _fixtures(db):
             "misc": misc.id,
             "uom": uom.id,
             "brand": brand.id,
+            "brand_other": other.id,
             "company2": second.id,
         }
     )
@@ -81,6 +85,7 @@ def _product(
     width=None,
     height=None,
     company_id=None,
+    brand=None,
 ) -> Product:
     row = Product(
         id=str(uuid.uuid4()),
@@ -89,6 +94,7 @@ def _product(
         description=description,
         category_id=_REFS[category or "cat"],
         base_uom_id=_REFS["uom"],
+        brand_id=_REFS[brand] if brand else None,
         list_price=Decimal("1.00"),
         dimensions_length=length,
         dimensions_width=width,
@@ -111,6 +117,16 @@ def _specs(db, code: str) -> dict:
     return row.values if row else {}
 
 
+def _provenance(db, code: str) -> dict:
+    row = (
+        db.query(ProductSpecifications)
+        .join(Product, Product.id == ProductSpecifications.product_id)
+        .filter(Product.product_code == code)
+        .first()
+    )
+    return row.provenance if row else {}
+
+
 def _value(db, code: str, key: str):
     entry = _specs(db, code).get(key)
     return entry.get("value") if entry else None
@@ -126,12 +142,107 @@ def _exceptions(db, code: str) -> set[str]:
 # --------------------------------------------------------------------------- #
 # class and brand, straight off the category (AC-T0c-03)
 # --------------------------------------------------------------------------- #
-def test_class_and_brand_come_from_the_category(db):
-    _product(db, "ZZT-KS-1", "SORENTO S/STEEL KITCHEN SINK")
+def test_the_description_names_its_own_class_and_outranks_the_category(db):
+    """`SORENTO SQUATTING PAN` in an SRT-WC category is not a water closet.
+
+    The category is the business's filing, not a description of the product, and it is
+    wrong in both directions - 11 squatting pans and 6 urinals sit under Water Closet,
+    120 flexible hoses under Tap. English puts the head noun last, so the description
+    already carries the answer.
+    """
+    _product(db, "ZZT-SP-1", "SORENTO SQUATTING PAN ZZT-SP-1", brand="brand")
+    derive_for_code(db, "ZZT-SP-1")
+
+    assert _value(db, "ZZT-SP-1", "class") == "Squatting Pan"
+    assert _provenance(db, "ZZT-SP-1")["class"]["evidence"] == "SQUATTING PAN"
+
+
+def test_only_a_trailing_noun_names_the_class(db):
+    # An earlier class word is a modifier saying what the product is FOR. Reading it as
+    # the class made `URINAL FLUSH VALVE` a urinal and `BASIN MIXER` a wash basin.
+    _product(db, "ZZT-UFV-1", "CABANA URINAL FLUSH VALVE ZZT-UFV-1", brand="brand")
+    derive_for_code(db, "ZZT-UFV-1")
+
+    assert _value(db, "ZZT-UFV-1", "class") == "Kitchen Sink", "falls back to the category"
+
+
+def test_what_a_product_comes_with_does_not_name_its_class(db):
+    # 61 taps were reclassified by their accessories before this cut existed.
+    _product(db, "ZZT-KT-1", "SORENTO KITCHEN MIXER TAP WITH PULL OUT SHOWER ZZT-KT-1", brand="brand")
+    derive_for_code(db, "ZZT-KT-1")
+
+    assert _value(db, "ZZT-KT-1", "class") == "Tap"
+
+
+def test_class_comes_from_the_category_and_brand_from_the_product(db):
+    _product(db, "ZZT-KS-1", "SORENTO S/STEEL KITCHEN SINK", brand="brand")
     derive_for_code(db, "ZZT-KS-1")
 
     assert _value(db, "ZZT-KS-1", "class") == "Kitchen Sink"
     assert _value(db, "ZZT-KS-1", "brand") == "Sorento"
+
+
+def test_the_products_own_brand_beats_the_category_prefix(db):
+    """`SRT-KS` decodes to Sorento; the product says OTHERS. Curated data wins.
+
+    Reading brand off the prefix mislabelled 1,934 of 20,515 live rows - every
+    INFINITY, OTHERS and NO LOGO product was published as Sorento or Cabana, and four
+    brands the prefix cannot spell at all were unreachable by a brand search.
+    """
+    _product(db, "ZZT-KS-BRAND", "S/STEEL KITCHEN SINK", brand="brand_other")
+    derive_for_code(db, "ZZT-KS-BRAND")
+
+    assert _value(db, "ZZT-KS-BRAND", "brand") == "OTHERS"
+    assert _value(db, "ZZT-KS-BRAND", "class") == "Kitchen Sink", "class still comes off the category"
+
+
+def test_a_product_with_no_brand_gets_no_brand(db):
+    """34 live rows. The prefix is not used as a fallback.
+
+    It is the same decode that mislabelled 1,934 rows, and it spells brands its own way
+    ("Sorento" against the brands table's "SORENTO"), which would put two spellings of
+    one brand into an open vocabulary and split the ranker's evidence between them.
+    """
+    _product(db, "ZZT-KS-NOBRAND", "S/STEEL KITCHEN SINK")
+    derive_for_code(db, "ZZT-KS-NOBRAND")
+
+    assert _value(db, "ZZT-KS-NOBRAND", "brand") is None
+    assert _value(db, "ZZT-KS-NOBRAND", "class") == "Kitchen Sink"
+
+
+def test_company_copies_with_different_brands_are_flagged(db):
+    """One derivation per CODE, but brand lives on the ROW. 6 live rows disagree.
+
+    Both copies get the chosen brand, so one of them is wrong; the exception is the only
+    thing that says so.
+    """
+    _product(db, "ZZT-KS-SPLIT", "S/STEEL KITCHEN SINK", brand="brand")
+    _product(
+        db,
+        "ZZT-KS-SPLIT",
+        "S/STEEL KITCHEN SINK",
+        brand="brand_other",
+        company_id=_REFS["company2"],
+    )
+    # All-companies scope, same as the batch job: that is what makes both copies
+    # visible to one derivation, and therefore what makes the disagreement detectable.
+    with company_scope(db, None):
+        derive_for_code(db, "ZZT-KS-SPLIT")
+
+        assert "company_copies_disagree" in _exceptions(db, "ZZT-KS-SPLIT")
+
+
+def test_a_rebrand_re_derives(db):
+    """The hash gates the whole catalog run; a brand it ignores is a silent stale row."""
+    row = _product(db, "ZZT-KS-REBRAND", "S/STEEL KITCHEN SINK", brand="brand_other")
+    derive_for_code(db, "ZZT-KS-REBRAND")
+    assert _value(db, "ZZT-KS-REBRAND", "brand") == "OTHERS"
+
+    row.brand_id = _REFS["brand"]
+    db.flush()
+    derive_for_code(db, "ZZT-KS-REBRAND")
+
+    assert _value(db, "ZZT-KS-REBRAND", "brand") == "Sorento"
 
 
 # --------------------------------------------------------------------------- #
@@ -375,18 +486,6 @@ def test_bowl_count_is_never_guessed_from_a_length(db):
     assert _value(db, "ZZT-NOBOWL", "bowl_count") is None
 
 
-def test_a_sink_with_a_drainer_is_not_a_drainer(db):
-    """`DRAINER` as a feature sets has_drainer; as the head noun it means accessory."""
-    _product(db, "ZZT-DRN1", "CABANA KITCHEN SINK CKS1050 -1 BOWL 1 DRAINER-")
-    derive_for_code(db, "ZZT-DRN1")
-    assert _value(db, "ZZT-DRN1", "has_drainer") is True
-    assert _value(db, "ZZT-DRN1", "is_accessory") is False
-
-    _product(db, "ZZT-DRN2", "S/STEEL KITCHEN SINK DRAINER (440x200x100MM)")
-    derive_for_code(db, "ZZT-DRN2")
-    assert _value(db, "ZZT-DRN2", "is_accessory") is True
-    # The part IS the drainer; claiming it has one would be nonsense.
-    assert _value(db, "ZZT-DRN2", "has_drainer") is None
 
 
 @pytest.mark.parametrize(
@@ -444,58 +543,14 @@ def test_non_finish_suffixes_yield_nothing(db, code):
 # --------------------------------------------------------------------------- #
 # accessory discriminator (AC-T0c-14)
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize(
-    "code,description,category",
-    [
-        ("ACC-ZZT001", "CABANA KITCHEN SINK TRIANGLE BASKET", None),
-        ("ZZT-DRAINER", "S/STEEL KITCHEN SINK DRAINER (440X200X100MM)", None),
-        ("ZZT-TAIL", "300MM TAIL PIPE FOR 40MM BOTTLE TRAP", None),
-        ("ZZT-ONLY", "SORENTO BATHTUB WASTE ONLY", None),
-        ("ZZT-SPARE", "SPARE SEAT COVER USED FOR ZZTWC6015", None),
-        ("ZZT-PART", "SORENTO KITCHEN SINK", "misc"),
-    ],
-)
-def test_accessories_are_flagged(db, code, description, category):
-    _product(db, code, description, category=category)
-    derive_for_code(db, code)
-    assert _value(db, code, "is_accessory") is True
 
 
 # Real catalog data caught this: 22 kitchen sinks were flagged accessories on the word
 # DRAINER alone. A sink with a drainer board is a sink.
-@pytest.mark.parametrize(
-    "code,description",
-    [
-        ("ZZT-FEAT1", "CABANA KITCHEN SINK (1000 X 500 X 140MM) -1 BOWL 1 DRAINER-"),
-        ("ZZT-FEAT2", "SORENTO KITCHEN SINK C/W BASKET"),
-        ("ZZT-FEAT3", "SORENTO WASH BASIN WITH WASTE"),
-        ("ZZT-FEAT4", "SORENTO KITCHEN SINK 2 BOWL 1 DRAINER"),
-    ],
-)
-def test_a_noun_that_is_only_a_feature_does_not_flag_an_accessory(db, code, description):
-    _product(db, code, description)
-    derive_for_code(db, code)
-    assert _value(db, code, "is_accessory") is False
 
 
-@pytest.mark.parametrize(
-    "code,description",
-    [
-        ("ZZT-HEAD1", "S/STEEL KITCHEN SINK DRAINER (440X200X100MM)"),
-        ("ZZT-HEAD2", "CABANA KITCHEN SINK TRIANGLE BASKET"),
-        ("ZZT-HEAD3", "SORENTO JACCUZI / BATHTUB OUTLET WASTE"),
-    ],
-)
-def test_a_noun_heading_the_phrase_still_flags_an_accessory(db, code, description):
-    _product(db, code, description)
-    derive_for_code(db, code)
-    assert _value(db, code, "is_accessory") is True
 
 
-def test_a_real_product_is_not_flagged_as_an_accessory(db):
-    _product(db, "ZZT-REAL", "SORENTO S/STEEL KITCHEN SINK (798X500X220MM)")
-    derive_for_code(db, "ZZT-REAL")
-    assert _value(db, "ZZT-REAL", "is_accessory") is False
 
 
 # --------------------------------------------------------------------------- #
@@ -725,17 +780,6 @@ def test_overflow_is_read_whether_the_word_is_split_or_joined(db):
     assert _value(db, "ZZT-OF2", "has_overflow") is True
 
 
-def test_a_basin_with_a_fixing_screw_is_not_a_screw(db):
-    """"C/W BASIN SCREW" is a feature; "BASIN SCREW (10 X 140)" IS the screw set."""
-    _product(db, "ZZT-SCR1", "SORENTO WALL HUNG BASIN (510X420X200MM) C/W BASIN SCREW.")
-    derive_for_code(db, "ZZT-SCR1")
-    assert _value(db, "ZZT-SCR1", "has_fixing_screw") is True
-    assert _value(db, "ZZT-SCR1", "is_accessory") is False
-
-    _product(db, "ZZT-SCR2", "CABANA WALL HUNG BASIN SCREW (10 X 140)")
-    derive_for_code(db, "ZZT-SCR2")
-    assert _value(db, "ZZT-SCR2", "is_accessory") is True
-    assert _value(db, "ZZT-SCR2", "has_fixing_screw") is None
 
 
 @pytest.mark.parametrize(
@@ -762,3 +806,232 @@ def test_an_ordinary_wc_is_not_flagged_smart(db):
     _product(db, "ZZT-PLAIN", "SORENTO ONE PIECE WASH DOWN WC (P-TRAP 180MM)")
     derive_for_code(db, "ZZT-PLAIN")
     assert _value(db, "ZZT-PLAIN", "is_smart") is None
+
+
+# --------------------------------------------------------------------------- #
+# configurable rules + the flyer as a second source (#102)
+# --------------------------------------------------------------------------- #
+def test_a_configured_rule_derives_a_value_the_shipped_tables_never_had(db):
+    """The point of the whole exercise: a new spec without a deploy."""
+    _product(db, "ZZT-RULE-1", "SORENTO KITCHEN SINK WITH NANO COATING", brand="brand")
+
+    derive_for_code(
+        db,
+        "ZZT-RULE-1",
+        rules_by_key={"material": [{"match": "contains", "pattern": "NANO COATING", "value": "nano"}]},
+    )
+
+    assert _value(db, "ZZT-RULE-1", "material") == "nano"
+
+
+def test_rule_order_is_priority(db):
+    # "STAINLESS STEEL" must beat "STEEL", or every stainless product reads as steel.
+    _product(db, "ZZT-RULE-2", "SORENTO STAINLESS STEEL SINK", brand="brand")
+
+    derive_for_code(
+        db,
+        "ZZT-RULE-2",
+        rules_by_key={
+            "material": [
+                {"match": "contains", "pattern": "STAINLESS STEEL", "value": "stainless_steel"},
+                {"match": "contains", "pattern": "STEEL", "value": "steel"},
+            ]
+        },
+    )
+
+    assert _value(db, "ZZT-RULE-2", "material") == "stainless_steel"
+
+
+def test_a_contains_rule_matches_whole_words_only(db):
+    """`SQ` -> square must not fire on SQUATTING PAN.
+
+    A plain substring search changed 42 of 11,415 live codes when the rule engine was
+    first written, some into nonsense. Bounded matching is the shipped behaviour and
+    moving rules into a table must not quietly loosen it.
+    """
+    _product(db, "ZZT-RULE-3", "SORENTO SQUATTING PAN ZZT-RULE-3", brand="brand")
+
+    derive_for_code(
+        db, "ZZT-RULE-3", rules_by_key={"shape": [{"match": "contains", "pattern": "SQ", "value": "square"}]}
+    )
+
+    assert _value(db, "ZZT-RULE-3", "shape") is None
+
+
+def test_the_flyer_fills_a_gap_the_description_left(db):
+    from app.models.product_spec import ProductFlyerText
+
+    _product(db, "ZZT-FLY-1", "SORENTO BASIN TAP ZZT-FLY-1", brand="brand")
+    db.add(
+        ProductFlyerText(
+            product_code="ZZT-FLY-1",
+            source_label="ZZT FLYER",
+            lines=["Brass Body", "Matt Black"],
+            text="Brass Body. Matt Black",
+        )
+    )
+    db.flush()
+
+    derive_for_code(db, "ZZT-FLY-1")
+
+    assert _value(db, "ZZT-FLY-1", "material") == "brass"
+    assert _provenance(db, "ZZT-FLY-1")["material"]["source"] == "flyer", "say where it came from"
+
+
+def test_the_description_beats_the_flyer(db):
+    """The master is the business's record; a leaflet is a leaflet."""
+    from app.models.product_spec import ProductFlyerText
+
+    _product(db, "ZZT-FLY-2", "SORENTO CERAMIC BASIN ZZT-FLY-2", brand="brand")
+    db.add(
+        ProductFlyerText(
+            product_code="ZZT-FLY-2", source_label="ZZT FLYER", lines=["Brass"], text="Brass"
+        )
+    )
+    db.flush()
+
+    derive_for_code(db, "ZZT-FLY-2")
+
+    assert _value(db, "ZZT-FLY-2", "material") == "ceramic"
+    assert _provenance(db, "ZZT-FLY-2")["material"]["source"] == "derived"
+
+
+def test_editing_a_rule_re_derives_rather_than_reporting_skipped(db):
+    """The rules are half the input, so the hash has to include them.
+
+    Without this an edit in the UI reports a successful run that changed nothing - the
+    same "skipped" it reports when there is genuinely nothing to do.
+    """
+    _product(db, "ZZT-RULE-4", "SORENTO KITCHEN SINK WITH NANO COATING", brand="brand")
+    derive_for_code(db, "ZZT-RULE-4", rules_by_key={})
+    assert _value(db, "ZZT-RULE-4", "material") is None
+
+    result = derive_for_code(
+        db,
+        "ZZT-RULE-4",
+        rules_by_key={"material": [{"match": "contains", "pattern": "NANO COATING", "value": "nano"}]},
+    )
+
+    assert result["skipped"] == 0, "a changed rule must not look like nothing changed"
+    assert _value(db, "ZZT-RULE-4", "material") == "nano"
+
+
+def test_a_broken_rule_does_not_stop_the_catalog_deriving(db):
+    # Rules are typed by hand. One bad regex must cost that rule, not the run.
+    _product(db, "ZZT-RULE-5", "SORENTO S/STEEL KITCHEN SINK", brand="brand")
+
+    derive_for_code(
+        db,
+        "ZZT-RULE-5",
+        rules_by_key={
+            "material": [
+                {"match": "regex", "pattern": "([unclosed", "capture": 1},
+                {"match": "contains", "pattern": "S/STEEL", "value": "stainless_steel"},
+            ]
+        },
+    )
+
+    assert _value(db, "ZZT-RULE-5", "material") == "stainless_steel"
+
+
+# --------------------------------------------------------------------------- #
+# source precedence: description, then flyer, then the code (#108)
+# --------------------------------------------------------------------------- #
+def _flyer(db, code: str, text: str):
+    from app.models.product_spec import ProductFlyerText
+
+    db.add(
+        ProductFlyerText(
+            product_code=code, source_label="ZZT FLYER", lines=text.split(". "), text=text
+        )
+    )
+    db.flush()
+
+
+def test_a_lower_rule_on_the_flyer_never_beats_a_higher_rule_on_the_description(db):
+    """The real failure: SRTWC7614-RL stored as a P-trap while its own description says S-TRAP.
+
+    The P-TRAP rule sits above the S-TRAP rule, and the loop tried each rule against
+    both texts before moving on — so rule order silently outranked source order and the
+    catalogue contradicted itself.
+    """
+    _product(db, "ZZT-SRC-1", "SORENTO ONE PIECE WC (S-TRAP:250MM). ZZT-SRC-1")
+    _flyer(db, "ZZT-SRC-1", "Washdown With Rimless. P-Trap: Horizontal Outlet 180mm")
+
+    derive_for_code(db, "ZZT-SRC-1")
+
+    assert _value(db, "ZZT-SRC-1", "trap_type") == "s_trap"
+    assert _provenance(db, "ZZT-SRC-1")["trap_type"]["source"] == "derived"
+
+
+def test_words_on_the_flyer_beat_a_letter_pair_in_the_code(db):
+    """`-GY` is mapped to grey; the flyer for SRTWB1516-GY says "Golden Yellow" in words.
+
+    A code suffix is a convention, a printed word is a statement. This is what the
+    shipped finish rules always intended — words first, suffix as the fallback — and
+    could not express while one loop ran text and code rules together.
+    """
+    _product(db, "ZZT-SRC-2-GY", "SORENTO CERAMIC ART BASIN ONLY ZZT-SRC-2-GY")
+    _flyer(db, "ZZT-SRC-2-GY", "Art Basin. Golden Yellow")
+
+    derive_for_code(db, "ZZT-SRC-2-GY")
+
+    assert _value(db, "ZZT-SRC-2-GY", "finish") == "golden_yellow"
+
+
+def test_the_code_suffix_still_answers_when_no_text_does(db):
+    # The other half: demoting the code must not disable it.
+    _product(db, "ZZT-SRC-3-GY", "SORENTO CERAMIC ART BASIN ONLY ZZT-SRC-3-GY")
+
+    derive_for_code(db, "ZZT-SRC-3-GY")
+
+    assert _value(db, "ZZT-SRC-3-GY", "finish") == "grey"
+
+
+# --------------------------------------------------------------------------- #
+# the flyer's labelled size, and what the seat is made of (#108)
+# --------------------------------------------------------------------------- #
+def test_the_flyer_supplies_dimensions_the_description_never_states(db):
+    """96 products carry no size at all while their flyer card prints one."""
+    _product(db, "ZZT-DIM-1", "SORENTO ONE PIECE WC ZZT-DIM-1")
+    _flyer(db, "ZZT-DIM-1", "Washdown. D: L680xW375xH770mm")
+
+    derive_for_code(db, "ZZT-DIM-1")
+
+    assert _value(db, "ZZT-DIM-1", "dim_length") == 680
+    assert _value(db, "ZZT-DIM-1", "dim_width") == 375
+    assert _value(db, "ZZT-DIM-1", "dim_height") == 770
+    assert _provenance(db, "ZZT-DIM-1")["dim_length"]["source"] == "flyer"
+
+
+def test_a_size_in_the_description_is_not_overwritten_by_the_flyer(db):
+    # The measurement block also cross-checks the stored columns and flags a round
+    # product whose length is really a diameter. A flyer must not quietly replace it.
+    _product(db, "ZZT-DIM-2", "SORENTO ONE PIECE WC (700X400X800MM) ZZT-DIM-2")
+    _flyer(db, "ZZT-DIM-2", "Washdown. D: L680xW375xH770mm")
+
+    derive_for_code(db, "ZZT-DIM-2")
+
+    assert _value(db, "ZZT-DIM-2", "dim_length") == 700
+    assert _provenance(db, "ZZT-DIM-2")["dim_length"]["source"] == "derived"
+
+
+def test_the_seat_cover_material_is_read_from_the_flyer(db):
+    """"water closet with PP seat cover" — only the flyer ever says which."""
+    _product(db, "ZZT-SEAT-1", "SORENTO ONE PIECE WC ZZT-SEAT-1")
+    _flyer(db, "ZZT-SEAT-1", "Washdown With Rimless. *PP Seat Cover")
+
+    derive_for_code(db, "ZZT-SEAT-1")
+
+    assert _value(db, "ZZT-SEAT-1", "seat_material") == "pp"
+    assert _provenance(db, "ZZT-SEAT-1")["seat_material"]["source"] == "flyer"
+
+
+def test_the_seat_material_stays_off_products_that_have_no_seat(db):
+    # Gated to Water Closet, so a tap whose flyer happens to say PP does not gain one.
+    _product(db, "ZZT-SEAT-2", "SORENTO BASIN TAP ZZT-SEAT-2")
+    _flyer(db, "ZZT-SEAT-2", "Basin Tap. *PP Seat Cover")
+
+    derive_for_code(db, "ZZT-SEAT-2")
+
+    assert _value(db, "ZZT-SEAT-2", "seat_material") is None

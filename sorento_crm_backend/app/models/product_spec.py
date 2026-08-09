@@ -36,6 +36,13 @@ class ProductSpecRegistry(Base):
     # and sourced from product_categories: a frozen list there would go stale the
     # moment a category is added.
     allowed_values = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    # Values that EXIST in the catalog but are not things a customer searches for.
+    # `brand` holds OTHERS and NO LOGO, which record the absence of a brand; offered to
+    # a model as options they read as "none of the above", so any word it could not
+    # place got filed under one — "interlignet wc" came back branded OTHERS. Excluded
+    # here they are simply not offered, and the unplaceable word stays a free term.
+    # A tuning knob, not vocabulary: seeded once, then owned by whoever tunes it.
+    excluded_values = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     # value -> [customer phrasings]. Customer language is not catalog language: nobody
     # types "stainless_steel", they type "s/steel" or "stainless".
     synonyms = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
@@ -78,6 +85,83 @@ class ProductSpecRegistry(Base):
     # synonyms at read time. Adding a word for a shipped key is the common case and
     # should not require taking ownership of the whole row.
     user_synonyms = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    # Values staff added to a SHIPPED key. Additive and never seed-repaired, exactly as
+    # user_synonyms is: `allowed_values` is the parser's contract and an edit there would
+    # be reverted on deploy, which left "add the value first" as an instruction nobody
+    # could follow. Read merged with allowed_values; see merged_allowed_values().
+    user_values = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    # {value: [words this business does NOT use for it]}. The mirror of user_synonyms:
+    # staff-owned, never seed-repaired, subtracted at read time. Nothing is deleted, so
+    # un-suppressing a word puts it straight back.
+    suppressed_synonyms = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    # Shipped VALUES this business has taken away, on the same bargain as the words
+    # above: staff-owned, never seed-repaired, subtracted at read time. `user_values`
+    # could only ever ADD, so a shipped value was permanent - a business that does not
+    # sell french gold had no way to stop the ranker offering it.
+    suppressed_values = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    # A standing preference for particular VALUES of this key: {"SORENTO": 1.5}. Applied
+    # to any product carrying the value, whether or not the customer asked for it, so
+    # "our own brand first" is a setting rather than a deploy. NOT applied when the
+    # customer named this key themselves - someone who asks for Bravat is asking for
+    # Bravat, and a house preference that overrode that would be a bug, not a boost.
+    # Calibration, like rank_weight: seeded once, then owned by whoever tunes it.
+    value_weights = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    # HOW this key is read out of a product's text, as an ordered list of rules. First
+    # match wins, so order is priority ("STAINLESS STEEL" must sit above "STEEL").
+    #
+    #   {"match": "contains",    "pattern": "S/STEEL 304", "value": "stainless_steel"}
+    #   {"match": "ends_with",   "pattern": "SQUATTING PAN", "value": "Squatting Pan"}
+    #   {"match": "present",     "pattern": "OVER\\s*FLOW", "value": true}
+    #   {"match": "regex",       "pattern": "(\\d+)MM S-TRAP", "capture": 1, "unit": "mm"}
+    #   {"match": "code_suffix", "pattern": "BL", "value": "black"}
+    #
+    # Optional "source": "any" (default) | "description" | "flyer". These were Python
+    # lists, which meant a key created in the UI could never be populated - the form
+    # made a promise the engine could not keep.
+    derivation_rules = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), nullable=True, onupdate=func.now())
+
+
+class ProductFlyerText(Base):
+    """What the printed flyer says about a product code.
+
+    A second text source for derivation, and a much richer one for the things marketing
+    prints but nobody typed into the master: material, finish, and features like a
+    drainer or an overflow. Keyed on the CODE for the same reason derivation is - one
+    card describes the model, and the model exists once per company.
+
+    Stored rather than read from the flyer record on demand because derivation runs over
+    the whole catalog and must not depend on the dealer-kit schema being present.
+    """
+
+    __tablename__ = "product_flyer_text"
+
+    product_code = Column(String(100), primary_key=True)
+    # Which flyer, in words a person recognises ("SORENTO A3 FLYER 2025-2026").
+    source_label = Column(String(200), nullable=False)
+    source_id = Column(String(64), nullable=True)
+    lines = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    text = Column(Text, nullable=False, server_default="")
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), nullable=True, onupdate=func.now())
+
+
+class ProductSpecSearchPolicy(Base):
+    """The ranker's scoring knobs, as data.
+
+    These were module constants, which meant "discontinued products should rank lower"
+    needed an engineer. Each row is one number the ranker reads at search time, seeded
+    with the constant it replaced so the behaviour on day one is identical.
+    """
+
+    __tablename__ = "product_spec_search_policy"
+
+    policy_key = Column(String(64), primary_key=True)
+    label = Column(String(150), nullable=False)
+    value = Column(Numeric(10, 3), nullable=False)
+    # Shown next to the field. A number with no explanation gets tuned by guesswork.
+    help_text = Column(Text, nullable=False, server_default="")
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True, onupdate=func.now())
 

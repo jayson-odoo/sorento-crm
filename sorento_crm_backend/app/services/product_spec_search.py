@@ -29,10 +29,13 @@ from sqlalchemy.orm import Session
 from app.models.product import Product, ProductCategory
 from app.models.product_spec import ProductSpecifications
 from app.services.product_class_signal import resolve_classes_for_term
-from app.services.product_spec_registry import active_registry, merged_synonyms
+from app.services.product_spec_registry import active_registry, merged_synonyms, search_policy
 
-# Tuned against the eval baseline, not guessed. Kept here rather than in the registry
-# because they describe the ranker's shape, not the vocabulary.
+# These are now DEFAULTS, not the settings. The live numbers come from
+# `product_spec_search_policy` (see product_spec_registry.search_policy), because
+# "discontinued should rank lower" and "our brand first" are merchandising decisions
+# and should not need a deploy. The values here are what the table is seeded with, and
+# what is used if the table is empty.
 CLASS_BOOST = 5.0
 FREE_TERM_BOOST = 1.2
 NUMERIC_BOOST = 2.0
@@ -67,6 +70,25 @@ def _numeric_score(target: float, actual: float, tolerance: float, decay: float)
     if decay <= 0:
         return 0.0
     return max(0.0, 1.0 - (distance / decay))
+
+
+def _threshold_score(
+    op: str, target: float, actual: float, tolerance: float, decay: float
+) -> float:
+    """How well `actual` answers a comparison against `target`.
+
+    `at_least` / `at_most` are satisfied or not - a 960mm basin fully answers "above
+    900mm" and a 850mm one does not answer it at all. There is no partial credit for
+    nearly clearing a threshold: a cabinet that does not fit does not nearly fit.
+
+    Anything else falls back to approximate equality, which is what an unqualified
+    number means.
+    """
+    if op in {"at_least", "gte", "min"}:
+        return 1.0 if actual >= target else 0.0
+    if op in {"at_most", "lte", "max"}:
+        return 1.0 if actual <= target else 0.0
+    return _numeric_score(target, actual, tolerance, decay)
 
 
 def _tokens(text: str) -> set[str]:
@@ -247,24 +269,82 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
     return resolved
 
 
+def _is_excluded(values: dict, exclusions: list[dict]) -> bool:
+    """True when the product is KNOWN to hold a value the customer ruled out."""
+    for entry in exclusions or []:
+        key, refused = entry.get("key"), entry.get("value")
+        if key is None or refused is None:
+            continue
+        stored = values.get(key)
+        if not isinstance(stored, dict):
+            continue
+        actual = stored.get("value")
+        if actual is None:
+            continue
+        if str(actual).strip().lower() == str(refused).strip().lower():
+            return True
+    return False
+
+
+def _fails_threshold(values: dict, specs: list[dict]) -> bool:
+    """True when the product is known to be on the wrong side of a stated limit."""
+    for entry in specs or []:
+        op = str(entry.get("op") or "")
+        if op not in {"at_least", "at_most"}:
+            continue
+        key, target = entry.get("key"), entry.get("value")
+        stored = values.get(key) if key else None
+        if not isinstance(stored, dict) or not isinstance(target, (int, float)):
+            continue
+        actual = stored.get("value")
+        if not isinstance(actual, (int, float)):
+            continue
+        if op == "at_least" and float(actual) < float(target):
+            return True
+        if op == "at_most" and float(actual) > float(target):
+            return True
+    return False
+
+
 def search_specs(
     db: Session,
     *,
     specs: list[dict] | None = None,
+    exclusions: list[dict] | None = None,
     free_terms: list[str] | None = None,
-    limit: int = MAX_CANDIDATES,
-    include_accessories: bool = False,
-    floor: float = RELEVANCE_FLOOR,
+    limit: int | None = None,
+    floor: float | None = None,
 ) -> dict:
     """Rank the catalog against extracted specs. Returns candidates and a floor verdict.
 
-    `include_accessories` only relaxes the deboost, it never becomes a filter: a
-    customer asking for a "sink basket" should find one.
+    `exclusions` are specs the customer refused. They are a filter rather than a
+    negative weight: see the comment at the candidate loop.
     """
     specs = specs or []
+    exclusions = exclusions or []
     free_terms = [t for t in (free_terms or []) if t and t.strip()]
 
+    policy = search_policy(db)
+    class_boost = policy["class_boost"]
+    free_term_boost = policy["free_term_boost"]
+    numeric_boost = policy["numeric_boost"]
+    mismatch_penalty = policy["mismatch_penalty"]
+    discontinued_penalty = policy["discontinued_penalty"]
+    # How much more a flyer-sourced spec is worth than a description-sourced one.
+    flyer_source_boost = policy.get("flyer_source_boost", 1.0)
+    if floor is None:
+        floor = policy["relevance_floor"]
+    if limit is None:
+        limit = int(policy["max_candidates"])
+
     registry_rows = active_registry(db)
+    # A standing preference for particular values - "our own brand first". Keyed by
+    # spec key, then by the value in the catalog's own spelling.
+    house_preferences = {
+        row.spec_key: {str(k).lower(): float(v) for k, v in (row.value_weights or {}).items()}
+        for row in registry_rows
+        if row.value_weights
+    }
     weights = {row.spec_key: float(row.rank_weight or 1.0) for row in registry_rows}
     # (tolerance, decay) per key, so a count is compared as a count and a millimetre as
     # a millimetre.
@@ -277,7 +357,16 @@ def search_specs(
     # spec always wins: the caller's parser saw the whole sentence, this sees a bag of
     # words.
     stated = {str(entry.get("key")) for entry in specs if entry.get("key")}
-    specs = specs + [e for e in resolve_terms_to_specs(db, free_terms) if e["key"] not in stated]
+    # The word-level resolver sees "not glass" as the word "glass" and nothing else, so
+    # anything the customer refused has to be withheld from it. Without this the refusal
+    # is undone one line after it was understood.
+    refused = {(e.get("key"), str(e.get("value")).strip().lower()) for e in exclusions}
+    specs = specs + [
+        e
+        for e in resolve_terms_to_specs(db, free_terms)
+        if e["key"] not in stated
+        and (e["key"], str(e.get("value")).strip().lower()) not in refused
+    ]
 
     # A free term that names a class IS a class match, and class is the strongest
     # signal we have. Without this, "sink" scored one weak text hit and fell below the
@@ -300,10 +389,44 @@ def search_specs(
     for term in free_terms:
         wanted_terms |= _tokens(term)
 
+
     scored: list[dict] = []
     for spec_row, product, category in rows:
         values = spec_row.values or {}
+        # Where each value was read from, so the flyer can outweigh the description.
+        provenance = spec_row.provenance or {}
+
+        # A refusal removes a product; it never merely demotes it. Showing a glass basin
+        # to someone who said "not glass" is not a ranking mistake, it is an answer to a
+        # question nobody asked, and no amount of penalty makes it acceptable at rank 5.
+        #
+        # It bites ONLY on a value the product is KNOWN to hold. A product whose material
+        # was never derived is not excluded - absence of a word is not evidence of the
+        # thing, which is this module's standing rule everywhere else too, and the strict
+        # reading would silently drop most of the catalog for any refusal.
+        if _is_excluded(values, exclusions):
+            continue
+
+        # A threshold the product is KNOWN to fail removes it, for the same reason a
+        # refusal does: "above 900mm" is the customer saying 850mm is not what they
+        # want. Demoting it merely was not enough - the 850mm basins still matched
+        # `free_standing` and outranked the one basin that actually cleared 900.
+        #
+        # Unknown is not failure. A product with no height is not excluded by a height
+        # threshold, which is the same rule the rest of this module follows.
+        if _fails_threshold(values, specs):
+            continue
+
         score = 0.0
+        # What the CUSTOMER'S OWN WORDS earned, kept apart from the total.
+        #
+        # `score` also carries the house preference, which is a standing merchandising
+        # thumb on the scale and is added to every product that qualifies for it
+        # whatever the customer said. Mixing the two made the relevance floor
+        # unreachable: "hi" extracts nothing, matches nothing, and still scored 8.0 on
+        # every Sorento product, so a greeting came back as five arbitrary products
+        # presented as answers. A preference can reorder answers; it cannot BE one.
+        evidence = 0.0
         # Penalties are accumulated apart from the boosts so that "did this product
         # match anything at all" stays answerable after they are applied.
         penalty = 0.0
@@ -321,15 +444,34 @@ def search_specs(
                 continue
 
             weight = weights.get(key, 1.0)
+            # A spec the FLYER states outranks one merely mentioned in a description.
+            # The flyer is the curated source and frequently the only one: 14 cards say
+            # FRAMELESS where 2 descriptions do, 9 say MASSAGE JET where none do. Without
+            # this, a product whose flyer card names the exact spec tied with one whose
+            # description happens to contain the word, and lost on alphabetical order.
+            if (provenance.get(key) or {}).get("source") == "flyer":
+                weight *= flyer_source_boost
             if key == "class":
                 if str(actual).lower() == str(target).lower():
-                    score += CLASS_BOOST
+                    score += class_boost
+                    evidence += class_boost
                     matched.append(key)
             elif isinstance(actual, (int, float, Decimal)) and isinstance(target, (int, float, Decimal)):
                 tolerance, decay = match_windows.get(key, (0.0, 0.0))
-                gain = _numeric_score(float(target), float(actual), tolerance, decay)
+                # "above 900mm" is a THRESHOLD, not an approximate equality. Scored as
+                # equality, a 960mm basin sat 60mm from the target and a 850mm one sat
+                # 50mm from it, so the basin that actually cleared 900 ranked BELOW the
+                # ones that did not - the opposite of what was asked for.
+                gain = _threshold_score(
+                    str(entry.get("op") or "about"),
+                    float(target),
+                    float(actual),
+                    tolerance,
+                    decay,
+                )
                 if gain > 0:
-                    score += NUMERIC_BOOST * weight * gain
+                    score += numeric_boost * weight * gain
+                    evidence += numeric_boost * weight * gain
                     if gain == 1.0:
                         matched.append(key)
                 else:
@@ -337,22 +479,24 @@ def search_specs(
                     # contradict exactly as an enum can — without this a one-bowl sink
                     # merely scored zero on bowl_count and still won on its other
                     # signals, which is what put it above real double-bowl sinks.
-                    penalty += MISMATCH_PENALTY
+                    penalty += mismatch_penalty
             elif str(actual).lower() == str(target).lower():
                 score += weight
+                evidence += weight
                 matched.append(key)
             else:
                 # Stated, stored, and different. Not the same thing as unstated: a
                 # product with NO mounting is merely unknown and stays neutral, but one
                 # that is explicitly floor standing contradicts "wall hung" and must not
                 # outrank a product that matches it.
-                penalty += MISMATCH_PENALTY
+                penalty += mismatch_penalty
 
         # A free term naming this product's class counts as a class match.
         class_value = str((values.get("class") or {}).get("value") or "").lower()
         if implied_classes and class_value and class_value in implied_classes:
             if "class" not in matched:
-                score += CLASS_BOOST
+                score += class_boost
+                evidence += class_boost
                 matched.append("class")
 
         # Free terms match the RENDERED SENTENCE, never the raw description.
@@ -364,14 +508,33 @@ def search_specs(
                     haystack |= _tokens(str(synonym))
             hits = wanted_terms & haystack
             if hits:
-                score += FREE_TERM_BOOST * len(hits)
+                score += free_term_boost * len(hits)
+                evidence += free_term_boost * len(hits)
                 matched.append("free_terms")
 
-        is_accessory = bool((values.get("is_accessory") or {}).get("value"))
-        if is_accessory and not include_accessories:
-            penalty += ACCESSORY_PENALTY
 
-        positive = score
+        # House preference. Applied only where the customer did NOT name the key
+        # themselves: someone asking for Bravat is asking for Bravat, and a preference
+        # that outranked their own words would be a bug wearing a boost's clothes.
+        # It is a tie-breaker by design - it lands on top of whatever the specs scored,
+        # so it reorders equally-good answers without promoting a worse one.
+        for key, preferred in house_preferences.items():
+            if key in stated:
+                continue
+            held = str((values.get(key) or {}).get("value") or "").lower()
+            bonus = preferred.get(held)
+            if bonus:
+                score += bonus
+                matched.append(key)
+
+        # Discontinued still sells - it is ranked below a live equivalent, not hidden.
+        # Applied as a PENALTY rather than a filter for the same reason as everything
+        # else here: a discontinued product that answers the question beats a live one
+        # that does not.
+        is_discontinued = bool(product.is_discontinued)
+        if is_discontinued:
+            penalty += discontinued_penalty
+
         score -= penalty
 
         # Dropped for having NO positive evidence, never for scoring badly. A penalty
@@ -379,7 +542,11 @@ def search_specs(
         # first rule is that one over-extracted spec must not empty the shortlist: a
         # floor-standing WC still answers "wall hung water closet" better than silence,
         # it just answers it last.
-        if positive <= 0:
+        #
+        # Evidence, NOT the total: on the total, every Sorento product in the catalog
+        # cleared this line on the house preference alone and the shortlist was never
+        # empty for anything.
+        if evidence <= 0:
             continue
 
         scored.append(
@@ -390,8 +557,9 @@ def search_specs(
                 "class": (values.get("class") or {}).get("value"),
                 "matched_specs": sorted(set(matched)),
                 "score": round(score, 4),
-                "is_discontinued": bool(product.is_discontinued),
-                "is_accessory": is_accessory,
+                # Kept only to test the floor, then dropped before the caller sees it.
+                "_evidence": round(evidence - penalty, 4),
+                "is_discontinued": is_discontinued,
                 # Collapse key. Two jobs: a variant answers for its parent (five
                 # finishes of one sink must not eat all five slots), AND the same
                 # model exists once per company, so keying on a row id would show
@@ -427,10 +595,42 @@ def search_specs(
         collapsed.append(candidate)
 
     top = collapsed[:limit]
-    floor_missed = (not top) or top[0]["score"] < floor
+    # The floor asks "did the customer's words find anything", so it is measured on the
+    # evidence and not on the total. Scored on the total, a standing brand preference
+    # of 8.0 sat above a floor of 1.5 on its own and the answer to "is there anything
+    # here" was permanently yes.
+    floor_missed = (not top) or max(c["_evidence"] for c in top) < floor
+    for candidate in collapsed:
+        candidate.pop("_evidence", None)
+
+    # WHAT THE CUSTOMER ASKED FOR AND DID NOT GET.
+    #
+    # Every spec is a boost, never a filter, which is right: "cabana free standing
+    # bathtub" should still offer the Sorento ones rather than nothing. But offering
+    # them silently reads as a broken search - the customer said Cabana and got Sorento
+    # with no acknowledgement. Nothing in the result said "there is no Cabana one", so
+    # the only available conclusion was that the engine ignored them.
+    #
+    # A key is unmet when it was ASKED FOR and NO offered product matches it. Computed
+    # over what is actually shown, not the whole catalog: a product that exists but did
+    # not make the shortlist is not something the customer can see.
+    shown = [] if floor_missed else top
+    asked = {
+        str(entry["key"]): entry.get("value")
+        for entry in specs
+        if entry.get("key") and entry.get("value") is not None
+    }
+    satisfied = {key for candidate in shown for key in candidate["matched_specs"]}
+    unmet = [
+        {"key": key, "value": value}
+        for key, value in asked.items()
+        if key not in satisfied
+    ]
 
     return {
-        "candidates": [] if floor_missed else top,
+        "candidates": shown,
         "floor_missed": floor_missed,
         "top_score": top[0]["score"] if top else 0.0,
+        "asked_for": [{"key": k, "value": v} for k, v in asked.items()],
+        "unmet": unmet,
     }

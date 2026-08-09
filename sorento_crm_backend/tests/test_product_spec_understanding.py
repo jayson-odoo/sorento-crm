@@ -279,3 +279,117 @@ def test_a_brand_is_returned_in_the_catalogs_own_spelling(db, monkeypatch):
     _model_returning({"specs": [{"key": "brand", "value": "sorento"}]}, monkeypatch)
 
     assert _keys(understand_phrase(db, "sorento sink"))["brand"] == "Sorento"
+
+
+# --------------------------------------------------------------------------- #
+# excluded values: a catalog value that is not a thing anyone searches for
+# --------------------------------------------------------------------------- #
+def _branded(db, code: str, brand: str):
+    """One product carrying a brand, so the open vocabulary has it to offer."""
+    import uuid as _uuid
+    from decimal import Decimal
+
+    from app.models.product import Product
+    from app.models.product_spec import ProductSpecifications
+
+    category = db.query(ProductCategory).filter_by(category_code="SRT-KS").one()
+    uom = db.query(UnitOfMeasure).filter_by(uom_code="ZZT-PCS").one()
+    product = Product(
+        id=str(_uuid.uuid4()),
+        product_code=code,
+        product_name=code,
+        description="KITCHEN SINK",
+        category_id=category.id,
+        base_uom_id=uom.id,
+        list_price=Decimal("1.00"),
+    )
+    db.add(product)
+    db.flush()
+    db.add(
+        ProductSpecifications(
+            product_id=product.id, values={"brand": {"value": brand}}, provenance={}
+        )
+    )
+    db.flush()
+    return product
+
+
+def test_an_excluded_value_is_never_offered_to_the_model(db):
+    """OTHERS and NO LOGO record the ABSENCE of a brand.
+
+    Offered as enum options they read as "none of the above", and the model filed every
+    word it could not place under one — "interlignet wc" came back branded OTHERS. Not
+    being shown a value is a harder guarantee than a rule telling the model to avoid it.
+    """
+    from app.services.product_spec_understanding import _vocabulary
+
+    _branded(db, "ZZT-EXC-1", "OTHERS")
+    _branded(db, "ZZT-EXC-2", "SORENTO")
+
+    described, _index, open_values = _vocabulary(db)
+    brand = next(e for e in described if e["spec_key"] == "brand")
+
+    assert "SORENTO" in brand["allowed_values"]
+    assert "OTHERS" not in brand["allowed_values"]
+    assert "OTHERS" not in open_values["brand"]
+
+
+def test_an_excluded_value_is_rejected_even_if_the_model_returns_it(db, monkeypatch):
+    # Belt as well as braces: the prompt is not the only thing standing between a
+    # placeholder brand and a customer's shortlist.
+    _branded(db, "ZZT-EXC-3", "OTHERS")
+    _model_returning({"specs": [{"key": "brand", "value": "OTHERS"}]}, monkeypatch)
+
+    assert "brand" not in _keys(understand_phrase(db, "interlignet wc"))
+
+
+# --------------------------------------------------------------------------- #
+# a refusal is not a request
+# --------------------------------------------------------------------------- #
+def test_a_refused_value_is_kept_out_of_the_specs(db, monkeypatch):
+    """"not glass" must not arrive as material=glass.
+
+    The literal resolver sees the word "glass" and nothing else — it has no concept of
+    "not" — so a phrase that rules a material out was scoring products made of it. The
+    model's refusal has to survive being merged with that reading, or the deterministic
+    floor reinstates the exact thing the customer refused.
+    """
+    _model_returning(
+        {
+            "specs": [{"key": "class", "value": "Wash Basin"}],
+            "exclusions": [{"key": "material", "value": "glass"}],
+        },
+        monkeypatch,
+    )
+
+    result = understand_phrase(db, "wash basin not glass")
+
+    assert "material" not in _keys(result), "a refusal must never become a request"
+    assert {(e["key"], e["value"]) for e in result.exclusions} == {("material", "glass")}
+
+
+def test_a_value_both_asked_for_and_refused_resolves_to_refused(db, monkeypatch):
+    # The model sometimes answers "not glass" with both. The refusal is the more
+    # specific statement, and getting this backwards is the worst possible answer.
+    _model_returning(
+        {
+            "specs": [{"key": "material", "value": "glass"}],
+            "exclusions": [{"key": "material", "value": "glass"}],
+        },
+        monkeypatch,
+    )
+
+    result = understand_phrase(db, "anything but glass")
+
+    assert "material" not in _keys(result)
+
+
+def test_a_refusal_of_an_unknown_value_is_dropped(db, monkeypatch):
+    # Exclusions go through the same registry gate as requests: an exclusion nothing
+    # can match would be a silent filter on a word the catalog never stores.
+    _model_returning(
+        {"specs": [], "exclusions": [{"key": "material", "value": "unobtainium"}]},
+        monkeypatch,
+    )
+
+    assert understand_phrase(db, "not unobtainium").exclusions == []

@@ -21,7 +21,12 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.models.product import Product, ProductCategory
-from app.models.product_spec import ProductSpecException, ProductSpecifications
+from app.models.product_spec import (
+    ProductSpecRegistry,
+    ProductFlyerText,
+    ProductSpecException,
+    ProductSpecifications,
+)
 from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error, handle_not_found
 from app.services.product_class_signal import explain_code
@@ -30,10 +35,14 @@ from app.services.product_spec_understanding import understand_phrase
 
 router = APIRouter()
 
-# `is_accessory` is derived and stored on every product for the ranker's deboost, but
-# it is not a thing a customer states — it has no registry row (see
-# product_spec_registry.py) and must not appear as a "spec" in either display surface.
-_INTERNAL_ONLY_VALUE_KEYS = {"is_accessory"}
+
+def _spec_reject(message: str):
+    """A refusal a person can act on, rather than a 500 with a stack trace."""
+    from app.services.error_handler import AppException
+
+    return AppException(status_code=400, message=message, code="product_spec_bad_value")
+
+_INTERNAL_ONLY_VALUE_KEYS: set[str] = set()
 
 
 def _display_values(values: dict) -> dict:
@@ -50,10 +59,6 @@ class SpecPreviewRequest(BaseModel):
     free_terms: list[str] = Field(
         default_factory=list,
         description="Words that did not map onto a registry key.",
-    )
-    include_accessories: bool = Field(
-        default=False,
-        description="Relax the accessory deboost. Never a filter.",
     )
     floor: Optional[float] = Field(
         default=None,
@@ -131,11 +136,10 @@ async def list_product_specifications(
                     or (category.class_label if category else None),
                     "brand_hint": (values.get("brand") or {}).get("value"),
                     "spec_count": len(
-                        [k for k in values if k not in ("class", "brand", "is_accessory")]
+                        [k for k in values if k not in ("class", "brand")]
                     ),
                     "rendered_text": spec.rendered_text,
                     "status": spec.status,
-                    "is_accessory": bool((values.get("is_accessory") or {}).get("value")),
                     "is_discontinued": bool(product.is_discontinued),
                     "open_exceptions": exception_counts.get(product.product_code, 0),
                     "values": _display_values(values),
@@ -224,6 +228,14 @@ async def get_product_specification(
                 for row in exceptions
             ],
             "source_text": product.description or product.product_name or "",
+            # The OTHER text derivation reads. A value whose provenance says `flyer`
+            # came from here and from nowhere the product master shows, so without it
+            # the only honest answer to "where did massage jet come from" is a shrug.
+            "flyer_text": (
+                db.query(ProductFlyerText.text)
+                .filter(ProductFlyerText.product_code == product.product_code)
+                .scalar()
+            ),
         }
     except HTTPException:
         raise
@@ -266,6 +278,196 @@ async def list_spec_exceptions(
         raise handle_internal_error(str(e))
 
 
+class ManualSpecValue(BaseModel):
+    """A value a person sets by hand, because the catalog does not state it anywhere."""
+
+    value: Any
+
+
+@router.post("/by-product/{product_id}/rederive")
+async def rederive_one_product(
+    product_id: str,
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Read THIS product again with the rules that are live now.
+
+    The catalogue-wide job takes minutes over 22,805 rows, which is the wrong tool when
+    you have just changed one rule and want to see what it did to one product.
+    """
+    from app.services.product_spec_derivation import derive_for_code
+
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if product is None:
+        raise handle_not_found("Product", product_id)
+    try:
+        result = derive_for_code(db, product.product_code, commit=True)
+        return {"product_code": product.product_code, **result}
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.put("/by-product/{product_id}/values/{spec_key}")
+async def set_spec_value_by_hand(
+    product_id: str,
+    spec_key: str,
+    payload: ManualSpecValue,
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Set a value the catalog never states, and hold it against re-derivation.
+
+    A blue WC is blue in the photograph and nowhere in the text. No rule can read it,
+    so the only honest source is a person - and derivation already promises that a
+    `human` value outranks anything derivable and is carried through every later run.
+
+    The value is checked against the registry so a hand-set spec cannot introduce a
+    word the ranker and the parser have never heard of, which is the whole reason the
+    vocabulary is shared.
+    """
+    from app.services.product_spec_registry import merged_allowed_values
+    from app.services.product_spec_rendering import render_spec_sentence
+
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if product is None:
+        raise handle_not_found("Product", product_id)
+
+    row = db.query(ProductSpecRegistry).filter_by(spec_key=spec_key).first()
+    if row is None:
+        raise handle_not_found("Spec key", spec_key)
+
+    value = payload.value
+    data_type = (row.data_type or "").lower()
+    if data_type == "boolean":
+        value = str(value).strip().lower() in {"true", "yes", "1"}
+    elif data_type == "numeric":
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            raise _spec_reject(f"{row.label} is a measurement, so it needs a number.")
+        value = int(number) if number.is_integer() else number
+    else:
+        value = str(value).strip()
+        allowed = merged_allowed_values(row)
+        if allowed and value not in allowed:
+            raise _spec_reject(
+                f"{row.label} does not have a value called \"{value}\". "
+                f"Add it to the specification first, or pick one of: {', '.join(allowed)}."
+            )
+
+    spec = db.query(ProductSpecifications).filter_by(product_id=product.id).first()
+    if spec is None:
+        spec = ProductSpecifications(product_id=product.id, values={}, provenance={})
+        db.add(spec)
+        db.flush()
+
+    values = dict(spec.values or {})
+    entry: dict[str, Any] = {"value": value}
+    if row.unit:
+        entry["unit"] = row.unit
+    values[spec_key] = entry
+    provenance = dict(spec.provenance or {})
+    provenance[spec_key] = {
+        "source": "human",
+        "confidence": 1.0,
+        "evidence": f"set by {current_user.get('email') or 'a person'}",
+    }
+    spec.values = values
+    spec.provenance = provenance
+    spec.rendered_text = render_spec_sentence(values)
+    db.commit()
+    return {"spec_key": spec_key, "value": value, "source": "human"}
+
+
+@router.delete("/by-product/{product_id}/values/{spec_key}")
+async def clear_hand_set_spec_value(
+    product_id: str,
+    spec_key: str,
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Drop a hand-set value and let derivation own the key again."""
+    from app.services.product_spec_derivation import derive_for_code
+
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if product is None:
+        raise handle_not_found("Product", product_id)
+
+    spec = db.query(ProductSpecifications).filter_by(product_id=product.id).first()
+    if spec is not None:
+        spec.values = {k: v for k, v in (spec.values or {}).items() if k != spec_key}
+        spec.provenance = {k: v for k, v in (spec.provenance or {}).items() if k != spec_key}
+        db.flush()
+    # Re-read so the key comes back with whatever the rules make of it, rather than
+    # staying blank until the next catalogue run.
+    derive_for_code(db, product.product_code, commit=True)
+    return {"spec_key": spec_key, "cleared": True}
+
+
+class FlyerTextEdit(BaseModel):
+    """The flyer card's wording, as a person corrects it."""
+
+    text: str
+
+
+@router.put("/by-product/{product_id}/flyer-text")
+async def set_flyer_text(
+    product_id: str,
+    payload: FlyerTextEdit,
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Correct the flyer card this product's specs are read from.
+
+    The card text comes from a machine reading of the printed flyer, and that reading is
+    not complete: a card the layout split across a column break, or one whose code the
+    reading could not place, leaves a product with no flyer text and therefore no
+    dimensions, no seat material, no flush type. Until now the only fix was to re-run
+    the reading, which is neither quick nor something a merchandiser can do.
+
+    The corrected text is stored as the product's flyer card and the product is read
+    again immediately, so the specs move in the same click rather than waiting for the
+    next catalogue run.
+    """
+    from app.services.product_spec_derivation import derive_for_code
+
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if product is None:
+        raise handle_not_found("Product", product_id)
+
+    text = (payload.text or "").strip()
+    row = (
+        db.query(ProductFlyerText)
+        .filter(ProductFlyerText.product_code == product.product_code)
+        .first()
+    )
+    if row is None:
+        if not text:
+            return {"product_code": product.product_code, "flyer_text": None, "cleared": True}
+        row = ProductFlyerText(product_code=product.product_code)
+        db.add(row)
+
+    if not text:
+        # Emptying the box means "this product has no flyer card", not "store a blank
+        # one" - a blank row would keep answering for a card the flyer never printed.
+        db.delete(row)
+    else:
+        row.text = text
+        # `lines` is what the importer stored sentence by sentence; keep the two in step
+        # so a later import diffing against it sees the corrected wording.
+        row.lines = [part.strip() for part in text.split(".") if part.strip()]
+        row.source_label = "Edited by hand"
+        row.source_id = None
+
+    db.flush()
+    result = derive_for_code(db, product.product_code, commit=True)
+    return {
+        "product_code": product.product_code,
+        "flyer_text": text or None,
+        "rederived": result,
+    }
+
+
 @router.post("/preview-search")
 async def preview_spec_search(
     payload: SpecPreviewRequest,
@@ -280,6 +482,7 @@ async def preview_spec_search(
     try:
         specs = list(payload.specs)
         free_terms = list(payload.free_terms)
+        exclusions: list[dict] = []
         understanding = None
 
         if payload.phrase and payload.phrase.strip():
@@ -294,17 +497,21 @@ async def preview_spec_search(
             pinned = {str(e.get("key")) for e in specs if e.get("key")}
             specs = specs + [e for e in understanding.specs if e["key"] not in pinned]
             free_terms = free_terms + [t for t in understanding.free_terms if t not in free_terms]
+            exclusions = list(understanding.exclusions)
 
         result = search_specs(
             db,
             specs=specs,
+            exclusions=exclusions,
             free_terms=free_terms,
-            include_accessories=payload.include_accessories,
             floor=payload.floor if payload.floor is not None else RELEVANCE_FLOOR,
         )
         return {
             "candidates": result["candidates"],
             "floor_missed": result["floor_missed"],
+            # What was asked for that nothing offered can satisfy, so the screen can say
+            # "no Cabana one — here are Sorento" rather than substituting in silence.
+            "unmet": result["unmet"],
             "top_score": result["top_score"],
             "floor": payload.floor if payload.floor is not None else RELEVANCE_FLOOR,
             # What the phrase was understood to mean, so a wrong result can be blamed
@@ -315,6 +522,10 @@ async def preview_spec_search(
                     "model": understanding.model,
                     "elapsed_ms": understanding.elapsed_ms,
                     "specs": understanding.specs,
+                    # Shown separately on screen: a reader who sees "material = glass"
+                    # next to a phrase that said "not glass" has every reason to think
+                    # the search is broken.
+                    "exclusions": understanding.exclusions,
                     "free_terms": understanding.free_terms,
                     "notes": understanding.notes,
                 }

@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from app.models.product_spec import ProductSpecRegistry
 from app.services.product_spec_registry import (
     PILOT_SPEC_KEYS,
+    merged_synonyms,
     seed_spec_registry,
 )
 from tests._pg_fixture import blank_session
@@ -105,7 +106,10 @@ def test_measured_numeric_keys_carry_a_unit(db):
     Rendering "2 mm" for a double bowl sink would be worse than wrong: it would embed a
     dimension phrase into a sentence the ranker compares against real dimensions.
     """
-    counts = {"bowl_count"}
+    # bar_count and spray_functions join it: towel bars and spray patterns are counted,
+    # not measured. Rendering "3 mm" for a 3-function shower head would put a dimension
+    # phrase into the sentence the ranker compares against real dimensions.
+    counts = {"bowl_count", "bar_count", "spray_functions"}
     seed_spec_registry(db)
     for key, row in _keys(db).items():
         if row.data_type != "numeric":
@@ -400,3 +404,295 @@ def test_a_user_word_reaches_the_resolver(db):
     resolved = {e["key"]: e["value"] for e in resolve_terms_to_specs(db, ["wc gantung dinding"])}
 
     assert resolved.get("mounting") == "wall_hung"
+
+
+# --------------------------------------------------------------------------- #
+# a rule may only produce a value the key actually has (#103)
+# --------------------------------------------------------------------------- #
+def test_a_rule_pointing_at_a_value_the_key_does_not_have_is_refused():
+    """Someone aimed a mounting rule at `free_standing`, which is not a mounting value.
+
+    Saved silently, the next catalogue read would have written a value the ranker can
+    never match, and search would have quietly got worse with nothing to point at.
+    """
+    from app.api.v1.master_data.spec_registry import _validate_rules
+
+    with pytest.raises(Exception) as excinfo:
+        _validate_rules(
+            [{"match": "contains", "pattern": "FREE STANDING", "value": "free_standing"}],
+            allowed_values=["wall_hung", "floor_standing", "pedestal"],
+            data_type="enum",
+        )
+
+    assert "free_standing" in str(excinfo.value)
+
+
+def test_an_open_vocabulary_key_accepts_any_value():
+    # `brand` and `class` take their values from the catalogue, so there is no list to
+    # check a rule against.
+    from app.api.v1.master_data.spec_registry import _validate_rules
+
+    cleaned = _validate_rules(
+        [{"match": "contains", "pattern": "ACME", "value": "Acme"}],
+        allowed_values=[],
+        data_type="enum",
+    )
+
+    assert cleaned[0]["value"] == "Acme"
+
+
+# --------------------------------------------------------------------------- #
+# staff can extend a shipped key's values (#104)
+# --------------------------------------------------------------------------- #
+def test_a_value_staff_added_is_usable_in_a_rule(db):
+    """"Add the value to this specification first" has to be possible to follow.
+
+    A shipped key's `allowed_values` is the parser's contract and is seed-repaired, so
+    it cannot be edited — which left the rejection message pointing at a door with no
+    handle for every key except the ones staff made themselves.
+    """
+    from app.api.v1.master_data.spec_registry import _validate_rules
+    from app.models.product_spec import ProductSpecRegistry
+    from app.services.product_spec_registry import merged_allowed_values
+
+    seed_spec_registry(db)
+    row = db.query(ProductSpecRegistry).filter_by(spec_key="mounting").one()
+    row.user_values = ["free_standing"]
+    db.flush()
+
+    assert "free_standing" in merged_allowed_values(row)
+    assert "floor_standing" in merged_allowed_values(row), "the shipped list survives"
+
+    cleaned = _validate_rules(
+        [{"match": "contains", "pattern": "FREE STANDING", "value": "free_standing"}],
+        allowed_values=merged_allowed_values(row),
+        data_type="enum",
+    )
+    assert cleaned[0]["value"] == "free_standing"
+
+
+def test_a_re_seed_does_not_remove_a_value_staff_added(db):
+    # The whole reason `allowed_values` is locked is that the seed repairs it. An
+    # additive column has to survive that, or this is the same dead end with more steps.
+    from app.models.product_spec import ProductSpecRegistry
+
+    seed_spec_registry(db)
+    row = db.query(ProductSpecRegistry).filter_by(spec_key="mounting").one()
+    row.user_values = ["free_standing"]
+    db.flush()
+
+    seed_spec_registry(db)
+
+    assert db.query(ProductSpecRegistry).filter_by(spec_key="mounting").one().user_values == [
+        "free_standing"
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# reviewing what a key actually did (#106)
+# --------------------------------------------------------------------------- #
+def _catalogue(db):
+    """Two kitchen sinks and a jacuzzi, derived through the real pipeline."""
+    import uuid as _uuid
+    from decimal import Decimal
+
+    from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
+    from app.services.product_class_signal import backfill_category_signals
+    from app.services.product_spec_derivation import derive_for_code
+
+    cat = ProductCategory(id=str(_uuid.uuid4()), category_code="SRT-KS", category_name="SRT-KS")
+    uom = UnitOfMeasure(id=str(_uuid.uuid4()), uom_code="ZZT-PCS", uom_name="Piece")
+    brand = Brand(id=str(_uuid.uuid4()), brand_code="ZZT-SRT", brand_name="SORENTO")
+    db.add_all([cat, uom, brand])
+    db.flush()
+    backfill_category_signals(db)
+    seed_spec_registry(db)
+    for code, description in [
+        ("ZZT-RV-1", "SORENTO S/STEEL KITCHEN SINK WITH DRAINER"),
+        ("ZZT-RV-2", "SORENTO S/STEEL KITCHEN SINK"),
+    ]:
+        db.add(
+            Product(
+                id=str(_uuid.uuid4()),
+                product_code=code,
+                product_name=code,
+                description=description,
+                category_id=cat.id,
+                base_uom_id=uom.id,
+                brand_id=brand.id,
+                list_price=Decimal("1.00"),
+            )
+        )
+        db.flush()
+        derive_for_code(db, code)
+    db.commit()
+
+
+def test_a_key_lists_the_products_carrying_it_with_the_words_it_read(client, db):
+    """A count says something happened without saying to what.
+
+    "Seen in 106" is not reviewable: the only way to know a rule did what you meant is
+    to look at the rows and the words each value was read from.
+    """
+    _catalogue(db)
+
+    body = client.get(f"{ENDPOINT}/has_drainer/products").json()
+
+    assert body["total"] == 1
+    row = body["products"][0]
+    assert row["product_code"] == "ZZT-RV-1"
+    assert row["value"] is True
+    assert row["evidence"] == "DRAINER"
+    assert row["source"] == "derived"
+
+
+def test_the_tallies_group_the_key_by_class_so_a_wrong_scope_is_visible(client, db):
+    # `has_drainer` on 74 bathtubs is obvious in a tally and invisible in a page of rows.
+    _catalogue(db)
+
+    body = client.get(f"{ENDPOINT}/has_drainer/products").json()
+
+    assert body["by_class"] == [{"class": "Kitchen Sink", "count": 1}]
+    assert body["by_value"] == [{"value": "true", "count": 1}]
+
+
+def test_an_unknown_key_is_a_404_not_an_empty_list(client, db):
+    _catalogue(db)
+
+    assert client.get(f"{ENDPOINT}/not_a_key/products").status_code == 404
+
+
+def test_coverage_reports_the_live_count_not_the_note_from_when_the_key_was_written(client, db):
+    """`measured_coverage` is a figure from the past; this is the catalogue now."""
+    _catalogue(db)
+
+    body = client.get(f"{ENDPOINT}/coverage").json()["coverage"]
+
+    assert body["class"] == 2
+    assert body["has_drainer"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# taking a shipped word away (#109)
+# --------------------------------------------------------------------------- #
+def test_a_shipped_synonym_can_be_suppressed(client, db):
+    """"matte black" ships as a word for `black`, and it is a colour in its own right.
+
+    Adding a `matte_black` value does not help while the word still resolves to
+    `black` first, and editing the seed row is undone on the next deploy. Suppression
+    is the only honest way to say "this business does not use that word for that".
+    """
+    seed_spec_registry(db)
+
+    body = client.patch(
+        f"{ENDPOINT}/finish",
+        json={"suppressed_synonyms": {"black": ["matte black"]}},
+    ).json()
+
+    assert "matte black" not in body["synonyms"]["black"]
+    assert "black" in body["synonyms"]["black"], "only the named word goes"
+    assert "matt black" in body["synonyms"]["black"], "and only that spelling of it"
+
+
+def test_suppression_survives_a_re_seed(client, db):
+    # The seed repairs `synonyms` on every deploy. If suppression did not outlive that,
+    # the word would come back and the setting would look like it never saved.
+    seed_spec_registry(db)
+    client.patch(f"{ENDPOINT}/finish", json={"suppressed_synonyms": {"black": ["matte black"]}})
+
+    seed_spec_registry(db)
+
+    row = _keys(db)["finish"]
+    assert "matte black" not in merged_synonyms(row)["black"]
+
+
+def test_un_suppressing_puts_the_word_back(client, db):
+    # Nothing is deleted, so this is reversible - which is what makes it safe to try.
+    seed_spec_registry(db)
+    client.patch(f"{ENDPOINT}/finish", json={"suppressed_synonyms": {"black": ["matte black"]}})
+
+    body = client.patch(f"{ENDPOINT}/finish", json={"suppressed_synonyms": {}}).json()
+
+    assert "matte black" in body["synonyms"]["black"]
+
+
+def test_suppressing_a_second_word_keeps_the_first_suppressed(client, db):
+    """The editor sends the WHOLE suppression list, not the delta it just made.
+
+    `synonyms` comes back merged, with earlier suppressions already applied, so an
+    editor that computed "what did I remove this time" from it could not see them and
+    left them out of the payload - which reinstated them. From the screen that read as
+    "I deleted the word, came back, and it is still there", because a different word
+    with almost the same spelling had quietly returned.
+    """
+    seed_spec_registry(db)
+    client.patch(f"{ENDPOINT}/finish", json={"suppressed_synonyms": {"black": ["matte black"]}})
+
+    body = client.patch(
+        f"{ENDPOINT}/finish",
+        json={"suppressed_synonyms": {"black": ["matte black", "matt black"]}},
+    ).json()
+
+    assert body["synonyms"]["black"] == ["black"]
+    assert set(body["suppressed_synonyms"]["black"]) == {"matte black", "matt black"}
+
+
+# --------------------------------------------------------------------------- #
+# taking a shipped VALUE away
+# --------------------------------------------------------------------------- #
+def test_a_shipped_value_can_be_taken_away_and_put_back(client, db):
+    """`user_values` could only ever add, so a shipped value was permanent.
+
+    A business that does not sell french gold had no way to stop the ranker offering
+    it: the chip rendered locked, with no remove control and nothing explaining why.
+    """
+    seed_spec_registry(db)
+
+    body = client.patch(
+        f"{ENDPOINT}/finish", json={"suppressed_values": ["french_gold"]}
+    ).json()
+    assert "french_gold" not in body["allowed_values"]
+    assert body["suppressed_values"] == ["french_gold"]
+
+    back = client.patch(f"{ENDPOINT}/finish", json={"suppressed_values": []}).json()
+    assert "french_gold" in back["allowed_values"], "nothing was deleted, so it returns"
+
+
+def test_suppressing_a_value_stops_it_being_derived(client, db):
+    """Suppression has to stop the value being PRODUCED, not merely offered.
+
+    Left at "not offered", the catalogue keeps filling in a value the business has said
+    it does not use, and every product carrying it still ranks for it.
+    """
+    from app.services.product_spec_derivation import configured_rules
+
+    seed_spec_registry(db)
+    before = configured_rules(db)
+    assert any(
+        str(rule.get("value")) == "french_gold" for rule in before.get("finish", [])
+    ), "a rule produces this value to begin with, or the test proves nothing"
+
+    client.patch(f"{ENDPOINT}/finish", json={"suppressed_values": ["french_gold"]})
+
+    after = configured_rules(db)
+    assert not any(str(rule.get("value")) == "french_gold" for rule in after.get("finish", []))
+    assert after.get("finish"), "only that value's rules go, not the whole key's"
+
+
+def test_a_rule_survives_the_value_it_produces_being_suppressed(client, db):
+    """Taking a value away must not invalidate somebody's rule.
+
+    Rules are validated against the vocabulary, so the strict reading rejected the whole
+    save with a 400 the moment a value a rule mentions was suppressed - which made
+    removing a value impossible for exactly the values that were in use.
+    """
+    seed_spec_registry(db)
+    client.patch(f"{ENDPOINT}/finish", json={"suppressed_values": ["french_gold"]})
+
+    response = client.patch(
+        f"{ENDPOINT}/finish",
+        json={"derivation_rules": [{"match": "contains", "pattern": "FR GOLD", "value": "french_gold"}]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["derivation_rules"][0]["value"] == "french_gold"

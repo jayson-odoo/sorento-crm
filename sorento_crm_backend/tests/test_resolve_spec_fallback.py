@@ -154,3 +154,101 @@ def test_a_floor_miss_returns_no_candidates(client):
 
     assert body["floor_missed"] is True
     assert body["spec_candidates"] == []
+
+
+# --------------------------------------------------------------------------- #
+# a described product must arrive as a PRODUCT, not as a side-channel (#106)
+# --------------------------------------------------------------------------- #
+def test_a_described_product_arrives_as_an_ordinary_product_match(client):
+    """`spec_candidates` alone was a dead end.
+
+    It is a different shape parked beside the result, so every existing consumer — the
+    n8n spine's resolve-entity, and get-results behind it — read `resolutions[].matches`,
+    found nothing, and treated the turn as unresolved. Describing a product well enough
+    to find it only matters if the thing that asked can then use it.
+    """
+    body = client.post(
+        ENDPOINT,
+        json={
+            "query": "stainless steel kitchen sink",
+            "spec_fallback": True,
+            "extracted_specs": [{"key": "class", "value": "Kitchen Sink"}],
+            "free_terms": ["stainless steel kitchen sink"],
+        },
+    ).json()
+
+    matches = [m for r in body["resolutions"] for m in r["matches"]]
+    spec_matches = [m for m in matches if m["match_tier"] == "spec_search"]
+
+    assert spec_matches, "the spec hit has to be reachable where every other match is"
+    hit = spec_matches[0]
+    assert hit["entity_type"] == "product"
+    assert hit["canonical_code"] == "ZZTKS9001"
+    assert hit["uuid"], "get-results needs the id, not just the code"
+    assert hit["match_field"] == "specifications"
+
+
+
+
+def test_the_flag_off_still_adds_no_matches(client):
+    # The seam stays inert: this is what let it ship dark, and it has to stay true now
+    # that it writes into `resolutions` rather than a field nobody reads.
+    body = client.post(ENDPOINT, json={"query": "stainless steel kitchen sink"}).json()
+
+    matches = [m for r in body["resolutions"] for m in r["matches"]]
+    assert not [m for m in matches if m.get("match_tier") == "spec_search"]
+
+
+
+
+def test_a_spec_shortlist_reads_exactly_like_a_prefix_shortlist(client):
+    """A description that finds many products is not a question, it is an answer.
+
+    `SRTWC286` returns 15 `prefix` matches and the spine goes straight to get-results
+    for all of them. A description that finds 15 must read identically, or the same
+    shortlist takes two different paths depending on how it was found. `alternatives`
+    stays empty because that is the did-you-mean channel and these are matches.
+    """
+    body = client.post(
+        ENDPOINT,
+        json={
+            "query": "stainless steel kitchen sink",
+            "spec_fallback": True,
+            "extracted_specs": [{"key": "class", "value": "Kitchen Sink"}],
+        },
+    ).json()
+
+    spec_resolution = next(
+        r for r in body["resolutions"] if any(m["match_tier"] == "spec_search" for m in r["matches"])
+    )
+
+    assert spec_resolution["matches"], "matches, not near misses"
+    assert spec_resolution["alternatives"] == []
+    assert spec_resolution["token"] not in (body.get("unresolved_tokens") or [])
+    # Same rule prefix uses: one match is settled, several are a shortlist.
+    assert spec_resolution["resolved"] is (len(spec_resolution["matches"]) == 1)
+    assert spec_resolution["ambiguous"] is (len(spec_resolution["matches"]) > 1)
+
+
+def test_and_mode_updates_every_view_of_the_answer(client):
+    """AND mode carries the same answer three ways and the spine reads all of them.
+
+    Setting `intersection` alone left `by_entity_type` empty and `empty` true, so a
+    caller saw no products while `intersection` held them.
+    """
+    body = client.post(
+        ENDPOINT,
+        json={
+            "query": "stainless steel kitchen sink",
+            "match_mode": "and",
+            "spec_fallback": True,
+            "extracted_specs": [{"key": "class", "value": "Kitchen Sink"}],
+        },
+    ).json()
+
+    if "intersection" not in body:
+        pytest.skip("this query did not take the AND path")
+
+    assert body["intersection"], "the products are here"
+    assert body["by_entity_type"]["product"] == body["intersection"]
+    assert body["empty"] is False

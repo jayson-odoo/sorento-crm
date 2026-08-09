@@ -5,9 +5,9 @@ Ownership is split, and the split is the whole point of this module:
   * the SEED owns vocabulary  - label, type, unit, allowed_values, synonyms, gates.
     These must match what the parser extracts against, so a drifted value is repaired
     on every re-seed rather than preserved.
-  * a HUMAN owns calibration  - rank_weight and is_active. Weights are tuned against
-    the eval baseline and that tuning is the only calibration the ranker has, so the
-    seed must never overwrite it.
+  * a HUMAN owns calibration  - rank_weight, is_active, the match window, and
+    excluded_values. Weights are tuned against the eval baseline and that tuning is the
+    only calibration the ranker has, so the seed must never overwrite it.
 
 Scope is the T0 tracer's pilot keys (jayson-odoo/sorento-crm#73). The remaining keys
 measured present in the catalog (trap_type, wc_form, rimless, seat_material, ...) land
@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app.models.product_spec import ProductSpecRegistry
+from app.models.product_spec import ProductSpecRegistry, ProductSpecSearchPolicy
 
 # Fields the seed owns. Anything not listed here is left alone once a row exists.
 _SEED_OWNED = (
@@ -30,10 +30,16 @@ _SEED_OWNED = (
     "unit",
     "allowed_values",
     "synonyms",
-    "applies_to_classes",
-    "applies_when",
     "measured_coverage",
 )
+# `applies_when` used to be seed-owned. It is CALIBRATION, not vocabulary: which
+# classes may carry a key is a merchandising judgement ("bowl count is not only for
+# kitchen sinks"), and the n8n parser is not held to it the way it is held to the value
+# list. Seed-owned, an edit here was reverted on the next deploy without saying so.
+#
+# `applies_to_classes` is gone entirely. It was never seeded, never read by anything,
+# and never held a value in any row - a column that existed only to be rendered in a
+# table header. The scope people were reading in that column was always `applies_when`.
 
 # How close a numeric value must be to count, defaulted from the key's UNIT.
 # `(tolerance, decay)`; decay 0 means exact-or-nothing.
@@ -48,6 +54,239 @@ _MATCH_DEFAULTS_BY_UNIT: dict[str | None, tuple[float, float]] = {
     "mm": (5.0, 150.0),
     None: (0.0, 0.0),
 }
+
+
+# The ranker's scoring knobs, seeded with the constants they replaced so behaviour on
+# day one is unchanged. `discontinued_penalty` is the one genuinely new number: 4,969
+# active-but-discontinued products used to rank as if they were live. It is set below
+# CLASS_BOOST on purpose - a discontinued product that answers the question still beats
+# a live one that does not, it just answers second.
+SEARCH_POLICY_SEED: list[dict] = [
+    {
+        "policy_key": "class_boost",
+        "label": "A matching product class is worth",
+        "value": 5.0,
+        "help_text": "The strongest signal there is - every product has a class.",
+    },
+    {
+        "policy_key": "free_term_boost",
+        "label": "Each matching word is worth",
+        "value": 1.2,
+        "help_text": "Words matched against the product's spec sentence, not its raw description.",
+    },
+    {
+        "policy_key": "numeric_boost",
+        "label": "A matching measurement is worth",
+        "value": 2.0,
+        "help_text": "Scaled by how close it is - see each key's own tolerance.",
+    },
+    {
+        "policy_key": "mismatch_penalty",
+        "label": "Contradicting what was asked costs",
+        "value": 2.5,
+        "help_text": (
+            "A floor-standing WC when the customer said wall hung. Smaller than the match "
+            "it opposes: this demotes the product, it never removes it."
+        ),
+    },
+    {
+        "policy_key": "discontinued_penalty",
+        "label": "Being discontinued costs",
+        "value": 2.0,
+        "help_text": (
+            "4,969 discontinued products are still active and still sellable, so this "
+            "ranks them below a live equivalent rather than hiding them."
+        ),
+    },
+    {
+        "policy_key": "flyer_source_boost",
+        "label": "A spec read from the flyer counts extra",
+        "value": 1.5,
+        "help_text": (
+            "A multiplier on the match, not a score of its own. The flyer is the better "
+            "source and often the only one: 14 cards say FRAMELESS where 2 descriptions "
+            "do, and 9 say MASSAGE JET where none do. Above 1, a product whose flyer "
+            "card states the spec beats one whose description merely mentions the word. "
+            "Set it to 1 to treat both sources alike."
+        ),
+    },
+    {
+        "policy_key": "relevance_floor",
+        "label": "Show nothing below a score of",
+        "value": 1.5,
+        "help_text": (
+            "Below this the best match is one weak word hit. The chatbot asks for a code "
+            "or a photo instead of offering a guess."
+        ),
+    },
+    {
+        "policy_key": "max_candidates",
+        "label": "Offer at most this many products",
+        "value": 5.0,
+        "help_text": "Variants of one model collapse onto the model, so five means five models.",
+    },
+]
+
+
+def _rules_from_shipped_tables() -> dict[str, list[dict]]:
+    """Today's hardcoded token tables, as rule rows.
+
+    Built FROM the tables rather than retyped, so the seeded rules cannot drift from
+    what the engine used to do - a transcription error here would be a silent
+    catalog-wide derivation change, and the whole point of this seed is that the first
+    run derives identically.
+
+    Imported inside the function: `product_spec_derivation` imports this module.
+    """
+    from app.services import product_spec_derivation as d
+
+    def contains(table) -> list[dict]:
+        return [{"match": "contains", "pattern": token, "value": value} for token, value in table]
+
+    rules: dict[str, list[dict]] = {
+        "material": contains(d.MATERIAL_TOKENS),
+        "mounting": contains(d.MOUNTING_TOKENS),
+        "control_type": contains(d.CONTROL_TOKENS),
+        "product_type": contains(d.PRODUCT_TYPE_TOKENS),
+        "water_supply": contains(d.WATER_SUPPLY_TOKENS),
+        "steel_grade": contains(d.STEEL_GRADE_TOKENS),
+        "spray_functions": [
+            {"match": "regex", "pattern": d.FUNCTION_COUNT_RE.pattern, "capture": 1}
+        ],
+        "hose_length": [
+            # Captured in metres off the card ("c/w 1.2m"), stored in millimetres like
+            # every other length, because that is the unit the ranker compares in.
+            {
+                "match": "regex",
+                "pattern": d.HOSE_LENGTH_RE.pattern,
+                "capture": 1,
+                "scale": 1000,
+                "unit": "mm",
+            }
+        ],
+        "is_frameless": [{"match": "present", "pattern": d.FRAMELESS_RE.pattern, "value": True}],
+        "has_led": [{"match": "present", "pattern": d.LED_RE.pattern, "value": True}],
+        "is_honeycomb": [{"match": "present", "pattern": d.HONEYCOMB_RE.pattern, "value": True}],
+        "is_soft_close": [{"match": "present", "pattern": d.SOFT_CLOSE_RE.pattern, "value": True}],
+        "has_diverter": [{"match": "present", "pattern": d.DIVERTER_RE.pattern, "value": True}],
+        "is_rimless": [{"match": "present", "pattern": d.RIMLESS_RE.pattern, "value": True}],
+        "bar_count": [
+            {"match": "contains", "pattern": token, "value": count}
+            for token, count in d.BAR_COUNT_TOKENS
+        ],
+        "spout_type": contains(d.SPOUT_TOKENS),
+        "trap_type": contains(d.TRAP_TOKENS),
+        "flush_type": contains(d.FLUSH_TOKENS),
+        "shape": contains(d.SHAPE_TOKENS),
+        "class": [
+            {"match": "ends_with", "pattern": token, "value": value}
+            for token, value in d.CLASS_TAIL_TOKENS
+        ],
+        # Finish was code-suffix ONLY, which meant a product whose code carries no
+        # suffix had no finish at all. The flyer prints it in words on 500+ cards
+        # ("Matt Black" 152, "Gunmetal" 103, "Chrome" 98, "Golden Yellow" 73), so the
+        # words go first and the suffix stays as the fallback. Longest first: "MATT
+        # BLACK" and "FULL ROSE GOLD" must beat "BLACK" and "GOLD".
+        "finish": [
+            {"match": "contains", "pattern": token, "value": value}
+            for token, value in d.FINISH_WORDS
+        ] + [
+            {"match": "code_suffix", "pattern": suffix, "value": value}
+            for suffix, value in d.FINISH_SUFFIXES.items()
+        ],
+        "trap_length": [
+            {"match": "regex", "pattern": d._TRAP_LENGTH_RE.pattern, "capture": 1, "unit": "mm"}
+        ],
+        # Was the one key with no rules at all: a hardcoded reader ran it, so the screen
+        # said "no rules yet, nothing will ever fill this in" beside 74 products that
+        # carried it, and there was no way to change how it was read. Word forms first,
+        # then the digit form, which is the order the hardcoded reader used.
+        "bowl_count": [
+            {"match": "regex", "pattern": rf"\b{word}\s+BOWLS?\b", "value": count}
+            for word, count in d.BOWL_WORDS.items()
+        ] + [{"match": "regex", "pattern": d._BOWL_DIGIT_RE.pattern, "capture": 1}],
+        "is_smart": [{"match": "present", "pattern": d._SMART_WC_RE.pattern, "value": True}],
+        # The flyer prints a labelled size the description does not carry:
+        # "D: L680xW375xH770mm". 177 of 756 cards state one, and 96 products have no
+        # dimension in their own description at all - so without these the size a
+        # customer asks for exists on paper and nowhere the ranker can see.
+        #
+        # Scoped to the flyer because the description's own size is parsed by the
+        # measurement block, which also cross-checks the stored columns and flags a
+        # round product whose length is really a diameter. These fill the gap; they do
+        # not compete with it.
+        "dim_length": [
+            {"match": "regex", "pattern": r"L\s*(\d+(?:\.\d+)?)\s*[xX*]", "capture": 1,
+             "source": "flyer"}
+        ],
+        "dim_width": [
+            {"match": "regex", "pattern": r"W\s*(\d+(?:\.\d+)?)\s*[xX*]", "capture": 1,
+             "source": "flyer"}
+        ],
+        "dim_height": [
+            {"match": "regex", "pattern": r"H\s*(\d+(?:\.\d+)?)\s*(?:MM|mm)?", "capture": 1,
+             "source": "flyer"}
+        ],
+        # What the seat cover is made of. Only the flyer says it ("*PP Seat Cover"),
+        # and it is a real buying decision: PP is the cheap one, UF the heavy one.
+        "seat_material": [
+            {"match": "regex", "pattern": r"\bPP\b[^.]*SEAT", "value": "pp", "source": "flyer"},
+            {"match": "regex", "pattern": r"\bUF\b[^.]*SEAT", "value": "uf", "source": "flyer"},
+            {"match": "regex", "pattern": r"UREA[^.]*SEAT", "value": "uf"},
+            {"match": "regex", "pattern": r"DUROPLAST", "value": "duroplast"},
+        ],
+        "has_drainer": [{"match": "present", "pattern": "DRAINER", "value": True}],
+        "has_overflow": [{"match": "present", "pattern": r"OVER\s*FLOW", "value": True}],
+        "has_fixing_screw": [
+            {"match": "present", "pattern": d._FIXING_SCREW_NOUN, "value": True}
+        ],
+    }
+    return rules
+
+
+def seed_derivation_rules(db: Session, *, commit: bool = False) -> dict:
+    """Give each key its shipped rules, ONCE. An edited row is never overwritten.
+
+    Same ownership split as everything else calibratable here: the seed puts the
+    starting point in, and from then on it belongs to whoever tunes it. A re-seed that
+    reinstated the shipped list would delete a rule someone added, on deploy, silently.
+    """
+    shipped = _rules_from_shipped_tables()
+    written = 0
+    for row in db.query(ProductSpecRegistry).all():
+        if row.derivation_rules:
+            continue
+        rules = shipped.get(row.spec_key)
+        if not rules:
+            continue
+        row.derivation_rules = rules
+        written += 1
+    db.flush()
+    if commit:
+        db.commit()
+    return {"keys_seeded": written}
+
+
+def seed_search_policy(db: Session, *, commit: bool = False) -> dict:
+    """Create missing policy rows. An existing row is NEVER overwritten - it is tuning."""
+    existing = {row.policy_key for row in db.query(ProductSpecSearchPolicy).all()}
+    created = 0
+    for entry in SEARCH_POLICY_SEED:
+        if entry["policy_key"] in existing:
+            continue
+        db.add(ProductSpecSearchPolicy(**entry))
+        created += 1
+    db.flush()
+    if commit:
+        db.commit()
+    return {"created": created}
+
+
+def search_policy(db: Session) -> dict[str, float]:
+    """Every scoring knob as a plain dict. Missing rows fall back to the seed."""
+    stored = {row.policy_key: float(row.value) for row in db.query(ProductSpecSearchPolicy).all()}
+    return {entry["policy_key"]: stored.get(entry["policy_key"], float(entry["value"]))
+            for entry in SEARCH_POLICY_SEED}
 
 
 def default_match_window(unit: str | None) -> tuple[float, float]:
@@ -73,17 +312,16 @@ SPEC_REGISTRY_SEED: list[dict] = [
         "data_type": "enum",
         "allowed_values": [],
         "synonyms": {},
+        # OTHERS (1,956 products) and NO LOGO (651) are how the catalog records the
+        # ABSENCE of a brand. They are real values on real rows, so they cannot be
+        # deleted, but they are not something a customer asks for - and offered to the
+        # understanding model as options they became its bucket for any word it could
+        # not place ("interlignet wc" -> brand OTHERS). Not offered, not accepted.
+        "excluded_values": ["OTHERS", "NO LOGO"],
         "measured_coverage": 11584,
         # Rankable, never a filter: every brand in the master is Sorento-sellable.
         "rank_weight": 1.5,
     },
-    # `is_accessory` is deliberately NOT a registry row. It is derived and stored on
-    # every product (product_spec_derivation.derive) and read directly by the ranker's
-    # accessory deboost (product_spec_search.py) — neither of those goes through this
-    # registry. A row here would only invite the n8n parser to try extracting "is the
-    # customer asking about an accessory" as a spec, which is not a thing a customer
-    # states, and it showed up as a bare "is accessory: true" row in the product-facing
-    # Specifications tab with no way to explain it. Keep it internal.
     {
         "spec_key": "shape",
         "label": "Shape",
@@ -164,12 +402,13 @@ SPEC_REGISTRY_SEED: list[dict] = [
         "spec_key": "material",
         "label": "Material",
         "data_type": "enum",
-        "allowed_values": ["stainless_steel", "ceramic", "glass", "pvc", "brass", "acrylic"],
+        "allowed_values": ["stainless_steel", "ceramic", "glass", "pvc", "brass", "acrylic", "abs"],
         "synonyms": {
             "stainless_steel": ["stainless", "stainless steel", "s/steel", "steel", "inox"],
             "ceramic": ["ceramic", "porcelain"],
             "glass": ["glass", "tempered glass"],
             "pvc": ["pvc", "plastic"],
+            "abs": ["abs", "abs plastic"],
             "brass": ["brass"],
             "acrylic": ["acrylic"],
         },
@@ -194,7 +433,7 @@ SPEC_REGISTRY_SEED: list[dict] = [
             "floor_standing": ["floor standing", "floor mounted", "free standing"],
             "pedestal": ["pedestal", "with pedestal"],
             "concealed": ["concealed", "hidden", "in wall"],
-            "counter_top": ["counter top", "countertop", "above counter", "on counter", "top mount"],
+            "counter_top": ["counter top", "countertop", "above counter", "on counter", "top mount", "table top", "tabletop"],
             "under_counter": ["under counter", "undermount", "under mount", "below counter"],
             # 383 taps say PILLAR MOUNTED and 220 more just say PILLAR. In this catalog
             # the word always describes where the tap is fixed, which is why it moved
@@ -218,6 +457,9 @@ SPEC_REGISTRY_SEED: list[dict] = [
             "french_gold",
             "white",
             "satin_chrome",
+            # 73 flyer cards. Distinct from french_gold in Sorento's own range, and
+            # nothing else mapped to it, so a customer asking for it got nothing.
+            "golden_yellow",
         ],
         "synonyms": {
             "black": ["black", "matt black", "matte black"],
@@ -228,6 +470,7 @@ SPEC_REGISTRY_SEED: list[dict] = [
             "chrome": ["chrome", "polished chrome"],
             "french_gold": ["french gold", "gold"],
             "white": ["white"],
+            "golden_yellow": ["golden yellow", "gold yellow", "yellow gold"],
             "satin_chrome": ["satin chrome", "satin"],
         },
         "measured_coverage": 1600,
@@ -272,6 +515,26 @@ SPEC_REGISTRY_SEED: list[dict] = [
             "one_piece",
             "art_basin",
             "mirror_cabinet",
+            # The flyer's own aisles. Each of these was already in the catalog under a
+            # class so broad it could not answer for them: "double towel bar" and
+            # "paper holder" were both simply Bathroom Accessory.
+            "pop_up_waste",
+            "towel_bar",
+            "towel_shelf",
+            "hook_bar",
+            "robe_hook",
+            "corner_basket",
+            "paper_holder",
+            "grab_bar",
+            "soap_dispenser",
+            "flexible_hose",
+            "flush_valve",
+            "floor_trap",
+            "floor_grating",
+            "cistern",
+            "tumbler",
+            "mirror",
+            "bidet",
         ],
         "synonyms": {
             "angle_valve": ["angle valve", "stop valve", "corner valve"],
@@ -288,21 +551,174 @@ SPEC_REGISTRY_SEED: list[dict] = [
             "one_piece": ["one piece", "one-piece", "single piece"],
             "art_basin": ["art basin", "vessel basin", "designer basin"],
             "mirror_cabinet": ["mirror cabinet", "cabinet mirror"],
+            "pop_up_waste": ["pop up waste", "popup waste", "pop-up waste", "waste cover"],
+            "towel_bar": ["towel bar", "towel rack", "towel rail", "penyangkut tuala"],
+            "towel_shelf": ["towel shelf", "shelf"],
+            "hook_bar": ["hook bar", "hanger bar"],
+            "robe_hook": ["robe hook", "hook", "coat hook"],
+            "corner_basket": ["corner basket", "corner rack", "corner shelf"],
+            "paper_holder": ["paper holder", "toilet roll holder", "tissue holder"],
+            "grab_bar": ["grab bar", "handrail", "safety bar"],
+            "soap_dispenser": ["soap dispenser", "soap holder", "soap dish"],
+            "flexible_hose": ["flexible hose", "flexi hose", "connector hose", "hose"],
+            "flush_valve": ["flush valve", "flushing valve"],
+            "floor_trap": ["floor trap", "floor waste"],
+            "floor_grating": ["floor grating", "grating", "floor drain"],
+            "cistern": ["cistern", "flush tank", "water tank"],
+            "tumbler": ["tumbler", "toothbrush holder"],
+            "mirror": ["mirror", "led mirror", "bathroom mirror"],
+            "bidet": ["bidet", "hand bidet", "bidet spray", "shattaf", "jet spray"],
         },
         "measured_coverage": 5075,
         "rank_weight": 3.0,
     },
     {
+        "spec_key": "water_supply",
+        "label": "Water supply",
+        "data_type": "enum",
+        # Cold-only or hot-and-cold. The first question a salesperson asks about a tap
+        # and the commonest phrase on the flyer (878 descriptions say COLD TAP), yet
+        # nothing in the registry could express it: a cold tap and a mixer both derived
+        # to product_type=basin_tap and scored identically for "basin mixer tap".
+        "allowed_values": ["cold_only", "mixer"],
+        "synonyms": {
+            "cold_only": ["cold tap", "cold only", "single cold", "cold water tap"],
+            "mixer": ["mixer", "mixer tap", "hot and cold", "hot cold", "mixer type"],
+        },
+        "measured_coverage": 1226,
+        "rank_weight": 2.5,
+    },
+    {
+        "spec_key": "is_rimless",
+        "label": "Rimless",
+        "data_type": "boolean",
+        # Printed on the flyer as its own selling point and asked for by name. Scoped to
+        # the pan classes: "rimless" said of a tap is not a fact about the tap.
+        "applies_when": {"class": ["Water Closet", "Urinal", "Squatting Pan"]},
+        "synonyms": {"true": ["rimless", "rim less", "no rim"]},
+        "measured_coverage": 337,
+        "rank_weight": 2.0,
+    },
+    {
+        "spec_key": "bar_count",
+        "label": "Number of bars",
+        "data_type": "numeric",
+        # Single or double towel bar. The same shape as bowl_count, and for the same
+        # reason: the flyer prints them as separate products and the customer says the
+        # number, so without it "double towel bar" scored a single bar just as highly.
+        "synonyms": {
+            "_self": ["bar", "bars"],
+            "1": ["single towel bar", "single bar", "one bar"],
+            "2": ["double towel bar", "double bar", "two bar", "twin bar"],
+        },
+        "measured_coverage": 264,
+        "rank_weight": 2.5,
+    },
+    {
+        "spec_key": "steel_grade",
+        "label": "Steel grade",
+        "data_type": "enum",
+        # 304 vs 201 is the first thing a kitchen-sink buyer asks and the biggest price
+        # difference on the page. 705 descriptions say 304, 137 say 201, and the flyer
+        # prints "S/Steel 304" 218 times - it was simply not askable before.
+        "allowed_values": ["304", "201"],
+        "synonyms": {
+            "304": ["304", "sus304", "grade 304", "s/steel 304", "stainless steel 304"],
+            "201": ["201", "sus201", "grade 201", "s/steel 201"],
+        },
+        "measured_coverage": 842,
+        "rank_weight": 2.5,
+    },
+    {
+        "spec_key": "spray_functions",
+        "label": "Spray functions",
+        "data_type": "numeric",
+        # "3 function shower" is how the flyer sells it (36 cards) and how a customer
+        # asks. A count, so exact-or-nothing - a 2-function head does not nearly satisfy
+        # someone who asked for 3.
+        "synonyms": {
+            "_self": ["function", "functions", "spray", "mode", "modes", "setting"],
+            "1": ["single function", "1 function", "one function"],
+            "2": ["2 function", "two function", "double function"],
+            "3": ["3 function", "three function", "triple function"],
+            "5": ["5 function", "five function"],
+        },
+        "measured_coverage": 349,
+        "rank_weight": 2.5,
+    },
+    {
+        "spec_key": "hose_length",
+        "label": "Hose length",
+        "data_type": "numeric",
+        "unit": "mm",
+        # The hand-bidet hose the flyer prints as "c/w 1.2m" on 41 cards. Customers ask
+        # because it decides whether the spray reaches, and 189 descriptions carry it.
+        "synonyms": {"_self": ["hose", "hose length", "pipe", "tube"]},
+        "measured_coverage": 237,
+        "rank_weight": 2.0,
+        # Millimetres, but a hose is not a cabinet: 100mm either side is what "about
+        # 1.2m" means to a customer, and nothing beyond half a metre is the same hose.
+        "match_tolerance": 100.0,
+        "match_decay": 500.0,
+    },
+    {
+        "spec_key": "is_frameless",
+        "label": "Frameless",
+        "data_type": "boolean",
+        # The clearest case for reading the flyer over the description: 14 flyer cards
+        # say FRAMELESS and only 2 descriptions do.
+        "synonyms": {"true": ["frameless", "frame less", "no frame", "borderless"]},
+        "measured_coverage": 16,
+        "rank_weight": 2.0,
+    },
+    {
+        "spec_key": "has_led",
+        "label": "LED light",
+        "data_type": "boolean",
+        "synonyms": {"true": ["led", "led light", "lighted", "illuminated", "with light"]},
+        # 84, NOT the 1,148 a `LIKE '%LED%'` first reported: that substring also matches
+        # CONCEALED and CLOSE-COUPLED. Every count in this file is a word-boundary match.
+        "measured_coverage": 84,
+        "rank_weight": 2.0,
+    },
+    {
+        "spec_key": "is_honeycomb",
+        "label": "Honeycomb structure",
+        "data_type": "boolean",
+        # The flyer gives page 7's bathroom furniture its own name and sells on it; 154
+        # descriptions carry it.
+        "synonyms": {"true": ["honeycomb", "honey comb", "honeycomb structure"]},
+        "measured_coverage": 154,
+        "rank_weight": 2.5,
+    },
+    {
+        "spec_key": "is_soft_close",
+        "label": "Soft close",
+        "data_type": "boolean",
+        "synonyms": {"true": ["soft close", "soft closing", "slow close", "damper"]},
+        "measured_coverage": 8,
+        "rank_weight": 2.0,
+    },
+    {
+        "spec_key": "has_diverter",
+        "label": "Diverter",
+        "data_type": "boolean",
+        "synonyms": {"true": ["diverter", "with diverter", "divertor"]},
+        "measured_coverage": 37,
+        "rank_weight": 1.5,
+    },
+    {
         "spec_key": "spout_type",
         "label": "Spout",
         "data_type": "enum",
-        "allowed_values": ["flexible", "double_flexible", "pull_out", "swivel", "gooseneck"],
+        "allowed_values": ["flexible", "double_flexible", "pull_out", "swivel", "gooseneck", "waterfall"],
         "synonyms": {
             "flexible": ["flexible", "flexible head", "flexi", "bendable", "hose spout"],
             "double_flexible": ["double flexible", "double spout"],
             "pull_out": ["pull out", "pull-out", "extendable", "pull down"],
             "swivel": ["swivel", "rotating", "turnable"],
             "gooseneck": ["gooseneck", "goose neck", "high arc"],
+            "waterfall": ["waterfall", "water fall", "cascade"],
         },
         "measured_coverage": 641,
         "rank_weight": 2.0,
@@ -373,6 +789,23 @@ SPEC_REGISTRY_SEED: list[dict] = [
         "rank_weight": 3.0,
     },
     {
+        "spec_key": "seat_material",
+        "label": "Seat cover material",
+        "data_type": "enum",
+        "allowed_values": ["pp", "uf", "duroplast"],
+        # Only the flyer states it, on 25 cards (PP 13, UF 12). Low coverage, high
+        # decisiveness: someone asking for a UF seat is refusing a PP one, so where the
+        # catalog says it, it settles the answer.
+        "synonyms": {
+            "pp": ["pp", "pp seat", "pp seat cover", "polypropylene", "plastic seat"],
+            "uf": ["uf", "uf seat", "uf seat cover", "urea", "urea formaldehyde"],
+            "duroplast": ["duroplast", "duroplast seat", "soft close seat"],
+        },
+        "applies_when": {"class": ["Water Closet"]},
+        "measured_coverage": 25,
+        "rank_weight": 2.5,
+    },
+    {
         "spec_key": "has_drainer",
         "label": "Has a drainer board",
         "data_type": "boolean",
@@ -424,7 +857,6 @@ def _seed_values(entry: dict) -> dict:
         "unit": entry.get("unit"),
         "allowed_values": entry.get("allowed_values", []),
         "synonyms": entry.get("synonyms", {}),
-        "applies_to_classes": entry.get("applies_to_classes", []),
         "applies_when": entry.get("applies_when", {}),
         "measured_coverage": entry.get("measured_coverage"),
     }
@@ -456,6 +888,7 @@ def seed_spec_registry(db: Session, *, commit: bool = False) -> dict:
                 ProductSpecRegistry(
                     spec_key=key,
                     rank_weight=entry.get("rank_weight", 1.0),
+                    excluded_values=entry.get("excluded_values", []),
                     is_active=entry.get("is_active", True),
                     match_tolerance=entry.get("match_tolerance", tolerance),
                     match_decay=entry.get("match_decay", decay),
@@ -476,6 +909,36 @@ def seed_spec_registry(db: Session, *, commit: bool = False) -> dict:
             if getattr(row, field) != value:
                 setattr(row, field, value)
                 changed = True
+
+        # New SHIPPED rules are appended; existing rules are never touched or reordered.
+        #
+        # Without this, shipped vocabulary could never reach an install again. Migration
+        # 311i materialised every key's rules into the column, and `configured_rules`
+        # prefers the column over the shipped table — so adding 17 product types to the
+        # table moved the value list and changed nothing about what gets derived. The
+        # symptom is the worst kind: the screen lists `bidet` as a value, the catalogue
+        # has 715 bidets, and not one of them carries it.
+        #
+        # Appending is safe for first-match-wins because a new token is by definition
+        # not matched by the existing rules; anything needing to sit ABOVE an existing
+        # rule (a longer phrase beating a shorter one) has to be ordered by hand, which
+        # is what the rule editor is for.
+        shipped_for_key = _rules_from_shipped_tables().get(key) or []
+        if shipped_for_key:
+            stored_rules = list(row.derivation_rules or [])
+            seen = {
+                (str(r.get("match")), str(r.get("pattern")), str(r.get("value")))
+                for r in stored_rules
+            }
+            missing = [
+                r
+                for r in shipped_for_key
+                if (str(r.get("match")), str(r.get("pattern")), str(r.get("value"))) not in seen
+            ]
+            if missing and stored_rules:
+                row.derivation_rules = stored_rules + missing
+                changed = True
+
         if changed:
             updated += 1
 
@@ -486,11 +949,32 @@ def seed_spec_registry(db: Session, *, commit: bool = False) -> dict:
     return {"created": created, "updated": updated}
 
 
+def merged_allowed_values(row: ProductSpecRegistry) -> list:
+    """The shipped values plus the ones staff added, minus the ones they took away.
+
+    Suppression is applied LAST and matches on the exact stored value, so taking a
+    shipped value away and adding one back under the same name both work, in either
+    order — the same bargain `merged_synonyms` strikes for words.
+    """
+    merged = list(row.allowed_values or [])
+    for value in row.user_values or []:
+        if value not in merged:
+            merged.append(value)
+    dropped = {str(v).strip() for v in (row.suppressed_values or [])}
+    return [v for v in merged if str(v).strip() not in dropped]
+
+
 def merged_synonyms(row: ProductSpecRegistry) -> dict:
     """Seed synonyms with the staff-added ones folded in, per value.
 
-    Additive on purpose: staff extend the shipped vocabulary, they do not contradict
-    it, so a word added here can never remove one the n8n parser is relying on.
+    Additions are additive: a word added here can never remove one the n8n parser is
+    relying on. Removals are explicit and separate — `suppressed_synonyms` says "this
+    business does not use that word for that value", which is what "matte black" needed:
+    it ships as a word for `black`, and while it is bound there it cannot mean a colour
+    of its own however many values you add.
+
+    Suppression is applied LAST, so suppressing a word the seed ships and adding it back
+    under another value both work, in either order.
     """
     merged = {value: list(words) for value, words in (row.synonyms or {}).items()}
     for value, words in (row.user_synonyms or {}).items():
@@ -498,7 +982,35 @@ def merged_synonyms(row: ProductSpecRegistry) -> dict:
         for word in words:
             if word not in existing:
                 existing.append(word)
+    for value, words in (row.suppressed_synonyms or {}).items():
+        if value not in merged:
+            continue
+        dropped = {str(w).strip().lower() for w in words}
+        merged[value] = [w for w in merged[value] if str(w).strip().lower() not in dropped]
     return merged
+
+
+def shipped_scopes() -> dict[str, dict]:
+    """`applies_when` as the seed declares it, for a caller with no database."""
+    return {
+        entry["spec_key"]: entry["applies_when"]
+        for entry in SPEC_REGISTRY_SEED
+        if entry.get("applies_when")
+    }
+
+
+def configured_scopes(db: Session) -> dict[str, dict]:
+    """Which products each key applies to, as configured.
+
+    Reads EVERY row for the same reason `configured_rules` does: `is_active` says
+    whether the key is searched, not which products may legitimately carry it.
+    """
+    scopes = shipped_scopes()
+    for row in db.query(ProductSpecRegistry).all():
+        # An explicit empty gate is a real answer - "this applies to everything" - so it
+        # overwrites the seed's rather than falling through to it.
+        scopes[row.spec_key] = row.applies_when or {}
+    return {key: gate for key, gate in scopes.items() if gate}
 
 
 def active_registry(db: Session) -> list[ProductSpecRegistry]:

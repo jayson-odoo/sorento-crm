@@ -90,11 +90,6 @@ def test_nothing_worth_saying_renders_nothing(values):
     assert render_spec_sentence(values) is None
 
 
-def test_accessory_is_stated_so_the_ranker_can_read_it_back():
-    sentence = render_spec_sentence(
-        _values(**{"class": "Kitchen Sink", "is_accessory": True, "material": "stainless_steel"})
-    )
-    assert "Accessory or spare part." in sentence
 
 
 # AC-T0d-03: the guard that makes description-derived search safe.

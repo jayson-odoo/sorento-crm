@@ -143,7 +143,13 @@ def render_spec_sentence(values: dict) -> str | None:
     parts: list[str] = []
 
     # Lead with what the customer leads with: the brand and the thing itself.
+    #
+    # Brand names are stored the way the catalog shouts them ("SORENTO"), and this
+    # sentence is read by a customer in a chat reply, where all-caps reads as shouting.
+    # `.title()` rather than `.capitalize()` so a two-word brand keeps both words.
     brand, class_label = read("brand"), read("class")
+    if brand:
+        brand = str(brand).title()
     if class_label:
         head = f"{brand} {str(class_label).lower()}" if brand else str(class_label)
         parts.append(head)
@@ -195,8 +201,6 @@ def render_spec_sentence(values: dict) -> str | None:
     if thickness is not None:
         parts.append(f"{_number(thickness)} mm thick")
 
-    if read("is_accessory") is True:
-        parts.append("Accessory or spare part")
 
     if not parts:
         return None

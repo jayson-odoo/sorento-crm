@@ -16,7 +16,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.product_spec import ProductSpecifications
 from app.services.embedding_worker import _SOURCE_MODEL_FOR_COMPANY, _canonical_for_source
 from app.services.product_class_signal import backfill_category_signals
@@ -32,10 +32,14 @@ def db():
     with blank_session() as s:
         cat = ProductCategory(id=str(uuid.uuid4()), category_code="SRT-KS", category_name="SRT-KS")
         uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code="ZZT-PCS", uom_name="Piece")
-        s.add_all([cat, uom])
+        # The brand is read off the product's own brand row, not off the `SRT` in the
+        # category code, so a product with no brand renders no brand. The sentence this
+        # file asserts on names one, which means the fixture has to give it one.
+        brand = Brand(id=str(uuid.uuid4()), brand_code="ZZT-SRT", brand_name="SORENTO")
+        s.add_all([cat, uom, brand])
         s.flush()
         backfill_category_signals(s)
-        _REFS.update({"cat": cat.id, "uom": uom.id})
+        _REFS.update({"cat": cat.id, "uom": uom.id, "brand": brand.id})
         yield s
 
 
@@ -47,6 +51,7 @@ def _product(db, code: str, description: str) -> Product:
         description=description,
         category_id=_REFS["cat"],
         base_uom_id=_REFS["uom"],
+        brand_id=_REFS["brand"],
         list_price=Decimal("1.00"),
     )
     db.add(row)

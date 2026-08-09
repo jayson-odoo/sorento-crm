@@ -70,6 +70,12 @@ CLASS_SYNONYMS: dict[str, list[str]] = {
     "Water Closet": ["water closet", "wc", "toilet", "toilet bowl", "closet", "tandas"],
     "Shower": ["shower", "shower head", "rain shower", "hand shower", "pancuran"],
     "Bathroom Furniture": ["cabinet", "mirror", "vanity", "bathroom cabinet", "kabinet"],
+    # The two the catalog used to file together. Each answers only to its own words, so
+    # "bathtub" stops returning jacuzzis.
+    "Bathtub": ["bathtub", "bath tub", "tub"],
+    "Jacuzzi": ["jacuzzi", "whirlpool", "spa bath"],
+    # Kept: 182 products are classed from their CATEGORY alone, which names both. They
+    # genuinely could be either, and answering to both words is the truthful reading.
     "Bathtub and Jacuzzi": ["bathtub", "bath tub", "jacuzzi", "tub", "shower screen"],
     "Bathroom Accessory": [
         "bathroom accessory",
@@ -223,6 +229,20 @@ def resolve_classes_for_term(db: Session, term: str) -> list[str]:
     Case-insensitive and whitespace-tolerant, because this is fed raw customer text.
     Non-searchable categories can never match. Returns a sorted list rather than one
     value: a term may legitimately span classes once the map widens.
+
+    THREE SOURCES, because a class can now be born in three places and a customer
+    cannot be expected to know which:
+
+      1. a category's `class_label` and its `search_synonyms`
+      2. a class value products ACTUALLY CARRY, however it got there
+      3. words staff bound to a class value in the registry
+
+    (2) is the one that was missing, and it is the one that matters. Class used to come
+    only from the category code, so these were all the same list. Class now comes from
+    configured derivation rules, so anyone can mint a class the categories have never
+    heard of - and "seat cover" resolved to nothing while 172 products sat there
+    carrying `Seat Cover`, because the word could only be looked up in the wrong place.
+    `Squatting Pan` had been unreachable the same way since the day it was added.
     """
     needle = (term or "").strip().lower()
     if not needle:
@@ -244,4 +264,32 @@ def resolve_classes_for_term(db: Session, term: str) -> list[str]:
         if any(str(s).strip().lower() == needle for s in synonyms):
             found.add(label)
 
+    for label in stored_class_labels(db):
+        if label.lower() == needle:
+            found.add(label)
+
+    # So "toilet seat" can be taught to reach Seat Cover in the UI, without inventing a
+    # category for it.
+    from app.models.product_spec import ProductSpecRegistry
+    from app.services.product_spec_registry import merged_synonyms
+
+    registry_row = db.query(ProductSpecRegistry).filter_by(spec_key="class").first()
+    if registry_row is not None:
+        for value, words in merged_synonyms(registry_row).items():
+            if any(str(w).strip().lower() == needle for w in words):
+                found.add(value)
+
     return sorted(found)
+
+
+def stored_class_labels(db: Session) -> list[str]:
+    """Every class value products actually carry, however it was derived."""
+    from sqlalchemy import text as sql_text
+
+    rows = db.execute(
+        sql_text(
+            "SELECT DISTINCT values->'class'->>'value' AS label "
+            "FROM product_specifications WHERE values ? 'class'"
+        )
+    ).all()
+    return sorted({r[0] for r in rows if r[0]})

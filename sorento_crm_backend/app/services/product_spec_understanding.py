@@ -37,8 +37,13 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.ai_assistant import AIAssistantUsageLog
 from app.models.product_spec import ProductSpecifications
+from app.services.ai_prompt_registry import agent_model, get_prompt
 from app.services.llm_provider import get_provider
-from app.services.product_spec_registry import active_registry, merged_synonyms
+from app.services.product_spec_registry import (
+    active_registry,
+    merged_allowed_values,
+    merged_synonyms,
+)
 from app.services.product_spec_search import (
     SELF_SYNONYM_KEY,
     normalise_quantity,
@@ -52,31 +57,10 @@ logger = logging.getLogger(__name__)
 _MAX_OUTPUT_TOKENS = 700
 _TEMPERATURE = 0.0
 
-_SYSTEM_PROMPT = """You read a customer's sanitaryware enquiry and map it onto a fixed \
-vocabulary of product specifications.
-
-You will be given the ONLY specifications that exist. Use nothing else.
-
-Rules:
-- Return a specification ONLY when the customer's words genuinely mean it. Silence is \
-correct and expected; a wrong specification is worse than a missing one, because it \
-puts the wrong product in front of a buyer.
-- Never invent a spec_key or an enum value. Use the exact strings given to you.
-- Understand meaning, not just words: misspellings, plurals, local phrasing, and \
-descriptions of a thing rather than its name ("the pipe goes into the wall" = a P-trap, \
-"pipe goes into the floor" = an S-trap).
-- For numeric specs return a plain number in the unit stated for that key. Convert if \
-the customer used another unit (8 inch = 203.2 mm).
-- A brand name or a product class IS a specification whenever it appears in the list \
-you were given. Return it, even when the customer says nothing else — "cabana wc" is a \
-brand and a class, not an empty enquiry.
-- Put words that carry meaning but map onto no spec — a model name, a room, a colour \
-you were not given — into free_terms.
-- If the customer is not describing a product at all, return empty lists.
-
-Reply with JSON only:
-{"specs": [{"key": "<spec_key>", "value": <string|number|boolean>}], \
-"free_terms": ["..."], "notes": "<one short sentence on anything ambiguous>"}"""
+# The prompt lives in the AI prompt registry under the agent name below, so it is
+# editable and versioned in the UI alongside every other agent's. The hardcoded copy
+# (its registry fallback) is what runs if the registry row is missing.
+AGENT_NAME = "spec_understanding"
 
 
 @dataclass
@@ -84,6 +68,9 @@ class Understanding:
     """What the customer meant, in the ranker's own terms."""
 
     specs: list[dict] = field(default_factory=list)
+    # What the customer RULED OUT. Kept apart from `specs` because a refusal is not a
+    # request for the opposite: "not glass" removes glass, it does not ask for ceramic.
+    exclusions: list[dict] = field(default_factory=list)
     free_terms: list[str] = field(default_factory=list)
     notes: str = ""
     # How this was produced, so the preview screen can be honest about it and a
@@ -124,6 +111,12 @@ def open_vocabulary_values(db: Session, spec_key: str) -> list[str]:
     return sorted({value for (value,) in rows if value})
 
 
+def _offerable(values, excluded: set[str]) -> list[str]:
+    """The values a customer may ask for: everything the catalog holds, minus the
+    placeholders that record the absence of one."""
+    return [v for v in values if str(v).strip().lower() not in excluded]
+
+
 def _vocabulary(db: Session) -> tuple[list[dict], dict[str, Any], dict[str, list[str]]]:
     """The registry rendered for a prompt, an index to validate replies against, and
     the catalog-sourced values for any open-vocabulary key."""
@@ -133,6 +126,7 @@ def _vocabulary(db: Session) -> tuple[list[dict], dict[str, Any], dict[str, list
 
     for row in active_registry(db):
         synonyms = merged_synonyms(row)
+        excluded = {str(v).strip().lower() for v in (row.excluded_values or [])}
         entry: dict[str, Any] = {
             "spec_key": row.spec_key,
             "means": row.label,
@@ -140,11 +134,16 @@ def _vocabulary(db: Session) -> tuple[list[dict], dict[str, Any], dict[str, list
         }
         if row.unit:
             entry["unit"] = row.unit
-        if row.allowed_values:
-            entry["allowed_values"] = list(row.allowed_values)
+        # Merged: a value staff added must be offerable, or the model can never return
+        # the thing they just told the system exists.
+        shipped_and_added = merged_allowed_values(row)
+        if shipped_and_added:
+            entry["allowed_values"] = _offerable(shipped_and_added, excluded)
         elif row.data_type == "enum":
-            # Open vocabulary: hand the model what the catalog actually holds.
-            catalog_values = open_vocabulary_values(db, row.spec_key)
+            # Open vocabulary: hand the model what the catalog actually holds, minus
+            # anything marked not-searchable. A value the model is never shown is a
+            # value it cannot answer with, which is a harder guarantee than a rule.
+            catalog_values = _offerable(open_vocabulary_values(db, row.spec_key), excluded)
             if catalog_values:
                 entry["allowed_values"] = catalog_values
                 open_values[row.spec_key] = catalog_values
@@ -192,7 +191,14 @@ def _coerce(row, value: Any, open_values: list[str] | None = None) -> Any | None
     if not text:
         return None
 
-    allowed = list(row.allowed_values or []) or list(open_values or [])
+    # Belt as well as braces: the model is not offered an excluded value, and is not
+    # allowed to return one it inferred from elsewhere in the prompt either.
+    excluded = {str(v).strip().lower() for v in (row.excluded_values or [])}
+    if text.lower() in excluded:
+        logger.info("spec understanding: dropped excluded value %r for %s", value, row.spec_key)
+        return None
+
+    allowed = _offerable(merged_allowed_values(row) or list(open_values or []), excluded)
     if not allowed:
         # Nothing to check against — the key is open and the catalog is empty for it.
         return text
@@ -216,13 +222,17 @@ def _coerce(row, value: Any, open_values: list[str] | None = None) -> Any | None
     return None
 
 
-def _validate(
-    payload: dict, index: dict[str, Any], open_values: dict[str, list[str]] | None = None
-) -> tuple[list[dict], list[str], str]:
-    specs: list[dict] = []
+def _validated_pairs(
+    items: Any,
+    index: dict[str, Any],
+    open_values: dict[str, list[str]] | None,
+    *,
+    one_per_key: bool,
+) -> list[dict]:
+    """Model-proposed {key, value} pairs, kept only where the registry recognises both."""
+    out: list[dict] = []
     seen: set[str] = set()
-
-    for item in payload.get("specs") or []:
+    for item in items or []:
         if not isinstance(item, dict):
             continue
         key = str(item.get("key") or "").strip()
@@ -230,21 +240,51 @@ def _validate(
         if row is None:
             logger.info("spec understanding: dropped unknown key %r", key)
             continue
-        if key in seen:
+        if one_per_key and key in seen:
             continue
         value = _coerce(row, item.get("value"), (open_values or {}).get(key))
         if value is None:
             continue
-        specs.append({"key": key, "value": value})
+        entry = {"key": key, "value": value}
+        # A comparison, where the customer made one. Only ever attached to a number:
+        # "at least chrome" is not a thing, and an operator on an enum would be read by
+        # the ranker as a threshold against a string.
+        op = str(item.get("op") or "").strip().lower()
+        if op in {"at_least", "at_most"} and isinstance(value, (int, float)):
+            entry["op"] = op
+        out.append(entry)
         seen.add(key)
+    return out
+
+
+def _validate(
+    payload: dict, index: dict[str, Any], open_values: dict[str, list[str]] | None = None
+) -> tuple[list[dict], list[dict], list[str], str]:
+    specs = _validated_pairs(payload.get("specs"), index, open_values, one_per_key=True)
+    # A customer can rule out several values of one key ("not glass, not plastic"), so
+    # exclusions are NOT collapsed to one per key the way requests are.
+    exclusions = _validated_pairs(
+        payload.get("exclusions"), index, open_values, one_per_key=False
+    )
+    # A value cannot be both asked for and refused. When the model says both, the
+    # refusal is the more specific statement and the request is dropped - the failure
+    # this guards is "not glass" arriving as material=glass, which is the exact
+    # opposite of what was said.
+    refused = {(e["key"], str(e["value"]).strip().lower()) for e in exclusions}
+    specs = [s for s in specs if (s["key"], str(s["value"]).strip().lower()) not in refused]
 
     free_terms = [str(t).strip() for t in (payload.get("free_terms") or []) if str(t).strip()]
     notes = str(payload.get("notes") or "").strip()
-    return specs, free_terms, notes
+    return specs, exclusions, free_terms, notes
 
 
 def _resolve_provider(db: Session):
-    """Same provider the rest of the CRM's AI features use. None when unconfigured."""
+    """The provider and model THIS agent runs on. None when unconfigured.
+
+    Per-agent, falling back to the global assistant config. Reading a misspelt customer
+    sentence is not the same job as writing an explanatory paragraph, so the model is
+    set against the `spec_understanding` agent row rather than shared with everything.
+    """
     from app.models.ai_assistant import AIAssistantConfig
 
     cfg = (
@@ -252,8 +292,9 @@ def _resolve_provider(db: Session):
         .order_by(AIAssistantConfig.created_at.asc())
         .first()
     )
-    provider_name = (cfg.provider if cfg else "openai") or "openai"
-    model_name = (cfg.model if cfg else "") or ""
+    agent_provider, agent_model_name = agent_model(db, AGENT_NAME)
+    provider_name = agent_provider or (cfg.provider if cfg else "openai") or "openai"
+    model_name = agent_model_name or (cfg.model if cfg else "") or ""
     api_key = (cfg.api_key_ciphertext if cfg else "") or settings.openai_api_key or ""
     if not api_key:
         return None, provider_name, model_name
@@ -297,7 +338,7 @@ def understand_phrase(
 
     described, index, open_values = _vocabulary(db)
     messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "system", "content": get_prompt(db, AGENT_NAME).text},
         {
             "role": "user",
             "content": (
@@ -323,7 +364,7 @@ def understand_phrase(
         return fallback
 
     elapsed_ms = int((time.monotonic() - started) * 1000)
-    specs, free_terms, notes = _validate(
+    specs, exclusions, free_terms, notes = _validate(
         payload if isinstance(payload, dict) else {}, index, open_values
     )
 
@@ -332,6 +373,12 @@ def understand_phrase(
     merged = list(specs)
     stated = {entry["key"] for entry in merged}
     merged.extend(entry for entry in baseline if entry["key"] not in stated)
+
+    # ...with one exception: the literal reader has no idea what "not" means, so it
+    # answers "not glass" with material=glass. A refusal the model DID understand
+    # overrules it, or the deterministic floor reinstates the very thing refused.
+    refused = {(e["key"], str(e["value"]).strip().lower()) for e in exclusions}
+    merged = [s for s in merged if (s["key"], str(s["value"]).strip().lower()) not in refused]
 
     # The whole phrase always stays available as free text: it is what the rendered
     # sentence is matched against, and dropping it would lose recall the model cannot
@@ -360,6 +407,7 @@ def understand_phrase(
 
     return Understanding(
         specs=merged,
+        exclusions=exclusions,
         free_terms=terms,
         notes=notes,
         source="semantic",

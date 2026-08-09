@@ -16,11 +16,12 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
+from sqlalchemy import text as sql_text
 
 import pytest
 
 from app.models.company import Company
-from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.services.product_class_signal import backfill_category_signals
 from app.services.product_spec_derivation import derive_for_code
 from app.services.product_spec_registry import seed_spec_registry
@@ -41,7 +42,11 @@ def db():
         sh = ProductCategory(id=str(uuid.uuid4()), category_code="SRT-SH", category_name="SRT-SH")
         wb = ProductCategory(id=str(uuid.uuid4()), category_code="SRT-WB", category_name="SRT-WB")
         uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code="ZZT-PCS", uom_name="Piece")
-        s.add_all([cat, wc, ft, sh, wb, uom])
+        # Brand is read off the product now, so the house-preference tests need real
+        # brand rows rather than a category prefix.
+        house = Brand(id=str(uuid.uuid4()), brand_code="ZZT-SRT", brand_name="SORENTO")
+        rival = Brand(id=str(uuid.uuid4()), brand_code="ZZT-BRV", brand_name="BRAVAT")
+        s.add_all([cat, wc, ft, sh, wb, uom, house, rival])
         s.flush()
         backfill_category_signals(s)
         seed_spec_registry(s)
@@ -53,12 +58,14 @@ def db():
                 "sh": sh.id,
                 "wb": wb.id,
                 "uom": uom.id,
+                "house": house.id,
+                "rival": rival.id,
             }
         )
         yield s
 
 
-def _product(db, code, description, *, category="cat", discontinued=False, variant_of=None):
+def _product(db, code, description, *, category="cat", discontinued=False, variant_of=None, brand=None):
     row = Product(
         id=str(uuid.uuid4()),
         product_code=code,
@@ -67,6 +74,7 @@ def _product(db, code, description, *, category="cat", discontinued=False, varia
         category_id=_REFS[category],
         base_uom_id=_REFS["uom"],
         list_price=Decimal("1.00"),
+        brand_id=_REFS[brand] if brand else None,
         is_discontinued=discontinued,
         variant_of_id=variant_of,
     )
@@ -125,36 +133,8 @@ def test_a_free_term_resolves_through_a_class_synonym(db):
 # --------------------------------------------------------------------------- #
 # accessories (AC-T0e-09, AC-T0e-10)
 # --------------------------------------------------------------------------- #
-def test_accessories_do_not_win_a_product_query(db):
-    _catalog(db)
-
-    results = search_specs(
-        db,
-        specs=[{"key": "class", "value": "Kitchen Sink"}, {"key": "material", "value": "stainless_steel"}],
-        free_terms=["kitchen sink"],
-    )
-
-    assert _codes(results)[0] != "ZZT-BASKET"
 
 
-def test_an_accessory_is_deboosted_not_excluded(db):
-    # The rule is a deboost, not a filter: with the deboost relaxed the accessory is
-    # still in the catalog and still rankable.
-    #
-    # NOTE a real v1 limitation: the rendered sentence is built from spec VALUES, so it
-    # carries the class ("kitchen sink") but not the part noun ("triangle basket").
-    # Searching the word "basket" therefore finds nothing today. Making part nouns
-    # searchable needs an accessory_type registry key, which is not in this slice.
-    _catalog(db)
-
-    results = search_specs(
-        db,
-        specs=[{"key": "class", "value": "Kitchen Sink"}],
-        free_terms=[],
-        include_accessories=True,
-    )
-
-    assert "ZZT-BASKET" in _codes(results)
 
 
 # --------------------------------------------------------------------------- #
@@ -676,3 +656,419 @@ def test_digits_inside_a_product_code_are_not_read_as_a_quantity(db):
     resolved = {e["key"]: e["value"] for e in resolve_terms_to_specs(db, ["CKS1050 trap"])}
 
     assert "trap_length" not in resolved
+
+
+# --------------------------------------------------------------------------- #
+# tuning: a house preference, and a discontinued deboost (#99)
+# --------------------------------------------------------------------------- #
+def _set_policy(db, key: str, value: float) -> None:
+    from app.models.product_spec import ProductSpecSearchPolicy
+    from app.services.product_spec_registry import seed_search_policy
+
+    seed_search_policy(db)
+    db.query(ProductSpecSearchPolicy).filter_by(policy_key=key).one().value = value
+    db.flush()
+
+
+def _prefer(db, spec_key: str, weights: dict) -> None:
+    from app.models.product_spec import ProductSpecRegistry
+
+    db.query(ProductSpecRegistry).filter_by(spec_key=spec_key).one().value_weights = weights
+    db.flush()
+
+
+def test_a_discontinued_product_ranks_below_an_otherwise_identical_live_one(db):
+    _product(db, "ZZT-LIVE", "SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)")
+    _product(db, "ZZT-DEAD", "SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)", discontinued=True)
+
+    codes = _codes(search_specs(db, specs=[{"key": "class", "value": "Kitchen Sink"}]))
+
+    assert codes.index("ZZT-LIVE") < codes.index("ZZT-DEAD")
+
+
+def test_a_discontinued_product_is_still_offered(db):
+    """4,969 discontinued products are still active and still sellable.
+
+    The deboost ranks them second, it does not hide them - otherwise a customer asking
+    for the only thing that matches gets told nothing matches.
+    """
+    _product(db, "ZZT-DEAD", "SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)", discontinued=True)
+
+    assert "ZZT-DEAD" in _codes(search_specs(db, specs=[{"key": "class", "value": "Kitchen Sink"}]))
+
+
+def test_turning_the_discontinued_penalty_off_restores_the_old_order(db):
+    # Proves the number is really the setting and not a decoration next to a constant.
+    _product(db, "ZZT-DEAD", "SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)", discontinued=True)
+    _product(db, "ZZT-LIVE", "SORENTO S/STEEL KITCHEN SINK (1000X500X220MM)")
+
+    _set_policy(db, "discontinued_penalty", 0)
+    scores = {
+        r["product_code"]: r["score"]
+        for r in search_specs(db, specs=[{"key": "class", "value": "Kitchen Sink"}])["candidates"]
+    }
+
+    assert scores["ZZT-DEAD"] == scores["ZZT-LIVE"]
+
+
+def _scores(db, specs) -> dict:
+    return {r["product_code"]: r["score"] for r in search_specs(db, specs=specs)["candidates"]}
+
+
+def test_a_house_brand_preference_floats_that_brand(db):
+    # Asserted on the SCORE, not on list order: with the two products otherwise equal
+    # the order is a tie either way, so an order assertion passes whether or not the
+    # preference is applied - a test that cannot fail.
+    _product(db, "ZZT-RIVAL", "BRAVAT S/STEEL KITCHEN SINK", brand="rival")
+    _product(db, "ZZT-HOUSE", "SORENTO S/STEEL KITCHEN SINK", brand="house")
+    class_only = [{"key": "class", "value": "Kitchen Sink"}]
+
+    before = _scores(db, class_only)
+    assert before["ZZT-HOUSE"] == before["ZZT-RIVAL"], "equal until a preference is set"
+
+    _prefer(db, "brand", {"SORENTO": 1.5})
+    after = _scores(db, class_only)
+
+    assert after["ZZT-HOUSE"] == before["ZZT-HOUSE"] + 1.5
+    assert after["ZZT-RIVAL"] == before["ZZT-RIVAL"]
+    assert _codes(search_specs(db, specs=class_only))[0] == "ZZT-HOUSE"
+
+
+def test_a_house_preference_never_overrides_the_brand_the_customer_asked_for(db):
+    """Someone who asks for Bravat is asking for Bravat.
+
+    A preference that outranked the customer's own words would be a bug wearing a
+    boost's clothes, so it is only applied to keys they did not state.
+    """
+    _product(db, "ZZT-HOUSE", "SORENTO S/STEEL KITCHEN SINK", brand="house")
+    _product(db, "ZZT-RIVAL", "BRAVAT S/STEEL KITCHEN SINK", brand="rival")
+    asked_for_bravat = [
+        {"key": "class", "value": "Kitchen Sink"},
+        {"key": "brand", "value": "BRAVAT"},
+    ]
+
+    before = _scores(db, asked_for_bravat)
+    _prefer(db, "brand", {"SORENTO": 1.5})
+    after = _scores(db, asked_for_bravat)
+
+    assert after == before, "the customer named the brand, so no house preference applies"
+    assert _codes(search_specs(db, specs=asked_for_bravat))[0] == "ZZT-RIVAL"
+
+
+def test_no_preference_configured_changes_nothing(db):
+    # The mechanism ships inert: an empty value_weights must score exactly as before.
+    _product(db, "ZZT-HOUSE", "SORENTO S/STEEL KITCHEN SINK", brand="house")
+    _product(db, "ZZT-RIVAL", "BRAVAT S/STEEL KITCHEN SINK", brand="rival")
+
+    scores = {
+        r["product_code"]: r["score"]
+        for r in search_specs(db, specs=[{"key": "class", "value": "Kitchen Sink"}])["candidates"]
+    }
+
+    assert scores["ZZT-HOUSE"] == scores["ZZT-RIVAL"]
+
+
+# --------------------------------------------------------------------------- #
+# a preference can reorder answers; it cannot BE one
+# --------------------------------------------------------------------------- #
+def test_a_phrase_that_matches_nothing_misses_the_floor_despite_a_house_preference(db):
+    """"hi" must return nothing, not five Sorento products.
+
+    The house preference is added to every product carrying the preferred value,
+    whatever the customer said. Counted as evidence it sat permanently above the
+    relevance floor, so the floor could never be missed and a greeting came back as a
+    shortlist of arbitrary products presented as answers.
+    """
+    _prefer(db, "brand", {"sorento": 8.0})
+    _product(db, "ZZT-HOUSE", "SORENTO S/STEEL KITCHEN SINK", brand="house")
+
+    result = search_specs(db, specs=[], free_terms=["flux", "capacitor"])
+
+    assert result["floor_missed"] is True
+    assert result["candidates"] == []
+
+
+def test_the_preference_still_reorders_answers_the_customer_did_find(db):
+    # The other half of the same rule: excluded from the floor, still applied to the
+    # score. Without this the fix above would read as "the preference was removed".
+    _prefer(db, "brand", {"sorento": 8.0})
+    _product(db, "ZZT-HOUSE", "SORENTO S/STEEL KITCHEN SINK", brand="house")
+    _product(db, "ZZT-RIVAL", "BRAVAT S/STEEL KITCHEN SINK", brand="rival")
+
+    result = search_specs(db, specs=[{"key": "class", "value": "Kitchen Sink"}])
+    scores = {r["product_code"]: r["score"] for r in result["candidates"]}
+
+    assert result["floor_missed"] is False
+    assert scores["ZZT-HOUSE"] == scores["ZZT-RIVAL"] + 8.0
+
+
+
+# --------------------------------------------------------------------------- #
+# say what was asked for and not delivered (#105)
+# --------------------------------------------------------------------------- #
+def test_a_brand_that_has_no_match_is_reported_as_unmet(db):
+    """"cabana free standing bathtub" offers Sorento ones — and must say so.
+
+    Every spec is a boost, never a filter, so offering the next best thing is correct.
+    Offering it SILENTLY is what reads as a broken search: the customer said Cabana,
+    got Sorento, and nothing in the answer acknowledged the difference.
+    """
+    _product(db, "ZZT-BT-SRT", "SORENTO FREE STANDING BATHTUB", brand="house", category="sh")
+
+    result = search_specs(
+        db,
+        specs=[
+            {"key": "class", "value": "Bathtub and Jacuzzi"},
+            {"key": "brand", "value": "CABANA"},
+        ],
+        free_terms=["bathtub"],
+    )
+
+    assert [u["key"] for u in result["unmet"]] == ["brand"]
+    assert result["unmet"][0]["value"] == "CABANA"
+
+
+def test_nothing_is_unmet_when_every_asked_spec_matches(db):
+    _product(db, "ZZT-BT-CB", "CABANA FREE STANDING BATHTUB", brand="rival", category="sh")
+
+    result = search_specs(
+        db, specs=[{"key": "brand", "value": "BRAVAT"}], free_terms=["bathtub"]
+    )
+
+    assert result["unmet"] == [], "the brand asked for is the brand offered"
+
+
+# --------------------------------------------------------------------------- #
+# a class minted by a rule must be searchable by its own name (#107)
+# --------------------------------------------------------------------------- #
+def _seat_cover(db, code: str):
+    """A product whose class came from a RULE, not from any category.
+
+    Written through the rule the user would write in the UI, so the test exercises the
+    real path rather than hand-stuffing a value into the JSON.
+    """
+    from app.models.product_spec import ProductSpecRegistry
+    from app.services.product_spec_derivation import derive_for_code
+
+    row = db.query(ProductSpecRegistry).filter_by(spec_key="class").one()
+    row.derivation_rules = [
+        {"match": "contains", "pattern": "SEAT COVER", "value": "Seat Cover"}
+    ]
+    db.flush()
+    product = _product(db, code, "SORENTO WC 8065 SEAT COVER", category="wc")
+    derive_for_code(db, code)
+    return product
+
+
+def test_a_class_that_no_category_declares_is_still_resolvable_by_its_words(db):
+    """"seat cover" found nothing while 172 products carried `Seat Cover`.
+
+    Class comes from configured derivation rules now, so a rule can mint a class the
+    categories have never heard of. The word could only ever be looked up against
+    `product_categories`, so the strongest signal in the ranker was unreachable for
+    exactly the classes someone had just gone to the trouble of defining.
+    """
+    from app.services.product_class_signal import resolve_classes_for_term
+
+    _seat_cover(db, "ZZT-SC-1")
+
+    assert resolve_classes_for_term(db, "seat cover") == ["Seat Cover"]
+
+
+def test_the_class_boost_reaches_a_rule_minted_class(db):
+    # The half that matters: resolvable AND scored, not merely resolvable.
+    _seat_cover(db, "ZZT-SC-2")
+    _product(db, "ZZT-SINK-2", "SORENTO S/STEEL KITCHEN SINK")
+
+    result = search_specs(db, specs=[], free_terms=["seat", "cover", "seat cover"])
+
+    assert result["floor_missed"] is False
+    assert _codes(result)[0] == "ZZT-SC-2"
+
+
+# --------------------------------------------------------------------------- #
+# a refusal removes, it does not demote
+# --------------------------------------------------------------------------- #
+def test_a_refused_value_removes_the_product_entirely(db):
+    """"golden yellow wash basin not glass" returned a glass basin at rank 5.
+
+    A penalty cannot fix that: any weight small enough to keep the ranking sane still
+    leaves the refused product on the page, and the customer said no. Removal is the
+    only answer that matches what was asked.
+    """
+    _catalog(db)
+    _product(db, "ZZT-WB-GLASS", "SORENTO GLASS WASH BASIN", category="wb")
+
+    without = search_specs(db, free_terms=["wash basin"])
+    assert "ZZT-WB-GLASS" in _codes(without), "the glass basin is findable to begin with"
+
+    refused = search_specs(
+        db,
+        free_terms=["wash basin"],
+        exclusions=[{"key": "material", "value": "glass"}],
+    )
+
+    assert "ZZT-WB-GLASS" not in _codes(refused)
+    assert "ZZT-WB-CT" in _codes(refused), "only the refused product goes"
+
+
+def test_a_refusal_does_not_remove_products_whose_value_is_unknown(db):
+    """Absence of a word is not evidence of the thing.
+
+    Most of the catalog has no material derived at all. Excluding on "not known to be
+    glass" would empty the results for any refusal, which is the opposite of helpful.
+    """
+    _catalog(db)
+
+    refused = search_specs(
+        db,
+        free_terms=["wash basin"],
+        exclusions=[{"key": "material", "value": "glass"}],
+    )
+
+    assert "ZZT-WB-CT" in _codes(refused)
+
+
+def test_the_word_resolver_cannot_reinstate_a_refused_spec(db):
+    """The phrase still contains the word "glass", and the word-level resolver reads it.
+
+    Without withholding refused values from that resolver, the exclusion is understood
+    and then undone one line later — the product is filtered out but the spec comes back
+    as a positive boost on everything else made of glass.
+    """
+    _catalog(db)
+    _product(db, "ZZT-WB-GLASS2", "SORENTO GLASS WASH BASIN 500MM", category="wb")
+
+    result = search_specs(
+        db,
+        free_terms=["glass wash basin"],
+        exclusions=[{"key": "material", "value": "glass"}],
+    )
+
+    assert "ZZT-WB-GLASS2" not in _codes(result)
+
+
+# --------------------------------------------------------------------------- #
+# the flyer is the better source
+# --------------------------------------------------------------------------- #
+def test_the_flyer_source_boost_lifts_only_flyer_sourced_specs(db):
+    """The flyer states things the product master does not.
+
+    14 flyer cards say FRAMELESS where 2 descriptions do; 9 say MASSAGE JET where none
+    do, so a flyer-stated spec is better evidence than a word in a description.
+
+    Each product is compared against ITSELF at two settings rather than against another
+    product. Two products are never equal in other ways - the first version of this test
+    compared a pair whose scores differed by an unrelated 2.0 and would have passed for
+    the wrong reason.
+    """
+    from app.models.product_spec import ProductSpecifications, ProductSpecSearchPolicy
+    from app.services.product_spec_registry import seed_search_policy
+
+    # The blank schema has no policy rows, so an UPDATE against it matches nothing and
+    # every read falls back to the seeded default - the first version of this test moved
+    # a number that was never read and passed its own sabotage.
+    seed_search_policy(db)
+
+    _catalog(db)
+    from_flyer = _product(db, "ZZT-MIRROR-F", "SORENTO MIRROR", category="cat")
+    from_text = _product(db, "ZZT-MIRROR-D", "SORENTO MIRROR", category="cat")
+    for product, source in ((from_flyer, "flyer"), (from_text, "derived")):
+        spec = db.query(ProductSpecifications).filter_by(product_id=product.id).first()
+        spec.values = {**(spec.values or {}), "is_frameless": {"value": True}}
+        spec.provenance = {**(spec.provenance or {}), "is_frameless": {"source": source}}
+    db.flush()
+
+    def score_for(code: str) -> float:
+        result = search_specs(db, specs=[{"key": "is_frameless", "value": True}], free_terms=[])
+        return next(c["score"] for c in result["candidates"] if c["product_code"] == code)
+
+    def set_boost(value: float) -> None:
+        db.query(ProductSpecSearchPolicy).filter_by(policy_key="flyer_source_boost").update(
+            {"value": value}
+        )
+        db.flush()
+
+    set_boost(1.0)
+    flyer_at_one, text_at_one = score_for("ZZT-MIRROR-F"), score_for("ZZT-MIRROR-D")
+    set_boost(3.0)
+    flyer_at_three, text_at_three = score_for("ZZT-MIRROR-F"), score_for("ZZT-MIRROR-D")
+
+    assert flyer_at_three > flyer_at_one, "the flyer-sourced spec is worth more"
+    assert text_at_three == text_at_one, "a description-sourced spec is untouched by it"
+
+
+# --------------------------------------------------------------------------- #
+# "above 900mm" is a limit, not a target
+# --------------------------------------------------------------------------- #
+def test_an_at_least_threshold_keeps_only_products_that_clear_it(db):
+    """Scored as approximate equality, a limit selects the wrong products.
+
+    "free standing basin above 900mm" put two 850mm basins above the one 960mm basin,
+    because 850 sits nearer to 900 than 960 does. Nearness is the wrong question: a
+    basin that does not clear 900 does not nearly clear it.
+    """
+    _catalog(db)
+    _product(db, "ZZT-WB-TALL", "SORENTO FREE STANDING WASH BASIN (460X480X960MM)", category="wb")
+    _product(db, "ZZT-WB-SHORT", "SORENTO FREE STANDING WASH BASIN (480X480X850MM)", category="wb")
+
+    result = search_specs(
+        db,
+        specs=[{"key": "dim_height", "value": 900, "op": "at_least"}],
+        free_terms=["free standing wash basin"],
+    )
+    codes = _codes(result)
+
+    assert "ZZT-WB-TALL" in codes
+    assert "ZZT-WB-SHORT" not in codes, "850mm does not answer 'above 900mm'"
+
+
+def test_an_at_most_threshold_is_the_mirror_of_it(db):
+    _catalog(db)
+    _product(db, "ZZT-WB-NARROW", "SORENTO WASH BASIN (410X410X150MM)", category="wb")
+    _product(db, "ZZT-WB-WIDE", "SORENTO WASH BASIN (820X600X830MM)", category="wb")
+
+    codes = _codes(
+        search_specs(
+            db,
+            specs=[{"key": "dim_width", "value": 500, "op": "at_most"}],
+            free_terms=["wash basin"],
+        )
+    )
+
+    assert "ZZT-WB-NARROW" in codes
+    assert "ZZT-WB-WIDE" not in codes
+
+
+def test_a_threshold_does_not_remove_a_product_whose_size_is_unknown(db):
+    """Absence of a measurement is not failure to meet it.
+
+    Most of the catalog has no derived height. Excluding on "not known to clear 900"
+    would empty the result for any threshold, which is the opposite of helpful.
+    """
+    _catalog(db)
+    sizeless = _product(db, "ZZT-WB-NOSIZE", "SORENTO WASH BASIN", category="wb")
+    assert sizeless is not None
+
+    codes = _codes(
+        search_specs(
+            db,
+            specs=[{"key": "dim_height", "value": 900, "op": "at_least"}],
+            free_terms=["wash basin"],
+        )
+    )
+
+    assert "ZZT-WB-NOSIZE" in codes
+
+
+def test_a_bare_number_still_means_about_that_size(db):
+    # Only an explicit limit filters. "600mm wash basin" is a target, and a 590mm basin
+    # is a perfectly good answer to it.
+    _catalog(db)
+    _product(db, "ZZT-WB-590", "SORENTO WASH BASIN (900X590X500MM)", category="wb")
+
+    codes = _codes(
+        search_specs(db, specs=[{"key": "dim_width", "value": 600}], free_terms=["wash basin"])
+    )
+
+    assert "ZZT-WB-590" in codes

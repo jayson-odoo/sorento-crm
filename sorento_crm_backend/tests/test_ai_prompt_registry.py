@@ -55,9 +55,10 @@ def seeded(db: Session) -> Session:
 def test_seed_creates_ten_keys_each_v1_with_production_label(seeded: Session):
     names = {r.name for r in seeded.query(AIPromptVersion).all()}
     assert names == set(PROMPT_KEYS.keys())
-    # M0 added `semantic_parser` (reformulator/router kept as dormant rows);
-    # the ideation pipeline added `ideate_extractor` (D-CONFIRM brain extractor).
-    assert len(names) == len(PROMPT_KEYS) == 11
+    # Counted against PROMPT_KEYS, not a literal: the key set grows (semantic_parser,
+    # ideate_extractor, the SCM pair, spec_understanding...) and a hardcoded number
+    # fails on every addition while proving nothing about the seed.
+    assert len(names) == len(PROMPT_KEYS)
     for name in PROMPT_KEYS:
         versions = [r.version for r in seeded.query(AIPromptVersion).filter_by(name=name).all()]
         assert versions == [1]
@@ -69,8 +70,8 @@ def test_seed_creates_ten_keys_each_v1_with_production_label(seeded: Session):
 def test_seed_is_idempotent(seeded: Session):
     seed_prompt_registry(seeded.get_bind())
     seed_prompt_registry(seeded.get_bind())
-    assert seeded.query(AIPromptVersion).count() == 11
-    assert seeded.query(AIPromptLabel).count() == 11
+    assert seeded.query(AIPromptVersion).count() == len(PROMPT_KEYS)
+    assert seeded.query(AIPromptLabel).count() == len(PROMPT_KEYS)
 
 
 def test_seed_preserves_existing_custom_system_prompt_as_v2(db: Session):
@@ -227,7 +228,7 @@ def test_set_label_reports_production_and_staging(seeded: Session):
 
 def test_list_keys_shape(seeded: Session):
     rows = AIPromptService(seeded).list_keys()
-    assert len(rows) == 11
+    assert len(rows) == len(PROMPT_KEYS)
     by_name = {r["name"]: r for r in rows}
     assert by_name["agent_system"]["active"] is True
     assert by_name["agent_system"]["production_version"] == 1
@@ -395,7 +396,7 @@ def test_route_list_prompts_happy(api):
     res = client.get("/api/v1/system/ai-assistant/prompts")
     assert res.status_code == 200, res.text
     body = res.json()
-    assert len(body) == 11
+    assert len(body) == len(PROMPT_KEYS)
     assert {r["name"] for r in body} == set(PROMPT_KEYS.keys())
 
 
@@ -460,3 +461,49 @@ def test_is_write_tool_classification():
     assert not _is_write_tool("crm_inventory_stock_balance_list")
     assert not _is_write_tool("crm_master_products_get")
     assert not _is_write_tool("")
+
+
+# --------------------------------------------------------------------------- #
+# per-agent LLM: which model this agent runs on
+# --------------------------------------------------------------------------- #
+def test_an_agent_with_no_model_set_uses_the_global_default(seeded: Session):
+    # Every row means this today, so shipping the column must change nothing until
+    # somebody sets a value.
+    assert ai_prompt_registry.agent_model(seeded, "spec_understanding") == (None, None)
+
+
+def test_setting_an_agents_model_is_readable_at_runtime(seeded: Session):
+    AIPromptService(seeded).set_agent_model(
+        "spec_understanding", label="production", provider="openai", model="gpt-5.4-mini"
+    )
+
+    assert ai_prompt_registry.agent_model(seeded, "spec_understanding") == (
+        "openai",
+        "gpt-5.4-mini",
+    )
+
+
+def test_clearing_an_agents_model_returns_it_to_the_global_default(seeded: Session):
+    svc = AIPromptService(seeded)
+    svc.set_agent_model("spec_understanding", label="production", provider="openai", model="gpt-5.4-mini")
+    svc.set_agent_model("spec_understanding", label="production", provider="", model="")
+
+    assert ai_prompt_registry.agent_model(seeded, "spec_understanding") == (None, None)
+
+
+def test_one_agents_model_does_not_leak_to_another(seeded: Session):
+    AIPromptService(seeded).set_agent_model(
+        "spec_understanding", label="production", provider="openai", model="gpt-5.4-mini"
+    )
+
+    assert ai_prompt_registry.agent_model(seeded, "semantic_parser") == (None, None)
+
+
+def test_the_model_shows_up_in_the_agent_list(seeded: Session):
+    AIPromptService(seeded).set_agent_model(
+        "spec_understanding", label="production", provider="openai", model="gpt-5.4-mini"
+    )
+
+    row = next(r for r in AIPromptService(seeded).list_keys() if r["name"] == "spec_understanding")
+    assert row["model"] == "gpt-5.4-mini"
+    assert row["provider"] == "openai"

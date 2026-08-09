@@ -1093,6 +1093,18 @@ class ResolveReferenceRequest(BaseModel):
             "`spec_fallback` is true."
         ),
     )
+    understand_phrase: bool = Field(
+        default=False,
+        description=(
+            "Read `query` with a language model before ranking, so a phrasing nobody "
+            "wrote a synonym for still lands on a spec. OFF by default because it "
+            "costs 2-3 SECONDS on the reply path — a real wait for a customer.\n\n"
+            "When on, the response carries `semantic_used` and `semantic_ms` so the "
+            "caller can tell the customer WHY the reply is slow ('looking properly, "
+            "one moment') instead of leaving them watching nothing happen. "
+            "Only used when `spec_fallback` is true."
+        ),
+    )
     domain_hint: str | None = Field(
         default=None,
         validation_alias=AliasChoices("domain_hint", "domain"),
@@ -1528,14 +1540,119 @@ def resolve_reference_post(
     # that resolves normally. The product probes themselves are untouched: see
     # _and_probe_product's "CODE-ONLY by design" note.
     if payload.spec_fallback and _result_has_zero_matches(result):
+        import time
+
         from app.services.product_spec_search import search_specs
 
-        found = search_specs(
-            db,
-            specs=payload.extracted_specs or [],
-            free_terms=payload.free_terms or [],
-        )
+        specs = list(payload.extracted_specs or [])
+        free_terms = list(payload.free_terms or [])
+
+        # Reading the sentence with a model costs 2-3 SECONDS on the reply path, so it
+        # is opt-in and it announces itself. `semantic_used` lets the caller tell the
+        # customer why the answer is slow instead of leaving them watching nothing:
+        # the chatbot can say it is looking properly and thank them for waiting.
+        semantic_used = False
+        semantic_ms = None
+        exclusions: list[dict] = []
+        if payload.understand_phrase and payload.query:
+            from app.services.product_spec_understanding import understand_phrase
+
+            started = time.monotonic()
+            understanding = understand_phrase(db, payload.query)
+            semantic_ms = int((time.monotonic() - started) * 1000)
+            semantic_used = understanding.source == "semantic"
+            stated = {entry["key"] for entry in specs}
+            specs = specs + [e for e in understanding.specs if e["key"] not in stated]
+            free_terms = free_terms + [
+                t for t in understanding.free_terms if t not in free_terms
+            ]
+            # Only the semantic read can see a refusal - the word-level resolver has no
+            # concept of "not". Without the model on, "not glass" is simply not heard.
+            exclusions = list(understanding.exclusions)
+
+        found = search_specs(db, specs=specs, exclusions=exclusions, free_terms=free_terms)
         result["spec_candidates"] = found["candidates"]
         result["floor_missed"] = found["floor_missed"]
+
+        # AND emit them as ordinary product matches.
+        #
+        # `spec_candidates` alone was a dead end: it is a different shape parked beside
+        # the result, so every existing consumer - the n8n spine's resolve-entity, and
+        # get-results behind it - looked at `resolutions[].matches`, found nothing, and
+        # treated the turn as unresolved. Describing a product well enough to find it
+        # only matters if the thing that asks can then USE it.
+        #
+        # Same record shape as every other product match, so nothing downstream needs to
+        # learn a new one, with `match_tier="spec_search"` so a caller that wants to tell
+        # a described product from a coded one still can.
+        if found["candidates"]:
+            spec_matches = [
+                {
+                    "entity_type": "product",
+                    "canonical_code": candidate["product_code"],
+                    "uuid": candidate["product_id"],
+                    "match_field": "specifications",
+                    "match_tier": "spec_search",
+                    # The ranker's score, so a caller can see how well each one answered
+                    # rather than treating an ordered list as equally good.
+                    "similarity": candidate["score"],
+                    "display": {
+                        "product_name": candidate["summary"],
+                        "via_token": payload.query or "",
+                        "class": candidate.get("class"),
+                        "matched_specs": candidate.get("matched_specs", []),
+                        "is_discontinued": candidate.get("is_discontinued", False),
+                    },
+                }
+                for candidate in found["candidates"]
+            ]
+            # Shaped exactly like a `prefix` match, because that is what it IS: a
+            # different WAY of matching, not a lesser kind of certainty. `SRTWC286`
+            # returns 15 prefix matches and the spine goes straight to get-results for
+            # all of them - it does not ask the customer to choose. A description that
+            # finds 15 products is the same situation and must read the same, or the
+            # same shortlist takes two different paths depending on how it was found.
+            #
+            # Only `incoming` and `product_attachment` need one exact row, and those
+            # callers clarify on their own terms - which they can, because `match_tier`
+            # says how this was matched.
+            spec_resolution = {
+                "token": payload.query or "specifications",
+                "resolved": len(spec_matches) == 1,
+                "ambiguous": len(spec_matches) > 1,
+                "matches": spec_matches,
+                # Empty on purpose: `alternatives` is the did-you-mean channel, and
+                # these are matches, not near misses. Putting them here would make the
+                # spine offer a list where it should be answering.
+                "alternatives": [],
+            }
+            if "intersection" in result:
+                # AND mode carries three views of one answer and the spine reads all of
+                # them, so updating `intersection` alone would leave `by_entity_type`
+                # empty and `empty` true while 15 products sat in `intersection`.
+                #
+                # In practice this branch is defensive: an AND run that matches nothing
+                # is rewritten to OR shape ABOVE, before spec search runs, so the result
+                # reaching here normally has `resolutions` and no `intersection`. Kept
+                # because the rewrite is a behaviour of the caller's flags, not a law.
+                result["intersection"] = spec_matches
+                by_type: dict[str, list[dict[str, Any]]] = {}
+                for match in spec_matches:
+                    by_type.setdefault(match["entity_type"], []).append(match)
+                result["by_entity_type"] = by_type
+                result["empty"] = not spec_matches
+            result.setdefault("resolutions", []).append(spec_resolution)
+            # Something was found, so the token is no longer unresolved. Nothing else is
+            # touched: `unresolved_tokens` and `alternatives` are what drive "did you
+            # mean", and a match is neither.
+            result["unresolved_tokens"] = [
+                t for t in (result.get("unresolved_tokens") or []) if t != spec_resolution["token"]
+            ]
+        # What the customer asked for that nothing offered can satisfy. The caller says
+        # "no Cabana one, here are Sorento" rather than silently substituting.
+        result["spec_unmet"] = found["unmet"]
+        result["semantic_used"] = semantic_used
+        if semantic_ms is not None:
+            result["semantic_ms"] = semantic_ms
 
     return result
