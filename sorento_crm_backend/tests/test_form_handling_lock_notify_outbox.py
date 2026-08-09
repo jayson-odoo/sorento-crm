@@ -7,14 +7,21 @@ Two layers:
    (``sla_handling_claimed`` / ``_taken_over`` / ``_released``) plus
    ``whatsapp_context_vars.handler_name``, and is gated by the per-user
    ``notify_email_on_handling`` / ``notify_whatsapp_on_handling`` prefs. Recipient
-   set excludes the actor (§6). Driven through the real service against sqlite; the
-   producer's ``create_with_channel_preferences`` call is captured.
+   set excludes the actor (§6). Driven through the real service against a blank
+   Postgres schema; the producer's ``create_with_channel_preferences`` call is captured.
 
 2. WORKER OUTBOX (``notification_tasks._send_whatsapp_for_notification``): a handling
    notification whose ``whatsapp_use_case`` is a handling case writes an
    ``integration_log`` outbox row on BOTH success AND failure (local runs use
-   intentionally-wrong Respond creds — a 401'd send must still be logged). Mirrors
-   tests/test_whatsapp_notification_outbox_log.py with a handling payload.
+   intentionally-wrong Respond creds - a 401'd send must still be logged).
+
+   **This file holds the ENTITY branch of the business-key contract** (AC-H8): a
+   handling notification names a real tracker, so the ENTITY is
+   ``business_table`` / ``business_id`` and the notification is
+   ``correlation_id`` alone. The no-entity branch (a digest, where the
+   notification is its own business key) lives in
+   tests/test_whatsapp_notification_outbox_log.py. Same worker, same contract,
+   two halves - see AC-H8b for why the live code once disagreed with both.
 
 Run: venv/bin/pytest tests/test_form_handling_lock_notify_outbox.py -q
 """
@@ -253,7 +260,23 @@ def _wa_patches(contact, send_side_effect=None, send_return=None):
     return p_contact, p_send, p_log, log_service
 
 
-def test_handling_whatsapp_failure_writes_outbox_log():
+def test_handling_whatsapp_failure_outbox_names_the_entity_not_the_notification():
+    """AC-H8 / AC-H8b / AC-H11, the entity branch.
+
+    A handling notification names a real tracker (`source_entity_type =
+    form_sla_tracking`, a uuid `source_entity_id`), so AC-H8 puts the ENTITY in
+    `business_table` / `business_id` and the notification in `correlation_id`
+    alone. AC-H8b is the ruling that got us here: the live code used to stamp
+    `business_id = notification.id` for every send, the AC required the entity,
+    and the AC won - so a test asserting the old behaviour was stale, not red.
+
+    AC-H11 still holds either way, because `source_entity_id` is guaranteed a uuid
+    or NULL by `_split_entity_and_dedup`. The complementary NULL case (no entity,
+    so the notification IS the business key) is pinned in
+    `tests/test_whatsapp_notification_outbox_log.py`; the mapped-entity case
+    (complaint -> the `complaints` table) in
+    `tests/test_after_sales_notification_spine.py`.
+    """
     db, notification, user, delivery, contact = _wa_objs("sla_handling_claimed")
     resp = httpx.Response(
         401,
@@ -275,8 +298,13 @@ def test_handling_whatsapp_failure_writes_outbox_log():
     assert log_arg.status == "failed"
     assert log_arg.status_code == 401
     assert log_arg.external_reference == "404284985"
-    # business_id is the notification UUID, never a composite source id.
-    assert log_arg.business_id == notification.id
+    # The entity is the business key; the notification is the correlation (AC-H8).
+    assert log_arg.business_id == notification.source_entity_id
+    assert log_arg.correlation_id == notification.id
+    # An entity type outside ENTITY_TABLES keeps its own name rather than having a
+    # table guessed into existence for it.
+    assert log_arg.business_table == notification.source_entity_type
+    uuid.UUID(str(log_arg.business_id))  # AC-H11: a real uuid, never a composite key
     assert delivery.status == "failed"
 
 

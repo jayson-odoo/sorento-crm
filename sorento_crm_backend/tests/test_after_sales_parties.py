@@ -101,6 +101,7 @@ from app.models.company import Company  # noqa: E402
 from app.models.complaints import Complaint  # noqa: E402
 from app.models.order import Customer, Order  # noqa: E402
 from app.models.portal import PortalToken  # noqa: E402
+from app.models.service_jobs import Technician  # noqa: E402
 from app.models.user import User  # noqa: E402
 from app.models.base import UNSET, company_scope  # noqa: E402
 
@@ -257,35 +258,46 @@ def _order(db, customer: Customer, *, salesman: str, order_date, number: str | N
     return order
 
 
-def _transient_contact(**bindings) -> RespondContact:
-    """An unsaved contact - derivation must not need the database.
+def _technician(db, contact: RespondContact) -> Technician:
+    """A ``technicians`` row bound to a contact - the S6 shape of AC-B2's third binding.
 
-    Only the two bindings S1 ships (AC-B13). The deferred third one is exercised
-    through ``_SyntheticContact`` below, so nothing here depends on a column that
-    does not exist until S6.
+    S1 predicted ``respond_contacts.technician_id``; S6 built
+    ``technicians.respond_contact_id`` (TEXT, UNIQUE) instead. This helper exists so
+    the top of the precedence order is asserted against the binding that is really
+    there, rather than a duck-typed stand-in for one that never arrived.
     """
-    contact = RespondContact(id="transient", phone_number="+60100000000")
+    row = Technician(
+        id=str(uuid.uuid4()),
+        name=f"{TEST_PREFIX} technician",
+        respond_contact_id=contact.id,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _transient_contact(**bindings) -> RespondContact:
+    """An unsaved contact - no id, so it cannot be on the end of a foreign key.
+
+    Only the two bindings that are columns on ``respond_contacts``. The third is a
+    row in ``technicians`` (see ``_technician``), which an unsaved contact by
+    definition cannot have, so the derivation answers it without a session at all.
+    """
+    contact = RespondContact(id=None, phone_number="+60100000000")
     contact.customer_id = bindings.get("customer_id")
     contact.user_id = bindings.get("user_id")
     return contact
 
 
-class _SyntheticContact:
-    """A duck-typed stand-in carrying all three bindings, including the deferred one.
+def _derive_unpersisted(derive, contact) -> str:
+    """Derive for a row that was never persisted, with no session.
 
-    AC-B13 defers ``technician_id`` to S6, so the top of the precedence order cannot
-    be reached from a real row in S1. Pinning the order only through reachable cases
-    would leave the highest-priority rung untested until S6, which is exactly when
-    somebody re-decides it. A synthetic input keeps the rung asserted now without
-    requiring a column, and it forces the derivation to read the binding
-    defensively (``getattr(contact, "technician_id", None)``) so S6 is a pure column
-    addition rather than a change to this function, the endpoint and the order.
+    ``db`` is a required argument since the technician rung moved off the row, but a
+    contact with no id short-circuits before the query - so passing ``None`` here is
+    an assertion in itself: this case reaches the database zero times. Where the
+    session IS needed, ``None`` raises rather than quietly answering wrong.
     """
-
-    def __init__(self, *, customer_id=None, user_id=None, technician_id=None):
-        self.customer_id = customer_id
-        self.user_id = user_id
-        self.technician_id = technician_id
+    return derive(None, contact)
 
 
 # =============================================================================
@@ -468,16 +480,25 @@ def test_the_migration_carries_the_reported_by_role_backfill():
 # =============================================================================
 
 
-def test_derivation_is_a_pure_function_of_the_row():
-    """AC-B2. No query, so it is safe inside a serializer loop and cannot vary.
+def test_derivation_needs_no_session_for_a_row_that_was_never_persisted():
+    """AC-B2, and AC-B15 narrowed by what S6 actually built.
 
-    A derivation that queries can return a different kind for a detached row than
-    for a loaded one, and it turns any list endpoint into an N+1.
+    AC-B15 asked for a pure function of the row, and in S1 it was one: all three
+    bindings were columns on ``respond_contacts``. S6 bound the technician the other
+    way round (``technicians.respond_contact_id``, UNIQUE), so the top rung can only
+    be answered by asking that table - and the defensive ``getattr`` S1 left for it
+    returned None forever, which is a WRONG answer rather than a missing feature.
+    ``db`` is therefore a required argument, and required rather than defaulted so a
+    caller who omits it gets a TypeError instead of the pre-S6 wrong kind back.
+
+    What survives of AC-B15 is asserted here: an unsaved contact has no id, cannot be
+    on the end of a foreign key, and so is derived with **zero** queries - passing
+    ``None`` as the session is the assertion.
     """
-    derive = _fn(PARTY_MODULE, "derive_contact_kind", "(contact) -> str")
-    assert derive(_transient_contact()) == "consumer", (
-        "derive_contact_kind must work on a row that was never persisted - it reads "
-        "three attributes and nothing else."
+    derive = _fn(PARTY_MODULE, "derive_contact_kind", "(db, contact) -> str")
+    assert _derive_unpersisted(derive, _transient_contact()) == "consumer", (
+        "derive_contact_kind must work on a row that was never persisted - the two "
+        "column-backed rungs are read off the row and the third cannot apply."
     )
 
 
@@ -498,16 +519,18 @@ def test_derivation_is_a_pure_function_of_the_row():
         ),
     ],
 )
-def test_kind_precedence_is_total_for_every_case_reachable_in_s1(bindings, expected, why):
+def test_kind_precedence_is_total_for_every_column_backed_case(bindings, expected, why):
     """AC-B2 permits more than one binding and names no precedence.
 
     That makes derivation a partial function, which is a gap in the AC, not a
     detail: the portal, the notification spine and the dashboard would each resolve
     it their own way. AC-B14 settles it as technician > staff > dealer > consumer;
-    these are the cases a real row can produce while ``technician_id`` is deferred.
+    these are the cases the two ``respond_contacts`` columns can produce. The
+    technician rung is a row in ``technicians`` and is asserted separately, against
+    the real binding.
     """
-    derive = _fn(PARTY_MODULE, "derive_contact_kind", "(contact) -> str")
-    assert derive(_transient_contact(**bindings)) == expected, why
+    derive = _fn(PARTY_MODULE, "derive_contact_kind", "(db, contact) -> str")
+    assert _derive_unpersisted(derive, _transient_contact(**bindings)) == expected, why
 
 
 def test_kind_precedence_is_declared_as_data():
@@ -518,6 +541,9 @@ def test_kind_precedence_is_declared_as_data():
     exactly the moment somebody re-decides it under delivery pressure. A declared
     tuple pins the whole order now, costs nothing, and is what S6 reads instead of
     re-deriving.
+
+    S6 landed the binding and the rung became reachable without the order or the
+    vocabulary moving, which is the outcome the declared tuple was buying.
 
     It also answers whether ``technician`` is dead weight in S1. It is not: the
     journey route is a **public, unauthenticated portal contract** consumed by a
@@ -542,34 +568,60 @@ def test_kind_precedence_is_declared_as_data():
     )
 
 
-def test_the_deferred_technician_binding_still_outranks_the_two_that_ship():
-    """AC-B13 + AC-B14. The rung that cannot be reached from a row is still asserted.
+def test_a_contact_bound_to_a_technician_derives_as_technician(db):
+    """AC-B2's third binding, in the shape S6 actually built it.
 
-    Synthetic input rather than a ``respond_contacts`` row, because the column does
-    not exist until S6. The point is to force the derivation to read the binding
-    defensively now, so S6 adds a column and changes nothing else: not this
-    function, not the endpoint, not the order.
+    **This is the test whose absence let a wrong answer live.** S1 predicted
+    ``respond_contacts.technician_id`` and read it defensively; S6 bound the
+    technician the other way round, as ``technicians.respond_contact_id``. Nothing
+    failed, because the only assertion covering the rung used a duck-typed object
+    carrying the column S1 predicted - so it kept passing while every real
+    technician contact derived as a Consumer. A synthetic stand-in for a binding
+    can outlive the binding it stood in for; a real row cannot.
     """
-    derive = _fn(PARTY_MODULE, "derive_contact_kind", "(contact) -> str")
-    assert derive(_SyntheticContact(technician_id="t")) == "technician"
-    assert derive(_SyntheticContact(customer_id="c", technician_id="t")) == "technician", (
+    derive = _fn(PARTY_MODULE, "derive_contact_kind", "(db, contact) -> str")
+    contact = _contact(db)
+    assert derive(db, contact) == "consumer", "unbound contacts are Consumers (AC-B4)"
+
+    _technician(db, contact)
+    assert derive(db, contact) == "technician", (
+        "A contact with a technicians row bound to it is a technician. The binding "
+        "lives on technicians.respond_contact_id (UNIQUE), not on respond_contacts."
+    )
+
+
+def test_the_technician_binding_outranks_the_two_that_ship(db):
+    """AC-B14. Narrowest binding wins, asserted against real rows on both sides.
+
+    A technician who is also a dealer's shop contact, or who also has a ``users``
+    row, is still a technician: AC-F8 gives them today's jobs and nothing else, so
+    one reaching a dealer form is the error the order exists to prevent.
+    """
+    derive = _fn(PARTY_MODULE, "derive_contact_kind", "(db, contact) -> str")
+    customer = _customer(db, "toolshop")
+    user = _user(db, "tech-also-staff")
+
+    both = _contact(db, customer_id=customer.id)
+    _technician(db, both)
+    assert derive(db, both) == "technician", (
         "A technician must never reach a dealer form; AC-F8 says they see today's "
         "jobs and nothing else."
     )
-    assert derive(_SyntheticContact(user_id="u", technician_id="t")) == "technician"
-    assert (
-        derive(_SyntheticContact(customer_id="c", user_id="u", technician_id="t"))
-        == "technician"
-    ), "All three set must still be a total function, not a coin flip."
+
+    all_three = _contact(db, customer_id=customer.id, user_id=user.id)
+    _technician(db, all_three)
+    assert derive(db, all_three) == "technician", (
+        "All three bindings set must still be a total function, not a coin flip."
+    )
 
 
-def test_kind_vocabulary_matches_the_journey_vocabulary():
+def test_kind_vocabulary_matches_the_journey_vocabulary(db):
     """One four-way split, one set of words.
 
     The endpoint returns a journey and the derivation returns a kind; if those are
     two vocabularies then somewhere there is a translation table that will drift.
-    Asserted against the declared constant so ``technician`` counts even while no
-    row can produce it.
+    All four are now producible from real rows, so the set is asserted as behaviour
+    and not only against the declared constant.
     """
     module = _party()
     precedence = getattr(module, "KIND_PRECEDENCE", None)
@@ -579,14 +631,17 @@ def test_kind_vocabulary_matches_the_journey_vocabulary():
         f"is {sorted(JOURNEYS)}."
     )
 
-    derive = _fn(PARTY_MODULE, "derive_contact_kind", "(contact) -> str")
+    derive = _fn(PARTY_MODULE, "derive_contact_kind", "(db, contact) -> str")
+    technician_contact = _contact(db)
+    _technician(db, technician_contact)
     produced = {
-        derive(_transient_contact()),
-        derive(_transient_contact(customer_id="c")),
-        derive(_transient_contact(user_id="u")),
+        _derive_unpersisted(derive, _transient_contact()),
+        _derive_unpersisted(derive, _transient_contact(customer_id="c")),
+        _derive_unpersisted(derive, _transient_contact(user_id="u")),
+        derive(db, technician_contact),
     }
-    assert produced == {"consumer", "dealer", "staff"}, (
-        f"The three kinds reachable in S1 produced {sorted(produced)}."
+    assert produced == JOURNEYS, (
+        f"The four kinds produced {sorted(produced)}, not {sorted(JOURNEYS)}."
     )
 
 
@@ -632,6 +687,23 @@ def test_journey_for_a_bound_staff_contact_is_staff(client, db):
     res = client.get(JOURNEY_ROUTE, headers={"X-Portal-Token": token.token})
     assert res.status_code == 200, res.text
     assert res.json()["journey"] == "staff"
+
+
+def test_journey_for_a_technician_contact_is_technician(client, db):
+    """AC-B5 + AC-F8, the fourth journey - the sibling this set was missing.
+
+    The route had a case for consumer, dealer and staff and none for technician,
+    because until S6 no row could produce one. It can now, and AC-F8 makes this the
+    rung that matters most: a technician routed anywhere else gets a dealer form
+    instead of today's jobs.
+    """
+    contact = _contact(db)
+    _technician(db, contact)
+    token = _token(db, contact)
+
+    res = client.get(JOURNEY_ROUTE, headers={"X-Portal-Token": token.token})
+    assert res.status_code == 200, res.text
+    assert res.json()["journey"] == "technician"
 
 
 def test_journey_requires_a_portal_token(client):

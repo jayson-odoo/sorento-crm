@@ -181,13 +181,15 @@ def test_the_technician_binding_lives_on_technicians_not_on_respond_contacts():
     row, carries ``respond_contact_id`` + ``phone``, and distinguishes employee from
     contractor).
 
-    **Open, flagged rather than decided here:**
-    ``party_service.BINDING_FOR_KIND["technician"]`` still names ``technician_id``
-    and reads it with a defensive ``getattr``, so with S6's direction
-    ``derive_contact_kind`` can never return ``"technician"``. Resolving that is
-    either a change to the derivation (query ``technicians``) or a reversal of S6's
-    direction - a design decision, not a repair. If it is ever resolved by adding
-    ``respond_contacts.technician_id``, delete this test in that same commit.
+    **Settled, and this test is the reason the fix went the way it did.** The flag
+    raised here was real: ``party_service.BINDING_FOR_KIND["technician"]`` named
+    ``technician_id`` and read it with a defensive ``getattr``, so under S6's
+    direction ``derive_contact_kind`` could never return ``"technician"`` and every
+    technician contact silently derived as something else. It was resolved on the
+    derivation side - ``derive_contact_kind(db, contact)`` asks the ``technicians``
+    table - because the UNIQUE constraint already makes that side authoritative and
+    reversing it would restore precisely the stub column S1 refused. So the absence
+    below stands, and this test keeps standing with it.
     """
     assert "technician_id" not in {c.key for c in RespondContact.__table__.columns}, (
         "respond_contacts.technician_id must not exist: S6 bound the technician as "

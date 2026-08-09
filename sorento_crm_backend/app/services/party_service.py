@@ -11,17 +11,32 @@ Three properties this module holds, each of which the obvious implementation bre
 **Kind is derived, never stored.** A `party_kind` column would be a second source of
 truth that can disagree with the bindings, and nothing would ever notice.
 
-**Derivation is a pure function of the row.** No query, so it cannot return one kind
-for a loaded row and another for a detached one, and it is safe inside a
-list-serializer loop without an N+1.
+**Derivation reads the row for three of the four rungs, and the `technicians` table
+for the fourth.** AC-B15 asked for a pure function of the row, and for S1 it was one:
+all three bindings were columns on `respond_contacts`. S6 then bound the technician
+the other way round - `technicians.respond_contact_id`, TEXT, UNIQUE - and the
+defensive `getattr(contact, "technician_id", None)` this module kept for it therefore
+returned None forever. That is not a missing feature, it is a wrong answer: every
+technician contact silently derived as consumer/dealer/staff from S6 onwards.
+So the technician rung asks the table that actually holds the binding, and `db` is a
+REQUIRED first argument, matching every other function here. Required rather than
+defaulted on purpose: a caller who omits it gets a TypeError, not another silently
+wrong kind, which is the whole defect being repaired. The three column-backed rungs
+are still read straight off the row, and a contact with no id (never persisted) skips
+the query entirely - it cannot be bound to anything.
+
+The cost AC-B15 named is real and accepted: a list-serializer loop would now do one
+indexed lookup per contact. There is no list caller today (both callers resolve a
+single contact); when one appears the answer is a batch helper here, not a second
+derivation there.
 
 **Precedence is data, not branches.** AC-B2 permits several bindings at once and
 named no order, which made derivation a partial function: the portal, the
 notification spine and the dashboard would each have resolved it their own way.
-AC-B14 fixes it as narrowest-binding-wins. The top rung is unreachable until S6 lands
-its binding, so it is declared rather than inferred - which is the point, because
-otherwise the order stays undecided until exactly the moment somebody re-decides it
-under delivery pressure.
+AC-B14 fixes it as narrowest-binding-wins. The top rung was unreachable until S6
+landed its binding, so it was declared rather than inferred - which was the point,
+because otherwise the order stays undecided until exactly the moment somebody
+re-decides it under delivery pressure. It is reachable now.
 
 The Site is NOT resolved here, and that is the AC-B3 rule rather than an omission: a
 dealer's owner reporting a fault in his own home carries a dealer binding and a
@@ -58,20 +73,27 @@ logger = logging.getLogger(__name__)
 # jobs and nothing else); being a Sorento employee outranks being somebody's shop
 # contact, because the employee relationship is the one that grants tools.
 #
-# All four members ship in S1 even though `technician` is unreachable until S6 lands
-# its binding. The journey route is a PUBLIC, unauthenticated portal contract
+# All four members shipped in S1 even though `technician` was unreachable until S6
+# landed its binding. The journey route is a PUBLIC, unauthenticated portal contract
 # consumed by a frontend and by n8n, neither of which deploys atomically with the
-# backend: a three-member response literal would make S6 a breaking change to
+# backend: a three-member response literal would have made S6 a breaking change to
 # OpenAPI, to the FE union type and to any exhaustive switch that would silently
-# fall through to its default.
+# fall through to its default. That bet paid: the rung became reachable without the
+# vocabulary moving.
 KIND_PRECEDENCE = ("technician", "staff", "dealer", "consumer")
 
-# Which nullable binding on `respond_contacts` implies each kind. `consumer` is
+# Which nullable binding ON `respond_contacts` implies each kind. `consumer` is
 # absent on purpose: it is the by-elimination answer and has no binding of its own.
-# Kept as a table rather than an if-chain so S6 adds one entry and changes nothing
-# else - not this function, not the endpoint, not the order.
+#
+# `technician` is absent for a different reason, and it is the one thing about this
+# table worth reading twice: S1 predicted a `respond_contacts.technician_id` column
+# and S6 built the binding the other way round, as `technicians.respond_contact_id`
+# (TEXT, UNIQUE - one contact is one technician). The UNIQUE constraint is what makes
+# that side authoritative, so the derivation asks the `technicians` table rather than
+# this map. Adding a second, reverse column would restore exactly the stub S1 refused
+# and give one binding two sources of truth.
+# `tests/test_after_sales_legacy_column_guard.py` asserts that column stays absent.
 BINDING_FOR_KIND: dict[str, str] = {
-    "technician": "technician_id",  # deferred to S6 (AC-B13); read defensively below
     "staff": "user_id",
     "dealer": "customer_id",
 }
@@ -90,14 +112,48 @@ REPORTED_BY_ROLES = frozenset({"end_user", "dealer", "salesperson", "cs", "techn
 # --------------------------------------------------------------------------- #
 
 
-def derive_contact_kind(contact) -> str:
-    """Return the party kind for a contact row. Pure, total, no query.
+def _is_technician(db: Session, contact) -> bool:
+    """Is a `technicians` row bound to this contact? (AC-B2's third binding, S6 shape.)
 
-    `getattr(..., None)` rather than attribute access because the technician binding
-    does not exist as a column until S6 (AC-B13). Reading it defensively now is what
-    makes S6 a pure column addition.
+    One indexed lookup on a UNIQUE column, skipped entirely for a contact with no id -
+    an unsaved row cannot be on the other end of a foreign key, so there is nothing to
+    ask. Imported inside the function: `app.models.service_jobs` belongs to the
+    service_jobs module and a top-level import here would couple party derivation to a
+    module a tenant can turn off.
+    """
+    contact_id = getattr(contact, "id", None)
+    if not contact_id:
+        return False
+    from app.models.service_jobs import Technician
+
+    return (
+        db.query(Technician.id)
+        .filter(Technician.respond_contact_id == str(contact_id))
+        .first()
+        is not None
+    )
+
+
+def derive_contact_kind(db: Session, contact) -> str:
+    """Return the party kind for a contact row. Total, and the order is AC-B14's.
+
+    `db` is required because the top rung cannot be answered from the row: S6 bound
+    the technician as `technicians.respond_contact_id`, not as a column here. Making
+    it optional would let a caller silently get the pre-S6 wrong answer back, which
+    is the defect this repairs.
+
+    The other three rungs are read off the row with `getattr(..., None)`, so a
+    duck-typed or partially-loaded object still derives.
     """
     for kind in KIND_PRECEDENCE:
+        if kind == "technician":
+            # Not in BINDING_FOR_KIND: the binding lives on the other table (see the
+            # note there). Still checked FIRST - narrowest binding wins, and AC-F8
+            # gives a technician today's jobs and nothing else, so one reaching a
+            # dealer form is the error the order exists to prevent.
+            if _is_technician(db, contact):
+                return kind
+            continue
         binding = BINDING_FOR_KIND.get(kind)
         if binding is None:
             continue  # the by-elimination kind, handled by falling through

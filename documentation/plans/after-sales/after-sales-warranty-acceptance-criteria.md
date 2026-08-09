@@ -211,6 +211,33 @@ the S1 schema in `PLAN-after-sales-warranty.md`, the correction wins.
 - **AC-B15** `[BE]` **Kind and journey share one vocabulary** (`consumer` / `dealer` / `staff` /
   `technician`) and derivation is a **pure function of the contact row**, no query. Two vocabularies
   would need a translation table, and a translation table drifts.
+- **AC-B15a** `[BE]` **AC-B15's "no query" is NARROWED to the three column-backed rungs, because S6
+  moved the fourth binding off the row.** AC-B15 was written when AC-B1 predicted all three bindings
+  as columns on `respond_contacts`. S6 (AC-F6) bound the technician the other way round -
+  `technicians.respond_contact_id`, TEXT, UNIQUE - and AC-B13's deferred `respond_contacts.technician_id`
+  was never created, so `derive_contact_kind`'s defensive `getattr(contact, "technician_id", None)`
+  returned None forever and **every technician contact silently derived as consumer / dealer / staff
+  from S6 until this correction.** That is a wrong answer, not a missing feature, and a pure function
+  that is reliably wrong is not worth the purity. So: `derive_contact_kind(db, contact)` takes the
+  session as a REQUIRED first argument (matching every other function in the module) and answers the
+  `technician` rung with one indexed lookup on the UNIQUE `technicians.respond_contact_id`. The other
+  three rungs are still read straight off the row, and a contact with no id skips the query entirely,
+  so an unsaved row still derives with zero queries. Required rather than defaulted on purpose: a
+  caller who omits the session gets a `TypeError`, never the pre-S6 wrong kind. **The direction is not
+  reversed** - adding `respond_contacts.technician_id` would restore precisely the stub column AC-B13
+  refused and give one binding two sources of truth;
+  `tests/test_after_sales_legacy_column_guard.py` asserts that column stays absent. The N+1 AC-B15
+  warned about is accepted and unrealised: both callers resolve a single contact, and the answer when
+  a list caller appears is a batch helper in `party_service`, not a second derivation elsewhere. The
+  vocabulary half of AC-B15 is untouched.
+- **AC-B15b** `[CFG]` **Do not bind a production contact to a Technician until AC-F8's portal exists.**
+  The derivation above is now correct, which means the portal journey endpoint will start answering
+  `"technician"` the first time anyone sets `technicians.respond_contact_id` - and nothing renders
+  that value yet. Measured 2026-08-09: 2 technician rows, **0 bound**, and the technicians admin
+  screen does not expose the field, so only a deliberate API call can create the state. This is
+  therefore a live precondition on F8 rather than a defect: the fix is latent by construction, and it
+  strands a real person the moment somebody binds one early. The lever is the binding, not the
+  derivation - do not "fix" this by making `derive_contact_kind` lie again.
 - **AC-B6a is REPLACED.** As written it is false on arrival and cannot become true in S1: five files
   read `complaints.customer_type`, four read `customer_name`, three read `salesperson`. It also
   contradicts AC-B6's own wording, since a column left "read-only for one release" is by definition

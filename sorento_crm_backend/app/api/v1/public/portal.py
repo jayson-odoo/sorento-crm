@@ -405,16 +405,16 @@ def portal_journey(
 ):
     """Which journey this phone number is on. No question is ever asked (AC-B4).
 
-    Dealer staff are known from their `customer_id` binding and Sorento staff from
-    `user_id`; anything else is a Consumer by elimination. Kind is derived on every
-    call rather than stored, so a binding configured five minutes ago takes effect
-    on the next landing with no backfill.
+    Dealer staff are known from their `customer_id` binding, Sorento staff from
+    `user_id`, and a technician from the `technicians` row bound to this contact.
+    Kind is derived on every call rather than stored, so a binding configured five
+    minutes ago takes effect on the next landing with no backfill.
     """
     from app.services import party_service
 
     contact = PortalService(db).get_contact(token)
     return PortalJourneyResponse(
-        journey=party_service.derive_contact_kind(contact),
+        journey=party_service.derive_contact_kind(db, contact),
         dealer_name=party_service.dealer_display_name(db, contact),
     )
 
@@ -442,7 +442,7 @@ def portal_journey_order_lookup(
     outcome = party_service.self_heal_dealer_binding(db, contact, payload.order_number)
     return PortalOrderLookupResponse(
         matched=outcome["matched"],
-        journey=party_service.derive_contact_kind(contact),
+        journey=party_service.derive_contact_kind(db, contact),
         dealer_name=party_service.dealer_display_name(db, contact),
     )
 

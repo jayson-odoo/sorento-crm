@@ -3,6 +3,25 @@
 Local testing runs with intentionally-wrong Respond creds, so a 401'd send MUST
 still produce an integration_log row (not just flip the delivery to failed) —
 same as the complaint / OTP / SLA-escalation paths via `_send_and_log`.
+
+**This file holds the NO-ENTITY branch of the business-key contract.** A batched
+or periodic notification (a digest, a daily summary) is about nothing but itself:
+`_split_entity_and_dedup` routes its synthetic scope key (`digest:<date>`,
+`alert:...`) into `dedup_key` and leaves `source_entity_id` NULL, so
+`business_keys_for_notification` falls back to the notification's own id. That
+keeps AC-H11 true (`integration_logs.business_id` is a uuid COLUMN, so a real
+uuid always goes in it, never a composite string).
+
+The OTHER branch - a notification that DOES name an entity, whose entity is
+therefore the business key with the notification only in `correlation_id`
+(AC-H8) - is pinned in `tests/test_form_handling_lock_notify_outbox.py` for an
+entity type outside `ENTITY_TABLES`, and in
+`tests/test_after_sales_notification_spine.py::test_the_outbox_row_points_at_the_notification_and_the_case`
+for a mapped one (complaint -> the `complaints` table).
+
+AC-H8b is why the pair reads this way at all: the live code once stamped
+`business_id = notification.id` unconditionally, the AC required the entity, and
+the AC won. Tests asserting the overruled behaviour were stale, not red.
 """
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -25,7 +44,12 @@ def _objs():
         title="Summary",
         body="body",
         source_entity_type="scheduled_task_user_sla_daily_summary",
-        source_entity_id="342b58af-ede7-5f34-8ae7-cefb3c478111",  # composite, NOT a uuid
+        # NULL on purpose, and reachable: the daily summary's idempotency scope is a
+        # synthetic string (`<user>:<date>:manual:<ts>`), which `_split_entity_and_dedup`
+        # now puts in `dedup_key` and never in `source_entity_id`. So a digest-style
+        # notification genuinely has no entity behind it, and that is the branch this
+        # file pins. (A uuid here would be the OTHER branch - see the module docstring.)
+        source_entity_id=None,
     )
     user = SimpleNamespace(id="u1")
     delivery = SimpleNamespace(status="pending", error_message=None, sent_at=None)
@@ -50,7 +74,19 @@ def _patches(contact, send_side_effect=None, send_return=None):
     return p_contact, p_send, p_log, log_service
 
 
-def test_failed_send_writes_failed_outbox_log_with_uuid_business_id():
+def test_failed_send_with_no_entity_uses_the_notification_as_the_business_key():
+    """AC-H8 / AC-H8b / AC-H11, the no-entity branch.
+
+    A notification with no `source_entity_id` is about nothing but itself, so the
+    notification id is the only real uuid available and it goes in `business_id`
+    as well as `correlation_id`. AC-H11 forbids the alternative anybody reaches
+    for - stuffing the composite dedup scope into a uuid column.
+
+    Where the notification DOES name an entity, the entity is the business key and
+    the notification appears only in `correlation_id` (AC-H8). That is AC-H8b's
+    ruling over the older code, and it is pinned in
+    `tests/test_form_handling_lock_notify_outbox.py`.
+    """
     db, notification, user, delivery, contact = _objs()
     resp = httpx.Response(401, json={"code": 401, "message": "Token not found"},
                           request=httpx.Request("POST", "https://api.respond.io/x"))
@@ -72,8 +108,10 @@ def test_failed_send_writes_failed_outbox_log_with_uuid_business_id():
     assert log_arg.status == "failed"
     assert log_arg.status_code == 401
     assert log_arg.external_reference == "404284985"
-    # business_id is the notification UUID, never the composite source_entity_id.
+    # No entity, so the notification is its own business key (AC-H11: a uuid, never
+    # the composite dedup scope) and correlation_id names it too (AC-H8).
     assert log_arg.business_id == notification.id
+    assert log_arg.correlation_id == notification.id
     # The logged payload reflects the TEMPLATE that was attempted, not a text default.
     assert call.kwargs["request_payload_dict"]["message"]["type"] == "whatsapp_template"
     assert delivery.status == "failed"
