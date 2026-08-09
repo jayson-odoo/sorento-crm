@@ -95,22 +95,12 @@ def upgrade() -> None:
             sa.Column("updated_at", sa.DateTime(timezone=False), nullable=True),
         )
 
-    # Imported rather than duplicated as INSERT statements so the migration and the
-    # re-runnable seed can never disagree about the vocabulary.
-    from sqlalchemy.orm import Session
-
-    from app.services.product_spec_registry import seed_spec_registry
-
-    session = Session(bind=bind)
-    try:
-        result = seed_spec_registry(session)
-        session.flush()
-        print(
-            f"[311b] spec registry: {result['created']} created, "
-            f"{result['updated']} vocabulary repairs"
-        )
-    finally:
-        session.close()
+    # The vocabulary is NOT seeded here. `seed_spec_registry` reads the ORM model,
+    # which is always the HEAD version - so seeding mid-chain asks for columns later
+    # migrations have not added yet, and the deploy dies on the first one it reaches
+    # ("column product_spec_registry.id does not exist"). The seed runs at the end of
+    # the chain instead, in 311m, where every column exists. Still one source of the
+    # vocabulary, just not read before the table can answer for it.
 
 
 def downgrade() -> None:

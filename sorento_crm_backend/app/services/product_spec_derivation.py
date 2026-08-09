@@ -178,6 +178,15 @@ EXTRA_TYPE_TOKENS: list[tuple[str, str]] = [
     ("TOWEL RING", "towel_ring"),  # 74
     ("DUSTBIN", "dustbin"),  # the flyer's page 16, by litre
     ("WASTE BIN", "dustbin"),
+    # Before BOTTLE TRAP: "300MM DRAIN PIPE FOR 32MM BOTTLE TRAP" is a pipe that FITS
+    # one, and reading it as the trap itself answered the wrong question.
+    # "BASIN COLD TAP" is a basin tap; only the adjacent "BASIN TAP" form was read, so
+    # this row derived a water supply and no type at all.
+    ("BASIN COLD TAP", "basin_tap"),
+    ("BASIN HOT TAP", "basin_tap"),
+    ("DRAIN PIPE", "drain_pipe"),
+    ("STOP COCK", "stop_cock"),
+    ("STOPCOCK", "stop_cock"),
     ("BOTTLE TRAP", "bottle_trap"),
     ("CABINET HINGES", "hinge"),
     ("HINGES", "hinge"),
@@ -486,9 +495,13 @@ FINISH_WORDS: list[tuple[str, str]] = [
 # Trailing code segment -> finish. Everything absent here yields nothing: DIY is
 # packaging, ENG is the -P-ENG collision family, bare digits are variant numbering.
 FINISH_SUFFIXES: dict[str, str] = {
+    # Matt black, on 52 codes. Its absence is why SRTWB890-MBL carried no finish at all
+    # and could not be told apart from SRTWB890, the same basin in white.
+    "MBL": "black",
     "BL": "black",
     "GM": "gunmetal",
     "NL": "nickel",
+    "NK": "nickel",
     "GY": "grey",
     "RG": "rose_gold",
     "CR": "chrome",
@@ -1070,7 +1083,7 @@ def _apply_scope(out: "DerivedSpec", applies_when: dict[str, dict]) -> None:
 # which kept their old values and reported a successful run. The failure is invisible:
 # the job says "skipped", which is exactly what it says when there is genuinely nothing
 # to do.
-DERIVATION_VERSION = "20"
+DERIVATION_VERSION = "22"
 
 
 def _input_hash(
