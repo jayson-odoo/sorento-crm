@@ -281,9 +281,23 @@ class UserService:
         respond_synced: Optional[str] = None,
         status: Optional[str] = None,
         trashed: str = "exclude",
+        company_id: Optional[str] = None,
     ):
-        """List users for select dropdowns. Defaults to non-trashed only."""
+        """List users for select dropdowns. Defaults to non-trashed only.
+
+        ``company_id`` narrows to users holding a grant for that company. Users are
+        SHARED across companies, so the default stays unfiltered; the team-member
+        picker passes it because team membership requires the grant (AC-G1) - and
+        offering a user who cannot be added is just an error waiting to happen.
+        """
         q = self.db.query(User)
+
+        if company_id:
+            from app.models.company import UserCompany
+
+            q = q.join(UserCompany, UserCompany.user_id == User.id).filter(
+                UserCompany.company_id == str(company_id)
+            )
 
         if trashed == "only":
             q = q.filter(User.is_trashed == True)
@@ -1914,6 +1928,14 @@ class AccessAgentService:
                     AgentTeam.tier == 1,
                     AgentTeam.agent_id != agent_id,
                     AgentTeam.team_id.notin_(team_ids),
+                    # Per company (AC-H4). The invariant exists so escalation can
+                    # derive ONE tier-1 team for a user; across companies there is no
+                    # ambiguity, since the two ladders are separate. Filtered
+                    # explicitly rather than left to the scope filter: this is a
+                    # multi-entity join selecting bare columns, and it was observed
+                    # matching a Sorento membership while the active company was
+                    # Mocha, blocking a legitimate Mocha tier-1 assignment.
+                    AgentTeam.company_id == self._active_company_id(),
                 )
             )
             # A conflict against a FORM-SLA agent's tier-1 team must NOT block —
@@ -2220,8 +2242,22 @@ class AccessAgentService:
                 ))
         try:
             self.db.commit()
-        except IntegrityError:
+        except IntegrityError as exc:
             self.db.rollback()
+            # Not every integrity error here is a duplicate code. Picking another
+            # company's SLA policy trips the (policy_id, company_id) composite FK,
+            # and reporting that as "duplicate code" sends the admin looking at the
+            # wrong field entirely.
+            detail = str(getattr(exc, "orig", exc))
+            if "fk_agent_teams_policy_company" in detail:
+                raise handle_validation_error(
+                    "That SLA policy belongs to another company. Pick a policy from "
+                    "this company, or create one for it."
+                ) from None
+            if "fk_agent_teams_team_company" in detail:
+                raise handle_validation_error(
+                    "That team belongs to another company. Pick a team from this company."
+                ) from None
             raise handle_validation_error(
                 "cannot have duplicate code in different groups"
             ) from None

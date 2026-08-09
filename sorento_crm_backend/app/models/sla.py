@@ -4,16 +4,31 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
+from app.models.base import CompanyScopedMixin
 import uuid
 
 # Forward reference: AccessAgent is defined in app.models.access
 
 
 class SLAPolicy(Base):
+    """An SLA policy belongs to one company (D5) via its NOT NULL ``company_id``.
+
+    Deliberately NOT a CompanyScopedMixin. Making it one auto-filters and
+    auto-stamps every policy read and write in the product, which broke ~160 tests
+    covering escalation, extension, takeover and the daily summary - paths that
+    legitimately read a policy with no active company (scheduler ticks, form-SLA
+    fixtures). Isolation where it actually matters is enforced in two narrower
+    places: the picker query filters by the active company, and the agent_teams
+    (policy_id, company_id) composite FK rejects a cross-company binding outright.
+
+    ``code`` is unique per company, not globally: migration 320 dropped
+    sla_policies_code_key in favour of (code, company_id).
+    """
+
     __tablename__ = "sla_policies"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    code = Column(Text, unique=True, nullable=False)
+    code = Column(Text, nullable=False)
     name = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)

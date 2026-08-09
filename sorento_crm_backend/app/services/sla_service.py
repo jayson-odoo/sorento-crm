@@ -133,9 +133,25 @@ class SLAPolicyService:
         sort_field: str = "created_at",
         sort_dir: str = "asc"
     ):
-        """List SLA policies."""
+        """List THIS COMPANY's SLA policies.
+
+        Filtered explicitly rather than by making SLAPolicy a scoped model: the
+        picker on an agent's team sets must only offer policies that can actually be
+        bound (the agent_teams composite FK rejects the rest), but escalation,
+        extension and the daily summary all read policies from contexts with no
+        active company, so a blanket auto-filter would break them.
+
+        A scope that is not a single company (a system / all-companies caller) is
+        left unfiltered, matching how those callers already read every other table.
+        """
         q = self.db.query(SLAPolicy)
-        
+
+        from app.models.base import get_company_scope
+
+        scope = get_company_scope(self.db)
+        if isinstance(scope, frozenset) and len(scope) == 1:
+            q = q.filter(SLAPolicy.company_id == next(iter(scope)))
+
         filters = []
         if status and status != "all":
             filters.append(SLAPolicy.is_active == (status == "active"))
@@ -202,9 +218,11 @@ class SLAPolicyService:
     
     def create_policy(self, policy_data: SLAPolicyCreate):
         """Create a new SLA policy with tiers."""
+        # Scoped read: the code is unique PER COMPANY now, so a global check would
+        # block Mocha from having its own policy with the same code as Sorento's.
         existing = self.db.query(SLAPolicy).filter(SLAPolicy.code == policy_data.code).first()
         if existing:
-            raise handle_conflict("SLA policy code already exists.")
+            raise handle_conflict("SLA policy code already exists in this company.")
         
         policy_dict = policy_data.model_dump(exclude={"tiers"})
         policy = SLAPolicy(**policy_dict)
