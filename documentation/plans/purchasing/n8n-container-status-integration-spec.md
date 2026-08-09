@@ -240,10 +240,26 @@ Three things to know, each of which has already caused a wrong answer:
    asked for.
 3. **If you do pass a type, it is SINGULAR: `attachment_type_id`, not `attachment_type_ids`.**
    There is no plural form and no array. An unknown key is dropped, which leaves the call with no
-   narrower at all, which trips (1). Tell a short-circuit from a real empty result by
-   `fallback_used`: a real backend call carries it, the short-circuit does not.
-   `attachment_type_code: "Container Status"` is the by-name equivalent and avoids the whole class
-   of mistake - no UUID to resolve, no plural to get wrong.
+   narrower at all, which trips (1). `attachment_type_code: "Container Status"` is the by-name
+   equivalent and avoids the whole class of mistake - no UUID to resolve, no plural to get wrong.
+   The matcher is permissive: case-insensitive `code`, then case-insensitive `type_name`, then a
+   catalog/catalogue spelling-variant pass against both.
+
+   **`fallback_used` answers "did we reach the backend", NOT "is this empty legitimate".** It is
+   present on a real call and absent on the no-narrower short-circuit, so it separates those two -
+   and nothing else. In particular a type code that matches NO type does reach the backend and
+   carries it, and still returns zero rows: `resources_service` applies an impossible-id filter on
+   purpose, so a wrong document hint can never leak the wrong files. That is correct behaviour
+   which happens to be indistinguishable from "no such document" - a third empty with a third
+   cause. Do not read `fallback_used` as a legitimacy signal.
+
+   The three empties, all identical to a caller today:
+
+   | cause | reached backend | why empty |
+   | --- | --- | --- |
+   | no recognised narrower | no | the tool refused to browse the library |
+   | type code matches no type | yes | impossible-id filter, deliberate, stops a bad hint leaking |
+   | filter matched nothing | yes | genuinely no such document for this caller |
 4. **The type filter alone is not enough.** `visible_type_ids` widens the baseline to
    (is_direct_access types) UNION (types granted to this contact). Container Status is NOT
    is_direct_access, so an ungranted contact gets 0 rows even with the correct parameter. An
