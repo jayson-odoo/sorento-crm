@@ -495,6 +495,7 @@ FINISH_WORDS: list[tuple[str, str]] = [
     ("BLACK", "black"),  # 41
     ("WHITE", "white"),
     ("GREY", "grey"),
+    ("SATIN", "satin_chrome"),  # 20 flyer cards, and the only finish word on some
 ]
 
 # Trailing code segment -> finish. Everything absent here yields nothing: DIY is
@@ -545,10 +546,15 @@ _SMART_WC_RE = re.compile(r"INTELLIGENT|AUTO\s*INDUCTION|SMART\s*(?:TOILET|WC)")
 MAX_PLAUSIBLE_MM = 5000
 
 # 2 to 4 numbers separated by x / X / *, with optional spaces and an optional unit.
+# Each number may be LABELLED and may carry its own unit, because the flyer writes
+# "L750 x W165 x H247mm" and "D L255xW125xH255mm" while the product master writes
+# "1500x750x630MM". 188 flyer cards use the labelled form and not one of them parsed, so
+# a grab bar printed its exact size on the card and still could not be found by it.
+_DIM_PART = r"(?:[LWHDlwhd]\s*)?(\d+(?:\.\d+)?)\s*(?:MM|mm)?"
 _DIM_RE = re.compile(
-    r"(\d+(?:\.\d+)?)\s*[xX*]\s*(\d+(?:\.\d+)?)"
-    r"(?:\s*[xX*]\s*(\d+(?:\.\d+)?))?"
-    r"(?:\s*[xX*]\s*(\d+(?:\.\d+)?))?",
+    rf"{_DIM_PART}\s*[xX*]\s*{_DIM_PART}"
+    rf"(?:\s*[xX*]\s*{_DIM_PART})?"
+    rf"(?:\s*[xX*]\s*{_DIM_PART})?",
 )
 
 # "1 BOWL", "2BOWL", and the spelled-out "SINGLE BOWL" / "DOUBLE BOWL (...)". Only a
@@ -1111,7 +1117,7 @@ def _apply_scope(out: "DerivedSpec", applies_when: dict[str, dict]) -> None:
 # which kept their old values and reported a successful run. The failure is invisible:
 # the job says "skipped", which is exactly what it says when there is genuinely nothing
 # to do.
-DERIVATION_VERSION = "24"
+DERIVATION_VERSION = "25"
 
 
 def _input_hash(
