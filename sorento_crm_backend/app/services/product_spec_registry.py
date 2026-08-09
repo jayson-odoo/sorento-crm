@@ -158,6 +158,9 @@ def _rules_from_shipped_tables() -> dict[str, list[dict]]:
         "water_supply": contains(d.WATER_SUPPLY_TOKENS),
         "steel_grade": contains(d.STEEL_GRADE_TOKENS),
         "furniture_type": contains(d.FURNITURE_TOKENS),
+        "way_count": [
+            {"match": "regex", "pattern": d.WAY_COUNT_RE.pattern, "capture": 1}
+        ],
         "piece_count": [
             {"match": "regex", "pattern": d.PIECE_COUNT_RE.pattern, "capture": 1}
         ],
@@ -830,6 +833,19 @@ SPEC_REGISTRY_SEED: list[dict] = [
         # 1.2m" means to a customer, and nothing beyond half a metre is the same hose.
         "match_tolerance": 100.0,
         "match_decay": 500.0,
+    },
+    {
+        "spec_key": "way_count",
+        "label": "Ways (diverter outlets)",
+        "data_type": "numeric",
+        # How many outlets the diverter feeds. Deliberately separate from
+        # spray_functions: a 2-way set can carry a 3-function hand shower, and the
+        # flyer prints both on the same card.
+        "synonyms": {"_self": ["way", "ways", "outlet", "outlets", "diverter way"]},
+        "measured_coverage": 222,
+        "rank_weight": 3.0,
+        "match_tolerance": 0.0,
+        "match_decay": 1.0,
     },
     {
         "spec_key": "piece_count",

@@ -26,6 +26,7 @@ from app.services.product_class_signal import backfill_category_signals
 from app.services.product_spec_derivation import derive_for_code
 from app.services.product_spec_registry import seed_spec_registry
 from app.services.product_spec_search import (
+    _states,
     _numeric_score,
     resolve_terms_to_specs,
     search_specs,
@@ -1091,3 +1092,18 @@ def test_the_nearer_of_two_matches_ranks_first():
     assert exact > near, "an exact size must outrank a merely tolerable one"
     # ...but only just: closeness orders equals, it does not outweigh a whole spec.
     assert near > 0.9, "a size inside the tolerance still fully matches"
+
+
+def test_a_two_tone_product_answers_for_either_finish():
+    """SRTWT9605-RG is "Rose Gold + Matt Black". Both are true of it.
+
+    A single scalar had to discard one, and WHICH one depended on rule order - so
+    searching the flyer's own words for "2 ways shower set rose gold" returned every
+    rose gold set except the one on the card.
+    """
+    assert _states(["rose_gold", "black"], "rose_gold")
+    assert _states(["rose_gold", "black"], "black")
+    assert not _states(["rose_gold", "black"], "chrome")
+    # A scalar keeps behaving exactly as it did.
+    assert _states("chrome", "chrome")
+    assert not _states("chrome", "black")

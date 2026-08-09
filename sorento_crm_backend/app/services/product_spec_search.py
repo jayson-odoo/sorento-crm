@@ -63,6 +63,18 @@ RELEVANCE_FLOOR = 1.5
 _EXACTNESS_MARGIN = 0.02
 
 
+def _states(actual, target) -> bool:
+    """Does the stored value say `target`?
+
+    A stored value may be a LIST: SRTWT9605-RG is "Rose Gold + Matt Black", two finishes
+    on one product, and a customer asking for either is right. Scalars behave exactly as
+    before.
+    """
+    if isinstance(actual, (list, tuple, set)):
+        return any(str(a).strip().lower() == str(target).strip().lower() for a in actual)
+    return str(actual).strip().lower() == str(target).strip().lower()
+
+
 def _numeric_score(target: float, actual: float, tolerance: float, decay: float) -> float:
     """1.0 within `tolerance` of the target, then decaying to 0 at `decay`.
 
@@ -293,7 +305,8 @@ def _is_excluded(values: dict, exclusions: list[dict]) -> bool:
         actual = stored.get("value")
         if actual is None:
             continue
-        if str(actual).strip().lower() == str(refused).strip().lower():
+        # A two-tone product holding a refused tone is still refused.
+        if _states(actual, refused):
             return True
     return False
 
@@ -464,11 +477,15 @@ def search_specs(
             if (provenance.get(key) or {}).get("source") == "flyer":
                 weight *= flyer_source_boost
             if key == "class":
-                if str(actual).lower() == str(target).lower():
+                if _states(actual, target):
                     score += class_boost
                     evidence += class_boost
                     matched.append(key)
-            elif isinstance(actual, (int, float, Decimal)) and isinstance(target, (int, float, Decimal)):
+            elif (
+                isinstance(actual, (int, float, Decimal))
+                and isinstance(target, (int, float, Decimal))
+                and not isinstance(actual, bool)
+            ):
                 tolerance, decay = match_windows.get(key, (0.0, 0.0))
                 # "above 900mm" is a THRESHOLD, not an approximate equality. Scored as
                 # equality, a 960mm basin sat 60mm from the target and a 850mm one sat
@@ -494,7 +511,7 @@ def search_specs(
                     # merely scored zero on bowl_count and still won on its other
                     # signals, which is what put it above real double-bowl sinks.
                     penalty += mismatch_penalty
-            elif str(actual).lower() == str(target).lower():
+            elif _states(actual, target):
                 score += weight
                 evidence += weight
                 matched.append(key)
