@@ -7,6 +7,7 @@ import {
   createReorderRun,
   getAllDispositionRecommendations,
   getBuyRecommendationsForCash,
+  getCoveredRecommendations,
   getReorderRun,
   getRecommendations,
   getTodayRun,
@@ -251,6 +252,23 @@ export function useReorderRunDetail(runId: string | null, enabled: boolean) {
  * slider then recomputes funded/deferred live client-side via `computeFunding`,
  * so this does NOT refetch per slider tick.
  */
+/**
+ * Every `covered` row for a run: demand the location's own stock already covers.
+ *
+ * Its own query, never merged into the cash set. A covered row is not a purchase, and
+ * letting it into the funding split would spend budget on something nobody agreed to buy.
+ */
+export function useCoveredRecommendations(runId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['scm', 'reorder', 'covered-recs', runId],
+    queryFn: () => getCoveredRecommendations(runId as string),
+    enabled: enabled && !!runId,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
 export function useBuyRecommendationsForCash(runId: string | null, enabled: boolean) {
   return useQuery({
     queryKey: ['scm', 'reorder', 'cash-recs', runId],

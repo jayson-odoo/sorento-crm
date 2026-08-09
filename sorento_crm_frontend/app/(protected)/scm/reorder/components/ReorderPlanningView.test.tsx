@@ -18,10 +18,12 @@ const useTodayRun = vi.fn();
 const useReorderRun = vi.fn();
 const useAllDispositionRecommendations = vi.fn();
 const useUnlocatedDemand = vi.fn();
+const useCoveredRecommendations = vi.fn();
 vi.mock('../hooks/useReorderRun', () => ({
   useTodayRun: () => useTodayRun(),
   useReorderRun: () => useReorderRun(),
   useUnlocatedDemand: () => useUnlocatedDemand(),
+  useCoveredRecommendations: (...a: unknown[]) => useCoveredRecommendations(...a),
   useAllDispositionRecommendations: (...a: unknown[]) => useAllDispositionRecommendations(...a),
   todayRunKey: ['scm', 'reorder', 'today'],
   runHistoryKey: ['scm', 'reorder', 'history'],
@@ -77,6 +79,7 @@ beforeEach(() => {
   useReorderRun.mockReset().mockReturnValue({ run: null, isRunning: false, isComplete: false, isFailed: false, error: null, start: vi.fn(), reset: vi.fn() });
   useAllDispositionRecommendations.mockReset().mockReturnValue({ data: [], isLoading: false });
   useUnlocatedDemand.mockReset().mockReturnValue({ data: undefined, isLoading: false });
+  useCoveredRecommendations.mockReset().mockReturnValue({ data: [], isLoading: false, isError: false, error: null });
   useReorderPlan.mockReset().mockReturnValue({ isLoading: false, isError: false, error: null, refetch: vi.fn(), applyProposalLine: vi.fn(), rows: [] });
 });
 
@@ -241,7 +244,8 @@ describe('ReorderPlanningView — demand the plan could not net', () => {
     renderView();
 
     expect(screen.getByText('770')).toBeInTheDocument();
-    expect(screen.getByText(/name no stock location/i)).toBeInTheDocument();
+    expect(screen.getByText(/planned against the location holding the most/i)).toBeInTheDocument();
+    expect(screen.getByText(/arrived with no stock location/i)).toBeInTheDocument();
     expect(screen.getByText('MWC7624-RL-S10')).toBeInTheDocument();
   });
 
@@ -253,6 +257,6 @@ describe('ReorderPlanningView — demand the plan could not net', () => {
     });
     renderView();
 
-    expect(screen.queryByText(/name no stock location/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/arrived with no stock location/i)).not.toBeInTheDocument();
   });
 });

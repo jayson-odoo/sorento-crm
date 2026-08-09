@@ -29,6 +29,7 @@ import {
   runHistoryKey,
   useAllDispositionRecommendations,
   useReorderRun,
+  useCoveredRecommendations,
   useTodayRun,
   useUnlocatedDemand,
 } from '../hooks/useReorderRun';
@@ -37,6 +38,7 @@ import { decisionsKey } from '../hooks/useDecisions';
 import type { ReorderRunHistoryItem } from '../services/reorderRunService';
 import type { OutstandingApplyResult } from '../services/outstandingImportService';
 import { CashCopilotResults } from './CashCopilotResults';
+import { CoveredByStockView } from './CoveredByStockView';
 import { DispositionResultsGrid } from './DispositionResultsGrid';
 import { UploadDataMenu } from './UploadDataMenu';
 import type {
@@ -141,6 +143,9 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const buildingFirstPlan = planInProgress && !!todayData && todayData.status !== 'completed';
 
   const plan = useReorderPlan(currentRunId, view === 'buy' && !!currentRunId);
+  // Fetched whenever a run is on screen, not only when its view is open, so the tile can
+  // carry a real count rather than a dash the user has to click to resolve.
+  const covered = useCoveredRecommendations(currentRunId, !!currentRunId);
 
   // Disposition (Stock allocation) rows come from the same run (type=disposition).
   // Fetched WHOLE (M8-F18) - kept enabled in the buy view too so the tile's
@@ -423,22 +428,24 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         isBusy={resetting}
       />
 
-      {/* Demand the plan could not net. It has committed quantity and no location, so it
-          produced no recommendation and the product simply is not on the grid - which reads
-          as "nothing to buy" rather than "we could not tell where it ships from". */}
+      {/* Demand that arrived with no stated location. It IS planned now - it lands on the
+          location holding the most of each item - but the planner should know which part of
+          the plan rests on demand nobody located, because that is the part most likely to be
+          wrong. Saying "not in this plan" here would now be false. */}
       {unlocated.data && unlocated.data.products > 0 ? (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-sm">
           <AlertTriangle className="size-4 shrink-0 text-amber-600" aria-hidden />
           <span className="text-muted-foreground">
             <span className="font-medium text-foreground tabular-nums">
-              {fmtInt(unlocated.data.products)}
-            </span>{' '}
-            product{unlocated.data.products === 1 ? '' : 's'} with{' '}
-            <span className="font-medium text-foreground tabular-nums">
               {fmtInt(unlocated.data.quantity)}
             </span>{' '}
-            units of committed demand are not in this plan: the order lines name no stock
-            location, so there is nothing to net them against.
+            units of committed demand across{' '}
+            <span className="font-medium text-foreground tabular-nums">
+              {fmtInt(unlocated.data.products)}
+            </span>{' '}
+            product{unlocated.data.products === 1 ? '' : 's'} arrived with no stock location.
+            It is planned against the location holding the most of each item, and rows built
+            on it are marked.
             {unlocated.data.sample.length ? (
               <>
                 {' '}
@@ -518,6 +525,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
           `summaryOrderMockStore`. */}
       <ReorderStatTiles
         buyCount={summary?.buy_count ?? 0}
+        coveredCount={covered.data ? covered.data.length : null}
         dispositionCount={actionableDispositions.length}
         cashTotal={summary?.total_cash_impact ?? 0}
         // Null, not a number: the plan-exception and PO-worklist engines are S5 and S4, and
@@ -533,7 +541,16 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         onSelectView={setView}
       />
 
-      {view === 'plan_exceptions' ? (
+      {view === 'covered' ? (
+        // Demand the location's own stock covers. A separate view, never merged into the
+        // buy grid, so the Buy count and the cash total keep meaning purchases.
+        <CoveredByStockView
+          rows={covered.data ?? []}
+          isLoading={covered.isLoading}
+          isError={covered.isError}
+          error={covered.error}
+        />
+      ) : view === 'plan_exceptions' ? (
         // Where the plan disagrees with supply already placed (S5, AC-D2). Reads the SAME
         // run as the plan above, so a past run shows the batch that week produced.
         <PlanExceptionsView runId={currentRunId} />

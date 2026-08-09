@@ -141,7 +141,7 @@ export interface RecommendationQuery {
   pageIndex: number;
   pageSize: number;
   /** Filter to a single type; null = all. Server-side. */
-  type?: 'buy' | 'disposition' | 'exception' | null;
+  type?: 'buy' | 'covered' | 'disposition' | 'exception' | null;
   searchQuery?: string;
   /** Column sort — forwarded to the backend as `sort`/`dir`. */
   sorting?: SortingState;
@@ -426,6 +426,24 @@ export async function getBuyRecommendationsForCash(
   const out = [...first.data];
   for (let page = 1; page < first.pagination.total_pages; page += 1) {
     const next = await getRecommendations(runId, { pageIndex: page, pageSize: PAGE, type: 'buy' });
+    out.push(...next.data);
+  }
+  return out;
+}
+
+/** Every `covered` row for a run: demand the location's own stock already covers.
+ *
+ *  Fetched whole and separately from the buy set. It is deliberately NOT folded into the
+ *  cash co-pilot: a covered row is not a purchase, and letting it into the funding split
+ *  would spend budget on something nobody has agreed to buy. */
+export async function getCoveredRecommendations(
+  runId: string,
+): Promise<ReorderRecommendation[]> {
+  const PAGE = 1000;
+  const first = await getRecommendations(runId, { pageIndex: 0, pageSize: PAGE, type: 'covered' });
+  const out = [...first.data];
+  for (let page = 1; page < first.pagination.total_pages; page += 1) {
+    const next = await getRecommendations(runId, { pageIndex: page, pageSize: PAGE, type: 'covered' });
     out.push(...next.data);
   }
   return out;

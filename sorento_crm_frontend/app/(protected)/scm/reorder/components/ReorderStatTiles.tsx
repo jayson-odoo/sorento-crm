@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ClipboardList,
   FileSpreadsheet,
+  PackageCheck,
   PackageX,
   ShoppingCart,
   Wallet,
@@ -16,6 +17,7 @@ import { fmtInt, fmtMoney } from '../../lib/format';
  *  not a view, so it never appears here. */
 export type ReorderPlanView =
   | 'buy'
+  | 'covered'
   | 'disposition'
   | 'order_summary'
   | 'plan_exceptions'
@@ -119,6 +121,7 @@ function Tile({
  */
 export function ReorderStatTiles({
   buyCount,
+  coveredCount = null,
   dispositionCount,
   cashTotal,
   planExceptionCount = null,
@@ -128,6 +131,9 @@ export function ReorderStatTiles({
   onSelectView,
 }: {
   buyCount: number;
+  /** Demand the location's own stock covers, waiting on use-stock-or-buy. Null until
+   *  the set has been read once. */
+  coveredCount?: number | null;
   /** ACTIONABLE dispositions only (Discontinue / Promote) - hold lines are excluded
    *  from the plan entirely and are NOT surfaced here (they carry no action). */
   dispositionCount: number;
@@ -146,7 +152,7 @@ export function ReorderStatTiles({
   onSelectView: (view: ReorderPlanView) => void;
 }) {
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 xl:grid-cols-6">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 xl:grid-cols-7">
       <Tile
         label="Buy"
         value={fmtInt(buyCount)}
@@ -156,6 +162,23 @@ export function ReorderStatTiles({
         active={activeView === 'buy'}
         activeRingClass="ring-scm-incoming"
         onClick={() => onSelectView('buy')}
+      />
+      {/* Demand the location's own stock covers. Its own tile, never folded into Buy:
+          it is a choice nobody has taken, and counting it as a purchase would report money
+          as committed that no one agreed to spend. */}
+      <Tile
+        label="Covered by stock"
+        value={coveredCount === null ? UNKNOWN_VALUE : fmtInt(coveredCount)}
+        subLabel={
+          coveredCount === null
+            ? UNKNOWN_SUBLABEL
+            : coveredCount
+              ? 'use stock, or buy anyway'
+              : 'nothing waiting on that choice'
+        }
+        icon={PackageCheck}
+        active={activeView === 'covered'}
+        onClick={() => onSelectView('covered')}
       />
       <Tile
         label="Stock allocation"

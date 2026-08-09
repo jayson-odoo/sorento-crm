@@ -20,7 +20,7 @@ export type ReorderRunStage =
 
 /** Recommendation kind. `buy` = triggered reorder; `disposition` = dead/overstock;
  *  `exception` = a would-be buy with no linked supplier (flagged, nothing to order). */
-export type ReorderRecType = 'buy' | 'disposition' | 'exception';
+export type ReorderRecType = 'buy' | 'covered' | 'disposition' | 'exception';
 
 /** Why a buy fired, or why a disposition applies. Drives the "Triggered reason" cell. */
 export type ReorderReason =
@@ -266,6 +266,13 @@ export interface ReorderRecommendation {
    * screens, so one label would send half the rows to the wrong one.
    */
   cost_status?: 'ok' | 'no_cost' | 'no_rate' | null;
+  /** `covered` rows only: the committed demand, and what the location already holds.
+   *  The two numbers the use-stock-or-buy choice turns on. */
+  covered_committed?: number | null;
+  covered_available?: number | null;
+  /** How much of this row's demand arrived on a sales-order line naming no warehouse.
+   *  The part of a buy most likely to be wrong, so it is stated rather than assumed. */
+  unlocated_demand?: number | null;
   missing_rate_currencies?: string[];
   /** 1-based rank by frozen rank_score (1 = fund first). null on non-buy rows. */
   rank: number | null;

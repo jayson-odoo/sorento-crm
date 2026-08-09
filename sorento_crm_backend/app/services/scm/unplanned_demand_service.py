@@ -1,13 +1,12 @@
-"""Demand the plan cannot see, and why.
+"""Demand that arrived with no stated location, and how much of the plan rests on it.
 
-Planning nets stock against demand per product AND location. A sales-order line that names
-no warehouse therefore has nothing to net against: it is real, committed, and invisible to
-every recommendation. On the customer's own book that is 8,011 of 8,136 open lines.
+Planning nets stock against demand per product AND location, so a sales-order line naming
+no warehouse once had nothing to net against and vanished. On the customer's own book that
+is 8,011 of 8,136 open lines.
 
-Nothing here decides where that demand SHOULD land - that is a business rule about which
-location serves an order nobody located, and it is not the engine's to invent. This module
-only counts it and says so, because a plan that quietly omits 97% of the demand is worse
-than one that admits it.
+It is planned now: ``reorder_run_service._apply_unlocated_demand`` lands it on the location
+holding the most of each item. This module is what lets the page SAY so, because a plan
+part-built on demand nobody located should not present all of it as equally confirmed.
 """
 from __future__ import annotations
 
