@@ -179,11 +179,19 @@ Because the two brands share one channel, an untagged inbound contact has no com
   purchase requests, sponsorship forms and stock inquiries all carry `contact_id`). A contact in
   more than one company, an entity with no contact (`tickets` has no contact column at all), or an
   unresolvable contact all stamp Sorento.
-- **AC-E5.** Every call site that resolves a team by (agent, code, tier) supplies a company:
-  `form_sla_service:501,790`, `sla_service:2160,2651`, `complaints_service:915,1279`,
-  `procurement_service:2439,5744`, `cs_routing_service:78`, `handling_lock_service:86`,
-  `tickets_service:1072`, `next_assignee:108,112`. The company comes from the tracker
-  (AC-E2) or from the entity's contact (AC-E4). It is never re-derived from the request.
+- **AC-E5.** Every call site that resolves a team by (agent, code, tier) supplies a company, and
+  the company comes from the tracker (AC-E2) or the entity's contact (AC-E4), never re-derived
+  from the request. The resolvers take it as a required keyword-only argument so a missed caller
+  is an error at import or test time rather than a wrong assignment in production.
+- **AC-E5b.** Resolvers that do NOT take (agent, code, tier) but still read `agent_teams` are
+  covered too: `get_team_id_by_code` (the complaint / procurement fallback path) and
+  `resolve_policy_id_for`, which returns the distinct policies bound to a team set and would
+  raise a bogus "inconsistent binding" 409 the moment one team set exists in two companies.
+- **AC-E5c.** Ad-hoc `agent_teams` queries that no signature change can reach (the takeover queue
+  lookup, the user-standing lookup, the tier-1 agent list in `sla_service`) are covered by
+  `agent_teams` carrying `CompanyScopedMixin` (AC-F1). The required keyword and the auto-filter
+  are two layers on purpose: the keyword fails loudly where it applies, the filter catches the
+  rest.
 - **AC-E6.** A `respond_contact_cs_routing` pin only wins when the pinned user is a member of the
   resolved company's team; otherwise it falls back to round-robin exactly as an inactive pin does.
 

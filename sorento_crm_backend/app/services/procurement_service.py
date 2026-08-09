@@ -2382,7 +2382,23 @@ class StockInquiryService:
         from app.services.entity_attachment_service import EntityAttachmentService
         self.entity_attachment_service = EntityAttachmentService(db)
 
-    def _get_team_user_ids_for_agent_code(self, agent_code: str) -> List[str]:
+    def _company_for_stock_inquiry(self, inquiry_id: str) -> str:
+        """AC-E4: a stock inquiry routes to its contact's company, else the default.
+
+        ``stock_inquiries`` has no company column, so the submitter contact is the
+        only signal.
+        """
+        from app.models.procurement import StockInquiry
+        from app.services.company_routing_service import company_for_contact
+
+        row = (
+            self.db.query(StockInquiry.contact_id)
+            .filter(StockInquiry.id == str(inquiry_id))
+            .first()
+        )
+        return company_for_contact(self.db, contact_id=str(row[0]) if row and row[0] else None)
+
+    def _get_team_user_ids_for_agent_code(self, agent_code: str, *, company_id: str) -> List[str]:
         """Return user IDs of all teams assigned to the access agent with the given code."""
         from app.services.user_service import AccessAgentService
         from app.models.access import AgentTeam, TeamMember
@@ -2402,7 +2418,7 @@ class StockInquiryService:
         return [str(r[0]) for r in rows if r and r[0]]
 
     def _get_team_user_ids_for_agent_team_assignment(
-        self, agent_code: str, team_assignment_code: str
+        self, agent_code: str, team_assignment_code: str, *, company_id: str
     ) -> List[str]:
         """Return user IDs of the team assigned to the agent with the given team assignment code (e.g. project_sales, purchasing)."""
         from app.services.user_service import AccessAgentService
@@ -2413,7 +2429,7 @@ class StockInquiryService:
         if not agent_id:
             logger.debug("No access agent found for code=%s", agent_code)
             return []
-        team_id = agent_svc.get_team_id_by_code(agent_id, team_assignment_code)
+        team_id = agent_svc.get_team_id_by_code(agent_id, team_assignment_code, company_id=company_id)
         if not team_id:
             logger.debug(
                 "No team assignment found for agent %s with code=%s",
@@ -2425,7 +2441,7 @@ class StockInquiryService:
         return [str(r[0]) for r in rows if r and r[0]]
 
     def _get_team_user_ids_for_agent_tier(
-        self, agent_code: str, tier: int
+        self, agent_code: str, tier: int, *, company_id: str
     ) -> List[str]:
         """Return user IDs of the team assigned to the agent with the given tier (1=initial, 2/3=escalation)."""
         from app.services.user_service import AccessAgentService
@@ -2436,7 +2452,7 @@ class StockInquiryService:
         if not agent_id:
             logger.debug("No access agent found for code=%s", agent_code)
             return []
-        team_id = agent_svc.get_team_id_by_tier(agent_id, tier)
+        team_id = agent_svc.get_team_id_by_tier(agent_id, tier, company_id=company_id)
         if not team_id:
             logger.debug(
                 "No team assignment found for agent %s with tier=%s",
@@ -2447,10 +2463,10 @@ class StockInquiryService:
         rows = self.db.query(TeamMember.user_id).filter(TeamMember.team_id == team_id).all()
         return [str(r[0]) for r in rows if r and r[0]]
 
-    def _get_team_user_ids_for_agent_tier_safe(self, agent_code: str, tier: int) -> List[str]:
+    def _get_team_user_ids_for_agent_tier_safe(self, agent_code: str, tier: int, *, company_id: str) -> List[str]:
         """Tier lookup; returns [] if multiple teams share the same tier (ambiguous) or lookup fails."""
         try:
-            return self._get_team_user_ids_for_agent_tier(agent_code, tier)
+            return self._get_team_user_ids_for_agent_tier(agent_code, tier, company_id=company_id)
         except HTTPException:
             logger.warning(
                 "Tier %s for agent %s is ambiguous or invalid (e.g. multiple team sets at tier %s). "
@@ -2529,18 +2545,20 @@ class StockInquiryService:
         from app.services.notification_service import NotificationService
         from datetime import datetime
 
+        company_id = self._company_for_stock_inquiry(inquiry_id)
+
         if team_assignment_code:
             if team_assignment_code == "project_sales":
                 # Prefer explicit team assignment code over tier 1: multiple tier-1 rows (e.g. purchasing +
                 # project_sales + customer_service) make tier lookup raise conflict or pick the wrong team.
                 user_ids = (
-                    self._get_team_user_ids_for_agent_team_assignment(agent_code, "project_sales")
-                    or self._get_team_user_ids_for_agent_tier_safe(agent_code, 1)
+                    self._get_team_user_ids_for_agent_team_assignment(agent_code, "project_sales", company_id=company_id)
+                    or self._get_team_user_ids_for_agent_tier_safe(agent_code, 1, company_id=company_id)
                 )
             else:
-                user_ids = self._get_team_user_ids_for_agent_team_assignment(agent_code, team_assignment_code)
+                user_ids = self._get_team_user_ids_for_agent_team_assignment(agent_code, team_assignment_code, company_id=company_id)
         else:
-            user_ids = self._get_team_user_ids_for_agent_code(agent_code)
+            user_ids = self._get_team_user_ids_for_agent_code(agent_code, company_id=company_id)
         if not user_ids:
             logger.warning(
                 "No team members found for agent code '%s'%s. Assign a team under Team Assignments (Tier 1 or code project_sales).",
@@ -5731,22 +5749,31 @@ class PurchaseRequestService:
             )
         return row
 
-    def _get_purchase_request_project_sales_tier1_user_ids(self) -> List[str]:
-        """Members of Tier 1 under team set code project_sales for access agent purchase_request."""
+    def _get_purchase_request_project_sales_tier1_user_ids(
+        self, *, company_id: Optional[str] = None
+    ) -> List[str]:
+        """Members of Tier 1 under team set code project_sales for access agent purchase_request.
+
+        ``company_id`` defaults to Sorento: some callers are generic team lookups with
+        no purchase request in hand. Where the PR is known, pass its contact's company.
+        """
         from app.services.user_service import AccessAgentService
         from app.models.access import TeamMember
 
+        from app.services.company_routing_service import DEFAULT_COMPANY_ID
+
+        company_id = str(company_id or DEFAULT_COMPANY_ID)
         agent_svc = AccessAgentService(self.db)
         agent_id = agent_svc.get_agent_id_by_code("purchase_request")
         if not agent_id:
             logger.debug("No access agent found for code=purchase_request")
             return []
-        team_id = agent_svc.get_team_id_by_tier(agent_id, 1, team_set_code="project_sales")
+        team_id = agent_svc.get_team_id_by_tier(agent_id, 1, team_set_code="project_sales", company_id=company_id)
         if not team_id:
-            team_id = agent_svc.get_team_id_by_code(agent_id, "project_sales")
+            team_id = agent_svc.get_team_id_by_code(agent_id, "project_sales", company_id=company_id)
         if not team_id:
             try:
-                team_id = agent_svc.get_team_id_by_tier(agent_id, 1)
+                team_id = agent_svc.get_team_id_by_tier(agent_id, 1, company_id=company_id)
             except HTTPException:
                 logger.warning(
                     "Tier 1 for agent 'purchase_request' is ambiguous (multiple team sets). "

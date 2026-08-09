@@ -2188,17 +2188,25 @@ class AccessAgentService:
                 "cannot have duplicate code in different groups"
             ) from None
 
-    def get_team_id_by_code(self, agent_id: str, code: str) -> str | None:
-        """Resolve team_id for agent+code. If several tiers share this code, returns one row (undefined which). Prefer get_team_id_by_tier + list_team_ids_for_agent_code for round-robin."""
+    def get_team_id_by_code(
+        self, agent_id: str, code: str, *, company_id: str
+    ) -> str | None:
+        """Resolve team_id for agent+code+company. If several tiers share this code, returns one row (undefined which). Prefer get_team_id_by_tier + list_team_ids_for_agent_code for round-robin."""
         row = (
             self.db.query(AgentTeam.team_id)
-            .filter(AgentTeam.agent_id == agent_id, AgentTeam.code == code)
+            .filter(
+                AgentTeam.agent_id == agent_id,
+                AgentTeam.code == code,
+                AgentTeam.company_id == str(company_id),
+            )
             .first()
         )
         return str(row[0]) if row else None
 
-    def list_team_ids_for_agent_code(self, agent_id: str, code: str) -> list[str]:
-        """All team_ids for this agent with the given assignment code (e.g. one per SLA tier)."""
+    def list_team_ids_for_agent_code(
+        self, agent_id: str, code: str, *, company_id: str
+    ) -> list[str]:
+        """All team_ids for this agent+company with the given assignment code (e.g. one per SLA tier)."""
         from sqlalchemy import and_
 
         c = str(code).strip() if code is not None else ""
@@ -2206,21 +2214,39 @@ class AccessAgentService:
             return []
         rows = (
             self.db.query(AgentTeam.team_id)
-            .filter(and_(AgentTeam.agent_id == agent_id, AgentTeam.code == c))
+            .filter(
+                and_(
+                    AgentTeam.agent_id == agent_id,
+                    AgentTeam.code == c,
+                    AgentTeam.company_id == str(company_id),
+                )
+            )
             .all()
         )
         return [str(r[0]) for r in rows]
 
     def get_team_id_by_tier(
-        self, agent_id: str, tier: int, team_set_code: Optional[str] = None
+        self,
+        agent_id: str,
+        tier: int,
+        team_set_code: Optional[str] = None,
+        *,
+        company_id: str,
     ) -> str | None:
-        """Resolve team_id for agent+tier, optionally constrained to one team set code."""
+        """Resolve team_id for agent+tier+company, optionally constrained to one team set code.
+
+        ``company_id`` is keyword-only and required on purpose: a positional optional
+        would let a call site silently keep the old cross-company behaviour, which is
+        the bug class this exists to close. A missed caller is a TypeError at import
+        or test time, not a wrong assignment in production.
+        """
         if tier is None or tier < 1 or tier > 3:
             return None
 
         query = self.db.query(AgentTeam.team_id).filter(
             AgentTeam.agent_id == agent_id,
             AgentTeam.tier == tier,
+            AgentTeam.company_id == str(company_id),
         )
         if team_set_code:
             query = query.filter(AgentTeam.code == team_set_code)
@@ -2228,23 +2254,40 @@ class AccessAgentService:
         rows = query.all()
         if not rows:
             return None
-        if len(rows) > 1 and not team_set_code:
-            raise handle_conflict(
-                f"Multiple team sets found for tier {tier}. Provide team_set_code to resolve escalation target."
+        if len(rows) > 1:
+            # Previously this returned rows[0] whenever a team_set_code was given, so
+            # the FIRST duplicate row won silently. With company in the key that
+            # duplicate could be another company's team, i.e. a silent wrong-company
+            # escalation. Ambiguity is now always an error (AC-C6).
+            detail = (
+                f"Multiple team sets found for tier {tier}. Provide team_set_code to "
+                "resolve escalation target."
+                if not team_set_code
+                else (
+                    f"Multiple teams found for tier {tier} in team set "
+                    f"{team_set_code!r} for this company. Remove the duplicate team-set row."
+                )
             )
+            raise handle_conflict(detail)
         return str(rows[0][0])
 
     def get_tier_team_and_notify(
-        self, agent_id: str, tier: int, team_set_code: Optional[str] = None
+        self,
+        agent_id: str,
+        tier: int,
+        team_set_code: Optional[str] = None,
+        *,
+        company_id: str,
     ) -> Optional[tuple[str, bool]]:
-        """``(team_id, notify_on_extension)`` for agent+tier (constrained to a team set),
-        or None when no team is configured at that exact tier. Used by the extension
-        notify fan-up to decide, per tier, whether that tier's team is notified."""
+        """``(team_id, notify_on_extension)`` for agent+tier+company (constrained to a
+        team set), or None when no team is configured at that exact tier. Used by the
+        extension notify fan-up to decide, per tier, whether that tier's team is notified."""
         if tier is None or tier < 1 or tier > 3:
             return None
         query = self.db.query(AgentTeam.team_id, AgentTeam.notify_on_extension).filter(
             AgentTeam.agent_id == agent_id,
             AgentTeam.tier == tier,
+            AgentTeam.company_id == str(company_id),
         )
         if team_set_code:
             query = query.filter(AgentTeam.code == team_set_code)
@@ -2262,8 +2305,14 @@ class AccessAgentService:
         agent = self.db.query(AccessAgent.id).filter(AccessAgent.code == code).first()
         return str(agent[0]) if agent else None
 
-    def resolve_policy_id_for(self, agent_id: str, team_set_code: str) -> Optional[str]:
-        """Resolve the single SLA policy bound to ``(agent_id, team_set_code)`` (D4).
+    def resolve_policy_id_for(
+        self, agent_id: str, team_set_code: str, *, company_id: str
+    ) -> Optional[str]:
+        """Resolve the single SLA policy bound to ``(agent_id, team_set_code, company)``.
+
+        Company-scoped because policies are now per company: without it, a team set
+        configured in both companies returns two distinct policy ids and this raises
+        a bogus "inconsistent binding" 409.
 
         Distinct non-null ``policy_id`` over the team-set rows:
         - zero rows  -> None (caller decides: rollout fallback vs 422 end-state)
@@ -2278,6 +2327,7 @@ class AccessAgentService:
             .filter(
                 AgentTeam.agent_id == agent_id,
                 AgentTeam.code == c,
+                AgentTeam.company_id == str(company_id),
                 AgentTeam.policy_id.isnot(None),
             )
             .distinct()
@@ -2293,7 +2343,12 @@ class AccessAgentService:
         return next(iter(policy_ids))
 
     def resolve_team_with_tier_fallback(
-        self, agent_id: str, start_tier: int, team_set_code: Optional[str] = None
+        self,
+        agent_id: str,
+        start_tier: int,
+        team_set_code: Optional[str] = None,
+        *,
+        company_id: str,
     ) -> Optional[tuple]:
         """Find the first existing team at or ABOVE ``start_tier`` for this agent's
         team set, returning ``(team_id, actual_tier)`` or None.
@@ -2310,20 +2365,29 @@ class AccessAgentService:
         if s < 1:
             s = 1
         for tier in range(s, 4):
-            team_id = self.get_team_id_by_tier(agent_id, tier, team_set_code=team_set_code)
+            team_id = self.get_team_id_by_tier(
+                agent_id, tier, team_set_code=team_set_code, company_id=company_id
+            )
             if team_id:
                 return team_id, tier
         return None
 
     def get_user_tier_in_team_set(
-        self, agent_id: str, user_id: str, team_set_code: Optional[str] = None
+        self,
+        agent_id: str,
+        user_id: str,
+        team_set_code: Optional[str] = None,
+        *,
+        company_id: str,
     ) -> Optional[int]:
         """Return the tier (1-3) at which ``user_id`` is a member of this agent's
         team set, or None if not a member of any tier. Used to route a form's
         configured default approver to their own tier in the approval team set
         (e.g. a director sitting at tier 3) instead of the tier-1 default."""
         for tier in (1, 2, 3):
-            team_id = self.get_team_id_by_tier(agent_id, tier, team_set_code=team_set_code)
+            team_id = self.get_team_id_by_tier(
+                agent_id, tier, team_set_code=team_set_code, company_id=company_id
+            )
             if not team_id:
                 continue
             member = (

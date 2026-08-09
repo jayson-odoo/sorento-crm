@@ -961,12 +961,17 @@ async def escalate_sla_tracking_integration(
         contact_segments = MarketSegmentService(db).resolve_segments_for_contact_id(
             internal_contact_id
         )
+        # AC-E3: the company comes off the tracker, so n8n needs no new field - it
+        # already resolves the tracker before escalating.
+        from app.services.sla_service import _tracking_company_id
+
         assignee = service.get_escalation_assignee_for_tier(
             getattr(tracking, "source_entity_type", None),
             target_tier,
             resolved_team_set_code,
             agent_id_override=resolved_agent_id,
             contact_segments=contact_segments,
+            company_id=_tracking_company_id(tracking),
         )
 
         # Assignee is passed into the service so the escalation event log (written inside
@@ -1149,12 +1154,15 @@ async def escalate_conversation_sla_tracking(
     contact_segments = MarketSegmentService(db).resolve_segments_for_contact_id(
         str(contact_id)
     )
+    from app.services.sla_service import _tracking_company_id
+
     assignee = service.get_escalation_assignee_for_tier(
         getattr(tracking, "source_entity_type", None),
         target_tier,
         getattr(tracking, "team_set_code", None) or None,
         agent_id_override=getattr(tracking, "agent_id", None) or None,
         contact_segments=contact_segments,
+        company_id=_tracking_company_id(tracking),
     )
     tracking = service.escalate_tracking(
         respond_contact_id=str(contact_id),

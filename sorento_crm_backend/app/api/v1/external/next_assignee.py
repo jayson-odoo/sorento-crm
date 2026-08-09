@@ -94,10 +94,13 @@ def _tier_level_from_body(body: dict) -> Optional[int]:
         return None
 
 
-def _resolve_round_robin_team_id(service: AccessAgentService, agent_id: str, body: dict) -> str:
+def _resolve_round_robin_team_id(
+    service: AccessAgentService, agent_id: str, body: dict, *, company_id: str
+) -> str:
     """
-    Resolve team_id for round-robin. Cursors are per (agent_id, team_id); the same team_code
-    on multiple tiers must use tier (or tier_level) with team_code so we advance the correct team.
+    Resolve team_id for round-robin within ONE company. Cursors are per (agent_id, team_id);
+    the same team_code on multiple tiers must use tier (or tier_level) with team_code so we
+    advance the correct team.
     """
     team_id = body.get("team_id")
     if team_id is not None and str(team_id).strip():
@@ -114,11 +117,13 @@ def _resolve_round_robin_team_id(service: AccessAgentService, agent_id: str, bod
 
     tier_level = _tier_level_from_body(body)
     if tier_level is not None:
-        tid = service.get_team_id_by_tier(agent_id, tier_level, team_set_code=code_eff)
+        tid = service.get_team_id_by_tier(
+            agent_id, tier_level, team_set_code=code_eff, company_id=company_id
+        )
         if tid:
             return tid
 
-    ids = service.list_team_ids_for_agent_code(agent_id, code_eff)
+    ids = service.list_team_ids_for_agent_code(agent_id, code_eff, company_id=company_id)
     if len(ids) > 1:
         raise HTTPException(
             status_code=400,
@@ -130,9 +135,14 @@ def _resolve_round_robin_team_id(service: AccessAgentService, agent_id: str, bod
     if len(ids) == 1:
         return ids[0]
 
+    # Naming the company matters: without it this reads as "the agent is misconfigured"
+    # when the real cause is that this company has no team for that code yet (AC-C5).
     raise HTTPException(
         status_code=404,
-        detail=f"No team found for agent and team_code={code_eff!r}",
+        detail=(
+            f"No team found for agent and team_code={code_eff!r} in company "
+            f"{company_id!r}. Configure that company's team set before routing to it."
+        ),
     )
 
 
@@ -380,7 +390,9 @@ async def post_next_assignee(
     if not agent_id:
         raise HTTPException(status_code=400, detail="agent_id or agent_code is required")
 
-    team_id = _resolve_round_robin_team_id(service, str(agent_id).strip(), body)
+    team_id = _resolve_round_robin_team_id(
+        service, str(agent_id).strip(), body, company_id=routing_company.company_id
+    )
 
     # Preferred-assignee override: skip round-robin, go straight to the named member.
     # n8n discovers valid ids via GET /external/team-members. Cursor is NOT advanced.

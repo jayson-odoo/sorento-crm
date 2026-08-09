@@ -38,6 +38,20 @@ def _utc_now_from_remote() -> Optional[datetime]:
     return None
 
 
+def _tracking_company_id(tracking) -> str:
+    """The company a tracker escalates within (AC-E2, AC-E3).
+
+    Read off the tracker, never re-derived from the request: escalation can be
+    triggered from a scheduler tick with no company at all, or from inside another
+    company's request, and either would resolve the wrong ladder. The column is NOT
+    NULL, so the fallback only covers a detached / partially built object.
+    """
+    from app.services.company_routing_service import DEFAULT_COMPANY_ID
+
+    value = getattr(tracking, "company_id", None) if tracking is not None else None
+    return str(value) if value else DEFAULT_COMPANY_ID
+
+
 def _respond_contact_phone_lookup_candidates(raw: str) -> list[str]:
     """
     Build possible respond_contacts.phone_number values for integration lookups.
@@ -2120,6 +2134,8 @@ class ConversationSLATrackingService:
         agent_code_override: Optional[str] = None,
         agent_id_override: Optional[str] = None,
         contact_segments: Optional[set] = None,
+        *,
+        company_id: str,
     ) -> dict:
         """
         Resolve the next assignee for escalation to the given tier using agent tier-team and round-robin.
@@ -2161,6 +2177,7 @@ class ConversationSLATrackingService:
             agent_id,
             target_tier,
             team_set_code=team_set_code,
+            company_id=company_id,
         )
         if not team_id:
             suffix = (
@@ -2649,7 +2666,10 @@ class ConversationSLATrackingService:
             notified: set[str] = set()
             for tier in range(target_tier, 4):
                 res = agent_svc.get_tier_team_and_notify(
-                    agent_id, tier, team_set_code=team_set_code
+                    agent_id,
+                    tier,
+                    team_set_code=team_set_code,
+                    company_id=_tracking_company_id(tracking),
                 )
                 if not res:
                     continue  # no team configured at this tier
@@ -3315,6 +3335,17 @@ class ConversationSLATrackingService:
             )
         tracking_dict["respond_contact_id"] = contact.id
 
+        # AC-E2: stamp the company ONCE, here, from the contact. Every later read of
+        # this tracker - escalation, extension notify, the handling lock - takes the
+        # company from the row rather than re-deriving it, so a tier-2 escalation of a
+        # Mocha conversation cannot land on Sorento even when it fires from a
+        # scheduler tick with no request company at all.
+        from app.services.company_routing_service import company_for_contact
+
+        tracking_dict["company_id"] = company_for_contact(
+            self.db, contact_id=str(contact.id), phone=normalized_phone
+        )
+
         # Resolve agent_code → agent_id (FK). When no assignee is passed, pick via round-robin
         # for current_tier (same as escalation). When assigned_to / assigned_to_id is passed
         # (e.g. after external next-assignee), use it and do not advance the tier cursor again.
@@ -3352,7 +3383,9 @@ class ConversationSLATrackingService:
             team_set_code = tracking_dict.get("team_set_code")
             # resolve_policy_id_for raises 409 when the team set has inconsistent policies.
             resolved_policy_id = _AccessAgentService(self.db).resolve_policy_id_for(
-                str(_agent.id), str(team_set_code or "")
+                str(_agent.id),
+                str(team_set_code or ""),
+                company_id=tracking_dict["company_id"],
             )
             if resolved_policy_id:
                 tracking_dict["policy_id"] = resolved_policy_id
@@ -3408,6 +3441,7 @@ class ConversationSLATrackingService:
                     target_tier=tracking_dict["current_tier"],
                     team_set_code=tracking_dict.get("team_set_code") or None,
                     agent_id_override=str(_agent.id),
+                    company_id=tracking_dict["company_id"],
                 )
                 tracking_dict["assigned_to_id"] = assignee["id"]
                 tracking_dict["assigned_to"] = (

@@ -85,6 +85,14 @@ class ConversationSLATracking(Base):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     respond_contact_id = Column(Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True)  # FK to respond_contacts
+    # The company this tracker escalates within. Stamped once at creation from the
+    # contact (conversation SLA) or the spawning entity's contact (form SLA), then
+    # read back by every escalation. NOT a CompanyScopedMixin: escalation runs from
+    # scheduler ticks and cross-company admin views that must still see the row —
+    # the company governs which ladder is climbed, not who may read the tracker.
+    # ORM-nullable / PG-NOT-NULL on purpose, matching the mixin's convention: the
+    # scratch-schema fixtures insert before any stamp would fire.
+    company_id = Column(UUID(as_uuid=False), ForeignKey("companies.id"), nullable=True, index=True)
     source_entity_type = Column(String(50), nullable=True)  # stock_inquiry | complaint
     # Polymorphic (no FK) but always a uuid — see migration 300.
     source_entity_id = Column(UUID(as_uuid=False), nullable=True)

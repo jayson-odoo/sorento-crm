@@ -138,6 +138,25 @@ def _default(db: Session, *, ambiguous: bool = False) -> RoutingCompany:
     )
 
 
+def company_for_contact(
+    db: Session,
+    *,
+    contact_id: Optional[str] = None,
+    space_id: Optional[str] = None,
+    phone: Optional[str] = None,
+) -> str:
+    """The company id an entity's contact routes to, coalesced to Sorento (AC-E4).
+
+    Form SLA's company source. Complaints, purchase requests, sponsorship forms and
+    stock inquiries all carry a contact; tickets carry none and therefore always get
+    the default. A contact in more than one company gets the default too - the same
+    "never pick arbitrarily" rule as conversation routing.
+    """
+    return resolve_routing_company(
+        db, contact_id=contact_id, space_id=space_id, phone=phone
+    ).company_id
+
+
 def resolve_routing_company(
     db: Session,
     *,

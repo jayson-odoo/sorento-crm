@@ -67,8 +67,14 @@ class CsRoutingService:
 
     # ---- candidate pool ----------------------------------------------------
 
-    def _cs_team_id(self) -> Optional[str]:
-        """Resolve the tier-1 team_id of the procurement customer-service team."""
+    def _cs_team_id(self, *, company_id: Optional[str] = None) -> Optional[str]:
+        """Resolve the tier-1 team_id of the procurement customer-service team.
+
+        ``company_id`` defaults to Sorento because the CS candidate list is also read
+        by the admin pin dropdown, which has no contact in scope. Pin RESOLUTION
+        passes the pinned contact's own company (AC-E6).
+        """
+        from app.services.company_routing_service import DEFAULT_COMPANY_ID
         from app.services.user_service import AccessAgentService
 
         agent_svc = AccessAgentService(self.db)
@@ -76,7 +82,10 @@ class CsRoutingService:
         if not agent_id:
             return None
         return agent_svc.get_team_id_by_tier(
-            agent_id, 1, team_set_code=CS_TEAM_SET_CODE
+            agent_id,
+            1,
+            team_set_code=CS_TEAM_SET_CODE,
+            company_id=str(company_id or DEFAULT_COMPANY_ID),
         )
 
     def list_candidates(self) -> list[dict]:

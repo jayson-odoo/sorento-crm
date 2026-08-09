@@ -85,11 +85,24 @@ def resolve_routing_company(
 ```python
 # app/services/user_service.py - AccessAgentService, all gain a required company_id
 get_team_id_by_tier(agent_id, tier, team_set_code=None, *, company_id)
+get_team_id_by_code(agent_id, code, *, company_id)
 list_team_ids_for_agent_code(agent_id, code, *, company_id)
 get_tier_team_and_notify(agent_id, tier, team_set_code=None, *, company_id)
 resolve_team_with_tier_fallback(agent_id, start_tier, team_set_code=None, *, company_id)
 get_user_tier_in_team_set(agent_id, user_id, team_set_code=None, *, company_id)
+resolve_policy_id_for(agent_id, team_set_code, *, company_id)
+
+# app/services/sla_service.py
+get_escalation_assignee_for_tier(..., *, company_id)
+_tracking_company_id(tracking) -> str      # the tracker's company, never the request's
 ```
+
+Two of these were not in the original draft and were found while implementing.
+`get_team_id_by_code` is a second lookup path used by the complaint and procurement
+fallbacks. `resolve_policy_id_for` matters more than it looks: it returns the DISTINCT
+policy ids bound to a team set and raises a 409 on more than one, so once a team set
+exists in two companies it would raise a bogus "inconsistent binding" error on every
+conversation-SLA create.
 
 Keyword-only and required, deliberately: a positional optional would let a call site silently keep
 the old cross-company behaviour, which is exactly the bug class being closed. A missed call site
@@ -156,15 +169,29 @@ entity's contact - never the request:
 
 | Call site | Company source |
 |---|---|
-| `next_assignee.py:108,112` | routing company resolved in S0 |
-| `team_members.py` (via `_resolve_round_robin_team_id`) | `company_code` query param, else contact, else default |
-| `sla_service.py:2160,2651` | the tracker's `company_id` |
-| `form_sla_service.py:501,790` | the tracker's `company_id` |
-| `complaints_service.py:915,1279` | the complaint's contact, else Sorento |
-| `procurement_service.py:2439,5744` | the PR/SF's contact, else Sorento |
-| `cs_routing_service.py:78` | the pinned contact's company (AC-E6) |
-| `handling_lock_service.py:86` | the tracker's `company_id` |
-| `tickets_service.py:1072` | Sorento (`tickets` has no contact column) |
+| `next_assignee.py` | routing company resolved in S0 |
+| `team_members.py` (via `_resolve_round_robin_team_id`) | same resolver as next-assignee, so the two agree (AC-E1) |
+| `sla_service.create_tracking` | the contact - this is where the tracker is STAMPED (AC-E2) |
+| `sla_service.get_escalation_assignee_for_tier` | caller-supplied; every caller passes the tracker's |
+| `sla_service` extension notify fan-up | `_tracking_company_id(tracking)` |
+| `sla_tracking.py` both escalate routes | `_tracking_company_id(tracking)` - no n8n change (AC-E3) |
+| `form_sla_service._start_for_config` | the spawning entity's contact (AC-E4); also stamps the tracker |
+| `form_sla_service` escalate | `_tracking_company_id(tracker)` - runs from the overdue scan |
+| `complaints_service` notify helpers | `_company_for_complaint(complaint_id)` |
+| `procurement_service` notify helpers | `_company_for_stock_inquiry(inquiry_id)` |
+| `cs_routing_service._cs_team_id` | pinned contact's company; defaults to Sorento for the admin dropdown |
+| `handling_lock_service.eligible_user_ids` | `_tracking_company_id(tracker)` |
+| `tickets_service` submit | Sorento (`tickets` has no contact column at all) |
+
+The notify helpers in `complaints_service` and `procurement_service` turned out to be
+chains three deep (`_notify_team_stock_inquiry` to
+`_get_team_user_ids_for_agent_team_assignment` to `get_team_id_by_code`), so the
+company threads through each link rather than being read at the bottom.
+
+Not every `AgentTeam` query goes through these resolvers: `sla_service` has ad-hoc ones
+(the takeover queue lookup, the user-standing lookup, the tier-1 agent list). A required
+kwarg cannot catch those, which is why `agent_teams` also carries `CompanyScopedMixin`
+in S4 - the auto-filter is the backstop for every query a signature change cannot reach.
 
 Also in this slice: `form_sla_service.py:858` stamps `company_id` at tracker creation from the
 entity's contact (AC-E4); `sla_tracking.py:858` (`/integration/escalate`) reads it off the tracker
