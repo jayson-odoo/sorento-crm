@@ -122,3 +122,38 @@ async def test_certificate_ids_alone_reaches_the_backend():
         certificate_ids="11111111-1111-4111-8111-111111111111",
     )  # type: ignore[arg-type]
     assert "certificate_ids" in out
+
+
+def test_resource_attachments_accepts_contact_id_alone_as_a_narrower():
+    """A contact IS a narrowing filter, and the one a caller always has.
+
+    The backend answers a contact-scoped call with (is_direct_access types) UNION
+    (types granted to this contact) - a handful of documents, not the library. So
+    "send me the container status list" needs no type resolution first. Requiring
+    one meant a missed resolution left the call with no narrower at all, which
+    returns an empty page WITHOUT calling the backend, which reads as "there is no
+    such document" about a document that exists.
+    """
+    spec = next(s for s in CATALOG if s.name == "crm_resource_attachments_list")
+    assert "contact_id" in spec.query_params
+    assert "contact_id" in TOOL_REQUIRED_NARROWING_FILTERS[spec.name]
+    assert "contact_id" in spec.description
+
+
+def test_resource_attachments_type_filter_is_singular_only():
+    """There is no `attachment_type_ids`. A caller that sends the plural has its
+    key dropped, ends up with no narrower, and gets the silent empty page above.
+    """
+    spec = next(s for s in CATALOG if s.name == "crm_resource_attachments_list")
+    assert "attachment_type_id" in spec.query_params
+    assert "attachment_type_ids" not in spec.query_params
+    assert "attachment_type_ids" not in TOOL_REQUIRED_NARROWING_FILTERS[spec.name]
+
+
+@pytest.mark.asyncio
+async def test_contact_id_alone_reaches_the_backend():
+    """Not short-circuited: the request must actually carry the contact."""
+    spec = next(s for s in CATALOG if s.name == "crm_resource_attachments_list")
+    fn = _compile_tool(spec)
+    out = await fn(_FakeCtx(_FakeClient()), contact_id="rio_10532f")  # type: ignore[arg-type]
+    assert "contact_id" in out

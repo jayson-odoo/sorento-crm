@@ -205,26 +205,35 @@ guard rather than prompt text).
 
 ```
 crm_resource_attachments_list
-  attachment_type_code = "Container Status"     # or attachment_type_id from resolve-entity
-  contact_id           = <respond contact id>
-  space_id             = <workspace space_id>
+  contact_id = <respond contact id>
+  space_id   = <workspace space_id>
 ```
+
+**That is the whole call. Do not resolve a document type first.** `contact_id` is itself a valid
+narrowing filter, and the backend answers a contact-scoped call with (is_direct_access types) UNION
+(the types granted to this contact) - today 9 baseline files plus that contact's grants, so 10 rows
+for someone holding Container Status. Read the file names and pick. A type filter is available
+(`attachment_type_code` by name, `attachment_type_id` by UUID) but is an optimisation, never a
+prerequisite.
 
 Three things to know, each of which has already caused a wrong answer:
 
-1. **A narrowing filter is mandatory.** Without one of `attachment_ids` / `directory_id` /
-   `attachment_type_id` / `attachment_type_code`, the tool returns an empty page **without calling
-   the backend at all**. The MCP log shows no HTTP request, and the agent narrates the empty page as
-   "there is no such document". `attachment_type_code` was added to that list for exactly this flow.
+1. **A narrowing filter is mandatory, and `contact_id` counts as one.** Without one of
+   `contact_id` / `attachment_ids` / `directory_id` / `attachment_type_id` / `attachment_type_code`,
+   the tool returns an empty page **without calling the backend at all**. The MCP log shows no HTTP
+   request, and the agent narrates the empty page as "there is no such document". Since a
+   contact-scoped call is already bounded by that contact's grants, passing the contact is both the
+   simplest call and a sufficient one.
 2. **`contact_id` + `space_id` widen, never narrow.** Container Status is not a dealer-facing type,
    so it is returned ONLY for a contact granted it (User Management → contact → Document types).
    Omit them and the response is the 9-file dealer baseline - correct, and not what the office
    asked for.
-3. **The type filter is SINGULAR: `attachment_type_id`, not `attachment_type_ids`.** There is no
-   plural form and no array. An unknown key is dropped, which leaves the call with no narrower at
-   all, which trips (1) - an empty page with no backend call, narrated as "there is no such
-   document". Tell the two apart by `fallback_used`: a real backend call carries it, the
-   short-circuit does not. `attachment_type_code: "Container Status"` is the by-name equivalent.
+3. **If you do pass a type, it is SINGULAR: `attachment_type_id`, not `attachment_type_ids`.**
+   There is no plural form and no array. An unknown key is dropped, which leaves the call with no
+   narrower at all, which trips (1). Tell a short-circuit from a real empty result by
+   `fallback_used`: a real backend call carries it, the short-circuit does not.
+   `attachment_type_code: "Container Status"` is the by-name equivalent. Passing only `contact_id`
+   avoids this class of mistake entirely, which is why it is the recommended call.
 4. **The type filter alone is not enough.** `visible_type_ids` widens the baseline to
    (is_direct_access types) UNION (types granted to this contact). Container Status is NOT
    is_direct_access, so an ungranted contact gets 0 rows even with the correct parameter. An
