@@ -4,7 +4,6 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
-from app.models.base import CompanyScopedMixin
 import uuid
 
 # Forward reference: AccessAgent is defined in app.models.access
@@ -29,6 +28,10 @@ class SLAPolicy(Base):
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     code = Column(Text, nullable=False)
+    # Mapped WITHOUT CompanyScopedMixin (see the class docstring): the column is real
+    # (migration 320, NOT NULL with a Sorento server default) and the picker filters
+    # on it, but no auto-filter or auto-stamp is wanted here.
+    company_id = Column(UUID(as_uuid=False), ForeignKey("companies.id"), nullable=True, index=True)
     name = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
