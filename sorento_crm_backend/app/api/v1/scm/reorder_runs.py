@@ -475,6 +475,10 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
         "incoming_spo": inp.get("on_order"),
         "outstanding_po": inp.get("po_ordered"),
         "outstanding_sales": inp.get("committed"),
+        # What master data says, beside what the plan computed. The buyer asked to see both:
+        # where they disagree is where the master record needs updating.
+        "master_reorder_level": inp.get("master_reorder_level"),
+        "master_reorder_quantity": inp.get("master_reorder_quantity"),
         "reorder_level": inp.get("reorder_level"),
         "reorder_level_source": inp.get("reorder_level_source"),
         "suggested_level": inp.get("suggested_level"),

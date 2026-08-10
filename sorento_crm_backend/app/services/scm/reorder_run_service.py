@@ -490,6 +490,10 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     sql = text(f"""
         SELECT np.product_id, np.warehouse_id,
                p.product_code, p.product_name, pc.category_code, p.list_price,
+               -- Master-data reorder settings. Shown beside what the plan computed so the
+               -- buyer can see where the two disagree; the engine does not read them.
+               p.reorder_level AS master_reorder_level,
+               p.reorder_quantity AS master_reorder_quantity,
                w.warehouse_code, w.warehouse_name, w.segment,
                np.quantity_on_hand, np.on_order, np.committed, np.net_position,
                -- S10 - the buyer checks outstanding PO and incoming SPO by hand every week.
@@ -965,6 +969,7 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
                 # checklist on exactly the rows a pool produces - which is most of them.
                 for k in ("net", "rop", "demand_rate", "doc",
                           "on_hand", "on_order", "po_ordered", "segment",
+                          "master_reorder_level", "master_reorder_quantity",
                           "committed", "list_price",
                           "reorder_level", "reorder_level_source", "suggested_level",
                           "suggestion_basis", "last_purchase", "last_purchase_basis"):
@@ -1151,6 +1156,8 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
         "on_order": _fnum(row.get("on_order")),
         "po_ordered": _fnum(row.get("po_ordered")),
         "segment": row.get("segment"),
+        "master_reorder_level": _fnum(row.get("master_reorder_level")),
+        "master_reorder_quantity": _fnum(row.get("master_reorder_quantity")),
         # The last price, and HOW it was attributed. The second half is the honest part:
         # most purchase history names no destination, so a dealer row is usually shown an
         # unattributed price and has to be told so.
@@ -1443,6 +1450,8 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         "on_order": c.get("on_order"),
         "po_ordered": c.get("po_ordered"),
         "segment": c.get("segment"),
+        "master_reorder_level": c.get("master_reorder_level"),
+        "master_reorder_quantity": c.get("master_reorder_quantity"),
         "last_purchase": c.get("last_purchase"),
         "last_purchase_basis": c.get("last_purchase_basis"),
         "cv_d": c.get("cv"),

@@ -19,7 +19,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -48,9 +48,13 @@ import { PlanDemandPopover } from './PlanDemandPopover';
  *  The budget control lives in the Within-budget section header (a separate flex
  *  row) and does NOT feed this grid template, so its placement no longer constrains
  *  the columns. */
+// Two extra columns after Order qty: the reorder level and reorder quantity held on the
+// PRODUCT record. The buyer reads the plan against what master data says, and where the two
+// disagree is where the master record needs updating - so both are on the row rather than
+// behind a drill.
 const COLS =
-  'minmax(0,32px) minmax(0,52px) minmax(180px,1.5fr) minmax(0,76px) minmax(0,150px) minmax(0,120px) minmax(0,88px) minmax(0,120px) minmax(110px,1fr) minmax(160px,1.4fr) minmax(230px,1.4fr)';
-const MIN_TABLE_WIDTH = 1330;
+  'minmax(0,32px) minmax(0,52px) minmax(180px,1.5fr) minmax(0,76px) minmax(0,150px) minmax(0,96px) minmax(0,96px) minmax(0,120px) minmax(0,88px) minmax(0,120px) minmax(110px,1fr) minmax(160px,1.4fr) minmax(230px,1.4fr)';
+const MIN_TABLE_WIDTH = 1520;
 
 /** Client-side sort/search over the visible rows (additive to the drag experience).
  *  'rank' asc IS the engine's default order — in that state (and only that state,
@@ -173,9 +177,11 @@ function ExplainNumber({
             <Info className="size-3.5" aria-hidden />
           </button>
         </PopoverTrigger>
-        <PopoverContent align="end" collisionPadding={8} className="w-80 p-0 text-sm">
-          {children}
-        </PopoverContent>
+        <PopoverPortal>
+          <PopoverContent align="end" collisionPadding={8} className="w-80 p-0 text-sm">
+            {children}
+          </PopoverContent>
+        </PopoverPortal>
       </Popover>
     </span>
   );
@@ -459,70 +465,72 @@ function InlineEditPopover({
       }}
     >
       <PopoverTrigger asChild>{anchor}</PopoverTrigger>
-      <PopoverContent align="start" collisionPadding={8} className="w-80 space-y-3 p-3">
-        <div className="text-xs font-semibold">Adjust {row.sku}</div>
-        <div className="space-y-1">
-          <Label htmlFor={`qty-${row.id}`} className="text-xs">
-            Order qty
-          </Label>
-          <Input
-            id={`qty-${row.id}`}
-            type="number"
-            inputMode="numeric"
-            min={1}
-            value={qty}
-            onChange={(e) => setQty(e.target.value)}
-            className="tabular-nums"
-          />
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs">Supplier</Label>
-          <SearchableSelect
-            value={supplierCode}
-            onChange={setSupplierCode}
-            options={supplierOptions}
-            placeholder="Select supplier"
-            emptyMessage="No alternative suppliers on file."
-          />
-        </div>
-        <div className="flex items-center justify-between rounded-md bg-muted/50 px-2.5 py-1.5 text-xs">
-          <span className="text-muted-foreground">Cash impact</span>
-          <span className="font-semibold tabular-nums">
-            {fmtMoney(newCash)}{' '}
-            <span className={cn(delta === 0 ? 'text-muted-foreground' : delta > 0 ? 'text-scm-stockout' : 'text-scm-incoming')}>
-              ({delta >= 0 ? '+' : '-'}
-              {fmtMoney(Math.abs(delta)).replace('RM ', '')})
+      <PopoverPortal>
+        <PopoverContent align="start" collisionPadding={8} className="w-80 space-y-3 p-3">
+          <div className="text-xs font-semibold">Adjust {row.sku}</div>
+          <div className="space-y-1">
+            <Label htmlFor={`qty-${row.id}`} className="text-xs">
+              Order qty
+            </Label>
+            <Input
+              id={`qty-${row.id}`}
+              type="number"
+              inputMode="numeric"
+              min={1}
+              value={qty}
+              onChange={(e) => setQty(e.target.value)}
+              className="tabular-nums"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Supplier</Label>
+            <SearchableSelect
+              value={supplierCode}
+              onChange={setSupplierCode}
+              options={supplierOptions}
+              placeholder="Select supplier"
+              emptyMessage="No alternative suppliers on file."
+            />
+          </div>
+          <div className="flex items-center justify-between rounded-md bg-muted/50 px-2.5 py-1.5 text-xs">
+            <span className="text-muted-foreground">Cash impact</span>
+            <span className="font-semibold tabular-nums">
+              {fmtMoney(newCash)}{' '}
+              <span className={cn(delta === 0 ? 'text-muted-foreground' : delta > 0 ? 'text-scm-stockout' : 'text-scm-incoming')}>
+                ({delta >= 0 ? '+' : '-'}
+                {fmtMoney(Math.abs(delta)).replace('RM ', '')})
+              </span>
             </span>
-          </span>
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor={`reason-${row.id}`} className="text-xs">
-            Reason <span className="text-destructive">*</span>
-          </Label>
-          <Textarea
-            id={`reason-${row.id}`}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="e.g. seasonal uplift"
-            rows={2}
-          />
-        </div>
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
-            Cancel
-          </Button>
-          <Button
-            size="sm"
-            disabled={!canSave}
-            onClick={() => {
-              onSave({ order_qty: newQty, supplier_code: supplierCode }, reason.trim());
-              setOpen(false);
-            }}
-          >
-            Save
-          </Button>
-        </div>
-      </PopoverContent>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor={`reason-${row.id}`} className="text-xs">
+              Reason <span className="text-destructive">*</span>
+            </Label>
+            <Textarea
+              id={`reason-${row.id}`}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. seasonal uplift"
+              rows={2}
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={!canSave}
+              onClick={() => {
+                onSave({ order_qty: newQty, supplier_code: supplierCode }, reason.trim());
+                setOpen(false);
+              }}
+            >
+              Save
+            </Button>
+          </div>
+        </PopoverContent>
+      </PopoverPortal>
     </Popover>
   );
 }
@@ -544,36 +552,38 @@ function RejectPopover({ row, onReject }: { row: M8PlanRow; onReject: (reason: s
           Reject
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" collisionPadding={8} className="w-72 space-y-2 p-3">
-        <div className="text-xs font-semibold">Reject {row.sku}</div>
-        <p className="text-2xs text-muted-foreground">
-          The line stays on the plan marked &ldquo;Rejected&rdquo; and is left out of the buy. You can
-          restore it with Accept.
-        </p>
-        <Textarea
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          placeholder="Reason for rejecting"
-          rows={2}
-          autoFocus
-        />
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
-            Cancel
-          </Button>
-          <Button
-            size="sm"
-            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            disabled={!reason.trim()}
-            onClick={() => {
-              onReject(reason.trim());
-              setOpen(false);
-            }}
-          >
-            Reject
-          </Button>
-        </div>
-      </PopoverContent>
+      <PopoverPortal>
+        <PopoverContent align="end" collisionPadding={8} className="w-72 space-y-2 p-3">
+          <div className="text-xs font-semibold">Reject {row.sku}</div>
+          <p className="text-2xs text-muted-foreground">
+            The line stays on the plan marked &ldquo;Rejected&rdquo; and is left out of the buy. You can
+            restore it with Accept.
+          </p>
+          <Textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Reason for rejecting"
+            rows={2}
+            autoFocus
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={!reason.trim()}
+              onClick={() => {
+                onReject(reason.trim());
+                setOpen(false);
+              }}
+            >
+              Reject
+            </Button>
+          </div>
+        </PopoverContent>
+      </PopoverPortal>
     </Popover>
   );
 }
@@ -739,10 +749,23 @@ function PlanRow({
               <Info className="size-3.5" aria-hidden />
             </button>
           </PopoverTrigger>
-          <PopoverContent align="end" collisionPadding={8} className="w-80 p-0 text-sm">
-            <OrderQtyDrill row={row} />
-          </PopoverContent>
+          <PopoverPortal>
+            <PopoverContent align="end" collisionPadding={8} className="w-80 p-0 text-sm">
+              <OrderQtyDrill row={row} />
+            </PopoverContent>
+          </PopoverPortal>
         </Popover>
+      </div>
+
+      {/* master-data reorder settings - what the product record says, beside what the plan
+          computed. A dash is "not set on the product", not zero. */}
+      <div className="px-1 py-2 text-right tabular-nums text-muted-foreground">
+        {row.rec.master_reorder_level == null ? EM_DASH : fmtInt(row.rec.master_reorder_level)}
+      </div>
+      <div className="px-1 py-2 text-right tabular-nums text-muted-foreground">
+        {row.rec.master_reorder_quantity == null
+          ? EM_DASH
+          : fmtInt(row.rec.master_reorder_quantity)}
       </div>
 
       {/* cash impact - hover shows qty x unit cost */}
@@ -1032,6 +1055,12 @@ export function CashResultsGrid({
           <div className="px-1 py-2">Type</div>
           <div className="px-1 py-2 text-right">
             <SortHeader label="Order qty" col="order_qty" activeCol={sortCol} dir={sortDir} onSort={onSort} align="end" />
+          </div>
+          <div className="px-1 py-2 text-right" title="Reorder level on the product record">
+            Master level
+          </div>
+          <div className="px-1 py-2 text-right" title="Reorder quantity on the product record">
+            Master qty
           </div>
           <div className="px-1 py-2 text-right">
             <SortHeader label="Cash impact" col="cash" activeCol={sortCol} dir={sortDir} onSort={onSort} align="end" />

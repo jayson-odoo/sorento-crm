@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import type { ReorderRecommendation, SupplierChoice } from '../types/reorder.types';
 import { recToPlanRow, type M8PlanRow } from '../lib/planRow';
+import { EM_DASH as EM_DASH_TEXT } from '../../lib/format';
 
 // ── jsdom polyfills Radix Popover needs ──────────────────────────────────────
 class ResizeObserverStub { observe() {} unobserve() {} disconnect() {} }
@@ -390,5 +391,33 @@ describe('CashResultsGrid — row-click detail vs control targets (M8-C10)', () 
     const { onOpenDetail } = renderGrid(recToPlanRow(rec()));
     fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
     expect(onOpenDetail).not.toHaveBeenCalled();
+  });
+});
+
+describe('CashResultsGrid - master-data reorder settings on the row', () => {
+  it('shows the reorder level and quantity held on the product record', () => {
+    const row = recToPlanRow(
+      rec({ master_reorder_level: 120, master_reorder_quantity: 400 } as Partial<ReorderRecommendation>),
+    );
+    renderGrid(row);
+    expect(screen.getByText('120')).toBeInTheDocument();
+    expect(screen.getByText('400')).toBeInTheDocument();
+  });
+
+  it('names both columns so the figures are not mistaken for the plan own', () => {
+    renderGrid(recToPlanRow(rec()));
+    expect(screen.getByText('Master level')).toBeInTheDocument();
+    expect(screen.getByText('Master qty')).toBeInTheDocument();
+  });
+
+  it('an unset setting reads as a dash, never as zero', () => {
+    const row = recToPlanRow(
+      rec({ master_reorder_level: null, master_reorder_quantity: null } as Partial<ReorderRecommendation>),
+    );
+    renderGrid(row);
+    // A product with no reorder level is not a product whose level is 0 - the second
+    // would read as "let it run to nothing", which nobody decided.
+    expect(screen.queryByText('Master level')).toBeInTheDocument();
+    expect(screen.getAllByText(EM_DASH_TEXT).length).toBeGreaterThan(0);
   });
 });
