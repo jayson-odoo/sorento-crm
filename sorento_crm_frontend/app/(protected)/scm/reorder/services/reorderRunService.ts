@@ -141,7 +141,7 @@ export interface RecommendationQuery {
   pageIndex: number;
   pageSize: number;
   /** Filter to a single type; null = all. Server-side. */
-  type?: 'buy' | 'covered' | 'disposition' | 'exception' | null;
+  type?: 'buy' | 'covered' | 'disposition' | 'exception' | 'needs_level' | null;
   searchQuery?: string;
   /** Column sort — forwarded to the backend as `sort`/`dir`. */
   sorting?: SortingState;
@@ -530,4 +530,63 @@ export async function applyBudget(runId: string, budget: number): Promise<ApplyB
   );
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to apply budget'));
   return (await res.json()) as ApplyBudgetResult;
+}
+
+/** Every `needs_level` row for a run: items the plan could not size because nobody has set
+ *  a reorder level for them.
+ *
+ *  Fetched whole and separately, the same way covered rows are, and for the same reason:
+ *  they are not purchases. Omitting them entirely would report "nothing to do" for stock
+ *  that has simply never been set up, which is the failure this kind exists to prevent. */
+export async function getNeedsLevelRecommendations(
+  runId: string,
+): Promise<ReorderRecommendation[]> {
+  const PAGE = 1000;
+  const first = await getRecommendations(runId, {
+    pageIndex: 0,
+    pageSize: PAGE,
+    type: 'needs_level',
+  });
+  const out = [...first.data];
+  for (let page = 1; page < first.pagination.total_pages; page += 1) {
+    const next = await getRecommendations(runId, {
+      pageIndex: page,
+      pageSize: PAGE,
+      type: 'needs_level',
+    });
+    out.push(...next.data);
+  }
+  return out;
+}
+
+/** Take our suggested level as the buyer's own, for one (product, location).
+ *
+ *  POST /api/v1/scm/reorder-levels/accept-suggestion */
+export async function acceptSuggestedLevel(
+  productId: string,
+  warehouseId: string | null,
+): Promise<{ level: number | null; source: string | null }> {
+  const res = await apiFetch('/api/v1/scm/reorder-levels/accept-suggestion', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ product_id: productId, warehouse_id: warehouseId }),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to accept the suggestion'));
+  return res.json();
+}
+
+/** Set a reorder level by hand. `null` clears it, which puts the item back in "needs a
+ *  level" rather than planning it as zero. */
+export async function setReorderLevel(
+  productId: string,
+  warehouseId: string | null,
+  level: number | null,
+): Promise<{ level: number | null; source: string | null }> {
+  const res = await apiFetch('/api/v1/scm/reorder-levels', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ product_id: productId, warehouse_id: warehouseId, level }),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the reorder level'));
+  return res.json();
 }

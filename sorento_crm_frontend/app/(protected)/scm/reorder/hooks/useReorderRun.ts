@@ -8,6 +8,7 @@ import {
   getAllDispositionRecommendations,
   getBuyRecommendationsForCash,
   getCoveredRecommendations,
+  getNeedsLevelRecommendations,
   getRecommendationDemand,
   getReorderRun,
   getRecommendations,
@@ -263,6 +264,24 @@ export function useCoveredRecommendations(runId: string | null, enabled: boolean
   return useQuery({
     queryKey: ['scm', 'reorder', 'covered-recs', runId],
     queryFn: () => getCoveredRecommendations(runId as string),
+    enabled: enabled && !!runId,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
+/**
+ * Items the plan could not size because nobody has set a reorder level for them.
+ *
+ * Fetched separately from the buys for the same reason covered rows are: they are not
+ * purchases and must not reach the cash split. They still have to be VISIBLE, though - a
+ * plan that drops them reports "nothing to do" for stock that was never set up.
+ */
+export function useNeedsLevelRecommendations(runId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['scm', 'reorder', 'needs-level-recs', runId],
+    queryFn: () => getNeedsLevelRecommendations(runId as string),
     enabled: enabled && !!runId,
     staleTime: 30_000,
     refetchOnWindowFocus: false,

@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ClipboardList,
   FileSpreadsheet,
+  Gauge,
   PackageCheck,
   PackageX,
   ShoppingCart,
@@ -18,6 +19,7 @@ import { fmtInt, fmtMoney } from '../../lib/format';
 export type ReorderPlanView =
   | 'buy'
   | 'covered'
+  | 'needs_level'
   | 'disposition'
   | 'order_summary'
   | 'plan_exceptions'
@@ -127,6 +129,7 @@ function Tile({
 export function ReorderStatTiles({
   buyCount,
   coveredCount = null,
+  needsLevelCount = null,
   dispositionCount,
   cashTotal,
   planExceptionCount = null,
@@ -139,6 +142,7 @@ export function ReorderStatTiles({
   /** Demand the location's own stock covers, waiting on use-stock-or-buy. Null until
    *  the set has been read once. */
   coveredCount?: number | null;
+  needsLevelCount?: number | null;
   /** ACTIONABLE dispositions only (Discontinue / Promote) - hold lines are excluded
    *  from the plan entirely and are NOT surfaced here (they carry no action). */
   dispositionCount: number;
@@ -184,6 +188,23 @@ export function ReorderStatTiles({
         icon={PackageCheck}
         active={activeView === 'covered'}
         onClick={() => onSelectView('covered')}
+      />
+      {/* Items the plan could not size. Its own tile because it is the one thing on this
+          page that is neither a decision nor a purchase: it is setup work, and folding it
+          anywhere else would make a plan that skipped items look complete. */}
+      <Tile
+        label="Needs a level"
+        value={needsLevelCount === null ? UNKNOWN_VALUE : fmtInt(needsLevelCount)}
+        subLabel={
+          needsLevelCount === null
+            ? UNKNOWN_SUBLABEL
+            : needsLevelCount
+              ? 'no reorder level set yet'
+              : 'every item has a level'
+        }
+        icon={Gauge}
+        active={activeView === 'needs_level'}
+        onClick={() => onSelectView('needs_level')}
       />
       <Tile
         label="Stock allocation"

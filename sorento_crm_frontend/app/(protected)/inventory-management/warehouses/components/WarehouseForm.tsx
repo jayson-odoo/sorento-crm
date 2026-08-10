@@ -235,6 +235,26 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
 
                   <FormField
                     control={form.control}
+                    name="pool_warehouse_id"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Draws stock from</FormLabel>
+                        <FormControl>
+                          <SearchableSelect
+                            value={field.value ?? ''}
+                            onChange={(v) => field.onChange(v || null)}
+                            options={poolOptions}
+                            clearable
+                            placeholder="Stands alone"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
                     name="segment"
                     render={({ field }) => (
                       <FormItem>
@@ -252,26 +272,6 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
                           />
                         </FormControl>
                         <FormDescription>Splits cost, price and sales history.</FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="pool_warehouse_id"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Draws stock from</FormLabel>
-                        <FormControl>
-                          <SearchableSelect
-                            value={field.value ?? ''}
-                            onChange={(v) => field.onChange(v || null)}
-                            options={poolOptions}
-                            clearable
-                            placeholder="Stands alone"
-                          />
-                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}

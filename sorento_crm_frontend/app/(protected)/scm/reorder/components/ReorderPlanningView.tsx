@@ -30,6 +30,7 @@ import {
   useAllDispositionRecommendations,
   useReorderRun,
   useCoveredRecommendations,
+  useNeedsLevelRecommendations,
   useTodayRun,
   useUnlocatedDemand,
 } from '../hooks/useReorderRun';
@@ -39,6 +40,7 @@ import type { ReorderRunHistoryItem } from '../services/reorderRunService';
 import type { OutstandingApplyResult } from '../services/outstandingImportService';
 import { CashCopilotResults } from './CashCopilotResults';
 import { CoveredByStockView } from './CoveredByStockView';
+import { NeedsLevelView } from './NeedsLevelView';
 import { PlanSection } from './PlanSection';
 import { DispositionResultsGrid } from './DispositionResultsGrid';
 import { UploadDataMenu } from './UploadDataMenu';
@@ -91,17 +93,24 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const [view, setView] = useState<ReorderPlanView>('buy');
   // Which bands are open. Buy is open on arrival because it is what the page is for; the
   // other two announce their counts in their headers while folded.
-  const [openSections, setOpenSections] = useState({ covered: false, disposition: false });
+  const [openSections, setOpenSections] = useState({
+    covered: false,
+    disposition: false,
+    needsLevel: false,
+  });
   const coveredRef = useRef<HTMLDivElement>(null);
   const dispositionRef = useRef<HTMLDivElement>(null);
+  const needsLevelRef = useRef<HTMLDivElement>(null);
 
   /** A tile now REVEALS its band rather than replacing the table. */
   const selectView = (next: ReorderPlanView) => {
-    if (next === 'covered' || next === 'disposition') {
-      const key = next === 'covered' ? 'covered' : 'disposition';
+    if (next === 'covered' || next === 'disposition' || next === 'needs_level') {
+      const key =
+        next === 'covered' ? 'covered' : next === 'disposition' ? 'disposition' : 'needsLevel';
       setOpenSections((prev) => ({ ...prev, [key]: true }));
       setView('buy');
-      const ref = next === 'covered' ? coveredRef : dispositionRef;
+      const ref =
+        next === 'covered' ? coveredRef : next === 'disposition' ? dispositionRef : needsLevelRef;
       // After the band has had a frame to expand, otherwise it scrolls to where it was.
       requestAnimationFrame(() =>
         ref.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }),
@@ -168,6 +177,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   // Fetched whenever a run is on screen, not only when its view is open, so the tile can
   // carry a real count rather than a dash the user has to click to resolve.
   const covered = useCoveredRecommendations(currentRunId, !!currentRunId);
+  const needsLevel = useNeedsLevelRecommendations(currentRunId, !!currentRunId);
 
   // Disposition (Stock allocation) rows come from the same run (type=disposition).
   // Fetched WHOLE (M8-F18) - kept enabled in the buy view too so the tile's
@@ -548,6 +558,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
       <ReorderStatTiles
         buyCount={summary?.buy_count ?? 0}
         coveredCount={covered.data ? covered.data.length : null}
+        needsLevelCount={needsLevel.data ? needsLevel.data.length : null}
         dispositionCount={actionableDispositions.length}
         cashTotal={summary?.total_cash_impact ?? 0}
         // Null, not a number: the plan-exception and PO-worklist engines are S5 and S4, and
@@ -631,6 +642,23 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
               isLoading={covered.isLoading}
               isError={covered.isError}
               error={covered.error}
+            />
+          </PlanSection>
+
+          <PlanSection
+            ref={needsLevelRef}
+            title="Needs a level"
+            count={needsLevel.data ? needsLevel.data.length : null}
+            hint="no reorder level set, so the plan could not size it"
+            open={openSections.needsLevel}
+            onOpenChange={(o) => setOpenSections((s) => ({ ...s, needsLevel: o }))}
+          >
+            <NeedsLevelView
+              runId={currentRunId}
+              rows={needsLevel.data ?? []}
+              isLoading={needsLevel.isLoading}
+              isError={needsLevel.isError}
+              error={needsLevel.error}
             />
           </PlanSection>
 

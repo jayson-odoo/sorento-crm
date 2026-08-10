@@ -243,6 +243,11 @@ export default function WarehouseDetailPage({
                     </Badge>
                   </Field>
                   <Field label="Draws stock from">{poolCode || 'Stands alone'}</Field>
+                  {/* Same field, same position as the edit view: the read view is what
+                      teaches the user where things are. */}
+                  <Field label="Sells to">
+                    <span className="capitalize">{warehouse.segment || 'Not set'}</span>
+                  </Field>
                 </CardContent>
               </Card>
             </TabsContent>

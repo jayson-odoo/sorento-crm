@@ -242,6 +242,7 @@ const FIELD_SPANS: Record<string, 'full' | 'half'> = {
   'Active Status': 'full',
   'Available for planning': 'full',
   'Draws stock from': 'half',
+  'Sells to': 'half',
 };
 
 /**
@@ -337,7 +338,7 @@ describe('Warehouse detail - same layout as the edit view', () => {
     selectTab('Planning');
 
     expect(gridSpans()).toEqual(
-      expectedSpans(['Available for planning', 'Draws stock from']),
+      expectedSpans(['Available for planning', 'Draws stock from', 'Sells to']),
     );
   });
 

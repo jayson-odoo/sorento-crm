@@ -19,8 +19,10 @@ export type ReorderRunStage =
   | 'writing_recommendations';
 
 /** Recommendation kind. `buy` = triggered reorder; `disposition` = dead/overstock;
- *  `exception` = a would-be buy with no linked supplier (flagged, nothing to order). */
-export type ReorderRecType = 'buy' | 'covered' | 'disposition' | 'exception';
+ *  `exception` = a would-be buy with no linked supplier (flagged, nothing to order);
+ *  `needs_level` = the plan runs on the reorder-level basis and nobody has set one, so
+ *  there is no quantity we are entitled to propose. */
+export type ReorderRecType = 'buy' | 'covered' | 'disposition' | 'exception' | 'needs_level';
 
 /** Why a buy fired, or why a disposition applies. Drives the "Triggered reason" cell. */
 export type ReorderReason =
@@ -276,6 +278,30 @@ export interface ReorderRecommendation {
   /** How much of this row's demand arrived on a sales-order line naming no warehouse.
    *  The part of a buy most likely to be wrong, so it is stated rather than assumed. */
   unlocated_demand?: number | null;
+  /** Who this location sells to: `dealer` or `project`. Cost, price and sales history
+   *  all mean something different on each side of it. */
+  segment?: string | null;
+  /** The weekly checklist, frozen with the row so it still reads true next month.
+   *  `incoming_spo` is stock on the water; `outstanding_po` is the ordered-not-received
+   *  purchase book. Two different questions, kept apart. */
+  on_hand?: number | null;
+  incoming_spo?: number | null;
+  outstanding_po?: number | null;
+  outstanding_sales?: number | null;
+  /** The level the buyer owns. Null means nobody has set one, which is NOT zero: the row
+   *  arrives as `needs_level` rather than as a buy. */
+  reorder_level?: number | null;
+  reorder_level_source?: string | null;
+  /** What three months of movement implies. Never applied on the buyer's behalf. */
+  suggested_level?: number | null;
+  suggestion_basis?: {
+    months?: { month: string; qty: number }[];
+    months_studied?: number;
+    avg_monthly?: number;
+    cover_months?: number;
+    raw_level?: number;
+    no_movement?: boolean;
+  } | null;
   missing_rate_currencies?: string[];
   /** 1-based rank by frozen rank_score (1 = fund first). null on non-buy rows. */
   rank: number | null;

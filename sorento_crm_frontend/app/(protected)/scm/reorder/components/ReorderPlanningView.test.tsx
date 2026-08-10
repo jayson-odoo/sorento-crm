@@ -19,11 +19,13 @@ const useReorderRun = vi.fn();
 const useAllDispositionRecommendations = vi.fn();
 const useUnlocatedDemand = vi.fn();
 const useCoveredRecommendations = vi.fn();
+const useNeedsLevelRecommendations = vi.fn();
 vi.mock('../hooks/useReorderRun', () => ({
   useTodayRun: () => useTodayRun(),
   useReorderRun: () => useReorderRun(),
   useUnlocatedDemand: () => useUnlocatedDemand(),
   useCoveredRecommendations: (...a: unknown[]) => useCoveredRecommendations(...a),
+  useNeedsLevelRecommendations: (...a: unknown[]) => useNeedsLevelRecommendations(...a),
   useAllDispositionRecommendations: (...a: unknown[]) => useAllDispositionRecommendations(...a),
   todayRunKey: ['scm', 'reorder', 'today'],
   runHistoryKey: ['scm', 'reorder', 'history'],
@@ -80,6 +82,7 @@ beforeEach(() => {
   useAllDispositionRecommendations.mockReset().mockReturnValue({ data: [], isLoading: false });
   useUnlocatedDemand.mockReset().mockReturnValue({ data: undefined, isLoading: false });
   useCoveredRecommendations.mockReset().mockReturnValue({ data: [], isLoading: false, isError: false, error: null });
+  useNeedsLevelRecommendations.mockReset().mockReturnValue({ data: [], isLoading: false, isError: false, error: null });
   useReorderPlan.mockReset().mockReturnValue({ isLoading: false, isError: false, error: null, refetch: vi.fn(), applyProposalLine: vi.fn(), rows: [] });
 });
 

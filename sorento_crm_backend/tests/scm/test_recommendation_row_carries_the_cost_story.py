@@ -25,7 +25,11 @@ def _rec(**over):
         "allocation": None, "rank": 1, "rank_score": 1.0,
         "unit_cost": 45, "cash_impact": 1980, "funding_status": "funded",
         "product_code": "SKU-1", "product_name": "SKU-1",
-        "warehouse_code": "WH", "warehouse_name": "WH",
+        # Every column the recommendations query selects has to be here, or the fixture
+        # stops describing a real row and the serializer fails on a KeyError that says
+        # nothing about the thing under test.
+        "status": None,
+        "warehouse_code": "WH", "warehouse_name": "WH", "segment": "dealer",
         "supplier_code": "S1", "supplier_name": "S1",
         "currency": "USD", "rate_to_base": 4.4, "rate_as_of": None,
         "inputs": {
