@@ -38,6 +38,7 @@ from app.schemas.procurement import (
     PurchaseRequestHeaderCreate, PurchaseRequestHeaderUpdate, PurchaseRequestUpdateAndReply,
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
+from app.services.scm.money import BASE_CURRENCY as MONEY_BASE_CURRENCY
 from app.services.banner_person_service import wa_phone_for_user_id
 from app.services.validators import validate_project_value
 from app.services.requestor_options_service import (
@@ -4364,6 +4365,25 @@ class ProductSupplierService:
             raise handle_not_found("Product Supplier", product_supplier_id)
         return product_supplier
     
+    @staticmethod
+    def _assert_priced_in_a_currency(unit_cost, currency) -> None:
+        """A price with no currency is read as ringgit everywhere downstream.
+
+        `scm.money.normalize_currency` treats a blank code as the base currency, which is
+        right for rows that predate the book having more than one currency. It is wrong
+        for a price somebody types today: a yuan figure saved with no code is silently
+        ranked, summed and budgeted as if it were ringgit, understating the buy. Nothing
+        later can detect that, because the number looks perfectly valid. So the pairing is
+        required at the point of entry, where the person still knows what they meant.
+        """
+        if unit_cost is None:
+            return
+        if not (currency or "").strip():
+            raise handle_validation_error(
+                "Enter the currency this price is in. A price with no currency is read as "
+                f"{MONEY_BASE_CURRENCY}, which would understate the cost if it is not."
+            )
+
     def create_product_supplier(self, product_supplier_data: ProductSupplierCreate):
         """Create a new product supplier relationship."""
         # Check if relationship already exists
@@ -4373,8 +4393,16 @@ class ProductSupplierService:
         ).first()
         if existing:
             raise handle_conflict("Product supplier relationship already exists.")
-        
-        product_supplier = ProductSupplier(**product_supplier_data.model_dump())
+
+        self._assert_priced_in_a_currency(
+            product_supplier_data.unit_cost, product_supplier_data.currency
+        )
+        # exclude_none, not a plain dump: `is_primary_supplier` is NOT NULL with a column
+        # default, so passing the unset field through as an explicit None would insert NULL
+        # and fail. Every other field is nullable, where omitted and null mean the same.
+        product_supplier = ProductSupplier(
+            **product_supplier_data.model_dump(exclude_none=True)
+        )
         self.db.add(product_supplier)
         self.db.commit()
         self.db.refresh(product_supplier)
@@ -4389,11 +4417,21 @@ class ProductSupplierService:
     def update_product_supplier(self, product_supplier_id: str, product_supplier_data: ProductSupplierUpdate):
         """Update a product supplier relationship."""
         product_supplier = self.get_product_supplier(product_supplier_id)
-        
+
         update_data = product_supplier_data.model_dump(exclude_unset=True)
+        # Check the MERGED row, not the patch: setting only a price on a row whose currency
+        # is blank is exactly the case the rule exists for, and the patch alone cannot see it.
+        self._assert_priced_in_a_currency(
+            update_data.get("unit_cost", product_supplier.unit_cost),
+            update_data.get("currency", product_supplier.currency),
+        )
         for key, value in update_data.items():
+            # Same NOT NULL column as on create: an explicit null for the primary flag is
+            # not a value, so leave the row's own.
+            if key == "is_primary_supplier" and value is None:
+                continue
             setattr(product_supplier, key, value)
-        
+
         self.db.commit()
         self.db.refresh(product_supplier)
         

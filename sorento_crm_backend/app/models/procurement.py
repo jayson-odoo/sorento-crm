@@ -76,7 +76,11 @@ class ProductSupplier(Base, CompanyScopedMixin):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
     supplier_id = Column(UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False)
-    standard_lead_time_days = Column(Integer, nullable=True)
+    # NOT NULL in the database, with no default. The model said nullable and the API let
+    # the field be omitted, so creating a link without a lead time raised an IntegrityError
+    # and the caller got a 500 for what is really a missing required field. The column is
+    # the truth; the model is corrected to match it rather than the other way round.
+    standard_lead_time_days = Column(Integer, nullable=False)
     # SCM (M0): sourcing parameters used by the reorder engine.
     moq = Column(Integer, nullable=True)
     order_multiple = Column(Integer, nullable=True)

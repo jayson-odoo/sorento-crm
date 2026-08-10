@@ -94,17 +94,55 @@ class PackingListLineGRNSimple(BaseModel):
         from_attributes = True
 
 
-class ProductSupplierBase(BaseModel):
+def _normalize_currency_code(value: Optional[str]) -> Optional[str]:
+    """Trim and upper-case a currency code; blank stays None (nothing on file)."""
+    if value is None:
+        return None
+    code = value.strip().upper()
+    return code or None
+
+
+class ProductSupplierSourcingTerms(BaseModel):
+    """What we buy this product from this supplier ON: the price, the money that price is
+    in, and the quantities the supplier will accept.
+
+    These live on the link rather than on the product because they are terms of a
+    relationship - two suppliers quote different prices, in different currencies, with
+    different minimums. The reorder plan reads every one of them, so a blank here is the
+    difference between a buy the buyer can act on and one it can only describe.
+    """
+
+    moq: Optional[int] = Field(default=None, ge=0)
+    order_multiple: Optional[int] = Field(default=None, ge=1)
+    unit_cost: Optional[Decimal] = Field(default=None, ge=0)
+    # No `max_length` here: it would run BEFORE the validator and reject " cny " for its
+    # padding rather than trimming it. The validator owns the whole rule.
+    currency: Optional[str] = None
+    is_primary_supplier: Optional[bool] = None
+
+    @field_validator("currency")
+    @classmethod
+    def _currency_code(cls, v: Optional[str]) -> Optional[str]:
+        code = _normalize_currency_code(v)
+        if code is not None and (len(code) != 3 or not code.isalpha()):
+            raise ValueError("Currency must be a 3-letter code, for example MYR or CNY.")
+        return code
+
+
+class ProductSupplierBase(ProductSupplierSourcingTerms):
     product_id: str
     supplier_id: str
-    standard_lead_time_days: Optional[int] = None
+    # Required, because the column is NOT NULL with no default. Declaring it optional
+    # turned a missing required field into a 500 at INSERT time; a caller that omits it
+    # now gets a 422 that says which field.
+    standard_lead_time_days: int = Field(ge=0)
 
 
 class ProductSupplierCreate(ProductSupplierBase):
     pass
 
 
-class ProductSupplierUpdate(BaseModel):
+class ProductSupplierUpdate(ProductSupplierSourcingTerms):
     standard_lead_time_days: Optional[int] = None
 
 
@@ -113,7 +151,7 @@ class ProductSupplierResponse(ProductSupplierBase):
     created_at: datetime
     product: Optional[ProductSimple] = None
     supplier: Optional[SupplierSimple] = None
-    
+
     class Config:
         from_attributes = True
 
