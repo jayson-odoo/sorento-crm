@@ -51,6 +51,10 @@ class ReorderPolicyWrite(BaseModel):
     is_active: bool = True
     supplier_selection: SupplierSelection = "primary"
     lead_time_default_days: Optional[int] = None
+    # S13d trajectory windows: months of orders deciding sustaining vs dying off.
+    # None = code default (retail 3, project 12). Config from day 1.
+    trajectory_window_retail_months: Optional[int] = None
+    trajectory_window_project_months: Optional[int] = None
 
     @model_validator(mode="after")
     def _coherence(self) -> "ReorderPolicyWrite":
@@ -67,7 +71,8 @@ class ReorderPolicyWrite(BaseModel):
 
         # AC-VAL-4 — day fields must be > 0 when provided.
         for name in ("safety_days", "review_period_days", "forecast_window_days",
-                     "dead_stock_days", "overstock_days", "lead_time_default_days"):
+                     "dead_stock_days", "overstock_days", "lead_time_default_days",
+                     "trajectory_window_retail_months", "trajectory_window_project_months"):
             val = getattr(self, name)
             if val is not None and val <= 0:
                 raise ValueError(f"{name} must be greater than 0")

@@ -79,6 +79,10 @@ class ReorderPolicy(Base):
     pool_netting = Column(Boolean, nullable=True, server_default=text("false"))
     level_study_months = Column(Integer, nullable=True, server_default=text("3"))
     level_cover_months = Column(Numeric(6, 2), nullable=True, server_default=text("2"))
+    # S13d trajectory windows: how many months of orders decide sustaining vs dying off.
+    # NULL = code default (retail 3, project 12). Config from day 1, never a constant.
+    trajectory_window_retail_months = Column(Integer, nullable=True)
+    trajectory_window_project_months = Column(Integer, nullable=True)
     factor_toggles = Column(JSONB, nullable=True)
     factor_weights = Column(JSONB, nullable=True)
     min_override = Column(Numeric, nullable=True)

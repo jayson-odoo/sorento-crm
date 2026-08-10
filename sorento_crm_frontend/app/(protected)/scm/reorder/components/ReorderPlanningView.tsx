@@ -670,6 +670,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
                 onClear={(line) => planLines.clear(line)}
                 coverFor={planLines.coverFor}
                 priceFor={planLines.priceFor}
+                trendFor={planLines.trendFor}
                 staleAfterDays={planLines.staleAfterDays}
               />
               {/* Last, and only here: what it costs and whether that works. */}

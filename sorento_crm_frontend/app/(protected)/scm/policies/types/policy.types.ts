@@ -45,6 +45,10 @@ export interface ReorderPolicyRow {
   safety_days: number | null;
   review_period_days: number | null;
   forecast_window_days: number | null;
+  /** S13d trajectory windows: months of orders deciding sustaining vs dying off.
+   *  Null = code default (retail 3, project 12). */
+  trajectory_window_retail_months: number | null;
+  trajectory_window_project_months: number | null;
   baseline_source: string | null;
   spike_handling: string | null;
   buy_scope: string | null;

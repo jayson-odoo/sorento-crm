@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   getCoverSources,
   getPriceHistory,
+  getTrajectory,
   getBuyRecommendationsForCash,
   getAllDispositionRecommendations,
   getCoveredRecommendations,
@@ -20,6 +21,7 @@ import {
 } from '../lib/coverPlan';
 import { planTotals, type PlanDecision, type PlanDecisionMap } from '../lib/planDecisions';
 import { priceKey, type PriceAdvice } from '../lib/priceAdvice';
+import { trajectoryKey, type TrajectoryEntry } from '../lib/trajectory';
 
 /**
  * Every line of a plan, in one list, with the buyer's decisions over it.
@@ -72,6 +74,15 @@ export function usePlanLines(runId: string | null, enabled = true) {
     enabled: on,
     // Losing the price facts must not take the plan down with them. The grid then shows no
     // price opinion at all, which is honest: it is what the screen said before S12c.
+    retry: false,
+  });
+
+  const trend = useQuery({
+    queryKey: ['plan-lines', runId, 'trajectory'],
+    queryFn: () => getTrajectory(runId as string),
+    enabled: on,
+    // Losing the trend must not take the plan down: the row then shows no trend opinion,
+    // which is what the screen said before S13d.
     retry: false,
   });
 
@@ -161,6 +172,15 @@ export function usePlanLines(runId: string | null, enabled = true) {
     [prices.data],
   );
 
+  /** The order trend for a line's product+side. Undefined = no opinion, render nothing. */
+  const trendFor = useCallback(
+    (line: PlanLine): TrajectoryEntry | undefined => {
+      const key = trajectoryKey(line.product_id, line.rec.segment);
+      return key ? trend.data?.series[key] : undefined;
+    },
+    [trend.data],
+  );
+
   return {
     lines,
     decisions: decisions as PlanDecisionMap,
@@ -169,6 +189,7 @@ export function usePlanLines(runId: string | null, enabled = true) {
     totals,
     coverFor,
     priceFor,
+    trendFor,
     staleAfterDays: prices.data?.stale_after_days ?? 180,
     coverSources: cover.data ?? {},
     isLoading:

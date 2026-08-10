@@ -73,6 +73,8 @@ interface FormState {
   review_period_days: string;
   lead_time_default_days: string;
   forecast_window_days: string;
+  trajectory_window_retail_months: string;
+  trajectory_window_project_months: string;
   baseline_source: string;
   spike_handling: string;
   buy_scope: string;
@@ -99,6 +101,9 @@ const EMPTY_FORM: FormState = {
   lead_time_default_days: '14',
   // Engine defaults (mirror reorder_engine.ensure_reorder_policy_defaults).
   forecast_window_days: '90',
+  // Trajectory defaults: retail is stable so a quarter reads it; project takes a year.
+  trajectory_window_retail_months: '3',
+  trajectory_window_project_months: '12',
   baseline_source: 'continuous_only',
   spike_handling: 'committed_only',
   buy_scope: 'network',
@@ -128,6 +133,8 @@ function hydrate(row: ReorderPolicyRow): FormState {
     review_period_days: row.review_period_days != null ? String(row.review_period_days) : '',
     lead_time_default_days: row.lead_time_default_days != null ? String(row.lead_time_default_days) : '',
     forecast_window_days: row.forecast_window_days != null ? String(row.forecast_window_days) : '90',
+    trajectory_window_retail_months: row.trajectory_window_retail_months != null ? String(row.trajectory_window_retail_months) : '3',
+    trajectory_window_project_months: row.trajectory_window_project_months != null ? String(row.trajectory_window_project_months) : '12',
     baseline_source: row.baseline_source ?? 'continuous_only',
     spike_handling: row.spike_handling ?? 'committed_only',
     buy_scope: row.buy_scope ?? 'network',
@@ -225,6 +232,8 @@ export function AddEditPolicyModal({
       { key: 'review_period_days', err: 'Must be a positive number of days.' },
       { key: 'lead_time_default_days', err: 'Must be a positive number of days.' },
       { key: 'forecast_window_days', err: 'Must be a positive number of days.' },
+      { key: 'trajectory_window_retail_months', err: 'Must be a positive number of months.' },
+      { key: 'trajectory_window_project_months', err: 'Must be a positive number of months.' },
       { key: 'dead_stock_days', err: 'Must be a positive number of days.' },
       { key: 'overstock_days', err: 'Must be a positive number of days.' },
     ];
@@ -262,6 +271,8 @@ export function AddEditPolicyModal({
       safety_days: numOrNull(form.safety_days),
       review_period_days: form.policy_type === 'periodic_review' ? numOrNull(form.review_period_days) : null,
       forecast_window_days: numOrNull(form.forecast_window_days),
+      trajectory_window_retail_months: numOrNull(form.trajectory_window_retail_months),
+      trajectory_window_project_months: numOrNull(form.trajectory_window_project_months),
       baseline_source: form.baseline_source || null,
       spike_handling: form.spike_handling || null,
       buy_scope: form.buy_scope || null,
@@ -556,6 +567,34 @@ export function AddEditPolicyModal({
                 value={form.forecast_window_days}
                 onChange={(e) => set('forecast_window_days', e.target.value)}
                 placeholder="e.g. 90"
+              />
+            </Field>
+            <Field
+              label="Retail trend window (months)"
+              help="How many months of retail orders decide whether demand is rising or dying off."
+              error={errors.trajectory_window_retail_months}
+            >
+              <Input
+                type="number"
+                min={1}
+                inputMode="numeric"
+                value={form.trajectory_window_retail_months}
+                onChange={(e) => set('trajectory_window_retail_months', e.target.value)}
+                placeholder="e.g. 3"
+              />
+            </Field>
+            <Field
+              label="Project trend window (months)"
+              help="Project demand is erratic, so its window is longer."
+              error={errors.trajectory_window_project_months}
+            >
+              <Input
+                type="number"
+                min={1}
+                inputMode="numeric"
+                value={form.trajectory_window_project_months}
+                onChange={(e) => set('trajectory_window_project_months', e.target.value)}
+                placeholder="e.g. 12"
               />
             </Field>
             <Field

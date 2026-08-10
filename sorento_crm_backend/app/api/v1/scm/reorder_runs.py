@@ -27,6 +27,7 @@ from app.schemas.scm_reorder import (
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.scm import cover_service
 from app.services.scm import price_history_service
+from app.services.scm import trajectory_service
 from app.services.error_handler import AppException
 from app.services.scm import reorder_run_service as svc
 from app.services.scm import demand_source_service
@@ -383,6 +384,23 @@ def list_price_history(
             for key, a in history.items()
         },
     }
+
+
+@router.get("/reorder-runs/{run_id}/trajectory")
+def get_trajectory(
+    run_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Is each product's demand sustaining or dying off, per side (S13d).
+
+    Keyed ``"{product_id}:{segment}"`` - project and retail are never merged into one
+    figure. Everything comes out of our own order book: the verdict compares the configured
+    recent window against the window before it AND the same window last year, side by side,
+    with the monthly series behind it for the popup's line graph.
+    """
+    svc.assert_run_visible(db, run_id)
+    return trajectory_service.trajectory_for_run(db, run_id)
 
 
 @router.get("/reorder-runs/{run_id}/recommendations")

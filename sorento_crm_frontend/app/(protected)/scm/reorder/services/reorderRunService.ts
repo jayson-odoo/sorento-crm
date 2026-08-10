@@ -59,6 +59,7 @@ import type { SortingState } from '@tanstack/react-table';
 import { apiFetch } from '@/lib/api';
 import type { CoverSource } from '../lib/coverPlan';
 import type { PriceHistoryPayload } from '../lib/priceAdvice';
+import type { TrajectoryPayload } from '../lib/trajectory';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
   BuyScope,
@@ -636,6 +637,18 @@ export async function getCoverSources(
  * Keyed `"{product_id}:{supplier_code}"`. Everything in it comes out of our own purchase
  * ledger - the endpoint makes no claim about what anything is worth today.
  */
+/**
+ * Is each product's demand sustaining or dying off, per side (S13d).
+ *
+ * Keyed `"{product_id}:{segment}"`. Verdicts compare the configured window against the
+ * one before it AND the same window last year - both, side by side, per the user's call.
+ */
+export async function getTrajectory(runId: string): Promise<TrajectoryPayload> {
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/trajectory`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load order trends'));
+  return res.json();
+}
+
 export async function getPriceHistory(runId: string): Promise<PriceHistoryPayload> {
   const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/price-history`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load price history'));

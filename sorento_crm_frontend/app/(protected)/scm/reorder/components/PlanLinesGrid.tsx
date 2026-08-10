@@ -35,6 +35,8 @@ import {
 import { decidedCost, decidedQty, type PlanDecisionMap } from '../lib/planDecisions';
 import { describeCover, NO_COVER, type CoverProposal } from '../lib/coverPlan';
 import { PRICE_ADVICE_SORT, type PriceAdvice } from '../lib/priceAdvice';
+import type { TrajectoryEntry } from '../lib/trajectory';
+import { PlanTrendPopover } from './PlanTrendPopover';
 import { PlanLineDecisionCell } from './PlanLineDecisionCell';
 import { PlanPriceCell } from './PlanPriceCell';
 import { PlanChecklistPopover } from './PlanChecklistPopover';
@@ -104,6 +106,7 @@ export function PlanLinesGrid({
   onClear,
   coverFor,
   priceFor,
+  trendFor,
   staleAfterDays = 180,
   statusFilter: statusFilterProp = null,
   onStatusFilterChange,
@@ -123,6 +126,8 @@ export function PlanLinesGrid({
   coverFor?: (line: PlanLine) => CoverProposal;
   /** What we last paid this line's supplier, and how old that is. Undefined = no opinion. */
   priceFor?: (line: PlanLine) => PriceAdvice | undefined;
+  /** Is this product's demand sustaining or dying off, on this line's side. */
+  trendFor?: (line: PlanLine) => TrajectoryEntry | undefined;
   /** The age past which the business stops trusting a price. Shown, not implied. */
   staleAfterDays?: number;
   /** Status the list is narrowed to, or null for the whole plan. Controlled so the summary
@@ -469,6 +474,11 @@ export function PlanLinesGrid({
                   {supersede}
                 </span>
               ) : null}
+              {/* Trend: the sustain-or-die-off judgment (S13d), clickable for the line
+                  graph and the orders behind it. */}
+              <StopClick>
+                <PlanTrendPopover trend={trendFor?.(line)} />
+              </StopClick>
             </div>
           );
         },
@@ -496,7 +506,7 @@ export function PlanLinesGrid({
         meta: { headerTitle: 'Decision', skeleton: <Skeleton className="h-8 w-40" /> },
       },
     ],
-    [decisions, onDecide, onClear, runId, coverFor, priceFor, staleAfterDays],
+    [decisions, onDecide, onClear, runId, coverFor, priceFor, trendFor, staleAfterDays],
   );
 
   const [columnOrder, setColumnOrder] = useState<string[]>(() =>
