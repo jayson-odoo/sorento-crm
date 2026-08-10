@@ -33,6 +33,7 @@ import {
   type PlanLineStatus,
 } from '../lib/planLine';
 import { decidedCost, decidedQty, type PlanDecisionMap } from '../lib/planDecisions';
+import { describeCover, NO_COVER, type CoverProposal } from '../lib/coverPlan';
 import { PlanLineDecisionCell } from './PlanLineDecisionCell';
 import { PlanChecklistPopover } from './PlanChecklistPopover';
 import { PlanDemandPopover } from './PlanDemandPopover';
@@ -99,6 +100,7 @@ export function PlanLinesGrid({
   decisions,
   onDecide,
   onClear,
+  coverFor,
   statusFilter: statusFilterProp = null,
   onStatusFilterChange,
   runId,
@@ -113,6 +115,8 @@ export function PlanLinesGrid({
   /** Return a line to undecided. Separate from `onDecide` because undecided is the absence
    *  of a decision, not a fourth kind of one. */
   onClear: (line: PlanLine) => void;
+  /** What the plan suggests for a line: buy, cover from elsewhere, or a split of the two. */
+  coverFor?: (line: PlanLine) => CoverProposal;
   /** Status the list is narrowed to, or null for the whole plan. Controlled so the summary
    *  tiles can narrow it: they used to reveal a band, and there are no bands now. */
   statusFilter?: PlanLineStatus | null;
@@ -299,12 +303,7 @@ export function PlanLinesGrid({
                 </PopoverTrigger>
                 <PopoverPortal>
                   <PopoverContent align="end" collisionPadding={8} className="w-80 p-0 text-sm">
-                    <OrderQtyDrill
-                      row={row.original}
-                      onApplyOffsets={(qty, reason) =>
-                        onDecide(row.original, { kind: 'buy', qty, reason })
-                      }
-                    />
+                    <OrderQtyDrill row={row.original} />
                   </PopoverContent>
                 </PopoverPortal>
               </Popover>
@@ -376,6 +375,39 @@ export function PlanLinesGrid({
         meta: { headerTitle: 'Cost', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
+        id: 'suggestion',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Suggested action" visibility column={column} />
+        ),
+        cell: ({ row }) => {
+          const line = row.original;
+          if (!line.purchasable) {
+            return <span className="text-muted-foreground">{EM_DASH}</span>;
+          }
+          const cover = coverFor?.(line) ?? NO_COVER;
+          // Stated as a sentence, because the buyer is being asked to agree with a
+          // recommendation. Two numbers in separate columns cannot be agreed with at a glance.
+          const text =
+            cover.coverQty > 0
+              ? describeCover(cover, (n) => fmtInt(n))
+              : `Buy ${fmtInt(Math.ceil(line.order_qty))}`;
+          const crossing = cover.sources.some((x) => x.cross_segment);
+          return (
+            <div className="min-w-0">
+              <span className="block truncate text-xs" title={text}>
+                {text}
+              </span>
+              {crossing ? (
+                <span className="text-2xs text-scm-overstock">crosses segment</span>
+              ) : null}
+            </div>
+          );
+        },
+        size: 210,
+        enableSorting: false,
+        meta: { headerTitle: 'Suggested action', skeleton: <Skeleton className="h-4 w-28" /> },
+      },
+      {
         id: 'decision',
         header: ({ column }) => <DataGridColumnHeader title="Decision" visibility column={column} />,
         cell: ({ row }) => (
@@ -383,6 +415,7 @@ export function PlanLinesGrid({
           <PlanLineDecisionCell
             line={row.original}
             decision={decisions[row.original.id]}
+            cover={coverFor?.(row.original) ?? NO_COVER}
             onDecide={(next) => onDecide(row.original, next)}
             onClear={() => onClear(row.original)}
           />
@@ -394,7 +427,7 @@ export function PlanLinesGrid({
         meta: { headerTitle: 'Decision', skeleton: <Skeleton className="h-8 w-40" /> },
       },
     ],
-    [decisions, onDecide, onClear, runId],
+    [decisions, onDecide, onClear, runId, coverFor],
   );
 
   const [columnOrder, setColumnOrder] = useState<string[]>(() =>

@@ -12,6 +12,7 @@ import type { ReorderRecommendation } from '../types/reorder.types';
 import { recToPlanLine, type PlanLine } from '../lib/planLine';
 import type { PlanDecisionMap } from '../lib/planDecisions';
 import { PlanLinesGrid } from './PlanLinesGrid';
+import { proposeCover, NO_COVER, type CoverSource } from '../lib/coverPlan';
 
 class ResizeObserverStub { observe() {} unobserve() {} disconnect() {} }
 (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
@@ -48,13 +49,27 @@ function rec(over: Partial<ReorderRecommendation> = {}): ReorderRecommendation {
 
 const line = (over: Partial<ReorderRecommendation> = {}): PlanLine => recToPlanLine(rec(over));
 
-function renderGrid(lines: PlanLine[], decisions: PlanDecisionMap = {}) {
+function renderGrid(
+  lines: PlanLine[],
+  decisions: PlanDecisionMap = {},
+  free: CoverSource[] = [],
+) {
   const onDecide = vi.fn();
   const onClear = vi.fn();
+  const coverFor = (l: PlanLine) =>
+    l.purchasable
+      ? proposeCover(Math.ceil(l.order_qty), l.warehouse_id ?? null, l.rec.segment ?? null, free)
+      : NO_COVER;
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <PlanLinesGrid lines={lines} decisions={decisions} onDecide={onDecide} onClear={onClear} />
+      <PlanLinesGrid
+        lines={lines}
+        decisions={decisions}
+        onDecide={onDecide}
+        onClear={onClear}
+        coverFor={coverFor}
+      />
     </QueryClientProvider>,
   );
   return { onDecide, onClear };
@@ -194,5 +209,68 @@ describe('PlanLinesGrid - deciding', () => {
     expect(screen.getByText(/Buying 23/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Change/i }));
     expect(onClear).toHaveBeenCalled();
+  });
+});
+
+describe('PlanLinesGrid - buy, cover, or both', () => {
+  const elsewhere: CoverSource[] = [
+    { warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', segment: 'project', qty: 5 },
+    { warehouse_id: 'wh-PJ-SR', warehouse_code: 'PJ-SR', segment: 'project', qty: 1 },
+  ];
+
+  it('says buy when no other location holds any', () => {
+    renderGrid([line({ order_qty: 188 })]);
+    expect(screen.getByText('Buy 188')).toBeInTheDocument();
+  });
+
+  it('names the source when stock elsewhere covers it outright', () => {
+    // The live BRW-IB case: nothing on hand HERE, but BRW-BB is holding some.
+    renderGrid([line({ order_qty: 1 })], {}, elsewhere);
+    expect(screen.getByText('Use 1 from BRW-BB')).toBeInTheDocument();
+  });
+
+  it('proposes the split when the free stock runs out part way', () => {
+    // The live DC1-BB case: 6 units exist anywhere else against a shortage of 188.
+    renderGrid([line({ order_qty: 188 })], {}, elsewhere);
+    expect(
+      screen.getByText('Use 5 from BRW-BB, 1 from PJ-SR, and buy 182'),
+    ).toBeInTheDocument();
+  });
+
+  it('refuses Use stock when nothing is free anywhere, and says why', () => {
+    // The reported bug: the button was offered on a row with nothing behind it.
+    renderGrid([line({ order_qty: 188, on_hand: 0 })]);
+    const btn = screen.getByRole('button', { name: /Use stock/i });
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute('title', expect.stringMatching(/No free stock at another location/i));
+  });
+
+  it('records where the stock comes from, not just that stock was used', () => {
+    const { onDecide } = renderGrid([line({ order_qty: 1 })], {}, elsewhere);
+    fireEvent.click(screen.getByRole('button', { name: /Use stock/i }));
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'r1' }),
+      expect.objectContaining({
+        kind: 'use_stock',
+        sources: [expect.objectContaining({ warehouse_code: 'BRW-BB', qty: 1 })],
+      }),
+    );
+  });
+
+  it('shows a settled cover with its source', () => {
+    renderGrid([line()], {
+      r1: {
+        kind: 'use_stock',
+        sources: [{ warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', qty: 5 }],
+      },
+    } as PlanDecisionMap, elsewhere);
+    expect(screen.getByText(/Using stock 5 from BRW-BB/)).toBeInTheDocument();
+  });
+
+  it('warns when the only cover crosses the dealer/project boundary', () => {
+    renderGrid([line({ order_qty: 2, segment: 'project' })], {}, [
+      { warehouse_id: 'wh-D', warehouse_code: 'DEALER', segment: 'dealer', qty: 50 },
+    ]);
+    expect(screen.getByText(/crosses segment/i)).toBeInTheDocument();
   });
 });

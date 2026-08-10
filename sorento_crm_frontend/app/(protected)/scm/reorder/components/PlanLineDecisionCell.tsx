@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { fmtInt } from '../../lib/format';
 import type { PlanLine } from '../lib/planLine';
 import type { PlanDecision, PlanDecisionKind } from '../lib/planDecisions';
+import { describeCover, type CoverProposal } from '../lib/coverPlan';
 
 /**
  * The same three choices on every row: buy this much, use the stock we already have, or skip.
@@ -32,12 +33,19 @@ const KIND_LABEL: Record<PlanDecisionKind, string> = {
 export function PlanLineDecisionCell({
   line,
   decision,
+  cover,
   onDecide,
   onClear,
 }: {
   line: PlanLine;
   decision: PlanDecision | undefined;
-  onDecide: (next: { kind: PlanDecisionKind; qty?: number }) => void;
+  /** What the plan suggests: buy it, cover it from elsewhere, or both. */
+  cover: CoverProposal;
+  onDecide: (next: {
+    kind: PlanDecisionKind;
+    qty?: number;
+    sources?: { warehouse_id: string; warehouse_code: string; qty: number }[];
+  }) => void;
   /** Put the line back to undecided. Its own callback rather than a fourth decision kind,
    *  because undecided is the ABSENCE of a decision and must not become one. */
   onClear: () => void;
@@ -71,6 +79,18 @@ export function PlanLineDecisionCell({
 
   // An allocation is stock to move, not stock to order, so it is never offered a buy.
   const canBuy = line.purchasable;
+  // "Use stock" is only a real action when some OTHER location actually holds free stock.
+  // Offering it otherwise is what made a row with nothing on hand look coverable.
+  const coverable = cover.coverQty > 0;
+  const takeCover = () =>
+    onDecide({
+      kind: 'use_stock',
+      sources: cover.sources.map((s) => ({
+        warehouse_id: s.warehouse_id,
+        warehouse_code: s.warehouse_code,
+        qty: s.qty,
+      })),
+    });
 
   if (decision) {
     return (
@@ -82,6 +102,11 @@ export function PlanLineDecisionCell({
         >
           {KIND_LABEL[decision.kind]}
           {decision.kind === 'buy' ? ` ${fmtInt(decision.qty ?? suggested)}` : ''}
+          {decision.kind === 'use_stock' && decision.sources?.length
+            ? ` ${fmtInt(decision.sources.reduce((t, x) => t + x.qty, 0))} from ${decision.sources
+                .map((x) => x.warehouse_code)
+                .join(', ')}`
+            : ''}
         </Badge>
         <Button
           variant="ghost"
@@ -121,8 +146,13 @@ export function PlanLineDecisionCell({
         variant="outline"
         size="sm"
         className={cn('h-8 px-2', !canBuy && 'flex-1')}
-        onClick={() => onDecide({ kind: 'use_stock' })}
-        title={`Cover ${line.sku} from stock we already hold`}
+        onClick={takeCover}
+        disabled={!coverable}
+        title={
+          coverable
+            ? `Cover ${line.sku}: ${describeCover(cover, (n) => fmtInt(n))}`
+            : `No free stock at another location to cover ${line.sku}`
+        }
       >
         <PackageCheck className="size-3.5" />
         Use stock

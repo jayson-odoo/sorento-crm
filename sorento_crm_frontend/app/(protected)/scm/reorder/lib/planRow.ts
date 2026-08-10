@@ -254,3 +254,17 @@ export interface M8ProposalLine {
   unit_cost: number;
   reason: string;
 }
+
+/**
+ * A staged decision on a line, as the plan's own vocabulary.
+ *
+ * Lived in the results grid that S11 replaced. Kept here, beside the row model, because it is
+ * a fact about a plan row rather than about any one component that draws it.
+ */
+export type M8RowDecision = 'accepted' | 'rejected' | null;
+
+/** The draft purchase order a confirmed line landed in. */
+export interface RowPoLink {
+  po_number: string;
+  po_id: string | null;
+}

@@ -7,7 +7,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { EM_DASH, fmtDecimal, fmtInt, fmtSigned, fmtSupplierCost } from '../../lib/format';
 import { useExplainDemand, useExplainNet } from '../hooks/useDrills';
 import { m8CashImpact, type M8PlanRow } from '../lib/planRow';
-import { BuyOffsetsPanel } from './BuyOffsetsPanel';
 
 /**
  * The explain drills - why this quantity, why this net, why this runway.
@@ -250,11 +249,8 @@ export function DaysCoverDrill({ row }: { row: M8PlanRow }) {
  *  reorder-point formula with its actual inputs (M8-F5). */
 export function OrderQtyDrill({
   row,
-  onApplyOffsets,
 }: {
   row: M8PlanRow;
-  /** Stage an adjustment when the buyer declines one of the netted offsets. */
-  onApplyOffsets: (qty: number, reason: string) => void;
 }) {
   const q = row.order_qty_inputs;
   // A pooled buy is sized once for every location that shares stock, then split. Saying so
@@ -274,11 +270,11 @@ export function OrderQtyDrill({
     <div>
       <DrillHeader title={`Order qty = ${fmtInt(q.rounded_qty)}`} />
 
-      {/* What we need and what we PROPOSE to cover it with, before the policy arithmetic.
-          This sits first because it is the part the buyer can disagree with: everything
-          below it explains the target, this decides what is actually bought. */}
-      <BuyOffsetsPanel row={row} onApply={onApplyOffsets} />
-
+      {/* The on-hand offsets panel that used to sit here is GONE. It asked the buyer whether
+          to use stock that is already inside the net position, which was never a decision -
+          "Use what is on hand at BRW-IB" is arithmetic that has already happened. The real
+          choice is buy versus cover from ANOTHER location, and that lives on the row as the
+          suggested action. See lib/coverPlan. */}
       <div className="space-y-1 px-3 py-2">
         {line('Safety stock', q.safety_stock)}
         {line('Reorder point', q.reorder_point)}

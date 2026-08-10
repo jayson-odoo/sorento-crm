@@ -29,6 +29,14 @@ export interface PlanDecision {
   qty?: number;
   /** Why the buyer departed from the suggestion, carried onto the adjustment. */
   reason?: string;
+  /**
+   * Where a `use_stock` decision takes its stock from, and how much of each.
+   *
+   * Required for that kind: "use stock" without a source is not a decision anybody can act
+   * on, and it is what makes the pool spendable - two lines drawing on the same units have to
+   * be able to see what the other took.
+   */
+  sources?: { warehouse_id: string; warehouse_code: string; qty: number }[];
 }
 
 export type PlanDecisionMap = Readonly<Record<string, PlanDecision | undefined>>;

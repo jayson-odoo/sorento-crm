@@ -8,7 +8,7 @@ import { m8CashImpact, recToPlanRow, type M8PlanRow, type M8ProposalLine } from 
 import { useBuyRecommendationsForCash } from './useReorderRun';
 import { useCashBudget } from './useCashBudget';
 import { useDecisionMutations, useRecommendationDecisions } from './useDecisions';
-import type { M8RowDecision } from '../components/CashResultsGrid';
+import type { M8RowDecision } from '../lib/planRow';
 import type { ReorderRecommendation } from '../types/reorder.types';
 import type { ActionProposalLine } from '../types/explainer.types';
 

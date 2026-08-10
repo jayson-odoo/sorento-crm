@@ -57,6 +57,7 @@
  */
 import type { SortingState } from '@tanstack/react-table';
 import { apiFetch } from '@/lib/api';
+import type { CoverSource } from '../lib/coverPlan';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
   BuyScope,
@@ -589,4 +590,20 @@ export async function setReorderLevel(
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the reorder level'));
   return res.json();
+}
+
+/**
+ * Stock held elsewhere that could cover a shortage instead of buying it.
+ *
+ * Keyed by product, because the pool is SHARED: two lines for the same product draw on the
+ * same units. Fetched once and spent down client-side as decisions are made (see
+ * `lib/coverPlan`), which is the only place that knows what has been decided so far.
+ */
+export async function getCoverSources(
+  runId: string,
+): Promise<Record<string, CoverSource[]>> {
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/cover-sources`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load cover sources'));
+  const body = (await res.json()) as { sources?: Record<string, CoverSource[]> };
+  return body.sources ?? {};
 }

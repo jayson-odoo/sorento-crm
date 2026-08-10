@@ -25,6 +25,7 @@ from app.schemas.scm_reorder import (
     UnlocatedDemandResponse,
 )
 from app.services.company_scope_sql import company_sql_predicate
+from app.services.scm import cover_service
 from app.services.error_handler import AppException
 from app.services.scm import reorder_run_service as svc
 from app.services.scm import unplanned_demand_service
@@ -271,6 +272,50 @@ def recommendation_demand(
     row itself: pooled netting is the reason, and the orders are the evidence."""
     svc.assert_run_visible(db, run_id)
     return demand_breakdown_service.demand_for_recommendation(db, rec_id, limit)
+
+
+@router.get("/reorder-runs/{run_id}/cover-sources")
+def list_cover_sources(
+    run_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Stock held somewhere else that could cover a shortage instead of buying it.
+
+    Keyed by product rather than folded onto each row, because the pool is SHARED: two lines
+    for the same product draw on the same units, and duplicating it per row would let the
+    screen promise the same stock twice. The caller holds one pool and spends it down as
+    decisions are made.
+
+    Free means surplus - a location's on-hand less its OWN demand - so a location that is
+    short of its own requirement offers nothing, however much it is holding.
+    """
+    svc.assert_run_visible(db, run_id)
+    product_ids = [
+        r[0]
+        for r in db.execute(
+            text(
+                "SELECT DISTINCT product_id::text FROM scm.reorder_recommendation "
+                "WHERE run_id::text = :run AND rec_type IN ('buy', 'needs_level')"
+            ),
+            {"run": run_id},
+        ).fetchall()
+    ]
+    free = cover_service.free_stock_by_product(db, run_id, product_ids)
+    return {
+        "sources": {
+            pid: [
+                {
+                    "warehouse_id": s.warehouse_id,
+                    "warehouse_code": s.warehouse_code,
+                    "segment": s.segment,
+                    "qty": s.qty,
+                }
+                for s in sources
+            ]
+            for pid, sources in free.items()
+        }
+    }
 
 
 @router.get("/reorder-runs/{run_id}/recommendations")
