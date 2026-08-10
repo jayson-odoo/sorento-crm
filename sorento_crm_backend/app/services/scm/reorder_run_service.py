@@ -652,6 +652,18 @@ def _last_purchase_for(costs: dict, product_id: str,
 # per-warehouse planning (buy_scope=warehouse)
 # ===========================================================================
 
+def _pool_netting_enabled(policies: list[dict], db: Session, product_id: str) -> bool:
+    """Whether this product's policy lets a sibling bin's surplus cover another bin.
+
+    OFF by default. Pooled netting assumes a transfer that this phase does not propose:
+    stock moves between bins on CS's say-so, decided before purchasing ever sees the
+    requirement. Buying less on the strength of a move nobody has agreed to under-buys, and
+    an under-buy is invisible until the stock runs out.
+    """
+    policy = eng.resolve_policy_for_sku(db, product_id, None, policies) or {}
+    return bool(policy.get("pool_netting"))
+
+
 def _pool_map(db: Session, rows: list[dict]) -> dict[str, str]:
     """``{warehouse_id: pool_id}`` for the planned locations.
 
@@ -708,6 +720,9 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
     _apply_unlocated_demand(db, by_product)
 
     for pid, prows in by_product.items():
+        # Each location is its own pool unless the policy says siblings may cover for one
+        # another. Grouping is per product because the toggle resolves per product.
+        pooled = _pool_netting_enabled(policies, db, pid)
         cands = eng.load_supplier_candidates(db, pid, rates=rates)
         computed: list[dict] = []
         for r in prows:
@@ -718,7 +733,8 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
 
         by_pool: dict[str, list[tuple[dict, dict]]] = {}
         for r, c in zip(prows, computed):
-            by_pool.setdefault(pool_of[str(r["warehouse_id"])], []).append((r, c))
+            wid = str(r["warehouse_id"])
+            by_pool.setdefault(pool_of[wid] if pooled else wid, []).append((r, c))
 
         for pool_id, members in by_pool.items():
             if len(members) == 1:

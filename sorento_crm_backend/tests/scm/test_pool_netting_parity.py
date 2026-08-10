@@ -178,6 +178,12 @@ def _plan(db, warehouse_ids: list[str]) -> list[dict]:
     """
     rows = [r for r in rrs._planning_rows(db, warehouse_ids)
             if str(r["product_code"]).startswith(_MK)]
+    # Pooled netting is OPT-IN now: a sibling covering another bin assumes a transfer that
+    # this phase does not propose, so the engine no longer assumes one by default. These
+    # tests are ABOUT pooled behaviour, so they turn it on explicitly - which is also the
+    # one row a tenant whose planners really do move stock freely would set.
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = true"))
+    db.flush()
     policies = eng.load_policies(db)
     last_move = rrs._last_movement_map(
         db, [str(r["product_id"]) for r in rows], warehouse_ids

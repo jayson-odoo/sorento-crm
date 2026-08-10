@@ -578,6 +578,7 @@ def load_policies(db: Session) -> list[dict]:
         "SELECT id, scope_type, scope_ref, policy_type, service_level, safety_stock_method, "
         "safety_days, review_period_days, forecast_window_days, spike_handling, buy_scope, "
         "dead_stock_days, overstock_days, min_override, max_override, factor_toggles, "
+        "pool_netting, level_study_months, level_cover_months, "
         "is_active, priority FROM scm.reorder_policy WHERE is_active = true"
     )).mappings().all()
     return [dict(r) for r in rows]

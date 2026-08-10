@@ -74,6 +74,9 @@ class ReorderPolicy(Base):
     transfer_cost_per_unit = Column(Numeric(12, 2), nullable=True)
     # reorder_level basis dials. How many months of movement to study, and how many months
     # of it a level should cover. Both only ever shape the SUGGESTION.
+    # May a sibling bin's surplus cover another bin's shortage? OFF: this phase does not
+    # propose transfers, so it must not assume one. Both behaviours stay in the engine.
+    pool_netting = Column(Boolean, nullable=True, server_default=text("false"))
     level_study_months = Column(Integer, nullable=True, server_default=text("3"))
     level_cover_months = Column(Numeric(6, 2), nullable=True, server_default=text("2"))
     factor_toggles = Column(JSONB, nullable=True)

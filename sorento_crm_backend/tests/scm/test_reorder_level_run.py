@@ -333,3 +333,52 @@ def test_a_pool_where_nobody_set_a_level_buys_nothing(scm_app):
     kinds = {r["rec_type"] for r in rows}
     assert "buy" not in kinds, "a pool with no level anywhere must not buy on a target of 0"
     assert "needs_level" in kinds, "and each unset member must still be named"
+
+
+# --- pooled netting is opt-in ------------------------------------------------------------
+
+def _pool_pair(db, code_root: str, root_stock: float, bin_stock: float,
+               demand: float = 2.0):
+    """A two-bin pool: the root holds surplus, the bin is short."""
+    root = _mk_warehouse(db, f"{code_root}-R")
+    bin_ = _mk_warehouse(db, f"{code_root}-B")
+    db.execute(text("UPDATE warehouses SET pool_warehouse_id = :r WHERE id = :b"),
+               {"r": root, "b": bin_})
+    pid = _mk_product(db, f"ZZTP-{code_root}-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, root, root_stock)
+    _mk_stock(db, pid, bin_, bin_stock)
+    _mk_demand(db, pid, root, 0.0)
+    _mk_demand(db, pid, bin_, demand)
+    _link(db, pid, _mk_supplier(db, f"ZZT {code_root} Supplier"), moq=None, mult=None)
+    db.flush()
+    created = svc.create_run(db, [f"{code_root}-R", f"{code_root}-B"], enqueue=False)
+    svc.run_reorder(created["run_id"], db=db)
+    return _recs(db, created["run_id"], pid)
+
+
+def test_by_default_a_bin_buys_its_own_shortage(scm_app):
+    """A sibling's surplus does NOT cover a shortage unless somebody says it may.
+
+    > "the pool, is at CS level, for them to do stock allocation, what it has to do with
+    >  this leh"
+
+    Stock moves between bins on CS's decision, taken before purchasing sees the
+    requirement, and this phase does not propose transfers. Buying less on the strength of
+    a move nobody agreed to under-buys, and an under-buy is invisible until it runs out.
+    """
+    _, db, _, _ = scm_app
+    svc.eng.ensure_reorder_policy_defaults(db)
+    rows = _pool_pair(db, "ZZTW-NOPOOL", root_stock=5000, bin_stock=0)
+    buys = [r for r in rows if r["rec_type"] == "buy"]
+    assert buys, "the short bin must still buy, however much the sibling is sitting on"
+
+
+def test_turning_pooled_netting_on_lets_the_sibling_cover(scm_app):
+    """The other behaviour is a policy row away, not a deploy away."""
+    _, db, _, _ = scm_app
+    svc.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = true"))
+    db.flush()
+    rows = _pool_pair(db, "ZZTW-POOLON", root_stock=5000, bin_stock=0)
+    assert not [r for r in rows if r["rec_type"] == "buy"], \
+        "5,000 on the shared root covers the shortage, so nothing is bought"
