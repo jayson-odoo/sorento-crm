@@ -28,6 +28,7 @@ from app.services.entity_resolver import (
     fetch_product_brands,
     resolve_references,
     resolve_references_intersection,
+    token_word_coverage_for_rows,
 )
 
 
@@ -285,6 +286,71 @@ def _apply_limit(result: dict[str, Any], limit: int | None) -> dict[str, Any]:
             by_type.setdefault(m.get("entity_type", ""), []).append(m)
         new_result["by_entity_type"] = by_type
     return new_result
+
+
+def _apply_limit_marking_truncation(
+    result: dict[str, Any], limit: int | None
+) -> dict[str, Any]:
+    """`_apply_limit`, plus: any entity type it cut rows from joins
+    `_truncated_entity_types`, so the coverage claim over that type is flagged
+    incomplete rather than asserted as if the caller saw everything."""
+    if not isinstance(result, dict) or not isinstance(result.get("intersection"), list):
+        return _apply_limit(result, limit)
+    pre: dict[str, int] = {}
+    for m in result["intersection"]:
+        et = str((m or {}).get("entity_type") or "")
+        pre[et] = pre.get(et, 0) + 1
+    capped = _apply_limit(result, limit)
+    post: dict[str, int] = {}
+    for m in capped.get("intersection") or []:
+        et = str((m or {}).get("entity_type") or "")
+        post[et] = post.get(et, 0) + 1
+    cut = {t for t, n in pre.items() if post.get(t, 0) < n}
+    if cut:
+        capped["_truncated_entity_types"] = sorted(
+            set(capped.get("_truncated_entity_types") or []) | cut
+        )
+    return capped
+
+
+def _attach_and_coverage(result: dict[str, Any]) -> dict[str, Any]:
+    """Final step for every AND-shaped result: compute `token_coverage` over
+    the rows ACTUALLY being returned, then strip the transport keys.
+
+    Runs after `_apply_promotion_access_levels_filter`,
+    `_expand_products_via_promotions` and `_apply_limit` have all had their
+    turn — coverage computed any earlier describes rows a later stage removed
+    (the original version asserted "every word matched" on zero-row
+    entitlement-filtered responses). No-op for OR-shaped results.
+
+    Best-effort by design: the rows are the answer, the coverage is commentary
+    on them, so a coverage failure must never 500 a resolve that succeeded.
+    The transport-key strip is unconditional either way.
+    """
+    if not isinstance(result, dict) or "intersection" not in result:
+        return result
+    try:
+        truncated = frozenset(result.get("_truncated_entity_types") or [])
+        result["token_coverage"] = token_word_coverage_for_rows(
+            result.get("tokens") or [],
+            result.get("intersection") or [],
+            truncated_types=truncated,
+        )
+    except Exception:
+        logger.exception("token_coverage computation failed; omitting the field")
+    finally:
+        result.pop("_truncated_entity_types", None)
+        # The filters rebuild `by_entity_type` from the same row dicts as
+        # `intersection`, so the blob can appear in both views — strip both.
+        for m in result.get("intersection") or []:
+            if isinstance(m, dict):
+                m.pop("_match_blob", None)
+        for rows in (result.get("by_entity_type") or {}).values():
+            if isinstance(rows, list):
+                for m in rows:
+                    if isinstance(m, dict):
+                        m.pop("_match_blob", None)
+    return result
 
 
 def _stamp_brand_on_products(db: Session, result: dict[str, Any]) -> dict[str, Any]:
@@ -1374,7 +1440,11 @@ def _resolve_input(
     result = _run(allowed_entity_types)
 
     if not (fallback_to_all_types and allowed_entity_types):
-        return result
+        # NOTE: `limit` is not applied on this exit — pre-existing behaviour,
+        # deliberately preserved (live callers see uncapped counts today, and
+        # capping here would move rows under them). Coverage/strip must still
+        # run on every AND-shaped exit.
+        return _attach_and_coverage(result)
 
     # ------------------------------------------------------------------
     # Per-token fallback (only for tokens unresolved under the whitelist).
@@ -1391,7 +1461,10 @@ def _resolve_input(
 
     if mode == "and":
         if not _result_has_zero_matches(result):
-            return _ret(result)
+            # Coverage LAST: it has to describe the post-limit rows, and the
+            # limit has to know which types it cut so their claims are
+            # flagged incomplete.
+            return _attach_and_coverage(_apply_limit_marking_truncation(result, limit))
         result = _run(allowed_entity_types, force_mode="or")
         fallback_match_mode_override = "or"
         fallback_reason = (

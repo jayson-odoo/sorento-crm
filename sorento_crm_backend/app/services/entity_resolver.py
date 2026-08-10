@@ -491,10 +491,13 @@ class ResolvedEntity:
     company_id: Optional[str] = None
     company_name: Optional[str] = None
     # The exact text this row was matched AGAINST, set by the AND probes so
-    # `_token_coverage` can report which query words actually landed. It is the
-    # probe's blob, NOT everything in `display`: the product probe matches on
-    # `product_code` alone by design, so scoring a word against `product_name`
-    # would report a match the probe never made. Never serialised — internal.
+    # `token_word_coverage_for_rows` can report which query words actually
+    # landed. It is the probe's blob, NOT everything in `display`: the product
+    # probe matches on `product_code` alone by design, so scoring a word
+    # against `product_name` would report a match the probe never made.
+    # Serialised as the transport key `_match_blob` on AND intersection rows
+    # only; the API layer (`references._attach_and_coverage`) strips it before
+    # the response leaves the process.
     match_blob: Optional[str] = None
 
 
@@ -3338,36 +3341,89 @@ _AND_PROBES: tuple[tuple[Callable[[Session, list[str]], list[ResolvedEntity]], f
 )
 
 
-def _token_word_coverage(
-    tokens: list[str], matches: list[ResolvedEntity]
+def token_word_coverage_for_rows(
+    tokens: list[str],
+    rows: list[dict[str, Any]],
+    truncated_types: frozenset[str] | set[str] = frozenset(),
 ) -> list[dict[str, Any]]:
-    """Per token, which of its words appear in the returned rows.
+    """Per token, per entity type: which of the token's words appear in the
+    rows being returned.
 
-    AND-mode is max-coverage, not a boolean AND (see `_and_max_tier_filter`), so
-    a word can contribute nothing and the caller cannot tell from the rows. This
-    reports it, without changing which rows come back.
+    AND-mode is max-coverage, not a boolean AND (see `_and_max_tier_filter`),
+    so a word can contribute nothing and the caller cannot tell from the rows.
+    This reports it, without changing which rows come back.
 
-    The claim is deliberately WEAK: "absent from these results", never "absent
-    from the catalogue". Scoring against `match_blob` (the text each probe
-    actually scored) rather than `display` keeps it honest — the product probe
-    matches `product_code` only, so a word appearing in `product_name` must not
-    be reported as matched. A word counts as matched when any `_word_variants`
-    form of it lands, but is echoed back AS THE CALLER TYPED IT: reporting
-    "taps" unmatched while showing a TAP promotion would be a new false
-    statement, which is the thing this exists to prevent.
+    Called by the API layer over the FINAL row set — after the access-level
+    filter, the promotion expansion and the limit — because coverage computed
+    earlier describes rows a later stage removed (the original version baked
+    it into ``as_dict()`` and asserted "every word matched" on zero-row
+    entitlement-filtered responses).
+
+    Rules that keep the field honest:
+      * The claim is WEAK: "absent from these results", never "absent from the
+        catalogue". No extra query.
+      * Partitioned per entity type. A word matched by a product code must not
+        be credited to a promotion enquiry — pooling across types was the
+        other way the first version lied.
+      * Scored against the row's ``_match_blob`` (the text its probe actually
+        scored), never ``display``: the product probe matches ``product_code``
+        only, so a word appearing in ``product_name`` would be a match the
+        probe never made. Promotion rows fall back to
+        ``display.description`` because for promotions blob and description
+        are the same column — this keeps rows the promotion expander
+        synthesized (which matched on description but carry no blob) honest.
+      * A type whose rows carry no scorable text is OMITTED, not reported
+        all-unmatched: nobody scored any text for those rows.
+      * A word matched via a `_word_variants` form counts as matched but is
+        echoed back AS THE CALLER TYPED IT — reporting "taps" unmatched while
+        showing a TAP promotion would be a new false statement.
+      * ``truncated_types`` marks a type whose row set was capped (probe limit
+        or API ``limit``), so a consumer knows an unmatched word may exist in
+        rows that were cut and must not phrase it as a catalogue-wide absence.
     """
-    blobs = [(m.match_blob or "").lower() for m in matches if m.match_blob]
+    blobs_by_type: dict[str, list[str]] = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        etype = str(row.get("entity_type") or "")
+        blob = row.get("_match_blob")
+        if not blob and etype == "promotion":
+            blob = (row.get("display") or {}).get("description")
+        if blob and etype:
+            blobs_by_type.setdefault(etype, []).append(str(blob).lower())
+
     out: list[dict[str, Any]] = []
     for tok in tokens or []:
-        if not tok:
+        if not tok or not isinstance(tok, str):
             continue
-        matched: list[str] = []
-        unmatched: list[str] = []
-        for word in [w for w in tok.split() if w]:
-            variants = [v.lower() for v in _word_variants(word)]
-            hit = any(v in blob for blob in blobs for v in variants)
-            (matched if hit else unmatched).append(word)
-        out.append({"token": tok, "matched_words": matched, "unmatched_words": unmatched})
+        coverage: list[dict[str, Any]] = []
+        for etype in sorted(blobs_by_type):
+            blobs = blobs_by_type[etype]
+            matched: list[str] = []
+            unmatched: list[str] = []
+            for word in [w for w in tok.split() if w]:
+                variants = [v.lower() for v in _word_variants(word)]
+                hit = any(v in blob for blob in blobs for v in variants)
+                (matched if hit else unmatched).append(word)
+            coverage.append(
+                {
+                    "entity_type": etype,
+                    "matched_words": matched,
+                    "unmatched_words": unmatched,
+                    "truncated": etype in truncated_types,
+                }
+            )
+        out.append(
+            {
+                "token": tok,
+                # What `match_mode: "and"` really means. Nested here rather
+                # than top-level: consumer chains spread top-level keys toward
+                # persisted session state, and `by_entity_type`'s keys are
+                # rendered to customers as entity types.
+                "match_semantics": "max_coverage",
+                "coverage": coverage,
+            }
+        )
     return out
 
 
@@ -3383,6 +3439,11 @@ class IntersectionResolutionResult:
     # tokens' trigram neighbours, deduped). Same entity-level, non-domain-gated
     # semantics as the OR-mode per-token alternatives.
     alternatives: list[ResolvedEntity] = field(default_factory=list)
+    # Entity types whose AND probe returned AND_MODE_LIMIT rows — the cap may
+    # have cut real matches, so word-coverage claims over these types are
+    # incomplete. (Exactly-at-the-cap without truncation is a harmless false
+    # positive: the flag only softens phrasing downstream.)
+    truncated_entity_types: list[str] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
@@ -3402,13 +3463,8 @@ class IntersectionResolutionResult:
                 "company_name": m.company_name,
                 "display": m.display,
             })
-        return {
+        result: dict[str, Any] = {
             "match_mode": self.match_mode,
-            # What `match_mode: "and"` really means. `match_tier` stays as it is
-            # — consumers branch on it — so the honest label arrives alongside
-            # rather than replacing it.
-            "match_semantics": "max_coverage",
-            "token_coverage": _token_word_coverage(self.tokens, self.intersection),
             "tokens": self.tokens,
             "elapsed_ms": round(self.elapsed_ms, 2),
             "intersection": [
@@ -3421,6 +3477,13 @@ class IntersectionResolutionResult:
                     "company_id": m.company_id,
                     "company_name": m.company_name,
                     "display": m.display,
+                    # Transport key for `token_word_coverage_for_rows`: the
+                    # text this row's probe actually scored. Coverage cannot
+                    # be computed here — the API layer filters / replaces /
+                    # caps these rows afterwards, and coverage must describe
+                    # the FINAL set. Stripped by `_attach_and_coverage`
+                    # before the response leaves the process.
+                    "_match_blob": m.match_blob,
                 }
                 for m in self.intersection
             ],
@@ -3442,6 +3505,12 @@ class IntersectionResolutionResult:
                 for a in self.alternatives
             ],
         }
+        if self.truncated_entity_types:
+            # Transport key, same lifecycle as `_match_blob`: tells the API
+            # layer which types' probes hit AND_MODE_LIMIT, so an unmatched
+            # word there is flagged rather than asserted.
+            result["_truncated_entity_types"] = sorted(self.truncated_entity_types)
+        return result
 
 
 def resolve_references_intersection(
@@ -3482,6 +3551,7 @@ def resolve_references_intersection(
     attachment_coverage = (domain_hint or "").strip().lower() in {"resource_attachment", "attachment"}
 
     hits: list[ResolvedEntity] = []
+    truncated_types: set[str] = set()
     for probe, produces in _AND_PROBES:
         if allowed is not None and produces.isdisjoint(allowed):
             continue
@@ -3499,6 +3569,10 @@ def resolve_references_intersection(
         except Exception:
             logger.exception("AND probe %s failed", probe.__name__)
             continue
+        if len(rows) >= AND_MODE_LIMIT:
+            # The probe's LIMIT bound: rows beyond the cap were cut, so any
+            # "word X is absent" claim over this type is incomplete.
+            truncated_types.update(r.entity_type for r in rows)
         hits.extend(rows)
 
     # No intersection → offer fuzzy "did you mean" neighbours (union across tokens,
@@ -3534,6 +3608,7 @@ def resolve_references_intersection(
         intersection=hits,
         elapsed_ms=elapsed,
         alternatives=alternatives,
+        truncated_entity_types=sorted(truncated_types),
     )
 
 
