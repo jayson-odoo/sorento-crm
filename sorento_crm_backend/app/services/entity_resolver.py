@@ -3152,16 +3152,30 @@ def _and_probe_attachment(
     ]
 
 
+class _ProbeRows(list):
+    """A probe's row list plus a truncation marker the probe sets itself.
+
+    The generic loop check (`len(rows) >= AND_MODE_LIMIT`) is blind to a probe
+    that merges MULTIPLE capped queries and dedups: the merged list can land
+    under the cap while one source query hit its LIMIT, silently under-
+    reporting truncation. A probe that knows better says so here.
+    """
+
+    truncated: bool = False
+
+
 def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     # Two sources: customers master (preferred — has UUID) and orders.debtor_name
     # (legacy fallback). Run both; orders.debtor_name JOINs Customer for UUID.
-    out: list[ResolvedEntity] = []
+    out: _ProbeRows = _ProbeRows()
     blob_c = _concat_ws(Customer.customer_code, Customer.customer_name, Customer.phone_number, Customer.email)
     counts_c = _and_token_match_counts(blob_c, tokens)
     base_c = db.query(Customer.id, Customer.customer_code, Customer.customer_name, Customer.phone_number, Customer.email, Customer.is_active)
     tier_c = _and_max_tier_filter(base_c, counts_c)
     if tier_c is not None:
         rows = base_c.filter(tier_c).limit(AND_MODE_LIMIT).all()
+        if len(rows) >= AND_MODE_LIMIT:
+            out.truncated = True
         for cid, code, name, phone, email, is_active in rows:
             out.append(
                 ResolvedEntity(
@@ -3186,6 +3200,10 @@ def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     tier_o = _and_max_tier_filter(base_o, counts_o)
     if tier_o is not None:
         rows = base_o.filter(tier_o).distinct().limit(AND_MODE_LIMIT).all()
+        if len(rows) >= AND_MODE_LIMIT:
+            # The dedup below can shrink the merged list under the cap even
+            # though this source hit its LIMIT — mark it at the source.
+            out.truncated = True
         for debtor_name, debtor_code, customer_id in rows:
             if (debtor_name or "").lower() in seen_names:
                 continue
@@ -3368,12 +3386,19 @@ def token_word_coverage_for_rows(
       * Scored against the row's ``_match_blob`` (the text its probe actually
         scored), never ``display``: the product probe matches ``product_code``
         only, so a word appearing in ``product_name`` would be a match the
-        probe never made. Promotion rows fall back to
-        ``display.description`` because for promotions blob and description
-        are the same column — this keeps rows the promotion expander
-        synthesized (which matched on description but carry no blob) honest.
+        probe never made. Promotion rows whose ``match_field`` is
+        ``description`` fall back to ``display.description`` — for those rows
+        blob and description are the same column, which keeps the rows the
+        promotion expander synthesized from a description match honest. The
+        gate matters: a promotion found by MEMBERSHIP
+        (``match_field="promotion_membership"``, the "check the promo for
+        <SKU>" walk) was never scored on its description, and scoring it
+        anyway invented ``unmatched=[<SKU>]`` on exactly the rows that ARE
+        that SKU's promotions.
       * A type whose rows carry no scorable text is OMITTED, not reported
-        all-unmatched: nobody scored any text for those rows.
+        all-unmatched: nobody scored any text for those rows. A type where
+        SOME rows are unscored keeps its claims but is marked ``truncated`` —
+        the claims cover only the scored subset.
       * A word matched via a `_word_variants` form counts as matched but is
         echoed back AS THE CALLER TYPED IT — reporting "taps" unmatched while
         showing a TAP promotion would be a new false statement.
@@ -3382,15 +3407,30 @@ def token_word_coverage_for_rows(
         rows that were cut and must not phrase it as a catalogue-wide absence.
     """
     blobs_by_type: dict[str, list[str]] = {}
+    # Types with at least one surviving row nobody scored (no blob, no honest
+    # fallback). Their claims cover only the scored subset, so they read as
+    # incomplete — reported via the same `truncated` flag.
+    partially_scored: set[str] = set()
     for row in rows or []:
         if not isinstance(row, dict):
             continue
         etype = str(row.get("entity_type") or "")
+        if not etype:
+            continue
         blob = row.get("_match_blob")
-        if not blob and etype == "promotion":
+        if (
+            not blob
+            and etype == "promotion"
+            and row.get("match_field") == "description"
+        ):
+            # Only description-MATCHED promotion rows may borrow the display
+            # description as their blob; membership-derived rows
+            # (match_field="promotion_membership") were never scored on it.
             blob = (row.get("display") or {}).get("description")
-        if blob and etype:
+        if blob:
             blobs_by_type.setdefault(etype, []).append(str(blob).lower())
+        else:
+            partially_scored.add(etype)
 
     out: list[dict[str, Any]] = []
     for tok in tokens or []:
@@ -3410,7 +3450,7 @@ def token_word_coverage_for_rows(
                     "entity_type": etype,
                     "matched_words": matched,
                     "unmatched_words": unmatched,
-                    "truncated": etype in truncated_types,
+                    "truncated": etype in truncated_types or etype in partially_scored,
                 }
             )
         out.append(
@@ -3569,9 +3609,11 @@ def resolve_references_intersection(
         except Exception:
             logger.exception("AND probe %s failed", probe.__name__)
             continue
-        if len(rows) >= AND_MODE_LIMIT:
+        if len(rows) >= AND_MODE_LIMIT or getattr(rows, "truncated", False):
             # The probe's LIMIT bound: rows beyond the cap were cut, so any
-            # "word X is absent" claim over this type is incomplete.
+            # "word X is absent" claim over this type is incomplete. A probe
+            # can also self-report (`_ProbeRows.truncated`) when a merged
+            # source hit its cap but dedup shrank the list back under it.
             truncated_types.update(r.entity_type for r in rows)
         hits.extend(rows)
 

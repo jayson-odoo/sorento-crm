@@ -468,28 +468,171 @@ def test_coverage_describes_the_rows_after_the_limit(db, corpus):
     )
 
 
-def test_a_type_with_no_scored_text_makes_no_claim(db, corpus):
-    """Rows synthesized downstream (through-promotion products, brand-access
-    rescue) carry no `_match_blob` - the API layer never saw what text, if
-    any, was scored for them. Their entity type must be OMITTED from coverage
-    rather than reported as all-unmatched, which would be a new false
-    statement about rows nobody scored.
+def _link_product_to_promo(db, product_id: str, promotion_id: str) -> None:
+    from app.models.marketing import PromotionGroup, PromotionProduct
 
-    `domain_hint="promotion"` + a promo-description token triggers the
-    expander; the synthesized promotion rows keep an honest description blob,
-    while any synthesized product rows must stay silent.
+    gid = str(uuid.uuid4())
+    db.add(
+        PromotionGroup(
+            id=gid,
+            promotion_id=promotion_id,
+            group_name="ZZT G",
+            company_id=DEFAULT_COMPANY_ID,
+        )
+    )
+    db.flush()
+    db.add(
+        PromotionProduct(
+            id=str(uuid.uuid4()),
+            promotion_id=promotion_id,
+            promotion_group_id=gid,
+            product_id=product_id,
+            company_id=DEFAULT_COMPANY_ID,
+        )
+    )
+
+
+def _seed_sku_in_promo(db, *, sku: str, promo_desc: str) -> None:
+    """A product plus a promotion that CONTAINS it but whose description does
+    not mention it - the "check the promo for <SKU>" shape."""
+    import uuid as _uuid
+
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+
+    cat, uom = str(_uuid.uuid4()), str(_uuid.uuid4())
+    db.add(ProductCategory(id=cat, category_code=f"ZZTC-{cat[:8]}", category_name="C"))
+    db.add(UnitOfMeasure(id=uom, uom_code=f"ZZTU-{uom[:8]}"[:20], uom_name="Each"))
+    db.flush()
+    pid = str(_uuid.uuid4())
+    db.add(
+        Product(
+            id=pid,
+            product_code=sku,
+            product_name="ZZT Sink",
+            category_id=cat,
+            base_uom_id=uom,
+            list_price=10,
+            is_active=True,
+            company_id=DEFAULT_COMPANY_ID,
+        )
+    )
+    promo_id = _promo(db, promo_desc)
+    db.flush()
+    _link_product_to_promo(db, pid, promo_id)
+
+
+def test_a_promotion_found_via_membership_is_never_scored_on_its_description(db):
+    """Reviewer blocker on the fix itself. "check the promo for <SKU>" walks
+    `promotion_products` BACKWARD from the resolved product - the promotion's
+    description was never scored against the token
+    (`match_field="promotion_membership"`). Blanket-falling-back to
+    `display.description` for every promotion row invented
+    `unmatched_words=[<SKU>]` on exactly the rows that ARE that SKU's
+    promotions - "none of these mention <SKU>" about the SKU's own promos.
+
+    A membership-derived promotion row must contribute no blob: when every
+    promotion row is membership-derived the type is OMITTED from coverage
+    (no claim), never reported all-unmatched.
     """
+    _seed_sku_in_promo(db, sku="ZZT-SINK-9001", promo_desc=f"{MARK} KITCHEN SINK PROMO 2026")
+    db.commit()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+
     payload = _resolve_api(
         db,
-        ["cabana shelf"],
-        allowed_entity_types=["promotion", "product"],
+        ["ZZT-SINK-9001"],
+        allowed_entity_types=["product"],
         domain_hint="promotion",
     )
 
     types_in_rows = {m["entity_type"] for m in payload["intersection"]}
-    entry = [e for e in payload["token_coverage"] if e["token"] == "cabana shelf"][0]
-    types_in_coverage = {c["entity_type"] for c in entry["coverage"]}
-    assert types_in_coverage <= types_in_rows, "coverage may not mention absent types"
-    if "promotion" in types_in_coverage:
-        promo = _coverage(payload, "cabana shelf", "promotion")
-        assert set(promo["matched_words"]) == {"cabana", "shelf"}
+    assert "promotion" in types_in_rows, "the membership walk must surface the promo"
+    membership_rows = [
+        m for m in payload["intersection"]
+        if m["entity_type"] == "promotion" and m["match_field"] == "promotion_membership"
+    ]
+    assert membership_rows, "fixture must exercise the via_product path"
+
+    entry = [e for e in payload["token_coverage"] if e["token"] == "ZZT-SINK-9001"][0]
+    by_type = {c["entity_type"]: c for c in entry["coverage"]}
+    promo_cov = by_type.get("promotion")
+    if promo_cov is not None:
+        assert "ZZT-SINK-9001" not in promo_cov["unmatched_words"], (
+            "the SKU's own promotions reported as not mentioning the SKU - the "
+            "false statement this feature exists to prevent"
+        )
+    # The product row WAS scored (on its code) and must still claim honestly.
+    assert by_type["product"]["matched_words"] == ["ZZT-SINK-9001"]
+
+
+def test_a_type_with_unscored_rows_alongside_scored_ones_is_marked_incomplete(db, corpus):
+    """Second half of the omission rule: when SOME rows of a type carry scored
+    text and others don't (AND-probe promos next to membership-derived ones),
+    the claims cover only the scored subset - so the type must carry
+    `truncated: true`, the existing "do not phrase this as an absence" signal.
+    """
+    # One token, two promotions: promo A NAMES the SKU in its description
+    # (scored by the AND probe), promo B merely CONTAINS the product
+    # (membership walk, unscored). The response mixes scored and unscored
+    # promotion rows.
+    _seed_sku_in_promo(db, sku="ZZT-SINK-9002", promo_desc=f"{MARK} BUNDLE PROMO_22052026")
+    _promo(db, f"{MARK} ZZT-SINK-9002 LAUNCH PROMO (END USER)")
+    db.commit()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+
+    payload = _resolve_api(
+        db,
+        ["ZZT-SINK-9002"],
+        allowed_entity_types=["product", "promotion"],
+        domain_hint="promotion",
+    )
+
+    promo_rows = [m for m in payload["intersection"] if m["entity_type"] == "promotion"]
+    fields = {m["match_field"] for m in promo_rows}
+    assert fields >= {"promotion_membership", "description"}, (
+        f"fixture must produce BOTH row kinds; got {fields!r}"
+    )
+    cov = _coverage(payload, "ZZT-SINK-9002", "promotion")
+    assert "ZZT-SINK-9002" in cov["matched_words"], "the scored promo names the SKU"
+    assert cov["truncated"] is True, (
+        "unscored promotion rows sit in the response; the claim does not "
+        "cover them and must be flagged incomplete"
+    )
+
+
+def test_route_level_coverage_matches_the_response_rows(db, corpus):
+    """Reviewer finding F3: `_resolve_input` is not the response boundary -
+    the POST route's spec-fallback replaces `intersection` AFTER it returns.
+    Coverage must be recomputed over whatever the route actually sends, so a
+    future stage that adds rows after `_resolve_input` cannot resurrect the
+    original blocker. Exercised through the real route function, not a shim.
+    """
+    from app.api.v1.system.references import resolve_reference_post, ResolveReferenceRequest
+
+    body = ResolveReferenceRequest(
+        query="",
+        tokens=["cabana car"],
+        match_mode="and",
+        allowed_entity_types=["promotion"],
+    )
+    payload = resolve_reference_post(body, current_user={}, db=db)
+
+    # Same invariants the _resolve_input tests pin, now at the boundary.
+    assert "match_semantics" not in payload
+    tokens_with_rows = {m["entity_type"] for m in payload["intersection"]}
+    for entry in payload.get("token_coverage") or []:
+        for cov in entry["coverage"]:
+            assert cov["entity_type"] in tokens_with_rows, (
+                "coverage mentions a type absent from the rows the route returns"
+            )
+
+    def walk(node):
+        if isinstance(node, dict):
+            assert "_match_blob" not in node
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(payload)

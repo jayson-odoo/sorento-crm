@@ -1774,6 +1774,12 @@ def resolve_reference_post(
                     by_type.setdefault(match["entity_type"], []).append(match)
                 result["by_entity_type"] = by_type
                 result["empty"] = not spec_matches
+                # Coverage was computed inside _resolve_input over rows this
+                # branch just REPLACED — recompute over what the route actually
+                # sends, or the field describes rows that no longer exist
+                # (blocker A's shape, one stage later). Spec rows carry no
+                # scored text, so this honestly yields no claims.
+                result = _attach_and_coverage(result)
             result.setdefault("resolutions", []).append(spec_resolution)
             # Something was found, so the token is no longer unresolved. Nothing else is
             # touched: `unresolved_tokens` and `alternatives` are what drive "did you
