@@ -77,8 +77,8 @@ follow.
   filtered to one or several.
 * **AC-S11a.3 [FE]** GIVEN the grid, WHEN it renders, THEN NOTHING on screen says within or
   over budget, and no budget input is present.
-* **AC-S11a.4 [BE]** GIVEN a run of ~3,000 lines, WHEN the grid pages, THEN lines are served
-  page by page from one endpoint with sort, search and status filter applied server-side.
+* **AC-S11a.4 [FE]** GIVEN a run of ~4,200 lines, WHEN the grid renders, THEN every line is
+  reachable by paging, sorting and filtering, with no silent cap.
 * **AC-S11a.5 [FE]** GIVEN a row, WHEN it renders, THEN on hand, incoming SPO and outstanding
   PO are columns on that row, and the suggested buy quantity is editable in place.
 
@@ -115,9 +115,14 @@ follow.
    is nothing left to buy".
 2. **The allocator survives, repositioned.** It is not deleted: it moves from deciding the
    plan up-front to proposing cuts at the end. Same ranking, applied later, as advice.
-3. **Server-side paging.** ~3,000 lines in one grid is past what the client-side load handles
-   honestly, and decisions persist anyway, so totals are computed on the server over the whole
-   run rather than over the loaded page.
+3. **No new endpoint. This is a frontend change.** Checked before planning for one: all four
+   sources already return the same `ReorderRecommendation` shape, differing only in
+   `rec_type` (`buy` 1,001 / `disposition` 3,130 / `covered` 98 / `needs_level` 0 on the live
+   run), and every one of them already pages past the endpoint's 1,000-row cap and holds the
+   whole set client-side. So the six bands are already one dataset that was being split four
+   ways on arrival, and unifying them removes code rather than adding an endpoint. Server-side
+   paging stays available if 4,229 rows in one grid turns out to be slow, but it is not a
+   prerequisite and would have been speculative work.
 4. **Stock allocation lines join the list read-only for now.** They are a disposition, not a
    purchase, so they carry the `Allocation` status and the use-stock decision, but they never
    produce a purchase-order line. Transfers remain parked.
