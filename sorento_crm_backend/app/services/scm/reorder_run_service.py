@@ -877,6 +877,16 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
             if c.get("reorder_level") is None:
                 unset.append((r, c))
 
+    # A pool where NOBODY has set a level has no target at all. Summing the levels that
+    # exist gives 0, and 0 is a real target that any deficit trips - so the pool bought its
+    # whole shortage on a number nobody chose, which is the exact failure the needs_level
+    # row exists to prevent. None means "do not plan this pool"; the members are still each
+    # named above, so the work is visible rather than silent.
+    pool_unplannable = (pool_levels is not None
+                        and all(v is None for v in pool_levels.values()))
+    if pool_unplannable:
+        pool_levels = None
+
     agg = eng.aggregate_network(wh_inputs, lead_time_days=lead, safety_days=safety_days,
                                 review_days=review_days, moq=moq,
                                 order_multiple=order_multiple, levels=pool_levels)
@@ -897,10 +907,16 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
         target_oup = float(max_override)
     else:
         target_oup = float(agg["order_up_to"])
-    triggered, reason_label = eng.trigger(
-        policy_type, net=agg_net, rop=float(agg["reorder_point"]),
-        min_level=min_override, oup=target_oup, on_cadence=True,
-        reorder_level=(float(agg["reorder_point"]) if pool_levels is not None else None))
+    if pool_unplannable:
+        # Nothing to plan against, and the forecast figures computed above must NOT be
+        # allowed to stand in for the missing level: falling through to them would silently
+        # restore the basis the buyer replaced.
+        triggered, reason_label = False, None
+    else:
+        triggered, reason_label = eng.trigger(
+            policy_type, net=agg_net, rop=float(agg["reorder_point"]),
+            min_level=min_override, oup=target_oup, on_cadence=True,
+            reorder_level=(float(agg["reorder_point"]) if pool_levels is not None else None))
     recommended, rounded = eng.order_qty(
         triggered, net=agg_net, oup=target_oup, moq=moq, order_multiple=order_multiple)
 
@@ -943,7 +959,15 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
                 # belongs to none of them.
                 member = cell_by_id.get(wid) or {}
                 row_cell = dict(agg_cell)
-                for k in ("net", "rop", "demand_rate", "doc"):
+                # Sizing is the POOL's; every figure that DESCRIBES a place belongs to the
+                # place. The aggregate cell has no on-hand, no level and no last price, so
+                # a pooled row that kept them all from `agg_cell` showed the buyer a blank
+                # checklist on exactly the rows a pool produces - which is most of them.
+                for k in ("net", "rop", "demand_rate", "doc",
+                          "on_hand", "on_order", "po_ordered", "segment",
+                          "committed", "list_price",
+                          "reorder_level", "reorder_level_source", "suggested_level",
+                          "suggestion_basis", "last_purchase", "last_purchase_basis"):
                     if k in member:
                         row_cell[k] = member[k]
                 recs.append(_build_rec(

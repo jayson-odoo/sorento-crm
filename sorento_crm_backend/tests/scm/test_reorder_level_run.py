@@ -272,3 +272,64 @@ def test_never_purchased_says_so_rather_than_showing_nothing(scm_app):
                if r["rec_type"] == "buy")["inputs"]
     assert inp["last_purchase"] is None
     assert inp["last_purchase_basis"] == "never_purchased"
+
+
+def test_a_pooled_buy_row_still_carries_the_checklist(scm_app):
+    """A pool sizes the buy; the row still has to describe the PLACE it lands in.
+
+    Found in the browser: pooled rows were built from the aggregate cell, which has no
+    on-hand, no level and no last price, so the checklist was blank on exactly the rows a
+    pool produces - and a pool produces most of them.
+    """
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+    root = _mk_warehouse(db, "ZZTW-POOL-R")
+    bin_ = _mk_warehouse(db, "ZZTW-POOL-B")
+    db.execute(text("UPDATE warehouses SET pool_warehouse_id = :r WHERE id = :b"),
+               {"r": root, "b": bin_})
+    pid = _mk_product(db, f"ZZTP-POOL-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, root, 4)
+    _mk_stock(db, pid, bin_, 6)
+    _mk_demand(db, pid, root, 0.0)
+    _mk_demand(db, pid, bin_, 0.0)
+    _set_level(db, pid, root, 50)
+    _set_level(db, pid, bin_, 50)
+    _link(db, pid, _mk_supplier(db, "ZZT Pool Supplier"), moq=None, mult=None)
+    _po_line(db, pid, bin_, 7.5)
+    db.flush()
+
+    created = svc.create_run(db, ["ZZTW-POOL-R", "ZZTW-POOL-B"], enqueue=False)
+    svc.run_reorder(created["run_id"], db=db)
+    buys = [r for r in _recs(db, created["run_id"], pid) if r["rec_type"] == "buy"]
+    assert buys, "10 across the pool against a level of 100 is a shortage"
+    for b in buys:
+        inp = b["inputs"]
+        assert inp.get("on_hand") is not None, "a pooled row must still say what is on hand"
+        assert inp.get("reorder_level") is not None, "and which level it was measured against"
+        assert inp.get("last_purchase_basis") is not None
+
+
+def test_a_pool_where_nobody_set_a_level_buys_nothing(scm_app):
+    """Found in the browser: summing the levels that exist gave a pool with NONE a target
+    of 0, and 0 is a real target that any deficit trips - so it bought its whole shortage
+    (52,872 units on the live data) against a number nobody chose."""
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+    root = _mk_warehouse(db, "ZZTW-POOL-NL-R")
+    bin_ = _mk_warehouse(db, "ZZTW-POOL-NL-B")
+    db.execute(text("UPDATE warehouses SET pool_warehouse_id = :r WHERE id = :b"),
+               {"r": root, "b": bin_})
+    pid = _mk_product(db, f"ZZTP-POOLNL-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, root, 0)
+    _mk_stock(db, pid, bin_, 0)
+    _mk_demand(db, pid, root, 3.0)
+    _mk_demand(db, pid, bin_, 3.0)
+    _link(db, pid, _mk_supplier(db, "ZZT PoolNL Supplier"), moq=None, mult=None)
+    db.flush()
+
+    created = svc.create_run(db, ["ZZTW-POOL-NL-R", "ZZTW-POOL-NL-B"], enqueue=False)
+    svc.run_reorder(created["run_id"], db=db)
+    rows = _recs(db, created["run_id"], pid)
+    kinds = {r["rec_type"] for r in rows}
+    assert "buy" not in kinds, "a pool with no level anywhere must not buy on a target of 0"
+    assert "needs_level" in kinds, "and each unset member must still be named"
