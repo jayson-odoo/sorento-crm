@@ -3458,6 +3458,7 @@ def resolve_references_intersection(
         alternatives = alternatives[:_ALTERNATIVES_CAP]
 
     blocked = _attach_company_info(db, list(hits) + list(alternatives))
+    _attach_brand_info(db, list(hits) + list(alternatives))
     if blocked:
         hits = [m for m in hits if (m.entity_type, str(m.uuid)) not in blocked]
         alternatives = [a for a in alternatives if (a.entity_type, str(a.uuid)) not in blocked]
@@ -3646,6 +3647,76 @@ def _attach_company_info(db: Session, matches: list[ResolvedEntity]) -> set[tupl
     return blocked
 
 
+def fetch_product_brands(db: Session, product_ids: Iterable[str]) -> dict[str, Optional[dict[str, Any]]]:
+    """product uuid -> its brand payload (or None when the product has no brand).
+
+    Read with RAW SQL for the same reason `_attach_company_info` does: the
+    company isolation filter is an ORM event, and these ids have ALREADY passed
+    (or are about to pass) that filter as part of the match they describe.
+    Re-reading them through the ORM would silently drop the brand of a row a
+    raw-SQL probe legitimately surfaced.
+
+    Only ids present in the returned map were actually read; a caller that finds
+    an id missing should leave the match alone rather than assert "no brand".
+    """
+    ids = [str(p) for p in product_ids if p]
+    if not ids:
+        return {}
+    rows = db.execute(
+        text(
+            "SELECT p.id::text AS id, b.id::text AS brand_id, b.brand_code, b.brand_name "
+            "FROM products p LEFT JOIN brands b ON b.id = p.brand_id "
+            "WHERE p.id::text = ANY(:ids)"
+        ),
+        {"ids": ids},
+    ).all()
+    out: dict[str, Optional[dict[str, Any]]] = {}
+    for r in rows:
+        out[r.id] = (
+            {
+                "brand_id": r.brand_id,
+                "brand_code": r.brand_code,
+                "brand_name": r.brand_name,
+            }
+            if r.brand_id
+            else None
+        )
+    return out
+
+
+def _attach_brand_info(db: Session, matches: list[ResolvedEntity]) -> None:
+    """Stamp `display.brand` on every product match, whatever path found it.
+
+    Brand and company are different axes: Cabana is a BRAND under the Sorento
+    COMPANY, so `company_name` cannot tell a Cabana product from any other
+    Sorento one. Downstream routing that keys on brand had nothing to read on
+    the code-lookup path, which is the common one.
+
+    Post-pass rather than per-probe for the same reason company attribution is:
+    the probes each select an explicit column tuple, so threading a brand join
+    through every one of them is a fresh chance to miss one and emit a product
+    that silently claims no brand.
+
+    `brand` is set to None (rather than omitted) when the product genuinely has
+    none, so a consumer can tell "this product has no brand" from "this match
+    path forgot to send one". Best-effort: a failed lookup leaves the matches
+    untouched and never fails a resolution that otherwise succeeded.
+    """
+    products = [m for m in matches if m.entity_type == "product" and m.uuid]
+    if not products:
+        return
+    try:
+        brands = fetch_product_brands(db, [str(m.uuid) for m in products])
+    except Exception:  # noqa: BLE001 — brand is additive, never fatal
+        logger.exception("brand attribution lookup failed")
+        return
+    for m in products:
+        key = str(m.uuid)
+        if key not in brands:
+            continue
+        m.display["brand"] = brands[key]
+
+
 def _apply_company_scope(db: Session, resolutions: list[TokenResolution]) -> None:
     """Attribute + company-scope every match and alternative, in place.
 
@@ -3655,11 +3726,11 @@ def _apply_company_scope(db: Session, resolutions: list[TokenResolution]) -> Non
     the stored `ambiguous` flag is recomputed; `resolved` / `unresolved_tokens`
     are properties and follow automatically.
     """
-    blocked = _attach_company_info(
-        db,
-        [m for tr in resolutions for m in tr.matches]
-        + [a for tr in resolutions for a in tr.alternatives],
-    )
+    everything = [m for tr in resolutions for m in tr.matches] + [
+        a for tr in resolutions for a in tr.alternatives
+    ]
+    blocked = _attach_company_info(db, everything)
+    _attach_brand_info(db, everything)
     if not blocked:
         return
     for tr in resolutions:

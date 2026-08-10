@@ -4,6 +4,7 @@ Exposes the deterministic entity resolver as an HTTP API so the MCP layer (or an
 external caller) can disambiguate codes mid-turn. The resolver itself lives in
 `app.services.entity_resolver`.
 """
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -24,6 +25,7 @@ from app.models.product import Brand, Product
 from app.models.resources import Attachment, AttachmentType
 from app.services.entity_resolver import (
     _canonical_entity_type,
+    fetch_product_brands,
     resolve_references,
     resolve_references_intersection,
 )
@@ -52,6 +54,8 @@ _RESOLVER_ENTITY_TYPES: frozenset[str] = frozenset({
     "category",
 })
 from app.services.query_normalizer import DOMAIN_STOPWORDS
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/references")
 
@@ -281,6 +285,58 @@ def _apply_limit(result: dict[str, Any], limit: int | None) -> dict[str, Any]:
             by_type.setdefault(m.get("entity_type", ""), []).append(m)
         new_result["by_entity_type"] = by_type
     return new_result
+
+
+def _stamp_brand_on_products(db: Session, result: dict[str, Any]) -> dict[str, Any]:
+    """Fill `display.brand` on any product row in the payload that lacks it.
+
+    The resolver stamps every match it builds itself (`_attach_brand_info`), but
+    this module builds product rows of its own - the through-promotion expansion
+    and the spec search - as plain dicts that never pass through it. Rather than
+    patch each builder (and every future one), sweep the finished payload: a row
+    that already carries a brand is left exactly as it is, so this is idempotent
+    and the brand-access path keeps the shape it always had.
+
+    Mutates in place: `by_entity_type` shares its `display` dicts with
+    `intersection`, so stamping once updates both views of the same row.
+    """
+    if not isinstance(result, dict):
+        return result
+
+    pending: list[dict[str, Any]] = []
+
+    def _collect(rows: Any) -> None:
+        if not isinstance(rows, list):
+            return
+        for row in rows:
+            if not isinstance(row, dict) or row.get("entity_type") != "product":
+                continue
+            display = row.get("display")
+            if not isinstance(display, dict) or "brand" in display or not row.get("uuid"):
+                continue
+            pending.append(row)
+
+    for tr in result.get("resolutions") or []:
+        if isinstance(tr, dict):
+            _collect(tr.get("matches"))
+            _collect(tr.get("alternatives"))
+    _collect(result.get("intersection"))
+    _collect(result.get("alternatives"))
+    for rows in (result.get("by_entity_type") or {}).values():
+        _collect(rows)
+
+    if not pending:
+        return result
+    try:
+        brands = fetch_product_brands(db, [str(r["uuid"]) for r in pending])
+    except Exception:  # noqa: BLE001 — brand is additive, never fatal
+        logger.exception("brand stamp on resolve payload failed")
+        return result
+    for row in pending:
+        key = str(row["uuid"])
+        if key in brands:
+            row["display"]["brand"] = brands[key]
+    return result
 
 
 def _resolve_promotion_ids_for_token(
@@ -1503,16 +1559,19 @@ def resolve_reference(
     OR mode (default): per-token, returns canonical UUIDs + display payload + ambiguity signals.
     AND mode: cross-token intersection across each entity's concatenated searchable columns.
     """
-    return _resolve_input(
+    return _stamp_brand_on_products(
         db,
-        query,
-        tokens,
-        match_mode=match_mode,
-        allowed_entity_types=allowed_entity_types,
-        access_levels=access_levels,
-        fallback_to_all_types=fallback_to_all_types,
-        domain_hint=domain_hint or domain,
-        limit=limit,
+        _resolve_input(
+            db,
+            query,
+            tokens,
+            match_mode=match_mode,
+            allowed_entity_types=allowed_entity_types,
+            access_levels=access_levels,
+            fallback_to_all_types=fallback_to_all_types,
+            domain_hint=domain_hint or domain,
+            limit=limit,
+        ),
     )
 
 
@@ -1656,4 +1715,4 @@ def resolve_reference_post(
         if semantic_ms is not None:
             result["semantic_ms"] = semantic_ms
 
-    return result
+    return _stamp_brand_on_products(db, result)
