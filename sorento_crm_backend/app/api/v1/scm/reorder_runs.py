@@ -470,6 +470,9 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
         "order_multiple": inp.get("order_multiple"),
         # --- S10: the weekly checklist, so the row answers "should I order this" alone ---
         "segment": r["segment"],
+        # The window the daily rate was averaged over, so the row can show "N units over
+        # M days" instead of a bare rate.
+        "demand_window_days": inp.get("demand_window_days"),
         "on_hand": inp.get("on_hand"),
         # SPO on the water vs the ordered-not-received PO book. Two different questions.
         "incoming_spo": inp.get("on_order"),

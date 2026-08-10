@@ -442,6 +442,50 @@ function OrderQtyDrill({ row }: { row: M8PlanRow }) {
           </div>
         </div>
       ) : null}
+      {/* Where the daily rate comes from, and how many days of it are being bought. Both
+          were invisible: the row showed "1.0/day" with no way to see the deliveries behind
+          it, and an order-up-to with no way to see it was 51 days of cover. */}
+      <div className="border-t px-3 py-2">
+        <div className="mb-1 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+          Order-up-to level
+        </div>
+        <p className="text-2xs text-muted-foreground">
+          S = reorder point + demand rate x review period
+        </p>
+        <div className="mt-1 flex items-baseline justify-between gap-2 text-xs">
+          <span className="tabular-nums text-muted-foreground">
+            {q.reorder_point === null ? EM_DASH : fmtInt(q.reorder_point)} +{' '}
+            {demandRate == null ? EM_DASH : fmtDecimal(demandRate)}/day x{' '}
+            {fmtInt(row.rec.review_days ?? null)}d review
+          </span>
+          <span className="tabular-nums font-semibold">
+            {q.order_up_to === null ? EM_DASH : fmtInt(q.order_up_to)}
+          </span>
+        </div>
+        {row.rec.safety_days != null && row.rec.review_days != null ? (
+          <p className="mt-1 text-2xs text-muted-foreground">
+            {fmtInt(
+              (row.rec.safety_days ?? 0) + (leadDays ?? 0) + (row.rec.review_days ?? 0),
+            )}{' '}
+            days of cover ({fmtInt(row.rec.safety_days)} safety + {fmtInt(leadDays)} lead +{' '}
+            {fmtInt(row.rec.review_days)} review)
+          </p>
+        ) : null}
+      </div>
+
+      {demandRate != null && row.rec.demand_window_days ? (
+        <div className="border-t px-3 py-2">
+          <div className="mb-1 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+            Where the rate comes from
+          </div>
+          <p className="text-2xs text-muted-foreground">
+            {fmtInt(demandRate * row.rec.demand_window_days)} units left this location over
+            the last {fmtInt(row.rec.demand_window_days)} days, which averages{' '}
+            {fmtDecimal(demandRate)} a day. Past deliveries, not the open orders.
+          </p>
+        </div>
+      ) : null}
+
       {/* Reorder-point explain (M8-F5): the formula + the frozen inputs behind it. */}
       <div className="border-t px-3 py-2">
         <div className="mb-1 text-2xs font-medium uppercase tracking-wide text-muted-foreground">

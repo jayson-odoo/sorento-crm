@@ -500,7 +500,7 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
                -- `np.on_order` is SPO (supplier POs on the water); `po_ordered_v` is the
                -- ordered-not-received PO book. Two different questions, two columns.
                COALESCE(po.ordered, 0) AS po_ordered,
-               ds.avg_daily_demand, ds.demand_cv, ds.sample_days,
+               ds.avg_daily_demand, ds.demand_cv, ds.sample_days, ds.window_days,
                ic.abc_class, ic.xyz_class
         FROM scm.net_position_v np
         JOIN products p ON p.id = np.product_id
@@ -991,6 +991,7 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
                 # comes from this bin.
                 for k in ("net", "rop", "demand_rate", "doc",
                           "ss", "ss_used", "ss_fallback",
+                          "demand_window_days",
                           "on_hand", "on_order", "po_ordered", "segment",
                           "master_reorder_level", "master_reorder_quantity",
                           "committed", "list_price",
@@ -1175,6 +1176,9 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
         "committed": _fnum(row.get("committed")),
         # S10 - the figures the buyer looks up by hand before deciding. Carried on the cell
         # so the row answers "should I order this" without a second screen.
+        # Where the daily rate came from: N units delivered over the window. Without it the
+        # rate is a number the reader has to take on faith.
+        "demand_window_days": _fnum(row.get("window_days")),
         "on_hand": _fnum(row.get("quantity_on_hand")),
         "on_order": _fnum(row.get("on_order")),
         "po_ordered": _fnum(row.get("po_ordered")),
@@ -1469,6 +1473,7 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         "suggested_level": c.get("suggested_level"),
         "suggestion_basis": c.get("suggestion_basis"),
         # The weekly checklist, frozen with the row so it still reads true next month.
+        "demand_window_days": c.get("demand_window_days"),
         "on_hand": c.get("on_hand"),
         "on_order": c.get("on_order"),
         "po_ordered": c.get("po_ordered"),

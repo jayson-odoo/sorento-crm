@@ -294,6 +294,9 @@ export interface ReorderRecommendation {
   reorder_level_source?: string | null;
   /** The reorder settings held on the PRODUCT record. Shown beside what the plan computed;
    *  the engine does not read them. Null means not set, which is not zero. */
+  /** The window the daily demand rate was averaged over, so the row can show the units
+   *  behind the rate rather than the rate alone. */
+  demand_window_days?: number | null;
   master_reorder_level?: number | null;
   master_reorder_quantity?: number | null;
   /** What we last paid, and HOW it was attributed. `unattributed` is said out loud: most
