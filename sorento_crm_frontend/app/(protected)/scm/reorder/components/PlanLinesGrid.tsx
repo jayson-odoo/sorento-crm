@@ -230,6 +230,26 @@ export function PlanLinesGrid({
         meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
+        id: 'side',
+        accessorFn: (row) => row.rec.segment ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Side" visibility column={column} />,
+        // Project vs Retail, off the warehouse's segment. Never merged into one figure
+        // anywhere on this screen (S13b): project demand is erratic and retail stable, so a
+        // number spanning both describes neither. "Retail" not "Dealer" - the user's word.
+        cell: ({ row }) => {
+          const seg = row.original.rec.segment;
+          if (!seg) return <span className="text-muted-foreground">{EM_DASH}</span>;
+          return (
+            <Badge variant={seg === 'project' ? 'info' : 'success'} appearance="light" size="sm">
+              {seg === 'project' ? 'Project' : 'Retail'}
+            </Badge>
+          );
+        },
+        size: 90,
+        enableSorting: true,
+        meta: { headerTitle: 'Side', skeleton: <Skeleton className="h-5 w-14" /> },
+      },
+      {
         id: 'status',
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" visibility column={column} />,
@@ -417,20 +437,37 @@ export function PlanLinesGrid({
             return <span className="text-muted-foreground">{EM_DASH}</span>;
           }
           const cover = coverFor?.(line) ?? NO_COVER;
-          // Stated as a sentence, because the buyer is being asked to agree with a
-          // recommendation. Two numbers in separate columns cannot be agreed with at a glance.
-          const text =
-            cover.coverQty > 0
-              ? describeCover(cover, (n) => fmtInt(n))
-              : `Buy ${fmtInt(Math.ceil(line.order_qty))}`;
+          // Structured parts, one per line, never a comma-joined sentence (user markup,
+          // 2026-08-10: "I need it to be more structured and organized"). The full prose
+          // stays on the title and in the decision cell's tooltip for anyone who wants it.
+          const buyQty = cover.coverQty > 0 ? cover.buyQty : Math.ceil(line.order_qty);
           const crossing = cover.sources.some((x) => x.cross_segment);
+          // A cover offer on a project line is purchasing superseding CS: the inquiry said
+          // buy it all, and the engine found stock CS did not use. Said out loud, because a
+          // quiet disagreement with CS reads as the engine miscounting.
+          const supersede =
+            line.rec.segment === 'project' && cover.coverQty > 0
+              ? `CS asked to buy ${fmtInt(Math.ceil(line.order_qty))}`
+              : null;
           return (
-            <div className="min-w-0">
-              <span className="block truncate text-xs" title={text}>
-                {text}
-              </span>
+            <div className="min-w-0 text-xs" title={describeCover(cover, (n) => fmtInt(n))}>
+              {cover.coverQty > 0 ? (
+                <div className="truncate">
+                  {`Use stock ${cover.sources
+                    .map((s) => `${fmtInt(s.qty)} from ${s.warehouse_code}`)
+                    .join(', ')}`}
+                </div>
+              ) : null}
+              {buyQty > 0 ? (
+                <div className="truncate font-medium">{`Buy ${fmtInt(buyQty)}`}</div>
+              ) : null}
               {crossing ? (
                 <span className="text-2xs text-scm-overstock">crosses segment</span>
+              ) : null}
+              {supersede ? (
+                <span className="block truncate text-2xs text-muted-foreground">
+                  {supersede}
+                </span>
               ) : null}
             </div>
           );

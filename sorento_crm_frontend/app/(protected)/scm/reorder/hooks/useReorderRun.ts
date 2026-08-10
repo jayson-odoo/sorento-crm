@@ -13,6 +13,7 @@ import {
   getReorderRun,
   getRecommendations,
   getTodayRun,
+  getSetAsideDemand,
   getUnlocatedDemand,
   listReorderRuns,
   type RecommendationQuery,
@@ -200,6 +201,23 @@ export function useTodayRun() {
 
 /** React-query cache key for the unlocated-demand signal. */
 export const unlocatedDemandKey = ['scm', 'reorder', 'unlocated-demand'];
+
+/** React-query cache key for the set-aside project demand signal. */
+export const setAsideDemandKey = ['scm', 'reorder', 'set-aside-demand'];
+
+/**
+ * Project demand no Order Inquiry names, so the plan set it aside (S13b). Like unlocated
+ * demand, a property of the demand book rather than of any one run.
+ */
+export function useSetAsideDemand() {
+  return useQuery({
+    queryKey: setAsideDemandKey,
+    queryFn: () => getSetAsideDemand(),
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
+    retry: 1,
+  });
+}
 
 /**
  * Demand the plan cannot net because the sales-order line names no warehouse. A property

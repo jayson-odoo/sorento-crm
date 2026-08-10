@@ -9,6 +9,7 @@ import {
   CalendarClock,
   CalendarDays,
   History,
+  Info,
   Loader2,
   PlayCircle,
   RotateCcw,
@@ -32,6 +33,7 @@ import {
   useCoveredRecommendations,
   useNeedsLevelRecommendations,
   useTodayRun,
+  useSetAsideDemand,
   useUnlocatedDemand,
 } from '../hooks/useReorderRun';
 import { usePlanLines } from '../hooks/usePlanLines';
@@ -125,6 +127,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   // A property of the demand book, not of the run on screen, so it is read once here and
   // shown whichever run the page is looking at.
   const unlocated = useUnlocatedDemand();
+  const setAside = useSetAsideDemand();
 
   // Manual re-plan runs a live run then swaps the page to today's fresh snapshot.
   const manual = useReorderRun();
@@ -484,6 +487,36 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
                 Largest:{' '}
                 <span className="font-medium text-foreground">
                   {unlocated.data.sample.map((s) => s.product_code).join(', ')}
+                </span>
+                .
+              </>
+            ) : null}
+          </span>
+        </div>
+      ) : null}
+
+      {/* Project demand CS has not put on an Order Inquiry. NOT in the plan, by the user's
+          own rule - the inquiry is the demand for the project side - and counted here so a
+          smaller-than-expected plan explains itself instead of looking like lost data. */}
+      {setAside.data && setAside.data.orders > 0 ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-sky-500/40 bg-sky-500/5 px-3 py-2 text-sm">
+          <Info className="size-4 shrink-0 text-sky-600" aria-hidden />
+          <span className="text-muted-foreground">
+            <span className="font-medium text-foreground tabular-nums">
+              {fmtInt(setAside.data.quantity)}
+            </span>{' '}
+            units across{' '}
+            <span className="font-medium text-foreground tabular-nums">
+              {fmtInt(setAside.data.orders)}
+            </span>{' '}
+            project order{setAside.data.orders === 1 ? '' : 's'} are waiting on an Order
+            Inquiry, so this plan leaves them out.
+            {setAside.data.sample.length ? (
+              <>
+                {' '}
+                Largest:{' '}
+                <span className="font-medium text-foreground">
+                  {setAside.data.sample.map((x) => x.so_number).join(', ')}
                 </span>
                 .
               </>

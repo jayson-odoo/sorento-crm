@@ -18,12 +18,14 @@ const useTodayRun = vi.fn();
 const useReorderRun = vi.fn();
 const useAllDispositionRecommendations = vi.fn();
 const useUnlocatedDemand = vi.fn();
+const useSetAsideDemand = vi.fn();
 const useCoveredRecommendations = vi.fn();
 const useNeedsLevelRecommendations = vi.fn();
 vi.mock('../hooks/useReorderRun', () => ({
   useTodayRun: () => useTodayRun(),
   useReorderRun: () => useReorderRun(),
   useUnlocatedDemand: () => useUnlocatedDemand(),
+  useSetAsideDemand: () => useSetAsideDemand(),
   useCoveredRecommendations: (...a: unknown[]) => useCoveredRecommendations(...a),
   useNeedsLevelRecommendations: (...a: unknown[]) => useNeedsLevelRecommendations(...a),
   useAllDispositionRecommendations: (...a: unknown[]) => useAllDispositionRecommendations(...a),
@@ -89,6 +91,7 @@ beforeEach(() => {
   useReorderRun.mockReset().mockReturnValue({ run: null, isRunning: false, isComplete: false, isFailed: false, error: null, start: vi.fn(), reset: vi.fn() });
   useAllDispositionRecommendations.mockReset().mockReturnValue({ data: [], isLoading: false });
   useUnlocatedDemand.mockReset().mockReturnValue({ data: undefined, isLoading: false });
+  useSetAsideDemand.mockReset().mockReturnValue({ data: undefined, isLoading: false });
   useCoveredRecommendations.mockReset().mockReturnValue({ data: [], isLoading: false, isError: false, error: null });
   useNeedsLevelRecommendations.mockReset().mockReturnValue({ data: [], isLoading: false, isError: false, error: null });
   useReorderPlan.mockReset().mockReturnValue({ isLoading: false, isError: false, error: null, refetch: vi.fn(), applyProposalLine: vi.fn(), rows: [] });
@@ -270,6 +273,37 @@ describe('ReorderPlanningView - demand the plan could not net', () => {
     renderView();
 
     expect(screen.queryByText(/arrived with no stock location/i)).not.toBeInTheDocument();
+  });
+
+  // > "order inquiry is only for project side" - a project SO no inquiry names is set
+  // > aside AND counted (user decision, 2026-08-10). This banner is the counting half.
+  it('says how much project demand is waiting on an Order Inquiry', () => {
+    stubToday(todayRun());
+    useSetAsideDemand.mockReturnValue({
+      data: {
+        orders: 3,
+        lines: 12,
+        quantity: 480,
+        sample: [{ so_number: 'SO26-0101', who: 'Vivo Homes', quantity: 300 }],
+      },
+      isLoading: false,
+    });
+    renderView();
+
+    expect(screen.getByText(/waiting on an Order Inquiry/i)).toBeInTheDocument();
+    expect(screen.getByText('480')).toBeInTheDocument();
+    expect(screen.getByText('SO26-0101')).toBeInTheDocument();
+  });
+
+  it('says nothing when every project order is on an inquiry', () => {
+    stubToday(todayRun());
+    useSetAsideDemand.mockReturnValue({
+      data: { orders: 0, lines: 0, quantity: 0, sample: [] },
+      isLoading: false,
+    });
+    renderView();
+
+    expect(screen.queryByText(/waiting on an Order Inquiry/i)).not.toBeInTheDocument();
   });
 });
 

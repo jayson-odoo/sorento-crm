@@ -215,6 +215,27 @@ export async function getUnlocatedDemand(): Promise<UnlocatedDemand> {
   return res.json();
 }
 
+export interface SetAsideDemand {
+  orders: number;
+  lines: number;
+  quantity: number;
+  sample: { so_number: string; who: string | null; quantity: number }[];
+}
+
+/**
+ * GET /api/v1/scm/reorder-runs/set-aside-demand
+ *
+ * Project demand the plan did NOT count, because no Order Inquiry named it (S13b). The
+ * report that keeps the demand split from reading as demand silently going missing.
+ */
+export async function getSetAsideDemand(): Promise<SetAsideDemand> {
+  const res = await apiFetch('/api/v1/scm/reorder-runs/set-aside-demand');
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, 'Failed to load set-aside demand'));
+  }
+  return res.json();
+}
+
 /** Raw shape returned by POST /reorder-runs (202). */
 interface ReorderRunAcceptedDto {
   run_id: string;

@@ -333,7 +333,16 @@ def _create_orders(db: Session, parsed, now: datetime) -> dict:
     for number, rows in by_number.items():
         order = existing.get(number)
         if order is not None and (order.source_system or "") != SOURCE_SYSTEM:
-            # Somebody else's order. The caller still annotates it; nothing here touches it.
+            # Somebody else's order. The caller still annotates it; quantities and dates
+            # stay theirs. ONE column is stamped all the same: the inquiry naming this
+            # order is exactly what makes it project demand (S13b), and the fact does not
+            # depend on who owns the figures. Without it the reverse ordering breaks - the
+            # CS book lands first, the inquiry names the order later, and its demand stays
+            # invisible because origin was only ever written at creation. Never cleared:
+            # dropping off a later sheet is one person tidying a working file, not CS
+            # withdrawing the demand.
+            if order.demand_origin != SOURCE_SYSTEM:
+                order.demand_origin = SOURCE_SYSTEM
             orders_owned_elsewhere += 1
             continue
 
@@ -360,6 +369,10 @@ def _create_orders(db: Session, parsed, now: datetime) -> dict:
                 demand_class="project" if project else None,
                 status="open",
                 source_system=SOURCE_SYSTEM,
+                # Origin survives adoption; source_system does not. Project demand is keyed
+                # on THIS stamp (S13b), so CS taking ownership of the order later must not
+                # be able to erase where it came from.
+                demand_origin=SOURCE_SYSTEM,
                 source_ref=SOURCE,
             )
             db.add(order)

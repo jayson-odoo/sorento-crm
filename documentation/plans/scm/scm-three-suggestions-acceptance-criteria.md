@@ -1,6 +1,6 @@
 # S13 - The engine in purchasing's chair: three suggestions per row
 
-Status: UAC reviewed and marked up by the user 2026-08-10 (lavish session). Decisions resolved below. Nothing built yet.
+Status: user said go 2026-08-10. S13b BUILT (demand_origin column, committed_v split, set-aside report + banner, Side column, structured quantity cell, supersede wording). S13c-f next.
 
 ## Why
 

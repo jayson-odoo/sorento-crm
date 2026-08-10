@@ -230,15 +230,28 @@ describe('PlanLinesGrid - buy, cover, or both', () => {
   it('names the source when stock elsewhere covers it outright', () => {
     // The live BRW-IB case: nothing on hand HERE, but BRW-BB is holding some.
     renderGrid([line({ order_qty: 1 })], {}, elsewhere);
-    expect(screen.getByText('Use 1 from BRW-BB')).toBeInTheDocument();
+    expect(screen.getByText('Use stock 1 from BRW-BB')).toBeInTheDocument();
   });
 
-  it('proposes the split when the free stock runs out part way', () => {
+  it('proposes the split as structured parts, one per line, never a sentence', () => {
     // The live DC1-BB case: 6 units exist anywhere else against a shortage of 188.
+    // Structured is the user's own markup: "more structured and organized, instead of
+    // like a sentence".
     renderGrid([line({ order_qty: 188 })], {}, elsewhere);
-    expect(
-      screen.getByText('Use 5 from BRW-BB, 1 from PJ-SR, and buy 182'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Use stock 5 from BRW-BB, 1 from PJ-SR')).toBeInTheDocument();
+    expect(screen.getByText('Buy 182')).toBeInTheDocument();
+  });
+
+  it('says when the engine is superseding CS on a project line', () => {
+    // Purchasing can overrule the inquiry, but never silently: a quiet disagreement with
+    // CS reads as the engine miscounting.
+    renderGrid([line({ order_qty: 188, segment: 'project' })], {}, elsewhere);
+    expect(screen.getByText('CS asked to buy 188')).toBeInTheDocument();
+  });
+
+  it('does not claim CS asked for anything on a retail line', () => {
+    renderGrid([line({ order_qty: 188, segment: 'dealer' })], {}, elsewhere);
+    expect(screen.queryByText(/CS asked/)).not.toBeInTheDocument();
   });
 
   it('refuses Use stock when nothing is free anywhere, and says why', () => {

@@ -297,6 +297,12 @@ class SalesOrder(Base, CompanyScopedMixin):
     # priority is decided by this. Nullable because a row whose class cannot be resolved is
     # rejected at import rather than silently defaulted to retail.
     demand_class = Column(String(32), nullable=True)
+    # Which feed ORIGINATED this order - 'scm_order_inquiry' when the Order Inquiry sheet
+    # created it. Its own column, never source_system: adoption by the outstanding extract
+    # overwrites source_system to take ownership, and project demand is keyed on origin
+    # (S13b), so reading origin off source_system would delete demand as a side effect of
+    # the handover. Stamped at creation, never rewritten.
+    demand_origin = Column(String(32), nullable=True)
     priority = Column(String(20), nullable=True)
     status = Column(String(50), default="open", nullable=False)
     source_system = Column(String, nullable=True)

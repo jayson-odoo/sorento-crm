@@ -69,7 +69,11 @@ from app.services.scm.coverage_timeline import (
     is_use_stock,
     resolve_sources,
 )
-from app.services.scm.demand import is_open_demand, qty_of as demand_qty_of
+from app.services.scm.demand import (
+    is_open_demand,
+    is_plan_demand_order,
+    qty_of as demand_qty_of,
+)
 from app.services.scm.reorder_engine import resolve_policy_for_sku
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 
@@ -376,6 +380,10 @@ class CoverageService:
                 SalesOrderLine.warehouse_id.in_(wh_ids),
                 SalesOrder.status == "open",
                 is_open_demand(),
+                # S13b: project demand exists only where the Order Inquiry created it. The
+                # timeline must eat the same demand as scm.committed_v or the chart
+                # contradicts the plan for reasons nobody can see.
+                is_plan_demand_order(),
             )
             .all()
         )
@@ -394,6 +402,7 @@ class CoverageService:
                 SalesOrderLine.warehouse_id.is_(None),
                 SalesOrder.status == "open",
                 is_open_demand(),
+                is_plan_demand_order(),
             )
             .all()
         )

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from sqlalchemy import func
 
-from app.models.order import SalesOrderLine
+from app.models.order import SalesOrder, SalesOrderLine
 
 #: CS has ruled this line out of purchasing. It stays on the sales order (the customer is
 #: still owed it) and stops being something to buy.
@@ -35,6 +35,39 @@ COVERED = "covered"
 #: Nobody has looked at this line yet. It COUNTS: a plan that quietly omitted unreviewed
 #: demand would be optimistic in exactly the situation where CS is behind.
 NOT_REVIEWED = "not_reviewed"
+
+#: The origin stamp the Order Inquiry feed writes on orders it creates. Its OWN column,
+#: never `source_system`: when CS's outstanding extract adopts an inquiry-created order it
+#: overwrites `source_system` to take ownership, and if origin were read off that column the
+#: act of adoption would silently delete the order's demand from the next run. Ownership
+#: moves; origin does not.
+ORDER_INQUIRY_ORIGIN = "scm_order_inquiry"
+
+#: The demand class CS filters through the Order Inquiry.
+PROJECT_CLASS = "project"
+
+#: The ORDER-level half of the demand rule (S13b, user decision 2026-08-10):
+#:
+#:   "order inquiry is only for project side. So for dealer side is exactly based on the
+#:    sales order."
+#:
+#: A project-class order is demand only when the Order Inquiry created it - CS already
+#: decided what purchasing should see, and a project SO the inquiry never named is CS
+#: saying "not yet". Every other class (retail, and NULL, which the importer already
+#: reports as unclassified) is demand straight from the book. What this predicate sets
+#: aside is counted by `demand_source_service.set_aside_project_demand`, never silently
+#: dropped.
+PLAN_DEMAND_ORDER_SQL = (
+    "(so.demand_class IS DISTINCT FROM 'project' "
+    "OR so.demand_origin = 'scm_order_inquiry')"
+)
+
+
+def is_plan_demand_order():
+    """`PLAN_DEMAND_ORDER_SQL`, as a SQLAlchemy expression over `sales_orders`."""
+    return SalesOrder.demand_class.is_distinct_from(PROJECT_CLASS) | (
+        SalesOrder.demand_origin == ORDER_INQUIRY_ORIGIN
+    )
 
 
 def demand_qty():
@@ -76,5 +109,8 @@ WHERE so.status = 'open'
   AND sol.purchasing_status <> 'covered'
   AND GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
                - COALESCE(sol.qty_delivered, 0), 0) > 0
+  -- S13b: project demand comes from the Order Inquiry; the book supplies the rest
+  AND (so.demand_class IS DISTINCT FROM 'project'
+       OR so.demand_origin = 'scm_order_inquiry')
 GROUP BY sol.product_id, sol.warehouse_id;
 """

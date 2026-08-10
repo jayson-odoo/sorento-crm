@@ -29,6 +29,7 @@ from app.services.scm import cover_service
 from app.services.scm import price_history_service
 from app.services.error_handler import AppException
 from app.services.scm import reorder_run_service as svc
+from app.services.scm import demand_source_service
 from app.services.scm import unplanned_demand_service
 from app.services.scm import demand_breakdown_service
 from app.services.scm.money import BASE_CURRENCY
@@ -219,6 +220,21 @@ def get_unlocated_demand(
     the demand is real and committed, and it is invisible because nobody said where it ships
     from."""
     return unplanned_demand_service.unlocated_demand(db)
+
+
+# Above ``/reorder-runs/{run_id}`` for the same route-shadowing reason as its neighbour.
+@router.get("/reorder-runs/set-aside-demand")
+def get_set_aside_demand(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Project demand the plan did NOT count, because no Order Inquiry named it (S13b).
+
+    The other half of the demand split: CS filters project sales orders into the Order
+    Inquiry, so a project SO outside it is set aside - and this report is what keeps that
+    from reading as demand silently going missing. Whole-book, like unlocated-demand: it
+    describes the CURRENT book, not a frozen run."""
+    return demand_source_service.set_aside_project_demand(db)
 
 
 @router.get("/reorder-runs/{run_id}", response_model=ReorderRunStatusResponse)

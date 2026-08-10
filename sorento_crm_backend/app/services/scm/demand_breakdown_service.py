@@ -21,6 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.services.company_scope_sql import company_sql_predicate
+from app.services.scm.demand import PLAN_DEMAND_ORDER_SQL
 
 # One screen's worth. A pool with thousands of lines is a reading problem, not a listing
 # problem, and the total is reported separately so the cap is never silent.
@@ -59,6 +60,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
     qty = ("GREATEST(COALESCE(sol.qty_required, sol.qty_ordered) "
            "         - COALESCE(sol.qty_delivered, 0), 0)")
     where_loc = "sol.warehouse_id::text = ANY(:members)"
+    plan_demand = PLAN_DEMAND_ORDER_SQL
     if include_unlocated:
         where_loc = f"({where_loc} OR sol.warehouse_id IS NULL)"
 
@@ -74,6 +76,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
           AND so.status = 'open' AND sol.line_status = 'open'
           AND sol.purchasing_status <> 'covered'
           AND {qty} > 0
+          AND {plan_demand}
           AND {where_loc}
           {("AND " + co) if co else ""}
     """

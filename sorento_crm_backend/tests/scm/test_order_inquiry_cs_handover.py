@@ -223,6 +223,31 @@ def test_both_orderings_reach_the_same_state(db, world):
     assert first == second == (1, "scm_upload", CS_QTY)
 
 
+def test_demand_origin_survives_both_orderings(db, world):
+    """S13b (AC-S13b.5). Project demand is keyed on `demand_origin`, so whichever feed lands
+    first, an order the inquiry names must end up stamped - CS adopting it must not erase
+    the stamp (sheet first), and the sheet annotating a CS-owned order must still write it
+    (CS first). Demand identical in both orderings follows from this, because
+    `scm.committed_v` reads exactly this column."""
+    _sheet_upload(db)
+    _cs_upload(db, world)
+    first = _orders(db)[0].demand_origin
+
+    db.query(SalesOrderLine).filter(
+        SalesOrderLine.sales_order_id == str(_orders(db)[0].id)
+    ).delete(synchronize_session=False)
+    db.query(SalesOrder).filter(SalesOrder.so_number == SO_NUMBER).delete(
+        synchronize_session=False
+    )
+    db.flush()
+
+    _cs_upload(db, world)
+    _sheet_upload(db)
+    second = _orders(db)[0].demand_origin
+
+    assert first == second == inquiry.SOURCE_SYSTEM
+
+
 # --------------------------------------------------------------------------- #
 # the same claim, against the REAL importer
 # --------------------------------------------------------------------------- #
