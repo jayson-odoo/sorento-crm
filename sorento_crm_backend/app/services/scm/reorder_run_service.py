@@ -375,6 +375,8 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
         # not select the reorder_level basis simply never consults them.
         levels = rl_service.get_levels(
             db, sorted({r["product_id"] for r in rows}), run.warehouse_ids)
+        # What we last paid, split by segment where the destination is known.
+        last_cost = _last_purchase_cost_map(db, [r["product_id"] for r in rows])
         wh_meta = {str(r["warehouse_id"]): (r["warehouse_code"], r["warehouse_name"]) for r in rows}
 
         # One read for the whole run. Every supplier price is restated in the base
@@ -384,11 +386,12 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
 
         if run.buy_scope == "network":
             recs = _plan_network(db, run_id, rows, policies, today, last_move, wh_meta,
-                                 last_buy=last_buy, rates=rates, levels=levels)
+                                 last_buy=last_buy, rates=rates, levels=levels,
+                                 last_cost=last_cost)
         else:
             recs = _plan_per_warehouse(db, run_id, rows, policies, today, last_move,
                                        wh_meta, last_buy=last_buy, rates=rates,
-                                       levels=levels)
+                                       levels=levels, last_cost=last_cost)
 
         # M4 cash stage — compute + FREEZE each buy's rank_score / rank / rank_factors
         # (funded/deferred is computed live at view-time against a budget, not here).
@@ -565,6 +568,82 @@ def _last_purchase_map(db: Session, product_ids: list[str]) -> dict[str, date]:
     return {str(r[0]): r[1] for r in rows}
 
 
+def _last_purchase_cost_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
+    """What we last PAID, per product, split by segment where the destination is known.
+
+    > "last purchase only consider BRW ... last purchase for project is depending on the
+    >  BRW-BB, IB those location"
+
+    The split is the right question and the data cannot answer it for most rows: 12,928 of
+    the 12,940 purchase-order lines on the customer's book name no destination, because the
+    purchase-history export does not carry one. So this returns THREE things and the row
+    says which it is showing:
+
+      dealer / project - a purchase whose destination is known to be that segment
+      any              - the most recent purchase regardless, used only when the segment
+                         has none of its own
+
+    A price with no destination is NOT relabelled as dealer. Calling an unattributed cost
+    "the dealer cost" would be inventing the very attribution the buyer asked for, and they
+    would price a project order off it. Once purchases arrive carrying a destination (an
+    SPO allocation already does), the same query starts answering per segment with no
+    further change here.
+    """
+    pids = list({str(p) for p in product_ids})
+    if not pids:
+        return {}
+    co, co_params = company_sql_predicate(db, "po.company_id", param_prefix="clc")
+    rows = db.execute(text(f"""
+        SELECT DISTINCT ON (pol.product_id, COALESCE(w.segment, 'unattributed'))
+               pol.product_id::text AS product_id,
+               COALESCE(w.segment, 'unattributed') AS segment,
+               pol.unit_cost, COALESCE(pol.currency, po.currency) AS currency,
+               po.po_number, po.issue_date
+          FROM purchase_order_lines pol
+          JOIN purchase_orders po ON po.id = pol.purchase_order_id
+          LEFT JOIN warehouses w ON w.id = pol.warehouse_id
+         WHERE pol.product_id::text = ANY(:pids)
+           AND pol.unit_cost IS NOT NULL
+           {("AND " + co) if co else ""}
+         ORDER BY pol.product_id, COALESCE(w.segment, 'unattributed'),
+                  po.issue_date DESC NULLS LAST, pol.created_at DESC
+    """), {"pids": pids, **co_params}).mappings().all()
+
+    out: dict[str, dict] = {}
+    for r in rows:
+        entry = {
+            "cost": _fnum(r["unit_cost"]),
+            "currency": r["currency"],
+            "ref": r["po_number"],
+            "at": r["issue_date"].isoformat() if r["issue_date"] else None,
+        }
+        bucket = out.setdefault(r["product_id"], {})
+        bucket[r["segment"]] = entry
+        # "any" is the newest across every segment. The rows arrive newest-first within a
+        # segment but not across them, so it is chosen rather than assumed.
+        cur = bucket.get("any")
+        if cur is None or (entry["at"] or "") > (cur["at"] or ""):
+            bucket["any"] = entry
+    return out
+
+
+def _last_purchase_for(costs: dict, product_id: str,
+                       segment: Optional[str]) -> tuple[Optional[dict], str]:
+    """The purchase to show on a row, and how it was attributed.
+
+    `own_segment` - a purchase that landed in this segment. `other_segment` is never
+    returned: a dealer price does not price a project order.
+    """
+    bucket = (costs or {}).get(product_id) or {}
+    if segment and bucket.get(segment):
+        return bucket[segment], "own_segment"
+    if bucket.get("unattributed"):
+        return bucket["unattributed"], "unattributed"
+    if bucket.get("any"):
+        return bucket["any"], "unattributed"
+    return None, "never_purchased"
+
+
 # ===========================================================================
 # per-warehouse planning (buy_scope=warehouse)
 # ===========================================================================
@@ -596,7 +675,8 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
                         wh_meta: Optional[dict] = None,
                         last_buy: Optional[dict] = None,
                         rates: Optional[dict] = None,
-                        levels: Optional[dict] = None) -> list[ReorderRecommendation]:
+                        levels: Optional[dict] = None,
+                        last_cost: Optional[dict] = None) -> list[ReorderRecommendation]:
     """Plan each SKU against each fulfilment POOL, not each warehouse.
 
     A shortage in one bin is covered from the shared pool its site draws on before it is
@@ -628,7 +708,7 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
         computed: list[dict] = []
         for r in prows:
             c = _compute_cell(db, r, policies, cands, today, last_move, last_buy,
-                              levels=levels)
+                              levels=levels, last_cost=last_cost)
             computed.append(c)
         flags = _transfer_flags_for(prows, computed)
 
@@ -908,7 +988,8 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
 
 def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict],
                   today: date, last_move: dict, last_buy: Optional[dict] = None,
-                  levels: Optional[dict] = None) -> dict:
+                  levels: Optional[dict] = None,
+                  last_cost: Optional[dict] = None) -> dict:
     """Run the engine for one SKU×warehouse; returns the frozen decision values."""
     pid = str(row["product_id"])
     wid = str(row["warehouse_id"])
@@ -967,6 +1048,7 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
     # S10 - the buyer's own level, when the resolved policy selects that basis. The forecast
     # ROP/OUP above are still computed and still frozen onto the row, because the buyer wants
     # to SEE what the industry-standard basis would have said; they simply no longer decide.
+    lp, lp_basis = _last_purchase_for(last_cost or {}, pid, row.get("segment"))
     level_row = rl_service.resolve_level(levels or {}, pid, wid) or {}
     reorder_level = _fnum(level_row.get("level"))
     # A level nobody has set is not a level of zero. The row is emitted as `needs_level` so
@@ -1045,6 +1127,11 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
         "on_order": _fnum(row.get("on_order")),
         "po_ordered": _fnum(row.get("po_ordered")),
         "segment": row.get("segment"),
+        # The last price, and HOW it was attributed. The second half is the honest part:
+        # most purchase history names no destination, so a dealer row is usually shown an
+        # unattributed price and has to be told so.
+        "last_purchase": lp,
+        "last_purchase_basis": lp_basis,
     }
 
 
@@ -1113,7 +1200,8 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
                   today: date, last_move: dict, wh_meta: dict,
                   last_buy: Optional[dict] = None,
                   rates: Optional[dict] = None,
-                  levels: Optional[dict] = None) -> list[ReorderRecommendation]:
+                  levels: Optional[dict] = None,
+                  last_cost: Optional[dict] = None) -> list[ReorderRecommendation]:
     recs: list[ReorderRecommendation] = []
     rates = load_rates(db) if rates is None else rates
     by_product: dict[str, list[dict]] = {}
@@ -1124,7 +1212,7 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
         cands = eng.load_supplier_candidates(db, pid, rates=rates)
         # per-warehouse cells (drive disposition + transfer flags + allocation demand)
         computed = [_compute_cell(db, r, policies, cands, today, last_move, last_buy,
-                                  levels=levels)
+                                  levels=levels, last_cost=last_cost)
                     for r in prows]
         flags = _transfer_flags_for(prows, computed)
 
@@ -1331,6 +1419,8 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         "on_order": c.get("on_order"),
         "po_ordered": c.get("po_ordered"),
         "segment": c.get("segment"),
+        "last_purchase": c.get("last_purchase"),
+        "last_purchase_basis": c.get("last_purchase_basis"),
         "cv_d": c.get("cv"),
         "var_lt": c.get("var_lt"),
         "demand_rate": _r(c.get("demand_rate")),

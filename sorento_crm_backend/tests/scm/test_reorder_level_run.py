@@ -164,3 +164,111 @@ def test_a_suggestion_is_never_planned_as_a_level(scm_app):
     rows = _recs(db, created["run_id"], pid)
     assert {r["rec_type"] for r in rows} == {"needs_level"}
     assert float(rows[0]["inputs"]["suggested_level"]) == 99.0
+
+
+# --- last purchase, split by segment where the destination is known ----------------------
+
+def _po_line(db, pid: str, wid: str | None, cost: float, days_ago: int = 3) -> None:
+    """A recent purchase. Dated relative to today on purpose: an old one makes the item
+    read as dead stock, and a disposition row replaces the buy this test is about."""
+    poid = str(uuid.uuid4())
+    db.execute(text(
+        "INSERT INTO purchase_orders (id, po_number, issue_date, status, created_at, "
+        "updated_at) VALUES (:id, :n, CURRENT_DATE - :ago, 'closed', now(), now())"
+    ), {"id": poid, "n": f"ZZTPO-{poid[:8]}", "ago": days_ago})
+    db.execute(text(
+        "INSERT INTO purchase_order_lines (id, purchase_order_id, product_id, warehouse_id, "
+        "qty_ordered, unit_cost, line_status, created_at, updated_at) "
+        "VALUES (:id, :po, :p, :w, 1, :c, 'closed', now(), now())"
+    ), {"id": str(uuid.uuid4()), "po": poid, "p": pid, "w": wid, "c": cost})
+    db.flush()
+
+
+def test_a_dealer_row_reads_a_dealer_purchase(scm_app):
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+    wid = _mk_warehouse(db, "ZZTW-SEG-D")
+    db.execute(text("UPDATE warehouses SET segment = 'dealer' WHERE id = :w"), {"w": wid})
+    pid = _mk_product(db, f"ZZTP-SEGD-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 8)
+    _mk_demand(db, pid, wid, 0.0)
+    _link(db, pid, _mk_supplier(db, "ZZT Seg D"), moq=None, mult=None)
+    _set_level(db, pid, wid, 20)
+    _po_line(db, pid, wid, 33.0)
+    db.flush()
+
+    created = svc.create_run(db, ["ZZTW-SEG-D"], enqueue=False)
+    svc.run_reorder(created["run_id"], db=db)
+    inp = next(r for r in _recs(db, created["run_id"], pid)
+               if r["rec_type"] == "buy")["inputs"]
+    assert float(inp["last_purchase"]["cost"]) == 33.0
+    assert inp["last_purchase_basis"] == "own_segment"
+
+
+def test_a_project_row_is_not_shown_the_dealer_price(scm_app):
+    # The whole reason the split exists. A purchase into the dealer bin must not be
+    # presented as what a project order costs.
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+    dealer = _mk_warehouse(db, "ZZTW-SEG-DD")
+    project = _mk_warehouse(db, "ZZTW-SEG-PP")
+    db.execute(text("UPDATE warehouses SET segment = 'dealer' WHERE id = :w"), {"w": dealer})
+    db.execute(text("UPDATE warehouses SET segment = 'project' WHERE id = :w"), {"w": project})
+    pid = _mk_product(db, f"ZZTP-SEGP-{uuid.uuid4().hex[:6]}")
+    for w in (dealer, project):
+        _mk_stock(db, pid, w, 8)
+        _mk_demand(db, pid, w, 0.0)
+        _set_level(db, pid, w, 20)
+    _link(db, pid, _mk_supplier(db, "ZZT Seg P"), moq=None, mult=None)
+    _po_line(db, pid, dealer, 33.0)
+    db.flush()
+
+    created = svc.create_run(db, ["ZZTW-SEG-DD", "ZZTW-SEG-PP"], enqueue=False)
+    svc.run_reorder(created["run_id"], db=db)
+    rows = [r for r in _recs(db, created["run_id"], pid) if r["rec_type"] == "buy"]
+    by_segment = {r["inputs"]["segment"]: r["inputs"] for r in rows}
+    assert by_segment["dealer"]["last_purchase_basis"] == "own_segment"
+    # The project row has no purchase of its own, so it falls back and SAYS it fell back.
+    assert by_segment["project"]["last_purchase_basis"] == "unattributed"
+
+
+def test_a_purchase_with_no_destination_is_never_relabelled(scm_app):
+    # 12,928 of the customer's 12,940 purchase lines are like this. Calling one of them
+    # "the dealer cost" would invent the attribution the buyer asked us to make.
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+    wid = _mk_warehouse(db, "ZZTW-SEG-U")
+    db.execute(text("UPDATE warehouses SET segment = 'dealer' WHERE id = :w"), {"w": wid})
+    pid = _mk_product(db, f"ZZTP-SEGU-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 8)
+    _mk_demand(db, pid, wid, 0.0)
+    _link(db, pid, _mk_supplier(db, "ZZT Seg U"), moq=None, mult=None)
+    _set_level(db, pid, wid, 20)
+    _po_line(db, pid, None, 21.0)
+    db.flush()
+
+    created = svc.create_run(db, ["ZZTW-SEG-U"], enqueue=False)
+    svc.run_reorder(created["run_id"], db=db)
+    inp = next(r for r in _recs(db, created["run_id"], pid)
+               if r["rec_type"] == "buy")["inputs"]
+    assert float(inp["last_purchase"]["cost"]) == 21.0
+    assert inp["last_purchase_basis"] == "unattributed"
+
+
+def test_never_purchased_says_so_rather_than_showing_nothing(scm_app):
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+    wid = _mk_warehouse(db, "ZZTW-SEG-N")
+    pid = _mk_product(db, f"ZZTP-SEGN-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 8)
+    _mk_demand(db, pid, wid, 0.0)
+    _link(db, pid, _mk_supplier(db, "ZZT Seg N"), moq=None, mult=None)
+    _set_level(db, pid, wid, 20)
+    db.flush()
+
+    created = svc.create_run(db, ["ZZTW-SEG-N"], enqueue=False)
+    svc.run_reorder(created["run_id"], db=db)
+    inp = next(r for r in _recs(db, created["run_id"], pid)
+               if r["rec_type"] == "buy")["inputs"]
+    assert inp["last_purchase"] is None
+    assert inp["last_purchase_basis"] == "never_purchased"

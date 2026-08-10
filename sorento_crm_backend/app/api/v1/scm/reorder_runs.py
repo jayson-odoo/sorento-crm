@@ -479,6 +479,14 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
         "reorder_level_source": inp.get("reorder_level_source"),
         "suggested_level": inp.get("suggested_level"),
         "suggestion_basis": inp.get("suggestion_basis"),
+        # What we last paid, and how it was attributed. `unattributed` is said out loud
+        # because most purchase history names no destination: presenting it as the dealer
+        # or project cost would invent the split the buyer asked us for.
+        "last_purchase_cost": (inp.get("last_purchase") or {}).get("cost"),
+        "last_purchase_currency": (inp.get("last_purchase") or {}).get("currency"),
+        "last_purchase_date": (inp.get("last_purchase") or {}).get("at"),
+        "last_purchase_ref": (inp.get("last_purchase") or {}).get("ref"),
+        "last_purchase_basis": inp.get("last_purchase_basis"),
         "policy_type": inp.get("policy_type"),
         "supplier_selection": inp.get("selection"),
         # --- M4 cash co-pilot (buy rows only; non-buy leave these null) ---

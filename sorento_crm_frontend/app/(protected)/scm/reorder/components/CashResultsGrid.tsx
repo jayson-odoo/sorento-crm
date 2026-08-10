@@ -27,6 +27,7 @@ import { cn } from '@/lib/utils';
 import { EM_DASH, fmtDecimal, fmtInt, fmtMoney, fmtSigned, fmtSupplierCost } from '../../lib/format';
 import { m8CashImpact, type M8PlanRow } from '../lib/planRow';
 import { useExplainDemand, useExplainNet } from '../hooks/useDrills';
+import { PlanChecklistPopover } from './PlanChecklistPopover';
 import { PlanDemandPopover } from './PlanDemandPopover';
 
 /**
@@ -681,6 +682,9 @@ function PlanRow({
           {/* Which orders this quantity is actually for. Answers "why is it bought into
               BRW when I ordered for BRW-IB, and why so many" from the row itself. */}
           <PlanDemandPopover runId={runId ?? null} recId={row.id} />
+          {/* On hand, incoming, outstanding PO, outstanding sales, the level and the last
+              price - the lookups the buyer used to do by hand before deciding. */}
+          <PlanChecklistPopover rec={row.rec} />
           {isPinned ? (
             <Badge variant="primary" appearance="light" size="xs">
               pinned

@@ -292,6 +292,14 @@ export interface ReorderRecommendation {
    *  arrives as `needs_level` rather than as a buy. */
   reorder_level?: number | null;
   reorder_level_source?: string | null;
+  /** What we last paid, and HOW it was attributed. `unattributed` is said out loud: most
+   *  purchase history names no destination, so presenting it as the dealer or project cost
+   *  would invent the very split the buyer asked for. */
+  last_purchase_cost?: number | null;
+  last_purchase_currency?: string | null;
+  last_purchase_date?: string | null;
+  last_purchase_ref?: string | null;
+  last_purchase_basis?: 'own_segment' | 'unattributed' | 'never_purchased' | null;
   /** What three months of movement implies. Never applied on the buyer's behalf. */
   suggested_level?: number | null;
   suggestion_basis?: {
