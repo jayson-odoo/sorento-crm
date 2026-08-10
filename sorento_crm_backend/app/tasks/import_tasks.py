@@ -1558,7 +1558,65 @@ _GRN_SPO_COLUMN_CANDIDATES = (
     "from doc number",
     "from document no",
     "from document number",
+    "our po no",
+    "our po number",
+    "our p o no",
+    "our p o number",
 )
+
+# The GRN DETAIL (line) export carries the SPO on the LINE itself - AutoCount
+# calls it "Our PO No.". That is the stronger linkage: one GRN can be received
+# against several SPOs, and only the line knows which one it belongs to. The
+# header's "Transfer from" is the FALLBACK, used when the line says nothing.
+#
+# Order matters, and so does emptiness: `_first_filled` walks these in order and
+# takes the first candidate that is actually POPULATED on the row, so a sheet
+# carrying both an empty "Our PO No." and a repeated "Transfer From" still
+# resolves to the header value instead of stopping at the blank line column.
+_GRN_LINE_SPO_COLUMN_CANDIDATES = (
+    "our po no",
+    "our po number",
+    # "Our P.O. No." normalizes to separate letters, so it needs its own entry.
+    "our p o no",
+    "our p o number",
+    "our po",
+    "from doc no",
+    "from doc number",
+    "from document no",
+    "from document number",
+    "spo number",
+    "transfer from",
+    "transfer from ",
+)
+
+
+def _resolve_line_spo(row_data: dict) -> Optional[str]:
+    """The SPO a GRN LINE was received against, from the line's own columns.
+
+    None when the line names no single SPO (blank, or a multi-SPO cell) - the
+    caller then falls back to the GRN header's `spo_number`, which is the older
+    "Transfer from" linkage.
+    """
+    return _single_spo_or_none(_first_filled(row_data, *_GRN_LINE_SPO_COLUMN_CANDIDATES))
+
+
+def _first_filled(row: dict, *candidates: str) -> Any:
+    """First candidate column that is PRESENT AND NON-BLANK on this row.
+
+    Distinct from a present-key lookup: an export that ships the line-level SPO
+    column but leaves it empty on a given row must fall through to the next
+    candidate, not resolve to None and lose the header fallback.
+    """
+    for c in candidates:
+        cl = _grn_import_normalize_header(c)
+        if cl not in row:
+            continue
+        value = row.get(cl)
+        if value is None:
+            continue
+        if str(value).strip():
+            return value
+    return None
 
 # AutoCount puts every SPO a GRN was received against into the ONE "Transfer
 # from" cell ("SPO-2026/06-0020, SPO-2026/06-0021, ..."), which overflowed the
@@ -1678,7 +1736,7 @@ def _run_grn_listing_import_core(
     for row_idx, row in enumerate(data_rows, start=2):
         doc_num = _find(row, "doc number", "doc. no.", "doc. number", "doc number ", "grn number")
         grn_number = (doc_num and str(doc_num).strip()) or None
-        transfer_from = _find(row, *_GRN_SPO_COLUMN_CANDIDATES)
+        transfer_from = _first_filled(row, *_GRN_SPO_COLUMN_CANDIDATES)
         # Every SPO the GRN covers, normalized. Display for the multi-SPO case;
         # allocation matching runs off the per-line SPO.
         spo_number = _header_spo_display(transfer_from)
@@ -1845,8 +1903,9 @@ def validate_grn_lines_import(
         item_code = (_find(row_data, "item code", "item code ", "product code", "product code ") and str(_find(row_data, "item code", "item code ", "product code", "product code ")).strip()) or None
         location = (_find(row_data, "location", "warehouse", "warehouse code") and str(_find(row_data, "location", "warehouse", "warehouse code")).strip()) or None
         qty_raw = _find(row_data, "qty", "quantity", "qty ")
-        line_spo_raw = _find(row_data, *_GRN_SPO_COLUMN_CANDIDATES)
-        line_spo = (str(line_spo_raw).strip() if line_spo_raw is not None else "") or None
+        # Line-level SPO first ("Our PO No."), header column only as fallback -
+        # the preview must resolve exactly what the import resolves.
+        line_spo = _resolve_line_spo(row_data)
         try:
             qty = int(float(qty_raw)) if qty_raw is not None else 0
         except (TypeError, ValueError):
@@ -2000,8 +2059,10 @@ def process_grn_listing_import(db_job_id: str, file_data: bytes, filename: str, 
 def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, user_id: str):
     """Process GRN lines Excel: create/update picking lines. Idempotent.
     Columns: doc no -> GRN picking_number; item code; location -> warehouse; qty.
-    Optional SPO source (same as listing Transfer from): transfer from, spo number, from doc. no., etc.
-    Line-level SPO overrides the header’s spo_number for SPO allocation matching. Groups split by effective SPO so mixed SPOs on one GRN do not merge.
+    SPO source, in order: the LINE's own column ("Our PO No." / "From Doc. No."),
+    then the sheet's repeated header column ("Transfer From"), then the GRN
+    header's stored spo_number. Groups split by effective SPO so mixed SPOs on
+    one GRN do not merge.
     """
     from rq import get_current_job
     import openpyxl
@@ -2061,11 +2122,13 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
             item_code = (_find(row_data, "item code", "item code ", "product code", "product code ") and str(_find(row_data, "item code", "item code ", "product code", "product code ")).strip()) or None
             location = (_find(row_data, "location", "warehouse", "warehouse code") and str(_find(row_data, "location", "warehouse", "warehouse code")).strip()) or None
             qty_raw = _find(row_data, "qty", "quantity", "qty ")
-            line_spo_raw = _find(row_data, *_GRN_SPO_COLUMN_CANDIDATES)
+            # "Our PO No." is the LINE's own SPO and wins; the repeated header
+            # column ("Transfer From") is only consulted when the line is blank,
+            # and the DB header's spo_number is the last fallback below.
             # Same scalar rule as the header: a multi-SPO cell names no single
             # allocation, so the line stays unlinked rather than carrying a blob
             # that `_spo_match_key` can never match.
-            line_spo = _single_spo_or_none(line_spo_raw)
+            line_spo = _resolve_line_spo(row_data)
             try:
                 qty = int(float(qty_raw)) if qty_raw is not None else 0
             except (TypeError, ValueError):
