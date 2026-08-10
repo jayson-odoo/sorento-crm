@@ -490,6 +490,15 @@ class ResolvedEntity:
     # prompt for the former. See `_attach_company_info`.
     company_id: Optional[str] = None
     company_name: Optional[str] = None
+    # The exact text this row was matched AGAINST, set by the AND probes so
+    # `token_word_coverage_for_rows` can report which query words actually
+    # landed. It is the probe's blob, NOT everything in `display`: the product
+    # probe matches on `product_code` alone by design, so scoring a word
+    # against `product_name` would report a match the probe never made.
+    # Serialised as the transport key `_match_blob` on AND intersection rows
+    # only; the API layer (`references._attach_and_coverage`) strips it before
+    # the response leaves the process.
+    match_blob: Optional[str] = None
 
 
 @dataclass
@@ -3006,6 +3015,7 @@ def _and_probe_product(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
             uuid=str(pid) if pid else None,
             match_field="product_code",
             match_tier="and",
+            match_blob=code,
             display={"product_name": name, "is_active": bool(is_active)},
         )
         for pid, code, name, is_active in rows
@@ -3026,6 +3036,7 @@ def _and_probe_promotion(db: Session, tokens: list[str]) -> list[ResolvedEntity]
             uuid=str(pid),
             match_field="description",
             match_tier="and",
+            match_blob=description,
             display={"description": description, "is_active": bool(is_active)},
         )
         for pid, description, is_active in rows
@@ -3121,6 +3132,14 @@ def _and_probe_attachment(
             uuid=str(aid) if aid else None,
             match_field="original_filename",
             match_tier="and",
+            # Coverage mode scores the filename ALONE; the default mode scores the
+            # concat blob. Reporting the wrong one would credit a word to text the
+            # probe never looked at.
+            match_blob=(
+                filename
+                if coverage_mode
+                else " ".join(x for x in (filename, description, type_name) if x)
+            ),
             display={
                 "filename": filename,
                 "description": description,
@@ -3133,16 +3152,30 @@ def _and_probe_attachment(
     ]
 
 
+class _ProbeRows(list):
+    """A probe's row list plus a truncation marker the probe sets itself.
+
+    The generic loop check (`len(rows) >= AND_MODE_LIMIT`) is blind to a probe
+    that merges MULTIPLE capped queries and dedups: the merged list can land
+    under the cap while one source query hit its LIMIT, silently under-
+    reporting truncation. A probe that knows better says so here.
+    """
+
+    truncated: bool = False
+
+
 def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     # Two sources: customers master (preferred — has UUID) and orders.debtor_name
     # (legacy fallback). Run both; orders.debtor_name JOINs Customer for UUID.
-    out: list[ResolvedEntity] = []
+    out: _ProbeRows = _ProbeRows()
     blob_c = _concat_ws(Customer.customer_code, Customer.customer_name, Customer.phone_number, Customer.email)
     counts_c = _and_token_match_counts(blob_c, tokens)
     base_c = db.query(Customer.id, Customer.customer_code, Customer.customer_name, Customer.phone_number, Customer.email, Customer.is_active)
     tier_c = _and_max_tier_filter(base_c, counts_c)
     if tier_c is not None:
         rows = base_c.filter(tier_c).limit(AND_MODE_LIMIT).all()
+        if len(rows) >= AND_MODE_LIMIT:
+            out.truncated = True
         for cid, code, name, phone, email, is_active in rows:
             out.append(
                 ResolvedEntity(
@@ -3151,6 +3184,7 @@ def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
                     uuid=str(cid) if cid else None,
                     match_field="customer_code",
                     match_tier="and",
+                    match_blob=" ".join(x for x in (code, name, phone, email) if x),
                     display={"customer_name": name, "phone_number": phone, "email": email, "is_active": bool(is_active) if is_active is not None else True},
                 )
             )
@@ -3166,6 +3200,10 @@ def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     tier_o = _and_max_tier_filter(base_o, counts_o)
     if tier_o is not None:
         rows = base_o.filter(tier_o).distinct().limit(AND_MODE_LIMIT).all()
+        if len(rows) >= AND_MODE_LIMIT:
+            # The dedup below can shrink the merged list under the cap even
+            # though this source hit its LIMIT — mark it at the source.
+            out.truncated = True
         for debtor_name, debtor_code, customer_id in rows:
             if (debtor_name or "").lower() in seen_names:
                 continue
@@ -3176,6 +3214,7 @@ def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
                     uuid=str(customer_id) if customer_id else None,
                     match_field="debtor_name",
                     match_tier="and",
+                    match_blob=" ".join(x for x in (debtor_name, debtor_code) if x),
                     display={"debtor_name": debtor_name, "debtor_code": debtor_code, "source": "orders"},
                 )
             )
@@ -3197,6 +3236,7 @@ def _and_probe_form(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
             uuid=str(fid) if fid else None,
             match_field="form_name",
             match_tier="and",
+            match_blob=" ".join(x for x in (code, name, purpose) if x),
             display={"form_code": code, "form_name": name, "form_type": form_type, "is_active": bool(is_active)},
         )
         for fid, code, name, purpose, is_active, form_type in rows
@@ -3206,7 +3246,10 @@ def _and_probe_form(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
 def _and_probe_transporter(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     blob = _concat_ws(Transporter.code, Transporter.name, Transporter.normalized_name)
     counts = _and_token_match_counts(blob, tokens)
-    base = db.query(Transporter.id, Transporter.code, Transporter.name)
+    # `normalized_name` is selected only so `match_blob` can mirror the scored
+    # blob exactly; it is not displayed. Widening the SELECT does not change
+    # which rows come back.
+    base = db.query(Transporter.id, Transporter.code, Transporter.name, Transporter.normalized_name)
     tier = _and_max_tier_filter(base, counts)
     if tier is None:
         return []
@@ -3218,9 +3261,10 @@ def _and_probe_transporter(db: Session, tokens: list[str]) -> list[ResolvedEntit
             uuid=str(tid) if tid else None,
             match_field="transporter_name",
             match_tier="and",
+            match_blob=" ".join(x for x in (code, name, normalized_name) if x),
             display={"code": code, "name": name},
         )
-        for tid, code, name in rows
+        for tid, code, name, normalized_name in rows
     ]
 
 
@@ -3239,6 +3283,7 @@ def _and_probe_warehouse(db: Session, tokens: list[str]) -> list[ResolvedEntity]
             uuid=str(wid) if wid else None,
             match_field="warehouse_code",
             match_tier="and",
+            match_blob=" ".join(x for x in (code, name, location) if x),
             display={"warehouse_name": name, "location": location, "is_active": bool(is_active) if is_active is not None else True},
         )
         for wid, code, name, location, is_active in rows
@@ -3248,7 +3293,8 @@ def _and_probe_warehouse(db: Session, tokens: list[str]) -> list[ResolvedEntity]
 def _and_probe_supplier(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     blob = _concat_ws(Supplier.supplier_code, Supplier.supplier_name, Supplier.contact_name)
     counts = _and_token_match_counts(blob, tokens)
-    base = db.query(Supplier.id, Supplier.supplier_code, Supplier.supplier_name, Supplier.is_active)
+    # `contact_name` is selected only so `match_blob` mirrors the scored blob.
+    base = db.query(Supplier.id, Supplier.supplier_code, Supplier.supplier_name, Supplier.is_active, Supplier.contact_name)
     tier = _and_max_tier_filter(base, counts)
     if tier is None:
         return []
@@ -3260,9 +3306,10 @@ def _and_probe_supplier(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
             uuid=str(sid) if sid else None,
             match_field="supplier_code",
             match_tier="and",
+            match_blob=" ".join(x for x in (code, name, contact_name) if x),
             display={"supplier_name": name, "is_active": bool(is_active) if is_active is not None else True},
         )
-        for sid, code, name, is_active in rows
+        for sid, code, name, is_active, contact_name in rows
     ]
 
 
@@ -3288,6 +3335,7 @@ def _and_probe_customer_order(db: Session, tokens: list[str]) -> list[ResolvedEn
             uuid=str(row.id) if row.id else None,
             match_field="order_number",
             match_tier="and",
+            match_blob=row.order_number,
             display={
                 "customer_name": row.debtor_name,
                 "actual_delivery_date": _iso(row.actual_delivery_date),
@@ -3311,6 +3359,114 @@ _AND_PROBES: tuple[tuple[Callable[[Session, list[str]], list[ResolvedEntity]], f
 )
 
 
+def token_word_coverage_for_rows(
+    tokens: list[str],
+    rows: list[dict[str, Any]],
+    truncated_types: frozenset[str] | set[str] = frozenset(),
+) -> list[dict[str, Any]]:
+    """Per token, per entity type: which of the token's words appear in the
+    rows being returned.
+
+    AND-mode is max-coverage, not a boolean AND (see `_and_max_tier_filter`),
+    so a word can contribute nothing and the caller cannot tell from the rows.
+    This reports it, without changing which rows come back.
+
+    Called by the API layer over the FINAL row set — after the access-level
+    filter, the promotion expansion and the limit — because coverage computed
+    earlier describes rows a later stage removed (the original version baked
+    it into ``as_dict()`` and asserted "every word matched" on zero-row
+    entitlement-filtered responses).
+
+    Rules that keep the field honest:
+      * The claim is WEAK: "absent from these results", never "absent from the
+        catalogue". No extra query.
+      * Partitioned per entity type. A word matched by a product code must not
+        be credited to a promotion enquiry — pooling across types was the
+        other way the first version lied.
+      * Scored against the row's ``_match_blob`` (the text its probe actually
+        scored), never ``display``: the product probe matches ``product_code``
+        only, so a word appearing in ``product_name`` would be a match the
+        probe never made. Promotion rows whose ``match_field`` is
+        ``description`` fall back to ``display.description`` — for those rows
+        blob and description are the same column, which keeps the rows the
+        promotion expander synthesized from a description match honest. The
+        gate matters: a promotion found by MEMBERSHIP
+        (``match_field="promotion_membership"``, the "check the promo for
+        <SKU>" walk) was never scored on its description, and scoring it
+        anyway invented ``unmatched=[<SKU>]`` on exactly the rows that ARE
+        that SKU's promotions.
+      * A type whose rows carry no scorable text is OMITTED, not reported
+        all-unmatched: nobody scored any text for those rows. A type where
+        SOME rows are unscored keeps its claims but is marked ``truncated`` —
+        the claims cover only the scored subset.
+      * A word matched via a `_word_variants` form counts as matched but is
+        echoed back AS THE CALLER TYPED IT — reporting "taps" unmatched while
+        showing a TAP promotion would be a new false statement.
+      * ``truncated_types`` marks a type whose row set was capped (probe limit
+        or API ``limit``), so a consumer knows an unmatched word may exist in
+        rows that were cut and must not phrase it as a catalogue-wide absence.
+    """
+    blobs_by_type: dict[str, list[str]] = {}
+    # Types with at least one surviving row nobody scored (no blob, no honest
+    # fallback). Their claims cover only the scored subset, so they read as
+    # incomplete — reported via the same `truncated` flag.
+    partially_scored: set[str] = set()
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        etype = str(row.get("entity_type") or "")
+        if not etype:
+            continue
+        blob = row.get("_match_blob")
+        if (
+            not blob
+            and etype == "promotion"
+            and row.get("match_field") == "description"
+        ):
+            # Only description-MATCHED promotion rows may borrow the display
+            # description as their blob; membership-derived rows
+            # (match_field="promotion_membership") were never scored on it.
+            blob = (row.get("display") or {}).get("description")
+        if blob:
+            blobs_by_type.setdefault(etype, []).append(str(blob).lower())
+        else:
+            partially_scored.add(etype)
+
+    out: list[dict[str, Any]] = []
+    for tok in tokens or []:
+        if not tok or not isinstance(tok, str):
+            continue
+        coverage: list[dict[str, Any]] = []
+        for etype in sorted(blobs_by_type):
+            blobs = blobs_by_type[etype]
+            matched: list[str] = []
+            unmatched: list[str] = []
+            for word in [w for w in tok.split() if w]:
+                variants = [v.lower() for v in _word_variants(word)]
+                hit = any(v in blob for blob in blobs for v in variants)
+                (matched if hit else unmatched).append(word)
+            coverage.append(
+                {
+                    "entity_type": etype,
+                    "matched_words": matched,
+                    "unmatched_words": unmatched,
+                    "truncated": etype in truncated_types or etype in partially_scored,
+                }
+            )
+        out.append(
+            {
+                "token": tok,
+                # What `match_mode: "and"` really means. Nested here rather
+                # than top-level: consumer chains spread top-level keys toward
+                # persisted session state, and `by_entity_type`'s keys are
+                # rendered to customers as entity types.
+                "match_semantics": "max_coverage",
+                "coverage": coverage,
+            }
+        )
+    return out
+
+
 @dataclass
 class IntersectionResolutionResult:
     """Cross-token AND result. Returned when match_mode=and."""
@@ -3323,6 +3479,11 @@ class IntersectionResolutionResult:
     # tokens' trigram neighbours, deduped). Same entity-level, non-domain-gated
     # semantics as the OR-mode per-token alternatives.
     alternatives: list[ResolvedEntity] = field(default_factory=list)
+    # Entity types whose AND probe returned AND_MODE_LIMIT rows — the cap may
+    # have cut real matches, so word-coverage claims over these types are
+    # incomplete. (Exactly-at-the-cap without truncation is a harmless false
+    # positive: the flag only softens phrasing downstream.)
+    truncated_entity_types: list[str] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
@@ -3342,7 +3503,7 @@ class IntersectionResolutionResult:
                 "company_name": m.company_name,
                 "display": m.display,
             })
-        return {
+        result: dict[str, Any] = {
             "match_mode": self.match_mode,
             "tokens": self.tokens,
             "elapsed_ms": round(self.elapsed_ms, 2),
@@ -3356,6 +3517,13 @@ class IntersectionResolutionResult:
                     "company_id": m.company_id,
                     "company_name": m.company_name,
                     "display": m.display,
+                    # Transport key for `token_word_coverage_for_rows`: the
+                    # text this row's probe actually scored. Coverage cannot
+                    # be computed here — the API layer filters / replaces /
+                    # caps these rows afterwards, and coverage must describe
+                    # the FINAL set. Stripped by `_attach_and_coverage`
+                    # before the response leaves the process.
+                    "_match_blob": m.match_blob,
                 }
                 for m in self.intersection
             ],
@@ -3377,6 +3545,12 @@ class IntersectionResolutionResult:
                 for a in self.alternatives
             ],
         }
+        if self.truncated_entity_types:
+            # Transport key, same lifecycle as `_match_blob`: tells the API
+            # layer which types' probes hit AND_MODE_LIMIT, so an unmatched
+            # word there is flagged rather than asserted.
+            result["_truncated_entity_types"] = sorted(self.truncated_entity_types)
+        return result
 
 
 def resolve_references_intersection(
@@ -3417,6 +3591,7 @@ def resolve_references_intersection(
     attachment_coverage = (domain_hint or "").strip().lower() in {"resource_attachment", "attachment"}
 
     hits: list[ResolvedEntity] = []
+    truncated_types: set[str] = set()
     for probe, produces in _AND_PROBES:
         if allowed is not None and produces.isdisjoint(allowed):
             continue
@@ -3434,6 +3609,12 @@ def resolve_references_intersection(
         except Exception:
             logger.exception("AND probe %s failed", probe.__name__)
             continue
+        if len(rows) >= AND_MODE_LIMIT or getattr(rows, "truncated", False):
+            # The probe's LIMIT bound: rows beyond the cap were cut, so any
+            # "word X is absent" claim over this type is incomplete. A probe
+            # can also self-report (`_ProbeRows.truncated`) when a merged
+            # source hit its cap but dedup shrank the list back under it.
+            truncated_types.update(r.entity_type for r in rows)
         hits.extend(rows)
 
     # No intersection → offer fuzzy "did you mean" neighbours (union across tokens,
@@ -3469,6 +3650,7 @@ def resolve_references_intersection(
         intersection=hits,
         elapsed_ms=elapsed,
         alternatives=alternatives,
+        truncated_entity_types=sorted(truncated_types),
     )
 
 
