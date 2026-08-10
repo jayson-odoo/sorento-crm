@@ -128,18 +128,35 @@ describe('CashCopilotResults - clearable budget input (M8-C2)', () => {
   });
 });
 
-describe('CashCopilotResults - needs-cost banner (M8-C7)', () => {
-  it('shows the skipped-products banner when uncosted rows exist and dismisses it', () => {
-    const bundle = makePlan({ funding: { within: [recToPlanRow(rec('a'))], over: [], needsCost: [recToPlanRow(rec('x', { unit_cost: null, supplier: null }))], committed: 1000, free: 4000 } } as Partial<M8PlanState>);
+describe('CashCopilotResults - the buys nothing can price', () => {
+  // A missing price is a gap in our master data, not a reason the shortage went away.
+  // These rows have to be visible and orderable, or the buyer never learns the item is
+  // short and never fulfils it. They stay out of the budget arithmetic only.
+  it('lists an unpriced buy in its own section, not as a dismissible note', () => {
+    const bundle = makePlan({
+      funding: {
+        within: [recToPlanRow(rec('a'))],
+        over: [],
+        needsCost: [
+          recToPlanRow(rec('x', { unit_cost: null, cash_impact: null, supplier: null })),
+        ],
+        committed: 1000,
+        free: 4000,
+      },
+    } as Partial<M8PlanState>);
     renderCopilot(bundle);
-    expect(screen.getByText(/product skipped - no supplier cost yet/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText('Dismiss'));
-    expect(screen.queryByText(/no supplier cost yet/i)).not.toBeInTheDocument();
+    expect(screen.getByText('No price yet')).toBeInTheDocument();
+    // The row itself is on screen, with its reason, so it can be accepted and ordered.
+    expect(screen.getByText('SKU-x')).toBeInTheDocument();
+    expect(screen.getByText('No cost')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Add a cost/i })).toBeInTheDocument();
   });
 
-  it('renders no banner when every row is costed', () => {
+  it('states the section is empty rather than hiding it when every buy has a price', () => {
     renderCopilot(makePlan());
-    expect(screen.queryByText(/no supplier cost yet/i)).not.toBeInTheDocument();
+    expect(screen.getByText('No price yet')).toBeInTheDocument();
+    expect(screen.getByText(/Every buy in this plan has a price/i)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Add a cost/i })).not.toBeInTheDocument();
   });
 });
 

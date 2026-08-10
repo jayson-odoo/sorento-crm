@@ -426,31 +426,43 @@ describe('CashResultsGrid - master-data reorder settings on the row', () => {
   });
 });
 
-describe('CashResultsGrid - a search that matches an uncosted buy says so', () => {
-  it('names the item instead of returning silence', () => {
+describe('CashResultsGrid - the buys nothing can price', () => {
+  it('shows an unpriced buy as a row of the plan, with its reason', () => {
     const priced = recToPlanRow(rec({ id: 'rec-priced', sku: 'AAA-1' }));
     const uncosted = recToPlanRow(
       rec({ id: 'rec-nocost', sku: 'CWCX1009-RL', unit_cost: null, cash_impact: null,
             warehouse_code: 'BRW-IB' } as Partial<ReorderRecommendation>),
     );
     renderGrid(priced, { within: [priced], over: [], needsCost: [uncosted] });
-    fireEvent.change(screen.getByPlaceholderText(/search sku/i), {
-      target: { value: 'CWCX1009-RL' },
-    });
-    // Without this the grid answers "No buys match", which reads as "not short" when the
-    // truth is the opposite: it IS short, we just cannot price it.
-    expect(screen.getByText(/not in the plan below/i)).toBeInTheDocument();
-    expect(screen.getByText(/no supplier cost/i)).toBeInTheDocument();
-    expect(screen.getByText(/CWCX1009-RL \(BRW-IB\)/)).toBeInTheDocument();
+    // The shortage is real and has to be fulfilled, so the row is here to be ordered.
+    // The cash cell carries the reason: a bare dash would read as zero cash.
+    expect(screen.getByText('CWCX1009-RL')).toBeInTheDocument();
+    expect(screen.getByText('No cost')).toBeInTheDocument();
   });
 
-  it('stays quiet when the search matches something that IS priced', () => {
-    const priced = recToPlanRow(rec({ sku: 'AAA-1' }));
+  it('says which currency has no rate, because a costed row can still be unpriceable', () => {
+    // A cost in CNY with no CNY rate on file has the same consequence as no cost at
+    // all - it cannot be compared to a ringgit budget. Left in Within budget it would
+    // draw zero and read as free money, so it belongs here, saying why.
+    const priced = recToPlanRow(rec({ id: 'rec-priced', sku: 'AAA-1' }));
+    const norate = recToPlanRow(
+      rec({ id: 'rec-norate', sku: 'BBB-2', unit_cost: 12.5, currency: 'CNY',
+            unit_cost_base: null, cash_impact: null } as Partial<ReorderRecommendation>),
+    );
+    renderGrid(priced, { within: [priced], over: [], needsCost: [norate] });
+    expect(screen.getByText('No CNY rate')).toBeInTheDocument();
+  });
+
+  it('filters the section with the same search as the rest of the plan', () => {
+    const priced = recToPlanRow(rec({ id: 'rec-priced', sku: 'AAA-1' }));
     const uncosted = recToPlanRow(
-      rec({ id: 'rec-nocost', sku: 'ZZZ-9', unit_cost: null } as Partial<ReorderRecommendation>),
+      rec({ id: 'rec-nocost', sku: 'ZZZ-9', unit_cost: null,
+            cash_impact: null } as Partial<ReorderRecommendation>),
     );
     renderGrid(priced, { within: [priced], over: [], needsCost: [uncosted] });
     fireEvent.change(screen.getByPlaceholderText(/search sku/i), { target: { value: 'AAA-1' } });
-    expect(screen.queryByText(/not in the plan below/i)).toBeNull();
+    expect(screen.queryByText('ZZZ-9')).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText(/search sku/i), { target: { value: 'ZZZ-9' } });
+    expect(screen.getByText('ZZZ-9')).toBeInTheDocument();
   });
 });

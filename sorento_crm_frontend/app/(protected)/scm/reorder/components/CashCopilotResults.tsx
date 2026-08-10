@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import { toast } from 'sonner';
 import {
   DndContext,
@@ -13,7 +12,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { CheckCheck, Info, X } from 'lucide-react';
+import { CheckCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -30,11 +29,11 @@ import { CashResultsGrid } from './CashResultsGrid';
 import { ReorderExplanationDialog } from './ReorderExplanationDialog';
 
 /**
- * SCM M8 (slice C) - the funded/deferred experience as ONE table with two
- * draggable sections. Owns the budget control (in the Within-budget header), the
- * drag-between-sections wiring, the needs-cost banner, and the confirm-decisions
- * bar. All plan state lives in the shared `useReorderPlan` hook so the assistant's
- * market bumps land on the same rows. Phase 2: wired to the live backend.
+ * SCM M8 (slice C) - the whole plan as ONE table: two draggable sections (funded /
+ * deferred) plus a third, undraggable one for the buys nothing can price. Owns the
+ * budget control (in the Within-budget header), the drag-between-sections wiring, and
+ * the confirm-decisions bar. All plan state lives in the shared `useReorderPlan` hook
+ * so the assistant's market bumps land on the same rows.
  */
 export function CashCopilotResults({ plan }: { plan: M8PlanState }) {
   const { funding, displayRank, decisions, editedIds, poByRow, budget, setBudget, fund, defer, reject, editRow, confirm: runConfirm, isConfirming } = plan;
@@ -45,7 +44,6 @@ export function CashCopilotResults({ plan }: { plan: M8PlanState }) {
   const saveBudget = useSaveCashBudget();
   const onSaveBudget = (amount: number) => saveBudget.mutate({ budget_amount: amount });
   const savingBudget = saveBudget.isPending;
-  const [bannerDismissed, setBannerDismissed] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [activeRow, setActiveRow] = useState<M8PlanRow | null>(null);
   // Row-click detail (M8-C10): reuse the existing ReorderExplanationDialog, fed a
@@ -90,16 +88,15 @@ export function CashCopilotResults({ plan }: { plan: M8PlanState }) {
   // across them (arrow-key / prev-next navigation) and fetch each rec's real AI
   // summary / advisory / Q&A + derivation (M8-C10).
   const detailRecs = useMemo(
-    () => [...funding.within, ...funding.over].map((r) => r.rec),
-    [funding.within, funding.over],
+    () => [...funding.within, ...funding.over, ...funding.needsCost].map((r) => r.rec),
+    [funding.within, funding.over, funding.needsCost],
   );
 
-  // M8-F14: "Review & add cost" deep-links to the product listing so the buyer can
-  // add the missing supplier cost. The products list (/master-data-management/products)
-  // restores a single free-text `query` from the URL, so a SINGLE skipped SKU
-  // pre-filters precisely; when several are skipped, one free-text term can't filter
-  // to a set (no SKU-set param exists), so we land on the unfiltered list rather than
-  // invent a route - the banner still states how many were skipped.
+  // "Add a cost" deep-links to the product listing so the buyer can fill the missing
+  // supplier cost. The products list (/master-data-management/products) restores a single
+  // free-text `query` from the URL, so a SINGLE unpriced SKU pre-filters precisely; when
+  // several are unpriced, one free-text term can't filter to a set (no SKU-set param
+  // exists), so we land on the unfiltered list rather than invent a route.
   const needsCostSkus = useMemo(
     () => funding.needsCost.map((r) => r.sku).filter(Boolean),
     [funding.needsCost],
@@ -243,6 +240,7 @@ export function CashCopilotResults({ plan }: { plan: M8PlanState }) {
       >
         <CashResultsGrid
           needsCost={funding.needsCost}
+          reviewCostHref={reviewCostHref}
           runId={plan.runId ?? null}
           within={funding.within}
           over={funding.over}
@@ -262,38 +260,6 @@ export function CashCopilotResults({ plan }: { plan: M8PlanState }) {
           ) : null}
         </DragOverlay>
       </DndContext>
-
-      {/* Needs-cost banner (M8-C7) - not a third section, just a dismissible note. */}
-      {funding.needsCost.length > 0 && !bannerDismissed ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-sm">
-          <Info className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-          <span className="text-muted-foreground">
-            <span className="font-medium text-foreground tabular-nums">
-              {fmtInt(funding.needsCost.length)}
-            </span>{' '}
-            product{funding.needsCost.length === 1 ? '' : 's'} skipped - no supplier cost yet.
-          </span>
-          <Link
-            href={reviewCostHref}
-            className="font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
-            title={
-              needsCostSkus.length === 1
-                ? `Review ${needsCostSkus[0]} in Products`
-                : 'Review these products in Products'
-            }
-          >
-            Review &amp; add cost
-          </Link>
-          <button
-            type="button"
-            className="ms-auto rounded-sm p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label="Dismiss"
-            onClick={() => setBannerDismissed(true)}
-          >
-            <X className="size-4" aria-hidden />
-          </button>
-        </div>
-      ) : null}
 
       <ConfirmActionDialog
         open={confirmOpen}

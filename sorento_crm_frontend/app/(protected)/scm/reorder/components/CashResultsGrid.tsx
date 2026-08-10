@@ -10,6 +10,7 @@ import {
   ChevronUp,
   Clock,
   GripVertical,
+  HelpCircle,
   Info,
   Search,
   ShoppingCart,
@@ -215,6 +216,14 @@ function costUnavailableReason(row: M8PlanRow): string {
   return code
     ? `No exchange rate on file for ${code}, so this cost cannot be compared or funded`
     : 'No supplier cost on record';
+}
+
+/** The same fact as `costUnavailableReason`, short enough to sit in the cash cell. The
+ *  full sentence stays on the cell's title. A bare dash here would read as zero cash. */
+function costUnavailableLabel(row: M8PlanRow): string {
+  if (row.unit_cost === null) return 'No cost';
+  const code = (row.currency || '').trim().toUpperCase();
+  return code ? `No ${code} rate` : 'No cost';
 }
 
 function NetDrill({ row }: { row: M8PlanRow }) {
@@ -699,7 +708,7 @@ function PlanRow({
   /** The run the row belongs to, so the demand drill can fetch its order lines. */
   runId?: string | null;
   row: M8PlanRow;
-  section: 'within' | 'over';
+  section: 'within' | 'over' | 'needs_cost';
   decision: M8RowDecision;
   edited: boolean;
   /** The draft PO this line was confirmed into, if any (M8-F8/M8-F9). */
@@ -866,7 +875,11 @@ function PlanRow({
             : `${fmtInt(row.order_qty)} x ${fmtSupplierCost(row.unit_cost, row.currency)}`
         }
       >
-        {cash === null ? <span className="text-muted-foreground">{EM_DASH}</span> : fmtMoney(cash)}
+        {cash === null ? (
+          <span className="text-2xs text-muted-foreground">{costUnavailableLabel(row)}</span>
+        ) : (
+          fmtMoney(cash)
+        )}
       </div>
 
       {/* net - explain drill */}
@@ -1043,12 +1056,17 @@ export function CashResultsGrid({
   onOpenDetail,
   runId,
   needsCost,
+  reviewCostHref,
 }: {
   within: M8PlanRow[];
   over: M8PlanRow[];
-  /** Buys the plan produced but could not price. They are real shortages and they are NOT
-   *  in the sections below, so a search that matches one has to say so. */
+  /** Buys the plan produced but could not price - no supplier cost, or no exchange rate
+   *  for the currency the cost is in. They are real shortages that still have to be
+   *  fulfilled, so they get their own section and can be ordered; they are only kept out
+   *  of the budget arithmetic, which needs a number nobody has. */
   needsCost?: M8PlanRow[];
+  /** Where "Add a cost" sends the buyer (the products list, pre-filtered when one SKU). */
+  reviewCostHref?: string;
   decisions: Record<string, M8RowDecision>;
   editedIds: ReadonlySet<string>;
   /** Draft PO per confirmed line, keyed by row id (M8-F8/M8-F9). */
@@ -1067,6 +1085,12 @@ export function CashResultsGrid({
   // scroll to the run-history list below (M8-D10).
   const [withinCollapsed, setWithinCollapsed] = useState(false);
   const [overCollapsed, setOverCollapsed] = useState(false);
+  // The unpriced section can run to hundreds of rows on a book with thin supplier costs,
+  // which would bury the two sections the buyer came for. Start it folded once it is
+  // large; the header still states the count, so nothing is hidden, only deferred.
+  const [needsCostCollapsed, setNeedsCostCollapsed] = useState(
+    () => (needsCost?.length ?? 0) > 25,
+  );
 
   // Client-side product search + column sort over the visible rows (additive).
   const [search, setSearch] = useState('');
@@ -1105,12 +1129,14 @@ export function CashResultsGrid({
     ? `${fmtInt(visibleOver.length)} of ${fmtInt(over.length)}`
     : fmtInt(over.length);
 
-  // A search that matches an uncosted buy returns nothing at all, because those rows are
-  // held out of the funded/deferred sections. Silence there reads as "this item is not in
-  // the plan", when the truth is the opposite: it IS short, we just cannot price it.
-  const hiddenMatches = needle
-    ? (needsCost ?? []).filter((r) => matchesSearch(r, needle))
-    : [];
+  const unpriced = needsCost ?? [];
+  const visibleUnpriced = useMemo(
+    () => sortSection(unpriced.filter((r) => matchesSearch(r, needle)), sortCol, sortDir),
+    [unpriced, needle, sortCol, sortDir],
+  );
+  const unpricedBadge = needle
+    ? `${fmtInt(visibleUnpriced.length)} of ${fmtInt(unpriced.length)}`
+    : fmtInt(unpriced.length);
 
   return (
     <div className="space-y-3">
@@ -1139,25 +1165,6 @@ export function CashResultsGrid({
           </button>
         ) : null}
       </div>
-
-      {hiddenMatches.length > 0 ? (
-        <div className="rounded-lg border border-scm-overstock/40 bg-scm-overstock-soft/40 px-3 py-2 text-xs">
-          <span className="font-medium">
-            {fmtInt(hiddenMatches.length)} match
-            {hiddenMatches.length === 1 ? 'es' : ''} but {hiddenMatches.length === 1 ? 'is' : 'are'}{' '}
-            not in the plan below
-          </span>
-          <span className="text-muted-foreground">
-            {' '}
-            - short, but no supplier cost, so nothing can be priced or funded:{' '}
-            {hiddenMatches
-              .slice(0, 4)
-              .map((r) => `${r.sku}${r.rec.warehouse_code ? ` (${r.rec.warehouse_code})` : ''}`)
-              .join(', ')}
-            {hiddenMatches.length > 4 ? ` and ${fmtInt(hiddenMatches.length - 4)} more` : ''}.
-          </span>
-        </div>
-      ) : null}
 
       <div className="overflow-x-auto rounded-xl border">
         <div style={{ minWidth: MIN_TABLE_WIDTH }}>
@@ -1285,6 +1292,60 @@ export function CashResultsGrid({
               </div>
             )}
           </DroppableSection>
+        ) : null}
+
+        {/* No price section. Rendered always, per the standard that a section states its
+            own emptiness rather than disappearing - "every buy has a price" is worth
+            reading. These rows are NOT droppable: a drop would pin a line into a budget
+            it cannot be measured against. */}
+        <div className="flex flex-wrap items-center gap-2 border-y bg-muted/60 px-3 py-2 text-sm">
+          <CollapseToggle
+            collapsed={needsCostCollapsed}
+            onToggle={() => setNeedsCostCollapsed((v) => !v)}
+            label="no price yet"
+          />
+          <HelpCircle className="size-4 text-muted-foreground" aria-hidden />
+          <span className="font-semibold">No price yet</span>
+          <Badge variant="secondary" appearance="light" size="sm">
+            {unpricedBadge}
+          </Badge>
+          <span className="text-2xs text-muted-foreground">
+            still short, still orderable, but no cash figure - so outside the budget above
+          </span>
+          {unpriced.length > 0 && reviewCostHref ? (
+            <Link
+              href={reviewCostHref}
+              className="ms-auto rounded-sm text-2xs font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Add a cost
+            </Link>
+          ) : null}
+        </div>
+
+        {!needsCostCollapsed ? (
+          visibleUnpriced.length ? (
+            visibleUnpriced.map((row) => (
+              <PlanRow
+                runId={runId}
+                key={row.id}
+                row={row}
+                section="needs_cost"
+                decision={decisions[row.id] ?? null}
+                edited={editedIds.has(row.id)}
+                po={poByRow?.[row.id]}
+                rankLabel={displayRank?.[row.id]}
+                dragDisabled
+                handlers={handlers}
+                onOpenDetail={onOpenDetail}
+              />
+            ))
+          ) : (
+            <div className="px-4 py-6 text-center text-sm text-muted-foreground">
+              {needle && unpriced.length > 0
+                ? 'No buys in this section match your search.'
+                : 'Every buy in this plan has a price.'}
+            </div>
+          )
         ) : null}
         </div>
       </div>

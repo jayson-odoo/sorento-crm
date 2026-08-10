@@ -166,10 +166,17 @@ export function useReorderPlan(runId: string | null, enabled: boolean) {
   // Funding VIEW derived from the STICKY membership (not a fresh greedy) so drags don't
   // reshuffle other rows. Within/over read straight off `withinIds`; committed excludes
   // any rejected line's cash (it stays in its section but is not bought); free can go
-  // negative when a drag-up overspends. Uncosted rows are always the needs-cost banner.
+  // negative when a drag-up overspends.
+  //
+  // The split is on CASH IMPACT, not on unit_cost. A row can carry a supplier cost and
+  // still have no cash impact, because its currency has no exchange rate on file; such a
+  // row inside Within budget would draw zero and read as free money. Both causes are the
+  // same fact to the buyer - we cannot price this line - so both land in `needsCost`,
+  // where each row states its own reason. They are still real shortages and still
+  // orderable; they just cannot compete for a budget they cannot be measured against.
   const funding = useMemo<M8FundingResult<M8PlanRow>>(() => {
-    const needsCost = rows.filter((r) => r.unit_cost === null);
-    const costed = rows.filter((r) => r.unit_cost !== null);
+    const needsCost = rows.filter((r) => m8CashImpact(r) === null);
+    const costed = rows.filter((r) => m8CashImpact(r) !== null);
     // Unshaped membership derives from the budget instead of reading as "nothing funded".
     const membership =
       withinIds ??
@@ -187,18 +194,18 @@ export function useReorderPlan(runId: string | null, enabled: boolean) {
     return { within, over, needsCost, committed, free: budget - committed };
   }, [rows, withinIds, rejects, budget, pins, forcedOver]);
 
-  // Sequential 1..N priority label over the COSTED plan (both sections) by rank, so the
-  // Rank column reads 1-5 for a 5-buy plan instead of the global engine rank (185, 194);
-  // the 425 skipped needs-cost SKUs are ignored entirely (M8-F).
+  // Sequential 1..N priority label over the WHOLE plan by rank, so the Rank column reads
+  // 1-5 for a 5-buy plan instead of the global engine rank (185, 194). The priceable rows
+  // are numbered first and the unpriceable ones continue the same sequence rather than
+  // restarting it, so no two rows on screen ever show the same number.
   const displayRank = useMemo<Record<string, number>>(() => {
     const map: Record<string, number> = {};
-    rows
-      .filter((r) => r.unit_cost !== null)
-      .slice()
-      .sort((a, b) => a.rank - b.rank)
-      .forEach((r, i) => {
-        map[r.id] = i + 1;
-      });
+    const byRank = (a: M8PlanRow, b: M8PlanRow) => a.rank - b.rank;
+    const priceable = rows.filter((r) => m8CashImpact(r) !== null).slice().sort(byRank);
+    const unpriceable = rows.filter((r) => m8CashImpact(r) === null).slice().sort(byRank);
+    [...priceable, ...unpriceable].forEach((r, i) => {
+      map[r.id] = i + 1;
+    });
     return map;
   }, [rows]);
 
