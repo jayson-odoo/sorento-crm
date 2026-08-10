@@ -13,6 +13,7 @@ import { recToPlanLine, type PlanLine } from '../lib/planLine';
 import type { PlanDecisionMap } from '../lib/planDecisions';
 import { PlanLinesGrid } from './PlanLinesGrid';
 import { proposeCover, NO_COVER, type CoverSource } from '../lib/coverPlan';
+import type { PriceAdvice } from '../lib/priceAdvice';
 
 class ResizeObserverStub { observe() {} unobserve() {} disconnect() {} }
 (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
@@ -53,6 +54,7 @@ function renderGrid(
   lines: PlanLine[],
   decisions: PlanDecisionMap = {},
   free: CoverSource[] = [],
+  priceFor?: (l: PlanLine) => PriceAdvice | undefined,
 ) {
   const onDecide = vi.fn();
   const onClear = vi.fn();
@@ -69,6 +71,8 @@ function renderGrid(
         onDecide={onDecide}
         onClear={onClear}
         coverFor={coverFor}
+        priceFor={priceFor}
+        staleAfterDays={180}
       />
     </QueryClientProvider>,
   );
@@ -272,5 +276,45 @@ describe('PlanLinesGrid - buy, cover, or both', () => {
       { warehouse_id: 'wh-D', warehouse_code: 'DEALER', segment: 'dealer', qty: 50 },
     ]);
     expect(screen.getByText(/crosses segment/i)).toBeInTheDocument();
+  });
+});
+
+describe('PlanLinesGrid - what price to use', () => {
+  const stale: PriceAdvice = {
+    advice: 'stale',
+    last: { po_number: '202012-S0048', issue_date: '2020-12-15', unit_cost: 20.37, currency: 'USD', qty: 38 },
+    previous: null,
+    age_days: 2064,
+    movement_pct: null,
+    currency_changed: false,
+    standing_cost: 20.37,
+    standing_currency: 'USD',
+    standing_gap_pct: 0,
+    free_of_charge_lines: 0,
+  };
+
+  it('puts the age of the price on the row, beside what it costs', () => {
+    renderGrid([line()], {}, [], () => stale);
+
+    expect(screen.getByText('Re-quote')).toBeInTheDocument();
+    expect(screen.getByText(/USD 20\.37/)).toBeInTheDocument();
+  });
+
+  it('leaves the cell empty when there is no price opinion, rather than implying all is well', () => {
+    renderGrid([line()], {}, [], () => undefined);
+
+    expect(screen.queryByText('Re-quote')).not.toBeInTheDocument();
+    expect(screen.queryByText('Price current')).not.toBeInTheDocument();
+  });
+
+  it('opening the price does not also open the row dialog', () => {
+    // `onRowClick` is handed the row, not the event, so an interactive cell that does not
+    // stop propagation opens the derivation dialog on top of what the buyer was reading.
+    renderGrid([line()], {}, [], () => stale);
+    fireEvent.click(screen.getByRole('button', { name: /price history/i }));
+
+    // The popover itself carries role="dialog", so the check is that ONE opened and not two.
+    expect(screen.getByText(/ask for a fresh quote/i)).toBeInTheDocument();
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
   });
 });

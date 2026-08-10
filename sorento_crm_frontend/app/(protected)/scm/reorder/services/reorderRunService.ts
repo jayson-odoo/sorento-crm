@@ -58,6 +58,7 @@
 import type { SortingState } from '@tanstack/react-table';
 import { apiFetch } from '@/lib/api';
 import type { CoverSource } from '../lib/coverPlan';
+import type { PriceHistoryPayload } from '../lib/priceAdvice';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
   BuyScope,
@@ -606,4 +607,21 @@ export async function getCoverSources(
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load cover sources'));
   const body = (await res.json()) as { sources?: Record<string, CoverSource[]> };
   return body.sources ?? {};
+}
+
+/**
+ * What we last paid each supplier for each item in the plan, and how old that is.
+ *
+ * Keyed `"{product_id}:{supplier_code}"`. Everything in it comes out of our own purchase
+ * ledger - the endpoint makes no claim about what anything is worth today.
+ */
+export async function getPriceHistory(runId: string): Promise<PriceHistoryPayload> {
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/price-history`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load price history'));
+  const body = (await res.json()) as Partial<PriceHistoryPayload>;
+  return {
+    stale_after_days: body.stale_after_days ?? 180,
+    movement_threshold_pct: body.movement_threshold_pct ?? 5,
+    prices: body.prices ?? {},
+  };
 }

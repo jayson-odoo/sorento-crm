@@ -26,6 +26,7 @@ from app.schemas.scm_reorder import (
 )
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.scm import cover_service
+from app.services.scm import price_history_service
 from app.services.error_handler import AppException
 from app.services.scm import reorder_run_service as svc
 from app.services.scm import unplanned_demand_service
@@ -315,6 +316,56 @@ def list_cover_sources(
             ]
             for pid, sources in free.items()
         }
+    }
+
+
+@router.get("/reorder-runs/{run_id}/price-history")
+def list_price_history(
+    run_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """What we last paid each supplier for each item in the plan, and how old that is.
+
+    Keyed ``"{product_id}:{supplier_code}"`` because that pair is the question: a cheaper
+    price from another supplier is a different negotiation and cannot stand in for it.
+
+    Everything here comes out of our own purchase ledger. The ``advice`` code names which
+    fact dominates (no history, unknown age, stale, moving, recent); it is never a claim
+    about what the item is worth today, because nothing in this system can see that.
+    """
+    svc.assert_run_visible(db, run_id)
+    history = price_history_service.price_history_for_run(db, run_id)
+
+    def _purchase(p) -> Optional[dict]:
+        if p is None:
+            return None
+        return {
+            "po_number": p.po_number,
+            "issue_date": p.issue_date.isoformat() if p.issue_date else None,
+            "unit_cost": p.unit_cost,
+            "currency": p.currency,
+            "qty": p.qty,
+        }
+
+    return {
+        "stale_after_days": price_history_service.STALE_AFTER_DAYS,
+        "movement_threshold_pct": price_history_service.MOVEMENT_PCT,
+        "prices": {
+            key: {
+                "advice": a.advice,
+                "last": _purchase(a.last),
+                "previous": _purchase(a.previous),
+                "age_days": a.age_days,
+                "movement_pct": a.movement_pct,
+                "currency_changed": a.currency_changed,
+                "standing_cost": a.standing_cost,
+                "standing_currency": a.standing_currency,
+                "standing_gap_pct": a.standing_gap_pct,
+                "free_of_charge_lines": a.free_of_charge_lines,
+            }
+            for key, a in history.items()
+        },
     }
 
 

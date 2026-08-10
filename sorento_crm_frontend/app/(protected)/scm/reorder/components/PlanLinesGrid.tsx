@@ -34,7 +34,9 @@ import {
 } from '../lib/planLine';
 import { decidedCost, decidedQty, type PlanDecisionMap } from '../lib/planDecisions';
 import { describeCover, NO_COVER, type CoverProposal } from '../lib/coverPlan';
+import { PRICE_ADVICE_SORT, type PriceAdvice } from '../lib/priceAdvice';
 import { PlanLineDecisionCell } from './PlanLineDecisionCell';
+import { PlanPriceCell } from './PlanPriceCell';
 import { PlanChecklistPopover } from './PlanChecklistPopover';
 import { PlanDemandPopover } from './PlanDemandPopover';
 import {
@@ -101,6 +103,8 @@ export function PlanLinesGrid({
   onDecide,
   onClear,
   coverFor,
+  priceFor,
+  staleAfterDays = 180,
   statusFilter: statusFilterProp = null,
   onStatusFilterChange,
   runId,
@@ -117,6 +121,10 @@ export function PlanLinesGrid({
   onClear: (line: PlanLine) => void;
   /** What the plan suggests for a line: buy, cover from elsewhere, or a split of the two. */
   coverFor?: (line: PlanLine) => CoverProposal;
+  /** What we last paid this line's supplier, and how old that is. Undefined = no opinion. */
+  priceFor?: (line: PlanLine) => PriceAdvice | undefined;
+  /** The age past which the business stops trusting a price. Shown, not implied. */
+  staleAfterDays?: number;
   /** Status the list is narrowed to, or null for the whole plan. Controlled so the summary
    *  tiles can narrow it: they used to reveal a band, and there are no bands now. */
   statusFilter?: PlanLineStatus | null;
@@ -375,6 +383,30 @@ export function PlanLinesGrid({
         meta: { headerTitle: 'Cost', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
+        id: 'price',
+        // Sorted by how urgent the price question is, not alphabetically: a line costing at
+        // zero has to be reachable in one click from the top of the column.
+        accessorFn: (row) => {
+          const p = priceFor?.(row);
+          return p ? PRICE_ADVICE_SORT[p.advice] : 99;
+        },
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Price basis" visibility column={column} />
+        ),
+        cell: ({ row }) => (
+          <StopClick>
+            <PlanPriceCell
+              price={priceFor?.(row.original)}
+              staleAfterDays={staleAfterDays}
+              purchasable={row.original.purchasable}
+            />
+          </StopClick>
+        ),
+        size: 190,
+        enableSorting: true,
+        meta: { headerTitle: 'Price basis', skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
         id: 'suggestion',
         header: ({ column }) => (
           <DataGridColumnHeader title="Suggested action" visibility column={column} />
@@ -427,7 +459,7 @@ export function PlanLinesGrid({
         meta: { headerTitle: 'Decision', skeleton: <Skeleton className="h-8 w-40" /> },
       },
     ],
-    [decisions, onDecide, onClear, runId, coverFor],
+    [decisions, onDecide, onClear, runId, coverFor, priceFor, staleAfterDays],
   );
 
   const [columnOrder, setColumnOrder] = useState<string[]>(() =>

@@ -1,6 +1,6 @@
 # S12 - Buy or cover, from where, and at what price
 
-Status: UAC written, not implemented
+Status: S12a, S12b, S12c implemented. One open decision for the user (see the end).
 
 ## Why
 
@@ -95,6 +95,61 @@ At the row, the buyer sees a **suggested action**, not a menu:
   (what it was, what it became) so the buyer can judge the trend themselves.
 * **AC-S12c.4 [FE]** The system NEVER claims to know the market price. Every suggestion here
   is stated as a fact about our own purchase history and its age.
+* **AC-S12c.5 [BE]** GIVEN the plan's own draft purchase orders, WHEN the last paid price is
+  read, THEN they are excluded. A `draft_recommendation` PO is this planner's proposal, and
+  reading it back as evidence would let the system cite itself.
+* **AC-S12c.6 [BE]** GIVEN a purchase line recorded at 0.00, WHEN the last paid price is read,
+  THEN it is not treated as the price and is counted separately. 637 such lines exist and 116
+  pairs would take one as their newest price; "our last price was 0.00" invites an order at
+  zero, and calling a change from 26.15 to 0.00 a 100% fall is arithmetic on a non-price.
+* **AC-S12c.7 [FE][BE]** GIVEN the plan is costing a line at exactly 0.00, THEN the row says
+  so, above every other price question, and shows the last figure we actually paid beside it.
+
+## Implementation notes
+
+* Backend: `app/services/scm/price_history_service.py`, `GET
+  /api/v1/scm/reorder-runs/{run_id}/price-history`, keyed `"{product_id}:{supplier_code}"`.
+* Frontend: `lib/priceAdvice.ts` (wording only, the codes are the backend's),
+  `components/PlanPriceCell.tsx`, the `Price basis` column on `PlanLinesGrid`.
+* The advice codes, in the order they outrank each other: `zero_cost`, `unknown_age`,
+  `stale`, `moving`, `no_history`, `recent`.
+* The gap the row reports is against the cost **the run froze**, not today's
+  `product_suppliers.unit_cost`. Re-reading the master would compare the paid price against a
+  figure that was never in the plan, and the gap would move whenever somebody edited the
+  supplier record.
+* Live shape at the time of writing (run of 2026-08-10, 2,374 product-supplier pairs):
+  `no_history` 1,565, `stale` 760, `zero_cost` 48, `recent` 1. Every real purchase on record
+  came from one 2020 import, so `stale` being near-universal is the honest answer, not a
+  defect in the rule.
+
+## Open decision for the user: the plan is costing 24 buy lines at zero
+
+Found while building S12c, NOT changed unilaterally, because it contradicts a decision
+already taken and tested (`tests/scm/test_cost_from_po_history.py`: "a purchase order
+recording zero is a price of zero").
+
+The engine's cost cascade (`reorder_engine.last_purchase_costs`) takes the newest priced PO
+line as the cost, and deliberately keeps a 0.00 as a real price. The consequences on the live
+run:
+
+* 24 buy lines covering **11,675 units** are costed at exactly 0.00, with cash impact 0.00.
+  They clear any budget unchallenged and rank with no cash pressure behind them.
+* All 637 zero-cost lines come from the single 2020 order import. 202 of them sit on a PO that
+  ALSO carries a priced line for the same product, which reads much more like a banded or
+  continuation row than a genuinely free item.
+* The cascade also does not filter PO status, so a `draft_recommendation` PO the planner wrote
+  itself is readable as "what we last paid" on the next run. Only 4 exist today; it grows with
+  every run.
+
+S12c makes both visible on the row rather than silently reversing the decision: a zero-costed
+line reads **Priced at zero** in the `Price basis` column, above every other price question,
+with the last figure we actually paid beside it.
+
+**The question for the user:** should the engine stop treating a zero purchase line as the
+price for the NEXT order, and fall through to the contract figure, then to unknown? Unknown
+puts the line in "No price", which is exactly the behaviour already agreed in S10e - an
+unpriced shortage stays in the plan, visibly unpriced, for a human to price. That is a
+one-line change to the cascade plus an update to two tests.
 
 ## Decisions taken
 

@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   getCoverSources,
+  getPriceHistory,
   getBuyRecommendationsForCash,
   getAllDispositionRecommendations,
   getCoveredRecommendations,
@@ -18,6 +19,7 @@ import {
   type TakenByWarehouse,
 } from '../lib/coverPlan';
 import { planTotals, type PlanDecision, type PlanDecisionMap } from '../lib/planDecisions';
+import { priceKey, type PriceAdvice } from '../lib/priceAdvice';
 
 /**
  * Every line of a plan, in one list, with the buyer's decisions over it.
@@ -61,6 +63,15 @@ export function usePlanLines(runId: string | null, enabled = true) {
     enabled: on,
     // A missing pool means "nothing to cover from", which is a safe reading: the plan then
     // proposes buying, which is what it did before cover existed.
+    retry: false,
+  });
+
+  const prices = useQuery({
+    queryKey: ['plan-lines', runId, 'price-history'],
+    queryFn: () => getPriceHistory(runId as string),
+    enabled: on,
+    // Losing the price facts must not take the plan down with them. The grid then shows no
+    // price opinion at all, which is honest: it is what the screen said before S12c.
     retry: false,
   });
 
@@ -135,6 +146,21 @@ export function usePlanLines(runId: string | null, enabled = true) {
     [cover.data, takenByProduct, decisions],
   );
 
+  /**
+   * The price facts for a line's CHOSEN supplier.
+   *
+   * Undefined when the line has no supplier (a no-supplier exception) or the fetch failed.
+   * The caller renders nothing in that case rather than guessing, because "we have no
+   * opinion on this price" and "this price is fine" are different answers.
+   */
+  const priceFor = useCallback(
+    (line: PlanLine): PriceAdvice | undefined => {
+      const key = priceKey(line.product_id, line.supplier?.code ?? null);
+      return key ? prices.data?.prices[key] : undefined;
+    },
+    [prices.data],
+  );
+
   return {
     lines,
     decisions: decisions as PlanDecisionMap,
@@ -142,6 +168,8 @@ export function usePlanLines(runId: string | null, enabled = true) {
     clear,
     totals,
     coverFor,
+    priceFor,
+    staleAfterDays: prices.data?.stale_after_days ?? 180,
     coverSources: cover.data ?? {},
     isLoading:
       buys.isLoading || covered.isLoading || needsLevel.isLoading || dispositions.isLoading,
