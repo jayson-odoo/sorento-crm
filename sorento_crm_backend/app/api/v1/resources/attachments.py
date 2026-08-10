@@ -230,9 +230,17 @@ async def get_attachments(
     directory_id: Optional[str] = Query(None),
     is_deleted: Optional[bool] = Query(None),
     attachment_type_id: Optional[str] = Query(None),
+    attachment_type_ids: Optional[List[str]] = Query(
+        None,
+        description="Canonical AttachmentType UUIDs (csv/JSON/repeated). Unions with `attachment_type_id`.",
+    ),
     attachment_type_code: Optional[str] = Query(
         None,
         description="Filter by AttachmentType.code (canonical) or type_name (fallback, case-insensitive). Unknown code → 0 rows.",
+    ),
+    attachment_type_codes: Optional[List[str]] = Query(
+        None,
+        description="Several AttachmentType codes/names (csv/JSON/repeated). Unions with `attachment_type_code`; no code resolves → 0 rows.",
     ),
     uploaded_by: Optional[str] = Query(None),
     uploaded_at_from: Optional[datetime] = Query(None),
@@ -257,7 +265,10 @@ async def get_attachments(
     """Get attachments with pagination and filtering (optional directory_id, query by filename, is_deleted for trash)."""
     try:
         service = AttachmentService(db)
-        from app.services.entity_filter_helpers import normalize_entities_query_param
+        from app.services.entity_filter_helpers import (
+            normalize_entities_query_param,
+            normalize_list_query_param,
+        )
         from app.services.contact_attachment_access import visible_type_ids
 
         result = service.list_attachments(
@@ -271,7 +282,9 @@ async def get_attachments(
             directory_id=directory_id,
             is_deleted=is_deleted,
             attachment_type_id=attachment_type_id,
+            attachment_type_ids=parse_uuid_list(attachment_type_ids, param_name="attachment_type_ids"),
             attachment_type_code=attachment_type_code,
+            attachment_type_codes=normalize_list_query_param(attachment_type_codes),
             uploaded_by=uploaded_by,
             uploaded_at_from=uploaded_at_from,
             uploaded_at_to=uploaded_at_to,
@@ -322,7 +335,9 @@ async def get_attachment_neighbours(
     directory_id: Optional[str] = Query(None),
     is_deleted: Optional[bool] = Query(None),
     attachment_type_id: Optional[str] = Query(None),
+    attachment_type_ids: Optional[List[str]] = Query(None),
     attachment_type_code: Optional[str] = Query(None),
+    attachment_type_codes: Optional[List[str]] = Query(None),
     uploaded_by: Optional[str] = Query(None),
     uploaded_at_from: Optional[datetime] = Query(None),
     uploaded_at_to: Optional[datetime] = Query(None),
@@ -343,7 +358,10 @@ async def get_attachment_neighbours(
     """
     try:
         service = AttachmentService(db)
-        from app.services.entity_filter_helpers import normalize_entities_query_param
+        from app.services.entity_filter_helpers import (
+            normalize_entities_query_param,
+            normalize_list_query_param,
+        )
         return service.neighbours(
             attachment_id=id,
             query=query,
@@ -354,7 +372,9 @@ async def get_attachment_neighbours(
             directory_id=directory_id,
             is_deleted=is_deleted,
             attachment_type_id=attachment_type_id,
+            attachment_type_ids=parse_uuid_list(attachment_type_ids, param_name="attachment_type_ids"),
             attachment_type_code=attachment_type_code,
+            attachment_type_codes=normalize_list_query_param(attachment_type_codes),
             uploaded_by=uploaded_by,
             uploaded_at_from=uploaded_at_from,
             uploaded_at_to=uploaded_at_to,

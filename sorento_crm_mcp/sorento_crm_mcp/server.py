@@ -59,12 +59,12 @@ TOOL_REQUIRED_NARROWING_FILTERS: dict[str, tuple[str, ...]] = {
     # Global document library: never browse the whole library — require at least
     # one narrower (attachment / directory / type / uploader UUID) or empty page.
     "crm_resource_attachments_list": (
-        "attachment_ids", "directory_id", "attachment_type_id",
+        "attachment_ids", "directory_id", "attachment_type_id", "attachment_type_ids",
         # By NAME as well as by UUID. An agent answering "send me the container
         # status list" has the document class, not its UUID, and forcing a
         # lookup first turns one turn into two - or, more often, into an empty
         # page the agent narrates as "there is no such document".
-        "attachment_type_code", "uploaded_by",
+        "attachment_type_code", "attachment_type_codes", "uploaded_by",
         # `contact_id` is deliberately NOT here. It scopes the answer to that
         # contact's entitlements, which bounds the result to a handful of files -
         # but a document request has to name a DOCUMENT. A contact-only call
