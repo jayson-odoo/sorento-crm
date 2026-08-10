@@ -1042,9 +1042,13 @@ export function CashResultsGrid({
   handlers,
   onOpenDetail,
   runId,
+  needsCost,
 }: {
   within: M8PlanRow[];
   over: M8PlanRow[];
+  /** Buys the plan produced but could not price. They are real shortages and they are NOT
+   *  in the sections below, so a search that matches one has to say so. */
+  needsCost?: M8PlanRow[];
   decisions: Record<string, M8RowDecision>;
   editedIds: ReadonlySet<string>;
   /** Draft PO per confirmed line, keyed by row id (M8-F8/M8-F9). */
@@ -1101,6 +1105,13 @@ export function CashResultsGrid({
     ? `${fmtInt(visibleOver.length)} of ${fmtInt(over.length)}`
     : fmtInt(over.length);
 
+  // A search that matches an uncosted buy returns nothing at all, because those rows are
+  // held out of the funded/deferred sections. Silence there reads as "this item is not in
+  // the plan", when the truth is the opposite: it IS short, we just cannot price it.
+  const hiddenMatches = needle
+    ? (needsCost ?? []).filter((r) => matchesSearch(r, needle))
+    : [];
+
   return (
     <div className="space-y-3">
       {/* Product search - filters both sections by SKU / product / supplier. */}
@@ -1128,6 +1139,25 @@ export function CashResultsGrid({
           </button>
         ) : null}
       </div>
+
+      {hiddenMatches.length > 0 ? (
+        <div className="rounded-lg border border-scm-overstock/40 bg-scm-overstock-soft/40 px-3 py-2 text-xs">
+          <span className="font-medium">
+            {fmtInt(hiddenMatches.length)} match
+            {hiddenMatches.length === 1 ? 'es' : ''} but {hiddenMatches.length === 1 ? 'is' : 'are'}{' '}
+            not in the plan below
+          </span>
+          <span className="text-muted-foreground">
+            {' '}
+            - short, but no supplier cost, so nothing can be priced or funded:{' '}
+            {hiddenMatches
+              .slice(0, 4)
+              .map((r) => `${r.sku}${r.rec.warehouse_code ? ` (${r.rec.warehouse_code})` : ''}`)
+              .join(', ')}
+            {hiddenMatches.length > 4 ? ` and ${fmtInt(hiddenMatches.length - 4)} more` : ''}.
+          </span>
+        </div>
+      ) : null}
 
       <div className="overflow-x-auto rounded-xl border">
         <div style={{ minWidth: MIN_TABLE_WIDTH }}>

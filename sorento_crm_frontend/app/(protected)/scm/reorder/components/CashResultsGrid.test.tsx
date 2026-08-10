@@ -425,3 +425,32 @@ describe('CashResultsGrid - master-data reorder settings on the row', () => {
     expect(screen.getAllByText(EM_DASH_TEXT).length).toBeGreaterThan(0);
   });
 });
+
+describe('CashResultsGrid - a search that matches an uncosted buy says so', () => {
+  it('names the item instead of returning silence', () => {
+    const priced = recToPlanRow(rec({ id: 'rec-priced', sku: 'AAA-1' }));
+    const uncosted = recToPlanRow(
+      rec({ id: 'rec-nocost', sku: 'CWCX1009-RL', unit_cost: null, cash_impact: null,
+            warehouse_code: 'BRW-IB' } as Partial<ReorderRecommendation>),
+    );
+    renderGrid(priced, { within: [priced], over: [], needsCost: [uncosted] });
+    fireEvent.change(screen.getByPlaceholderText(/search sku/i), {
+      target: { value: 'CWCX1009-RL' },
+    });
+    // Without this the grid answers "No buys match", which reads as "not short" when the
+    // truth is the opposite: it IS short, we just cannot price it.
+    expect(screen.getByText(/not in the plan below/i)).toBeInTheDocument();
+    expect(screen.getByText(/no supplier cost/i)).toBeInTheDocument();
+    expect(screen.getByText(/CWCX1009-RL \(BRW-IB\)/)).toBeInTheDocument();
+  });
+
+  it('stays quiet when the search matches something that IS priced', () => {
+    const priced = recToPlanRow(rec({ sku: 'AAA-1' }));
+    const uncosted = recToPlanRow(
+      rec({ id: 'rec-nocost', sku: 'ZZZ-9', unit_cost: null } as Partial<ReorderRecommendation>),
+    );
+    renderGrid(priced, { within: [priced], over: [], needsCost: [uncosted] });
+    fireEvent.change(screen.getByPlaceholderText(/search sku/i), { target: { value: 'AAA-1' } });
+    expect(screen.queryByText(/not in the plan below/i)).toBeNull();
+  });
+});
