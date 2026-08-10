@@ -404,10 +404,10 @@ describe('CashResultsGrid - master-data reorder settings on the row', () => {
     expect(screen.getByText('400')).toBeInTheDocument();
   });
 
-  it('names both columns so the figures are not mistaken for the plan own', () => {
+  it('names both columns after the product-record fields they come from', () => {
     renderGrid(recToPlanRow(rec()));
-    expect(screen.getByText('Master level')).toBeInTheDocument();
-    expect(screen.getByText('Master qty')).toBeInTheDocument();
+    expect(screen.getByText('Reorder level')).toBeInTheDocument();
+    expect(screen.getByText('Reorder qty')).toBeInTheDocument();
   });
 
   it('an unset setting reads as a dash, never as zero', () => {
@@ -417,7 +417,7 @@ describe('CashResultsGrid - master-data reorder settings on the row', () => {
     renderGrid(row);
     // A product with no reorder level is not a product whose level is 0 - the second
     // would read as "let it run to nothing", which nobody decided.
-    expect(screen.queryByText('Master level')).toBeInTheDocument();
+    expect(screen.queryByText('Reorder level')).toBeInTheDocument();
     expect(screen.getAllByText(EM_DASH_TEXT).length).toBeGreaterThan(0);
   });
 });

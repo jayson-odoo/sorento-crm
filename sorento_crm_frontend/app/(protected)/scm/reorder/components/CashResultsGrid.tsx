@@ -1057,10 +1057,10 @@ export function CashResultsGrid({
             <SortHeader label="Order qty" col="order_qty" activeCol={sortCol} dir={sortDir} onSort={onSort} align="end" />
           </div>
           <div className="px-1 py-2 text-right" title="Reorder level on the product record">
-            Master level
+            Reorder level
           </div>
           <div className="px-1 py-2 text-right" title="Reorder quantity on the product record">
-            Master qty
+            Reorder qty
           </div>
           <div className="px-1 py-2 text-right">
             <SortHeader label="Cash impact" col="cash" activeCol={sortCol} dir={sortDir} onSort={onSort} align="end" />
