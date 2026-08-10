@@ -26,7 +26,7 @@ LOCKED formulae (UAC M3-D1..D5):
   recommended_qty = S - net (0 when not triggered / non-positive)
   rounded_qty     = ceil(max(recommended, moq) / order_multiple) * order_multiple
   trigger         = reorder_point: net<=ROP ; periodic_review: on-cadence & net<S ;
-                    min_max: net<=min_override
+                    min_max: net<=min_override ; reorder_level: net<=stored level
   network buy     = aggregate demand+net -> S_agg - net_agg (rounded) ; allocate
                     deficit-first then velocity-proportional surplus (sums to buy)
   confidence      = X & adequate -> high ; Z or thin sample -> low ; else medium
@@ -295,9 +295,20 @@ def order_up_to(rop: float, demand_rate: float,
 
 def trigger(policy_type: Optional[str], *, net: float, rop: Optional[float] = None,
             min_level: Optional[float] = None, oup: Optional[float] = None,
-            on_cadence: bool = True) -> tuple[bool, Optional[str]]:
+            on_cadence: bool = True,
+            reorder_level: Optional[float] = None) -> tuple[bool, Optional[str]]:
     """Whether a buy fires + the human ``triggered_reason`` (AC-M3.7)."""
     n = float(net)
+    if policy_type == "reorder_level":
+        # The buyer's own number. No forecast term participates, by design: this basis exists
+        # because forecast cover turned a 2-unit order into a 15.933 buy. A missing level is
+        # NOT a level of zero - the caller emits the row as `needs_level` instead of planning
+        # it, so an item nobody has set up is neither bought nor silently dropped.
+        if reorder_level is None:
+            return False, None
+        if n <= float(reorder_level):
+            return True, f"reorder_level: net {_g(n)} <= level {_g(reorder_level)}"
+        return False, None
     if policy_type == "periodic_review":
         if on_cadence and oup is not None and n < float(oup):
             return True, f"periodic_review: net {_g(n)} < order-up-to {_g(oup)} on review cadence"
@@ -420,22 +431,36 @@ def aggregate_network(warehouses: list[dict], *, lead_time_days: float,
                       safety_days: float = DEFAULT_SAFETY_DAYS,
                       review_days: float = DEFAULT_REVIEW_PERIOD_DAYS,
                       moq: Optional[float] = None,
-                      order_multiple: Optional[float] = None) -> dict:
+                      order_multiple: Optional[float] = None,
+                      levels: Optional[dict[str, Optional[float]]] = None) -> dict:
     """Aggregate demand+net across warehouses, size one buy on the aggregate, and
     auto-allocate it (AC-M3.8). ``warehouses``: [{warehouse_id, demand_rate, net}].
     Uses fixed_days SS on the aggregate (network golden path).
+
+    ``levels`` switches the target from the forecast order-up-to to the levels the buyer
+    owns: the pool's target is the SUM of its members' levels, and each member's deficit is
+    measured against its OWN level. A member with no level contributes nothing and can
+    therefore receive nothing, which is what keeps a bin nobody has set up out of a purchase
+    instead of guessing a number for it.
     """
     agg_demand = sum(float(w["demand_rate"]) for w in warehouses)
     agg_net = sum(float(w["net"]) for w in warehouses)
     ss = agg_demand * float(safety_days)
-    rop = reorder_point(agg_demand, lead_time_days, ss)
-    oup = order_up_to(rop, agg_demand, review_days)
+    if levels is not None:
+        rop = sum(float(levels.get(w["warehouse_id"]) or 0.0) for w in warehouses)
+        oup = rop
+    else:
+        rop = reorder_point(agg_demand, lead_time_days, ss)
+        oup = order_up_to(rop, agg_demand, review_days)
     recommended = oup - agg_net
     buy = round_order_qty(recommended, moq, order_multiple) if recommended > 0 else 0.0
     per_wh = []
     for w in warehouses:
         d = float(w["demand_rate"])
-        rop_i = reorder_point(d, lead_time_days, d * float(safety_days))
+        if levels is not None:
+            rop_i = float(levels.get(w["warehouse_id"]) or 0.0)
+        else:
+            rop_i = reorder_point(d, lead_time_days, d * float(safety_days))
         per_wh.append({"warehouse_id": w["warehouse_id"],
                        "deficit": max(rop_i - float(w["net"]), 0.0),
                        "demand_rate": d, "reorder_point": rop_i})

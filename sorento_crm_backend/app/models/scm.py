@@ -47,7 +47,10 @@ class ReorderPolicy(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     scope_type = Column(String(30), nullable=False)  # sku | product_class | abc_xyz_cell | global
     scope_ref = Column(String(255), nullable=True)
-    policy_type = Column(String(30), nullable=False)  # reorder_point | periodic_review | min_max
+    # reorder_point | periodic_review | min_max | reorder_level. This field IS the planning
+    # basis switch: it already resolves global -> product_class -> sku, so turning the
+    # forecast basis back on for a class or a SKU is a row here, never a deploy.
+    policy_type = Column(String(30), nullable=False)
     service_level = Column(Numeric, nullable=True)
     safety_stock_method = Column(String(30), nullable=True)  # statistical | fixed_days | manual
     safety_days = Column(Numeric, nullable=True)
@@ -69,6 +72,10 @@ class ReorderPolicy(Base):
     # one, and either would make a transfer proposal look better than the truth.
     transfer_lead_time_days = Column(Integer, nullable=True)
     transfer_cost_per_unit = Column(Numeric(12, 2), nullable=True)
+    # reorder_level basis dials. How many months of movement to study, and how many months
+    # of it a level should cover. Both only ever shape the SUGGESTION.
+    level_study_months = Column(Integer, nullable=True, server_default=text("3"))
+    level_cover_months = Column(Numeric(6, 2), nullable=True, server_default=text("2"))
     factor_toggles = Column(JSONB, nullable=True)
     factor_weights = Column(JSONB, nullable=True)
     min_override = Column(Numeric, nullable=True)
@@ -79,6 +86,35 @@ class ReorderPolicy(Base):
     source_ref = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class ReorderLevel(Base, CompanyScopedMixin):
+    """The reorder level a buyer owns, and the suggestion it was derived from.
+
+    Two columns, never one. `level` is what the plan uses and only a person sets it;
+    `suggested_level` is what three months of movement implies and a refresh may move it
+    freely. Merging them would let a recompute silently change what gets bought, which is
+    the behaviour the reorder_level basis exists to end.
+
+    A NULL `level` is NOT a level of zero: it means nobody has set one, and the engine emits
+    the item as `needs_level` rather than planning it.
+    """
+    __tablename__ = "reorder_level"
+    __table_args__ = {"schema": "scm"}
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    product_id = Column(UUID(as_uuid=False), nullable=False)
+    # NULL = the level applies to the product everywhere; a per-location row wins.
+    warehouse_id = Column(UUID(as_uuid=False), nullable=True)
+    level = Column(Numeric(18, 4), nullable=True)
+    source = Column(String(30), nullable=True)  # manual | accepted_suggestion
+    suggested_level = Column(Numeric(18, 4), nullable=True)
+    suggested_at = Column(DateTime(timezone=False), nullable=True)
+    # The months studied, their average, the cover applied - so the number is arguable.
+    suggestion_basis = Column(JSONB, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), nullable=True)
 
 
 class ItemClassification(Base):

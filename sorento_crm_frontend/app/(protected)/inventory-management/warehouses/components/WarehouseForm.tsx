@@ -61,6 +61,7 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
       is_active: true,
       counts_as_available: true,
       pool_warehouse_id: null,
+      segment: null,
     },
     mode: 'onSubmit',
   });
@@ -94,6 +95,7 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
           warehouse.pool_warehouse_id && warehouse.pool_warehouse_id !== warehouse.id
             ? warehouse.pool_warehouse_id
             : null,
+        segment: (warehouse.segment as 'dealer' | 'project' | null) ?? null,
       });
     }
   }, [warehouse, isEditMode, form]);
@@ -227,6 +229,30 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
                         <FormControl>
                           <Switch checked={field.value} onCheckedChange={field.onChange} />
                         </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="segment"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Sells to</FormLabel>
+                        <FormControl>
+                          <SearchableSelect
+                            value={field.value ?? ''}
+                            onChange={(v) => field.onChange(v || null)}
+                            options={[
+                              { value: 'dealer', label: 'Dealer' },
+                              { value: 'project', label: 'Project' },
+                            ]}
+                            clearable
+                            placeholder="Not set"
+                          />
+                        </FormControl>
+                        <FormDescription>Splits cost, price and sales history.</FormDescription>
+                        <FormMessage />
                       </FormItem>
                     )}
                   />

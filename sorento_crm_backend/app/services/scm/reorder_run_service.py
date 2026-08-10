@@ -38,6 +38,7 @@ from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.scm import cash_ranking
 from app.services.scm import reorder_engine as eng
+from app.services.scm import reorder_level_service as rl_service
 from app.services.scm.money import (
     BASE_CURRENCY,
     Rate,
@@ -370,6 +371,10 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
         # L5 - how long the stock sitting there has been sitting. Only ever consulted for a
         # SKU that has never moved, where until now there was no evidence at all.
         last_buy = _last_purchase_map(db, [r["product_id"] for r in rows])
+        # S10: the levels the buyer owns. Read once for the whole run; a policy that does
+        # not select the reorder_level basis simply never consults them.
+        levels = rl_service.get_levels(
+            db, sorted({r["product_id"] for r in rows}), run.warehouse_ids)
         wh_meta = {str(r["warehouse_id"]): (r["warehouse_code"], r["warehouse_name"]) for r in rows}
 
         # One read for the whole run. Every supplier price is restated in the base
@@ -379,10 +384,11 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
 
         if run.buy_scope == "network":
             recs = _plan_network(db, run_id, rows, policies, today, last_move, wh_meta,
-                                 last_buy=last_buy, rates=rates)
+                                 last_buy=last_buy, rates=rates, levels=levels)
         else:
             recs = _plan_per_warehouse(db, run_id, rows, policies, today, last_move,
-                                       wh_meta, last_buy=last_buy, rates=rates)
+                                       wh_meta, last_buy=last_buy, rates=rates,
+                                       levels=levels)
 
         # M4 cash stage — compute + FREEZE each buy's rank_score / rank / rank_factors
         # (funded/deferred is computed live at view-time against a budget, not here).
@@ -481,13 +487,19 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     sql = text(f"""
         SELECT np.product_id, np.warehouse_id,
                p.product_code, p.product_name, pc.category_code, p.list_price,
-               w.warehouse_code, w.warehouse_name,
+               w.warehouse_code, w.warehouse_name, w.segment,
                np.quantity_on_hand, np.on_order, np.committed, np.net_position,
+               -- S10 - the buyer checks outstanding PO and incoming SPO by hand every week.
+               -- `np.on_order` is SPO (supplier POs on the water); `po_ordered_v` is the
+               -- ordered-not-received PO book. Two different questions, two columns.
+               COALESCE(po.ordered, 0) AS po_ordered,
                ds.avg_daily_demand, ds.demand_cv, ds.sample_days,
                ic.abc_class, ic.xyz_class
         FROM scm.net_position_v np
         JOIN products p ON p.id = np.product_id
         JOIN warehouses w ON w.id = np.warehouse_id
+        LEFT JOIN scm.po_ordered_v po
+          ON po.product_id = np.product_id AND po.warehouse_id = np.warehouse_id
         LEFT JOIN product_categories pc ON pc.id = p.category_id
         LEFT JOIN scm.demand_stat ds
           ON ds.product_id = np.product_id AND ds.warehouse_id = np.warehouse_id
@@ -583,7 +595,8 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
                         today: date, last_move: dict,
                         wh_meta: Optional[dict] = None,
                         last_buy: Optional[dict] = None,
-                        rates: Optional[dict] = None) -> list[ReorderRecommendation]:
+                        rates: Optional[dict] = None,
+                        levels: Optional[dict] = None) -> list[ReorderRecommendation]:
     """Plan each SKU against each fulfilment POOL, not each warehouse.
 
     A shortage in one bin is covered from the shared pool its site draws on before it is
@@ -614,7 +627,8 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
         cands = eng.load_supplier_candidates(db, pid, rates=rates)
         computed: list[dict] = []
         for r in prows:
-            c = _compute_cell(db, r, policies, cands, today, last_move, last_buy)
+            c = _compute_cell(db, r, policies, cands, today, last_move, last_buy,
+                              levels=levels)
             computed.append(c)
         flags = _transfer_flags_for(prows, computed)
 
@@ -768,11 +782,34 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
     wh_inputs = [{"warehouse_id": str(r["warehouse_id"]),
                   "demand_rate": float(r["avg_daily_demand"] or 0.0),
                   "net": float(r["net_position"] or 0.0)} for r in prows]
-    agg = eng.aggregate_network(wh_inputs, lead_time_days=lead, safety_days=safety_days,
-                                review_days=review_days, moq=moq,
-                                order_multiple=order_multiple)
 
     policy_type = policy.get("policy_type") or "reorder_point"
+    # S10 - on the reorder_level basis the pool is sized against the SUM of its members'
+    # levels rather than against a forecast. Each member is measured against its own level,
+    # so a bin nobody has set up contributes nothing and receives nothing.
+    pool_levels = None
+    unset = []
+    if policy_type == "reorder_level":
+        pool_levels = {}
+        for r, c in zip(prows, cells):
+            wid = str(r["warehouse_id"])
+            pool_levels[wid] = c.get("reorder_level")
+            if c.get("reorder_level") is None:
+                unset.append((r, c))
+
+    agg = eng.aggregate_network(wh_inputs, lead_time_days=lead, safety_days=safety_days,
+                                review_days=review_days, moq=moq,
+                                order_multiple=order_multiple, levels=pool_levels)
+
+    # Named one row per bin, not once for the pool: the buyer has to set each one, and a
+    # single pool-level "somebody needs a level" would not say which.
+    for r, c in unset:
+        recs.append(_build_rec(run_id, "needs_level", r, c,
+                               warehouse_id=str(r["warehouse_id"]),
+                               order_qty=None, rounded=None,
+                               reason_enum="needs_level",
+                               reason_label=_needs_level_label(c)))
+
     min_override = _fnum(policy.get("min_override"))
     max_override = _fnum(policy.get("max_override"))
     agg_net = float(agg["agg_net"])
@@ -782,7 +819,8 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
         target_oup = float(agg["order_up_to"])
     triggered, reason_label = eng.trigger(
         policy_type, net=agg_net, rop=float(agg["reorder_point"]),
-        min_level=min_override, oup=target_oup, on_cadence=True)
+        min_level=min_override, oup=target_oup, on_cadence=True,
+        reorder_level=(float(agg["reorder_point"]) if pool_levels is not None else None))
     recommended, rounded = eng.order_qty(
         triggered, net=agg_net, oup=target_oup, moq=moq, order_multiple=order_multiple)
 
@@ -869,7 +907,8 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
 
 
 def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict],
-                  today: date, last_move: dict, last_buy: Optional[dict] = None) -> dict:
+                  today: date, last_move: dict, last_buy: Optional[dict] = None,
+                  levels: Optional[dict] = None) -> dict:
     """Run the engine for one SKU×warehouse; returns the frozen decision values."""
     pid = str(row["product_id"])
     wid = str(row["warehouse_id"])
@@ -924,13 +963,28 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
         oup = float(max_override)
     else:
         oup = eng.order_up_to(rop, demand_rate, review_days)
+
+    # S10 - the buyer's own level, when the resolved policy selects that basis. The forecast
+    # ROP/OUP above are still computed and still frozen onto the row, because the buyer wants
+    # to SEE what the industry-standard basis would have said; they simply no longer decide.
+    level_row = rl_service.resolve_level(levels or {}, pid, wid) or {}
+    reorder_level = _fnum(level_row.get("level"))
+    # A level nobody has set is not a level of zero. The row is emitted as `needs_level` so
+    # the item is neither bought on a guess nor quietly dropped off the plan.
+    needs_level = policy_type == "reorder_level" and reorder_level is None
+
     # on_cadence=True: in M3 every run counts as a review cadence (periodic_review always
     # gets to fire when below order-up-to). Real cadence scheduling (only fire on the SKU's
     # due review date) is future work.
     triggered, reason_label = eng.trigger(
-        policy_type, net=net, rop=rop, min_level=min_override, oup=oup, on_cadence=True)
+        policy_type, net=net, rop=rop, min_level=min_override, oup=oup, on_cadence=True,
+        reorder_level=reorder_level)
+    # On this basis the level IS the order-up-to: order the difference, nothing more. Reusing
+    # `order_qty` keeps MOQ and order-multiple rounding in one place rather than growing a
+    # second, subtly different quantity path.
+    target = reorder_level if policy_type == "reorder_level" else oup
     recommended, rounded = eng.order_qty(
-        triggered, net=net, oup=oup, moq=moq, order_multiple=order_multiple)
+        triggered, net=net, oup=target, moq=moq, order_multiple=order_multiple)
     doc = eng.days_of_cover(net, demand_rate)
 
     lm = last_move.get((pid, wid))
@@ -970,11 +1024,27 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
         "supplier_reason": sel.get("reason"),
         "selection": tog["supplier_selection"],
         "overstock": bool(disp and disp["type"] == "overstock"),
-        "short": net < rop,
+        # "Short" means short of whatever the ACTIVE basis plans against, so the shortage
+        # count on the page agrees with the buys beneath it.
+        "short": net < (reorder_level if policy_type == "reorder_level"
+                        and reorder_level is not None else rop),
+        # S10 - carried onto the frozen row so the buyer sees their number, our suggestion,
+        # and where the number came from, without a second query.
+        "reorder_level": reorder_level,
+        "reorder_level_source": level_row.get("source"),
+        "suggested_level": _fnum(level_row.get("suggested_level")),
+        "suggestion_basis": level_row.get("suggestion_basis"),
+        "needs_level": needs_level,
         # M4 cash-ranking factor inputs (list_price read-only from products; committed
         # from the net-position view) — frozen into `inputs` for the cash stage.
         "list_price": _fnum(row.get("list_price")),
         "committed": _fnum(row.get("committed")),
+        # S10 - the figures the buyer looks up by hand before deciding. Carried on the cell
+        # so the row answers "should I order this" without a second screen.
+        "on_hand": _fnum(row.get("quantity_on_hand")),
+        "on_order": _fnum(row.get("on_order")),
+        "po_ordered": _fnum(row.get("po_ordered")),
+        "segment": row.get("segment"),
     }
 
 
@@ -992,7 +1062,17 @@ def _emit_cell(run_id: str, row: dict, c: dict,
     # once MOQ/multiple are applied) is NOT an actionable buy — "buy 0" is noise, so
     # emit nothing. Mirrors the network path's `rounded > 0` gate (line ~516).
     rounded = c["rounded"] or 0
-    if not disp and c["triggered"] and rounded > 0:
+    if not disp and c.get("needs_level"):
+        # S10 - the plan runs on a level nobody has set for this item. Proposing a quantity
+        # would be a guess and omitting the row would read as "nothing to do here", so it is
+        # emitted as its own kind, carrying the suggestion and the months behind it. One
+        # click on that row turns it into a plannable item next run.
+        out.append(_build_rec(run_id, "needs_level", row, c,
+                              warehouse_id=str(row["warehouse_id"]),
+                              order_qty=None, rounded=None,
+                              reason_enum="needs_level",
+                              reason_label=_needs_level_label(c)))
+    elif not disp and c["triggered"] and rounded > 0:
         if chosen:
             out.append(_build_rec(run_id, "buy", row, c, warehouse_id=str(row["warehouse_id"]),
                                   order_qty=c["recommended"], rounded=c["rounded"]))
@@ -1032,7 +1112,8 @@ def _emit_cell(run_id: str, row: dict, c: dict,
 def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dict],
                   today: date, last_move: dict, wh_meta: dict,
                   last_buy: Optional[dict] = None,
-                  rates: Optional[dict] = None) -> list[ReorderRecommendation]:
+                  rates: Optional[dict] = None,
+                  levels: Optional[dict] = None) -> list[ReorderRecommendation]:
     recs: list[ReorderRecommendation] = []
     rates = load_rates(db) if rates is None else rates
     by_product: dict[str, list[dict]] = {}
@@ -1042,7 +1123,8 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
     for pid, prows in by_product.items():
         cands = eng.load_supplier_candidates(db, pid, rates=rates)
         # per-warehouse cells (drive disposition + transfer flags + allocation demand)
-        computed = [_compute_cell(db, r, policies, cands, today, last_move, last_buy)
+        computed = [_compute_cell(db, r, policies, cands, today, last_move, last_buy,
+                                  levels=levels)
                     for r in prows]
         flags = _transfer_flags_for(prows, computed)
 
@@ -1063,16 +1145,30 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
         wh_inputs = [{"warehouse_id": str(r["warehouse_id"]),
                       "demand_rate": float(r["avg_daily_demand"] or 0.0),
                       "net": float(r["net_position"] or 0.0)} for r in prows]
+        policy_type = policy.get("policy_type") or "reorder_point"
+        # S10 - same rule as the pool path: the network target is the sum of the levels the
+        # buyer owns, and a location with no level is named rather than guessed at.
+        net_levels = None
+        if policy_type == "reorder_level":
+            net_levels = {str(r["warehouse_id"]): c.get("reorder_level")
+                          for r, c in zip(prows, computed)}
+            for r, c in zip(prows, computed):
+                if c.get("reorder_level") is None:
+                    recs.append(_build_rec(run_id, "needs_level", r, c,
+                                           warehouse_id=str(r["warehouse_id"]),
+                                           order_qty=None, rounded=None,
+                                           reason_enum="needs_level",
+                                           reason_label=_needs_level_label(c)))
+
         agg = eng.aggregate_network(wh_inputs, lead_time_days=lead, safety_days=safety_days,
                                     review_days=review_days, moq=moq,
-                                    order_multiple=order_multiple)
+                                    order_multiple=order_multiple, levels=net_levels)
 
         # Gate the network buy on the SAME policy trigger as per-warehouse, computed on
         # the AGGREGATE (net vs agg-ROP / agg-min / agg-OUP). Sizing the buy is NOT a
         # trigger: a cell above ROP but below OUP under a reorder_point policy must NOT
         # buy (matches per-warehouse), and min_max/periodic get their own gate + honest
         # label instead of a hardcoded "net ≤ ROP".
-        policy_type = policy.get("policy_type") or "reorder_point"
         min_override = _fnum(policy.get("min_override"))
         max_override = _fnum(policy.get("max_override"))
         agg_net = float(agg["agg_net"])
@@ -1083,7 +1179,8 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
         # on_cadence=True: every run is a review cadence in M3 (see per-warehouse note).
         triggered, reason_label = eng.trigger(
             policy_type, net=agg_net, rop=float(agg["reorder_point"]),
-            min_level=min_override, oup=target_oup, on_cadence=True)
+            min_level=min_override, oup=target_oup, on_cadence=True,
+            reorder_level=(float(agg["reorder_point"]) if net_levels is not None else None))
         recommended, rounded = eng.order_qty(
             triggered, net=agg_net, oup=target_oup, moq=moq, order_multiple=order_multiple)
 
@@ -1223,6 +1320,17 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         "review_days": c.get("review_days"),
         "moq": c.get("moq"),
         "order_multiple": c.get("order_multiple"),
+        # S10 - the buyer's number, our suggestion, and the arithmetic behind it. Frozen so
+        # the row still explains itself after the level is edited next week.
+        "reorder_level": c.get("reorder_level"),
+        "reorder_level_source": c.get("reorder_level_source"),
+        "suggested_level": c.get("suggested_level"),
+        "suggestion_basis": c.get("suggestion_basis"),
+        # The weekly checklist, frozen with the row so it still reads true next month.
+        "on_hand": c.get("on_hand"),
+        "on_order": c.get("on_order"),
+        "po_ordered": c.get("po_ordered"),
+        "segment": c.get("segment"),
         "cv_d": c.get("cv"),
         "var_lt": c.get("var_lt"),
         "demand_rate": _r(c.get("demand_rate")),
@@ -1362,9 +1470,27 @@ def _disposition_label(kind: str, c: dict, basis: Optional[str] = None) -> str:
 
 
 def _reason_enum(policy_type: Optional[str]) -> str:
-    if policy_type in ("reorder_point", "periodic_review", "min_max"):
+    if policy_type in ("reorder_point", "periodic_review", "min_max", "reorder_level"):
         return policy_type
     return "reorder_point"
+
+
+def _needs_level_label(c: dict) -> str:
+    """Why this row is asking rather than proposing, with the suggestion in the sentence."""
+    suggested = c.get("suggested_level")
+    basis = c.get("suggestion_basis") or {}
+    if suggested is None:
+        return "no reorder level set, and there is no movement history to suggest one from"
+    if basis.get("no_movement"):
+        return (f"no reorder level set. Nothing moved in the last "
+                f"{basis.get('months_studied', 3)} months, so the suggestion is 0")
+    avg = basis.get("avg_monthly")
+    cover = basis.get("cover_months")
+    if avg is not None and cover is not None:
+        return (f"no reorder level set. {avg:g} a month over "
+                f"{basis.get('months_studied', 3)} months x {cover:g} months cover "
+                f"suggests {suggested:g}")
+    return f"no reorder level set. The suggestion is {suggested:g}"
 
 
 def _cash_impact_in_base(rounded, unit_cost, currency, rate, rate_as_of) -> Optional[float]:
@@ -1682,9 +1808,14 @@ def _summarise(recs: list[ReorderRecommendation]) -> dict:
     # a decision the planner has not taken yet, and adding it to the Buy tile would report
     # money as committed that nobody has agreed to spend.
     covered = sum(1 for r in recs if r.rec_type == "covered")
+    # Items the plan could not size because nobody has set a level. Counted, never folded
+    # into anything else: a plan that quietly omits them reports "nothing to do" for stock
+    # that has simply never been set up.
+    needs_level = sum(1 for r in recs if r.rec_type == "needs_level")
     return {
         "buy": buy,
         "covered": covered,
+        "needs_level": needs_level,
         "disposition": disposition,
         "exceptions": exceptions,
         "total_cash_impact": round(total_cash, 2),

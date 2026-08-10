@@ -21,6 +21,7 @@ from app.api.v1.scm import (
     policies,
     purchase_history,
     purchase_orders,
+    reorder_levels,
     reorder_runs,
     sales_orders,
 )
@@ -30,6 +31,7 @@ router.include_router(dashboard.router)
 router.include_router(config.router)
 router.include_router(analytics.router)
 router.include_router(policies.router)
+router.include_router(reorder_levels.router)
 router.include_router(reorder_runs.router)
 router.include_router(sales_orders.router)
 router.include_router(purchase_orders.router)

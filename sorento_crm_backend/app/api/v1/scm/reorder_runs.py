@@ -283,7 +283,7 @@ def list_recommendations(
     sort: Optional[str] = Query(None),
     dir: str = Query("asc"),
     query: Optional[str] = Query(None),
-    type: Optional[str] = Query(None),  # buy | covered | disposition | exception
+    type: Optional[str] = Query(None),  # buy | covered | disposition | exception | needs_level
     budget: Optional[float] = Query(None, ge=0),  # M4 — live funding what-if
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
@@ -300,7 +300,7 @@ def list_recommendations(
 
     where = ["rr.run_id = :rid"]
     params: dict[str, Any] = {"rid": run_id}
-    if type in ("buy", "covered", "disposition", "exception"):
+    if type in ("buy", "covered", "disposition", "exception", "needs_level"):
         where.append("rr.rec_type = :type")
         params["type"] = type
     if query:
@@ -325,7 +325,7 @@ def list_recommendations(
                rr.rank, rr.rank_score, rr.unit_cost, rr.cash_impact, rr.funding_status,
                rr.currency, rr.rate_to_base, rr.rate_as_of, rr.status,
                p.product_code, p.product_name,
-               w.warehouse_code, w.warehouse_name,
+               w.warehouse_code, w.warehouse_name, w.segment,
                su.supplier_code, su.supplier_name
         FROM scm.reorder_recommendation rr
         JOIN products p ON p.id = rr.product_id
@@ -468,6 +468,17 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
         "review_days": inp.get("review_days"),
         "moq": inp.get("moq"),
         "order_multiple": inp.get("order_multiple"),
+        # --- S10: the weekly checklist, so the row answers "should I order this" alone ---
+        "segment": r["segment"],
+        "on_hand": inp.get("on_hand"),
+        # SPO on the water vs the ordered-not-received PO book. Two different questions.
+        "incoming_spo": inp.get("on_order"),
+        "outstanding_po": inp.get("po_ordered"),
+        "outstanding_sales": inp.get("committed"),
+        "reorder_level": inp.get("reorder_level"),
+        "reorder_level_source": inp.get("reorder_level_source"),
+        "suggested_level": inp.get("suggested_level"),
+        "suggestion_basis": inp.get("suggestion_basis"),
         "policy_type": inp.get("policy_type"),
         "supplier_selection": inp.get("selection"),
         # --- M4 cash co-pilot (buy rows only; non-buy leave these null) ---

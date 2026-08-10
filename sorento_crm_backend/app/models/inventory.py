@@ -48,6 +48,12 @@ class Warehouse(Base, CompanyScopedMixin):
     pool_warehouse_id = Column(
         UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
     )
+    # Who this location sells to: `dealer` or `project`. The bare site code (BRW) is the
+    # dealer bin and its suffixed bins (BRW-BB, BRW-IB) are project stock, which is why
+    # "last purchase cost" is two different numbers depending on who is asking. SEEDED from
+    # that convention and then never parsed again, same reasoning as pool_warehouse_id: a
+    # client whose codes look nothing like Sorento's repoints rows instead of needing code.
+    segment = Column(String(20), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
     

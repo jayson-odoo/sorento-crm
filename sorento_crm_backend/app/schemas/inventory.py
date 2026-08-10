@@ -20,8 +20,13 @@ class WarehouseBase(BaseModel):
     # pool_warehouse_id - the shared pool this location draws on. A shortage in a customer
     # bin is covered from its site's pool before it is ever a purchase (ADR-0011). Empty
     # means the location is its own pool, which is the no-pooling default.
+    #
+    # segment - who this location sells to, `dealer` or `project`. The bare site code is
+    # the dealer bin and its suffixed bins are project stock, which is why "last purchase
+    # cost" is two different numbers depending on who is asking.
     counts_as_available: bool = True
     pool_warehouse_id: Optional[str] = None
+    segment: Optional[str] = None
 
 
 class WarehouseCreate(WarehouseBase):
@@ -36,6 +41,7 @@ class WarehouseUpdate(BaseModel):
     is_active: Optional[bool] = None
     counts_as_available: Optional[bool] = None
     pool_warehouse_id: Optional[str] = None
+    segment: Optional[str] = None
 
 
 class WarehouseResponse(WarehouseBase):
