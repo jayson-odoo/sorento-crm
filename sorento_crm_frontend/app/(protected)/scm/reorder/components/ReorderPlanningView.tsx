@@ -34,11 +34,14 @@ import {
   useTodayRun,
   useUnlocatedDemand,
 } from '../hooks/useReorderRun';
+import { usePlanLines } from '../hooks/usePlanLines';
 import { useReorderPlan } from '../hooks/useReorderPlan';
 import { decisionsKey } from '../hooks/useDecisions';
 import type { ReorderRunHistoryItem } from '../services/reorderRunService';
 import type { OutstandingApplyResult } from '../services/outstandingImportService';
-import { CashCopilotResults } from './CashCopilotResults';
+import { PlanLinesGrid } from './PlanLinesGrid';
+import type { PlanLineStatus } from '../lib/planLine';
+import { PlanBudgetReview } from './PlanBudgetReview';
 import { CoveredByStockView } from './CoveredByStockView';
 import { NeedsLevelView } from './NeedsLevelView';
 import { PlanSection } from './PlanSection';
@@ -91,32 +94,27 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(autoOpenRun);
   const [view, setView] = useState<ReorderPlanView>('buy');
-  // Which bands are open. Buy is open on arrival because it is what the page is for; the
-  // other two announce their counts in their headers while folded.
-  const [openSections, setOpenSections] = useState({
-    covered: false,
-    disposition: false,
-    needsLevel: false,
-  });
-  const coveredRef = useRef<HTMLDivElement>(null);
-  const dispositionRef = useRef<HTMLDivElement>(null);
-  const needsLevelRef = useRef<HTMLDivElement>(null);
+  /**
+   * Which status the one list is filtered to, or null for all of it.
+   *
+   * The tiles used to reveal and scroll to a band. There are no bands now, so a tile filters
+   * the grid instead: same intent - "show me just those" - against a list that never moved.
+   */
+  const [statusFilter, setStatusFilter] = useState<PlanLineStatus | null>(null);
 
-  /** A tile now REVEALS its band rather than replacing the table. */
   const selectView = (next: ReorderPlanView) => {
     if (next === 'covered' || next === 'disposition' || next === 'needs_level') {
-      const key =
-        next === 'covered' ? 'covered' : next === 'disposition' ? 'disposition' : 'needsLevel';
-      setOpenSections((prev) => ({ ...prev, [key]: true }));
-      setView('buy');
-      const ref =
-        next === 'covered' ? coveredRef : next === 'disposition' ? dispositionRef : needsLevelRef;
-      // After the band has had a frame to expand, otherwise it scrolls to where it was.
-      requestAnimationFrame(() =>
-        ref.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }),
+      setStatusFilter(
+        next === 'covered'
+          ? 'covered_by_stock'
+          : next === 'disposition'
+            ? 'allocation'
+            : 'needs_level',
       );
+      setView('buy');
       return;
     }
+    if (next === 'buy') setStatusFilter(null);
     setView(next);
   };
   // A history-selected run overrides today's; null = show today's default run.
@@ -174,6 +172,8 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const buildingFirstPlan = planInProgress && !!todayData && todayData.status !== 'completed';
 
   const plan = useReorderPlan(currentRunId, view === 'buy' && !!currentRunId);
+  // S11: one list for every planning line, decisions over it, no budget.
+  const planLines = usePlanLines(currentRunId, view === 'buy' && !!currentRunId);
   // Fetched whenever a run is on screen, not only when its view is open, so the tile can
   // carry a real count rather than a dash the user has to click to resolve.
   const covered = useCoveredRecommendations(currentRunId, !!currentRunId);
@@ -597,85 +597,52 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         // the SAME run as the plan above, so a past run reports the week it was.
         <SummaryOrderReportView runId={currentRunId} />
       ) : (
-        // ONE PAGE. Buy, covered-by-stock and stock allocation are bands of the same plan,
-        // not three screens: swapping the table meant leaving the buys to ask "is any of
-        // this already covered?" and then finding your place again. The tiles now open and
-        // scroll to a band instead of replacing what is on screen.
+        // ONE LIST (S11). Every planning line lives in a single DataGrid where what the plan
+        // found is a STATUS COLUMN, not a place the row lives. The six bands this replaces
+        // sorted the work for the buyer, and two of them - Within budget, Over budget -
+        // delivered a verdict before the buyer had decided anything, using a budget they had
+        // not entered. The money question now comes last, in PlanBudgetReview, asked of the
+        // decisions that were actually made.
         <>
           <PlanAssistant
             runId={currentRunId}
             onApplyProposalLine={plan.applyProposalLine}
             onApplyActions={plan.applyActions}
           />
-          {plan.isLoading ? (
+          {planLines.isLoading ? (
             <Skeleton className="h-72 w-full rounded-xl" />
-          ) : plan.isError ? (
+          ) : planLines.isError ? (
             <Card className="flex flex-col items-center gap-3 p-10 text-center">
               <span className="flex size-10 items-center justify-center rounded-full bg-destructive/10 text-destructive">
                 <AlertCircle className="size-5" aria-hidden />
               </span>
               <p className="max-w-sm text-sm text-muted-foreground">
-                {plan.error instanceof Error ? plan.error.message : 'Failed to load buy recommendations.'}
+                {planLines.error instanceof Error
+                  ? planLines.error.message
+                  : 'Failed to load the plan.'}
               </p>
-              <Button variant="outline" onClick={() => void plan.refetch()}>
+              <Button variant="outline" onClick={() => planLines.refetch()}>
                 Try again
               </Button>
             </Card>
           ) : (
-            // Keeps its own Within budget / Over budget collapse and its drag-to-fund: that
-            // interaction is why this grid is hand-rolled rather than a DataGrid, and
-            // folding it into one would have cost the drag.
-            <CashCopilotResults plan={plan} />
+            <>
+              <PlanLinesGrid
+                statusFilter={statusFilter}
+                onStatusFilterChange={setStatusFilter}
+                lines={planLines.lines}
+                decisions={planLines.decisions}
+                onDecide={(line, next) => planLines.decide(line, next)}
+                onClear={(line) => planLines.clear(line)}
+              />
+              {/* Last, and only here: what it costs and whether that works. */}
+              <PlanBudgetReview
+                lines={planLines.lines}
+                decisions={planLines.decisions}
+                totals={planLines.totals}
+              />
+            </>
           )}
-
-          <PlanSection
-            ref={coveredRef}
-            title="Covered by stock"
-            count={covered.data ? covered.data.length : null}
-            hint="the location already holds it - use stock, or buy anyway"
-            open={openSections.covered}
-            onOpenChange={(o) => setOpenSections((s) => ({ ...s, covered: o }))}
-          >
-            <CoveredByStockView
-              runId={currentRunId}
-              rows={covered.data ?? []}
-              isLoading={covered.isLoading}
-              isError={covered.isError}
-              error={covered.error}
-            />
-          </PlanSection>
-
-          <PlanSection
-            ref={needsLevelRef}
-            title="Needs a level"
-            count={needsLevel.data ? needsLevel.data.length : null}
-            hint="no reorder level set, so the plan could not size it"
-            open={openSections.needsLevel}
-            onOpenChange={(o) => setOpenSections((s) => ({ ...s, needsLevel: o }))}
-          >
-            <NeedsLevelView
-              runId={currentRunId}
-              rows={needsLevel.data ?? []}
-              isLoading={needsLevel.isLoading}
-              isError={needsLevel.isError}
-              error={needsLevel.error}
-            />
-          </PlanSection>
-
-          <PlanSection
-            ref={dispositionRef}
-            title="Stock allocation"
-            count={actionableDispositions.length}
-            hint="stock to move on, rather than buy"
-            open={openSections.disposition}
-            onOpenChange={(o) => setOpenSections((s) => ({ ...s, disposition: o }))}
-          >
-            {dispositionQuery.isLoading ? (
-              <Skeleton className="h-72 w-full rounded-xl" />
-            ) : (
-              <DispositionResultsGrid rows={dispositionRows} />
-            )}
-          </PlanSection>
         </>
       )}
 

@@ -38,7 +38,15 @@ vi.mock('../hooks/useReorderPlan', () => ({ useReorderPlan: (...a: unknown[]) =>
 vi.mock('../hooks/useDecisions', () => ({ decisionsKey: (id: string | null) => ['scm', 'reorder', 'decisions', id] }));
 
 // Heavy children stubbed to sentinels so we assert orchestration, not their internals.
-vi.mock('./CashCopilotResults', () => ({ CashCopilotResults: () => <div>cash-copilot</div> }));
+vi.mock('./PlanLinesGrid', () => ({ PlanLinesGrid: () => <div>plan-lines-grid</div> }));
+vi.mock('./PlanBudgetReview', () => ({ PlanBudgetReview: () => <div>budget-review</div> }));
+vi.mock('../hooks/usePlanLines', () => ({
+  usePlanLines: () => ({
+    lines: [], decisions: {}, decide: vi.fn(), clear: vi.fn(),
+    totals: { decided: 0, undecided: 0, buying: 0, usingStock: 0, skipped: 0, units: 0, cost: 0, unpriced: 0 },
+    isLoading: false, isError: false, error: null, refetch: vi.fn(),
+  }),
+}));
 vi.mock('./PlanAssistant', () => ({ PlanAssistant: () => <div>plan-assistant</div> }));
 vi.mock('./DispositionResultsGrid', () => ({ DispositionResultsGrid: () => <div>disposition-grid</div> }));
 vi.mock('./RunHistoryPanel', () => ({ RunHistoryPanel: () => <div>run-history</div> }));
@@ -91,7 +99,7 @@ describe('ReorderPlanningView - opens to today (M8-D3 / M8-C12)', () => {
     stubToday(todayRun());
     renderView();
     expect(screen.getByText(/Today's plan · /)).toBeInTheDocument();
-    expect(screen.getByText('cash-copilot')).toBeInTheDocument();
+    expect(screen.getByText('plan-lines-grid')).toBeInTheDocument();
     expect(screen.getByText('plan-assistant')).toBeInTheDocument();
     // M8-C12 - the disposition card is labelled "Stock allocation"
     // Named twice now, deliberately: the tile and the band it opens.
@@ -265,27 +273,33 @@ describe('ReorderPlanningView - demand the plan could not net', () => {
   });
 });
 
-describe('ReorderPlanningView - one page, not three', () => {
-  // > "if i want to toggle between buy, covered by stock, stock allocation, is very hassle,
-  // >  I want to see all in 1 page"
+describe('ReorderPlanningView - one list, not six bands (S11)', () => {
+  // > "ALL should be in 1 table, 1 list, 1 data grid table ... I need to decide first, before
+  // >  you tell me within budget or out of budget"
 
-  it('shows the buys, the covered band and the allocation band together', () => {
+  it('renders every planning line through ONE grid', () => {
     stubToday(todayRun());
     renderView();
 
-    expect(screen.getByText('cash-copilot')).toBeInTheDocument();
-    expect(screen.getAllByText('Covered by stock').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Stock allocation').length).toBeGreaterThan(0);
+    expect(screen.getByText('plan-lines-grid')).toBeInTheDocument();
   });
 
-  it('a tile reveals its band instead of replacing the table', () => {
+  it('no longer splits the plan into bands', () => {
+    // Covered by stock, Needs a level and Stock allocation were separate collapsible
+    // sections with their own tables. They are values of the grid's Status column now, so
+    // their tables must be gone rather than merely collapsed. The TILES keep those labels -
+    // they are counts, and they now narrow the one list instead of revealing a band.
     stubToday(todayRun());
     renderView();
 
-    fireEvent.click(screen.getAllByText('Covered by stock')[0]);
+    expect(screen.queryByText('disposition-grid')).toBeNull();
+    expect(screen.getAllByText('plan-lines-grid')).toHaveLength(1);
+  });
 
-    // The buys are still there: answering "is any of this covered?" must not cost you
-    // your place in the plan.
-    expect(screen.getByText('cash-copilot')).toBeInTheDocument();
+  it('asks the budget question after the list, never inside it', () => {
+    stubToday(todayRun());
+    renderView();
+
+    expect(screen.getByText('budget-review')).toBeInTheDocument();
   });
 });
