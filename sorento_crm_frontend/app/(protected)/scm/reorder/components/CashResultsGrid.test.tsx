@@ -1,5 +1,5 @@
 /**
- * SCM M8 — CashResultsGrid (slice C + drills). The one-table/two-section plan grid
+ * SCM M8 - CashResultsGrid (slice C + drills). The one-table/two-section plan grid
  * with click-to-explain drills, inline edit + decisions, and row-click detail.
  *   M8-A2/A3 DaysCover drill RECONCILIATION: finite frozen rate → net/rate=days;
  *            days_cover=null deficit → undefined copy, NO "/ 0"; rate<=0 → no-demand;
@@ -42,7 +42,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
-// Lazy drills — return controlled data so the drill popovers render deterministically.
+// Lazy drills - return controlled data so the drill popovers render deterministically.
 const useExplainNet = vi.fn();
 const useExplainDemand = vi.fn();
 vi.mock('../hooks/useDrills', () => ({
@@ -113,7 +113,7 @@ beforeEach(() => {
 /** Normalised full-document text (collapses the JSX whitespace between spans). */
 const docText = () => (document.body.textContent ?? '').replace(/\s+/g, ' ');
 
-describe('CashResultsGrid — layout (M8-C11)', () => {
+describe('CashResultsGrid - layout (M8-C11)', () => {
   it('renders the Warehouse column header + the row’s human warehouse label', () => {
     renderGrid(recToPlanRow(rec()));
     expect(screen.getByText('Warehouse')).toBeInTheDocument();
@@ -121,7 +121,7 @@ describe('CashResultsGrid — layout (M8-C11)', () => {
   });
 });
 
-describe('CashResultsGrid — Days cover drill reconciliation (M8-A2/A3)', () => {
+describe('CashResultsGrid - Days cover drill reconciliation (M8-A2/A3)', () => {
   it('finite frozen rate → arithmetic net/rate=days reconciles; CV spelled in full', () => {
     // net 80, frozen rate 4/day, days_cover 20 → "80 / 4.0 = 20 days".
     renderGrid(recToPlanRow(rec({ net_position: 80, forecast_daily_demand: 4, days_of_cover: 20 })));
@@ -132,7 +132,7 @@ describe('CashResultsGrid — Days cover drill reconciliation (M8-A2/A3)', () =>
     expect(docText()).not.toContain('99');
     // full metric name, never the ambiguous "CV"
     expect(screen.getByText('Coefficient of variation')).toBeInTheDocument();
-    // navigable DO list (M8-A2) — the demand basis is DOs, not raw buckets
+    // navigable DO list (M8-A2) - the demand basis is DOs, not raw buckets
     expect(screen.getByText('DO-2026-0100')).toBeInTheDocument();
   });
 
@@ -141,7 +141,7 @@ describe('CashResultsGrid — Days cover drill reconciliation (M8-A2/A3)', () =>
     fireEvent.click(screen.getByLabelText('Explain runway'));
     expect(screen.getByText(/Runway = undefined/i)).toBeInTheDocument();
     expect(screen.getByText(/Net is a deficit/i)).toBeInTheDocument();
-    // the arithmetic line is suppressed — no "/ 0" ever printed
+    // the arithmetic line is suppressed - no "/ 0" ever printed
     expect(docText()).not.toContain('/ 0');
   });
 
@@ -160,11 +160,13 @@ describe('CashResultsGrid — Days cover drill reconciliation (M8-A2/A3)', () =>
     // Asserted on the CV cell itself, not the whole document: prices elsewhere on the row
     // legitimately carry cents ("RM 100.00"), and a document-wide check for "0.00" fails
     // on those without the CV cell being wrong at all.
-    expect(label.nextElementSibling?.textContent).toBe('\u2014');
+    // The shared placeholder, whatever it is - asserting the character itself makes a
+    // change of dash look like a broken CV cell.
+    expect(label.nextElementSibling?.textContent).toBe(EM_DASH_TEXT);
   });
 });
 
-describe('CashResultsGrid — Net drill lists committed SOs (M8-A1)', () => {
+describe('CashResultsGrid - Net drill lists committed SOs (M8-A1)', () => {
   it('shows on-hand/on-order/committed + the open SO behind committed', () => {
     renderGrid(recToPlanRow(rec()));
     fireEvent.click(screen.getByLabelText('Explain net'));
@@ -174,7 +176,7 @@ describe('CashResultsGrid — Net drill lists committed SOs (M8-A1)', () => {
   });
 });
 
-describe('CashResultsGrid — inline edit (M8-C5)', () => {
+describe('CashResultsGrid - inline edit (M8-C5)', () => {
   it('reason-gates Save, shows live cash, and emits the supplier CODE on save', () => {
     const { onEdit } = renderGrid(recToPlanRow(rec()));
     // open the qty edit popover
@@ -195,14 +197,14 @@ describe('CashResultsGrid — inline edit (M8-C5)', () => {
   });
 });
 
-describe('CashResultsGrid — inline decisions (M8-C6)', () => {
+describe('CashResultsGrid - inline decisions (M8-C6)', () => {
   it('Accept funds a within-budget row', () => {
     const { onFund } = renderGrid(recToPlanRow(rec()));
     fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
     expect(onFund).toHaveBeenCalledWith(expect.objectContaining({ id: 'rec-1' }));
   });
 
-  it('an Over-budget row has NO call-to-action — no Accept / Reject / Fund (M8-F13)', () => {
+  it('an Over-budget row has NO call-to-action - no Accept / Reject / Fund (M8-F13)', () => {
     const row = recToPlanRow(rec());
     renderGrid(row, { within: [], over: [row] });
     // M8-F13: over-budget rows show only data + a drag handle; the ONLY way to fund
@@ -226,7 +228,7 @@ describe('CashResultsGrid — inline decisions (M8-C6)', () => {
   });
 });
 
-describe('CashResultsGrid — reject keeps the row IN PLACE (M8-F1 REVISED)', () => {
+describe('CashResultsGrid - reject keeps the row IN PLACE (M8-F1 REVISED)', () => {
   it('a rejected WITHIN row stays in the Within section with a "Rejected" chip + Accept (undo)', () => {
     const row = recToPlanRow(rec());
     // The rejected row is passed in the WITHIN section (reject no longer moves it to Over).
@@ -235,11 +237,11 @@ describe('CashResultsGrid — reject keeps the row IN PLACE (M8-F1 REVISED)', ()
       over: [],
       decisions: { [row.id]: 'rejected' },
     });
-    // the row is NOT removed — its product name still renders
+    // the row is NOT removed - its product name still renders
     expect(screen.getByText('Ceramic Wash Basin 450mm')).toBeInTheDocument();
     // a "Rejected" chip marks the state (parity with "Accepted")
     expect(screen.getByText('Rejected')).toBeInTheDocument();
-    // the restore control is now "Accept" (undo) — the old "Fund" button is gone
+    // the restore control is now "Accept" (undo) - the old "Fund" button is gone
     expect(screen.queryByRole('button', { name: 'Fund' })).toBeNull();
     const accept = screen.getByRole('button', { name: 'Accept' });
     fireEvent.click(accept);
@@ -247,7 +249,7 @@ describe('CashResultsGrid — reject keeps the row IN PLACE (M8-F1 REVISED)', ()
   });
 });
 
-describe('CashResultsGrid — confirmed line shows a PO link (M8-F8 / M8-F9)', () => {
+describe('CashResultsGrid - confirmed line shows a PO link (M8-F8 / M8-F9)', () => {
   it('a line with a draft PO shows "PO created" + a link to the PO, no Accept/Reject', () => {
     const row = recToPlanRow(rec());
     renderGrid(row, {
@@ -266,7 +268,7 @@ describe('CashResultsGrid — confirmed line shows a PO link (M8-F8 / M8-F9)', (
   });
 });
 
-describe('CashResultsGrid — supplier cell never overlaps Decision (M8-F3)', () => {
+describe('CashResultsGrid - supplier cell never overlaps Decision (M8-F3)', () => {
   it('renders the supplier name truncated inside an overflow-hidden cell', () => {
     renderGrid(recToPlanRow(rec()));
     const supplierName = screen.getByText('Acme Sanitary');
@@ -277,7 +279,7 @@ describe('CashResultsGrid — supplier cell never overlaps Decision (M8-F3)', ()
   });
 });
 
-describe('CashResultsGrid — order-qty drill shows the ROP formula (M8-A4 / M8-F5)', () => {
+describe('CashResultsGrid - order-qty drill shows the ROP formula (M8-A4 / M8-F5)', () => {
   it('renders "ROP = safety stock + demand rate x lead time" with the frozen inputs', () => {
     // safety_stock 20, forecast_daily_demand 4, supplier lead 14, reorder_point 60.
     renderGrid(recToPlanRow(rec()));
@@ -290,7 +292,7 @@ describe('CashResultsGrid — order-qty drill shows the ROP formula (M8-A4 / M8-
   });
 });
 
-describe('CashResultsGrid — product search + column sort (additive)', () => {
+describe('CashResultsGrid - product search + column sort (additive)', () => {
   const supplier = (name: string, cost: number): SupplierChoice => ({
     supplier_code: `SUP-${name.slice(0, 3).toUpperCase()}`, supplier_name: name,
     unit_cost: cost, lead_time_days: 14, composite_score: 80, is_primary: true,
@@ -380,7 +382,7 @@ describe('CashResultsGrid — product search + column sort (additive)', () => {
   });
 });
 
-describe('CashResultsGrid — row-click detail vs control targets (M8-C10)', () => {
+describe('CashResultsGrid - row-click detail vs control targets (M8-C10)', () => {
   it('clicking the bare row opens the detail view', () => {
     const { onOpenDetail } = renderGrid(recToPlanRow(rec()));
     fireEvent.click(screen.getByText('Ceramic Wash Basin 450mm'));

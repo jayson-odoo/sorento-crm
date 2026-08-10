@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * SCM M3 — Reorder-run feature service  (Phase-2: live backend)
+ * SCM M3 - Reorder-run feature service  (Phase-2: live backend)
  * ============================================================================
  * Layering: hooks (useReorderRun) → THIS service → lib/api-client → backend.
  *
@@ -14,9 +14,9 @@
  *                                          //   Human codes. Phase 2 adds the field to
  *                                          //   the backend schema; sent only when the
  *                                          //   user narrowed the run.
- *      budget_id?: string | null           // M4 — always null/omitted in M3
+ *      budget_id?: string | null           // M4 - always null/omitted in M3
  *    }
- *    Planning scope is fixed server-side (M8-D5) — no `buy_scope` in the request.
+ *    Planning scope is fixed server-side (M8-D5) - no `buy_scope` in the request.
  *    → 202 { run_id, status: "running", buy_scope, stage: <ReorderRunStage> }
  *    Enqueues the RQ `run_reorder(run_id)` task. Auth: `scm.reorder.run`.
  *
@@ -41,7 +41,7 @@
  *        pagination: { page, limit, total, total_pages }
  *      }
  *    Each row carries its FROZEN inputs (net, ROP, SS, lead_time, supplier,
- *    policy_ref, allocation, triggered_reason, confidence) per AC-M3.11 —
+ *    policy_ref, allocation, triggered_reason, confidence) per AC-M3.11 -
  *    read-only in M3 (Accept/Adjust/Dismiss + cash ranking land in M4).
  *
  * 4) Run history  (newest-first, paginated)
@@ -77,7 +77,7 @@ import {
 /**
  * ── M4 CASH CO-PILOT · PHASE-1 FLAG ─────────────────────────────────────────
  * `USE_M4_MOCKS = true` runs the WHOLE reorder page off the deterministic cash
- * mock (`lib/reorderCashMock.ts`) — no backend needed — so the budget → funded /
+ * mock (`lib/reorderCashMock.ts`) - no backend needed - so the budget → funded /
  * deferred interaction can be prototyped and verified in isolation. Phase 2
  * flips this to false; the run + read paths return to the live M3 endpoints and
  * the M4 cash fields arrive from the two NEW endpoints documented below.
@@ -94,7 +94,7 @@ import {
  *           pagination: { page, limit, total, total_pages }
  *         }
  *     `budget` re-runs the greedy skip-overflow allocation (`computeFunding`)
- *     server-side over the FROZEN rank_score — no engine re-run. Uncosted buys
+ *     server-side over the FROZEN rank_score - no engine re-run. Uncosted buys
  *     (cash_impact null) are NOT cash-ranked (M4-D16): they return
  *     funding_status = `needs_cost` and never fund/defer or touch the budget.
  *     Omitting budget returns funding_status = null (unallocated). Cash
@@ -143,7 +143,7 @@ export interface RecommendationQuery {
   /** Filter to a single type; null = all. Server-side. */
   type?: 'buy' | 'covered' | 'disposition' | 'exception' | 'needs_level' | null;
   searchQuery?: string;
-  /** Column sort — forwarded to the backend as `sort`/`dir`. */
+  /** Column sort - forwarded to the backend as `sort`/`dir`. */
   sorting?: SortingState;
 }
 
@@ -153,14 +153,14 @@ export interface RecommendationPage {
 }
 
 /** One row in the run-history list (newest-first). Runs are identified by time +
- *  warehouses — never the run_id (no UUIDs surface). */
+ *  warehouses - never the run_id (no UUIDs surface). */
 export interface ReorderRunHistoryItem {
   run_id: string;
   status: ReorderRunStatus;
   buy_scope: BuyScope;
   warehouse_codes: string[];
   warehouse_count: number;
-  /** Naive-UTC ISO strings — format with `formatDateTimeInMalaysia` (raw string). */
+  /** Naive-UTC ISO strings - format with `formatDateTimeInMalaysia` (raw string). */
   started_at: string | null;
   finished_at: string | null;
   /** Populated once the run completed; null while running / failed. */
@@ -183,7 +183,7 @@ export interface TodayRun extends ReorderRunHistoryItem {
   in_progress: boolean;
 }
 
-/** Load the default run for the page — `null` when no run exists yet (fresh
+/** Load the default run for the page - `null` when no run exists yet (fresh
  *  install → empty page + Manual plan). Never throws on an empty body. */
 export async function getTodayRun(): Promise<TodayRun | null> {
   const res = await apiFetch('/api/v1/scm/reorder-runs/today');
@@ -235,7 +235,7 @@ const DEFAULT_STAGE: ReorderRunStage = 'resolving_policies';
 
 /** Launch a run. Returns a running run record the hook then polls. */
 export async function createReorderRun(req: CreateReorderRunRequest): Promise<ReorderRun> {
-  if (USE_M4_MOCKS) return mockRun(); // completes instantly — mock has no worker
+  if (USE_M4_MOCKS) return mockRun(); // completes instantly - mock has no worker
   const res = await apiFetch('/api/v1/scm/reorder-runs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -278,7 +278,7 @@ export async function getReorderRun(runId: string): Promise<ReorderRun> {
   };
 }
 
-/** DEMO / ADMIN reset — roll a run's decisions back to as-generated (clears every
+/** DEMO / ADMIN reset - roll a run's decisions back to as-generated (clears every
  *  accept/reject/adjust + the draft POs they staged) so the flow can be re-demoed.
  *  Confirmed (active) POs are untouched. Returns what was cleared. */
 export async function resetRunDecisions(
@@ -332,7 +332,7 @@ export async function getRecommendations(
  * The FULL disposition (Stock allocation) recommendation set for a run, unpaginated.
  * The Stock allocation view (M8-F18) splits these into actionable (Discontinue /
  * Promote) vs FYI "hold" client-side, and the tile counts ONLY the actionable subset
- * — so an accurate count needs every row, not a page. A run can carry >1000 hold rows
+ * - so an accurate count needs every row, not a page. A run can carry >1000 hold rows
  * (past the endpoint's page cap) with the few actionable rows scattered alphabetically,
  * so we page through at the 1000-row cap until the whole set is fetched. Cached per run.
  */
@@ -404,7 +404,7 @@ export interface ApplyBudgetResult {
 }
 
 /**
- * The FULL buy recommendation set for cash ranking/funding — not paginated,
+ * The FULL buy recommendation set for cash ranking/funding - not paginated,
  * because greedy allocation runs across the whole ranked list. `budget` seeds
  * the server-side funding; the slider then recomputes live client-side via
  * `computeFunding` for instant what-if (Phase 2 endpoint A, above).

@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * SCM M8 — click-to-explain DRILL feature service  (Phase-2, real backend)
+ * SCM M8 - click-to-explain DRILL feature service  (Phase-2, real backend)
  * ============================================================================
  * Layering: hooks (useDrills) → THIS service → lib/api-client → backend.
  *

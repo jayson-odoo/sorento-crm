@@ -1,5 +1,5 @@
 /**
- * SCM M4 Slice B — PurchaseOrderDetail page (AC-M4.6/M4.15).
+ * SCM M4 Slice B - PurchaseOrderDetail page (AC-M4.6/M4.15).
  * Always renders header + meta + lines + goods-receipt section (explicit empty
  * states), driven off the PO id. Covers loading / error(not-found) / data /
  * empty-lines / empty-GR states.
@@ -171,7 +171,7 @@ describe('PurchaseOrderDetail (AC-M4.6)', () => {
   });
 });
 
-describe('PurchaseOrderDetail — why a PO is not on order', () => {
+describe('PurchaseOrderDetail - why a PO is not on order', () => {
   it('does not call a closed historical order a draft', () => {
     // An imported 2020 order is closed and fully received. "Not on order (draft)" says
     // somebody has yet to confirm a purchase that arrived six years ago.

@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * SCM Policy Configuration — feature service
+ * SCM Policy Configuration - feature service
  * ============================================================================
  * Layering: hooks (usePolicies*) → THIS service → lib/api-client → backend.
  * No component fetches directly (AC-STD-1).
@@ -34,11 +34,11 @@
  *
  *  GET    /api/v1/scm/policies/resolve?product_id=&warehouse_id=  → ResolutionResult
  *    Produced by calling the SAME `reorder_engine.resolve_policy_for_sku` the
- *    reorder run uses — never a reimplementation (AC-PREV-2). `chain` teaches the
+ *    reorder run uses - never a reimplementation (AC-PREV-2). `chain` teaches the
  *    precedence: which scopes matched, which won, and why.
  *
- * Server-authoritative validation (mirrored client-side for UX) — AC-VAL-*,
- * AC-CFG-2, AC-SUP-2 — returns 422 via the global AppException handler.
+ * Server-authoritative validation (mirrored client-side for UX) - AC-VAL-*,
+ * AC-CFG-2, AC-SUP-2 - returns 422 via the global AppException handler.
  * ============================================================================
  */
 import type { SortingState } from '@tanstack/react-table';
@@ -69,7 +69,7 @@ import {
   mockWarehouseOptions,
 } from '../lib/scmPolicyMock';
 
-/** Phase-1 flag — true = deterministic mock store, false = live backend. */
+/** Phase-1 flag - true = deterministic mock store, false = live backend. */
 export const USE_POLICY_MOCKS = false;
 
 export interface PolicyListQuery {

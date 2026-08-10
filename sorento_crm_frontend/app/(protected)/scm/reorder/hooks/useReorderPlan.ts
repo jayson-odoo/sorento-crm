@@ -18,15 +18,15 @@ interface LocalEdit {
   supplier_code: string;
 }
 
-/** Shared empty set — passed as the greedy's `rejects` so section membership never
+/** Shared empty set - passed as the greedy's `rejects` so section membership never
  *  depends on decisions (rejects only affect `committed`, computed in the hook). */
 const EMPTY_SET: ReadonlySet<string> = new Set<string>();
 
 /**
- * SCM M8 plan state — REAL backend (Phase 2). Loads the run's buy recommendations
+ * SCM M8 plan state - REAL backend (Phase 2). Loads the run's buy recommendations
  * + recorded decisions, adapts them onto the M8 plan grid rows, and owns the same
  * interactive model the prototype had (budget what-if, pins, drag-to-defer, inline
- * edits) — but every decision now hits the server:
+ * edits) - but every decision now hits the server:
  *
  *   • Accept / Fund  → POST /recommendations/{id}/accept   (pins the row)
  *   • Reject         → POST /recommendations/{id}/reject
@@ -86,12 +86,12 @@ export function useReorderPlan(runId: string | null, enabled: boolean) {
 
   // Seed ONCE per run: budget (≈60% of costed total so the funded boundary lands
   // mid-list), pins/rejects/edits from the recorded decision overlay. Section
-  // membership is DERIVED live (below) from budget + pins + drag — it is not stored,
+  // membership is DERIVED live (below) from budget + pins + drag - it is not stored,
   // so a budget change always re-splits and a decision never re-sections.
   const seededFor = useRef<string | null>(null);
   const lastGreedyBudget = useRef<number | null>(null);
   useEffect(() => {
-    // Only seed once the decisions query has actually resolved for this run — a
+    // Only seed once the decisions query has actually resolved for this run - a
     // disabled query (non-buy view) reports isFetched=false, so we don't seed empty.
     // Wait for the budget answer too, or the plan seeds itself against a guess and then
     // jumps when the real figure lands.
@@ -122,7 +122,7 @@ export function useReorderPlan(runId: string | null, enabled: boolean) {
     setForcedOver(new Set());
     setBudget(seededBudget);
     // Seed the sticky split from the initial greedy at the seeded budget, honouring the
-    // seeded pins (adjusted/accepted lines force-in). Rejects are NOT passed — a reject
+    // seeded pins (adjusted/accepted lines force-in). Rejects are NOT passed - a reject
     // never changes a row's section.
     const seedRows = recs.map((rec) => {
       const base = recToPlanRow(rec);
@@ -213,7 +213,7 @@ export function useReorderPlan(runId: string | null, enabled: boolean) {
   }, [rows, pins, rejects]);
 
   // Which rows have already been materialised into a draft PO (M8-F8/M8-F9). Keyed
-  // by recommendation id off the server decision overlay — populated only AFTER
+  // by recommendation id off the server decision overlay - populated only AFTER
   // Confirm decisions (accept/adjust stage, they don't create a PO). A row with a PO
   // is "confirmed": it drops out of the confirm-bar count and shows a "PO created"
   // link instead of Accept/Reject.
@@ -257,7 +257,7 @@ export function useReorderPlan(runId: string | null, enabled: boolean) {
     [mutations.accept],
   );
 
-  /** Defer a row (drag down) — client-only budget staging, no server decision.
+  /** Defer a row (drag down) - client-only budget staging, no server decision.
    *  KNOWN LIMITATION: `forcedOver` is live-view-only; `confirm()` derives the persisted
    *  funded/deferred split from the decision overlay (pins/rejects) alone, so a row that
    *  was only dragged-to-defer (not rejected) reverts to funded on reload. */
@@ -277,7 +277,7 @@ export function useReorderPlan(runId: string | null, enabled: boolean) {
 
   /** Reject a row with a reason → POST reject. Reject marks the DECISION only
    *  (M8-F1): it must NOT move the row between budget sections, so we leave `pins`
-   *  and `forcedOver` untouched — a pinned/within row stays within (greyed), an
+   *  and `forcedOver` untouched - a pinned/within row stays within (greyed), an
    *  over-budget row stays over. The allocator excludes a rejected row's cash from
    *  `committed`. Undo is via Accept (`fund`), which clears the reject. */
   const reject = useCallback(
@@ -306,7 +306,7 @@ export function useReorderPlan(runId: string | null, enabled: boolean) {
             reason_text: reason,
           },
         })
-        .then((res) => toast.success(`Adjusted ${row.sku} — draft PO with ${res.supplier_name} staged`))
+        .then((res) => toast.success(`Adjusted ${row.sku} - draft PO with ${res.supplier_name} staged`))
         .catch((e) => toast.error(e instanceof Error ? e.message : 'Failed to adjust recommendation'));
     },
     [mutations.adjust],
@@ -342,7 +342,7 @@ export function useReorderPlan(runId: string | null, enabled: boolean) {
     [mutations.adjust, recById],
   );
 
-  /** Apply an assistant action proposal (M8-F16) — route each proposed line through the
+  /** Apply an assistant action proposal (M8-F16) - route each proposed line through the
    *  SAME confirm-gated decision handlers a manual click uses: accept → `fund`, reject →
    *  `reject` (carries the assistant's reason), adjust → `editRow` (new qty + reason,
    *  supplier unchanged). The Apply click IS the confirmation; the LLM never wrote a
@@ -400,7 +400,7 @@ export function useReorderPlan(runId: string | null, enabled: boolean) {
 
   /** Persist the chosen budget then materialise staged decisions into draft POs.
    *  NOTE: the persisted split is derived server-side from the decision overlay
-   *  (pins/rejects) + budget only — `forcedOver` (manual drag-to-defer) is NOT sent, so a
+   *  (pins/rejects) + budget only - `forcedOver` (manual drag-to-defer) is NOT sent, so a
    *  dragged-to-defer row that was never rejected reverts to funded on reload. */
   const confirm = useCallback(async () => {
     if (!runId) return;

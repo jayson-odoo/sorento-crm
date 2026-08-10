@@ -1,5 +1,5 @@
 /**
- * SCM M8 — ReorderPlanningView (slice D). The reorder page opens straight to
+ * SCM M8 - ReorderPlanningView (slice D). The reorder page opens straight to
  * today's scheduled snapshot (no "Run planning" click), falls back to an empty
  * state on a fresh install, and reflects a PAST run in its header with that run's
  * date + time.
@@ -86,20 +86,20 @@ beforeEach(() => {
   useReorderPlan.mockReset().mockReturnValue({ isLoading: false, isError: false, error: null, refetch: vi.fn(), applyProposalLine: vi.fn(), rows: [] });
 });
 
-describe('ReorderPlanningView — opens to today (M8-D3 / M8-C12)', () => {
+describe('ReorderPlanningView - opens to today (M8-D3 / M8-C12)', () => {
   it('renders today’s plan header + the buy co-pilot without a run click', () => {
     stubToday(todayRun());
     renderView();
     expect(screen.getByText(/Today's plan · /)).toBeInTheDocument();
     expect(screen.getByText('cash-copilot')).toBeInTheDocument();
     expect(screen.getByText('plan-assistant')).toBeInTheDocument();
-    // M8-C12 — the disposition card is labelled "Stock allocation"
+    // M8-C12 - the disposition card is labelled "Stock allocation"
     // Named twice now, deliberately: the tile and the band it opens.
     expect(screen.getAllByText('Stock allocation').length).toBeGreaterThan(0);
   });
 });
 
-describe('ReorderPlanningView — first-view fallback (M8-D4)', () => {
+describe('ReorderPlanningView - first-view fallback (M8-D4)', () => {
   it('shows the empty state + Manual plan when no run exists yet', () => {
     stubToday(null);
     renderView();
@@ -108,7 +108,7 @@ describe('ReorderPlanningView — first-view fallback (M8-D4)', () => {
   });
 });
 
-describe('ReorderPlanningView — loading + error', () => {
+describe('ReorderPlanningView - loading + error', () => {
   it('renders a skeleton while today’s run is loading (no header yet)', () => {
     useTodayRun.mockReturnValue({ data: null, isLoading: true, isError: false, error: null, refetch: vi.fn() });
     renderView();
@@ -124,7 +124,7 @@ describe('ReorderPlanningView — loading + error', () => {
   });
 });
 
-describe('ReorderPlanningView — the upload channels', () => {
+describe('ReorderPlanningView - the upload channels', () => {
   // The plan is computed from these files, so loading them is a planning action and
   // belongs on this screen.
   it('offers the upload menu from the toolbar', () => {
@@ -144,14 +144,14 @@ describe('ReorderPlanningView — the upload channels', () => {
   });
 });
 
-describe('ReorderPlanningView — past-run header (M8-D11)', () => {
+describe('ReorderPlanningView - past-run header (M8-D11)', () => {
   it('stops saying "Today\'s plan" and shows the run\'s date + time when viewing a past run', () => {
     // is_today=false → the default run is a past snapshot, not today's.
     stubToday(todayRun({ run_id: 'run-old', is_today: false }));
     renderView();
     expect(screen.queryByText(/Today's plan/)).not.toBeInTheDocument();
     // header reads "Plan · <date>, <time>" (started_at 06:00 UTC → 14:00 Asia/KL)
-    // and the past-run banner shows — the point is date AND time, not "Today's plan".
+    // and the past-run banner shows - the point is date AND time, not "Today's plan".
     expect(screen.getByText(/Plan · 15\/07\/2026, 14:00/)).toBeInTheDocument();
     // The banner shows. Which of its two messages appears depends on whether a run has
     // happened today, which is the subject of the group below.
@@ -159,7 +159,7 @@ describe('ReorderPlanningView — past-run header (M8-D11)', () => {
   });
 });
 
-describe('ReorderPlanningView — "Back to today\'s plan" has somewhere to go', () => {
+describe('ReorderPlanningView - "Back to today\'s plan" has somewhere to go', () => {
   // > "is this working cause I can't seemed to click it to go to today's plan"
   //
   // It was not. The banner shows whenever the run on screen is not today's, which includes
@@ -191,7 +191,7 @@ describe('ReorderPlanningView — "Back to today\'s plan" has somewhere to go', 
   });
 });
 
-describe('ReorderPlanningView — a plan being built never empties the page', () => {
+describe('ReorderPlanningView - a plan being built never empties the page', () => {
   // > "i think there is some conflict in backend, cuse I just can't retrieve any data"
   //
   // The job had been enqueued with no worker draining it, so a run sat unfinished all day.
@@ -226,7 +226,7 @@ describe('ReorderPlanningView — a plan being built never empties the page', ()
   });
 });
 
-describe('ReorderPlanningView — demand the plan could not net', () => {
+describe('ReorderPlanningView - demand the plan could not net', () => {
   // > "it has a few thousands of committed quantity ... but why when i search
   // >  MWC7624-RL-S10 in the reorder planning, it does not exist"
   //
@@ -265,7 +265,7 @@ describe('ReorderPlanningView — demand the plan could not net', () => {
   });
 });
 
-describe('ReorderPlanningView — one page, not three', () => {
+describe('ReorderPlanningView - one page, not three', () => {
   // > "if i want to toggle between buy, covered by stock, stock allocation, is very hassle,
   // >  I want to see all in 1 page"
 

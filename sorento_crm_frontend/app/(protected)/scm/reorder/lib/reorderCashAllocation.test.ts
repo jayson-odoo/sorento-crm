@@ -9,7 +9,7 @@ import {
   type M8FundingRow,
 } from './reorderCashAllocation';
 
-/** Minimal buy rec for allocator tests — only the fields the allocator reads. */
+/** Minimal buy rec for allocator tests - only the fields the allocator reads. */
 function rec(
   id: string,
   rank: number,
@@ -67,7 +67,7 @@ function rec(
   };
 }
 
-describe('computeFunding — greedy skip-overflow (M4-D3)', () => {
+describe('computeFunding - greedy skip-overflow (M4-D3)', () => {
   it('funds whole items, skips an overflowing one and continues to the next that fits', () => {
     // budget 12000; by rank: 6000 fund→rem6000, 5000 fund→rem1000, 8000 overflow→
     // deferred, 1000 fits→funded. Σ funded 12000 ≤ budget.
@@ -108,7 +108,7 @@ describe('computeFunding — greedy skip-overflow (M4-D3)', () => {
   });
 });
 
-describe('computeFundingM8 — reject keeps the row IN PLACE (M8-F1 REVISED)', () => {
+describe('computeFundingM8 - reject keeps the row IN PLACE (M8-F1 REVISED)', () => {
   const r = (id: string, rank: number, cost: number | null): M8FundingRow => ({
     id,
     rank,
@@ -119,7 +119,7 @@ describe('computeFundingM8 — reject keeps the row IN PLACE (M8-F1 REVISED)', (
 
   it('a within-budget row that is rejected STAYS within budget, cash excluded', () => {
     // a 5000, b 3000 (REJECTED), c 2000; ample budget so all three would fund.
-    // M8-F1 REVISED: reject no longer routes b into Over — it stays in the section
+    // M8-F1 REVISED: reject no longer routes b into Over - it stays in the section
     // the budget lands it in (Within), just greyed + excluded from committed.
     const rows = [r('a', 1, 5000), r('b', 2, 3000), r('c', 3, 2000)];
     const out = computeFundingM8(rows, 100000, { pins: NONE, rejects: new Set(['b']) });
@@ -176,7 +176,7 @@ describe('computeFundingM8 — reject keeps the row IN PLACE (M8-F1 REVISED)', (
   });
 });
 
-describe('computeFundingM8 — pins are ADDITIVE, dragging one row never evicts another (M8-F)', () => {
+describe('computeFundingM8 - pins are ADDITIVE, dragging one row never evicts another (M8-F)', () => {
   const r = (id: string, rank: number, cost: number): M8FundingRow => ({
     id,
     rank,
@@ -214,7 +214,7 @@ describe('computeFundingM8 — pins are ADDITIVE, dragging one row never evicts 
   });
 });
 
-describe('scoreFromFactors — graceful degrade (M4-D14)', () => {
+describe('scoreFromFactors - graceful degrade (M4-D14)', () => {
   const F = (key: RankFactor['key'], weight: number, value: number | null, present: boolean): RankFactor => ({
     key,
     weight,

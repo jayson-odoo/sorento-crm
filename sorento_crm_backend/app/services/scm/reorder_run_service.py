@@ -967,7 +967,14 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
                 # place. The aggregate cell has no on-hand, no level and no last price, so
                 # a pooled row that kept them all from `agg_cell` showed the buyer a blank
                 # checklist on exactly the rows a pool produces - which is most of them.
+                # `ss` travels with `rop` and `demand_rate` or the row's own explanation
+                # stops adding up: the drill renders "ROP = safety stock + demand x lead",
+                # and pairing the POOL's safety stock with the LOCATION's reorder point
+                # printed 27 + 1.0/day x 14d = 22, which is not arithmetic anybody can
+                # follow. Sizing stays the pool's; every figure that describes this bin
+                # comes from this bin.
                 for k in ("net", "rop", "demand_rate", "doc",
+                          "ss", "ss_used", "ss_fallback",
                           "on_hand", "on_order", "po_ordered", "segment",
                           "master_reorder_level", "master_reorder_quantity",
                           "committed", "list_price",

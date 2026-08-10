@@ -64,13 +64,13 @@ describe('RollupTiles', () => {
     expect(screen.queryByText('Out of stock')).not.toBeInTheDocument();
   });
 
-  it('renders figures and shows "—" for the two deferred tiles', () => {
+  it('renders figures and shows "-" for the two deferred tiles', () => {
     render(<RollupTiles data={DATA} isLoading={false} isError={false} {...baseProps} />);
     expect(screen.getByText('Out of stock')).toBeInTheDocument();
     expect(screen.getByText('Low stock')).toBeInTheDocument();
     expect(screen.getByText('Overstock valuation')).toBeInTheDocument();
     // exactly the two deferred tiles render the em-dash
-    expect(screen.getAllByText('—')).toHaveLength(2);
+    expect(screen.getAllByText('-')).toHaveLength(2);
   });
 
   it('toggles a health filter from a stat card body', () => {

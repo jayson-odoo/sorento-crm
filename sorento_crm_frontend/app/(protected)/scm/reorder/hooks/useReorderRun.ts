@@ -55,7 +55,7 @@ export interface ReorderRunController {
   isRunning: boolean;
   isComplete: boolean;
   isFailed: boolean;
-  /** Still `running` past MAX_POLL_MS — polling stopped, run may have stalled/failed. */
+  /** Still `running` past MAX_POLL_MS - polling stopped, run may have stalled/failed. */
   isStalled: boolean;
   error: string | null;
   start: (req: CreateReorderRunRequest) => Promise<void>;
@@ -95,7 +95,7 @@ export function useReorderRun(): ReorderRunController {
     retry: 2,
   });
 
-  // A failed POST has no run to poll — synthesize a failed record so the view can
+  // A failed POST has no run to poll - synthesize a failed record so the view can
   // render the retry card (not just a toast).
   const syntheticFailed: ReorderRun | null = startError
     ? {
@@ -234,7 +234,7 @@ export function useReorderRunHistory(page: number, limit: number, enabled = true
 
 /**
  * Load a PAST run's summary (status + roll-up counts) so the tiles + grid can
- * render it WITHOUT re-running. Reuses the poll cache key — revisiting the live
+ * render it WITHOUT re-running. Reuses the poll cache key - revisiting the live
  * run is a cache hit. Only enabled for a completed/failed run being viewed.
  */
 export function useReorderRunDetail(runId: string | null, enabled: boolean) {
@@ -249,7 +249,7 @@ export function useReorderRunDetail(runId: string | null, enabled: boolean) {
 }
 
 /**
- * The FULL buy recommendation set for the M4 cash co-pilot (not paginated —
+ * The FULL buy recommendation set for the M4 cash co-pilot (not paginated -
  * greedy funding runs across the whole ranked list). Fetched once; the budget
  * slider then recomputes funded/deferred live client-side via `computeFunding`,
  * so this does NOT refetch per slider tick.
@@ -323,7 +323,7 @@ export function useBuyRecommendationsForCash(runId: string | null, enabled: bool
 /**
  * The FULL disposition (Stock allocation) recommendation set for a run. The M8-F18
  * view needs every row to split actionable (Discontinue / Promote) from FYI hold
- * and to count only the actionable subset on the tile — so it is fetched whole
+ * and to count only the actionable subset on the tile - so it is fetched whole
  * (paged internally past the 1000-row cap) and cached per run, not paginated. Kept
  * enabled in the buy view too so the tile's actionable count is always live.
  */

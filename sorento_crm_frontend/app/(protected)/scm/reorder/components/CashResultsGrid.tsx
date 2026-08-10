@@ -57,7 +57,7 @@ const COLS =
 const MIN_TABLE_WIDTH = 1520;
 
 /** Client-side sort/search over the visible rows (additive to the drag experience).
- *  'rank' asc IS the engine's default order — in that state (and only that state,
+ *  'rank' asc IS the engine's default order - in that state (and only that state,
  *  with an empty search) the rows stay drag-orderable; any other sort or an active
  *  search disables drag so the two orderings never fight (see `dragDisabled`). */
 type SortCol = 'rank' | 'order_qty' | 'cash' | 'days_cover' | 'warehouse' | 'supplier';
@@ -83,7 +83,7 @@ function compareRows(col: SortCol, a: M8PlanRow, b: M8PlanRow): number {
 }
 
 /** Sort a section's rows. Rank-ascending returns the array untouched so the default
- *  (engine) order — and the drag identity that rides on it — is preserved exactly. */
+ *  (engine) order - and the drag identity that rides on it - is preserved exactly. */
 function sortSection(rows: M8PlanRow[], col: SortCol, dir: SortDir): M8PlanRow[] {
   if (col === 'rank' && dir === 'asc') return rows;
   const factor = dir === 'asc' ? 1 : -1;
@@ -289,12 +289,12 @@ function DaysCoverDrill({ row }: { row: M8PlanRow }) {
   );
   // Headline avg/day + the "net / rate = days" arithmetic MUST use the SAME rate the
   // engine froze into `days_cover` (`net / forecast_daily_demand = days_cover`), not the
-  // live `explain/demand` recompute — that runs a different window (and returns 0 for a
+  // live `explain/demand` recompute - that runs a different window (and returns 0 for a
   // network SKU here) which would print "net / 0 = N". The live drill is evidence-only:
   // the DO list + coefficient of variation.
   const frozenRate = row.forecast_daily_demand;
   // No finite cover to show when there's a deficit OR no measurable frozen demand to
-  // divide by — either way we must NOT divide by zero.
+  // divide by - either way we must NOT divide by zero.
   const undefinedCover = row.days_cover === null || frozenRate == null || frozenRate <= 0;
   const isDeficit = row.net != null && row.net < 0;
   return (
@@ -378,6 +378,11 @@ function DaysCoverDrill({ row }: { row: M8PlanRow }) {
  *  reorder-point formula with its actual inputs (M8-F5). */
 function OrderQtyDrill({ row }: { row: M8PlanRow }) {
   const q = row.order_qty_inputs;
+  // A pooled buy is sized once for every location that shares stock, then split. Saying so
+  // is the difference between "why 55" answering itself and the reader doing arithmetic
+  // that cannot work.
+  const alloc = row.rec.allocation ?? [];
+  const pooled = alloc.length > 1;
   const demandRate = row.forecast_daily_demand;
   const leadDays = row.supplier.lead_time_days;
   const line = (label: string, value: number | null) => (
@@ -392,14 +397,51 @@ function OrderQtyDrill({ row }: { row: M8PlanRow }) {
       <div className="space-y-1 px-3 py-2">
         {line('Safety stock', q.safety_stock)}
         {line('Reorder point', q.reorder_point)}
-        {line('Order-up-to level', q.order_up_to)}
+        {/* On a pooled row the order-up-to belongs to the POOL, not to this bin, so it is
+            labelled as such. Otherwise the reader tries order-up-to minus this location's
+            net and gets a number that is nowhere on the row. */}
+        {line(pooled ? 'Order-up-to level (whole pool)' : 'Order-up-to level', q.order_up_to)}
         {line('MoQ', q.moq)}
         {line('Order multiple', q.order_multiple)}
         <div className="mt-1 flex justify-between border-t pt-1 text-xs font-medium">
-          <span>Rounded order qty</span>
+          <span>{pooled ? 'This location\u2019s share' : 'Rounded order qty'}</span>
           <span className="tabular-nums">{fmtInt(q.rounded_qty)}</span>
         </div>
       </div>
+
+      {pooled ? (
+        <div className="border-t px-3 py-2">
+          <div className="mb-1 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+            Bought for the whole pool
+          </div>
+          <p className="text-2xs text-muted-foreground">
+            One purchase covers {alloc.length} locations that share stock. It is sized once
+            against the pool, then placed where the shortage is.
+          </p>
+          <div className="mt-1 space-y-0.5">
+            {alloc.map((a) => (
+              <div key={a.warehouse_code ?? String(a.qty)} className="flex justify-between text-2xs">
+                <span
+                  className={
+                    a.warehouse_code === row.rec.warehouse_code
+                      ? 'font-medium'
+                      : 'text-muted-foreground'
+                  }
+                >
+                  {a.warehouse_code ?? EM_DASH}
+                </span>
+                <span className="tabular-nums">{fmtInt(a.qty)}</span>
+              </div>
+            ))}
+            <div className="mt-1 flex justify-between border-t pt-1 text-2xs font-medium">
+              <span>Pool total</span>
+              <span className="tabular-nums">
+                {fmtInt(alloc.reduce((t, a) => t + (a.qty ?? 0), 0))}
+              </span>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {/* Reorder-point explain (M8-F5): the formula + the frozen inputs behind it. */}
       <div className="border-t px-3 py-2">
         <div className="mb-1 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -615,7 +657,7 @@ function PlanRow({
   edited: boolean;
   /** The draft PO this line was confirmed into, if any (M8-F8/M8-F9). */
   po?: RowPoLink;
-  /** Sequential 1..N priority within the costed plan (M8-F) — defaults to the global rank. */
+  /** Sequential 1..N priority within the costed plan (M8-F) - defaults to the global rank. */
   rankLabel?: number;
   /** When a sort/search is active the row order no longer maps to drag order, so the
    *  drag handle is rendered inert to stop the two orderings fighting. */
@@ -662,7 +704,7 @@ function PlanRow({
       )}
       style={{ gridTemplateColumns: COLS }}
     >
-      {/* drag handle — hidden while a sort/search is active (drag order is meaningless then) */}
+      {/* drag handle - hidden while a sort/search is active (drag order is meaningless then) */}
       <div className="flex h-full items-center justify-center py-2 text-muted-foreground/40">
         {dragDisabled ? null : (
           <button
@@ -851,7 +893,7 @@ function PlanRow({
           </>
         ) : section === 'over' ? (
           // M8-F13: over-budget rows have NO call-to-action (no Accept / Reject /
-          // Fund) — the only way to fund one is to DRAG it up into Within budget.
+          // Fund) - the only way to fund one is to DRAG it up into Within budget.
           // A rejected line dragged down keeps its "Rejected" chip but no buttons.
           isRejected ? (
             <Badge variant="secondary" appearance="light" size="sm">
@@ -866,7 +908,7 @@ function PlanRow({
               Rejected
             </Badge>
             {/* Reversible (M8-F1): Accept overrides the reject and restores the buy.
-                (The old "Fund" restore button is removed — sections move by drag only.) */}
+                (The old "Fund" restore button is removed - sections move by drag only.) */}
             <Button
               variant="ghost"
               size="sm"
@@ -1014,7 +1056,7 @@ export function CashResultsGrid({
 
   return (
     <div className="space-y-3">
-      {/* Product search — filters both sections by SKU / product / supplier. */}
+      {/* Product search - filters both sections by SKU / product / supplier. */}
       <div className="relative w-full sm:max-w-xs">
         <Search
           className="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"

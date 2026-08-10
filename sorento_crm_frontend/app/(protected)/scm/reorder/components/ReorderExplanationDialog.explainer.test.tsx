@@ -172,7 +172,7 @@ function askForTheSummary() {
   if (trigger) fireEvent.click(trigger);
 }
 
-describe('ReorderExplanationDialog — M5 semantic layer', () => {
+describe('ReorderExplanationDialog - M5 semantic layer', () => {
   it('costs nothing until it is asked for', () => {
     setHooks({ explanation: { data: { explanation: 'You should order 4 units now.' } } });
     render(<ReorderExplanationDialog rec={rec({})} open onOpenChange={() => {}} />);
@@ -192,7 +192,7 @@ describe('ReorderExplanationDialog — M5 semantic layer', () => {
     expect(screen.getByText('AI summary')).toBeInTheDocument();
     expect(document.querySelector('[aria-label="Generating explanation"]')).not.toBeNull();
 
-    // Flip to loaded — the generated sentence renders in place of the skeleton
+    // Flip to loaded - the generated sentence renders in place of the skeleton
     setHooks({ explanation: { data: { explanation: 'You should order 4 units now.' } } });
     rerender(<ReorderExplanationDialog rec={rec({})} open onOpenChange={() => {}} />);
     expect(screen.getByText('You should order 4 units now.')).toBeInTheDocument();
@@ -229,7 +229,7 @@ describe('ReorderExplanationDialog — M5 semantic layer', () => {
   });
 
   it('shows the market-advisory callout only when an advisory is present', () => {
-    setHooks({ advisory: { data: { advisory: 'Tile prices trending +8% — order sooner.' } } });
+    setHooks({ advisory: { data: { advisory: 'Tile prices trending +8% - order sooner.' } } });
     const { rerender } = render(
       <ReorderExplanationDialog rec={rec({})} open onOpenChange={() => {}} />,
     );

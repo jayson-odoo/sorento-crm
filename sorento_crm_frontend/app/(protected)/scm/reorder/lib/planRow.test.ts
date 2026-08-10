@@ -1,5 +1,5 @@
 /**
- * SCM M8 — plan-row adapters (Phase 2, test-first).
+ * SCM M8 - plan-row adapters (Phase 2, test-first).
  * `recToPlanRow` / `recToDispositionRow` / `m8CashImpact` / `supplierOptionsFor`
  * map the REAL run payload onto the lean M8 grid rows the div-grid renders.
  *   M8-C11 Warehouse column · M8-A4 order-qty inputs · M8-C12 Stock allocation rows
@@ -34,7 +34,7 @@ const beta: SupplierChoice = {
   composite_score: 80,
   is_primary: false,
 };
-/** An uncosted alternative — must be dropped from swap options (can't be budgeted). */
+/** An uncosted alternative - must be dropped from swap options (can't be budgeted). */
 const nocost: SupplierChoice = {
   supplier_code: 'SUP-NOCOST',
   supplier_name: 'Gamma (no price)',
@@ -112,7 +112,7 @@ describe('recToPlanRow (M8 adapter)', () => {
     expect(row.net).toBe(240);
     expect(row.days_cover).toBe(20);
     expect(row.forecast_daily_demand).toBe(12);
-    // M8-A4 — order-qty drill reads these off the frozen rec, never recomputed.
+    // M8-A4 - order-qty drill reads these off the frozen rec, never recomputed.
     expect(row.order_qty_inputs).toEqual({
       safety_stock: 77,
       reorder_point: 280,
@@ -152,13 +152,13 @@ describe('recToPlanRow (M8 adapter)', () => {
   });
 });
 
-describe('supplierOptionsFor — costed swap options only', () => {
+describe('supplierOptionsFor - costed swap options only', () => {
   it('includes the chosen supplier + costed alternatives, drops uncosted + dupes', () => {
     const opts = supplierOptionsFor(rec({ supplier: acme, alternatives: [beta, nocost, acme] }));
     // acme (chosen) + beta; nocost dropped (no price); acme not duplicated
     expect(opts.map((o) => o.value)).toEqual(['SUP-ACME', 'SUP-BETA']);
     expect(opts.find((o) => o.value === 'SUP-BETA')).toMatchObject({
-      value: 'SUP-BETA', // supplier CODE — what /adjust's override_supplier_id wants
+      value: 'SUP-BETA', // supplier CODE - what /adjust's override_supplier_id wants
       label: 'Beta Supplies',
       unit_cost: 38,
       lead_time_days: 21,

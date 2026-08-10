@@ -1,11 +1,11 @@
 /**
- * SCM Policy Configuration — types.
+ * SCM Policy Configuration - types.
  *
  * These mirror the Phase-2 backend contract documented at the top of
  * `services/scmPolicyService.ts`. Three policy families feed the reorder engine:
- *   1. reorder_policy       — scoped CRUD, resolved most-specific-active-wins.
- *   2. abc_xyz_policy        — single global classification-threshold row.
- *   3. supplier_scoring_policy — single global supplier-scoring row.
+ *   1. reorder_policy       - scoped CRUD, resolved most-specific-active-wins.
+ *   2. abc_xyz_policy        - single global classification-threshold row.
+ *   3. supplier_scoring_policy - single global supplier-scoring row.
  * Plus a resolution preview that (Phase 2) calls the SAME resolver the run uses.
  *
  * No UUIDs are ever surfaced in the UI: SKU shows `product_code · name`, class
@@ -35,10 +35,10 @@ export interface ReorderPolicyRow {
    *   global         → null
    */
   scope_ref: string | null;
-  /** Human-readable target, no UUID. `—` for global. */
+  /** Human-readable target, no UUID. `-` for global. */
   scope_label: string;
   policy_type: PolicyType;
-  /** Statistical service level 0–1 (exclusive); null unless statistical. */
+  /** Statistical service level 0-1 (exclusive); null unless statistical. */
   service_level: number | null;
   safety_stock_method: SafetyStockMethod;
   /** Buffer days for fixed_days; also the manual SS value carrier. */
@@ -60,20 +60,20 @@ export interface ReorderPolicyRow {
   lead_time_default_days: number | null;
 }
 
-/** Write payload — same as the row minus server-owned id + scope_label. */
+/** Write payload - same as the row minus server-owned id + scope_label. */
 export type ReorderPolicyWrite = Omit<ReorderPolicyRow, 'id' | 'scope_label'>;
 
 /** Global classification thresholds (single active row). */
 export interface AbcXyzPolicy {
-  /** Cumulative-value cut for class A (0–1). */
+  /** Cumulative-value cut for class A (0-1). */
   abc_a_pct: number;
-  /** Cumulative-value cut for class B (0–1); A + B < 1. */
+  /** Cumulative-value cut for class B (0-1); A + B < 1. */
   abc_b_pct: number;
   /** Demand CV ceiling for class X. */
   xyz_x_max: number;
   /** Demand CV ceiling for class Y (X ≤ Y). */
   xyz_y_max: number;
-  /** False when no row exists yet — the panel shows seeded defaults. */
+  /** False when no row exists yet - the panel shows seeded defaults. */
   exists: boolean;
 }
 
@@ -81,9 +81,9 @@ export type AbcXyzWrite = Omit<AbcXyzPolicy, 'exists'>;
 
 /** Global supplier-scoring weights (single active row). */
 export interface SupplierScoringPolicy {
-  /** On-time delivery weight (0–1); delivery + quality = 1. */
+  /** On-time delivery weight (0-1); delivery + quality = 1. */
   delivery_weight: number;
-  /** Quality weight (0–1). */
+  /** Quality weight (0-1). */
   quality_weight: number;
   /** Days a delivery may slip and still count "on time". */
   grace_days: number;

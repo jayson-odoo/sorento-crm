@@ -12,7 +12,7 @@ import { isAllScope, isFocusedScope, scopeSummary } from '../lib/scope';
  * The dashboard defaults to the FOCUSED view (active + ongoing), which silently
  * shrinks the headline counts (e.g. Stockouts 2,688 → 2,454). This chip makes
  * that active narrowing visible right next to the tiles and offers a one-click
- * "Show all" to widen both filters — so the user never wonders where SKUs went.
+ * "Show all" to widen both filters - so the user never wonders where SKUs went.
  * When already showing everything it flips to a "Back to focused" reset.
  */
 export function ScmScopeChip({

@@ -163,7 +163,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
 
   return (
     <div className="space-y-4">
-      {/* Summary — always rendered. */}
+      {/* Summary - always rendered. */}
       <Card>
         <CardHeader className="block py-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -197,7 +197,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         </CardHeader>
         <div className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-3 lg:grid-cols-4">
           <Field label="Supplier">{po.supplier_name}</Field>
-          <Field label="Warehouse">{po.warehouse_name ?? '—'}</Field>
+          <Field label="Warehouse">{po.warehouse_name ?? '-'}</Field>
           <Field label="Order date">{fmtDate(po.order_date)}</Field>
           <Field label="Expected date">{fmtDate(po.expected_date)}</Field>
           <Field label="Total qty">{fmtInt(po.total_qty)}</Field>
@@ -213,7 +213,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         </div>
       </Card>
 
-      {/* Lines — always rendered, explicit empty state. */}
+      {/* Lines - always rendered, explicit empty state. */}
       <DataGrid
         table={table}
         recordCount={lines.length}
@@ -237,7 +237,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         </Card>
       </DataGrid>
 
-      {/* Goods receipt — always rendered, empty state when none. */}
+      {/* Goods receipt - always rendered, empty state when none. */}
       <Card>
         <CardHeader>
           <CardHeading>
@@ -249,7 +249,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
             <div className="flex items-center gap-2 text-sm">
               <PackageCheck className="size-4 text-scm-incoming" />
               <span className="font-medium">{po.gr_reference}</span>
-              <span className="text-muted-foreground">— received in full</span>
+              <span className="text-muted-foreground">- received in full</span>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">

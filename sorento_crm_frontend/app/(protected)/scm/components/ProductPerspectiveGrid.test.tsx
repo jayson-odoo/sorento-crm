@@ -23,7 +23,7 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-// DataGrid persists column prefs via this hook (fires network) — stub it.
+// DataGrid persists column prefs via this hook (fires network) - stub it.
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
@@ -89,14 +89,14 @@ describe('ProductPerspectiveGrid', () => {
     expect(screen.getByText('committed')).toBeInTheDocument();
   });
 
-  it('renders "—" for the deferred demand columns', () => {
+  it('renders "-" for the deferred demand columns', () => {
     useNetPosition.mockReturnValue({
       data: result([row({ stockout_with_committed: false, status: 'healthy' })]),
       isLoading: false, isFetching: false, isError: false, refetch: vi.fn(),
     });
     render(<ProductPerspectiveGrid {...props} />);
     // avg daily demand / days of cover / reorder point cells + null valuation +
-    // last movement — all render the em-dash. At least the 3 deferred columns.
-    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(3);
+    // last movement - all render the em-dash. At least the 3 deferred columns.
+    expect(screen.getAllByText('-').length).toBeGreaterThanOrEqual(3);
   });
 });

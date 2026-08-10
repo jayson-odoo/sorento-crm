@@ -68,7 +68,7 @@ interface FormState {
   xyz: string;
   policy_type: PolicyType;
   safety_stock_method: SafetyStockMethod;
-  service_level_pct: string; // 0–100
+  service_level_pct: string; // 0-100
   safety_days: string;
   review_period_days: string;
   lead_time_default_days: string;
@@ -615,7 +615,7 @@ export function AddEditPolicyModal({
             </Field>
             <Field
               label="Active"
-              help="Inactive policies are ignored by the reorder run — the next-most-specific active policy resolves instead."
+              help="Inactive policies are ignored by the reorder run - the next-most-specific active policy resolves instead."
             >
               <div className="flex h-10 items-center">
                 <Switch checked={form.is_active} onCheckedChange={(v) => set('is_active', v)} />

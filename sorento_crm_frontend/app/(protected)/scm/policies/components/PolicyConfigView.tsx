@@ -9,7 +9,7 @@ import { ResolutionPreviewCard } from './ResolutionPreviewCard';
 import { SupplierScoringPanel } from './SupplierScoringPanel';
 
 /**
- * The SCM Policies area — one screen tuning the three reorder-engine policy
+ * The SCM Policies area - one screen tuning the three reorder-engine policy
  * families plus a resolution preview. Every tab renders its own section with
  * explicit loading / empty / error states (per CRUD UX standard).
  */

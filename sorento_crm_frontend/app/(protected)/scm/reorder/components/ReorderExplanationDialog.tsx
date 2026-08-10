@@ -58,7 +58,7 @@ import type {
 } from '../types/reorder.types';
 
 /**
- * Row-click explanation popup — the headline "make it fool-proof" surface.
+ * Row-click explanation popup - the headline "make it fool-proof" surface.
  *
  * Turns a recommendation's FROZEN inputs (AC-M3.11) into a plain-language,
  * step-by-step derivation a supply-chain novice can follow: it never recomputes
@@ -68,7 +68,7 @@ import type {
  * qty = order-up-to − net), and the modal is mobile-scrollable.
  */
 
-/** Compact number for the arithmetic — trims trailing zeros so 11.0 reads "11". */
+/** Compact number for the arithmetic - trims trailing zeros so 11.0 reads "11". */
 function dec(v: number | null | undefined): string {
   if (v === null || v === undefined) return EM_DASH;
   return Number(v.toFixed(2)).toLocaleString('en-MY', { maximumFractionDigits: 2 });
@@ -152,7 +152,7 @@ const RANK_FACTOR_LABEL: Record<RankFactor['key'], string> = {
   market: 'Market trend',
 };
 
-/** M4 "why this rank" block — which cash-ranking factors were present, and which
+/** M4 "why this rank" block - which cash-ranking factors were present, and which
  *  dominated. Margin is DROPPED (not zeroed) for uncosted SKUs (M4-D14), shown
  *  greyed so a novice sees exactly why urgency ended up dominant. */
 function RankExplanation({ rec }: { rec: ReorderRecommendation }) {
@@ -208,7 +208,7 @@ function RankExplanation({ rec }: { rec: ReorderRecommendation }) {
                     {fmtPct(f.value)} <span className="text-2xs">· weight {f.weight}</span>
                   </>
                 ) : (
-                  <span className="text-2xs italic">dropped — no cost on file</span>
+                  <span className="text-2xs italic">dropped - no cost on file</span>
                 )}
               </span>
             </div>
@@ -219,14 +219,14 @@ function RankExplanation({ rec }: { rec: ReorderRecommendation }) {
         <div className="flex items-start gap-2 rounded-lg border border-scm-incoming/40 bg-scm-incoming-soft p-2.5 text-xs">
           <TrendingUp className="mt-0.5 size-3.5 shrink-0 text-scm-incoming" aria-hidden />
           <span>
-            <span className="font-medium">Market trend applied:</span> {rec.market_signal} — this
+            <span className="font-medium">Market trend applied:</span> {rec.market_signal} - this
             lifted the funding priority (rank), not the order quantity.
           </span>
         </div>
       ) : null}
       <p className="text-xs text-muted-foreground">
         {isNeedsCost
-          ? 'Without a supplier cost the margin factor drops out and there is no cash impact to weigh against the budget, so this buy stays in Needs cost. It is still a real must-buy — add a cost to fund it.'
+          ? 'Without a supplier cost the margin factor drops out and there is no cash impact to weigh against the budget, so this buy stays in Needs cost. It is still a real must-buy - add a cost to fund it.'
           : 'Rank orders the buys for funding: higher-ranked buys are funded first when the budget is tight. Factors without data are dropped so they never dilute the score.'}
       </p>
     </div>
@@ -278,7 +278,7 @@ function DetailLine({ label, value, sub }: { label: string; value: React.ReactNo
   );
 }
 
-/** Click-to-reveal supplier scorecard — kept OUT of the always-on table so the row
+/** Click-to-reveal supplier scorecard - kept OUT of the always-on table so the row
  *  stays scannable; a planner who wants "why this supplier" clicks the chevron and
  *  gets the composite score breakdown, reliability, cost + ordering constraints,
  *  plus how it ranked vs the chosen supplier. Frozen numbers only (M5 boundary). */
@@ -549,7 +549,7 @@ function SupplierBlock({ rec }: { rec: ReorderRecommendation }) {
   );
 }
 
-/** Forecast-demand derivation row — the daily usage that drives ROP and
+/** Forecast-demand derivation row - the daily usage that drives ROP and
  *  days-of-cover. Shared by the buy and disposition variants so the demand that
  *  PRODUCED the days-of-cover is always spelled out (value + /day + pattern). */
 function ForecastDemandStep({ rec }: { rec: ReorderRecommendation }) {
@@ -568,7 +568,7 @@ function ForecastDemandStep({ rec }: { rec: ReorderRecommendation }) {
   );
 }
 
-/** Buy / exception derivation — the arithmetic laid out step by step. */
+/** Buy / exception derivation - the arithmetic laid out step by step. */
 function BuyDerivation({ rec }: { rec: ReorderRecommendation }) {
   const ssWhy = rec.safety_stock_method
     ? SS_METHOD_WHY[rec.safety_stock_method]?.(rec)
@@ -663,7 +663,7 @@ function BuyDerivation({ rec }: { rec: ReorderRecommendation }) {
   );
 }
 
-/** Disposition explanation — why (dead / overstock) + suggested action. No buy maths. */
+/** Disposition explanation - why (dead / overstock) + suggested action. No buy maths. */
 function DispositionExplanation({ rec }: { rec: ReorderRecommendation }) {
   const isDead = rec.reason === 'dead';
   return (
@@ -723,7 +723,7 @@ function DispositionExplanation({ rec }: { rec: ReorderRecommendation }) {
 }
 
 /**
- * M5 semantic layer — the LLM narrator that sits ON TOP of the deterministic derivation
+ * M5 semantic layer - the LLM narrator that sits ON TOP of the deterministic derivation
  * below. Clearly badged "AI" so it is never mistaken for the frozen arithmetic.
  *
  * ON DEMAND, not on open. It used to fire two model calls (explanation + market advisory)
@@ -776,14 +776,14 @@ function AiSummaryBlock({ rec, enabled }: { rec: ReorderRecommendation; enabled:
           </div>
         ) : explanation.isError ? (
           <p className="text-sm text-muted-foreground">
-            Couldn&apos;t generate a plain-language summary — the derivation below still applies.
+            Couldn&apos;t generate a plain-language summary - the derivation below still applies.
           </p>
         ) : (
           <p className="text-sm">{explanation.data?.explanation}</p>
         )}
       </div>
 
-      {/* Market advisory — subtle info callout, only when a signal matched. */}
+      {/* Market advisory - subtle info callout, only when a signal matched. */}
       {advisory.data?.advisory ? (
         <div className="flex items-start gap-2 rounded-lg border border-scm-incoming/40 bg-scm-incoming-soft p-3 text-sm">
           <TrendingUp className="mt-0.5 size-4 shrink-0 text-scm-incoming" aria-hidden />
@@ -800,7 +800,7 @@ function AiSummaryBlock({ rec, enabled }: { rec: ReorderRecommendation; enabled:
 }
 
 /**
- * M5 Ask box — a bounded Q&A grounded in THIS rec's frozen numbers. Keeps a short
+ * M5 Ask box - a bounded Q&A grounded in THIS rec's frozen numbers. Keeps a short
  * transcript in local state (reset when the dialog steps to another rec via the
  * `key` on DialogBody). A question that needs a number the rec doesn't carry
  * comes back as the exact refusal string, which we style as a muted turn so the
@@ -888,17 +888,17 @@ export function ReorderExplanationDialog({
   rec: ReorderRecommendation | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Current grid-page rows, in the active sort/filter order — powers the
+  /** Current grid-page rows, in the active sort/filter order - powers the
    *  in-place prev/next pager so the user can step recommendations without
    *  closing the popup. Optional so the dialog still renders standalone. */
   recs?: ReorderRecommendation[];
-  /** Full filtered total (all pages) — the pager's denominator. */
+  /** Full filtered total (all pages) - the pager's denominator. */
   totalCount?: number;
   /** 0-based index of the first `recs` row within the full filtered list. */
   pageItemOffset?: number;
   /** Step to a neighbouring recommendation in place (no close). */
   onNavigate?: (rec: ReorderRecommendation) => void;
-  /** The draft PO this rec was confirmed into (M8-F8) — drives the "View PO"
+  /** The draft PO this rec was confirmed into (M8-F8) - drives the "View PO"
    *  button that deep-links to the PO detail page. null when not yet confirmed. */
   poLink?: { po_number: string; po_id: string | null } | null;
 }) {
@@ -931,7 +931,7 @@ export function ReorderExplanationDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange} modal>
       {/* `overflow-y-hidden` overrides the base `overflow-y-auto` (same
-          tailwind-merge group) so only the body scrolls — the header + pager
+          tailwind-merge group) so only the body scrolls - the header + pager
           stay pinned. `max-h-[85dvh]` keeps the tallest derivation on-screen,
           reachable at ~375px mobile width. */}
       <DialogContent
@@ -963,7 +963,7 @@ export function ReorderExplanationDialog({
               <span className="flex flex-wrap items-center gap-2">
                 <TypeChip rec={rec} />
                 <span className="font-medium text-foreground">{rec.sku}</span>
-                {rec.product_name ? <span>— {rec.product_name}</span> : null}
+                {rec.product_name ? <span>- {rec.product_name}</span> : null}
                 {/* View PO (M8-F8): once the line is confirmed into a draft PO, jump
                     straight to that PO's detail page. */}
                 {poLink?.po_id ? (
@@ -983,7 +983,7 @@ export function ReorderExplanationDialog({
           // `key` resets scroll to top when stepping to a neighbouring rec.
           <DialogBody key={rec.id} className="grow space-y-5 overflow-y-auto min-h-0 -mx-6 px-6">
             {/* M5 AI narration + market advisory IS the headline for EVERY rec type
-                (buy / exception / disposition) — the old deterministic one-liner was
+                (buy / exception / disposition) - the old deterministic one-liner was
                 redundant with it. */}
             <AiSummaryBlock rec={rec} enabled={open} />
 
@@ -1084,7 +1084,7 @@ export function ReorderExplanationDialog({
               </div>
             ) : null}
 
-            {/* M5 Ask box — bounded Q&A over this rec's frozen numbers (buy /
+            {/* M5 Ask box - bounded Q&A over this rec's frozen numbers (buy /
                 exception only). Lives at the bottom so the derivation is read
                 first; the dialog body is already mobile-scrollable. */}
             <AskSection rec={rec} />

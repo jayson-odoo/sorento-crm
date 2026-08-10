@@ -1,5 +1,5 @@
 /**
- * SCM M8 — CashCopilotResults (slice C). The funded/deferred experience as ONE
+ * SCM M8 - CashCopilotResults (slice C). The funded/deferred experience as ONE
  * table (two draggable sections) with the budget control in the funded header,
  * the needs-cost banner, and the confirm-decisions bar.
  *   M8-C1 two sections · M8-C2 clearable budget input · M8-C7 needs-cost banner
@@ -104,7 +104,7 @@ beforeEach(() => {
   toastInfo.mockReset();
 });
 
-describe('CashCopilotResults — one table, two sections (M8-C1)', () => {
+describe('CashCopilotResults - one table, two sections (M8-C1)', () => {
   it('renders the Within-budget and Over-budget sections with their rows', () => {
     renderCopilot(makePlan());
     expect(screen.getByText('Within budget')).toBeInTheDocument();
@@ -114,7 +114,7 @@ describe('CashCopilotResults — one table, two sections (M8-C1)', () => {
   });
 });
 
-describe('CashCopilotResults — clearable budget input (M8-C2)', () => {
+describe('CashCopilotResults - clearable budget input (M8-C2)', () => {
   it('drives setBudget on change and treats an emptied input as 0 (no stuck leading 0)', () => {
     const bundle = makePlan();
     renderCopilot(bundle);
@@ -128,7 +128,7 @@ describe('CashCopilotResults — clearable budget input (M8-C2)', () => {
   });
 });
 
-describe('CashCopilotResults — needs-cost banner (M8-C7)', () => {
+describe('CashCopilotResults - needs-cost banner (M8-C7)', () => {
   it('shows the skipped-products banner when uncosted rows exist and dismisses it', () => {
     const bundle = makePlan({ funding: { within: [recToPlanRow(rec('a'))], over: [], needsCost: [recToPlanRow(rec('x', { unit_cost: null, supplier: null }))], committed: 1000, free: 4000 } } as Partial<M8PlanState>);
     renderCopilot(bundle);
@@ -143,7 +143,7 @@ describe('CashCopilotResults — needs-cost banner (M8-C7)', () => {
   });
 });
 
-describe('CashCopilotResults — confirm decisions (M8-C8 / M8-F2)', () => {
+describe('CashCopilotResults - confirm decisions (M8-C8 / M8-F2)', () => {
   it('hides the confirm bar when within-budget rows exist but NO decision is accepted (M8-F2)', () => {
     // default plan: SKU-a is within budget, but no accept/adjust decision is staged.
     // The bar must NOT show merely because a fundable row exists.
@@ -168,7 +168,7 @@ describe('CashCopilotResults — confirm decisions (M8-C8 / M8-F2)', () => {
 
   it('hides the confirm bar once every accepted line already has a draft PO (M8-F9)', () => {
     // An accepted line that has already been materialised into a draft PO is no
-    // longer "pending confirmation" — with only that line accepted, the bar hides.
+    // longer "pending confirmation" - with only that line accepted, the bar hides.
     const bundle = makePlan({
       decisions: { a: 'accepted', b: null },
       poByRow: { a: { po_number: 'PO-2026-0007', po_id: 'po-abc' } },

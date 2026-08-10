@@ -1,5 +1,5 @@
 /**
- * SCM M4 Slice B — PurchaseOrdersList (AC-M4.6).
+ * SCM M4 Slice B - PurchaseOrdersList (AC-M4.6).
  *   - draft + active rows render (draft = "Not on order", active = "On order")
  *   - PO number is a hyperlink to the detail page (human number, no UUID)
  *   - select-all selects ALL rows (drafts + active); the Actions dropdown shows
@@ -127,7 +127,7 @@ beforeEach(() => {
   uploadProps = null;
 });
 
-describe('PurchaseOrdersList — states (AC-M4.6)', () => {
+describe('PurchaseOrdersList - states (AC-M4.6)', () => {
   it('renders the empty state when there are no POs', () => {
     mockList([], { data: { data: [], pagination: { page: 1, total: 0 } } });
     render(<PurchaseOrdersList />);
@@ -141,7 +141,7 @@ describe('PurchaseOrdersList — states (AC-M4.6)', () => {
   });
 });
 
-describe('PurchaseOrdersList — draft + active rows (AC-M4.6)', () => {
+describe('PurchaseOrdersList - draft + active rows (AC-M4.6)', () => {
   it('renders a draft ("Not on order") and an active ("On order") row', () => {
     mockList([
       po({ id: 'po-draft', po_number: 'PO-DRAFT-0001', status: 'draft_recommendation' }),
@@ -171,12 +171,12 @@ describe('PurchaseOrdersList — draft + active rows (AC-M4.6)', () => {
       po({ id: 'po-active', po_number: 'PO-2026/07-0009', status: 'active', is_on_order: true }),
     ]);
     render(<PurchaseOrdersList />);
-    // Exactly one Create GR button — for the single active PO.
+    // Exactly one Create GR button - for the single active PO.
     expect(screen.getAllByRole('button', { name: /Create GR/i })).toHaveLength(1);
   });
 });
 
-describe('PurchaseOrdersList — select-all + bulk Confirm gating (AC-M4.6)', () => {
+describe('PurchaseOrdersList - select-all + bulk Confirm gating (AC-M4.6)', () => {
   it('select-all selects ALL rows and Confirm is scoped to the draft subset', () => {
     mockList([
       po({ id: 'po-draft-1', status: 'draft_recommendation' }),
@@ -263,7 +263,7 @@ describe('PurchaseOrdersList - upload the order book', () => {
   });
 });
 
-describe('PurchaseOrdersList — find a SKU and what we last paid for it', () => {
+describe('PurchaseOrdersList - find a SKU and what we last paid for it', () => {
   // > "in PO can I search this product also ... I want to see its PO and its last purchase
   // >  price (unit cost), so at least I know if it doesn't appear in planning, I can check
   // >  from here"

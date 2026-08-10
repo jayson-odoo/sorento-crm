@@ -1,12 +1,14 @@
 /**
  * Number/currency formatting for the SCM dashboard. Right-aligned tabular
- * figures are the "type signature" of the dashboard — deferred values render as
+ * figures are the "type signature" of the dashboard - deferred values render as
  * an em dash, never a fabricated 0.
  *
  * Phase 1 hard-codes "RM"; Phase 2 will thread the system currency format
  * (`useCurrencyFormat`) through instead.
  */
-export const EM_DASH = '—';
+// A plain hyphen, deliberately. Em-dashes are banned in this codebase's writing and the
+// user does not want to see them in the UI either.
+export const EM_DASH = '-';
 
 const intFmt = new Intl.NumberFormat('en-MY', { maximumFractionDigits: 0 });
 const moneyFmt = new Intl.NumberFormat('en-MY', {
@@ -20,7 +22,7 @@ export function fmtInt(value: number | null | undefined): string {
   return intFmt.format(value);
 }
 
-/** Signed integer — used for net position (deficit shows a leading −). */
+/** Signed integer - used for net position (deficit shows a leading −). */
 export function fmtSigned(value: number | null | undefined): string {
   if (value === null || value === undefined) return EM_DASH;
   const s = intFmt.format(Math.abs(value));
@@ -84,7 +86,7 @@ export const INFINITY = '∞';
 
 /**
  * Days-of-cover cell text. `∞` = stock on hand with no demand (never runs out);
- * `—` = nothing meaningful to quote (no demand + no stock, or a deficit).
+ * `-` = nothing meaningful to quote (no demand + no stock, or a deficit).
  */
 export function fmtDoc(days: number | null | undefined, infinite: boolean): string {
   if (infinite) return INFINITY;
@@ -101,7 +103,7 @@ export function fmtDecimal(value: number | null | undefined, dp = 1): string {
   });
 }
 
-/** Percentage from a 0–1 ratio. null → em dash. */
+/** Percentage from a 0-1 ratio. null → em dash. */
 export function fmtPct(ratio: number | null | undefined, dp = 0): string {
   if (ratio === null || ratio === undefined) return EM_DASH;
   return `${(ratio * 100).toLocaleString('en-MY', {

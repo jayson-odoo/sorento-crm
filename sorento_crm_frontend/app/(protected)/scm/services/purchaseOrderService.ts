@@ -1,16 +1,16 @@
 /**
  * ============================================================================
- * PURCHASE ORDERS — real API binding + M4 Slice B draft→confirm→GR flow
+ * PURCHASE ORDERS - real API binding + M4 Slice B draft→confirm→GR flow
  * ============================================================================
  * Mounted under `require_module_enabled_with_api_key("scm")` at
  * `/api/v1/scm/purchase-orders`, gated on `scm.dashboard.view` (writes use
  * `scm.reorder.run`). The PO feeds "on-order" / "incoming" into the
- * net-position views. No UUIDs surfaced — PO by po_number.
+ * net-position views. No UUIDs surfaced - PO by po_number.
  *
  * At M1 the list was READ-ONLY. M4 Slice B adds the draft→confirm→GR flow:
  *   - draft POs (status `draft_recommendation`) are drafted from accepted
  *     recommendations and are NOT on-order (M4-D5);
- *   - bulk Confirm flips them to `active` — only then do they count as on-order;
+ *   - bulk Confirm flips them to `active` - only then do they count as on-order;
  *   - create-GR stamps received qty on an active PO (GR = `picking_headers`,
  *     `picking_type='goods_received'`).
  *
@@ -125,7 +125,7 @@ export async function getPurchaseOrders(
   return res.json();
 }
 
-/** Single PO by stable id — drives the detail page. GET /purchase-orders/{id}. */
+/** Single PO by stable id - drives the detail page. GET /purchase-orders/{id}. */
 export async function getPurchaseOrder(id: string): Promise<PurchaseOrder | null> {
   if (USE_SLICE_B_MOCKS) return mockGetPurchaseOrder(id);
   const res = await apiFetch(`${BASE}/${encodeURIComponent(id)}`);

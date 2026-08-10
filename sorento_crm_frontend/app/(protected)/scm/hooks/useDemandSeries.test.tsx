@@ -1,5 +1,5 @@
 /**
- * Tests for useDemandSeries — the lazy 12-month DO-outflow trend fetch backing
+ * Tests for useDemandSeries - the lazy 12-month DO-outflow trend fetch backing
  * the expandable Product row's sparkline.
  *  - disabled (no fetch) when the row isn't expanded / SKU is empty
  *  - hits /dashboard/demand-series with sku (+ optional warehouse)

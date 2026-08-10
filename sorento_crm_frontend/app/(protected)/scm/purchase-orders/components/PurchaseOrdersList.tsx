@@ -224,7 +224,7 @@ export default function PurchaseOrdersList() {
       },
       {
         // create-GR stays a PER-ROW action on an active PO (not bulk). Drafts
-        // have no per-row action — they're confirmed via the bulk Actions menu.
+        // have no per-row action - they're confirmed via the bulk Actions menu.
         id: 'actions',
         header: '',
         cell: ({ row }) => {
@@ -286,7 +286,7 @@ export default function PurchaseOrdersList() {
       const res = await confirm.mutateAsync(confirmIds);
       table.resetRowSelection();
       toast.success(
-        `Confirmed ${res.confirmed_count} purchase order${res.confirmed_count === 1 ? '' : 's'} — now counted as incoming stock`,
+        `Confirmed ${res.confirmed_count} purchase order${res.confirmed_count === 1 ? '' : 's'} - now counted as incoming stock`,
       );
       setConfirmIds(null);
     } catch (e) {
@@ -319,7 +319,7 @@ export default function PurchaseOrdersList() {
         <Info className="mt-0.5 size-4 shrink-0" />
         <span>
           Draft POs are drafted from accepted reorder recommendations and are NOT counted as incoming
-          stock. Confirm a draft (single or in bulk) to make it Active — only then does it count as
+          stock. Confirm a draft (single or in bulk) to make it Active - only then does it count as
           on-order. Create a goods receipt from an Active PO to record what arrived.
         </span>
       </div>

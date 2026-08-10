@@ -32,7 +32,7 @@ const PRIORITY_OPTIONS = [
   { value: 'urgent', label: 'Urgent' },
 ];
 
-// `uom` is display-only (product base UOM, stamped by the BE) — it is carried
+// `uom` is display-only (product base UOM, stamped by the BE) - it is carried
 // for existing lines but never sent on write.
 type LineDraft = { sku: string; qty_ordered: string; uom: string };
 
@@ -218,7 +218,7 @@ export function SalesOrderFormModal({
                       className="flex h-9 items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground"
                       title="Set automatically from the product's base unit of measure"
                     >
-                      {line.uom || '—'}
+                      {line.uom || '-'}
                     </div>
                   </div>
                   <Button

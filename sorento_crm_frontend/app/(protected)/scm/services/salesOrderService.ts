@@ -1,10 +1,10 @@
 /**
  * ============================================================================
- * SALES ORDERS (M1-D14) — real API bindings (Phase 2 / M1 CP2b)
+ * SALES ORDERS (M1-D14) - real API bindings (Phase 2 / M1 CP2b)
  * ============================================================================
  * Mounted under `require_module_enabled_with_api_key("scm")` at
  * `/api/v1/scm/sales-orders`. Reads gate on `scm.dashboard.view`; writes gate on
- * `scm.reorder.run`. No UUIDs surfaced — SO identified by so_number in the UI,
+ * `scm.reorder.run`. No UUIDs surfaced - SO identified by so_number in the UI,
  * addressed by id in the path. `uom` is display-only (product base UOM) and is
  * NOT sent on write; the BE stamps it from the product.
  *
@@ -43,7 +43,7 @@ export interface SalesOrderListQuery {
   outstanding?: boolean;
 }
 
-/** Strip the display-only `uom` from each line — the BE derives it. */
+/** Strip the display-only `uom` from each line - the BE derives it. */
 function toWritePayload(data: SalesOrderFormData) {
   return {
     order_type: data.order_type,

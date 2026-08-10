@@ -1,5 +1,5 @@
 /**
- * AddEditPolicyModal — scope-driven target picker, edit-global lock, and
+ * AddEditPolicyModal - scope-driven target picker, edit-global lock, and
  * validation surfacing.
  *   AC-EDIT-1 (scope switch changes the target picker: sku→product,
  *     product_class→class, abc_xyz_cell→two ABC/XYZ pickers)
@@ -82,7 +82,7 @@ const GLOBAL_ROW: ReorderPolicyRow = {
   id: 'pol-global',
   scope_type: 'global',
   scope_ref: null,
-  scope_label: '—',
+  scope_label: '-',
   policy_type: 'reorder_point',
   service_level: null,
   safety_stock_method: 'fixed_days',
@@ -107,7 +107,7 @@ beforeEach(() => {
   hooks.useClassScopeOptions.mockReturnValue({ data: CLASSES, isLoading: false });
 });
 
-describe('AddEditPolicyModal — scope-driven target picker (AC-EDIT-1)', () => {
+describe('AddEditPolicyModal - scope-driven target picker (AC-EDIT-1)', () => {
   it('defaults to the SKU product picker', () => {
     renderModal();
     expect(screen.getByLabelText('Search a product')).toBeInTheDocument();
@@ -133,7 +133,7 @@ describe('AddEditPolicyModal — scope-driven target picker (AC-EDIT-1)', () => 
   });
 });
 
-describe('AddEditPolicyModal — edit global default (AC-EDIT-4)', () => {
+describe('AddEditPolicyModal - edit global default (AC-EDIT-4)', () => {
   it('locks the scope to Global default and hides the target picker', () => {
     renderModal({ mode: 'edit', initial: GLOBAL_ROW });
     expect(screen.getByText('Edit global default policy')).toBeInTheDocument();
@@ -146,7 +146,7 @@ describe('AddEditPolicyModal — edit global default (AC-EDIT-4)', () => {
   });
 });
 
-describe('AddEditPolicyModal — validation surfacing (AC-VAL-7 / AC-EDIT-5)', () => {
+describe('AddEditPolicyModal - validation surfacing (AC-VAL-7 / AC-EDIT-5)', () => {
   it('blocks a statistical policy with no service level and does not submit', () => {
     const props = renderModal();
     // Pick a product so scope_ref passes, then choose statistical SS.
@@ -162,7 +162,7 @@ describe('AddEditPolicyModal — validation surfacing (AC-VAL-7 / AC-EDIT-5)', (
     expect(props.onSubmit).not.toHaveBeenCalled();
   });
 
-  it('never self-closes on submit — closing is delegated to the parent (AC-EDIT-5)', async () => {
+  it('never self-closes on submit - closing is delegated to the parent (AC-EDIT-5)', async () => {
     // The modal only closes when the parent flips `open` after a RESOLVED save;
     // it never calls onOpenChange(false) itself, so on a rejected save it stays
     // open. (The error toast is proven by the usePolicies hook tests.)
@@ -189,7 +189,7 @@ describe('AddEditPolicyModal — validation surfacing (AC-VAL-7 / AC-EDIT-5)', (
   });
 });
 
-describe('AddEditPolicyModal — engine fields (AC-EDIT-2)', () => {
+describe('AddEditPolicyModal - engine fields (AC-EDIT-2)', () => {
   it('renders the four engine fields defaulted to the engine defaults', () => {
     renderModal();
     expect(screen.getByPlaceholderText('e.g. 90')).toHaveValue(90);

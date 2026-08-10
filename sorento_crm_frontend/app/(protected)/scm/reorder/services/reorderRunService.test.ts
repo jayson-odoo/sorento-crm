@@ -32,7 +32,7 @@ function lastInit(): RequestInit {
 
 beforeEach(() => apiFetch.mockReset());
 
-describe('reorderRunService — createReorderRun', () => {
+describe('reorderRunService - createReorderRun', () => {
   it('POSTs warehouse_codes + null budget, and normalises the 202 body', async () => {
     apiFetch.mockResolvedValue(
       ok({ run_id: 'run-9', status: 'running', buy_scope: 'network', stage: 'resolving_policies' }),
@@ -84,7 +84,7 @@ describe('reorderRunService — createReorderRun', () => {
   });
 });
 
-describe('reorderRunService — getReorderRun', () => {
+describe('reorderRunService - getReorderRun', () => {
   it('maps the poll payload including the completed summary', async () => {
     apiFetch.mockResolvedValue(
       ok({
@@ -110,7 +110,7 @@ describe('reorderRunService — getReorderRun', () => {
   });
 });
 
-describe('reorderRunService — getRecommendations', () => {
+describe('reorderRunService - getRecommendations', () => {
   it('sends page/limit + sort/dir + type + query as server-side params', async () => {
     apiFetch.mockResolvedValue(
       ok({ data: [], pagination: { page: 3, limit: 25, total: 0, total_pages: 1 } }),
@@ -144,7 +144,7 @@ describe('reorderRunService — getRecommendations', () => {
   });
 });
 
-describe('reorderRunService — listReorderRuns', () => {
+describe('reorderRunService - listReorderRuns', () => {
   it('requests newest-first page/limit and returns the history envelope', async () => {
     apiFetch.mockResolvedValue(
       ok({

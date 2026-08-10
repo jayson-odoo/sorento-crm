@@ -116,7 +116,7 @@ describe('ReorderExplanationDialog', () => {
   it('explains a BUY recommendation with the step-by-step derivation', () => {
     render(<ReorderExplanationDialog rec={rec({})} open onOpenChange={() => {}} />);
 
-    // The old deterministic one-liner headline is gone — the AI summary block is
+    // The old deterministic one-liner headline is gone - the AI summary block is
     // now the sole top-of-dialog narrative (covered in the explainer suite).
 
     // every derivation step is spelled out

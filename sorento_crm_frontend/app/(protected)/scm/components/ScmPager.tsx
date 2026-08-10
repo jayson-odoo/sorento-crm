@@ -8,7 +8,7 @@ import { fmtInt } from '../lib/format';
  * Client-side pager for the perspective card lists (warehouse tiles, supplier
  * cards). Mirrors the ProductListDialog footer pager (Prev / "Page X of Y" /
  * Next) so paging looks the same everywhere, and shows the in-scope total near
- * the control. Purely presentational — the caller owns the page state and slices
+ * the control. Purely presentational - the caller owns the page state and slices
  * the already-fetched payload.
  */
 export function ScmPager({

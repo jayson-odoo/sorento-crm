@@ -67,7 +67,7 @@ export function CashCopilotResults({ plan }: { plan: M8PlanState }) {
 
   const allRows = [...funding.within, ...funding.over];
   // Slider ceiling = the plan's TRUE cash impact (Σ all costed cash), rounded up to a
-  // step. No headroom: at max every buy is funded and free ≈ 0 — budgeting beyond the
+  // step. No headroom: at max every buy is funded and free ≈ 0 - budgeting beyond the
   // total buys nothing, so the slider must not run past it (min one step so the track
   // is always draggable even on a tiny plan).
   const sliderMax = useMemo(() => {
@@ -99,7 +99,7 @@ export function CashCopilotResults({ plan }: { plan: M8PlanState }) {
   // restores a single free-text `query` from the URL, so a SINGLE skipped SKU
   // pre-filters precisely; when several are skipped, one free-text term can't filter
   // to a set (no SKU-set param exists), so we land on the unfiltered list rather than
-  // invent a route — the banner still states how many were skipped.
+  // invent a route - the banner still states how many were skipped.
   const needsCostSkus = useMemo(
     () => funding.needsCost.map((r) => r.sku).filter(Boolean),
     [funding.needsCost],
@@ -160,7 +160,7 @@ export function CashCopilotResults({ plan }: { plan: M8PlanState }) {
           />
         </div>
       </div>
-      {/* Slider mirrors the numeric input (M8: drag OR type) — same clamp + step as the
+      {/* Slider mirrors the numeric input (M8: drag OR type) - same clamp + step as the
           server allocator, so a drag lands the funded boundary exactly where a typed
           value would. Kept compact so it sits inline in the section header. */}
       <Slider
