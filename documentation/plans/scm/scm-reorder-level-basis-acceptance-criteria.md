@@ -1,6 +1,6 @@
 # Reorder level as the planning basis - acceptance criteria
 
-Status: in progress (S10)
+Status: implemented (S10), not deployed
 
 Related: `PLAN-scm-m3-reorder-engine.md` (the forecast basis this sits beside),
 `PLAN-scm-m8-reorder-planning-daily.md` (the daily run), ADR-0011 (one planning engine).
@@ -123,6 +123,28 @@ reflects them and he is not asked twice.
   drill-in, at 1280px and at 375px.
 - **AC-S10d.5 [FE]** Rows needing a level are a separate group with the suggestion and its
   arithmetic, and accepting one moves the row into the proposal in place.
+
+## What the data cannot answer yet
+
+**AC-S10d.2 is satisfied honestly, not fully.** 12,928 of the 12,940 `purchase_order_lines`
+on the customer's book carry no `warehouse_id`, because the purchase-history export names no
+destination. So a segment-specific last purchase exists only where a purchase happened to
+record one. The row reports which case it is - `own_segment`, `unattributed`,
+`never_purchased` - and an unattributed price is never relabelled as the dealer cost. SPO
+allocations already carry a destination, so the same query answers per segment as that data
+arrives, with no further change.
+
+## Found by verification, not by tests
+
+Both leaks came through the POOL path, from running a real plan and reading the rows:
+
+1. A pooled buy row was built from the aggregate cell, which has no on-hand, no level and no
+   last price. The checklist rendered blank on exactly the rows a pool produces.
+2. A pool where nobody had set a level summed to a target of **0**, and 0 is a real target
+   that any deficit trips - it bought 52,872 units of one live SKU against a number nobody
+   chose. That is AC-S10c.4 defeated through a path the AC did not name.
+
+Both now have regression tests written from what the browser showed.
 
 ## Out of scope for this phase
 
