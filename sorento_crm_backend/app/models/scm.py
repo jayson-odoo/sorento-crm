@@ -110,7 +110,11 @@ class ReorderLevel(Base, CompanyScopedMixin):
     # NULL = the level applies to the product everywhere; a per-location row wins.
     warehouse_id = Column(UUID(as_uuid=False), nullable=True)
     level = Column(Numeric(18, 4), nullable=True)
-    source = Column(String(30), nullable=True)  # manual | accepted_suggestion
+    # AutoCount's own reorder quantity, uploaded with the level (S13c). Nothing in our UI
+    # edits it: it is the starting point the quantity suggestion offers, with the engine's
+    # computed figure shown beside it when they disagree.
+    reorder_qty = Column(Numeric(18, 4), nullable=True)
+    source = Column(String(30), nullable=True)  # manual | accepted_suggestion | autocount
     suggested_level = Column(Numeric(18, 4), nullable=True)
     suggested_at = Column(DateTime(timezone=False), nullable=True)
     # The months studied, their average, the cover applied - so the number is arguable.

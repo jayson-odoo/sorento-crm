@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { HistoryUploadDialog } from './HistoryUploadDialog';
 import { OutstandingUploadDialog } from './OutstandingUploadDialog';
+import { ReorderLevelUploadDialog } from './ReorderLevelUploadDialog';
 import type {
   OutstandingApplyResult,
   OutstandingImportKind,
@@ -37,7 +38,7 @@ import type {
  * buttons would give the rare ones the same weight as the routine one.
  */
 
-type Channel = OutstandingImportKind | HistoryImportKind;
+type Channel = OutstandingImportKind | HistoryImportKind | 'reorder-levels';
 
 const OUTSTANDING: ReadonlyArray<readonly [OutstandingImportKind, string, string]> = [
   ['sales-orders', 'Outstanding sales orders', 'What customers are waiting for'],
@@ -48,6 +49,13 @@ const CURATION: ReadonlyArray<readonly [HistoryImportKind, string, string]> = [
   ['purchase-history', 'Purchase history', 'Past orders, for last cost and slow movers'],
   ['sales-history', 'Sales history', 'Past sales orders. Never counted as demand'],
   ['order-inquiry', 'Order inquiry sheet', 'Stock locations and purchase-order links'],
+] as const;
+
+// AutoCount owns the reorder level; this feed receives it (S13c). Its own group because it
+// is neither the order book nor history: it is configuration, and it decides WHEN a product
+// appears in the plan at all.
+const CONFIGURATION: ReadonlyArray<readonly ['reorder-levels', string, string]> = [
+  ['reorder-levels', 'Reorder levels (AutoCount)', 'When each product should trigger a buy'],
 ] as const;
 
 function isHistoryChannel(channel: Channel): channel is HistoryImportKind {
@@ -103,12 +111,29 @@ export function UploadDataMenu({
               </div>
             </DropdownMenuItem>
           ))}
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel>Configuration</DropdownMenuLabel>
+          {CONFIGURATION.map(([kind, label, hint]) => (
+            <DropdownMenuItem key={kind} onSelect={() => setChannel(kind)}>
+              <div className="flex flex-col gap-0.5">
+                <span>{label}</span>
+                <span className="text-2xs text-muted-foreground">{hint}</span>
+              </div>
+            </DropdownMenuItem>
+          ))}
         </DropdownMenuContent>
       </DropdownMenu>
 
       {/* Mounted only while its own channel is chosen, so each dialog starts from a clean
           flow rather than whatever the last upload left behind. */}
-      {channel && !isHistoryChannel(channel) ? (
+      {channel === 'reorder-levels' ? (
+        <ReorderLevelUploadDialog
+          open
+          onOpenChange={(next) => !next && setChannel(null)}
+        />
+      ) : null}
+
+      {channel && channel !== 'reorder-levels' && !isHistoryChannel(channel) ? (
         <OutstandingUploadDialog
           open
           onOpenChange={(next) => !next && setChannel(null)}
@@ -117,7 +142,7 @@ export function UploadDataMenu({
         />
       ) : null}
 
-      {channel && isHistoryChannel(channel) ? (
+      {channel && channel !== 'reorder-levels' && isHistoryChannel(channel) ? (
         <HistoryUploadDialog
           open
           onOpenChange={(next) => !next && setChannel(null)}

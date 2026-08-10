@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Body, Depends, File, Query, UploadFile
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -20,7 +20,9 @@ from app.models.base import get_company_scope
 from app.services.company_scope import resolve_write_company_id
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
+from app.services.scm import reorder_level_import_service as import_svc
 from app.services.scm import reorder_level_service as svc
+from app.services.scm.upload_intake import read_upload
 
 router = APIRouter()
 
@@ -97,6 +99,35 @@ def accept(payload: dict = Body(...), db: Session = Depends(get_db),
         warehouse_id=(str(payload["warehouse_id"]) if payload.get("warehouse_id") else None),
         company_id=_company_id(db))
     return _row(row)
+
+
+@router.post("/reorder-levels/import/preview")
+async def preview_level_import(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _=Depends(_EDIT),
+) -> dict[str, Any]:
+    """Test an AutoCount reorder level + reorder quantity listing without writing it.
+
+    Same resolution `apply` runs - created / updated / unchanged / conflicts / problems -
+    so the Test button and Confirm cannot disagree about the same file (S13c)."""
+    return import_svc.preview(db, await read_upload(file))
+
+
+@router.post("/reorder-levels/import/apply")
+async def apply_level_import(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: dict = Depends(_EDIT),
+) -> dict[str, Any]:
+    """Apply the listing. AutoCount owns the level; a hand-set level is never silently
+    overwritten - it comes back in `conflict_rows` for a person to settle."""
+    out = import_svc.apply(
+        db, await read_upload(file),
+        actor=(user or {}).get("email") or (user or {}).get("id"),
+    )
+    db.commit()
+    return out
 
 
 @router.post("/reorder-levels/refresh-suggestions")
