@@ -287,7 +287,9 @@ describe('CashResultsGrid - order-qty drill shows the ROP formula (M8-A4 / M8-F5
     expect(screen.getByText('ROP = safety stock + demand rate x lead time')).toBeInTheDocument();
     // the frozen inputs behind the formula are spelled out (SS + demand/day x lead days)
     const text = docText();
-    expect(text).toContain('20 +');
+    // One decimal: a whole-number safety stock made the printed sum disagree with the
+    // reorder point beside it by a unit, which reads as a broken calculation.
+    expect(text).toContain('20.0 +');
     expect(text).toContain('4.0/day x 14d lead');
   });
 });
