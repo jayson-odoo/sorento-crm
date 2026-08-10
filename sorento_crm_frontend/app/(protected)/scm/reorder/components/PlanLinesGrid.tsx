@@ -11,7 +11,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Search, X } from 'lucide-react';
+import { Info, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -21,10 +21,11 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
-import { EM_DASH, fmtInt, fmtMoney } from '../../lib/format';
+import { EM_DASH, fmtInt, fmtMoney, fmtSigned } from '../../lib/format';
 import {
   PLAN_LINE_STATUS_LABEL,
   PLAN_LINE_STATUS_ORDER,
@@ -33,6 +34,16 @@ import {
 } from '../lib/planLine';
 import { decidedCost, decidedQty, type PlanDecisionMap } from '../lib/planDecisions';
 import { PlanLineDecisionCell } from './PlanLineDecisionCell';
+import { PlanChecklistPopover } from './PlanChecklistPopover';
+import { PlanDemandPopover } from './PlanDemandPopover';
+import {
+  DaysCoverDrill,
+  ExplainNumber,
+  NetDrill,
+  OrderQtyDrill,
+} from './PlanExplainDrills';
+import { ReorderExplanationDialog } from './ReorderExplanationDialog';
+import type { ReorderRecommendation } from '../types/reorder.types';
 
 /**
  * ONE grid for every line of a plan.
@@ -59,6 +70,21 @@ const STATUS_VARIANT: Record<PlanLineStatus, 'primary' | 'warning' | 'secondary'
   exception: 'warning',
 };
 
+/**
+ * Swallows a click so it never reaches the row.
+ *
+ * The row opens the full derivation, and `onRowClick` is handed the row rather than the
+ * event, so it cannot tell an interactive cell from the row itself. Without this, adjusting a
+ * quantity or opening a drill would also open the dialog on top of what you were doing.
+ */
+function StopClick({ children }: { children: React.ReactNode }) {
+  return (
+    <span onClick={(e) => e.stopPropagation()} className="contents">
+      {children}
+    </span>
+  );
+}
+
 /** A dash means "not on file", which is a different fact from zero and must not read as it. */
 function numCell(value: number | null | undefined) {
   return value === null || value === undefined ? (
@@ -75,11 +101,15 @@ export function PlanLinesGrid({
   onClear,
   statusFilter: statusFilterProp = null,
   onStatusFilterChange,
+  runId,
   isLoading,
 }: {
   lines: PlanLine[];
   decisions: PlanDecisionMap;
-  onDecide: (line: PlanLine, next: { kind: 'buy' | 'use_stock' | 'skip'; qty?: number }) => void;
+  onDecide: (
+    line: PlanLine,
+    next: { kind: 'buy' | 'use_stock' | 'skip'; qty?: number; reason?: string },
+  ) => void;
   /** Return a line to undecided. Separate from `onDecide` because undecided is the absence
    *  of a decision, not a fourth kind of one. */
   onClear: (line: PlanLine) => void;
@@ -87,6 +117,8 @@ export function PlanLinesGrid({
    *  tiles can narrow it: they used to reveal a band, and there are no bands now. */
   statusFilter?: PlanLineStatus | null;
   onStatusFilterChange?: (next: PlanLineStatus | null) => void;
+  /** The run on screen, threaded to each row's demand drill so it can fetch its order lines. */
+  runId?: string | null;
   isLoading?: boolean;
 }) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
@@ -99,6 +131,10 @@ export function PlanLinesGrid({
   // Undecided first by default is a deliberate bias toward the work that is left. It is a
   // filter, not a sort, so it never reorders the priority the engine computed.
   const [decidedFilter, setDecidedFilter] = useState<string>('all');
+  // Row click opens the full derivation, as it did before the grid was rebuilt. The pager
+  // steps through the rows in the order they are currently sorted and filtered, so "next"
+  // means the next line the buyer is actually looking at.
+  const [detailRec, setDetailRec] = useState<ReorderRecommendation | null>(null);
 
   const filtered = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase();
@@ -139,8 +175,16 @@ export function PlanLinesGrid({
         header: ({ column }) => <DataGridColumnHeader title="Product" visibility column={column} />,
         cell: ({ row }) => (
           <div className="min-w-0 space-y-px">
-            <div className="truncate text-sm font-medium" title={row.original.sku}>
-              {row.original.sku}
+            <div className="flex items-center gap-1.5">
+              <span className="truncate text-sm font-medium" title={row.original.sku}>
+                {row.original.sku}
+              </span>
+              {/* Which orders this quantity is for, and the lookups the buyer used to do by
+                  hand. Both were on the old row and are the reason a number is trustworthy. */}
+              <StopClick>
+                <PlanDemandPopover runId={runId ?? null} recId={row.original.id} />
+                <PlanChecklistPopover rec={row.original.rec} />
+              </StopClick>
             </div>
             <div className="truncate text-xs text-muted-foreground" title={row.original.product_name}>
               {row.original.product_name}
@@ -239,13 +283,72 @@ export function PlanLinesGrid({
         ),
         cell: ({ row }) =>
           row.original.purchasable ? (
-            <span className="tabular-nums">{fmtInt(row.original.order_qty)}</span>
+            <span className="inline-flex items-center gap-1">
+              <span className="tabular-nums">{fmtInt(row.original.order_qty)}</span>
+              <StopClick>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    title="How we got this qty"
+                    aria-label={`Explain order qty for ${row.original.sku}`}
+                    className="rounded-sm text-muted-foreground/70 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <Info className="size-3.5" aria-hidden />
+                  </button>
+                </PopoverTrigger>
+                <PopoverPortal>
+                  <PopoverContent align="end" collisionPadding={8} className="w-80 p-0 text-sm">
+                    <OrderQtyDrill
+                      row={row.original}
+                      onApplyOffsets={(qty, reason) =>
+                        onDecide(row.original, { kind: 'buy', qty, reason })
+                      }
+                    />
+                  </PopoverContent>
+                </PopoverPortal>
+              </Popover>
+              </StopClick>
+            </span>
           ) : (
             <span className="text-muted-foreground">{EM_DASH}</span>
           ),
-        size: 100,
+        size: 120,
         enableSorting: true,
         meta: { headerTitle: 'Suggested', skeleton: <Skeleton className="h-4 w-10" /> },
+      },
+      {
+        id: 'net',
+        accessorFn: (row) => row.net ?? 0,
+        header: ({ column }) => <DataGridColumnHeader title="Net" visibility column={column} />,
+        cell: ({ row }) => (
+          <StopClick>
+            <ExplainNumber value={fmtSigned(row.original.net)} title="Explain net">
+              <NetDrill row={row.original} />
+            </ExplainNumber>
+          </StopClick>
+        ),
+        size: 110,
+        enableSorting: true,
+        meta: { headerTitle: 'Net', skeleton: <Skeleton className="h-4 w-10" /> },
+      },
+      {
+        id: 'days_cover',
+        accessorFn: (row) => row.days_cover ?? -1,
+        header: ({ column }) => <DataGridColumnHeader title="Runway" visibility column={column} />,
+        cell: ({ row }) => (
+          <StopClick>
+            <ExplainNumber
+              value={row.original.days_cover === null ? EM_DASH : fmtInt(row.original.days_cover)}
+              title="Explain runway"
+            >
+              <DaysCoverDrill row={row.original} />
+            </ExplainNumber>
+          </StopClick>
+        ),
+        size: 110,
+        enableSorting: true,
+        meta: { headerTitle: 'Runway', skeleton: <Skeleton className="h-4 w-10" /> },
       },
       {
         id: 'cost',
@@ -276,12 +379,14 @@ export function PlanLinesGrid({
         id: 'decision',
         header: ({ column }) => <DataGridColumnHeader title="Decision" visibility column={column} />,
         cell: ({ row }) => (
+          <StopClick>
           <PlanLineDecisionCell
             line={row.original}
             decision={decisions[row.original.id]}
             onDecide={(next) => onDecide(row.original, next)}
             onClear={() => onClear(row.original)}
           />
+          </StopClick>
         ),
         size: 260,
         enableSorting: false,
@@ -289,7 +394,7 @@ export function PlanLinesGrid({
         meta: { headerTitle: 'Decision', skeleton: <Skeleton className="h-8 w-40" /> },
       },
     ],
-    [decisions, onDecide, onClear],
+    [decisions, onDecide, onClear, runId],
   );
 
   const [columnOrder, setColumnOrder] = useState<string[]>(() =>
@@ -311,6 +416,12 @@ export function PlanLinesGrid({
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
   });
+
+  const pageRecs = useMemo<ReorderRecommendation[]>(
+    () => table.getRowModel().rows.map((r) => r.original.rec),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [table, filtered, pagination, sorting],
+  );
 
   const statusOptions = useMemo(
     () => [
@@ -390,6 +501,7 @@ export function PlanLinesGrid({
         columnsVisibility: true,
       }}
       tableClassNames={{ edgeCell: 'px-5' }}
+      onRowClick={(row) => setDetailRec(row.rec)}
     >
       <Card>
         <Toolbar />
@@ -403,6 +515,16 @@ export function PlanLinesGrid({
           <DataGridPagination />
         </CardFooter>
       </Card>
+
+      <ReorderExplanationDialog
+        rec={detailRec}
+        open={!!detailRec}
+        onOpenChange={(o) => !o && setDetailRec(null)}
+        recs={pageRecs}
+        totalCount={filtered.length}
+        pageItemOffset={pagination.pageIndex * pagination.pageSize}
+        onNavigate={setDetailRec}
+      />
     </DataGrid>
   );
 }

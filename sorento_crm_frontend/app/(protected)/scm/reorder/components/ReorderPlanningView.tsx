@@ -628,6 +628,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
           ) : (
             <>
               <PlanLinesGrid
+                runId={currentRunId}
                 statusFilter={statusFilter}
                 onStatusFilterChange={setStatusFilter}
                 lines={planLines.lines}

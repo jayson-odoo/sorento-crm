@@ -117,6 +117,44 @@ describe('PlanLinesGrid - the netting is on the row', () => {
   });
 });
 
+describe('PlanLinesGrid - the explanations are still there', () => {
+  // Every one of these was on the old hand-rolled row and got dropped when the grid was
+  // rebuilt. They are the reason a computed quantity is trustworthy rather than taken on
+  // faith, so they are pinned here.
+  it('offers the demand and checklist drills beside the product', () => {
+    renderGrid([line()]);
+    expect(screen.getByRole('button', { name: /Demand behind this row/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /What the plan checked/i })).toBeInTheDocument();
+  });
+
+  it('explains how the suggested quantity was reached', () => {
+    renderGrid([line()]);
+    expect(
+      screen.getByRole('button', { name: /Explain order qty for SKU-1/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('explains the net and the runway', () => {
+    renderGrid([line()]);
+    expect(screen.getByRole('button', { name: /Explain net/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Explain runway/i })).toBeInTheDocument();
+  });
+
+  it('opens the full derivation when the row itself is clicked', () => {
+    renderGrid([line()]);
+    fireEvent.click(screen.getByText('Product one'));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('does NOT open it when the decision controls are used', () => {
+    // The row handler is given the row, not the event, so it cannot tell them apart by
+    // itself: adjusting a quantity would otherwise throw the dialog over your work.
+    renderGrid([line()]);
+    fireEvent.click(screen.getByLabelText(/Quantity to buy for SKU-1/i));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+});
+
 describe('PlanLinesGrid - deciding', () => {
   it('offers buy, use stock and skip on a purchasable line', () => {
     renderGrid([line()]);
