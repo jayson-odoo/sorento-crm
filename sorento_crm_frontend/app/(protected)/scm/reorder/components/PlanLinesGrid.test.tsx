@@ -296,15 +296,15 @@ describe('PlanLinesGrid - what price to use', () => {
   it('puts the age of the price on the row, beside what it costs', () => {
     renderGrid([line()], {}, [], () => stale);
 
-    expect(screen.getByText('Re-quote')).toBeInTheDocument();
+    expect(screen.getByText('Ask new price')).toBeInTheDocument();
     expect(screen.getByText(/USD 20\.37/)).toBeInTheDocument();
   });
 
   it('leaves the cell empty when there is no price opinion, rather than implying all is well', () => {
     renderGrid([line()], {}, [], () => undefined);
 
-    expect(screen.queryByText('Re-quote')).not.toBeInTheDocument();
-    expect(screen.queryByText('Price current')).not.toBeInTheDocument();
+    expect(screen.queryByText('Ask new price')).not.toBeInTheDocument();
+    expect(screen.queryByText('Use last price')).not.toBeInTheDocument();
   });
 
   it('opening the price does not also open the row dialog', () => {

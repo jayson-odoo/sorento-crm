@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  PRICE_ADVICE_LABEL,
   PRICE_ADVICE_SORT,
   describeLastPurchase,
   describePriceAdvice,
   humanAge,
   priceFootnotes,
   priceKey,
+  rowFact,
   type PriceAdvice,
 } from './priceAdvice';
 
@@ -137,6 +139,36 @@ describe('priceFootnotes', () => {
     const notes = priceFootnotes({ ...base, free_of_charge_lines: 2 });
 
     expect(notes.join(' ')).toMatch(/2 lines .* recorded no charge/);
+  });
+});
+
+describe('rowFact - the one plain line under the action', () => {
+  it('is the price and its age, nothing else', () => {
+    expect(rowFact(base)).toBe('Last paid USD 20.37, 40 days ago');
+  });
+
+  it('never puts the order number on the row - that is popup material', () => {
+    expect(rowFact(base)).not.toContain('202012-S0048');
+  });
+
+  it('says never bought instead of inventing a fact', () => {
+    expect(rowFact({ ...base, last: null, age_days: null })).toBe(
+      'Never bought from this supplier',
+    );
+  });
+
+  it('admits an unknown date rather than skipping the age', () => {
+    expect(rowFact({ ...base, age_days: null })).toBe('Last paid USD 20.37, date unknown');
+  });
+});
+
+describe('PRICE_ADVICE_LABEL - plain words, not purchasing jargon', () => {
+  it('every label is an action a person would say across a desk', () => {
+    // The rejected first cut said "Re-quote" and "Price basis". The reviewer standard is
+    // the least tech-savvy person in the world, so no label may lean on trade vocabulary.
+    for (const label of Object.values(PRICE_ADVICE_LABEL)) {
+      expect(label).not.toMatch(/re-quote|rfq|basis|standing|stale/i);
+    }
   });
 });
 

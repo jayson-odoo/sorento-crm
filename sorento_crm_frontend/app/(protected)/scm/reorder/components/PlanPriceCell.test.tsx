@@ -39,7 +39,7 @@ describe('PlanPriceCell', () => {
   it('shows the verdict and the price it is a verdict about', () => {
     renderCell(advice());
 
-    expect(screen.getByText('Re-quote')).toBeInTheDocument();
+    expect(screen.getByText('Ask new price')).toBeInTheDocument();
     expect(screen.getByText(/USD 20\.37/)).toBeInTheDocument();
   });
 
@@ -52,27 +52,27 @@ describe('PlanPriceCell', () => {
   it('calls a zero-costed line out as the loudest thing on the row', () => {
     renderCell(advice({ advice: 'zero_cost', standing_cost: 0 }));
 
-    expect(screen.getByText('Priced at zero')).toBeInTheDocument();
+    expect(screen.getByText('Fix zero price')).toBeInTheDocument();
   });
 
   it('says never bought rather than showing a price we do not have', () => {
     renderCell(advice({ advice: 'no_history', last: null, age_days: null }));
 
-    expect(screen.getByText('Never bought')).toBeInTheDocument();
-    expect(screen.getByText(/no purchase on record/i)).toBeInTheDocument();
+    expect(screen.getByText('Get a quote')).toBeInTheDocument();
+    expect(screen.getByText(/never bought from this supplier/i)).toBeInTheDocument();
   });
 
   it('renders nothing for an allocation, which has no supplier to have a price with', () => {
     renderCell(advice(), false);
 
-    expect(screen.queryByText('Re-quote')).not.toBeInTheDocument();
+    expect(screen.queryByText('Ask new price')).not.toBeInTheDocument();
   });
 
   it('has no opinion when the facts did not load, rather than implying the price is fine', () => {
     renderCell(undefined);
 
-    expect(screen.queryByText('Price current')).not.toBeInTheDocument();
-    expect(screen.queryByText('Re-quote')).not.toBeInTheDocument();
+    expect(screen.queryByText('Use last price')).not.toBeInTheDocument();
+    expect(screen.queryByText('Ask new price')).not.toBeInTheDocument();
   });
 
   it('opens the full reasoning, and states the limit of it', () => {

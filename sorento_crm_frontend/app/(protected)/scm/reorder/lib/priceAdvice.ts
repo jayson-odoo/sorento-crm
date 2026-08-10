@@ -56,14 +56,22 @@ export interface PriceHistoryPayload {
   prices: Record<string, PriceAdvice>;
 }
 
-/** The one-word column label. Short enough for a grid cell, specific enough to act on. */
+/**
+ * The column label, as the ACTION the buyer takes.
+ *
+ * > "it needs to be presented to the least tech savvy person in the world"
+ *
+ * The first cut said "Re-quote" and "Price basis", which is purchasing jargon wearing a
+ * badge. The column is suggestion #2 of the row's three - what price to use - so every
+ * label is the suggestion itself, in the words a person would say across a desk.
+ */
 export const PRICE_ADVICE_LABEL: Record<PriceAdviceCode, string> = {
-  zero_cost: 'Priced at zero',
-  no_history: 'Never bought',
-  unknown_age: 'Undated price',
-  stale: 'Re-quote',
-  moving: 'Price moving',
-  recent: 'Price current',
+  zero_cost: 'Fix zero price',
+  no_history: 'Get a quote',
+  unknown_age: 'Confirm price',
+  stale: 'Ask new price',
+  moving: 'Confirm price',
+  recent: 'Use last price',
 };
 
 /**
@@ -117,13 +125,28 @@ function money(amount: number, currency: string | null): string {
   return currency ? `${currency} ${n}` : n;
 }
 
-/** "USD 20.37 on 202012-S0048, 2020-12-15" - the fact, with its receipt. */
+/** "USD 20.37 on 202012-S0048, 2020-12-15" - the fact, with its receipt. Popup only. */
 export function describeLastPurchase(p: PricePurchase | null): string | null {
   if (!p) return null;
   const parts = [money(p.unit_cost, p.currency)];
   if (p.po_number) parts.push(`on ${p.po_number}`);
   if (p.issue_date) parts.push(p.issue_date);
   return parts.join(', ');
+}
+
+/**
+ * The one plain fact under the row's action: "Last paid USD 20.37, 5 years 8 months ago".
+ *
+ * Deliberately NO order number and no raw date here. The row is read by a reviewer
+ * deciding whether to trust the suggestion, and what they weigh is the price and its age;
+ * the receipt (PO number, exact date, the purchase before) lives in the popup for the
+ * moment they want to verify it.
+ */
+export function rowFact(a: PriceAdvice): string {
+  if (!a.last) return 'Never bought from this supplier';
+  const age = humanAge(a.age_days);
+  const paid = `Last paid ${money(a.last.unit_cost, a.last.currency)}`;
+  return age ? `${paid}, ${age}` : `${paid}, date unknown`;
 }
 
 /**

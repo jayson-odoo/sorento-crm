@@ -6,10 +6,9 @@ import { EM_DASH } from '../../lib/format';
 import {
   PRICE_ADVICE_LABEL,
   PRICE_ADVICE_TONE,
-  describeLastPurchase,
   describePriceAdvice,
-  humanAge,
   priceFootnotes,
+  rowFact,
   type PriceAdvice,
 } from '../lib/priceAdvice';
 
@@ -57,8 +56,6 @@ export function PlanPriceCell({
     );
   }
 
-  const paid = describeLastPurchase(price.last);
-  const age = humanAge(price.age_days);
   const notes = priceFootnotes(price);
 
   return (
@@ -72,8 +69,10 @@ export function PlanPriceCell({
           >
             {PRICE_ADVICE_LABEL[price.advice]}
           </Badge>
+          {/* One plain fact: the price and its age. The receipt (order number, exact
+              date) is popup material - on the row it is clutter a reviewer scans past. */}
           <span className="mt-0.5 block truncate text-2xs text-muted-foreground">
-            {paid ? `${paid}${age ? `, ${age}` : ''}` : 'No purchase on record'}
+            {rowFact(price)}
           </span>
         </button>
       </PopoverTrigger>

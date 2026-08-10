@@ -391,7 +391,7 @@ export function PlanLinesGrid({
           return p ? PRICE_ADVICE_SORT[p.advice] : 99;
         },
         header: ({ column }) => (
-          <DataGridColumnHeader title="Price basis" visibility column={column} />
+          <DataGridColumnHeader title="Price to use" visibility column={column} />
         ),
         cell: ({ row }) => (
           <StopClick>
@@ -404,7 +404,7 @@ export function PlanLinesGrid({
         ),
         size: 190,
         enableSorting: true,
-        meta: { headerTitle: 'Price basis', skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Price to use', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         id: 'suggestion',
