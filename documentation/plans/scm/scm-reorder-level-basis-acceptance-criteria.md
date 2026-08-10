@@ -146,6 +146,62 @@ Both leaks came through the POOL path, from running a real plan and reading the 
 
 Both now have regression tests written from what the browser showed.
 
+## S10e - a shortage we cannot price is still a shortage
+
+Raised in review of the built plan:
+
+> "no unit cost ... but i thought when no supplier cost, we should also plan against it,
+> cause it is not like if it has no cost then we don't buy ma, we still need to buy cause we
+> still need to fulfil, right?"
+
+Correct, and the shipped behaviour was wrong. Uncosted buys - **149 of 966 in the live run** -
+were held out of the funded and deferred sections entirely and surfaced only as a dismissible
+note. A missing price is a gap in our master data. The item is still short, and it still has
+to be fulfilled.
+
+* **AC-S10e.1 [FE]** GIVEN a buy the plan cannot price, WHEN the plan renders, THEN the row
+  appears in its own section of the same table, ranked in the same sequence, with the same
+  Accept / Adjust / Reject controls as any other buy.
+* **AC-S10e.2 [FE]** GIVEN such a row, WHEN the cash column renders, THEN it states the
+  reason - `No cost` or `No <CCY> rate` - never a dash, which reads as zero.
+* **AC-S10e.3 [FE]** GIVEN such a row, WHEN the budget is computed, THEN it contributes
+  nothing to committed or free, and cannot be dragged into a budgeted section.
+* **AC-S10e.4 [FE]** GIVEN a plan where every buy is priced, WHEN the plan renders, THEN the
+  section still renders, stating that every buy has a price.
+
+**A costed row can be unpriceable too.** The split is on CASH IMPACT, not on `unit_cost`: a
+row can carry a supplier cost and still have no cash figure, because its currency has no
+exchange rate on file. Inside Within budget it drew zero and read as free money. That path
+becomes live the moment a CNY cost is entered, so it lands in the same section, saying which
+of the two it is.
+
+## S10f - the price, its currency and the MoQ are things a person can set
+
+> "all the currency is in RMB (purchase currency for product, need to be able to set that)"
+
+`unit_cost`, `currency`, `moq` and `order_multiple` were all already columns on
+`product_suppliers` and all already read by the engine. None could be written: the API
+exposed only the lead time. **5,417 of 17,408 links carry no price**, which is what S10e's
+section is mostly made of.
+
+* **AC-S10f.1 [BE][FE]** GIVEN a product's Suppliers section, WHEN a supplier row is edited,
+  THEN lead time, unit cost, currency, minimum order and order multiple all save, as one
+  request per row.
+* **AC-S10f.2 [BE]** GIVEN a unit cost, WHEN no currency accompanies it on the MERGED row,
+  THEN the save is refused. `scm.money` reads a blank code as ringgit, so a yuan price saved
+  without one is ranked and budgeted as ringgit and nothing downstream can detect it.
+* **AC-S10f.3 [FE]** GIVEN the currency picker, WHEN it lists options, THEN it offers only
+  currencies with an exchange rate on file, plus whatever the row already holds. A cost in a
+  rate-less currency would land straight back in S10e's section.
+* **AC-S10f.4 [FE]** GIVEN a supplier row, WHEN Remove is pressed, THEN a confirmation is
+  required first.
+
+**Day-0 dependency, unmet.** The customer says purchases are in RMB. There is **no CNY rate
+on `scm.currency_rate`** (only USD), and all 11,991 priced links are labelled MYR. Until a
+CNY rate is entered under Supply Chain, CNY cannot be selected, and any link relabelled CNY
+would move into "No price yet". The relabelling of those 11,991 rows is a data decision for
+the customer, not a migration to run unasked.
+
 ## Out of scope for this phase
 
 Deferred to Phase 2 (commercial layer): selling price and margin per segment, who is selling
