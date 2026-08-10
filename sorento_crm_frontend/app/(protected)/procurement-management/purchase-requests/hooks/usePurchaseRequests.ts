@@ -9,6 +9,7 @@ import {
 import {
   getPurchaseRequests,
   getPurchaseRequest,
+  getPurchaseRequestRevisions,
   createPurchaseRequest,
   updatePurchaseRequest,
   deletePurchaseRequest,
@@ -82,6 +83,26 @@ export function usePurchaseRequest(id: string | null) {
     queryFn: () => {
       if (!id) throw new Error('Purchase request ID is required');
       return getPurchaseRequest(id);
+    },
+    enabled: !!id,
+    retry: 1,
+  });
+}
+
+/**
+ * Revision lineage for the office Revisions panel. Keyed on `revisionNo` so a
+ * revision landing while the page is open refetches the timeline instead of
+ * serving the pre-revision lineage until a manual reload.
+ */
+export function usePurchaseRequestRevisions(
+  id: string | null,
+  revisionNo?: number | null,
+) {
+  return useQuery({
+    queryKey: ['purchase-request-revisions', id, revisionNo ?? 0],
+    queryFn: () => {
+      if (!id) throw new Error('Purchase request ID is required');
+      return getPurchaseRequestRevisions(id);
     },
     enabled: !!id,
     retry: 1,

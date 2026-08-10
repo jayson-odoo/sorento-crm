@@ -23,6 +23,7 @@ import type {
   DataGridApiFetchParams,
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
+import type { FormRevisionEntry } from '@/components/common/RevisionTimeline';
 
 /**
  * List query shape for purchase requests / sponsorship forms. The snake_case
@@ -87,6 +88,31 @@ export async function getPurchaseRequest(id: string): Promise<PurchaseRequestDet
   const response = await apiFetch(`/api/v1/procurement/purchase-requests/${id}`);
   if (!response.ok) throw new Error('Failed to load record');
   return response.json();
+}
+
+/**
+ * Revision lineage for the office Revisions panel (UAC H2/H3).
+ *
+ * Contract:
+ *   GET /api/v1/procurement/purchase-requests/{id}/revisions
+ *   Serves BOTH purchase requests and sponsorship forms: the backend reads the
+ *   header's own `request_type`, so the caller never has to say which it is.
+ *   Auth: the existing purchase request view permission.
+ *   200: { items: FormRevisionEntry[] } - oldest first, each entry carrying what
+ *        changed since the version before it plus the voided-stage context.
+ *   Read-only: the office never creates, edits or deletes a revision (UAC H5).
+ */
+export async function getPurchaseRequestRevisions(
+  id: string,
+): Promise<FormRevisionEntry[]> {
+  const response = await apiFetch(
+    `/api/v1/procurement/purchase-requests/${id}/revisions`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load revisions'));
+  }
+  const data = await response.json();
+  return (data?.items ?? []) as FormRevisionEntry[];
 }
 
 export async function linkPurchaseRequestAttachment(

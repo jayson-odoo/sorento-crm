@@ -10,6 +10,7 @@ import { STOCK_INQUIRY_NEIGHBOURS_PATH } from '../services/stockInquiryService';
 import {
   getStockInquiries,
   getStockInquiry,
+  getStockInquiryRevisions,
   createStockInquiry,
   updateStockInquiry,
   updateStockInquiryAndReply,
@@ -75,6 +76,26 @@ export function useStockInquiry(id: string | null) {
     queryFn: () => {
       if (!id) throw new Error('Stock inquiry ID is required');
       return getStockInquiry(id);
+    },
+    enabled: !!id,
+    retry: 1,
+  });
+}
+
+/**
+ * Revision lineage for the office Revisions panel. Keyed on `revisionNo` so a
+ * revision landing while the page is open refetches the timeline instead of
+ * serving the pre-revision lineage until a manual reload.
+ */
+export function useStockInquiryRevisions(
+  id: string | null,
+  revisionNo?: number | null,
+) {
+  return useQuery({
+    queryKey: ['stock-inquiry-revisions', id, revisionNo ?? 0],
+    queryFn: () => {
+      if (!id) throw new Error('Stock inquiry ID is required');
+      return getStockInquiryRevisions(id);
     },
     enabled: !!id,
     retry: 1,

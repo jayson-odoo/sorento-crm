@@ -129,6 +129,7 @@ vi.mock('../hooks/useStockInquiries', () => ({
   }),
   useDeleteStockInquiry: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useExportStockInquiryPdf: () => ({ mutate: exportPdfMutate, isPending: false }),
+  useStockInquiryRevisions: () => ({ data: [], isLoading: false, isError: false }),
 }));
 
 import StockInquiryDetail from './StockInquiryDetail';

@@ -3,6 +3,8 @@
  * Uses xlsx (see lib/excel-utils.ts).
  */
 
+import { withRevisionSuffix } from '@/lib/document-number';
+
 import type { PurchaseRequest } from '../types/purchaseRequest.types';
 
 let XLSX: typeof import('xlsx') | null = null;
@@ -51,6 +53,16 @@ function str(value: unknown): string {
 }
 
 /**
+ * Number as the screens show it: the stored value plus the derived `-R{n}`
+ * (UAC N4/N5). The sheet is a read-only rendering of the document, so nothing
+ * here can travel back into `request_number` - only the editable input on the
+ * form is required to stay bare.
+ */
+function displayNumber(request: PurchaseRequest): string {
+  return withRevisionSuffix(request.request_number, request.revision_no) ?? '';
+}
+
+/**
  * Export a purchase request to Excel in the Purchase Request form format:
  * Purchase request number, Date, Customer, Project, Purpose, Expected dates,
  * line items table (#, Item Code, Qty, Remark), Requested by, Approved by.
@@ -76,7 +88,7 @@ export async function exportPurchaseRequestToExcel(
 
   const aoa: (string | number)[][] = [
     ['Purchase Request'],
-    ['Purchase request number:', str(request.request_number), 'Date:', requestDate],
+    ['Purchase request number:', displayNumber(request), 'Date:', requestDate],
     [],
     ['Customer Name:', str(request.customer_name)],
     ['PIC:', str(request.pic)],
@@ -110,7 +122,7 @@ export async function exportPurchaseRequestToExcel(
   ws['!cols'] = colWidths;
   const wb = xlsx.utils.book_new();
   xlsx.utils.book_append_sheet(wb, ws, 'Purchase Request');
-  const filename = `Purchase_Request_${str(request.request_number) || request.id}.xlsx`;
+  const filename = `Purchase_Request_${displayNumber(request) || request.id}.xlsx`;
   xlsx.writeFile(wb, filename);
 }
 
@@ -145,7 +157,7 @@ export async function exportSponsorshipFormToExcel(request: PurchaseRequest): Pr
     [],
     ['Project Sales Sponsorship Form'],
     [],
-    ['Sponsorship form number:', str(request.request_number), 'Date:', requestDate],
+    ['Sponsorship form number:', displayNumber(request), 'Date:', requestDate],
     [],
     ['Customer Name:', str(request.customer_name)],
     ['PIC:', str(request.pic)],
@@ -191,7 +203,7 @@ export async function exportSponsorshipFormToExcel(request: PurchaseRequest): Pr
   ws['!cols'] = colWidths;
   const wb = xlsx.utils.book_new();
   xlsx.utils.book_append_sheet(wb, ws, 'Sponsorship Form');
-  const filename = `Sponsorship_Form_${str(request.request_number) || request.id}.xlsx`;
+  const filename = `Sponsorship_Form_${displayNumber(request) || request.id}.xlsx`;
   xlsx.writeFile(wb, filename);
 }
 

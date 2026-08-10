@@ -152,4 +152,23 @@ describe('AttachmentDropzone (portal)', () => {
     // Index 1 - the row that was clicked (staff upload is the 2nd attachment).
     expect(modal.getByTestId('preview-start-index').textContent).toBe('1');
   });
+
+  it('hands the modal a portal byte reader and an attachment_id-keyed download route', () => {
+    render(
+      <AttachmentDropzone
+        kind="stock_inquiry"
+        submissionId="sub-1"
+        attachments={[contactUpload()]}
+        onChange={vi.fn()}
+      />,
+    );
+    const props = previewPropsSpy.mock.calls.at(-1)?.[0];
+    // No NextAuth session on the portal, so the modal must not fall back to
+    // its apiFetch default for Download / inline Excel.
+    expect(typeof props.fetchBytes).toBe('function');
+    // Keyed on attachment_id, never link_id (I2a).
+    expect(props.items[0].downloadUrl).toBe(
+      '/api/v1/public/portal/attachments/att-1/download',
+    );
+  });
 });

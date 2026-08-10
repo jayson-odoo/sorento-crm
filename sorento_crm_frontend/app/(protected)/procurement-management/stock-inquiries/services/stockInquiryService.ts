@@ -9,6 +9,7 @@ import type {
   DataGridApiFetchParams,
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
+import type { FormRevisionEntry } from '@/components/common/RevisionTimeline';
 
 /**
  * Path of the stock-inquiry neighbours endpoint. Consumed by
@@ -51,6 +52,29 @@ export async function getStockInquiry(id: string): Promise<StockInquiryDetail> {
   const response = await apiFetch(`/api/v1/procurement/stock-inquiries/${id}`);
   if (!response.ok) throw new Error('Failed to fetch stock inquiry');
   return response.json();
+}
+
+/**
+ * Revision lineage for the office Revisions panel (UAC H2/H3).
+ *
+ * Contract:
+ *   GET /api/v1/procurement/stock-inquiries/{id}/revisions
+ *   Auth: the existing stock inquiry view permission.
+ *   200: { items: FormRevisionEntry[] }  - oldest first, each entry carrying
+ *        what changed since the version before it plus the voided-stage context.
+ *   Read-only: the office never creates, edits or deletes a revision (UAC H5).
+ */
+export async function getStockInquiryRevisions(
+  id: string,
+): Promise<FormRevisionEntry[]> {
+  const response = await apiFetch(
+    `/api/v1/procurement/stock-inquiries/${id}/revisions`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load revisions'));
+  }
+  const data = await response.json();
+  return (data?.items ?? []) as FormRevisionEntry[];
 }
 
 export async function createStockInquiry(

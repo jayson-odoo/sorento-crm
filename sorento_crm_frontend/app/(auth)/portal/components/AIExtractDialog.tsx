@@ -27,6 +27,9 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
 
 import {
   AI_EXTRACT_FORM_KEYS,
@@ -34,6 +37,7 @@ import {
   PortalSubmissionKind,
   aiExtractFromFiles,
 } from '../lib/portal-client';
+import { canPreviewLocally, portalFetchBytes } from '../lib/portal-preview';
 
 interface FieldDef {
   name: string;
@@ -58,8 +62,6 @@ interface Props {
 
 type Stage = 'upload' | 'review';
 
-const PREVIEWABLE = /^(image|video)\//;
-
 const KINDS_WITH_LINE_ITEMS: PortalSubmissionKind[] = [
   'purchase_request',
   'sponsorship_form',
@@ -81,7 +83,39 @@ export function AIExtractDialog({
   const [result, setResult] = useState<AIExtractResult | null>(null);
   const [discarded, setDiscarded] = useState<Set<string>>(new Set());
   const [alsoAttach, setAlsoAttach] = useState(true);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewIndex, setPreviewIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Blob: urls for the staged files, created and revoked in this one place so
+  // they cannot leak. The rows below render from them and the shared modal
+  // previews them in place - nothing here opens a new tab.
+  const [stagedUrls, setStagedUrls] = useState<(string | null)[]>([]);
+  useEffect(() => {
+    const urls = files.map((f) => (canPreviewLocally(f) ? URL.createObjectURL(f) : null));
+    setStagedUrls(urls);
+    return () => {
+      urls.forEach((u) => {
+        if (u) URL.revokeObjectURL(u);
+      });
+    };
+  }, [files]);
+
+  const previewItems = useMemo<AttachmentPreviewItem[]>(
+    () =>
+      files.map((file, idx) => ({
+        id: `staged-${idx}-${file.name}`,
+        name: file.name,
+        url: stagedUrls[idx] ?? '',
+        sizeBytes: file.size,
+      })),
+    [files, stagedUrls],
+  );
+
+  const openPreview = useCallback((index: number) => {
+    setPreviewIndex(index);
+    setPreviewOpen(true);
+  }, []);
 
   const reset = useCallback(() => {
     setStage('upload');
@@ -91,6 +125,8 @@ export function AIExtractDialog({
     setResult(null);
     setDiscarded(new Set());
     setAlsoAttach(true);
+    setPreviewOpen(false);
+    setPreviewIndex(0);
   }, []);
 
   useEffect(() => {
@@ -345,6 +381,8 @@ export function AIExtractDialog({
                     <PendingPreview
                       key={`${file.name}-${idx}-${file.size}`}
                       file={file}
+                      previewUrl={stagedUrls[idx] ?? null}
+                      onView={() => openPreview(idx)}
                       onRemove={() => removeFile(idx)}
                     />
                   ))}
@@ -520,6 +558,14 @@ export function AIExtractDialog({
             </DialogFooter>
           </>
         )}
+
+        <AttachmentPreviewModal
+          open={previewOpen}
+          onOpenChange={setPreviewOpen}
+          items={previewItems}
+          startIndex={previewIndex}
+          fetchBytes={portalFetchBytes}
+        />
       </DialogContent>
     </Dialog>
   );
@@ -527,33 +573,30 @@ export function AIExtractDialog({
 
 function PendingPreview({
   file,
+  previewUrl,
+  onView,
   onRemove,
 }: {
   file: File;
+  /** blob: url owned by the dialog (created + revoked there), or null for a
+   *  type the modal cannot render inline. */
+  previewUrl: string | null;
+  onView: () => void;
   onRemove: () => void;
 }) {
-  const previewUrl = useMemo(() => {
-    if (!PREVIEWABLE.test(file.type)) return null;
-    return URL.createObjectURL(file);
-  }, [file]);
-  useEffect(() => {
-    return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-    };
-  }, [previewUrl]);
   return (
     <li className="flex items-center gap-3 rounded-md border border-border px-3 py-2">
       <div className="shrink-0">
         {previewUrl && file.type.startsWith('image/') ? (
-          <a href={previewUrl} target="_blank" rel="noopener noreferrer">
+          <button type="button" onClick={onView} aria-label={`Preview ${file.name}`}>
             <img
               src={previewUrl}
               alt={file.name}
               className="h-12 w-12 rounded object-cover border border-border"
             />
-          </a>
+          </button>
         ) : previewUrl && file.type.startsWith('video/') ? (
-          <a href={previewUrl} target="_blank" rel="noopener noreferrer">
+          <button type="button" onClick={onView} aria-label={`Preview ${file.name}`}>
             <video
               src={previewUrl}
               muted
@@ -561,13 +604,17 @@ function PendingPreview({
               preload="metadata"
               className="h-12 w-12 rounded object-cover border border-border"
             />
-          </a>
+          </button>
+        ) : previewUrl ? (
+          <button type="button" onClick={onView} aria-label={`Preview ${file.name}`}>
+            <FileThumb label="PDF" interactive />
+          </button>
         ) : isTextFile(file.name, file.type) ? (
           <TextPreview name={file.name} loadText={() => file.text()}>
             <FileThumb label="TXT" interactive />
           </TextPreview>
         ) : (
-          <FileThumb label="PDF" />
+          <FileThumb label="FILE" />
         )}
       </div>
       <div className="min-w-0 flex-1">

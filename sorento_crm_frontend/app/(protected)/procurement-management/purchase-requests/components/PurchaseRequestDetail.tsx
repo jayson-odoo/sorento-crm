@@ -30,7 +30,11 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
-import { usePurchaseRequest, useExportPurchaseRequestPdf } from '../hooks/usePurchaseRequests';
+import {
+  usePurchaseRequest,
+  useExportPurchaseRequestPdf,
+  usePurchaseRequestRevisions,
+} from '../hooks/usePurchaseRequests';
 import { formatDate, formatCurrency } from '@/lib/helpers';
 import { useCurrencyFormat } from '@/hooks/useCurrencyFormat';
 import PurchaseRequestDeleteDialog from './purchase-request-delete-dialog';
@@ -50,9 +54,12 @@ import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_s
 import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tracking/components/ReassignDialog';
 import { useReassignSLATracking } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
+import { RevisionBanner } from '@/components/common/RevisionBanner';
+import { RevisionsSection } from '@/components/common/RevisionsSection';
 import { VoidBanner } from '@/components/common/VoidBanner';
 import { VoidDialog } from '@/components/common/VoidDialog';
 import { useFormVoid } from '@/hooks/useFormVoid';
+import { withRevisionSuffix } from '@/lib/document-number';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { ArrowUpCircle, ThumbsUp, ThumbsDown, Ban, UserRoundCog } from 'lucide-react';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -199,6 +206,17 @@ export default function PurchaseRequestDetail({
   } | null>(null);
   const [openingReplySheet, setOpeningReplySheet] = useState(false);
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
+  // Denormalized revision counter (UAC H4). Drives the banner, the number
+  // suffix and the revision-lineage refetch.
+  const revisionNo = Number(request?.revision_no ?? 0);
+  const revisionsQuery = usePurchaseRequestRevisions(
+    isValidId ? requestId : null,
+    revisionNo,
+  );
+  // The newest entry carries the reason and submitter the banner quotes verbatim.
+  const latestRevision = (revisionsQuery.data ?? [])
+    .filter((entry) => (entry.revision_no ?? 0) > 0)
+    .at(-1);
 
   const { data: systemSettingsPayload } = useQuery({
     queryKey: ['system-settings'],
@@ -226,6 +244,7 @@ export default function PurchaseRequestDetail({
     const idPhrase = purchaseRequestNumberReplyPhrase(
       request.request_type,
       request.request_number,
+      request.revision_no,
     );
     let fullMessage = `This is the ${idPhrase} for ${typeLabelVal} for project title ${request.project_title ?? ''}.`;
     if (viewUrl) {
@@ -376,7 +395,7 @@ export default function PurchaseRequestDetail({
           <h1 className="text-2xl font-bold break-words">
             {typeLabel}
             {request.request_number
-              ? ` - ${request.request_number}`
+              ? ` - ${withRevisionSuffix(request.request_number, revisionNo)}`
               : request.customer_name
                 ? ` - ${request.customer_name}`
                 : request.project_title
@@ -883,6 +902,15 @@ export default function PurchaseRequestDetail({
         />
       )}
 
+      {/* Contact revised their submission (UAC H1). Renders nothing at revision 0. */}
+      <RevisionBanner
+        revisionNo={revisionNo}
+        documentNumber={request.request_number}
+        revisedAt={request.last_revised_at}
+        revisedByName={latestRevision?.submitted_by}
+        reason={latestRevision?.reason}
+      />
+
       <VoidBanner
         voided={isVoided}
         voidedByName={request.voided_by_name}
@@ -942,7 +970,9 @@ export default function PurchaseRequestDetail({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5 [&>div]:min-w-0 [&_p]:break-words">
                   <div>
                     <p className="text-sm text-muted-foreground">Purchase request number</p>
-                    <p className="font-medium tabular-nums">{request.request_number || '—'}</p>
+                    <p className="font-medium tabular-nums">
+                      {withRevisionSuffix(request.request_number, revisionNo) || '—'}
+                    </p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Submitted date</p>
@@ -1097,7 +1127,9 @@ export default function PurchaseRequestDetail({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5 [&>div]:min-w-0 [&_p]:break-words">
                   <div>
                     <p className="text-sm text-muted-foreground">Sponsorship form number</p>
-                    <p className="font-medium tabular-nums">{request.request_number || '—'}</p>
+                    <p className="font-medium tabular-nums">
+                      {withRevisionSuffix(request.request_number, revisionNo) || '—'}
+                    </p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Submitted date</p>
@@ -1245,6 +1277,16 @@ export default function PurchaseRequestDetail({
           <PurchaseRequestAttachmentsSection
             requestId={requestId}
             attachments={request.attachments}
+          />
+        </div>
+
+        {/* Addition only (UAC H2a): every section above keeps the placement it
+            has today. Always rendered, with an explicit empty state at revision 0. */}
+        <div className="lg:col-span-2">
+          <RevisionsSection
+            entries={revisionsQuery.data}
+            isLoading={revisionsQuery.isLoading}
+            isError={revisionsQuery.isError}
           />
         </div>
 
