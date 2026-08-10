@@ -31,6 +31,8 @@ from app.schemas.procurement import (
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, FormVoidRequest
 from app.services.error_handler import handle_internal_error
 from app.services.handling_lock_service import assert_can_act_on_form
+from app.services.revision_fence import require_current_revision
+from app.services.document_number import display_document_number
 from app.config import settings
 from app.modules.runtime.guards import require_public_view_links_enabled
 
@@ -188,6 +190,35 @@ async def get_purchase_request(
         raise handle_internal_error(str(e))
 
 
+@router.get("/{request_id}/revisions")
+async def get_purchase_request_revisions(
+    request_id: str,
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Revision lineage for the office Revisions tab (UAC H2/H3).
+
+    Serves BOTH purchase requests and sponsorship forms: they share this router and
+    this table, and the revision rows are keyed on the header's own ``request_type``,
+    so the caller never has to say which it is.
+    """
+    try:
+        validate_uuid_path(request_id, resource="Request")
+        from app.services.portal_revision_service import PortalRevisionService
+
+        header = PurchaseRequestService(db).get_request(
+            request_id, contact_id=None, space_id=None
+        )
+        entity_type = str(getattr(header, "request_type", "") or "purchase_request")
+        return {
+            "items": PortalRevisionService(db).list_revisions(entity_type, request_id)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/{request_id}/conversation")
 async def get_purchase_request_conversation(
     request_id: str,
@@ -256,7 +287,11 @@ async def create_purchase_request(
         raise handle_internal_error(str(e))
 
 
-@router.put("/{request_id}", response_model=PurchaseRequestHeaderResponse)
+@router.put(
+    "/{request_id}",
+    response_model=PurchaseRequestHeaderResponse,
+    dependencies=[Depends(require_current_revision("purchase_request", "request_id"))],
+)
 async def update_purchase_request(
     request_id: str,
     data: PurchaseRequestHeaderUpdate,
@@ -277,7 +312,11 @@ async def update_purchase_request(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{request_id}/update-and-reply", response_model=PurchaseRequestHeaderResponse)
+@router.post(
+    "/{request_id}/update-and-reply",
+    response_model=PurchaseRequestHeaderResponse,
+    dependencies=[Depends(require_current_revision("purchase_request", "request_id"))],
+)
 async def update_purchase_request_and_reply(
     request_id: str,
     data: PurchaseRequestUpdateAndReply,
@@ -316,7 +355,11 @@ async def update_purchase_request_and_reply(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{request_id}/set-pending-approval", response_model=PurchaseRequestHeaderResponse)
+@router.post(
+    "/{request_id}/set-pending-approval",
+    response_model=PurchaseRequestHeaderResponse,
+    dependencies=[Depends(require_current_revision("purchase_request", "request_id"))],
+)
 async def set_pending_approval(
     request_id: str,
     current_user: dict = Depends(require_permission_with_api_key("procurement.purchase_requests.send_for_approval")),
@@ -351,7 +394,11 @@ async def set_pending_approval(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{request_id}/reject-submitted", response_model=PurchaseRequestHeaderResponse)
+@router.post(
+    "/{request_id}/reject-submitted",
+    response_model=PurchaseRequestHeaderResponse,
+    dependencies=[Depends(require_current_revision("purchase_request", "request_id"))],
+)
 async def reject_submitted_purchase_request(
     request_id: str,
     body: RejectSubmittedRequest,
@@ -390,7 +437,11 @@ class ApprovalDecisionRequest(BaseModel):
     comments: Optional[str] = None
 
 
-@router.post("/{request_id}/approval-decision", response_model=PurchaseRequestHeaderResponse)
+@router.post(
+    "/{request_id}/approval-decision",
+    response_model=PurchaseRequestHeaderResponse,
+    dependencies=[Depends(require_current_revision("purchase_request", "request_id"))],
+)
 async def decide_purchase_request_approval(
     request_id: str,
     body: ApprovalDecisionRequest,
@@ -440,7 +491,11 @@ class CsFinalizeRequest(BaseModel):
     note: Optional[str] = None
 
 
-@router.post("/{request_id}/process", response_model=PurchaseRequestHeaderResponse)
+@router.post(
+    "/{request_id}/process",
+    response_model=PurchaseRequestHeaderResponse,
+    dependencies=[Depends(require_current_revision("purchase_request", "request_id"))],
+)
 async def process_request_by_cs(
     request_id: str,
     payload: CsFinalizeRequest,
@@ -470,7 +525,11 @@ async def process_request_by_cs(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{request_id}/close", response_model=PurchaseRequestHeaderResponse)
+@router.post(
+    "/{request_id}/close",
+    response_model=PurchaseRequestHeaderResponse,
+    dependencies=[Depends(require_current_revision("purchase_request", "request_id"))],
+)
 async def close_request_by_cs(
     request_id: str,
     payload: CsFinalizeRequest,
@@ -500,7 +559,11 @@ async def close_request_by_cs(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{request_id}/void", response_model=PurchaseRequestHeaderResponse)
+@router.post(
+    "/{request_id}/void",
+    response_model=PurchaseRequestHeaderResponse,
+    dependencies=[Depends(require_current_revision("purchase_request", "request_id"))],
+)
 async def void_purchase_request(
     request_id: str,
     payload: FormVoidRequest,
@@ -563,7 +626,11 @@ async def bulk_delete_purchase_requests(
         raise handle_internal_error(str(e))
 
 
-@router.delete("/{request_id}", status_code=status.HTTP_200_OK)
+@router.delete(
+    "/{request_id}",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_current_revision("purchase_request", "request_id"))],
+)
 async def delete_purchase_request(
     request_id: str,
     current_user: dict = Depends(get_current_user),
@@ -581,7 +648,11 @@ async def delete_purchase_request(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{request_id}/send-approval-link", response_model=SendApprovalLinkResponse)
+@router.post(
+    "/{request_id}/send-approval-link",
+    response_model=SendApprovalLinkResponse,
+    dependencies=[Depends(require_current_revision("purchase_request", "request_id"))],
+)
 async def send_approval_link(
     request_id: str,
     data: SendApprovalLinkRequest,
@@ -623,11 +694,11 @@ async def send_approval_link(
                 full_url = approval_url if approval_url.startswith("http") else f"{base_url.rstrip('/')}{approval_url if approval_url.startswith('/') else '/' + approval_url}"
                 body_text = (
                     f"You have been sent a one-time approval link for a {type_label.lower()}.\n\n"
-                    f"Form number: {getattr(header, 'request_number', None) or 'N/A'}\n"
+                    f"Form number: {display_document_number(header) or 'N/A'}\n"
                     f"Project: {getattr(header, 'project_title', None) or 'N/A'}\n\n"
                     f"Open this link to approve or reject (link expires after use or after the expiry time):\n{full_url}\n"
                 )
-                form_num = html.escape(str(getattr(header, "request_number", None) or "N/A"))
+                form_num = html.escape(str(display_document_number(header) or "N/A"))
                 project = html.escape(str(getattr(header, "project_title", None) or "N/A"))
                 url_escaped = html.escape(full_url, quote=True)
                 body_html = (
@@ -688,7 +759,11 @@ async def delete_purchase_request_attachment(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{request_id}/attachments", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{request_id}/attachments",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_current_revision("purchase_request", "request_id"))],
+)
 async def link_attachment_to_purchase_request(
     request_id: str,
     body: PurchaseRequestAttachmentLinkRequest,
@@ -811,7 +886,8 @@ def export_purchase_request_pdf(
 
         is_sponsorship = (getattr(header, "request_type", None) or "") == "sponsorship_form"
         stem = "sponsorship-form" if is_sponsorship else "purchase-request"
-        number = getattr(header, "request_number", None) or request_id
+        # Filename carries the revision, same as the document body (UAC N5).
+        number = display_document_number(header) or request_id
 
         download = DownloadService(db).create(
             user_id=str(current_user["id"]),

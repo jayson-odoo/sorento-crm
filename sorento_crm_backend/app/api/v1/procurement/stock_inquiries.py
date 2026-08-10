@@ -21,6 +21,8 @@ from app.schemas.procurement import (
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, FormVoidRequest
 from app.services.error_handler import handle_internal_error
 from app.services.handling_lock_service import assert_can_act_on_form
+from app.services.revision_fence import require_current_revision
+from app.services.document_number import display_document_number
 from app.config import settings as app_settings
 from app.modules.runtime.guards import require_public_view_links_enabled
 
@@ -142,6 +144,33 @@ async def get_stock_inquiry(
         raise handle_internal_error(str(e))
 
 
+@router.get("/{inquiry_id}/revisions")
+async def get_stock_inquiry_revisions(
+    inquiry_id: str,
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Revision lineage for the office Revisions tab (UAC H2/H3).
+
+    The same payload the portal history reads - one service, one shape, so the two
+    sides cannot disagree about what changed. Read-only: the office never creates,
+    edits or deletes a revision (UAC H5).
+    """
+    try:
+        validate_uuid_path(inquiry_id, resource="Stock Inquiry")
+        from app.services.portal_revision_service import PortalRevisionService
+
+        # 404 for an unknown id before any history is read.
+        StockInquiryService(db).get_inquiry(inquiry_id)
+        return {
+            "items": PortalRevisionService(db).list_revisions("stock_inquiry", inquiry_id)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/{inquiry_id}/conversation")
 async def get_stock_inquiry_conversation(
     inquiry_id: str,
@@ -211,7 +240,11 @@ async def delete_stock_inquiry_attachment(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{inquiry_id}/attachments", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{inquiry_id}/attachments",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
+)
 async def link_attachment_to_stock_inquiry(
     inquiry_id: str,
     body: StockInquiryAttachmentLinkRequest,
@@ -235,7 +268,11 @@ async def link_attachment_to_stock_inquiry(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{inquiry_id}/response-attachments", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{inquiry_id}/response-attachments",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
+)
 async def upload_stock_inquiry_response_attachment(
     inquiry_id: str,
     file: UploadFile = File(...),
@@ -338,7 +375,8 @@ async def export_stock_inquiry_pdf(
         service = StockInquiryService(db)
         inquiry = service.get_inquiry(inquiry_id)  # 404 if missing
 
-        number = getattr(inquiry, "inquiry_number", None) or inquiry_id
+        # Filename carries the revision, same as the document body (UAC N5).
+        number = display_document_number(inquiry) or inquiry_id
         download = DownloadService(db).create(
             user_id=str(current_user["id"]),
             kind="stock_inquiry_pdf",
@@ -418,7 +456,11 @@ async def create_stock_inquiry(
         raise handle_internal_error(str(e))
 
 
-@router.put("/{inquiry_id}", response_model=StockInquiryResponse)
+@router.put(
+    "/{inquiry_id}",
+    response_model=StockInquiryResponse,
+    dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
+)
 async def update_stock_inquiry(
     inquiry_id: str,
     inquiry_data: StockInquiryUpdate,
@@ -439,7 +481,11 @@ async def update_stock_inquiry(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{inquiry_id}/update-and-reply", response_model=StockInquiryResponse)
+@router.post(
+    "/{inquiry_id}/update-and-reply",
+    response_model=StockInquiryResponse,
+    dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
+)
 async def update_stock_inquiry_and_reply(
     inquiry_id: str,
     inquiry_data: StockInquiryUpdate,
@@ -447,7 +493,13 @@ async def update_stock_inquiry_and_reply(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Update inquiry and send message via Respond.io from Chat Records. SLA/status move to responded only when status is pending_purchasing or responded; other statuses only send and record last_responded."""
+    """Send the purchasing response to the contact via Respond.io and record it.
+
+    This is the RESPONSE path and is gated on status (UAC O1): allowed at
+    pending_purchasing or responded, 422 anywhere else. Plain messaging is a
+    separate endpoint (``/{inquiry_id}/conversation/send-message``) that never
+    touches the inquiry and keeps working at any status, closed included (UAC O2).
+    """
     try:
         validate_uuid_path(inquiry_id, resource="Stock Inquiry")
         assert_can_act_on_form(db, inquiry_id, current_user, source_entity_type="stock_inquiry")
@@ -468,7 +520,11 @@ async def update_stock_inquiry_and_reply(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{inquiry_id}/submit-for-project-sales", response_model=StockInquiryResponse)
+@router.post(
+    "/{inquiry_id}/submit-for-project-sales",
+    response_model=StockInquiryResponse,
+    dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
+)
 async def submit_stock_inquiry_for_project_sales(
     inquiry_id: str,
     current_user: dict = Depends(require_permission("procurement.stock_inquiries.submit_for_project_sales")),
@@ -487,7 +543,11 @@ async def submit_stock_inquiry_for_project_sales(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{inquiry_id}/project-sales-approve", response_model=StockInquiryResponse)
+@router.post(
+    "/{inquiry_id}/project-sales-approve",
+    response_model=StockInquiryResponse,
+    dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
+)
 async def project_sales_approve_stock_inquiry(
     inquiry_id: str,
     current_user: dict = Depends(require_permission("procurement.stock_inquiries.project_sales_approve")),
@@ -517,7 +577,11 @@ async def project_sales_approve_stock_inquiry(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{inquiry_id}/project-sales-reject", response_model=StockInquiryResponse)
+@router.post(
+    "/{inquiry_id}/project-sales-reject",
+    response_model=StockInquiryResponse,
+    dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
+)
 async def project_sales_reject_stock_inquiry(
     inquiry_id: str,
     body: Optional[StockInquiryRejectReopenRequest] = Body(None),
@@ -550,7 +614,11 @@ async def project_sales_reject_stock_inquiry(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{inquiry_id}/purchasing-reject", response_model=StockInquiryResponse)
+@router.post(
+    "/{inquiry_id}/purchasing-reject",
+    response_model=StockInquiryResponse,
+    dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
+)
 async def purchasing_reject_stock_inquiry(
     inquiry_id: str,
     body: Optional[StockInquiryRejectReopenRequest] = Body(None),
@@ -583,7 +651,11 @@ async def purchasing_reject_stock_inquiry(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{inquiry_id}/reopen", response_model=StockInquiryResponse)
+@router.post(
+    "/{inquiry_id}/reopen",
+    response_model=StockInquiryResponse,
+    dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
+)
 async def reopen_stock_inquiry(
     inquiry_id: str,
     body: Optional[StockInquiryRejectReopenRequest] = Body(None),
@@ -605,7 +677,11 @@ async def reopen_stock_inquiry(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{inquiry_id}/void", response_model=StockInquiryResponse)
+@router.post(
+    "/{inquiry_id}/void",
+    response_model=StockInquiryResponse,
+    dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
+)
 async def void_stock_inquiry(
     inquiry_id: str,
     payload: FormVoidRequest,
@@ -652,7 +728,11 @@ async def bulk_delete_stock_inquiries(
         raise handle_internal_error(str(e))
 
 
-@router.delete("/{inquiry_id}", status_code=status.HTTP_200_OK)
+@router.delete(
+    "/{inquiry_id}",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
+)
 async def delete_stock_inquiry(
     inquiry_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),

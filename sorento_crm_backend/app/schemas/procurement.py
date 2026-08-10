@@ -656,6 +656,12 @@ class StockInquiryUpdate(BaseModel):
     purchasing_response: Optional[str] = None
     contact_id: Optional[str] = None
     space_id: Optional[str] = None
+    # Declared, but NOT editable on ANY update path (the plain PUT and
+    # update-and-reply alike): the lifecycle moves only through the workflow
+    # actions. A value that would MOVE the record is refused with a 422; one that
+    # echoes the current status is accepted and dropped, so a caller posting the
+    # whole entity back still saves. See ``_pop_status_or_refuse_move`` in
+    # procurement_service.
     status: Optional[str] = None
     last_responded_by: Optional[str] = None
     last_responded_at: Optional[datetime] = None
@@ -746,6 +752,17 @@ class StockInquiryResponse(StockInquiryBase):
     # How many PDF exports the VIEWING user has taken of this record (list path only;
     # 0 on the detail path, which does not batch the count).
     print_count: Optional[int] = None
+    # Portal submission revisions. The client echoes revision_no back in the
+    # X-Revision-No header on every write and a stale value is refused with 409
+    # (UAC CB1). Declared here because a response_model silently DROPS any field
+    # it does not name, which would leave the fence nothing to compare.
+    revision_no: Optional[int] = None
+    last_revised_at: Optional[datetime] = None
+    # Whether `purchasing_response` may be written at this status (UAC O1). Computed
+    # from `response_gate`, the same module the write path raises from, so the client
+    # gating an affordance and the server enforcing the rule read ONE source instead
+    # of two status lists that drift. Same response_model rule as above.
+    response_write_allowed: Optional[bool] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     attachments: Optional[List[StockInquiryAttachmentResponse]] = []
@@ -862,6 +879,12 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     requested_by: Optional[str] = None
     requested_by_contact_id: Optional[str] = None
     requested_at: Optional[date] = None
+    # Declared, but NOT editable on ANY update path (the plain PUT and
+    # update-and-reply alike): the lifecycle moves only through the workflow
+    # actions. A value that would MOVE the record is refused with a 422; one that
+    # echoes the current status is accepted and dropped, so a caller posting the
+    # whole entity back still saves. See ``_pop_status_or_refuse_move`` in
+    # procurement_service.
     status: Optional[str] = None
     contact_id: Optional[str] = None
     space_id: Optional[str] = None
@@ -908,6 +931,13 @@ class PurchaseRequestHeaderListResponse(PurchaseRequestHeaderBase):
     assigned_to_name: Optional[str] = None  # resolved display name
     handled_by_name: Optional[str] = None  # form-handling-lock holder display name
     handled_by_wa_phone: Optional[str] = None  # holder's wa.me digits (banner link)
+    # Portal revisions: the list needs BOTH. `revision_no` drives the "Rev N" badge
+    # and the -R{n} display suffix, and the frontend fence registry harvests it from
+    # list rows so a row action taken without opening the detail page is still
+    # fenced. Omitting it here does not merely hide a badge, it silently unfences
+    # every PR/SF row action, because `response_model` strips undeclared fields.
+    revision_no: Optional[int] = None
+    last_revised_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -955,6 +985,10 @@ class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
     voided_at: Optional[datetime] = None
     voided_by_name: Optional[str] = None
     voided_by_wa_phone: Optional[str] = None
+    # Portal submission revisions - see StockInquiryResponse for why these are
+    # declared explicitly (UAC CB1).
+    revision_no: Optional[int] = None
+    last_revised_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     lines: Optional[List[PurchaseRequestLineResponse]] = []

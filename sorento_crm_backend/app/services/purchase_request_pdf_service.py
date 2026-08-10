@@ -28,6 +28,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.procurement import PurchaseRequestHeader
+from app.services.document_number import display_document_number
 from app.services.pdf_render import (
     PDFRenderingUnavailable,
     embedded_images,
@@ -128,7 +129,9 @@ class PurchaseRequestPDFService:
         """Name the file after what the document IS, so a folder of downloads
         sorts into purchase requests and sponsorship forms."""
         stem = "sponsorship-form" if self._is_sponsorship(req) else "purchase-request"
-        num = (getattr(req, "request_number", None) or str(req.id)).strip()
+        # The filename carries the revision too, so two revisions of the same
+        # form do not land in a downloads folder as one overwritten file (UAC N5).
+        num = (display_document_number(req) or str(req.id)).strip()
         safe = "".join(c for c in num if c.isalnum() or c in ("-", "_")) or stem
         return f"{stem}-{safe}.pdf"
 
@@ -265,7 +268,7 @@ class PurchaseRequestPDFService:
         if sponsorship:
             rows.append(
                 _field(
-                    "Sponsorship form number:", _blank(getattr(req, "request_number", None)),
+                    "Sponsorship form number:", _blank(display_document_number(req) or None),
                     label2="Date:", value2=_date_long(submitted),
                 )
             )
@@ -296,7 +299,7 @@ class PurchaseRequestPDFService:
         else:
             rows.append(
                 _field(
-                    "Purchase request number:", _blank(getattr(req, "request_number", None)),
+                    "Purchase request number:", _blank(display_document_number(req) or None),
                     label2="Date:", value2=_date_cell(submitted),
                 )
             )

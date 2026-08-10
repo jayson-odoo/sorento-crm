@@ -61,7 +61,12 @@ from app.models.ai_prompt import AIPromptVersion, AIPromptLabel
 from app.models.chat_history import ChatHistory
 from app.models.conversation_frame import ConversationFrame
 from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
-from app.models.portal import PortalToken, PortalOtpCode
+from app.models.portal import (
+    PortalToken,
+    PortalOtpCode,
+    PortalFormRevision,
+    PortalRevisionConfig,
+)
 from app.models.user_session import UserSession
 from app.models.activities import ActivityEvent, InternalNote, ActivityMention
 from app.models.tickets import Ticket, TicketWatcher, TicketRespondContactLink
@@ -216,6 +221,8 @@ __all__ = [
     "LookupBinding",
     "PortalToken",
     "PortalOtpCode",
+    "PortalFormRevision",
+    "PortalRevisionConfig",
     "UserSession",
     "ActivityEvent",
     "InternalNote",

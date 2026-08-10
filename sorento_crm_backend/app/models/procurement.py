@@ -561,8 +561,27 @@ class StockInquiry(Base):
     void_reason = Column(Text, nullable=True)
     voided_by = Column(Text, nullable=True)  # users.id of the actor who voided
     voided_at = Column(DateTime(timezone=False), nullable=True)
+    # Portal submission revisions (PLAN-portal-submission-revisions), denormalized so the
+    # list badge and the revision fence cost no per-row query. Contact-initiated
+    # revisions only - the full lineage (including resubmissions) lives in
+    # portal_form_revisions. The reason is read from the latest revision row, never
+    # copied here, so there is nothing to drift.
+    revision_no = Column(Integer, nullable=False, server_default="0", default=0)
+    last_revised_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=True)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=True)
+
+    @property
+    def response_write_allowed(self) -> bool:
+        """Whether ``purchasing_response`` may be written at this status (UAC O1).
+
+        Read straight off ``response_gate`` - the same module the write path raises
+        from - so the flag the UI gates on and the rule the server enforces cannot
+        disagree. Derived live; never a column, nothing to backfill.
+        """
+        from app.services.response_gate import STOCK_INQUIRY, is_response_status_allowed
+
+        return is_response_status_allowed(STOCK_INQUIRY, self.status)
 
     __table_args__ = (
         Index("ix_stock_inquiries_product_code", "product_code"),
@@ -641,6 +660,11 @@ class PurchaseRequestHeader(Base):
     void_reason = Column(Text, nullable=True)
     voided_by = Column(String(100), nullable=True)  # users.id of the actor who voided
     voided_at = Column(DateTime(timezone=False), nullable=True)
+    # Portal submission revisions, denormalized (see StockInquiry.revision_no). One pair
+    # of columns serves BOTH request types - purchase_request and sponsorship_form share
+    # this table.
+    revision_no = Column(Integer, nullable=False, server_default="0", default=0)
+    last_revised_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 

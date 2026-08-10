@@ -21,6 +21,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.models.procurement import StockInquiry
+from app.services.document_number import display_document_number
 from app.services.pdf_render import (
     PDFRenderingUnavailable,
     embedded_images,
@@ -67,7 +68,9 @@ class StockInquiryPDFService:
         self.db = db
 
     def build_filename(self, inquiry: StockInquiry) -> str:
-        num = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
+        # The filename carries the revision too, so two revisions of the same
+        # inquiry do not land in a downloads folder as one overwritten file (UAC N5).
+        num = (display_document_number(inquiry) or str(inquiry.id)).strip()
         safe = "".join(c for c in num if c.isalnum() or c in ("-", "_")) or "product-inquiry"
         return f"product-inquiry-{safe}.pdf"
 
@@ -108,7 +111,7 @@ class StockInquiryPDFService:
         form_rows = "".join(
             [
                 _row("Date", getattr(inquiry, "created_at", None)),
-                _row("Stock Inquiry Number", getattr(inquiry, "inquiry_number", None)),
+                _row("Stock Inquiry Number", display_document_number(inquiry) or None),
                 _row("Sales Person", self._salesperson(inquiry)),
                 _row("Product Code", getattr(inquiry, "product_code", None)),
                 _row("Item Description", getattr(inquiry, "item_description", None)),
@@ -147,7 +150,7 @@ class StockInquiryPDFService:
         )
         other_html = names_list_html(non_image_names(links))
 
-        title_num = _fmt(getattr(inquiry, "inquiry_number", None))
+        title_num = _fmt(display_document_number(inquiry) or None)
         status = escape(self._status_label(inquiry))
 
         return f"""<!doctype html><html><head><meta charset="utf-8"/>

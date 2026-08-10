@@ -88,6 +88,11 @@ class SystemSettingUpdate(BaseModel):
     chat_latency_ceiling_multiplier: Optional[int] = Field(None, ge=1, le=100)
     chat_latency_no_reply_minutes: Optional[int] = Field(None, ge=1, le=1440)
     chat_latency_min_sample: Optional[int] = Field(None, ge=1, le=100000)
+    # Portal submission revisions: global kill switch + fallback cap. Per-type
+    # overrides live in portal_revision_configs. Same rule as the latency block above -
+    # must appear here AND in the GET dict.
+    portal_revisions_enabled: Optional[bool] = None
+    portal_max_revisions: Optional[int] = Field(None, ge=0, le=50)
 
 
 class SmtpTestResult(BaseModel):
@@ -193,6 +198,8 @@ async def get_settings(
                 "chat_latency_ceiling_multiplier": getattr(settings, "chat_latency_ceiling_multiplier", 3) if settings else None,
                 "chat_latency_no_reply_minutes": getattr(settings, "chat_latency_no_reply_minutes", 5) if settings else None,
                 "chat_latency_min_sample": getattr(settings, "chat_latency_min_sample", 30) if settings else None,
+                "portal_revisions_enabled": getattr(settings, "portal_revisions_enabled", True) if settings else None,
+                "portal_max_revisions": getattr(settings, "portal_max_revisions", 2) if settings else None,
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]
