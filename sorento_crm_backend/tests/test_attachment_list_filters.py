@@ -70,6 +70,76 @@ def test_filter_by_attachment_type_only_returns_matching_rows(db):
     assert ids == [keep_id]
 
 
+def test_filter_by_attachment_type_ids_unions_the_named_types(db):
+    type_a = _seed_type(db, "TypeA")
+    type_b = _seed_type(db, "TypeB")
+    type_c = _seed_type(db, "TypeC")
+    a_id = _seed_attachment(db, filename="a.pdf", type_id=type_a)
+    b_id = _seed_attachment(db, filename="b.pdf", type_id=type_b)
+    _seed_attachment(db, filename="c.pdf", type_id=type_c)
+    db.commit()
+
+    result = AttachmentService(db).list_attachments(
+        attachment_type_ids=[type_a, type_b]
+    )
+    ids = {a.id for a in result["data"]}
+    assert ids == {a_id, b_id}
+
+
+def test_attachment_type_id_and_ids_union_not_intersect(db):
+    type_a = _seed_type(db, "TypeA")
+    type_b = _seed_type(db, "TypeB")
+    a_id = _seed_attachment(db, filename="a.pdf", type_id=type_a)
+    b_id = _seed_attachment(db, filename="b.pdf", type_id=type_b)
+    db.commit()
+
+    result = AttachmentService(db).list_attachments(
+        attachment_type_id=type_a, attachment_type_ids=[type_b]
+    )
+    ids = {a.id for a in result["data"]}
+    assert ids == {a_id, b_id}
+
+
+def test_filter_by_attachment_type_codes_unions_the_named_types(db):
+    type_a = _seed_type(db, "PluralTypeA")
+    type_b = _seed_type(db, "PluralTypeB")
+    type_c = _seed_type(db, "PluralTypeC")
+    a_id = _seed_attachment(db, filename="a.pdf", type_id=type_a)
+    b_id = _seed_attachment(db, filename="b.pdf", type_id=type_b)
+    _seed_attachment(db, filename="c.pdf", type_id=type_c)
+    db.commit()
+
+    result = AttachmentService(db).list_attachments(
+        # case-insensitive, matched on type_name when `code` is unset
+        attachment_type_codes=["pluraltypea", "PLURALTYPEB"]
+    )
+    ids = {a.id for a in result["data"]}
+    assert ids == {a_id, b_id}
+
+
+def test_attachment_type_codes_all_unknown_returns_no_rows(db):
+    type_a = _seed_type(db, "PluralTypeA")
+    _seed_attachment(db, filename="a.pdf", type_id=type_a)
+    db.commit()
+
+    result = AttachmentService(db).list_attachments(
+        attachment_type_codes=["no-such-type", "also-missing"]
+    )
+    assert result["data"] == []
+
+
+def test_attachment_type_codes_partial_match_keeps_the_resolved_type(db):
+    type_a = _seed_type(db, "PluralTypeA")
+    a_id = _seed_attachment(db, filename="a.pdf", type_id=type_a)
+    db.commit()
+
+    result = AttachmentService(db).list_attachments(
+        attachment_type_codes=["PluralTypeA", "no-such-type"]
+    )
+    ids = [a.id for a in result["data"]]
+    assert ids == [a_id]
+
+
 def test_filter_by_uploaded_by(db):
     keep_id = _seed_attachment(db, filename="alice.pdf", uploaded_by="ad6d17ba-8feb-5d22-b749-f6c01bb2adab")
     _seed_attachment(db, filename="bob.pdf", uploaded_by="bfe28624-e7e7-5dd8-b190-5abd49600587")

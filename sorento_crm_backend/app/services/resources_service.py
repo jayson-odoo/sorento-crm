@@ -486,7 +486,9 @@ class AttachmentService:
         directory_id: Optional[str] = None,
         is_deleted: Optional[bool] = None,
         attachment_type_id: Optional[str] = None,
+        attachment_type_ids: Optional[list[str]] = None,
         attachment_type_code: Optional[str] = None,
+        attachment_type_codes: Optional[list[str]] = None,
         uploaded_by: Optional[str] = None,
         uploaded_at_from: Optional[Any] = None,
         uploaded_at_to: Optional[Any] = None,
@@ -505,6 +507,10 @@ class AttachmentService:
         - ``any`` (default): row's access_levels overlap any selected code.
         - ``all``: row's access_levels contain every selected code (extras allowed).
         - ``exact``: row's access_levels equal the selected set.
+
+        ``attachment_type_id`` / ``attachment_type_code`` are the singular forms;
+        ``attachment_type_ids`` / ``attachment_type_codes`` take a list and union
+        with their singular twin (OR within each pair, AND across the two pairs).
         """
         from app.services.entity_filter_helpers import (
             attach_echo,
@@ -521,7 +527,9 @@ class AttachmentService:
             directory_id=directory_id,
             is_deleted=is_deleted,
             attachment_type_id=attachment_type_id,
+            attachment_type_ids=attachment_type_ids,
             attachment_type_code=attachment_type_code,
+            attachment_type_codes=attachment_type_codes,
             uploaded_by=uploaded_by,
             uploaded_at_from=uploaded_at_from,
             uploaded_at_to=uploaded_at_to,
@@ -553,6 +561,40 @@ class AttachmentService:
             entity_buckets,
         )
 
+    def _resolve_attachment_type_code(self, code: str) -> Optional[str]:
+        """Resolve one attachment-type code/name to its AttachmentType id.
+
+        Lookup is permissive so the caller (MCP, n8n) does not need to know
+        whether the type was seeded with `code` set or only `type_name`, what
+        casing it uses, or whether the canonical label is "catalogue" vs
+        "catalog":
+          1. case-insensitive `code` match
+          2. case-insensitive `type_name` match
+          3. spelling variants (catalog / catalogue) tried against both
+        Returns None when nothing matches.
+        """
+        code_norm = (code or "").strip()
+        if not code_norm:
+            return None
+        variants = {code_norm}
+        low = code_norm.lower()
+        if low == "catalog":
+            variants.add("catalogue")
+        elif low == "catalogue":
+            variants.add("catalog")
+        for variant in variants:
+            type_row = (
+                self.db.query(AttachmentType)
+                .filter(AttachmentType.code.ilike(variant))
+                .first()
+                or self.db.query(AttachmentType)
+                .filter(AttachmentType.type_name.ilike(variant))
+                .first()
+            )
+            if type_row is not None:
+                return str(type_row.id)
+        return None
+
     def _build_list_query(
         self,
         query: Optional[str] = None,
@@ -563,7 +605,9 @@ class AttachmentService:
         directory_id: Optional[str] = None,
         is_deleted: Optional[bool] = None,
         attachment_type_id: Optional[str] = None,
+        attachment_type_ids: Optional[list[str]] = None,
         attachment_type_code: Optional[str] = None,
+        attachment_type_codes: Optional[list[str]] = None,
         uploaded_by: Optional[str] = None,
         uploaded_at_from: Optional[Any] = None,
         uploaded_at_to: Optional[Any] = None,
@@ -623,43 +667,36 @@ class AttachmentService:
             q = q.filter(Attachment.entity_id == entity_id)
         if directory_id is not None:
             q = q.filter(Attachment.directory_id == directory_id)
-        if attachment_type_id:
-            q = q.filter(Attachment.attachment_type_id == attachment_type_id)
-        if attachment_type_code and attachment_type_code.strip():
-            # Resolve attachment_type_code → AttachmentType.id, then filter by
-            # that type. Lookup is permissive so the caller (MCP, n8n) does not
-            # need to know whether the type was seeded with `code` set or only
-            # `type_name`, what casing it uses, or whether the canonical label
-            # is "catalogue" vs "catalog":
-            #   1. case-insensitive `code` match
-            #   2. case-insensitive `type_name` match
-            #   3. spelling variants (catalog ↔ catalogue) tried against both
-            # No match → impossible-id filter so the tool returns 0 rows
+        # Singular + plural type filters are unioned within each pair (OR), and the
+        # id pair is ANDed with the code pair (passing an id and a mismatching code
+        # still yields 0 rows, as it did when both were single-value filters).
+        wanted_type_ids = {
+            str(t).strip()
+            for t in ([attachment_type_id] + list(attachment_type_ids or []))
+            if t and str(t).strip()
+        }
+        if wanted_type_ids:
+            q = q.filter(Attachment.attachment_type_id.in_(sorted(wanted_type_ids)))
+
+        wanted_codes = [
+            str(c).strip()
+            for c in ([attachment_type_code] + list(attachment_type_codes or []))
+            if c and str(c).strip()
+        ]
+        if wanted_codes:
+            # Resolve each code → AttachmentType.id, then filter by those types.
+            # No code resolves → impossible-id filter so the tool returns 0 rows
             # instead of silently dropping the filter (catalogue domain hint
             # must never leak non-catalogue attachments).
-            code_norm = attachment_type_code.strip()
-            variants = {code_norm}
-            low = code_norm.lower()
-            if low == "catalog":
-                variants.add("catalogue")
-            elif low == "catalogue":
-                variants.add("catalog")
-            type_row = None
-            for variant in variants:
-                type_row = (
-                    self.db.query(AttachmentType)
-                    .filter(AttachmentType.code.ilike(variant))
-                    .first()
-                    or self.db.query(AttachmentType)
-                    .filter(AttachmentType.type_name.ilike(variant))
-                    .first()
-                )
-                if type_row is not None:
-                    break
-            if type_row is None:
+            resolved = {
+                type_id
+                for type_id in (self._resolve_attachment_type_code(c) for c in wanted_codes)
+                if type_id
+            }
+            if not resolved:
                 q = q.filter(Attachment.id == "00000000-0000-0000-0000-000000000000")
             else:
-                q = q.filter(Attachment.attachment_type_id == str(type_row.id))
+                q = q.filter(Attachment.attachment_type_id.in_(sorted(resolved)))
         if direct_access_only:
             if visible_attachment_type_ids is not None:
                 # A contact was resolved and holds per-contact grants, so the
@@ -787,7 +824,9 @@ class AttachmentService:
         directory_id: Optional[str] = None,
         is_deleted: Optional[bool] = None,
         attachment_type_id: Optional[str] = None,
+        attachment_type_ids: Optional[list[str]] = None,
         attachment_type_code: Optional[str] = None,
+        attachment_type_codes: Optional[list[str]] = None,
         uploaded_by: Optional[str] = None,
         uploaded_at_from: Optional[Any] = None,
         uploaded_at_to: Optional[Any] = None,
@@ -822,7 +861,9 @@ class AttachmentService:
             directory_id=directory_id,
             is_deleted=is_deleted,
             attachment_type_id=attachment_type_id,
+            attachment_type_ids=attachment_type_ids,
             attachment_type_code=attachment_type_code,
+            attachment_type_codes=attachment_type_codes,
             uploaded_by=uploaded_by,
             uploaded_at_from=uploaded_at_from,
             uploaded_at_to=uploaded_at_to,

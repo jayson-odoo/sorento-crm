@@ -137,14 +137,44 @@ def test_contact_id_alone_is_not_a_narrowing_filter():
     assert "contact_id" not in TOOL_REQUIRED_NARROWING_FILTERS[spec.name]
 
 
-def test_resource_attachments_type_filter_is_singular_only():
-    """There is no `attachment_type_ids`. A caller that sends the plural has its
-    key dropped, ends up with no narrower, and gets the silent empty page above.
+def test_resource_attachments_type_filter_takes_singular_and_plural():
+    """Both forms are accepted, and BOTH count as a narrower.
+
+    A plural form missing from the narrowing list is worse than one missing from
+    query_params: the filter reaches the backend but the tool short-circuits to a
+    silent empty page first.
     """
     spec = next(s for s in CATALOG if s.name == "crm_resource_attachments_list")
-    assert "attachment_type_id" in spec.query_params
-    assert "attachment_type_ids" not in spec.query_params
-    assert "attachment_type_ids" not in TOOL_REQUIRED_NARROWING_FILTERS[spec.name]
+    for param in (
+        "attachment_type_id",
+        "attachment_type_ids",
+        "attachment_type_code",
+        "attachment_type_codes",
+    ):
+        assert param in spec.query_params
+        assert param in TOOL_REQUIRED_NARROWING_FILTERS[spec.name]
+
+
+@pytest.mark.asyncio
+async def test_attachment_type_ids_alone_reaches_the_backend():
+    spec = next(s for s in CATALOG if s.name == "crm_resource_attachments_list")
+    fn = _compile_tool(spec)
+    out = await fn(
+        _FakeCtx(_FakeClient()),
+        attachment_type_ids="11111111-1111-4111-8111-111111111111,22222222-2222-4222-8222-222222222222",
+    )  # type: ignore[arg-type]
+    assert "attachment_type_ids" in out
+
+
+@pytest.mark.asyncio
+async def test_attachment_type_codes_alone_reaches_the_backend():
+    spec = next(s for s in CATALOG if s.name == "crm_resource_attachments_list")
+    fn = _compile_tool(spec)
+    out = await fn(
+        _FakeCtx(_FakeClient()),
+        attachment_type_codes="Container Status,catalogue",
+    )  # type: ignore[arg-type]
+    assert "attachment_type_codes" in out
 
 
 @pytest.mark.asyncio
