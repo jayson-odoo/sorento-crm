@@ -452,7 +452,10 @@ function OrderQtyDrill({ row }: { row: M8PlanRow }) {
         </p>
         <div className="mt-1 flex items-baseline justify-between gap-2 text-xs">
           <span className="tabular-nums text-muted-foreground">
-            {q.safety_stock === null ? EM_DASH : fmtInt(q.safety_stock)} +{' '}
+            {/* One decimal, so the sum shown equals the answer shown. Rounding safety stock
+                to a whole number printed "7 + 1.0/day x 14d = 22", which is off by one and
+                reads as a broken calculation. */}
+            {q.safety_stock === null ? EM_DASH : fmtDecimal(q.safety_stock)} +{' '}
             {demandRate == null ? EM_DASH : fmtDecimal(demandRate)}/day x{' '}
             {fmtInt(leadDays)}d lead
           </span>
