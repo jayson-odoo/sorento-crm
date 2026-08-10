@@ -86,8 +86,10 @@ export function PlanBudgetReview({
 
         {totals.unpriced > 0 ? (
           <p className="text-xs text-muted-foreground">
-            {fmtInt(totals.unpriced)} of the lines you are buying have no price, so they are not
-            in the cost above and cannot be checked against a budget.
+            {fmtInt(totals.unpriced)} of the lines you are buying{' '}
+            {totals.unpriced === 1 ? 'has' : 'have'} no price, so{' '}
+            {totals.unpriced === 1 ? 'it is' : 'they are'} not in the cost above and cannot be
+            checked against a budget.
           </p>
         ) : null}
 
@@ -119,8 +121,12 @@ export function PlanBudgetReview({
           ) : (
             <div className="flex items-center gap-2 text-sm text-scm-incoming">
               <CheckCircle2 className="size-4 shrink-0" aria-hidden />
+              {/* Qualified whenever a decided buy could not be priced. A clean "Within budget"
+                  there would be arithmetically true and misleading: the missing lines could
+                  cost anything, so the verdict covers only what we can actually add up. */}
               <span>
-                Within budget, <span className="font-semibold tabular-nums">{fmtMoney(verdict.remaining ?? 0)}</span> left
+                {verdict.unpriced > 0 ? 'Within budget on what we can price' : 'Within budget'},{' '}
+                <span className="font-semibold tabular-nums">{fmtMoney(verdict.remaining ?? 0)}</span> left
               </span>
             </div>
           )}
