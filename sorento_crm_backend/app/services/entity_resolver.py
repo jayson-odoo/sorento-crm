@@ -490,6 +490,12 @@ class ResolvedEntity:
     # prompt for the former. See `_attach_company_info`.
     company_id: Optional[str] = None
     company_name: Optional[str] = None
+    # The exact text this row was matched AGAINST, set by the AND probes so
+    # `_token_coverage` can report which query words actually landed. It is the
+    # probe's blob, NOT everything in `display`: the product probe matches on
+    # `product_code` alone by design, so scoring a word against `product_name`
+    # would report a match the probe never made. Never serialised — internal.
+    match_blob: Optional[str] = None
 
 
 @dataclass
@@ -3006,6 +3012,7 @@ def _and_probe_product(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
             uuid=str(pid) if pid else None,
             match_field="product_code",
             match_tier="and",
+            match_blob=code,
             display={"product_name": name, "is_active": bool(is_active)},
         )
         for pid, code, name, is_active in rows
@@ -3026,6 +3033,7 @@ def _and_probe_promotion(db: Session, tokens: list[str]) -> list[ResolvedEntity]
             uuid=str(pid),
             match_field="description",
             match_tier="and",
+            match_blob=description,
             display={"description": description, "is_active": bool(is_active)},
         )
         for pid, description, is_active in rows
@@ -3121,6 +3129,14 @@ def _and_probe_attachment(
             uuid=str(aid) if aid else None,
             match_field="original_filename",
             match_tier="and",
+            # Coverage mode scores the filename ALONE; the default mode scores the
+            # concat blob. Reporting the wrong one would credit a word to text the
+            # probe never looked at.
+            match_blob=(
+                filename
+                if coverage_mode
+                else " ".join(x for x in (filename, description, type_name) if x)
+            ),
             display={
                 "filename": filename,
                 "description": description,
@@ -3151,6 +3167,7 @@ def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
                     uuid=str(cid) if cid else None,
                     match_field="customer_code",
                     match_tier="and",
+                    match_blob=" ".join(x for x in (code, name, phone, email) if x),
                     display={"customer_name": name, "phone_number": phone, "email": email, "is_active": bool(is_active) if is_active is not None else True},
                 )
             )
@@ -3176,6 +3193,7 @@ def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
                     uuid=str(customer_id) if customer_id else None,
                     match_field="debtor_name",
                     match_tier="and",
+                    match_blob=" ".join(x for x in (debtor_name, debtor_code) if x),
                     display={"debtor_name": debtor_name, "debtor_code": debtor_code, "source": "orders"},
                 )
             )
@@ -3197,6 +3215,7 @@ def _and_probe_form(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
             uuid=str(fid) if fid else None,
             match_field="form_name",
             match_tier="and",
+            match_blob=" ".join(x for x in (code, name, purpose) if x),
             display={"form_code": code, "form_name": name, "form_type": form_type, "is_active": bool(is_active)},
         )
         for fid, code, name, purpose, is_active, form_type in rows
@@ -3206,7 +3225,10 @@ def _and_probe_form(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
 def _and_probe_transporter(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     blob = _concat_ws(Transporter.code, Transporter.name, Transporter.normalized_name)
     counts = _and_token_match_counts(blob, tokens)
-    base = db.query(Transporter.id, Transporter.code, Transporter.name)
+    # `normalized_name` is selected only so `match_blob` can mirror the scored
+    # blob exactly; it is not displayed. Widening the SELECT does not change
+    # which rows come back.
+    base = db.query(Transporter.id, Transporter.code, Transporter.name, Transporter.normalized_name)
     tier = _and_max_tier_filter(base, counts)
     if tier is None:
         return []
@@ -3218,9 +3240,10 @@ def _and_probe_transporter(db: Session, tokens: list[str]) -> list[ResolvedEntit
             uuid=str(tid) if tid else None,
             match_field="transporter_name",
             match_tier="and",
+            match_blob=" ".join(x for x in (code, name, normalized_name) if x),
             display={"code": code, "name": name},
         )
-        for tid, code, name in rows
+        for tid, code, name, normalized_name in rows
     ]
 
 
@@ -3239,6 +3262,7 @@ def _and_probe_warehouse(db: Session, tokens: list[str]) -> list[ResolvedEntity]
             uuid=str(wid) if wid else None,
             match_field="warehouse_code",
             match_tier="and",
+            match_blob=" ".join(x for x in (code, name, location) if x),
             display={"warehouse_name": name, "location": location, "is_active": bool(is_active) if is_active is not None else True},
         )
         for wid, code, name, location, is_active in rows
@@ -3248,7 +3272,8 @@ def _and_probe_warehouse(db: Session, tokens: list[str]) -> list[ResolvedEntity]
 def _and_probe_supplier(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     blob = _concat_ws(Supplier.supplier_code, Supplier.supplier_name, Supplier.contact_name)
     counts = _and_token_match_counts(blob, tokens)
-    base = db.query(Supplier.id, Supplier.supplier_code, Supplier.supplier_name, Supplier.is_active)
+    # `contact_name` is selected only so `match_blob` mirrors the scored blob.
+    base = db.query(Supplier.id, Supplier.supplier_code, Supplier.supplier_name, Supplier.is_active, Supplier.contact_name)
     tier = _and_max_tier_filter(base, counts)
     if tier is None:
         return []
@@ -3260,9 +3285,10 @@ def _and_probe_supplier(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
             uuid=str(sid) if sid else None,
             match_field="supplier_code",
             match_tier="and",
+            match_blob=" ".join(x for x in (code, name, contact_name) if x),
             display={"supplier_name": name, "is_active": bool(is_active) if is_active is not None else True},
         )
-        for sid, code, name, is_active in rows
+        for sid, code, name, is_active, contact_name in rows
     ]
 
 
@@ -3288,6 +3314,7 @@ def _and_probe_customer_order(db: Session, tokens: list[str]) -> list[ResolvedEn
             uuid=str(row.id) if row.id else None,
             match_field="order_number",
             match_tier="and",
+            match_blob=row.order_number,
             display={
                 "customer_name": row.debtor_name,
                 "actual_delivery_date": _iso(row.actual_delivery_date),
@@ -3309,6 +3336,39 @@ _AND_PROBES: tuple[tuple[Callable[[Session, list[str]], list[ResolvedEntity]], f
     (_and_probe_supplier, frozenset({"supplier"})),
     (_and_probe_customer_order, frozenset({"customer_order"})),
 )
+
+
+def _token_word_coverage(
+    tokens: list[str], matches: list[ResolvedEntity]
+) -> list[dict[str, Any]]:
+    """Per token, which of its words appear in the returned rows.
+
+    AND-mode is max-coverage, not a boolean AND (see `_and_max_tier_filter`), so
+    a word can contribute nothing and the caller cannot tell from the rows. This
+    reports it, without changing which rows come back.
+
+    The claim is deliberately WEAK: "absent from these results", never "absent
+    from the catalogue". Scoring against `match_blob` (the text each probe
+    actually scored) rather than `display` keeps it honest — the product probe
+    matches `product_code` only, so a word appearing in `product_name` must not
+    be reported as matched. A word counts as matched when any `_word_variants`
+    form of it lands, but is echoed back AS THE CALLER TYPED IT: reporting
+    "taps" unmatched while showing a TAP promotion would be a new false
+    statement, which is the thing this exists to prevent.
+    """
+    blobs = [(m.match_blob or "").lower() for m in matches if m.match_blob]
+    out: list[dict[str, Any]] = []
+    for tok in tokens or []:
+        if not tok:
+            continue
+        matched: list[str] = []
+        unmatched: list[str] = []
+        for word in [w for w in tok.split() if w]:
+            variants = [v.lower() for v in _word_variants(word)]
+            hit = any(v in blob for blob in blobs for v in variants)
+            (matched if hit else unmatched).append(word)
+        out.append({"token": tok, "matched_words": matched, "unmatched_words": unmatched})
+    return out
 
 
 @dataclass
@@ -3344,6 +3404,11 @@ class IntersectionResolutionResult:
             })
         return {
             "match_mode": self.match_mode,
+            # What `match_mode: "and"` really means. `match_tier` stays as it is
+            # — consumers branch on it — so the honest label arrives alongside
+            # rather than replacing it.
+            "match_semantics": "max_coverage",
+            "token_coverage": _token_word_coverage(self.tokens, self.intersection),
             "tokens": self.tokens,
             "elapsed_ms": round(self.elapsed_ms, 2),
             "intersection": [
