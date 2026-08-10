@@ -1,6 +1,6 @@
 # S13 - The engine in purchasing's chair: three suggestions per row
 
-Status: user said go 2026-08-10. S13b BUILT (demand_origin column, committed_v split, set-aside report + banner, Side column, structured quantity cell, supersede wording). S13c-f next.
+Status: user said go 2026-08-10. S13b BUILT (demand_origin column, committed_v split, set-aside report + banner, Side column, structured quantity cell, supersede wording). S13c BUILT (level+qty upload channel, alias mapper, hand-set-level conflict rule). S13d BUILT (trajectory verdicts, line graph popup, both baselines, customers). S13e BUILT (thresholds on scm.reorder_policy + policy modal, cheaperAlternative in base currency, "Ask <code> instead" headline on recent prices, popover footnote otherwise; live run has 0 qualifying rows because the engine already sits on the cheapest ranked supplier). S13f next.
 
 ## Why
 

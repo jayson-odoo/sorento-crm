@@ -6,9 +6,11 @@ import { EM_DASH } from '../../lib/format';
 import {
   PRICE_ADVICE_LABEL,
   PRICE_ADVICE_TONE,
+  describeCheaper,
   describePriceAdvice,
   priceFootnotes,
   rowFact,
+  type CheaperAlternative,
   type PriceAdvice,
 } from '../lib/priceAdvice';
 
@@ -39,10 +41,13 @@ export function PlanPriceCell({
   price,
   staleAfterDays,
   purchasable,
+  cheaper = null,
 }: {
   price: PriceAdvice | undefined;
   staleAfterDays: number;
   purchasable: boolean;
+  /** S13e: a materially cheaper supplier on this row's own shortlist, when one exists. */
+  cheaper?: CheaperAlternative | null;
 }) {
   // An allocation moves stock we already own. There is no supplier and no price to judge.
   if (!purchasable) return <span className="text-muted-foreground">{EM_DASH}</span>;
@@ -58,29 +63,44 @@ export function PlanPriceCell({
 
   const notes = priceFootnotes(price);
 
+  // The switch is only the HEADLINE when the current price has nothing wrong with it:
+  // a stale/zero/moved price is the more urgent question, and the cheaper name waits in
+  // the popup. One suggestion per cell, or the reviewer reads neither.
+  const suggestSwitch = price.advice === 'recent' && cheaper != null;
+  if (cheaper && !suggestSwitch) {
+    notes.push(describeCheaper(cheaper));
+  }
+
   return (
     <Popover>
       <PopoverTrigger asChild>
         <button type="button" className="min-w-0 text-left" aria-label="Price history">
           <Badge
-            variant={TONE_VARIANT[PRICE_ADVICE_TONE[price.advice]]}
+            variant={suggestSwitch ? 'info' : TONE_VARIANT[PRICE_ADVICE_TONE[price.advice]]}
             appearance="light"
             size="sm"
           >
-            {PRICE_ADVICE_LABEL[price.advice]}
+            {suggestSwitch ? `Ask ${cheaper!.supplier_code} instead` : PRICE_ADVICE_LABEL[price.advice]}
           </Badge>
           {/* One plain fact: the price and its age. The receipt (order number, exact
               date) is popup material - on the row it is clutter a reviewer scans past. */}
           <span className="mt-0.5 block truncate text-2xs text-muted-foreground">
-            {rowFact(price)}
+            {suggestSwitch
+              ? `Their price ${cheaper!.currency ?? ''} ${cheaper!.unit_cost?.toFixed(2)}, ${cheaper!.saving_pct}% less`.trim()
+              : rowFact(price)}
           </span>
         </button>
       </PopoverTrigger>
       <PopoverPortal>
         <PopoverContent className="w-80 text-xs" align="start">
           <p className="font-medium text-foreground">
-            {describePriceAdvice(price, staleAfterDays)}
+            {suggestSwitch ? describeCheaper(cheaper!) : describePriceAdvice(price, staleAfterDays)}
           </p>
+          {suggestSwitch ? (
+            <p className="mt-1 text-muted-foreground">
+              {describePriceAdvice(price, staleAfterDays)}
+            </p>
+          ) : null}
           {notes.length ? (
             <ul className="mt-2 space-y-1 text-muted-foreground">
               {notes.map((n) => (

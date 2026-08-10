@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   PRICE_ADVICE_LABEL,
   PRICE_ADVICE_SORT,
+  cheaperAlternative,
+  describeCheaper,
   describeLastPurchase,
   describePriceAdvice,
   humanAge,
@@ -9,6 +11,7 @@ import {
   priceKey,
   rowFact,
   type PriceAdvice,
+  type PriceSupplier,
 } from './priceAdvice';
 
 /**
@@ -185,5 +188,82 @@ describe('PRICE_ADVICE_SORT', () => {
     expect(PRICE_ADVICE_SORT.zero_cost).toBeLessThan(PRICE_ADVICE_SORT.stale);
     expect(PRICE_ADVICE_SORT.stale).toBeLessThan(PRICE_ADVICE_SORT.no_history);
     expect(PRICE_ADVICE_SORT.recent).toBeGreaterThan(PRICE_ADVICE_SORT.no_history);
+  });
+});
+
+describe('cheaperAlternative (S13e: the change-supplier suggestion)', () => {
+  const chosen = (over: Partial<PriceSupplier> = {}): PriceSupplier => ({
+    supplier_code: 'S-A',
+    supplier_name: 'Acme',
+    unit_cost: 10,
+    currency: 'CNY',
+    unit_cost_base: 10,
+    ...over,
+  });
+  const alt = (over: Partial<PriceSupplier> = {}): PriceSupplier => ({
+    supplier_code: 'S-B',
+    supplier_name: 'Beta',
+    unit_cost: 8,
+    currency: 'CNY',
+    unit_cost_base: 8,
+    ...over,
+  });
+
+  it('offers the cheapest comparable alternative when the saving clears the threshold', () => {
+    const got = cheaperAlternative(chosen(), [alt()], 5);
+
+    expect(got).not.toBeNull();
+    expect(got!.supplier_code).toBe('S-B');
+    expect(got!.saving_pct).toBe(20);
+  });
+
+  it('stays silent when the saving is below the threshold, which is the same knob as price movement', () => {
+    expect(cheaperAlternative(chosen(), [alt({ unit_cost_base: 9.9, unit_cost: 9.9 })], 5)).toBeNull();
+  });
+
+  it('compares in the base currency, never across two raw currencies', () => {
+    // The alternative LOOKS cheaper in its own currency, but restated it is dearer.
+    const got = cheaperAlternative(
+      chosen({ currency: 'MYR', unit_cost: 10, unit_cost_base: 10 }),
+      [alt({ currency: 'CNY', unit_cost: 8, unit_cost_base: 12 })],
+      5,
+    );
+    expect(got).toBeNull();
+  });
+
+  it('never compares an alternative whose price could not be restated', () => {
+    expect(cheaperAlternative(chosen(), [alt({ unit_cost_base: null })], 5)).toBeNull();
+    expect(cheaperAlternative(chosen({ unit_cost_base: null }), [alt()], 5)).toBeNull();
+  });
+
+  it('picks the cheapest of several, not the first', () => {
+    const got = cheaperAlternative(
+      chosen(),
+      [alt(), alt({ supplier_code: 'S-C', supplier_name: 'Ceta', unit_cost: 6, unit_cost_base: 6 })],
+      5,
+    );
+    expect(got!.supplier_code).toBe('S-C');
+    expect(got!.saving_pct).toBe(40);
+  });
+
+  it('ignores the chosen supplier listed among its own alternatives', () => {
+    expect(cheaperAlternative(chosen(), [chosen({ unit_cost_base: 5 })], 5)).toBeNull();
+  });
+
+  it('a free (zero) alternative is not a price to switch to', () => {
+    expect(cheaperAlternative(chosen(), [alt({ unit_cost: 0, unit_cost_base: 0 })], 5)).toBeNull();
+  });
+});
+
+describe('describeCheaper', () => {
+  it('states their price in THEIR currency plus the comparable saving', () => {
+    expect(
+      describeCheaper({ supplier_code: 'S-B', supplier_name: 'Beta', unit_cost: 8, currency: 'CNY', saving_pct: 20 }),
+    ).toBe('Beta last charged us CNY 8.00, 20% less on a comparable basis.');
+  });
+
+  it('claims our own records, never the market', () => {
+    const text = describeCheaper({ supplier_code: 'S-B', supplier_name: 'Beta', unit_cost: 8, currency: 'CNY', saving_pct: 20 });
+    expect(text).not.toMatch(/market|cheaper price available|best price/i);
   });
 });

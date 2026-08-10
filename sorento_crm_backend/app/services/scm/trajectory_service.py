@@ -48,7 +48,7 @@ def _windows(db: Session) -> dict[str, int]:
     row = db.execute(text(
         "SELECT trajectory_window_retail_months, trajectory_window_project_months "
         "FROM scm.reorder_policy WHERE scope_type = 'global' AND is_active = true "
-        "ORDER BY priority DESC LIMIT 1"
+        "ORDER BY priority DESC NULLS LAST LIMIT 1"
     )).first()
     return {
         "retail_months": int(row[0]) if row and row[0] else DEFAULT_RETAIL_MONTHS,

@@ -353,6 +353,9 @@ def list_price_history(
     """
     svc.assert_run_visible(db, run_id)
     history = price_history_service.price_history_for_run(db, run_id)
+    # The applied thresholds ride on every entry (policy override or default), so the
+    # header echoes the first entry rather than restating the module constants.
+    first = next(iter(history.values()), None)
 
     def _purchase(p) -> Optional[dict]:
         if p is None:
@@ -366,8 +369,12 @@ def list_price_history(
         }
 
     return {
-        "stale_after_days": price_history_service.STALE_AFTER_DAYS,
-        "movement_threshold_pct": price_history_service.MOVEMENT_PCT,
+        "stale_after_days": (
+            first.stale_after_days if first else price_history_service.STALE_AFTER_DAYS
+        ),
+        "movement_threshold_pct": (
+            first.movement_threshold_pct if first else price_history_service.MOVEMENT_PCT
+        ),
         "prices": {
             key: {
                 "advice": a.advice,

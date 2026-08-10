@@ -98,3 +98,56 @@ describe('PlanPriceCell', () => {
     expect(screen.getByText(/\+13\.2%/)).toBeInTheDocument();
   });
 });
+
+describe('the change-supplier suggestion (S13e)', () => {
+  const cheaper = {
+    supplier_code: 'S-B',
+    supplier_name: 'Beta Trading',
+    unit_cost: 8,
+    currency: 'CNY',
+    saving_pct: 20,
+  };
+
+  function renderWithCheaper(price: PriceAdvice, c = cheaper) {
+    render(
+      <PlanPriceCell price={price} staleAfterDays={180} purchasable cheaper={c} />,
+    );
+  }
+
+  it('suggests the switch on a recent price, naming who to ask', () => {
+    renderWithCheaper(advice({ advice: 'recent', age_days: 40 }));
+
+    expect(screen.getByText('Ask S-B instead')).toBeInTheDocument();
+    expect(screen.getByText(/CNY 8\.00, 20% less/)).toBeInTheDocument();
+  });
+
+  it('keeps the price problem as the headline when there is one, and demotes the switch to a note', () => {
+    renderWithCheaper(advice()); // stale
+
+    expect(screen.getByText('Ask new price')).toBeInTheDocument();
+    expect(screen.queryByText('Ask S-B instead')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /price history/i }));
+    expect(screen.getByText(/Beta Trading last charged us CNY 8\.00/)).toBeInTheDocument();
+  });
+
+  it('says use last price when nobody on the shortlist is cheaper', () => {
+    render(
+      <PlanPriceCell
+        price={advice({ advice: 'recent', age_days: 40 })}
+        staleAfterDays={180}
+        purchasable
+        cheaper={null}
+      />,
+    );
+
+    expect(screen.getByText('Use last price')).toBeInTheDocument();
+  });
+
+  it('states its comparable-records basis in the popover, never a market claim', () => {
+    renderWithCheaper(advice({ advice: 'recent', age_days: 40 }));
+
+    fireEvent.click(screen.getByRole('button', { name: /price history/i }));
+    expect(screen.getByText(/on a comparable basis/)).toBeInTheDocument();
+  });
+});

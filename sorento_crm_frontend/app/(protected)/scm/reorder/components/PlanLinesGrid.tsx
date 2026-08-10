@@ -34,7 +34,7 @@ import {
 } from '../lib/planLine';
 import { decidedCost, decidedQty, type PlanDecisionMap } from '../lib/planDecisions';
 import { describeCover, NO_COVER, type CoverProposal } from '../lib/coverPlan';
-import { PRICE_ADVICE_SORT, type PriceAdvice } from '../lib/priceAdvice';
+import { PRICE_ADVICE_SORT, type CheaperAlternative, type PriceAdvice } from '../lib/priceAdvice';
 import type { TrajectoryEntry } from '../lib/trajectory';
 import { PlanTrendPopover } from './PlanTrendPopover';
 import { PlanLineDecisionCell } from './PlanLineDecisionCell';
@@ -106,6 +106,7 @@ export function PlanLinesGrid({
   onClear,
   coverFor,
   priceFor,
+  cheaperFor,
   trendFor,
   staleAfterDays = 180,
   statusFilter: statusFilterProp = null,
@@ -126,6 +127,8 @@ export function PlanLinesGrid({
   coverFor?: (line: PlanLine) => CoverProposal;
   /** What we last paid this line's supplier, and how old that is. Undefined = no opinion. */
   priceFor?: (line: PlanLine) => PriceAdvice | undefined;
+  /** S13e: a materially cheaper supplier on the line's own shortlist, when one exists. */
+  cheaperFor?: (line: PlanLine) => CheaperAlternative | null;
   /** Is this product's demand sustaining or dying off, on this line's side. */
   trendFor?: (line: PlanLine) => TrajectoryEntry | undefined;
   /** The age past which the business stops trusting a price. Shown, not implied. */
@@ -422,6 +425,7 @@ export function PlanLinesGrid({
           <StopClick>
             <PlanPriceCell
               price={priceFor?.(row.original)}
+              cheaper={cheaperFor?.(row.original) ?? null}
               staleAfterDays={staleAfterDays}
               purchasable={row.original.purchasable}
             />
@@ -506,7 +510,7 @@ export function PlanLinesGrid({
         meta: { headerTitle: 'Decision', skeleton: <Skeleton className="h-8 w-40" /> },
       },
     ],
-    [decisions, onDecide, onClear, runId, coverFor, priceFor, trendFor, staleAfterDays],
+    [decisions, onDecide, onClear, runId, coverFor, priceFor, cheaperFor, trendFor, staleAfterDays],
   );
 
   const [columnOrder, setColumnOrder] = useState<string[]>(() =>

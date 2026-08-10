@@ -55,6 +55,9 @@ class ReorderPolicyWrite(BaseModel):
     # None = code default (retail 3, project 12). Config from day 1.
     trajectory_window_retail_months: Optional[int] = None
     trajectory_window_project_months: Optional[int] = None
+    # S13e price-advice thresholds. None = code default (180 days, 5%).
+    price_stale_after_days: Optional[int] = None
+    price_movement_threshold_pct: Optional[float] = None
 
     @model_validator(mode="after")
     def _coherence(self) -> "ReorderPolicyWrite":
@@ -72,7 +75,8 @@ class ReorderPolicyWrite(BaseModel):
         # AC-VAL-4 — day fields must be > 0 when provided.
         for name in ("safety_days", "review_period_days", "forecast_window_days",
                      "dead_stock_days", "overstock_days", "lead_time_default_days",
-                     "trajectory_window_retail_months", "trajectory_window_project_months"):
+                     "trajectory_window_retail_months", "trajectory_window_project_months",
+                     "price_stale_after_days", "price_movement_threshold_pct"):
             val = getattr(self, name)
             if val is not None and val <= 0:
                 raise ValueError(f"{name} must be greater than 0")

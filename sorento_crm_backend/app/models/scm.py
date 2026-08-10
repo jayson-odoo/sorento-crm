@@ -83,6 +83,11 @@ class ReorderPolicy(Base):
     # NULL = code default (retail 3, project 12). Config from day 1, never a constant.
     trajectory_window_retail_months = Column(Integer, nullable=True)
     trajectory_window_project_months = Column(Integer, nullable=True)
+    # S13e price-advice thresholds: when a last price is too old to trust, and what
+    # price difference is worth acting on (staleness flag AND change-supplier gate).
+    # NULL = code default (180 days, 5%).
+    price_stale_after_days = Column(Integer, nullable=True)
+    price_movement_threshold_pct = Column(Numeric(6, 2), nullable=True)
     factor_toggles = Column(JSONB, nullable=True)
     factor_weights = Column(JSONB, nullable=True)
     min_override = Column(Numeric, nullable=True)

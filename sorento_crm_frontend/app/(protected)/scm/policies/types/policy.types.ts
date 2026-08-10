@@ -49,6 +49,10 @@ export interface ReorderPolicyRow {
    *  Null = code default (retail 3, project 12). */
   trajectory_window_retail_months: number | null;
   trajectory_window_project_months: number | null;
+  /** S13e price-advice thresholds: when a last price is too old to trust, and what
+   *  price difference is worth acting on. Null = code default (180 days, 5%). */
+  price_stale_after_days: number | null;
+  price_movement_threshold_pct: number | null;
   baseline_source: string | null;
   spike_handling: string | null;
   buy_scope: string | null;

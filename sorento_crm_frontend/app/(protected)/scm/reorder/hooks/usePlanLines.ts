@@ -20,7 +20,12 @@ import {
   type TakenByWarehouse,
 } from '../lib/coverPlan';
 import { planTotals, type PlanDecision, type PlanDecisionMap } from '../lib/planDecisions';
-import { priceKey, type PriceAdvice } from '../lib/priceAdvice';
+import {
+  cheaperAlternative,
+  priceKey,
+  type CheaperAlternative,
+  type PriceAdvice,
+} from '../lib/priceAdvice';
 import { trajectoryKey, type TrajectoryEntry } from '../lib/trajectory';
 
 /**
@@ -172,6 +177,21 @@ export function usePlanLines(runId: string | null, enabled = true) {
     [prices.data],
   );
 
+  /**
+   * S13e: a materially cheaper supplier on the line's OWN shortlist, or null.
+   *
+   * Compared on the base-currency figures the ranking already used, gated by the same
+   * threshold as price movement (one knob for "a difference worth acting on").
+   */
+  const movementThresholdPct = prices.data?.movement_threshold_pct ?? 5;
+  const cheaperFor = useCallback(
+    (line: PlanLine): CheaperAlternative | null => {
+      if (!line.purchasable || !line.rec.supplier) return null;
+      return cheaperAlternative(line.rec.supplier, line.rec.alternatives, movementThresholdPct);
+    },
+    [movementThresholdPct],
+  );
+
   /** The order trend for a line's product+side. Undefined = no opinion, render nothing. */
   const trendFor = useCallback(
     (line: PlanLine): TrajectoryEntry | undefined => {
@@ -189,6 +209,7 @@ export function usePlanLines(runId: string | null, enabled = true) {
     totals,
     coverFor,
     priceFor,
+    cheaperFor,
     trendFor,
     staleAfterDays: prices.data?.stale_after_days ?? 180,
     coverSources: cover.data ?? {},

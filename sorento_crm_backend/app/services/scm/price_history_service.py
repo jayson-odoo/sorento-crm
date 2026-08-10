@@ -19,12 +19,13 @@ The advice code is a statement about that history and its age. `stale` means "th
 is older than the window", never "prices have gone up". A re-quote is recommended because
 we cannot vouch for a six-year-old number, not because we know a better one exists.
 
-## Why the thresholds live here as constants
+## The thresholds are policy configuration (S13e)
 
-Both numbers are returned in the payload so the screen can state the rule it applied
-rather than asserting a bare verdict. Making them per-tenant configuration is a real
-requirement and is on the backlog; hard-coding them silently while the UI implies a
-considered policy would be the actual defect, and returning them closes that gap.
+`scm.reorder_policy.price_stale_after_days` and `price_movement_threshold_pct` override
+the two module constants, which remain only as the defaults for a policy that has not
+said. Both are still returned in the payload so the screen states the rule it applied.
+The movement threshold also gates the change-supplier suggestion: one figure for "a
+price difference worth acting on", not two.
 """
 from __future__ import annotations
 
@@ -118,6 +119,8 @@ def assess_price(
     standing_currency: Optional[str],
     *,
     as_of: date,
+    stale_after_days: int = STALE_AFTER_DAYS,
+    movement_pct: float = MOVEMENT_PCT,
 ) -> PriceAdvice:
     """Turn a pair of purchases into facts plus the code that dominates them.
 
@@ -148,7 +151,7 @@ def assess_price(
         and previous.currency
         and last.currency != previous.currency
     )
-    movement_pct = (
+    move = (
         None
         if previous is None or currency_changed
         else _pct_change(last.unit_cost, previous.unit_cost)
@@ -170,9 +173,9 @@ def assess_price(
         advice = "zero_cost"
     elif age_days is None:
         advice = "unknown_age"
-    elif age_days > STALE_AFTER_DAYS:
+    elif age_days > stale_after_days:
         advice = "stale"
-    elif movement_pct is not None and abs(movement_pct) >= MOVEMENT_PCT:
+    elif move is not None and abs(move) >= movement_pct:
         advice = "moving"
     else:
         advice = "recent"
@@ -182,11 +185,13 @@ def assess_price(
         last=last,
         previous=previous,
         age_days=age_days,
-        movement_pct=movement_pct,
+        movement_pct=move,
         currency_changed=currency_changed,
         standing_cost=standing_cost,
         standing_currency=standing_currency,
         standing_gap_pct=standing_gap_pct,
+        stale_after_days=stale_after_days,
+        movement_threshold_pct=movement_pct,
     )
 
 
@@ -277,6 +282,15 @@ def price_history_for_run(
     """
     as_of = as_of or date.today()
 
+    # The configured thresholds, from the global planning policy (S13e). NULL = default.
+    cfg = db.execute(text(
+        "SELECT price_stale_after_days, price_movement_threshold_pct "
+        "FROM scm.reorder_policy WHERE scope_type = 'global' AND is_active = true "
+        "ORDER BY priority DESC NULLS LAST LIMIT 1"
+    )).first()
+    stale_after = int(cfg[0]) if cfg and cfg[0] else STALE_AFTER_DAYS
+    movement = float(cfg[1]) if cfg and cfg[1] else MOVEMENT_PCT
+
     rows = db.execute(
         text(_PURCHASES_SQL),
         {"run_id": run_id, "not_a_purchase": _NOT_A_PURCHASE},
@@ -313,6 +327,7 @@ def price_history_for_run(
         seen = found.get(inner, {})
         cost, currency = standing.get(inner, (None, None))
         out[f"{pair['product_id']}:{pair['supplier_code']}"] = assess_price(
-            seen.get(1), seen.get(2), cost, currency, as_of=as_of
+            seen.get(1), seen.get(2), cost, currency, as_of=as_of,
+            stale_after_days=stale_after, movement_pct=movement,
         )._replace(free_of_charge_lines=free_lines.get(inner, 0))
     return out

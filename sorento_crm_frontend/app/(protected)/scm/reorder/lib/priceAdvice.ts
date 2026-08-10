@@ -205,6 +205,72 @@ export function priceFootnotes(a: PriceAdvice | undefined): string[] {
   return out;
 }
 
+/**
+ * S13e: is another supplier on this row's own shortlist materially cheaper?
+ *
+ * Compared in the BASE currency (`unit_cost_base`), because "all of supplier are from
+ * china so the currency is RMB" was almost true - a raw CNY-vs-MYR comparison is an
+ * exchange rate wearing a price's clothes. A candidate whose price could not be restated
+ * (`unit_cost_base` null, e.g. a missing rate) is never compared, and a zero price is a
+ * free line, not a price to switch to.
+ *
+ * The threshold is the SAME knob as price movement (`movement_threshold_pct`): one figure
+ * for "a price difference worth acting on".
+ */
+export interface PriceSupplier {
+  supplier_code: string;
+  supplier_name: string;
+  unit_cost: number | null;
+  currency?: string | null;
+  unit_cost_base?: number | null;
+}
+
+export interface CheaperAlternative {
+  supplier_code: string;
+  supplier_name: string;
+  /** Their price in THEIR currency - what the PO would actually say. */
+  unit_cost: number | null;
+  currency: string | null;
+  /** Percent below the chosen supplier, on the comparable (base-currency) figures. */
+  saving_pct: number;
+}
+
+export function cheaperAlternative(
+  chosen: PriceSupplier | null,
+  alternatives: PriceSupplier[],
+  thresholdPct: number,
+): CheaperAlternative | null {
+  const ours = chosen?.unit_cost_base;
+  if (!chosen || ours === null || ours === undefined || ours <= 0) return null;
+
+  let best: PriceSupplier | null = null;
+  for (const alt of alternatives) {
+    if (alt.supplier_code === chosen.supplier_code) continue;
+    const theirs = alt.unit_cost_base;
+    // null = could not be restated; 0 = free of charge. Neither is a price to switch to.
+    if (theirs === null || theirs === undefined || theirs <= 0) continue;
+    if (best === null || theirs < (best.unit_cost_base as number)) best = alt;
+  }
+  if (!best) return null;
+
+  const savingPct = ((ours - (best.unit_cost_base as number)) / ours) * 100;
+  if (savingPct < thresholdPct) return null;
+
+  return {
+    supplier_code: best.supplier_code,
+    supplier_name: best.supplier_name,
+    unit_cost: best.unit_cost,
+    currency: best.currency ?? null,
+    saving_pct: Math.round(savingPct * 10) / 10,
+  };
+}
+
+/** "Beta last charged us CNY 8.00, 20% less on a comparable basis." Our records, not the market. */
+export function describeCheaper(c: CheaperAlternative): string {
+  const price = c.unit_cost !== null ? money(c.unit_cost, c.currency) : 'an unknown price';
+  return `${c.supplier_name} last charged us ${price}, ${c.saving_pct}% less on a comparable basis.`;
+}
+
 /** The key both the plan row and the price map agree on. */
 export function priceKey(productId: string | null, supplierCode: string | null): string | null {
   if (!productId || !supplierCode) return null;

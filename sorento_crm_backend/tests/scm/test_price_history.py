@@ -343,3 +343,98 @@ def db_price_world():
             "key": f"{product.id}:{known.supplier_code}",
             "other_key": f"{product.id}:{fresh.supplier_code}",
         }
+
+
+# --------------------------------------------------------------------------- #
+# S13e: the thresholds are configuration, not constants
+# --------------------------------------------------------------------------- #
+
+def test_a_tighter_staleness_window_from_config_turns_recent_into_stale():
+    # 60 days old: fine under the 180-day default, stale under a 30-day policy.
+    advice = assess_price(buy(date(2026, 6, 11), 10.0), None, 10.0, "USD",
+                          as_of=AS_OF, stale_after_days=30)
+    assert advice.advice == "stale"
+    assert advice.stale_after_days == 30
+
+
+def test_a_higher_movement_threshold_from_config_silences_a_small_move():
+    last, prev = buy(date(2026, 7, 1), 12.0), buy(date(2026, 5, 1), 10.0)
+    default = assess_price(last, prev, 12.0, "USD", as_of=AS_OF)
+    relaxed = assess_price(last, prev, 12.0, "USD", as_of=AS_OF, movement_pct=50.0)
+
+    assert default.advice == "moving"  # 20% >= the 5% default
+    assert relaxed.advice == "recent"  # 20% < the configured 50%
+    assert relaxed.movement_threshold_pct == 50.0
+
+
+def test_the_run_reads_its_thresholds_off_the_global_policy_row():
+    """price_history_for_run applies the policy's thresholds, and the payload names them."""
+    from sqlalchemy import text as _t
+
+    from app.models.procurement import Supplier
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+    from tests._pg_fixture import pg_session, unique_code
+
+    def _u() -> str:
+        return str(uuid.uuid4())
+
+    with pg_session() as db:
+        # The configured policy: 30-day staleness, 50% movement. Priority high enough to
+        # outrank any global row already on the shared dev DB.
+        db.execute(_t(
+            "INSERT INTO scm.reorder_policy (id, scope_type, policy_type, is_active, "
+            "priority, price_stale_after_days, price_movement_threshold_pct, "
+            "source_system, source_ref, created_at, updated_at) "
+            "VALUES (:id, 'global', 'forecast', true, 999999, 30, 50, "
+            "'manual', :m, now(), now())"), {"id": _u(), "m": MARKER})
+
+        cat = ProductCategory(id=_u(), category_code=unique_code(MARKER),
+                              category_name=f"{MARKER} cat")
+        uom = UnitOfMeasure(id=_u(), uom_code=unique_code("U")[:20], uom_name=f"{MARKER} u")
+        db.add_all([cat, uom])
+        db.flush()
+        product = Product(id=_u(), product_code=unique_code("P"), product_name=f"{MARKER} p",
+                          category_id=cat.id, base_uom_id=uom.id, list_price=0,
+                          is_active=True, is_discontinued=False)
+        supplier = Supplier(id=_u(), supplier_code=unique_code("S"),
+                            supplier_name=f"{MARKER} s")
+        db.add_all([product, supplier])
+        db.flush()
+
+        wid = _u()
+        db.execute(_t(
+            "INSERT INTO warehouses (id, warehouse_code, warehouse_name, counts_as_available) "
+            "VALUES (:id, :c, :c, true)"), {"id": wid, "c": unique_code("W")[:20]})
+
+        # 60 days old, 20% up on the one before: recent+moved under the defaults,
+        # stale (and NOT moved) under the configured 30/50.
+        for number, day, cost in (("A", date(2026, 5, 1), 10.0), ("B", date(2026, 6, 11), 12.0)):
+            pid = _u()
+            db.execute(_t(
+                "INSERT INTO purchase_orders (id, po_number, supplier_id, issue_date, status, "
+                "currency, source_system) VALUES (:id, :n, :s, :d, 'closed', 'USD', "
+                "'scm_po_history')"),
+                {"id": pid, "n": f"{MARKER}-{number}", "s": supplier.id, "d": day})
+            db.execute(_t(
+                "INSERT INTO purchase_order_lines (id, purchase_order_id, product_id, "
+                "warehouse_id, qty_ordered, qty_received, unit_cost, currency, line_status) "
+                "VALUES (:id, :po, :p, :w, 100, 0, :c, 'USD', 'open')"),
+                {"id": _u(), "po": pid, "p": product.id, "w": wid, "c": cost})
+
+        run_id = _u()
+        db.execute(_t(
+            "INSERT INTO scm.reorder_run (id, status, created_at) "
+            "VALUES (:id, 'completed', now())"), {"id": run_id})
+        db.execute(_t(
+            "INSERT INTO scm.reorder_recommendation "
+            "(id, run_id, product_id, warehouse_id, supplier_id, rec_type, rounded_qty) "
+            "VALUES (:id, :r, :p, :w, :s, 'buy', 10)"),
+            {"id": _u(), "r": run_id, "p": product.id, "w": wid, "s": supplier.id})
+        db.flush()
+
+        history = price_history_for_run(db, run_id, as_of=AS_OF)
+        advice = history[f"{product.id}:{supplier.supplier_code}"]
+
+        assert advice.advice == "stale"
+        assert advice.stale_after_days == 30
+        assert advice.movement_threshold_pct == 50.0
