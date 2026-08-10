@@ -172,3 +172,38 @@ def test_upsert_rejects_a_negative_level():
     from app.services.error_handler import AppException
     with pytest.raises(AppException):
         rl.upsert_level(None, product_id="P1", warehouse_id=None, level=-1)
+
+
+# --- S13f: the trajectory shapes the rounding, never the arithmetic ----------------------
+
+def test_rising_demand_rounds_the_suggestion_up_to_a_whole_unit():
+    out = rl.suggest_level(_months(10, 11, 10), cover_months=1.5, trend="rising")
+    # avg 10.3333 x 1.5 = 15.5 -> a rising book gets 16, not 15.5
+    assert out["level"] == 16.0
+    assert out["basis"]["trend"] == "rising"
+    assert out["basis"]["raw_level"] == 15.5
+
+
+def test_dying_demand_rounds_the_suggestion_down():
+    out = rl.suggest_level(_months(10, 11, 10), cover_months=1.5, trend="falling")
+    assert out["level"] == 15.0
+    assert out["basis"]["trend"] == "falling"
+
+
+def test_quiet_demand_also_rounds_down_because_orders_stopped():
+    out = rl.suggest_level(_months(1, 0, 0), cover_months=2, trend="quiet")
+    # avg 0.3333 x 2 = 0.6667 -> floors to 0, and honestly so
+    assert out["level"] == 0.0
+
+
+def test_no_trend_leaves_the_arithmetic_exactly_as_before():
+    out = rl.suggest_level(_months(30, 60, 30), cover_months=2)
+    assert out["level"] == 80.0
+    assert out["basis"]["trend"] is None
+
+
+def test_the_trend_rounds_before_the_supplier_constraints_apply():
+    # avg 1 x 2.2 = 2.2 -> rising ceils to 3 -> multiple of 4 lifts to 4.
+    out = rl.suggest_level(_months(1, 1, 1), cover_months=2.2, trend="rising",
+                           order_multiple=4.0)
+    assert out["level"] == 4.0

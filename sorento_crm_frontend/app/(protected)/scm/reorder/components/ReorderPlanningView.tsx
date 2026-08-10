@@ -44,6 +44,7 @@ import type { OutstandingApplyResult } from '../services/outstandingImportServic
 import { PlanLinesGrid } from './PlanLinesGrid';
 import type { PlanLineStatus } from '../lib/planLine';
 import { PlanBudgetReview } from './PlanBudgetReview';
+import { LevelChangesPanel } from './LevelChangesPanel';
 import { CoveredByStockView } from './CoveredByStockView';
 import { NeedsLevelView } from './NeedsLevelView';
 import { PlanSection } from './PlanSection';
@@ -671,6 +672,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
                 coverFor={planLines.coverFor}
                 priceFor={planLines.priceFor}
                 cheaperFor={planLines.cheaperFor}
+                levelFor={planLines.levelFor}
                 trendFor={planLines.trendFor}
                 staleAfterDays={planLines.staleAfterDays}
               />
@@ -680,6 +682,10 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
                 decisions={planLines.decisions}
                 totals={planLines.totals}
               />
+              {/* S13f: the level changes to carry into AutoCount, as one list + CSV. */}
+              <div className="flex justify-end">
+                <LevelChangesPanel suggestions={planLines.levelSuggestions} />
+              </div>
             </>
           )}
         </>

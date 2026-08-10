@@ -110,11 +110,15 @@ def _add_months(d: date, delta: int) -> date:
 
 def suggest_level(movement: list[dict[str, Any]], *, cover_months: float = DEFAULT_COVER_MONTHS,
                   moq: Optional[float] = None,
-                  order_multiple: Optional[float] = None) -> dict[str, Any]:
+                  order_multiple: Optional[float] = None,
+                  trend: Optional[str] = None) -> dict[str, Any]:
     """`avg monthly movement x cover months`, rounded up to what the supplier will sell.
 
     Returns the level AND the arithmetic. A suggestion the buyer cannot argue with is a
     suggestion they will not trust, so every input that produced the number travels with it.
+
+    `trend` (S13f) shapes only the ROUNDING, never the arithmetic: a rising book rounds up
+    to the next whole unit, a falling or quiet one rounds down. None = exact, as before.
     """
     months = list(movement or [])
     total = sum(float(m.get("qty") or 0) for m in months)
@@ -122,6 +126,10 @@ def suggest_level(movement: list[dict[str, Any]], *, cover_months: float = DEFAU
     cover = float(cover_months if cover_months is not None else DEFAULT_COVER_MONTHS)
     raw = avg * cover
     level = raw
+    if trend == "rising":
+        level = float(math.ceil(level))
+    elif trend in ("falling", "quiet"):
+        level = float(math.floor(level))
     if moq is not None and level > 0 and level < float(moq):
         level = float(moq)
     if order_multiple and float(order_multiple) > 0 and level > 0:
@@ -138,6 +146,8 @@ def suggest_level(movement: list[dict[str, Any]], *, cover_months: float = DEFAU
             "raw_level": round(raw, 4),
             "moq": moq,
             "order_multiple": order_multiple,
+            # The verdict that shaped the rounding, or None when none was consulted.
+            "trend": trend,
             # Said explicitly so a 0 reads as "nothing moved", never as "not computed".
             "no_movement": total <= 0,
         },

@@ -35,6 +35,8 @@ import {
 import { decidedCost, decidedQty, type PlanDecisionMap } from '../lib/planDecisions';
 import { describeCover, NO_COVER, type CoverProposal } from '../lib/coverPlan';
 import { PRICE_ADVICE_SORT, type CheaperAlternative, type PriceAdvice } from '../lib/priceAdvice';
+import { levelActionLabel, type LevelSuggestion } from '../lib/levelSuggestion';
+import { PlanLevelCell } from './PlanLevelCell';
 import type { TrajectoryEntry } from '../lib/trajectory';
 import { PlanTrendPopover } from './PlanTrendPopover';
 import { PlanLineDecisionCell } from './PlanLineDecisionCell';
@@ -107,6 +109,7 @@ export function PlanLinesGrid({
   coverFor,
   priceFor,
   cheaperFor,
+  levelFor,
   trendFor,
   staleAfterDays = 180,
   statusFilter: statusFilterProp = null,
@@ -129,6 +132,8 @@ export function PlanLinesGrid({
   priceFor?: (line: PlanLine) => PriceAdvice | undefined;
   /** S13e: a materially cheaper supplier on the line's own shortlist, when one exists. */
   cheaperFor?: (line: PlanLine) => CheaperAlternative | null;
+  /** S13f: the AutoCount level this run suggests for the line's product+location. */
+  levelFor?: (line: PlanLine) => LevelSuggestion | undefined;
   /** Is this product's demand sustaining or dying off, on this line's side. */
   trendFor?: (line: PlanLine) => TrajectoryEntry | undefined;
   /** The age past which the business stops trusting a price. Shown, not implied. */
@@ -436,6 +441,26 @@ export function PlanLinesGrid({
         meta: { headerTitle: 'Price to use', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
+        id: 'level',
+        // The changes float to the top: a column of "still fits" is a column nobody reads.
+        accessorFn: (row) => {
+          const s = levelFor?.(row);
+          if (!s) return 2;
+          return levelActionLabel(s).changed ? 0 : 1;
+        },
+        header: ({ column }) => (
+          <DataGridColumnHeader title="AutoCount level" visibility column={column} />
+        ),
+        cell: ({ row }) => (
+          <StopClick>
+            <PlanLevelCell suggestion={levelFor?.(row.original)} />
+          </StopClick>
+        ),
+        size: 190,
+        enableSorting: true,
+        meta: { headerTitle: 'AutoCount level', skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
         id: 'suggestion',
         header: ({ column }) => (
           <DataGridColumnHeader title="Suggested action" visibility column={column} />
@@ -510,7 +535,7 @@ export function PlanLinesGrid({
         meta: { headerTitle: 'Decision', skeleton: <Skeleton className="h-8 w-40" /> },
       },
     ],
-    [decisions, onDecide, onClear, runId, coverFor, priceFor, cheaperFor, trendFor, staleAfterDays],
+    [decisions, onDecide, onClear, runId, coverFor, priceFor, cheaperFor, trendFor, levelFor, staleAfterDays],
   );
 
   const [columnOrder, setColumnOrder] = useState<string[]>(() =>

@@ -27,7 +27,7 @@ from app.schemas.scm_reorder import (
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.scm import cover_service
 from app.services.scm import price_history_service
-from app.services.scm import trajectory_service
+from app.services.scm import level_suggestion_service, trajectory_service
 from app.services.error_handler import AppException
 from app.services.scm import reorder_run_service as svc
 from app.services.scm import demand_source_service
@@ -408,6 +408,24 @@ def get_trajectory(
     """
     svc.assert_run_visible(db, run_id)
     return trajectory_service.trajectory_for_run(db, run_id)
+
+
+@router.get("/reorder-runs/{run_id}/level-suggestions")
+def list_level_suggestions(
+    run_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The AutoCount levels this run suggests changing (S13f).
+
+    Keyed ``"{product_id}:{warehouse_id}"``. Each entry carries the current level beside
+    the suggestion and the full arithmetic (`basis`), because "set it to 12" means nothing
+    without "it is 20 today" and the sums that produced the 12. The stored `level` is never
+    written by the engine - accepting a suggestion stays the buyer's click, and applying it
+    in AutoCount stays the buyer's job.
+    """
+    svc.assert_run_visible(db, run_id)
+    return level_suggestion_service.suggestions_for_run(db, run_id)
 
 
 @router.get("/reorder-runs/{run_id}/recommendations")

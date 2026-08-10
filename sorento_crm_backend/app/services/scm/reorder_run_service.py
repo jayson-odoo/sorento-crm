@@ -423,6 +423,17 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
         except Exception:  # noqa: BLE001
             log.exception("run_reorder %s: failed to freeze the order summary", run_id)
 
+        # S13f, same rules as the summary: AFTER the commit and BEST-EFFORT. Writes only
+        # `suggested_level` + `suggestion_basis` for the pairs this run planned; the stored
+        # `level` belongs to the buyer and is never touched here. Idempotent, so a missed
+        # refresh is filled by the next run rather than failing this one.
+        try:
+            from app.services.scm import level_suggestion_service
+            n = level_suggestion_service.refresh_for_run(db, run_id)
+            log.info("run_reorder %s: refreshed %s level suggestions", run_id, n)
+        except Exception:  # noqa: BLE001
+            log.exception("run_reorder %s: failed to refresh level suggestions", run_id)
+
         return {"run_id": run_id, "status": "completed", **counts}
     except Exception as exc:  # noqa: BLE001 — record, never crash the worker
         log.exception("run_reorder %s failed", run_id)

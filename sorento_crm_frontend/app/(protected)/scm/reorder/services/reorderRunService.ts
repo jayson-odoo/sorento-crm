@@ -58,6 +58,7 @@
 import type { SortingState } from '@tanstack/react-table';
 import { apiFetch } from '@/lib/api';
 import type { CoverSource } from '../lib/coverPlan';
+import type { LevelSuggestionsPayload } from '../lib/levelSuggestion';
 import type { PriceHistoryPayload } from '../lib/priceAdvice';
 import type { TrajectoryPayload } from '../lib/trajectory';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
@@ -647,6 +648,13 @@ export async function getTrajectory(runId: string): Promise<TrajectoryPayload> {
   const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/trajectory`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load order trends'));
   return res.json();
+}
+
+export async function getLevelSuggestions(runId: string): Promise<LevelSuggestionsPayload> {
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/level-suggestions`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load level suggestions'));
+  const body = (await res.json()) as Partial<LevelSuggestionsPayload>;
+  return { suggestions: body.suggestions ?? {}, count: body.count ?? 0 };
 }
 
 export async function getPriceHistory(runId: string): Promise<PriceHistoryPayload> {

@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   getCoverSources,
+  getLevelSuggestions,
   getPriceHistory,
   getTrajectory,
   getBuyRecommendationsForCash,
@@ -27,6 +28,7 @@ import {
   type PriceAdvice,
 } from '../lib/priceAdvice';
 import { trajectoryKey, type TrajectoryEntry } from '../lib/trajectory';
+import { levelKey, type LevelSuggestion } from '../lib/levelSuggestion';
 
 /**
  * Every line of a plan, in one list, with the buyer's decisions over it.
@@ -88,6 +90,15 @@ export function usePlanLines(runId: string | null, enabled = true) {
     enabled: on,
     // Losing the trend must not take the plan down: the row then shows no trend opinion,
     // which is what the screen said before S13d.
+    retry: false,
+  });
+
+  const levels = useQuery({
+    queryKey: ['plan-lines', runId, 'level-suggestions'],
+    queryFn: () => getLevelSuggestions(runId as string),
+    enabled: on,
+    // Losing the level suggestions must not take the plan down: the row then shows no
+    // third suggestion, which is what the screen said before S13f.
     retry: false,
   });
 
@@ -192,6 +203,15 @@ export function usePlanLines(runId: string | null, enabled = true) {
     [movementThresholdPct],
   );
 
+  /** The level suggestion for a line's product+location. Undefined = no opinion. */
+  const levelFor = useCallback(
+    (line: PlanLine): LevelSuggestion | undefined => {
+      const key = levelKey(line.product_id, line.warehouse_id);
+      return key ? levels.data?.suggestions[key] : undefined;
+    },
+    [levels.data],
+  );
+
   /** The order trend for a line's product+side. Undefined = no opinion, render nothing. */
   const trendFor = useCallback(
     (line: PlanLine): TrajectoryEntry | undefined => {
@@ -211,6 +231,8 @@ export function usePlanLines(runId: string | null, enabled = true) {
     priceFor,
     cheaperFor,
     trendFor,
+    levelFor,
+    levelSuggestions: levels.data?.suggestions ?? {},
     staleAfterDays: prices.data?.stale_after_days ?? 180,
     coverSources: cover.data ?? {},
     isLoading:
