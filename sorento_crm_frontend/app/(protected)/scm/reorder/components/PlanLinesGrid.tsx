@@ -45,9 +45,15 @@ import { describePoBook, poOffset, type PoReceipt } from '../lib/poCover';
 import { PlanLevelCell } from './PlanLevelCell';
 import { trendAdvice, type TrajectoryEntry } from '../lib/trajectory';
 import { PlanTrendPopover } from './PlanTrendPopover';
+import { PlanHealthCell } from './PlanHealthCell';
 import { PlanLineDecisionCell } from './PlanLineDecisionCell';
 import { PlanPriceCell } from './PlanPriceCell';
 import { PlanSupplierCell } from './PlanSupplierCell';
+import {
+  discontinueAdvice,
+  marginOf,
+  type ProductEconomics,
+} from '../lib/productHealth';
 import { PlanChecklistPopover } from './PlanChecklistPopover';
 import { PlanDemandPopover } from './PlanDemandPopover';
 import {
@@ -129,6 +135,8 @@ export function PlanLinesGrid({
   onAmendLevel,
   poFor,
   trendFor,
+  economicsFor,
+  healthThresholds = { margin_floor_pct: 15, dead_turnover_months: 6 },
   staleAfterDays = 180,
   statusFilter: statusFilterProp = null,
   onStatusFilterChange,
@@ -155,6 +163,10 @@ export function PlanLinesGrid({
   poFor?: (line: PlanLine) => PoReceipt[];
   /** Is this product's demand sustaining or dying off, on this line's side. */
   trendFor?: (line: PlanLine) => TrajectoryEntry | undefined;
+  /** What the product sells for and how fast it moves. Undefined = no opinion. */
+  economicsFor?: (line: PlanLine) => ProductEconomics | undefined;
+  /** The policy's lines for "thin margin" and "dead turnover". */
+  healthThresholds?: { margin_floor_pct: number; dead_turnover_months: number };
   /** The age past which the business stops trusting a price. Shown, not implied. */
   staleAfterDays?: number;
   /** Status the list is narrowed to, or null for the whole plan. Controlled so the summary
@@ -557,6 +569,38 @@ export function PlanLinesGrid({
         meta: { headerTitle: 'AutoCount level + qty', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
+        id: 'health',
+        // The rows the buyer should re-question float up: discontinue candidates first,
+        // then the margin problems, then the healthy book.
+        accessorFn: (row) => {
+          const econ = economicsFor?.(row);
+          if (!econ) return 9;
+          const margin = marginOf(row.unit_cost_base, econ, healthThresholds.margin_floor_pct);
+          const advice = discontinueAdvice(econ, margin, trendFor?.(row), healthThresholds);
+          if (advice?.consider) return 0;
+          return { negative: 1, thin: 2, unknown: 3, healthy: 4 }[margin.tone];
+        },
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Product health" visibility column={column} />
+        ),
+        cell: ({ row }) => {
+          const econ = economicsFor?.(row.original);
+          if (!econ) return <span className="text-muted-foreground">{EM_DASH}</span>;
+          const margin = marginOf(
+            row.original.unit_cost_base, econ, healthThresholds.margin_floor_pct);
+          const advice = discontinueAdvice(
+            econ, margin, trendFor?.(row.original), healthThresholds);
+          return (
+            <StopClick>
+              <PlanHealthCell margin={margin} advice={advice} />
+            </StopClick>
+          );
+        },
+        size: 170,
+        enableSorting: true,
+        meta: { headerTitle: 'Product health', skeleton: <Skeleton className="h-5 w-20" /> },
+      },
+      {
         id: 'suggestion',
         header: ({ column }) => (
           <DataGridColumnHeader title="Suggested action" visibility column={column} />
@@ -578,6 +622,17 @@ export function PlanLinesGrid({
           const poQty = receipts.reduce((t, r) => t + r.remaining, 0);
           const { usePo, buy: buyQty } = poOffset(afterStock, poQty);
           const advice = trendAdvice(trendFor?.(line), buyQty);
+          // "Hot selling but the margin is so little": a consider-more on a thin or
+          // negative margin carries the caveat in the same breath, so enthusiasm about
+          // volume never travels without the economics of it.
+          const econ = economicsFor?.(line);
+          const margin = econ
+            ? marginOf(line.unit_cost_base, econ, healthThresholds.margin_floor_pct)
+            : null;
+          const thinMargin =
+            advice?.direction === 'more' &&
+            (margin?.tone === 'thin' || margin?.tone === 'negative') &&
+            margin.pct !== null;
           const crossing = cover.sources.some((x) => x.cross_segment);
           // A cover offer on a project line is purchasing superseding CS: the inquiry said
           // buy it all, and the engine found stock CS did not use. Said out loud, because a
@@ -664,7 +719,7 @@ export function PlanLinesGrid({
                   >
                     {`Consider ${fmtInt(advice.delta)} ${advice.direction} - orders ${
                       advice.direction === 'more' ? 'rose' : 'fell'
-                    } ${advice.pct}%`}
+                    } ${advice.pct}%${thinMargin ? `, but margin only ${margin!.pct}%` : ''}`}
                   </button>
                 </StopClick>
               ) : null}
@@ -696,7 +751,8 @@ export function PlanLinesGrid({
         meta: { headerTitle: 'Decision', skeleton: <Skeleton className="h-8 w-40" /> },
       },
     ],
-    [decisions, onDecide, onClear, runId, coverFor, priceFor, cheaperFor, trendFor, levelFor, onAmendLevel, poFor, staleAfterDays],
+    [decisions, onDecide, onClear, runId, coverFor, priceFor, cheaperFor, trendFor,
+     levelFor, onAmendLevel, poFor, economicsFor, healthThresholds, staleAfterDays],
   );
 
   // The story order (see the header comment): each chapter leads with its result and is
@@ -706,7 +762,7 @@ export function PlanLinesGrid({
     'suggested', 'needed', 'on_hand', 'incoming_spo', 'outstanding_po',
     'suggestion', 'decision',
     'price', 'supplier', 'cost',
-    'level',
+    'level', 'health',
     'net', 'days_cover',
   ]);
   // Computed steps, not decisions: off by default, one columns-menu click to bring back.

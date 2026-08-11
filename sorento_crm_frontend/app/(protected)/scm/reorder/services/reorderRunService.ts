@@ -59,6 +59,7 @@ import type { SortingState } from '@tanstack/react-table';
 import { apiFetch } from '@/lib/api';
 import type { CoverSource } from '../lib/coverPlan';
 import type { LevelSuggestionsPayload } from '../lib/levelSuggestion';
+import type { EconomicsPayload } from '../lib/productHealth';
 import type { PoReceipt } from '../lib/poCover';
 import type { PriceHistoryPayload } from '../lib/priceAdvice';
 import type { TrajectoryPayload } from '../lib/trajectory';
@@ -656,6 +657,18 @@ export async function getLevelSuggestions(runId: string): Promise<LevelSuggestio
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load level suggestions'));
   const body = (await res.json()) as Partial<LevelSuggestionsPayload>;
   return { suggestions: body.suggestions ?? {}, count: body.count ?? 0 };
+}
+
+export async function getProductEconomics(runId: string): Promise<EconomicsPayload> {
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/product-economics`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load product economics'));
+  const body = (await res.json()) as Partial<EconomicsPayload>;
+  return {
+    products: body.products ?? {},
+    count: body.count ?? 0,
+    thresholds: body.thresholds ?? { margin_floor_pct: 15, dead_turnover_months: 6 },
+    sell_window_months: body.sell_window_months ?? 12,
+  };
 }
 
 export async function getPoBook(

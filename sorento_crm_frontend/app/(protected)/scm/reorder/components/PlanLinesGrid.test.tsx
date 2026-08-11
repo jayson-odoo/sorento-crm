@@ -16,6 +16,7 @@ import { proposeCover, NO_COVER, type CoverSource } from '../lib/coverPlan';
 import type { PriceAdvice } from '../lib/priceAdvice';
 import type { PoReceipt } from '../lib/poCover';
 import type { TrajectoryEntry } from '../lib/trajectory';
+import type { ProductEconomics } from '../lib/productHealth';
 
 class ResizeObserverStub { observe() {} unobserve() {} disconnect() {} }
 (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
@@ -88,6 +89,7 @@ function renderGrid(
   priceFor?: (l: PlanLine) => PriceAdvice | undefined,
   poFor?: (l: PlanLine) => PoReceipt[],
   trendFor?: (l: PlanLine) => TrajectoryEntry | undefined,
+  economicsFor?: (l: PlanLine) => ProductEconomics | undefined,
 ) {
   const onDecide = vi.fn();
   const onClear = vi.fn();
@@ -107,6 +109,7 @@ function renderGrid(
         priceFor={priceFor}
         poFor={poFor}
         trendFor={trendFor}
+        economicsFor={economicsFor}
         staleAfterDays={180}
       />
     </QueryClientProvider>,
@@ -512,6 +515,55 @@ describe('the forecast advisory (2026-08-11 markup)', () => {
       () => ({ ...rising, verdict: 'holding' as const }),
     );
     expect(screen.queryByText(/Consider \d+ (more|less)/)).not.toBeInTheDocument();
+  });
+});
+
+describe('product health (2026-08-11 markup)', () => {
+  const econ = (over: Partial<ProductEconomics> = {}): ProductEconomics => ({
+    product_id: 'p1', avg_sell_price: 100, sell_source: 'orders', sold_qty: 240,
+    on_hand: 40, avg_monthly_out: 20, turnover_months: 2, no_movement: false,
+    ...over,
+  });
+  const rising: TrajectoryEntry = {
+    verdict: 'rising', recent_qty: 120, previous_qty: 90, change_pct: 33.33,
+    year_ago_qty: null, year_change_pct: null, window_months: 12,
+    months: [], customers: [], agents: [], agents_available: false,
+  };
+
+  it('closes the row with the margin the item really earns', () => {
+    // rec fixture: unit_cost 10 vs sells 100 -> 90% margin.
+    renderGrid([line()], {}, [], undefined, undefined, undefined, () => econ());
+    expect(screen.getByText('Margin 90%')).toBeInTheDocument();
+  });
+
+  it('asks to consider discontinuing a dead product, with the whole case behind it', () => {
+    const dead = econ({ no_movement: true, avg_monthly_out: 0, turnover_months: null,
+                        sold_qty: 0, on_hand: 25 });
+    renderGrid(
+      [line()], {}, [], undefined, undefined,
+      () => ({ ...rising, verdict: 'quiet' as const, change_pct: null }),
+      () => dead,
+    );
+
+    // Click the cell's own trigger (the column header is also named "Product health").
+    fireEvent.click(screen.getByText('Consider discontinuing'));
+    expect(screen.getByText(/factors argue for discontinuing/i)).toBeInTheDocument();
+    expect(screen.getByText(/nothing left this product/i)).toBeInTheDocument();
+    expect(screen.getByText(/Discontinuing stays your call/i)).toBeInTheDocument();
+  });
+
+  it('a consider-more advisory on a thin margin carries the caveat in the same breath', () => {
+    // Base cost 92 (cash 9200 over 100 units) vs sells 100 -> 8% margin, below the floor.
+    renderGrid(
+      [line({ order_qty: 100, recommended_qty: 100, unit_cost: 92, cash_impact: 9200 })],
+      {}, [], undefined, undefined, () => rising, () => econ(),
+    );
+
+    expect(
+      screen.getByRole('button', {
+        name: /Consider 34 more - orders rose 33%, but margin only 8%/,
+      }),
+    ).toBeInTheDocument();
   });
 });
 

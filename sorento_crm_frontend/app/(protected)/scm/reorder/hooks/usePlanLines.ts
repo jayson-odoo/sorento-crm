@@ -8,6 +8,7 @@ import {
   getLevelSuggestions,
   getPoBook,
   getPriceHistory,
+  getProductEconomics,
   getTrajectory,
   getBuyRecommendationsForCash,
   getAllDispositionRecommendations,
@@ -23,6 +24,7 @@ import {
   type TakenByWarehouse,
 } from '../lib/coverPlan';
 import { planTotals, type PlanDecision, type PlanDecisionMap } from '../lib/planDecisions';
+import type { ProductEconomics } from '../lib/productHealth';
 import {
   cheaperAlternative,
   priceKey,
@@ -111,6 +113,15 @@ export function usePlanLines(runId: string | null, enabled = true) {
     enabled: on,
     // Losing the receipts must not take the plan down: the row then offers no PO offset,
     // which is what the screen said before S15.
+    retry: false,
+  });
+
+  const economics = useQuery({
+    queryKey: ['plan-lines', runId, 'product-economics'],
+    queryFn: () => getProductEconomics(runId as string),
+    enabled: on,
+    // Losing the economics must not take the plan down: the health cell then shows no
+    // opinion, which is honest - "we do not know the margin" is not "the margin is fine".
     retry: false,
   });
 
@@ -254,6 +265,13 @@ export function usePlanLines(runId: string | null, enabled = true) {
     [trend.data],
   );
 
+  /** The sell/turnover facts for a line's product. Undefined = no opinion. */
+  const economicsFor = useCallback(
+    (line: PlanLine): ProductEconomics | undefined =>
+      line.product_id ? economics.data?.products[line.product_id] : undefined,
+    [economics.data],
+  );
+
   return {
     lines,
     decisions: decisions as PlanDecisionMap,
@@ -266,6 +284,11 @@ export function usePlanLines(runId: string | null, enabled = true) {
     trendFor,
     levelFor,
     poFor,
+    economicsFor,
+    healthThresholds: economics.data?.thresholds ?? {
+      margin_floor_pct: 15,
+      dead_turnover_months: 6,
+    },
     amendLevel,
     levelSuggestions: levels.data?.suggestions ?? {},
     staleAfterDays: prices.data?.stale_after_days ?? 180,
