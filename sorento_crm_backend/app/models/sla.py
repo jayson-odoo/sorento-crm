@@ -1,5 +1,6 @@
 """SLA management models."""
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, BigInteger, Numeric, Index, text
+from sqlalchemy.dialects.postgresql import JSONB as JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -200,6 +201,11 @@ class FormSLAConfig(Base):
     # the stage without advancing to customer service). NULL = spawn on any resolve
     # (backward-compatible with existing single-event chains).
     advance_on_event = Column(String(100), nullable=True)
+    # --- Undo grace window (PLAN-form-sla-undo.md) ---------------------------- #
+    # Seconds an in-app action on this stage waits before it actually runs, so the
+    # actor can take it back before anyone is told. NULL = use the global
+    # `system_settings.form_sla_grace_seconds` (which ships as 0 = no deferral).
+    grace_seconds = Column(Integer, nullable=True)
     # --- Skip the rest of the chain (UAC-form-sla-skip-stage) ---------------- #
     # When set, this stage may be closed by an explicit "skip" action instead of its
     # normal resolve: the stage resolves, the next stage never spawns, and the entity
@@ -334,6 +340,97 @@ class SlaTakeoverRequest(Base):
         Index(
             "uq_sla_takeover_requests_one_pending",
             "tracking_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Form SLA Undo (PLAN-form-sla-undo.md)
+# ---------------------------------------------------------------------------
+
+FORM_ACTION_PENDING = "pending"
+FORM_ACTION_COMMITTED = "committed"
+FORM_ACTION_CANCELLED = "cancelled"
+FORM_ACTION_INELIGIBLE = "ineligible"
+FORM_ACTION_FAILED = "failed"
+FORM_ACTION_UNDONE = "undone"
+FORM_ACTION_TERMINAL = (
+    FORM_ACTION_COMMITTED,
+    FORM_ACTION_CANCELLED,
+    FORM_ACTION_INELIGIBLE,
+    FORM_ACTION_FAILED,
+    FORM_ACTION_UNDONE,
+)
+
+# Channel decides whether an action may defer at all. Only an in-system UI caller can
+# be shown an Undo button, so only `ui` ever waits out a grace window; portal /
+# API-key / n8n / MCP callers execute immediately and keep today's response shapes.
+FORM_ACTION_CHANNEL_UI = "ui"
+FORM_ACTION_CHANNEL_IMMEDIATE = "immediate"
+
+
+class SlaFormAction(Base):
+    """A form-SLA action that either waits out a grace window before running, or ran
+    immediately and is retained as the undo history.
+
+    Deliberately mirrors ``SlaTakeoverRequest``'s lifecycle vocabulary. Committed rows
+    are never deleted - they are what a post-grace undo reads to restore prior state.
+    """
+
+    __tablename__ = "sla_form_actions"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    action_key = Column(String(64), nullable=False)
+    source_entity_type = Column(String(50), nullable=False)
+    source_entity_id = Column(UUID(as_uuid=False), nullable=False)
+    # The resolve-event this action will emit — the guardrail reads it to find the
+    # stage the action closed.
+    event_name = Column(String(64), nullable=True)
+
+    # Arguments for the registry's `execute`, and the domain columns it is about to
+    # overwrite, captured BEFORE it runs. The inverse restores from this snapshot and
+    # never from a guessed default.
+    payload_json = Column(JSON, nullable=False, default=dict)
+    prior_state_json = Column(JSON, nullable=False, default=dict)
+
+    requested_by_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    channel = Column(String(16), nullable=False, server_default=FORM_ACTION_CHANNEL_IMMEDIATE)
+    status = Column(String(16), nullable=False, server_default=FORM_ACTION_PENDING)
+
+    commit_at = Column(DateTime(timezone=False), nullable=True)  # naive UTC
+    committed_at = Column(DateTime(timezone=False), nullable=True)
+    resolved_at = Column(DateTime(timezone=False), nullable=True)
+    resolution_reason = Column(String(32), nullable=True)
+    error_text = Column(Text, nullable=True)
+
+    # The stage tracker this action resolved (reopen target) and the one its commit
+    # spawned (void target). Not FKs: a tracker can be hard-deleted, and losing the
+    # history row with it would be worse than a dangling id.
+    prior_tracking_id = Column(UUID(as_uuid=False), nullable=True)
+    spawned_tracking_id = Column(UUID(as_uuid=False), nullable=True)
+
+    undone_by_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    undone_at = Column(DateTime(timezone=False), nullable=True)
+    undo_reason = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_sla_form_actions_sweep", "status", "commit_at"),
+        Index(
+            "ix_sla_form_actions_last",
+            "source_entity_type",
+            "source_entity_id",
+            "committed_at",
+        ),
+        # At most one pending action per form row (AC-D-7). A second action attempted
+        # while one is pending is refused by the database, not only by the service.
+        Index(
+            "uq_sla_form_actions_one_pending",
+            "source_entity_type",
+            "source_entity_id",
             unique=True,
             postgresql_where=text("status = 'pending'"),
         ),
