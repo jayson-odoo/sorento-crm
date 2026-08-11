@@ -21,9 +21,12 @@ Ticket: jayson-odoo/sorento-crm#76.
 """
 from __future__ import annotations
 
+import json
 import re
 from decimal import Decimal
 
+from sqlalchemy import cast, func, literal, or_
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from app.models.product import Product, ProductCategory
@@ -371,6 +374,59 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
     return resolved
 
 
+def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: list[str] | None = None) -> dict:
+    """The described set as a MEMBERSHIP clause — shape B's filter leg.
+
+    Class-only by decision: class coverage is broad, so a class filter is safe;
+    spec-VALUE derivation is partial, so a value filter silently undercounts, and
+    numeric entries carry ops (at_least, tolerance windows) that have no boolean
+    meaning. Non-class entries are dropped here and still reach the ranker as
+    boosts, so the customer's number is heard, just not membership-defining.
+
+    Three verdicts per word, because n8n renders them differently:
+      - names a class            -> membership
+      - names a known spec value -> dropped (recognized, boost-only)
+      - names nothing            -> `unrecognized_terms` (clarify, never "none")
+
+    Returns `{"clause", "class_labels", "unrecognized_terms"}`; `clause` is a
+    predicate over `ProductSpecifications.values`, or None when no class was named.
+    """
+    free_terms = [t for t in (free_terms or []) if t and t.strip()]
+
+    labels: set[str] = set()
+    for entry in specs or []:
+        if entry.get("key") == "class" and entry.get("value"):
+            labels.add(str(entry["value"]))
+
+    unrecognized: list[str] = []
+    for term in free_terms:
+        classes = resolve_classes_for_term(db, term)
+        if classes:
+            labels.update(classes)
+        elif not resolve_terms_to_specs(db, [term]):
+            unrecognized.append(term)
+
+    clause = None
+    if labels:
+        # Scalar branch is case-insensitive, matching the ranker's `_states`. The
+        # containment branch (case-sensitive, against the stored spelling the
+        # resolvers returned) exists because a value may be a LIST — two finishes
+        # on one product — and `#>>` renders a list as its JSON text.
+        lowered = [label.lower() for label in labels]
+        scalar = func.lower(ProductSpecifications.values["class"]["value"].astext).in_(lowered)
+        contained = [
+            ProductSpecifications.values["class"]["value"].op("@>")(cast(literal(json.dumps(label)), JSONB))
+            for label in sorted(labels)
+        ]
+        clause = or_(scalar, *contained)
+
+    return {
+        "clause": clause,
+        "class_labels": sorted(labels),
+        "unrecognized_terms": unrecognized,
+    }
+
+
 def _is_excluded(values: dict, exclusions: list[dict]) -> bool:
     """True when the product is KNOWN to hold a value the customer ruled out."""
     for entry in exclusions or []:
@@ -417,11 +473,16 @@ def search_specs(
     free_terms: list[str] | None = None,
     limit: int | None = None,
     floor: float | None = None,
+    product_ids: list[str] | None = None,
 ) -> dict:
     """Rank the catalog against extracted specs. Returns candidates and a floor verdict.
 
     `exclusions` are specs the customer refused. They are a filter rather than a
     negative weight: see the comment at the candidate loop.
+
+    `product_ids` restricts ranking to a caller-supplied whitelist (shape B's
+    stage 2: membership was decided in SQL, the ranker only ORDERS what already
+    qualifies). None means the whole catalog; an empty list ranks nothing.
     """
     specs = specs or []
     exclusions = exclusions or []
@@ -480,13 +541,17 @@ def search_specs(
         for label in resolve_classes_for_term(db, term)
     }
 
-    rows = (
+    candidate_query = (
         db.query(ProductSpecifications, Product, ProductCategory)
         .join(Product, Product.id == ProductSpecifications.product_id)
         .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
         .filter(Product.is_active.is_(True))
-        .all()
     )
+    if product_ids is not None:
+        candidate_query = candidate_query.filter(
+            ProductSpecifications.product_id.in_(list(product_ids))
+        )
+    rows = candidate_query.all()
 
     wanted_terms: set[str] = set()
     for term in free_terms:

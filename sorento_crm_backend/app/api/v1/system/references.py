@@ -1094,6 +1094,23 @@ class ResolveReferenceRequest(BaseModel):
             "`spec_fallback` is true."
         ),
     )
+    require: dict | None = Field(
+        default=None,
+        description=(
+            "Shape B: a domain predicate over the DESCRIBED set (\"what faucets "
+            "have certs\"). Keys — `attachment_type` (the customer's LABEL, e.g. "
+            "'technical drawing', resolved server-side), `certificate` (true, or "
+            "{scheme, validity_state}), `promotion` (true), `stock` (true = "
+            "on-hand > 0). Multiple keys AND. The intersection with the class "
+            "set named by `free_terms` is computed inside the CRM over the full "
+            "company-scoped catalogue, so the count is honest — never a top-K "
+            "join across the wire. Response gains a `predicate` block "
+            "(qualifying_total / truncated / unrecognized_terms) and the "
+            "qualifying top-K lands in `resolutions[].matches` with "
+            "`match_tier='spec_search'`. Absent = response byte-identical to "
+            "today. When present it supersedes `spec_fallback`."
+        ),
+    )
     understand_phrase: bool = Field(
         default=False,
         description=(
@@ -1516,6 +1533,81 @@ def resolve_reference(
     )
 
 
+def _emit_spec_matches(result: dict[str, Any], candidates: list[dict], token: str) -> None:
+    """Emit ranker candidates as ordinary product matches.
+
+    `spec_candidates` alone was a dead end: it is a different shape parked beside
+    the result, so every existing consumer - the n8n spine's resolve-entity, and
+    get-results behind it - looked at `resolutions[].matches`, found nothing, and
+    treated the turn as unresolved. Describing a product well enough to find it
+    only matters if the thing that asks can then USE it.
+
+    Same record shape as every other product match, so nothing downstream needs to
+    learn a new one, with `match_tier="spec_search"` so a caller that wants to tell
+    a described product from a coded one still can. Shaped exactly like a `prefix`
+    match, because that is what it IS: a different WAY of matching, not a lesser
+    kind of certainty - a description that finds 15 products must read the same as
+    a code prefix that finds 15, or the same shortlist takes two different paths
+    depending on how it was found. Only `incoming` and `product_attachment` need
+    one exact row, and those callers clarify on their own terms, which they can,
+    because `match_tier` says how this was matched.
+    """
+    if not candidates:
+        return
+    spec_matches = [
+        {
+            "entity_type": "product",
+            "canonical_code": candidate["product_code"],
+            "uuid": candidate["product_id"],
+            "match_field": "specifications",
+            "match_tier": "spec_search",
+            # The ranker's score, so a caller can see how well each one answered
+            # rather than treating an ordered list as equally good.
+            "similarity": candidate["score"],
+            "display": {
+                "product_name": candidate["summary"],
+                "via_token": token,
+                "class": candidate.get("class"),
+                "matched_specs": candidate.get("matched_specs", []),
+                "is_discontinued": candidate.get("is_discontinued", False),
+            },
+        }
+        for candidate in candidates
+    ]
+    spec_resolution = {
+        "token": token or "specifications",
+        "resolved": len(spec_matches) == 1,
+        "ambiguous": len(spec_matches) > 1,
+        "matches": spec_matches,
+        # Empty on purpose: `alternatives` is the did-you-mean channel, and
+        # these are matches, not near misses. Putting them here would make the
+        # spine offer a list where it should be answering.
+        "alternatives": [],
+    }
+    if "intersection" in result:
+        # AND mode carries three views of one answer and the spine reads all of
+        # them, so updating `intersection` alone would leave `by_entity_type`
+        # empty and `empty` true while 15 products sat in `intersection`.
+        #
+        # In practice this branch is defensive: an AND run that matches nothing
+        # is rewritten to OR shape before spec search runs, so the result
+        # reaching here normally has `resolutions` and no `intersection`. Kept
+        # because the rewrite is a behaviour of the caller's flags, not a law.
+        result["intersection"] = spec_matches
+        by_type: dict[str, list[dict[str, Any]]] = {}
+        for match in spec_matches:
+            by_type.setdefault(match["entity_type"], []).append(match)
+        result["by_entity_type"] = by_type
+        result["empty"] = not spec_matches
+    result.setdefault("resolutions", []).append(spec_resolution)
+    # Something was found, so the token is no longer unresolved. Nothing else is
+    # touched: `unresolved_tokens` and `alternatives` are what drive "did you
+    # mean", and a match is neither.
+    result["unresolved_tokens"] = [
+        t for t in (result.get("unresolved_tokens") or []) if t != spec_resolution["token"]
+    ]
+
+
 @router.post("/resolve")
 def resolve_reference_post(
     payload: ResolveReferenceRequest,
@@ -1534,6 +1626,33 @@ def resolve_reference_post(
         domain_hint=payload.domain_hint,
         limit=payload.limit,
     )
+
+    # Shape B: a domain predicate over the described set. This is NOT a fallback -
+    # "what faucets have certs" is a different question from "find me a faucet",
+    # and it runs whenever the parser asked it, whatever the normal probes found.
+    # The whole intersection + count happens in the service (zero SQL here); this
+    # veneer only maps the outcome onto the wire shape the spine already reads.
+    if payload.require:
+        from app.services.product_set_service import resolve_product_set
+
+        outcome = resolve_product_set(
+            db,
+            require=payload.require,
+            specs=payload.extracted_specs,
+            free_terms=payload.free_terms,
+            limit=payload.limit,
+        )
+        # One nested block, not top-level scalars: n8n item-mutation chains
+        # persist top-level keys across nodes. And never inside `by_entity_type`,
+        # which n8n renders to customers.
+        result["predicate"] = {
+            "require": outcome["require"],
+            "qualifying_total": outcome["qualifying_total"],
+            "truncated": outcome["truncated"],
+            "unrecognized_terms": outcome["unrecognized_terms"],
+        }
+        _emit_spec_matches(result, outcome["candidates"], payload.query or "")
+        return result
 
     # Spec search is a FALLBACK, never a parallel path. It runs only when the caller
     # asked for it AND the normal (code-only) product probes found nothing, so the
@@ -1575,80 +1694,8 @@ def resolve_reference_post(
         result["spec_candidates"] = found["candidates"]
         result["floor_missed"] = found["floor_missed"]
 
-        # AND emit them as ordinary product matches.
-        #
-        # `spec_candidates` alone was a dead end: it is a different shape parked beside
-        # the result, so every existing consumer - the n8n spine's resolve-entity, and
-        # get-results behind it - looked at `resolutions[].matches`, found nothing, and
-        # treated the turn as unresolved. Describing a product well enough to find it
-        # only matters if the thing that asks can then USE it.
-        #
-        # Same record shape as every other product match, so nothing downstream needs to
-        # learn a new one, with `match_tier="spec_search"` so a caller that wants to tell
-        # a described product from a coded one still can.
-        if found["candidates"]:
-            spec_matches = [
-                {
-                    "entity_type": "product",
-                    "canonical_code": candidate["product_code"],
-                    "uuid": candidate["product_id"],
-                    "match_field": "specifications",
-                    "match_tier": "spec_search",
-                    # The ranker's score, so a caller can see how well each one answered
-                    # rather than treating an ordered list as equally good.
-                    "similarity": candidate["score"],
-                    "display": {
-                        "product_name": candidate["summary"],
-                        "via_token": payload.query or "",
-                        "class": candidate.get("class"),
-                        "matched_specs": candidate.get("matched_specs", []),
-                        "is_discontinued": candidate.get("is_discontinued", False),
-                    },
-                }
-                for candidate in found["candidates"]
-            ]
-            # Shaped exactly like a `prefix` match, because that is what it IS: a
-            # different WAY of matching, not a lesser kind of certainty. `SRTWC286`
-            # returns 15 prefix matches and the spine goes straight to get-results for
-            # all of them - it does not ask the customer to choose. A description that
-            # finds 15 products is the same situation and must read the same, or the
-            # same shortlist takes two different paths depending on how it was found.
-            #
-            # Only `incoming` and `product_attachment` need one exact row, and those
-            # callers clarify on their own terms - which they can, because `match_tier`
-            # says how this was matched.
-            spec_resolution = {
-                "token": payload.query or "specifications",
-                "resolved": len(spec_matches) == 1,
-                "ambiguous": len(spec_matches) > 1,
-                "matches": spec_matches,
-                # Empty on purpose: `alternatives` is the did-you-mean channel, and
-                # these are matches, not near misses. Putting them here would make the
-                # spine offer a list where it should be answering.
-                "alternatives": [],
-            }
-            if "intersection" in result:
-                # AND mode carries three views of one answer and the spine reads all of
-                # them, so updating `intersection` alone would leave `by_entity_type`
-                # empty and `empty` true while 15 products sat in `intersection`.
-                #
-                # In practice this branch is defensive: an AND run that matches nothing
-                # is rewritten to OR shape ABOVE, before spec search runs, so the result
-                # reaching here normally has `resolutions` and no `intersection`. Kept
-                # because the rewrite is a behaviour of the caller's flags, not a law.
-                result["intersection"] = spec_matches
-                by_type: dict[str, list[dict[str, Any]]] = {}
-                for match in spec_matches:
-                    by_type.setdefault(match["entity_type"], []).append(match)
-                result["by_entity_type"] = by_type
-                result["empty"] = not spec_matches
-            result.setdefault("resolutions", []).append(spec_resolution)
-            # Something was found, so the token is no longer unresolved. Nothing else is
-            # touched: `unresolved_tokens` and `alternatives` are what drive "did you
-            # mean", and a match is neither.
-            result["unresolved_tokens"] = [
-                t for t in (result.get("unresolved_tokens") or []) if t != spec_resolution["token"]
-            ]
+        # AND emit them as ordinary product matches (see _emit_spec_matches).
+        _emit_spec_matches(result, found["candidates"], payload.query or "")
         # What the customer asked for that nothing offered can satisfy. The caller says
         # "no Cabana one, here are Sorento" rather than silently substituting.
         result["spec_unmet"] = found["unmet"]
