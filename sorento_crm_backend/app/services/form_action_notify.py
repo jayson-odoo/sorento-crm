@@ -214,10 +214,17 @@ def _notify_contact(db: Session, record, *, number: str, reason: str) -> None:
 
         if entity_type == "stock_inquiry":
             from app.services.procurement_service import StockInquiryService
+            from app.services.respond_identifier import resolve_send_identifier
 
             service = StockInquiryService(db)
             inquiry = service.get_inquiry(entity_id)
-            identifier = getattr(inquiry, "contact_id", None)
+            # `contact_id` is the INTERNAL respond_contacts UUID; the Respond.io send
+            # API needs the contact's respond_io_id. Resolve exactly the way the
+            # service's own reply path does (inbox URL first, then contact lookup) -
+            # passing the raw FK 400s on every send, silently, in the except below.
+            identifier = service._identifier_from_respond_inbox_url(
+                getattr(inquiry, "respond_inbox_url", None)
+            ) or resolve_send_identifier(db, getattr(inquiry, "contact_id", None))
             if not identifier:
                 return
             restored = _status_label(getattr(inquiry, "status", None))
@@ -235,10 +242,13 @@ def _notify_contact(db: Session, record, *, number: str, reason: str) -> None:
 
         if entity_type == "complaint":
             from app.services.complaints_service import ComplaintService
+            from app.services.respond_identifier import resolve_send_identifier
 
             service = ComplaintService(db)
             complaint = service.get_complaint(entity_id)
-            identifier = getattr(complaint, "contact_id", None)
+            identifier = service._identifier_from_respond_inbox_url(
+                getattr(complaint, "respond_inbox_url", None)
+            ) or resolve_send_identifier(db, getattr(complaint, "contact_id", None))
             if not identifier:
                 return
             restored = _status_label(getattr(complaint, "status", None))
@@ -254,7 +264,26 @@ def _notify_contact(db: Session, record, *, number: str, reason: str) -> None:
             )
             return
 
-        # Tickets reach their submitter through the ticket notifier, not Respond.io.
+        if entity_type == "ticket":
+            # The submitter was told "your ticket has been resolved" and that message
+            # cannot be unsent - route the correction through the same notifier, which
+            # picks in-app + email for user submitters and WhatsApp (outbox-logged)
+            # for respond-contact submitters.
+            from app.models.tickets import Ticket
+            from app.services.ticket_notification_service import notify_submitter_text
+
+            ticket = db.query(Ticket).filter(Ticket.id == entity_id).first()
+            if ticket is None:
+                return
+            restored = _status_label(getattr(ticket, "status", None))
+            notify_submitter_text(
+                db,
+                ticket=ticket,
+                title=f"Update on {number}: status changed back",
+                text=_correction_text(number, restored, reason_part),
+            )
+            return
+
         logger.info(
             "No contact-send path for %s; contact not corrected for %s",
             entity_type,

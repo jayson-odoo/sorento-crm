@@ -76,18 +76,27 @@ def _get_ticket(db: Session, payload: dict):
 
 
 def _jsonable(value):
-    """Snapshots round-trip through JSONB, so datetimes have to survive as text."""
-    return value.isoformat() if hasattr(value, "isoformat") else value
+    """Snapshots round-trip through JSONB, so datetimes survive as a MARKED wrapper.
+
+    The marker matters: restoring by "does it parse as ISO?" coerces user-typed free
+    text too - an approver whose comment is "2025-10-01" would get a datetime written
+    back into a String column on undo. Only values that WERE datetimes at capture
+    time come back as datetimes.
+    """
+    if hasattr(value, "isoformat"):
+        return {"$dt": value.isoformat()}
+    return value
 
 
 def _restore(value):
-    if isinstance(value, str):
-        # Only a full ISO timestamp round-trips back to a datetime; a plain status
-        # string must stay a string.
+    if isinstance(value, dict) and set(value.keys()) == {"$dt"}:
         try:
-            return datetime.fromisoformat(value)
-        except ValueError:
-            return value
+            return datetime.fromisoformat(value["$dt"])
+        except (TypeError, ValueError):
+            return value["$dt"]
+    # Plain strings stay strings. Legacy snapshots (pre-marker) stored datetimes as
+    # bare ISO text; Postgres casts those into timestamp columns on write, so passing
+    # them through unchanged is still correct - and free text is never mangled.
     return value
 
 
@@ -102,24 +111,38 @@ def _declare(
     resolve_event: Callable,
     tells_contact: bool = False,
     invertible: bool = True,
+    payload_columns: Optional[Callable[[dict], Sequence[str]]] = None,
 ) -> FormAction:
     """Register one action from a declaration, so all 13 share one implementation of
-    capture-and-restore rather than 13 hand-written near-copies."""
+    capture-and-restore rather than 13 hand-written near-copies.
+
+    `payload_columns` is for the one action shape whose write set is NOT fixed: a
+    method that applies whatever fields the caller submitted must have those fields
+    snapshotted too, or the inverse restores a half-reverted record.
+    """
 
     def capture(db: Session, payload: dict) -> dict:
         entity = getter(db, payload)
         if entity is None:
             return {}
-        return {col: _jsonable(getattr(entity, col, None)) for col in columns}
+        cols = list(columns)
+        if payload_columns is not None:
+            for extra in payload_columns(dict(payload or {})):
+                if extra not in cols and hasattr(entity, extra):
+                    cols.append(extra)
+        return {col: _jsonable(getattr(entity, col, None)) for col in cols}
 
     def invert(db: Session, record) -> None:
         entity = getter(db, dict(record.payload_json or {}))
         if entity is None:
             return
+        # Iterate the SNAPSHOT, not the declared columns: capture decides the scope
+        # once (including any payload-derived extras), and the inverse restores
+        # exactly what was captured - never more, never less.
         prior = dict(record.prior_state_json or {})
-        for col in columns:
-            if col in prior:
-                setattr(entity, col, _restore(prior[col]))
+        for col, value in prior.items():
+            if hasattr(entity, col):
+                setattr(entity, col, _restore(value))
         db.commit()
 
     return register(
@@ -192,6 +215,9 @@ _declare(
         p["request_id"], requested_by_user_id=p.get("actor_user_id")
     ),
     resolve_event=lambda _p: "send_for_approval",
+    # set_pending_approval messages the contact ("sent for approval") since the
+    # 2026-08 fix - the undo dialog must disclose that a correction will follow.
+    tells_contact=True,
 )
 
 _declare(
@@ -331,6 +357,12 @@ _declare(
     label="Purchasing response",
     getter=_get_inquiry,
     columns=("status", "last_responded_by", "last_responded_at"),
+    # `update_inquiry_and_reply` setattr's EVERY submitted field (model_dump over the
+    # whole StockInquiryUpdate) and recomputes the respond linkage columns - so the
+    # snapshot must widen to whatever this particular payload touches, or an undo
+    # restores the status while silently keeping the edited prices/remarks/contact.
+    payload_columns=lambda p: list((p.get("inquiry_data") or {}).keys())
+    + ["respond_inbox_url", "contact_id", "space_id"],
     runner=_si_respond_runner,
     resolve_event=lambda _p: "purchasing_respond",
     # The whole point of this action is the message to the contact. An undo restores the

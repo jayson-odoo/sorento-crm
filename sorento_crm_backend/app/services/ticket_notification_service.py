@@ -225,3 +225,85 @@ def notify_submitter_on_status_change(
             ),
             request_payload_dict={"message": {"type": "text", "text": text}},
         )
+
+
+def notify_submitter_text(db: Session, *, ticket: Ticket, title: str, text: str) -> None:
+    """Free-text notice to the submitter over the same routing as the status
+    notifications: in-app + email for user submitters, WhatsApp (with an outbox
+    row on success AND failure) for respond-contact submitters.
+
+    Exists for messages outside the responded/resolved pair - e.g. the form-action
+    undo correction, where the submitter was already told "resolved" and that
+    message cannot be unsent.
+    """
+    raised_by = ticket.raised_by
+    if not raised_by:
+        return
+
+    if ticket.raised_by_kind == "user":
+        try:
+            NotificationService(db).create_with_channel_preferences(
+                user_id=str(raised_by),
+                type="ticket_correction",
+                title=title,
+                body=text,
+                data={
+                    "ticket_id": str(ticket.id),
+                    "ticket_number": ticket.ticket_number,
+                    "link": _ticket_link(ticket),
+                },
+                source_entity_type="ticket",
+                source_entity_id=str(ticket.id),
+                event_type="submitter_correction",
+                send_in_app=True,
+                send_email=True,
+                send_web_push=False,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Ticket %s correction notification failed: %s", ticket.id, e)
+        return
+
+    contact = (
+        db.query(RespondContact).filter(RespondContact.id == str(raised_by)).first()
+    )
+    if not contact or not contact.respond_io_id:
+        logger.info(
+            "Ticket %s respond contact missing respond_io_id; skipping WhatsApp correction",
+            ticket.id,
+        )
+        return
+
+    log_service = IntegrationLogService(db)
+    try:
+        client = RespondClient()
+        response = client.send_message(contact.respond_io_id, text)
+        log_service.create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="respond_io",
+                business_table="tickets",
+                business_id=str(ticket.id),
+                external_reference=contact.respond_io_id,
+                direction="outbound",
+                endpoint=f"https://api.respond.io/v2/contact/id:{contact.respond_io_id}/message",
+                http_method="POST",
+                status="success",
+                response_payload=str(response)[:50000] if response else None,
+            ),
+            request_payload_dict={"message": {"type": "text", "text": text}},
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Respond.io correction send failed for ticket %s", ticket.id)
+        log_service.create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="respond_io",
+                business_table="tickets",
+                business_id=str(ticket.id),
+                external_reference=contact.respond_io_id or "",
+                direction="outbound",
+                endpoint=f"https://api.respond.io/v2/contact/id:{contact.respond_io_id or ''}/message",
+                http_method="POST",
+                status="failed",
+                error_message=str(e),
+            ),
+            request_payload_dict={"message": {"type": "text", "text": text}},
+        )
