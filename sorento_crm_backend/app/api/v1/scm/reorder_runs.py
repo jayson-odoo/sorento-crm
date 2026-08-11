@@ -27,7 +27,12 @@ from app.schemas.scm_reorder import (
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.scm import cover_service
 from app.services.scm import price_history_service
-from app.services.scm import level_suggestion_service, po_book_service, trajectory_service
+from app.services.scm import (
+    level_suggestion_service,
+    po_book_service,
+    product_economics_service,
+    trajectory_service,
+)
 from app.services.error_handler import AppException
 from app.services.scm import reorder_run_service as svc
 from app.services.scm import demand_source_service
@@ -424,6 +429,24 @@ def get_po_book(
     """
     svc.assert_run_visible(db, run_id)
     return po_book_service.po_book_for_run(db, run_id)
+
+
+@router.get("/reorder-runs/{run_id}/product-economics")
+def list_product_economics(
+    run_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Sell-price, stock and turnover facts for every product the run planned.
+
+    Keyed by product id. Feeds the margin column and the discontinue advisory: realized
+    average selling price (last 12 months of real order lines; `sell_source` names the
+    fallback when list price had to stand in), total on hand, average monthly outflow and
+    months-of-stock. The verdicts are drawn on the frontend against the policy thresholds
+    carried here, so both sides use the same line.
+    """
+    svc.assert_run_visible(db, run_id)
+    return product_economics_service.economics_for_run(db, run_id)
 
 
 @router.get("/reorder-runs/{run_id}/level-suggestions")
