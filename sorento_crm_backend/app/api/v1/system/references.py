@@ -1274,6 +1274,28 @@ def _result_has_zero_matches(result: dict[str, Any]) -> bool:
     return True
 
 
+def _product_words_unanswered(result: dict[str, Any]) -> bool:
+    """AND-shaped result whose returned PRODUCT rows do not, between them,
+    contain every word the customer used.
+
+    This catalog writes description words INTO product codes
+    (SRTWB7104-WALL HUNG), so max-coverage AND-mode collects partial code
+    matches for exactly the phrases spec search exists to answer — "wall hung
+    basin" finds 13 codes containing "wall hung" and the zero-match gate never
+    fires. Partially matching a code is not answering the description.
+
+    Reads the `token_coverage` the AND exit already computed. Product rows
+    only: a promotion whose description covered the words DID answer the turn.
+    A missing/unscored coverage block stays False — this widens the fallback
+    gate, and a widening must never fire on absence of evidence.
+    """
+    for entry in result.get("token_coverage") or []:
+        for claim in (entry or {}).get("coverage") or []:
+            if claim.get("entity_type") == "product" and claim.get("unmatched_words"):
+                return True
+    return False
+
+
 def _collect_match_types(result: dict[str, Any]) -> list[str]:
     """Distinct `entity_type` values across resolutions / intersection."""
     types: set[str] = set()
@@ -1792,11 +1814,15 @@ def resolve_reference_post(
         return _stamp_brand_on_products(db, result)
 
     # Spec search is a FALLBACK, never a parallel path. It runs only when the caller
-    # asked for it AND the normal (code-only) product probes found nothing, so the
-    # response stays byte-identical for every existing caller and for every request
-    # that resolves normally. The product probes themselves are untouched: see
-    # _and_probe_product's "CODE-ONLY by design" note.
-    if payload.spec_fallback and _result_has_zero_matches(result):
+    # asked for it AND the normal (code-only) product probes found nothing — or
+    # found only PARTIAL code-word overlap (`_product_words_unanswered`): a code
+    # that happens to contain "WALL HUNG" has not answered "wall hung basin".
+    # The response stays byte-identical for every existing caller and for every
+    # request that resolves a code fully. The product probes themselves are
+    # untouched: see _and_probe_product's "CODE-ONLY by design" note.
+    if payload.spec_fallback and (
+        _result_has_zero_matches(result) or _product_words_unanswered(result)
+    ):
         import time
 
         from app.services.product_spec_search import search_specs

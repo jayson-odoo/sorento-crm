@@ -141,6 +141,91 @@ def test_spec_search_does_not_run_when_the_code_resolves(client):
     assert "spec_candidates" not in body
 
 
+def test_partial_code_overlap_does_not_suppress_the_fallback(db, client):
+    """SA-P1: this catalog writes description words INTO product codes
+    (SRTWB7104-WALL HUNG), so an AND-mode turn like "wall hung basin" collects
+    partial code matches — the words "wall hung" literally appear in codes —
+    and the zero-match gate then never fires, for exactly the phrase class the
+    fallback exists to answer. "Partially matched a code" is not "the
+    description was answered": the gate must also fire when no returned
+    product row covered EVERY word.
+    """
+    spare = Product(
+        id=str(uuid.uuid4()),
+        product_code="ZZT-KITCHEN SINK-BKT",
+        product_name="ZZT-KITCHEN SINK-BKT",
+        description="TRIANGLE BASKET SPARE",
+        category_id=_REFS["cat"],
+        base_uom_id=_REFS["uom"],
+        list_price=Decimal("1.00"),
+    )
+    db.add(spare)
+    db.flush()
+    derive_for_code(db, spare.product_code)
+
+    body = client.post(
+        ENDPOINT,
+        json={
+            "query": "stainless steel kitchen sink",
+            "tokens": ["stainless steel kitchen sink"],
+            "match_mode": "and",
+            "spec_fallback": True,
+            "extracted_specs": [
+                {"key": "class", "value": "Kitchen Sink"},
+                {"key": "material", "value": "stainless_steel"},
+            ],
+            "free_terms": ["kitchen sink"],
+        },
+    ).json()
+
+    assert "spec_candidates" in body, "partial code coverage must not suppress spec search"
+    spec_matches = [
+        m
+        for r in body.get("resolutions", [])
+        for m in r.get("matches", [])
+        if m.get("match_tier") == "spec_search"
+    ]
+    assert "ZZTKS9001" in [m["canonical_code"] for m in spec_matches]
+    # The AND views were REPLACED by the ranked answer, not left describing
+    # the partial code overlap.
+    if "intersection" in body:
+        assert all(m.get("match_tier") == "spec_search" for m in body["intersection"])
+
+
+def test_full_code_coverage_still_suppresses_the_fallback(db, client):
+    """The counterweight: when a returned product row DOES cover every word, the
+    description was answered by codes and spec search must stay out of the way.
+    Same catalog quirk as above — the words all appear in the code — but this
+    time the overlap is COMPLETE, which is the case max-coverage is right about.
+    """
+    spare = Product(
+        id=str(uuid.uuid4()),
+        product_code="ZZT-KITCHEN SINK-BKT",
+        product_name="ZZT-KITCHEN SINK-BKT",
+        description="TRIANGLE BASKET SPARE",
+        category_id=_REFS["cat"],
+        base_uom_id=_REFS["uom"],
+        list_price=Decimal("1.00"),
+    )
+    db.add(spare)
+    db.flush()
+    derive_for_code(db, spare.product_code)
+
+    body = client.post(
+        ENDPOINT,
+        json={
+            "query": "kitchen sink",
+            "tokens": ["kitchen sink"],
+            "match_mode": "and",
+            "spec_fallback": True,
+            "free_terms": ["kitchen sink"],
+        },
+    ).json()
+
+    assert [m["canonical_code"] for m in body.get("intersection", [])] == ["ZZT-KITCHEN SINK-BKT"]
+    assert "spec_candidates" not in body
+
+
 def test_a_floor_miss_returns_no_candidates(client):
     body = client.post(
         ENDPOINT,
