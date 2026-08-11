@@ -7,18 +7,17 @@ unconditional and idempotent here. Guarded with an existence check so a re-run
 (or a create_all DB that already has the ORM tables) is a no-op.
 
 Revision ID: 302_autocount_credit_terms_tax_codes
-Revises: 307_admin_listing_company
+Revises: 312c_seed_undo_template_defaults
 """
 from alembic import op
 import sqlalchemy as sa
 
 
 revision = "302_autocount_credit_terms_tax_codes"
-# Chained onto main's head (the multi_company chain's merge node) rather than the
-# shared ancestor cbf3a0044924, so the autocount chain (302..309) STACKS on top
-# of main instead of forking a second head off cbf3a0044924. Keeps a single
-# alembic head after this branch merges. See PLAN-autocount-ingest-ui.md.
-down_revision = "307_admin_listing_company"
+# Re-chained onto main's current head after each rebase so the autocount chain
+# (302..310) STACKS on top of main instead of forking a second head. Keeps a
+# single alembic head after this branch merges. See PLAN-autocount-ingest-ui.md.
+down_revision = "312c_seed_undo_template_defaults"
 branch_labels = None
 depends_on = None
 
