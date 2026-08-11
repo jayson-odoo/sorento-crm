@@ -678,6 +678,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
                 trendFor={planLines.trendFor}
                 economicsFor={planLines.economicsFor}
                 healthThresholds={planLines.healthThresholds}
+                onDecideLifecycle={planLines.decideLifecycle}
                 staleAfterDays={planLines.staleAfterDays}
               />
               {/* Last, and only here: what it costs and whether that works. */}

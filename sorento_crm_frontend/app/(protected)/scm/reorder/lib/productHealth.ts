@@ -29,6 +29,9 @@ export interface ProductEconomics {
   /** Months of stock at the current pace. Null when nothing moves. */
   turnover_months: number | null;
   no_movement: boolean;
+  /** The buyer's standing answer to the advisory, or null while undecided. */
+  lifecycle_decision: 'keep' | 'discontinue' | null;
+  lifecycle_decided_at: string | null;
 }
 
 export interface EconomicsPayload {
@@ -94,7 +97,12 @@ export function discontinueAdvice(
       ? econ.turnover_months > thresholds.dead_turnover_months
       : econ.no_movement && econ.on_hand > 0;
 
-  const consider = demandDying && turnoverDead;
+  // Two paths in (user markup, 2026-08-11): a dying product whose stock has stopped
+  // moving, OR one sold BELOW cost while its demand falls - fast turnover does not
+  // redeem selling at a loss on a dying book. A negative margin alone (demand rising or
+  // holding) stays a pricing conversation, not a discontinuation.
+  const consider =
+    (demandDying && turnoverDead) || (demandDying && margin.tone === 'negative');
 
   const factors: string[] = [];
   factors.push(
@@ -128,4 +136,51 @@ export function discontinueAdvice(
   }
 
   return { consider, factors };
+}
+
+/**
+ * The MOQ pump-up, explained with its sell-through odds.
+ *
+ * > "if the quantity can't reach MoQ, we need to flag the gap, then suggest to fill the
+ * >  gap via what method, maybe promotion? or pump up to MoQ with no hope that the extra
+ * >  qty will sell? how likely is it for us to sell the additional quantity"
+ *
+ * The engine already floors the buy at the MOQ - silently, which is the problem. This
+ * names the pump-up: how much was needed, how much the supplier forces, and how long the
+ * extra takes to clear at the product's own pace. The judgment ("fine" / "promotion" /
+ * "negotiate") keys on the same dead-turnover line the discontinue advisory uses.
+ */
+export interface MoqGap {
+  moq: number;
+  /** What the plan actually needed before the MOQ floor. */
+  needed: number;
+  /** Units forced on top of the need (includes pack rounding above the MOQ). */
+  extra: number;
+  /** How long the extra takes to sell at the current pace. Null when nothing moves. */
+  months_to_clear: number | null;
+  verdict: 'clears' | 'slow' | 'no_pace';
+  sentence: string;
+}
+
+export function moqGap(
+  needed: number,
+  moq: number | null,
+  orderedQty: number,
+  econ: ProductEconomics | undefined,
+  deadTurnoverMonths: number,
+): MoqGap | null {
+  if (moq === null || moq <= 0 || needed <= 0 || needed >= moq) return null;
+  const extra = Math.max(orderedQty - needed, 0);
+  if (extra < 1) return null;
+  const pace = econ?.avg_monthly_out ?? 0;
+  const months = pace > 0 ? Math.round((extra / pace) * 10) / 10 : null;
+  const verdict: MoqGap['verdict'] =
+    months === null ? 'no_pace' : months <= deadTurnoverMonths ? 'clears' : 'slow';
+  const sentence =
+    verdict === 'clears'
+      ? `Need ${fmt(needed)}, MOQ forces ${fmt(orderedQty)}: the ${fmt(extra)} extra clears in about ${fmt(months!)} months at the current pace.`
+      : verdict === 'slow'
+        ? `Need ${fmt(needed)}, MOQ forces ${fmt(orderedQty)}: the ${fmt(extra)} extra is about ${fmt(months!)} months of stock - consider a promotion to move it, or negotiate the MOQ down.`
+        : `Need ${fmt(needed)}, MOQ forces ${fmt(orderedQty)}: nothing is selling to clear the ${fmt(extra)} extra - a promotion or a lower MOQ is the honest path.`;
+  return { moq, needed, extra, months_to_clear: months, verdict, sentence };
 }

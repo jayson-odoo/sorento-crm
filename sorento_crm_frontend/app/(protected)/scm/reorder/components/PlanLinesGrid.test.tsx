@@ -90,6 +90,7 @@ function renderGrid(
   poFor?: (l: PlanLine) => PoReceipt[],
   trendFor?: (l: PlanLine) => TrajectoryEntry | undefined,
   economicsFor?: (l: PlanLine) => ProductEconomics | undefined,
+  onDecideLifecycle?: (productId: string, decision: 'keep' | 'discontinue' | null) => void,
 ) {
   const onDecide = vi.fn();
   const onClear = vi.fn();
@@ -110,6 +111,7 @@ function renderGrid(
         poFor={poFor}
         trendFor={trendFor}
         economicsFor={economicsFor}
+        onDecideLifecycle={onDecideLifecycle}
         staleAfterDays={180}
       />
     </QueryClientProvider>,
@@ -522,6 +524,7 @@ describe('product health (2026-08-11 markup)', () => {
   const econ = (over: Partial<ProductEconomics> = {}): ProductEconomics => ({
     product_id: 'p1', avg_sell_price: 100, sell_source: 'orders', sold_qty: 240,
     on_hand: 40, avg_monthly_out: 20, turnover_months: 2, no_movement: false,
+    lifecycle_decision: null, lifecycle_decided_at: null,
     ...over,
   });
   const rising: TrajectoryEntry = {
@@ -549,7 +552,7 @@ describe('product health (2026-08-11 markup)', () => {
     fireEvent.click(screen.getByText('Consider discontinuing'));
     expect(screen.getByText(/factors argue for discontinuing/i)).toBeInTheDocument();
     expect(screen.getByText(/nothing left this product/i)).toBeInTheDocument();
-    expect(screen.getByText(/Discontinuing stays your call/i)).toBeInTheDocument();
+    expect(screen.getByText(/marking it in AutoCount stays your job/i)).toBeInTheDocument();
   });
 
   it('a consider-more advisory on a thin margin carries the caveat in the same breath', () => {
@@ -564,6 +567,52 @@ describe('product health (2026-08-11 markup)', () => {
         name: /Consider 34 more - orders rose 33%, but margin only 8%/,
       }),
     ).toBeInTheDocument();
+  });
+});
+
+describe('the discontinue decision and the MOQ gap (2026-08-11 markup)', () => {
+  const econ = (over: Partial<ProductEconomics> = {}): ProductEconomics => ({
+    product_id: 'p1', avg_sell_price: 100, sell_source: 'orders', sold_qty: 240,
+    on_hand: 40, avg_monthly_out: 20, turnover_months: 2, no_movement: false,
+    lifecycle_decision: null, lifecycle_decided_at: null,
+    ...over,
+  });
+
+  it('offers Keep and Discontinue, and records the click', () => {
+    const onLifecycle = vi.fn();
+    const dead = econ({ no_movement: true, avg_monthly_out: 0, turnover_months: null,
+                        sold_qty: 0, on_hand: 25 });
+    renderGrid([line()], {}, [], undefined, undefined, undefined, () => dead, onLifecycle);
+
+    fireEvent.click(screen.getByText('Consider discontinuing'));
+    fireEvent.click(screen.getByRole('button', { name: 'Discontinue' }));
+    expect(onLifecycle).toHaveBeenCalledWith('p1', 'discontinue');
+  });
+
+  it('shows the recorded answer on the row instead of asking again', () => {
+    const decided = econ({ lifecycle_decision: 'discontinue',
+                           lifecycle_decided_at: '2026-08-11T00:00:00' });
+    renderGrid([line()], {}, [], undefined, undefined, undefined, () => decided);
+
+    expect(screen.getByText('You chose: discontinue')).toBeInTheDocument();
+    expect(screen.queryByText('Consider discontinuing')).not.toBeInTheDocument();
+  });
+
+  it('shows the MOQ and flags the pump-up with its sell-through odds', () => {
+    // Need 20, MOQ 100: engine already floored the buy at 100. At 5/month the 80 extra
+    // is 16 months of stock - the row says so and suggests the way out.
+    renderGrid(
+      [line({ order_qty: 100, recommended_qty: 20, moq: 100 })], {}, [],
+      undefined, undefined, undefined, () => econ({ avg_monthly_out: 5 }),
+    );
+
+    const gapNote = screen.getByText(/\+80 extra ≈ 16 mo - promotion\?/);
+    expect(gapNote.closest('div')).toHaveTextContent('100');
+  });
+
+  it('a dash when no MOQ is on file - absence, not zero', () => {
+    renderGrid([line()]);
+    expect(screen.getByTitle('No MOQ on file for this supplier')).toBeInTheDocument();
   });
 });
 

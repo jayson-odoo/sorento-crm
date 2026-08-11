@@ -52,6 +52,7 @@ import { PlanSupplierCell } from './PlanSupplierCell';
 import {
   discontinueAdvice,
   marginOf,
+  moqGap,
   type ProductEconomics,
 } from '../lib/productHealth';
 import { PlanChecklistPopover } from './PlanChecklistPopover';
@@ -137,6 +138,7 @@ export function PlanLinesGrid({
   trendFor,
   economicsFor,
   healthThresholds = { margin_floor_pct: 15, dead_turnover_months: 6 },
+  onDecideLifecycle,
   staleAfterDays = 180,
   statusFilter: statusFilterProp = null,
   onStatusFilterChange,
@@ -167,6 +169,8 @@ export function PlanLinesGrid({
   economicsFor?: (line: PlanLine) => ProductEconomics | undefined;
   /** The policy's lines for "thin margin" and "dead turnover". */
   healthThresholds?: { margin_floor_pct: number; dead_turnover_months: number };
+  /** Record (or withdraw) the buyer's keep-or-discontinue answer. Absent = read-only. */
+  onDecideLifecycle?: (productId: string, decision: 'keep' | 'discontinue' | null) => Promise<void> | void;
   /** The age past which the business stops trusting a price. Shown, not implied. */
   staleAfterDays?: number;
   /** Status the list is narrowed to, or null for the whole plan. Controlled so the summary
@@ -592,13 +596,67 @@ export function PlanLinesGrid({
             econ, margin, trendFor?.(row.original), healthThresholds);
           return (
             <StopClick>
-              <PlanHealthCell margin={margin} advice={advice} />
+              <PlanHealthCell
+                margin={margin}
+                advice={advice}
+                econ={econ}
+                onDecideLifecycle={onDecideLifecycle}
+              />
             </StopClick>
           );
         },
         size: 170,
         enableSorting: true,
         meta: { headerTitle: 'Product health', skeleton: <Skeleton className="h-5 w-20" /> },
+      },
+      {
+        id: 'moq',
+        accessorFn: (row) => row.order_qty_inputs?.moq ?? -1,
+        header: ({ column }) => <DataGridColumnHeader title="MOQ" visibility column={column} />,
+        // The supplier's minimum, and - when it forces more than the need - the pump-up
+        // with its sell-through odds. The engine floors at the MOQ silently; this column
+        // is where the silence ends.
+        cell: ({ row }) => {
+          const line = row.original;
+          const moq = line.order_qty_inputs?.moq ?? null;
+          if (!line.purchasable || moq === null) {
+            return (
+              <span className="text-muted-foreground" title="No MOQ on file for this supplier">
+                {EM_DASH}
+              </span>
+            );
+          }
+          const gap = moqGap(
+            // The PRE-round need: what the engine computed before the MOQ floor.
+            line.rec.recommended_qty ?? line.order_qty,
+            moq,
+            Math.ceil(line.order_qty),
+            economicsFor?.(line),
+            healthThresholds.dead_turnover_months,
+          );
+          return (
+            <div className="min-w-0">
+              <span className="tabular-nums">{fmtInt(moq)}</span>
+              {gap ? (
+                <span
+                  className={`block truncate text-2xs ${
+                    gap.verdict === 'clears' ? 'text-muted-foreground' : 'text-scm-overstock'
+                  }`}
+                  title={gap.sentence}
+                >
+                  {gap.verdict === 'clears'
+                    ? `+${fmtInt(gap.extra)} extra, clears in ~${gap.months_to_clear} mo`
+                    : gap.verdict === 'slow'
+                      ? `+${fmtInt(gap.extra)} extra ≈ ${gap.months_to_clear} mo - promotion?`
+                      : `+${fmtInt(gap.extra)} extra, nothing selling to clear it`}
+                </span>
+              ) : null}
+            </div>
+          );
+        },
+        size: 140,
+        enableSorting: true,
+        meta: { headerTitle: 'MOQ', skeleton: <Skeleton className="h-4 w-10" /> },
       },
       {
         id: 'suggestion',
@@ -752,7 +810,8 @@ export function PlanLinesGrid({
       },
     ],
     [decisions, onDecide, onClear, runId, coverFor, priceFor, cheaperFor, trendFor,
-     levelFor, onAmendLevel, poFor, economicsFor, healthThresholds, staleAfterDays],
+     levelFor, onAmendLevel, poFor, economicsFor, healthThresholds, onDecideLifecycle,
+     staleAfterDays],
   );
 
   // The story order (see the header comment): each chapter leads with its result and is
@@ -761,7 +820,7 @@ export function PlanLinesGrid({
     'rank', 'side', 'sku', 'warehouse', 'status',
     'suggested', 'needed', 'on_hand', 'incoming_spo', 'outstanding_po',
     'suggestion', 'decision',
-    'price', 'supplier', 'cost',
+    'price', 'supplier', 'moq', 'cost',
     'level', 'health',
     'net', 'days_cover',
   ]);

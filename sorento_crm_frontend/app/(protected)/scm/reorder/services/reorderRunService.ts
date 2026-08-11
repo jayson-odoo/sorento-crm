@@ -671,6 +671,20 @@ export async function getProductEconomics(runId: string): Promise<EconomicsPaylo
   };
 }
 
+export async function recordLifecycleDecision(input: {
+  product_id: string;
+  /** null withdraws the decision, back to undecided. */
+  decision: 'keep' | 'discontinue' | null;
+}): Promise<{ product_id: string; decision: string | null }> {
+  const res = await apiFetch('/api/v1/scm/product-lifecycle-decision', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to record the decision'));
+  return res.json();
+}
+
 export async function getPoBook(
   runId: string,
 ): Promise<{ po_book: Record<string, PoReceipt[]> }> {

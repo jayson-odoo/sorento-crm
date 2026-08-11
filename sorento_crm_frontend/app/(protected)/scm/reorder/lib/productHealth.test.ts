@@ -6,7 +6,7 @@
  * figure so the verdict can be argued with.
  */
 import { describe, expect, it } from 'vitest';
-import { discontinueAdvice, marginOf, type ProductEconomics } from './productHealth';
+import { discontinueAdvice, marginOf, moqGap, type ProductEconomics } from './productHealth';
 import type { TrajectoryEntry } from './trajectory';
 
 const THRESHOLDS = { margin_floor_pct: 15, dead_turnover_months: 6 };
@@ -20,6 +20,8 @@ const econ = (over: Partial<ProductEconomics> = {}): ProductEconomics => ({
   avg_monthly_out: 20,
   turnover_months: 2,
   no_movement: false,
+  lifecycle_decision: null,
+  lifecycle_decided_at: null,
   ...over,
 });
 
@@ -82,5 +84,45 @@ describe('discontinueAdvice', () => {
 
   it('no economics, no opinion', () => {
     expect(discontinueAdvice(undefined, marginOf(60, undefined, 15), undefined, THRESHOLDS)).toBeNull();
+  });
+
+  it('selling below cost on a falling book qualifies even when the stock still turns', () => {
+    // 2026-08-11: "why high margin then we consider discontinue, but low margin then we
+    // don't?" - fast turnover does not redeem a loss-maker whose demand is dying.
+    const out = discontinueAdvice(econ(), marginOf(120, econ(), 15), trend('falling'), THRESHOLDS);
+    expect(out?.consider).toBe(true);
+  });
+
+  it('a loss-maker still rising stays a pricing conversation', () => {
+    const out = discontinueAdvice(econ(), marginOf(120, econ(), 15), trend('rising'), THRESHOLDS);
+    expect(out?.consider).toBe(false);
+  });
+});
+
+describe('moqGap - the pump-up, with its sell-through odds', () => {
+  it('names the extra and how fast it clears at the current pace', () => {
+    // Need 20, MOQ 100 -> 80 extra at 20/month = 4 months: clears.
+    const gap = moqGap(20, 100, 100, econ(), 6);
+    expect(gap).toMatchObject({ extra: 80, months_to_clear: 4, verdict: 'clears' });
+    expect(gap?.sentence).toContain('clears in about 4 months');
+  });
+
+  it('suggests a promotion or a lower MOQ when the extra outlives the turnover line', () => {
+    // 80 extra at 5/month = 16 months, line is 6.
+    const gap = moqGap(20, 100, 100, econ({ avg_monthly_out: 5 }), 6);
+    expect(gap?.verdict).toBe('slow');
+    expect(gap?.sentence).toMatch(/promotion|negotiate/);
+  });
+
+  it('says so when nothing sells to clear the extra', () => {
+    const gap = moqGap(20, 100, 100, econ({ avg_monthly_out: 0, no_movement: true }), 6);
+    expect(gap?.verdict).toBe('no_pace');
+    expect(gap?.months_to_clear).toBeNull();
+  });
+
+  it('no gap when the need already reaches the MOQ, or no MOQ is on file', () => {
+    expect(moqGap(150, 100, 150, econ(), 6)).toBeNull();
+    expect(moqGap(20, null, 20, econ(), 6)).toBeNull();
+    expect(moqGap(0, 100, 0, econ(), 6)).toBeNull();
   });
 });

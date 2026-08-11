@@ -10,6 +10,7 @@ import {
   getPriceHistory,
   getProductEconomics,
   getTrajectory,
+  recordLifecycleDecision,
   getBuyRecommendationsForCash,
   getAllDispositionRecommendations,
   getCoveredRecommendations,
@@ -272,6 +273,17 @@ export function usePlanLines(runId: string | null, enabled = true) {
     [economics.data],
   );
 
+  /** Record (or withdraw, with null) the buyer's keep-or-discontinue answer. */
+  const decideLifecycle = useCallback(
+    async (productId: string, decision: 'keep' | 'discontinue' | null) => {
+      await recordLifecycleDecision({ product_id: productId, decision });
+      await qc.invalidateQueries({
+        queryKey: ['plan-lines', runId, 'product-economics'],
+      });
+    },
+    [qc, runId],
+  );
+
   return {
     lines,
     decisions: decisions as PlanDecisionMap,
@@ -285,6 +297,7 @@ export function usePlanLines(runId: string | null, enabled = true) {
     levelFor,
     poFor,
     economicsFor,
+    decideLifecycle,
     healthThresholds: economics.data?.thresholds ?? {
       margin_floor_pct: 15,
       dead_turnover_months: 6,
