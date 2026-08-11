@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import dynamic from 'next/dynamic';
+import type { ApexOptions } from 'apexcharts';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,6 +15,10 @@ import {
   quantityActionLabel,
   type LevelSuggestion,
 } from '../lib/levelSuggestion';
+
+const ApexChart = dynamic(() => import('react-apexcharts').then((mod) => mod.default), {
+  ssr: false,
+});
 
 /**
  * The third suggestion on a plan row (S13f/S14): the reorder level to set in AutoCount.
@@ -95,27 +101,30 @@ export function PlanLevelCell({
         <PopoverContent className="w-96 text-xs" align="start">
           <p className="font-medium text-foreground">{describeLevelSuggestion(suggestion)}</p>
 
-          {/* The months behind the average, so the arithmetic can be checked line by
-              line rather than taken on faith. */}
+          {/* The months behind the average, as bars with the exact figure on each, so
+              the arithmetic can be checked at a glance rather than taken on faith
+              (user markup, 2026-08-11: the level needs a drill-down explanation). */}
           {months.length ? (
-            <table className="mt-2 w-full">
-              <tbody>
-                <tr className="text-muted-foreground">
-                  {months.map((m) => (
-                    <td key={m.month} className="pr-2 text-2xs">
-                      {m.month}
-                    </td>
-                  ))}
-                </tr>
-                <tr className="font-medium tabular-nums">
-                  {months.map((m) => (
-                    <td key={m.month} className="pr-2">
-                      {m.qty}
-                    </td>
-                  ))}
-                </tr>
-              </tbody>
-            </table>
+            <div className="mt-1 -mx-1">
+              <ApexChart
+                options={{
+                  chart: { type: 'bar', toolbar: { show: false }, sparkline: { enabled: false } },
+                  plotOptions: { bar: { columnWidth: '55%', borderRadius: 2 } },
+                  colors: ['var(--color-primary, #2563eb)'],
+                  dataLabels: { enabled: true, style: { fontSize: '10px' } },
+                  xaxis: {
+                    categories: months.map((m) => m.month),
+                    labels: { style: { fontSize: '10px' } },
+                  },
+                  yaxis: { labels: { show: false } },
+                  grid: { show: false },
+                  tooltip: { enabled: false },
+                } satisfies ApexOptions}
+                series={[{ name: 'Left this location', data: months.map((m) => m.qty) }]}
+                type="bar"
+                height={110}
+              />
+            </div>
           ) : null}
 
           {/* The buyer's own figure, beside the engine's - never instead of it. */}

@@ -15,6 +15,7 @@ import { PlanLinesGrid } from './PlanLinesGrid';
 import { proposeCover, NO_COVER, type CoverSource } from '../lib/coverPlan';
 import type { PriceAdvice } from '../lib/priceAdvice';
 import type { PoReceipt } from '../lib/poCover';
+import type { TrajectoryEntry } from '../lib/trajectory';
 
 class ResizeObserverStub { observe() {} unobserve() {} disconnect() {} }
 (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
@@ -86,6 +87,7 @@ function renderGrid(
   free: CoverSource[] = [],
   priceFor?: (l: PlanLine) => PriceAdvice | undefined,
   poFor?: (l: PlanLine) => PoReceipt[],
+  trendFor?: (l: PlanLine) => TrajectoryEntry | undefined,
 ) {
   const onDecide = vi.fn();
   const onClear = vi.fn();
@@ -104,6 +106,7 @@ function renderGrid(
         coverFor={coverFor}
         priceFor={priceFor}
         poFor={poFor}
+        trendFor={trendFor}
         staleAfterDays={180}
       />
     </QueryClientProvider>,
@@ -463,6 +466,52 @@ describe('the column story - result first, explanation after (2026-08-11 markup)
     fireEvent.click(screen.getByRole('button', { name: /why this supplier/i }));
     expect(screen.getByText(/only supplier linked to this product/i)).toBeInTheDocument();
     expect(screen.getByText(/our own purchase records only/i)).toBeInTheDocument();
+  });
+});
+
+describe('the forecast advisory (2026-08-11 markup)', () => {
+  const rising: TrajectoryEntry = {
+    verdict: 'rising', recent_qty: 120, previous_qty: 90, change_pct: 33.33,
+    year_ago_qty: null, year_change_pct: null, window_months: 12,
+    months: [], customers: [], agents: [], agents_available: false,
+  };
+
+  it('puts the trend on the SO column, where the demand it judges lives', () => {
+    renderGrid([line()], {}, [], undefined, undefined, () => rising);
+    const so = screen.getByTitle(/Outstanding sales-order quantity/).closest('td') as HTMLElement;
+    expect(within(so).getByText('Orders rising - consider more')).toBeInTheDocument();
+  });
+
+  it('advises how many more, and one click applies it as the decision with its reason', () => {
+    const { onDecide } = renderGrid(
+      [line({ order_qty: 100, recommended_qty: 100 })], {}, [], undefined, undefined,
+      () => rising,
+    );
+
+    const chip = screen.getByRole('button', { name: /Consider 34 more - orders rose 33%/ });
+    fireEvent.click(chip);
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'r1' }),
+      { buy: 134, reason: 'Trend: orders rose 33%' },
+    );
+  });
+
+  it('advises fewer on a falling book, and never advises on a holding one', () => {
+    renderGrid(
+      [line({ order_qty: 100, recommended_qty: 100 })], {}, [], undefined, undefined,
+      () => ({ ...rising, verdict: 'falling', change_pct: -28.4 }),
+    );
+    expect(
+      screen.getByRole('button', { name: /Consider 28 less - orders fell 28%/ }),
+    ).toBeInTheDocument();
+  });
+
+  it('stays silent when the trend argues nothing', () => {
+    renderGrid(
+      [line({ order_qty: 100 })], {}, [], undefined, undefined,
+      () => ({ ...rising, verdict: 'holding' as const }),
+    );
+    expect(screen.queryByText(/Consider \d+ (more|less)/)).not.toBeInTheDocument();
   });
 });
 

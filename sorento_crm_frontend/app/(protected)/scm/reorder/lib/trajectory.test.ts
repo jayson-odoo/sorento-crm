@@ -5,6 +5,7 @@ import {
   describeTrajectory,
   describeYearAgo,
   trajectoryKey,
+  trendAdvice,
   type TrajectoryEntry,
 } from './trajectory';
 
@@ -28,6 +29,40 @@ const entry = (over: Partial<TrajectoryEntry> = {}): TrajectoryEntry => ({
   agents: [],
   agents_available: false,
   ...over,
+});
+
+describe('trendAdvice - the forecast advisory on a buy', () => {
+  it('a rising book advises more, by its own percentage, rounded up', () => {
+    // 33.33% of 100 = 33.33 -> 34 more. The advisory quotes the rounded percent.
+    expect(trendAdvice(entry(), 100)).toEqual({ direction: 'more', delta: 34, pct: 33 });
+  });
+
+  it('a falling book advises less, rounded down, never a full skip', () => {
+    const t = entry({ verdict: 'falling', change_pct: -28.4 });
+    expect(trendAdvice(t, 10)).toEqual({ direction: 'less', delta: 2, pct: 28 });
+  });
+
+  it('caps the advisory at the buy itself - doubling is the loudest sane suggestion', () => {
+    const t = entry({ change_pct: 300 });
+    expect(trendAdvice(t, 10)).toEqual({ direction: 'more', delta: 10, pct: 300 });
+  });
+
+  it('says nothing on holding, quiet, or no-history books', () => {
+    for (const verdict of ['holding', 'quiet', 'no_history'] as const) {
+      expect(trendAdvice(entry({ verdict }), 100)).toBeNull();
+    }
+  });
+
+  it('says nothing when there is no buy to advise on, or no percentage to base it on', () => {
+    expect(trendAdvice(entry(), 0)).toBeNull();
+    expect(trendAdvice(entry({ change_pct: null }), 100)).toBeNull();
+    expect(trendAdvice(undefined, 100)).toBeNull();
+  });
+
+  it('a delta that rounds to nothing is no advisory at all', () => {
+    // falling 5% of 10 = 0.5 -> floors to 0 -> null, not "consider 0 fewer".
+    expect(trendAdvice(entry({ verdict: 'falling', change_pct: -5 }), 10)).toBeNull();
+  });
 });
 
 describe('the row label', () => {

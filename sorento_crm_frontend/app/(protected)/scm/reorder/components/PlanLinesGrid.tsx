@@ -43,7 +43,7 @@ import {
 import { levelActionLabel, type LevelSuggestion } from '../lib/levelSuggestion';
 import { describePoBook, poOffset, type PoReceipt } from '../lib/poCover';
 import { PlanLevelCell } from './PlanLevelCell';
-import type { TrajectoryEntry } from '../lib/trajectory';
+import { trendAdvice, type TrajectoryEntry } from '../lib/trajectory';
 import { PlanTrendPopover } from './PlanTrendPopover';
 import { PlanLineDecisionCell } from './PlanLineDecisionCell';
 import { PlanPriceCell } from './PlanPriceCell';
@@ -337,14 +337,21 @@ export function PlanLinesGrid({
           <DataGridColumnHeader title="SO" visibility column={column} />
         ),
         cell: ({ row }) => (
-          <span
-            className="tabular-nums"
-            title="Outstanding sales-order quantity - the demand this line covers"
-          >
-            {numCell(row.original.rec.outstanding_sales)}
-          </span>
+          <div className="min-w-0">
+            <span
+              className="tabular-nums"
+              title="Outstanding sales-order quantity - the demand this line covers"
+            >
+              {numCell(row.original.rec.outstanding_sales)}
+            </span>
+            {/* The trend lives on the DEMAND column: it is a statement about the orders
+                behind this number, not about the action (user markup, 2026-08-11). */}
+            <StopClick>
+              <PlanTrendPopover trend={trendFor?.(row.original)} />
+            </StopClick>
+          </div>
         ),
-        size: 80,
+        size: 130,
         enableSorting: true,
         meta: { headerTitle: 'SO (needed)', skeleton: <Skeleton className="h-4 w-10" /> },
       },
@@ -570,6 +577,7 @@ export function PlanLinesGrid({
           const receipts = poFor?.(line) ?? [];
           const poQty = receipts.reduce((t, r) => t + r.remaining, 0);
           const { usePo, buy: buyQty } = poOffset(afterStock, poQty);
+          const advice = trendAdvice(trendFor?.(line), buyQty);
           const crossing = cover.sources.some((x) => x.cross_segment);
           // A cover offer on a project line is purchasing superseding CS: the inquiry said
           // buy it all, and the engine found stock CS did not use. Said out loud, because a
@@ -623,11 +631,43 @@ export function PlanLinesGrid({
                   {supersede}
                 </span>
               ) : null}
-              {/* Trend: the sustain-or-die-off judgment (S13d), clickable for the line
-                  graph and the orders behind it. */}
-              <StopClick>
-                <PlanTrendPopover trend={trendFor?.(line)} />
-              </StopClick>
+              {/* The forecast advisory: the trend's own %-change applied to the buy,
+                  applied by a CLICK, never silently - committed demand stays the driver.
+                  The applied decision carries the reason so the departure explains itself. */}
+              {advice ? (
+                <StopClick>
+                  <button
+                    type="button"
+                    className="block truncate text-2xs text-scm-incoming underline decoration-dotted underline-offset-2 hover:text-primary"
+                    title={`Apply: adjust the buy to ${fmtInt(
+                      advice.direction === 'more' ? buyQty + advice.delta : buyQty - advice.delta,
+                    )}`}
+                    onClick={() =>
+                      onDecide(line, {
+                        ...(cover.coverQty > 0
+                          ? {
+                              stock: {
+                                qty: cover.coverQty,
+                                sources: cover.sources.map((s) => ({
+                                  warehouse_id: s.warehouse_id,
+                                  warehouse_code: s.warehouse_code,
+                                  qty: s.qty,
+                                })),
+                              },
+                            }
+                          : {}),
+                        ...(usePo > 0 ? { po: usePo } : {}),
+                        buy: advice.direction === 'more' ? buyQty + advice.delta : buyQty - advice.delta,
+                        reason: `Trend: orders ${advice.direction === 'more' ? 'rose' : 'fell'} ${advice.pct}%`,
+                      })
+                    }
+                  >
+                    {`Consider ${fmtInt(advice.delta)} ${advice.direction} - orders ${
+                      advice.direction === 'more' ? 'rose' : 'fell'
+                    } ${advice.pct}%`}
+                  </button>
+                </StopClick>
+              ) : null}
             </div>
           );
         },

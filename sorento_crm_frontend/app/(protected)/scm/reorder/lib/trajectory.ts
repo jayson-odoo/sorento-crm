@@ -32,6 +32,49 @@ export interface TrajectoryPayload {
   series: Record<string, TrajectoryEntry>;
 }
 
+/**
+ * The forecast advisory on a buy: how many MORE or FEWER units the trend argues for.
+ *
+ * > "based on the forecast, how much more should i buy, and how much less should i buy,
+ * >  think we need to have this level of intelligence also" (user markup, 2026-08-11)
+ *
+ * The engine's quantity covers COMMITTED demand and stays untouched - an earlier build let
+ * the forecast inflate committed orders (a 2-unit order became 15.9) and that was ruled a
+ * bug. So this is an ADVISORY the buyer applies with one click, never a silent change:
+ * the trend's own %-change (recent window vs the one before), applied to the buy quantity.
+ * Capped at the buy quantity itself - "consider doubling" is the loudest sane suggestion,
+ * and "consider less" can at most take the buy to zero.
+ */
+export interface TrendAdvice {
+  direction: 'more' | 'less';
+  /** Whole units, >= 1, <= the buy quantity. */
+  delta: number;
+  /** The |%| the windows moved, rounded, for the row's sentence. */
+  pct: number;
+}
+
+export function trendAdvice(
+  t: TrajectoryEntry | undefined,
+  buyQty: number,
+): TrendAdvice | null {
+  if (!t || buyQty <= 0) return null;
+  // Only the two verdicts that ARGUE for a different quantity. Holding/quiet/no-history
+  // say nothing about buying more or less, and an advisory on them would be noise.
+  if (t.verdict !== 'rising' && t.verdict !== 'falling') return null;
+  if (t.change_pct === null) return null;
+  const pct = Math.abs(t.change_pct);
+  const raw = (buyQty * pct) / 100;
+  // Rising rounds up (an advisory of 0 more is not an advisory); falling rounds down so
+  // "consider less" never quietly suggests skipping outright.
+  const delta = Math.min(t.verdict === 'rising' ? Math.ceil(raw) : Math.floor(raw), buyQty);
+  if (delta < 1) return null;
+  return {
+    direction: t.verdict === 'rising' ? 'more' : 'less',
+    delta,
+    pct: Math.round(pct),
+  };
+}
+
 /** The Trend line on the row: the verdict AND what to do about it, in plain words. */
 export const TRAJECTORY_ROW_LABEL: Record<TrajectoryVerdict, string> = {
   rising: 'Orders rising - consider more',

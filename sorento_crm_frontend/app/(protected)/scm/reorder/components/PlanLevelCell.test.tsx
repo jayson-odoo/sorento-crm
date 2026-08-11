@@ -15,6 +15,19 @@ class ResizeObserverStub { observe() {} unobserve() {} disconnect() {} }
 Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {});
 Element.prototype.hasPointerCapture = Element.prototype.hasPointerCapture ?? (() => false);
 
+// The month bars render through react-apexcharts, which needs a real layout engine. The
+// assertions here are about WHICH months and quantities feed the chart, not about SVG.
+vi.mock('react-apexcharts', () => ({
+  default: ({ options, series }: {
+    options: { xaxis?: { categories?: string[] } };
+    series: { data: number[] }[];
+  }) => (
+    <div data-testid="level-chart">
+      {(options.xaxis?.categories ?? []).join(' ')} | {series[0]?.data.join(' ')}
+    </div>
+  ),
+}));
+
 const suggestion = (over: Partial<LevelSuggestion> = {}): LevelSuggestion => ({
   product_id: 'p1',
   warehouse_id: 'w1',
@@ -81,12 +94,14 @@ describe('PlanLevelCell', () => {
 });
 
 describe('the derivation and the amendment (S14)', () => {
-  it('shows the months behind the average, so the sums can be checked', () => {
+  it('graphs the months behind the average, so the sums can be checked at a glance', async () => {
     render(<PlanLevelCell suggestion={suggestion()} />);
     fireEvent.click(screen.getByRole('button', { name: /level suggestion/i }));
 
-    expect(screen.getByText('2026-06')).toBeInTheDocument();
-    expect(screen.getAllByText('12')).toHaveLength(3);
+    // findBy: the chart arrives through next/dynamic, so it mounts a tick later.
+    const chart = await screen.findByTestId('level-chart');
+    expect(chart.textContent).toContain('2026-06');
+    expect(chart.textContent).toContain('12 12 12');
   });
 
   it('lets the buyer put their own figure beside the engine’s', async () => {
