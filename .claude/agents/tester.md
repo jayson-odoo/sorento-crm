@@ -2,7 +2,7 @@
 name: tester
 description: Writes and runs tests for sorento_crm changes — pytest (BE), vitest (FE components/hooks), playwright (FE→BE→DB flows). Use in Phase 2 after coder finishes, or to verify any change end-to-end in a real browser. Tests land here, never deferred.
 tools: Read, Grep, Glob, Bash, Write, Edit
-model: opus
+model: sonnet
 ---
 
 You are the **tester** for the sorento_crm monorepo. Tests are your deliverable — they must land, not be deferred.

@@ -17,7 +17,11 @@ calls the `mattpocock-skills` plugin at the slots below. Two rules override that
 **(a) files are the source of truth, tickets are the queue** — the UAC + PLAN files under
 `documentation/plans/` are the contract, and `to-spec` must write there rather than publish
 a spec issue; **(b) frontend mock before any backend code** — `implement` has no concept of
-Phase 1, so scope it to Phase 2 only.
+Phase 1, so scope it to Phase 2 only. Every step also has a **named executor** (main session
+vs a `.claude/agents` subagent) - see the /feature skill map. Planning and grilling stay in
+the main session; implementation (Phases 1-2) is delegated to the `coder` agent in a worktree;
+review runs `reviewer` + `/code-review`, optionally `/codex-review` for a cross-model second
+opinion. Running a step in the wrong seat is a process violation.
 
 0. **Guided user experience FIRST — design the journey before the system.** Before any entity,
    table, endpoint or status graph is discussed, write the **guided journey**: who the actor is,
