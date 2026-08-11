@@ -110,7 +110,7 @@ def test_measured_numeric_keys_carry_a_unit(db):
     8 next to a 800mm basin as though they were the same kind of number.
     """
     # Counted, not measured: towel bars, bowls, spray patterns, pieces in a set.
-    counts = {"bowl_count", "bar_count", "spray_functions", "piece_count"}
+    counts = {"bowl_count", "bar_count", "spray_functions", "piece_count", "way_count"}
     # Every unit the vocabulary is allowed to be in. A new one is a deliberate act:
     # the ranker compares like with like, so a unit nothing normalises is a silent
     # mismatch rather than an error.

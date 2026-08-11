@@ -187,6 +187,9 @@ EXTRA_TYPE_TOKENS: list[tuple[str, str]] = [
     ("DRAIN PIPE", "drain_pipe"),
     ("STOP COCK", "stop_cock"),
     ("STOPCOCK", "stop_cock"),
+    ("SHOWER SEAT", "shower_seat"),
+    ("HANDRAIL", "handrail"),
+    ("HAND RAIL", "handrail"),
     ("BOTTLE TRAP", "bottle_trap"),
     ("CABINET HINGES", "hinge"),
     ("HINGES", "hinge"),
@@ -236,6 +239,11 @@ CAPACITY_OZ_RE = re.compile(r"(?<![A-Z0-9])(\d+(?:\.\d+)?)\s*OZ\b", re.IGNORECAS
 
 # Pumps are quoted in horsepower on 48 rows and kilowatts on 14; customers say HP.
 POWER_HP_RE = re.compile(r"(\d+(?:\.\d+)?)\s*HP\b")
+
+# "2-Ways", "3 WAYS": how many outlets the diverter feeds. NOT the same fact as
+# spray_functions - SRTWT9605-RG is a 2-way set with a 3-function hand shower, and
+# folding them together would answer "2 ways" with 3-function sets.
+WAY_COUNT_RE = re.compile(r"\b(\d)\s*-?\s*WAYS?\b")
 
 # A shower with a temperature valve - asked for by name, and 44 rows say so.
 THERMOSTATIC_RE = re.compile(r"\bTHERMOSTATIC\b")
@@ -490,6 +498,7 @@ FINISH_WORDS: list[tuple[str, str]] = [
     ("BLACK", "black"),  # 41
     ("WHITE", "white"),
     ("GREY", "grey"),
+    ("SATIN", "satin_chrome"),  # 20 flyer cards, and the only finish word on some
 ]
 
 # Trailing code segment -> finish. Everything absent here yields nothing: DIY is
@@ -540,10 +549,15 @@ _SMART_WC_RE = re.compile(r"INTELLIGENT|AUTO\s*INDUCTION|SMART\s*(?:TOILET|WC)")
 MAX_PLAUSIBLE_MM = 5000
 
 # 2 to 4 numbers separated by x / X / *, with optional spaces and an optional unit.
+# Each number may be LABELLED and may carry its own unit, because the flyer writes
+# "L750 x W165 x H247mm" and "D L255xW125xH255mm" while the product master writes
+# "1500x750x630MM". 188 flyer cards use the labelled form and not one of them parsed, so
+# a grab bar printed its exact size on the card and still could not be found by it.
+_DIM_PART = r"(?:[LWHDlwhd]\s*)?(\d+(?:\.\d+)?)\s*(?:MM|mm)?"
 _DIM_RE = re.compile(
-    r"(\d+(?:\.\d+)?)\s*[xX*]\s*(\d+(?:\.\d+)?)"
-    r"(?:\s*[xX*]\s*(\d+(?:\.\d+)?))?"
-    r"(?:\s*[xX*]\s*(\d+(?:\.\d+)?))?",
+    rf"{_DIM_PART}\s*[xX*]\s*{_DIM_PART}"
+    rf"(?:\s*[xX*]\s*{_DIM_PART})?"
+    rf"(?:\s*[xX*]\s*{_DIM_PART})?",
 )
 
 # "1 BOWL", "2BOWL", and the spelled-out "SINGLE BOWL" / "DOUBLE BOWL (...)". Only a
@@ -772,6 +786,11 @@ def apply_rules(rules_by_key: dict[str, list[dict]], texts: dict[str, str], code
     could not express while one loop ran them together.
     """
     code_kinds = {"code_suffix", "code_contains", "code_starts_with"}
+    # Keys a product may legitimately hold more than one of. SRTWT9605-RG is "Rose Gold
+    # + Matt Black" - both true, and a customer asking for either is right. First-match
+    # -wins had to discard one of them, and which one it discarded depended on rule
+    # order, so the answer was arbitrary rather than merely incomplete.
+    multi = MULTI_VALUE_KEYS
     found: dict[str, tuple] = {}
     for key, rules in (rules_by_key or {}).items():
         default_scope = _DEFAULT_SCOPE_BY_KEY.get(key, "any")
@@ -780,6 +799,8 @@ def apply_rules(rules_by_key: dict[str, list[dict]], texts: dict[str, str], code
         for source in (primary, "flyer", "code"):
             if key in found:
                 break
+            collected: list = []
+            evidences: list[str] = []
             for rule in rules or []:
                 is_code_rule = str(rule.get("match")) in code_kinds
                 if is_code_rule != (source == "code"):
@@ -792,12 +813,28 @@ def apply_rules(rules_by_key: dict[str, list[dict]], texts: dict[str, str], code
                 value, evidence = hit
                 if value is None:
                     continue
+                if key in multi:
+                    # Keep every distinct tone this source states, then stop: a later
+                    # source must not add to what a better one already answered.
+                    if value not in collected:
+                        collected.append(value)
+                        evidences.append(evidence)
+                    continue
                 found[key] = (value, evidence, "flyer" if source == "flyer" else source)
                 break
+            if collected:
+                found[key] = (
+                    collected[0] if len(collected) == 1 else collected,
+                    " + ".join(evidences),
+                    "flyer" if source == "flyer" else source,
+                )
     return found
 
 
-# Keys measured in millimetres, so the stored value carries its unit.
+# Keys a product may hold more than one of at once. Two-tone taps and shower sets are
+# printed that way on 23 flyer cards ("Rose Gold + Matt Black").
+MULTI_VALUE_KEYS = {"finish"}
+
 # Keys measured in millimetres, so the stored value carries its unit.
 _MM_KEYS = {
     "trap_length",
@@ -1083,7 +1120,7 @@ def _apply_scope(out: "DerivedSpec", applies_when: dict[str, dict]) -> None:
 # which kept their old values and reported a successful run. The failure is invisible:
 # the job says "skipped", which is exactly what it says when there is genuinely nothing
 # to do.
-DERIVATION_VERSION = "22"
+DERIVATION_VERSION = "26"
 
 
 def _input_hash(

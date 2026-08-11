@@ -158,6 +158,9 @@ def _rules_from_shipped_tables() -> dict[str, list[dict]]:
         "water_supply": contains(d.WATER_SUPPLY_TOKENS),
         "steel_grade": contains(d.STEEL_GRADE_TOKENS),
         "furniture_type": contains(d.FURNITURE_TOKENS),
+        "way_count": [
+            {"match": "regex", "pattern": d.WAY_COUNT_RE.pattern, "capture": 1}
+        ],
         "piece_count": [
             {"match": "regex", "pattern": d.PIECE_COUNT_RE.pattern, "capture": 1}
         ],
@@ -598,6 +601,8 @@ SPEC_REGISTRY_SEED: list[dict] = [
             "bottle_trap",
             "water_pump",
             "hinge",
+            "shower_seat",
+            "handrail",
             "drain_pipe",
             "stop_cock",
         ],
@@ -642,6 +647,8 @@ SPEC_REGISTRY_SEED: list[dict] = [
             "bottle_trap": ["bottle trap", "basin trap"],
             "water_pump": ["water pump", "pressure pump", "booster pump", "pam air"],
             "hinge": ["hinge", "hinges", "cabinet hinge", "door hinge"],
+            "shower_seat": ["shower seat", "foldable seat", "bath seat"],
+            "handrail": ["handrail", "hand rail", "safety rail", "toilet safety rail"],
             "drain_pipe": ["drain pipe", "waste pipe", "extension pipe"],
             "stop_cock": ["stop cock", "stopcock", "isolating valve"],
         },
@@ -830,6 +837,19 @@ SPEC_REGISTRY_SEED: list[dict] = [
         # 1.2m" means to a customer, and nothing beyond half a metre is the same hose.
         "match_tolerance": 100.0,
         "match_decay": 500.0,
+    },
+    {
+        "spec_key": "way_count",
+        "label": "Ways (diverter outlets)",
+        "data_type": "numeric",
+        # How many outlets the diverter feeds. Deliberately separate from
+        # spray_functions: a 2-way set can carry a 3-function hand shower, and the
+        # flyer prints both on the same card.
+        "synonyms": {"_self": ["way", "ways", "outlet", "outlets", "diverter way"]},
+        "measured_coverage": 222,
+        "rank_weight": 3.0,
+        "match_tolerance": 0.0,
+        "match_decay": 1.0,
     },
     {
         "spec_key": "piece_count",
@@ -1158,7 +1178,14 @@ def seed_spec_registry(db: Session, *, commit: bool = False) -> dict:
             # Derivation is first-match-wins, so a more specific token added later
             # ("DRAIN PIPE" before "BOTTLE TRAP") is inert if it is merely appended:
             # "300MM DRAIN PIPE FOR 32MM BOTTLE TRAP" kept deriving the trap.
-            human = [r for r in kept if not r.get(SEED_RULE_MARKER)]
+            # A stored rule identical to one the seed ships IS the seed's, marker or
+            # not: rules written before the marker existed carry nothing, and treating
+            # them as a human's kept every shipped rule twice and in the wrong order.
+            human = [
+                r
+                for r in kept
+                if not r.get(SEED_RULE_MARKER) and _rule_identity(r) not in wanted
+            ]
             merged = human + list(shipped_for_key)
             if stored_rules and merged != stored_rules:
                 row.derivation_rules = merged

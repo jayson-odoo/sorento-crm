@@ -1,6 +1,8 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type {
+  FindabilityResult,
+  FindabilityRun,
   SpecDerivationRule,
   SpecSearchPolicyRow,
   ProductSpecDetail,
@@ -356,6 +358,70 @@ export async function rereadCatalogue(): Promise<{ status: string }> {
   });
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to start reading the catalogue'));
+  }
+  return response.json();
+}
+
+// --- Findability: can a customer find this product by describing it? ---------------
+
+export async function getFlyers(): Promise<{
+  flyers: { source_id: string; source_label: string; cards: number; last_run: string | null }[];
+}> {
+  const response = await apiFetch(
+    '/api/v1/master-data/product-specifications/findability/flyers',
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load flyers'));
+  }
+  return response.json();
+}
+
+export async function runFindability(params: {
+  sourceId?: string;
+  window?: number;
+  limit?: number;
+}): Promise<FindabilityRun> {
+  const search = new URLSearchParams({
+    ...(params.sourceId ? { source_id: params.sourceId } : {}),
+    ...(params.window ? { window: String(params.window) } : {}),
+    ...(params.limit ? { limit: String(params.limit) } : {}),
+  });
+  const response = await apiFetch(
+    `/api/v1/master-data/product-specifications/findability/run?${search.toString()}`,
+    { method: 'POST' },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to run the findability sweep'));
+  }
+  return response.json();
+}
+
+export async function getFindabilityRuns(
+  sourceId?: string,
+): Promise<{ runs: FindabilityRun[] }> {
+  const search = new URLSearchParams(sourceId ? { source_id: sourceId } : {});
+  const response = await apiFetch(
+    `/api/v1/master-data/product-specifications/findability/runs?${search.toString()}`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load past sweeps'));
+  }
+  return response.json();
+}
+
+export async function getFindabilityRun(
+  runId: string,
+  params: { boundary?: string; q?: string } = {},
+): Promise<{ run: FindabilityRun; results: FindabilityResult[] }> {
+  const search = new URLSearchParams({
+    ...(params.boundary ? { boundary: params.boundary } : {}),
+    ...(params.q ? { q: params.q } : {}),
+  });
+  const response = await apiFetch(
+    `/api/v1/master-data/product-specifications/findability/runs/${runId}?${search.toString()}`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load the sweep'));
   }
   return response.json();
 }
