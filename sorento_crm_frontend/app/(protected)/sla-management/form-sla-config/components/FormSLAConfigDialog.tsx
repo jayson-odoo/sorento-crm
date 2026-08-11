@@ -186,6 +186,9 @@ export default function FormSLAConfigDialog({
       setIsActive(true);
       setNotifyAssignee(true);
       setNotifyOnEscalation(true);
+      // Without this, a new stage silently inherits the last-viewed stage's grace
+      // as an explicit pin instead of blank-inherits-global.
+      setGraceSeconds('');
     }
   }, [existing, open]);
 
