@@ -395,8 +395,33 @@ def _register_invertible(monkeypatch, spy, *, key="zzt.undoable"):
     return action
 
 
+def _seed_entity(db, entity_id, *, status="submitted"):
+    """A real purchase_requests row behind the action. The eligibility guardrail
+    reads the entity's CURRENT status (a voided or deleted form refuses undo), so an
+    undoable action needs its form to actually exist."""
+    from app.models.procurement import PurchaseRequestHeader
+
+    existing = (
+        db.query(PurchaseRequestHeader)
+        .filter(PurchaseRequestHeader.id == str(entity_id))
+        .first()
+    )
+    if existing is not None:
+        return existing
+    header = PurchaseRequestHeader(
+        id=str(entity_id),
+        request_number=f"{MARKER}{str(entity_id)[:6]}",
+        request_type="purchase_request",
+        status=status,
+    )
+    db.add(header)
+    db.commit()
+    return header
+
+
 def _commit_one(db, svc, entity_id, key="zzt.undoable"):
     """Dispatch at grace 0 so the action commits straight away and becomes undoable."""
+    _seed_entity(db, entity_id)
     return svc.dispatch(
         action_key=key,
         entity_type="purchase_request",
@@ -990,3 +1015,328 @@ def test_reopen_tracker_writes_a_reopened_event(db):
         .all()
     )
     assert [e.event_type for e in events] == ["reopened"]
+
+
+# --------------------------------------------------------------------------------------
+# Ultra-review hardening (PR #123): immediate path, undo claim release, terminal forms
+# --------------------------------------------------------------------------------------
+
+
+def test_immediate_path_never_persists_a_pending_row(db, monkeypatch):
+    """Services commit internally, and a durable pending row with commit_at=NULL is
+    invisible to the sweep AND the lazy commit - a crash then bricks the form behind
+    the one-pending unique index. So the immediate path must hold the row out of the
+    session until the action has run."""
+    observed: list[int] = []
+
+    class _PeekSpy(_Spy):
+        def execute(self, db_, payload):
+            # What the wrapped method would see if it committed right now.
+            observed.append(
+                db_.query(SlaFormAction)
+                .filter(SlaFormAction.source_entity_id == payload["request_id"])
+                .count()
+            )
+            super().execute(db_, payload)
+
+    spy = _PeekSpy()
+    _register(monkeypatch, spy)
+    entity_id = _entity_id()
+
+    _service(db).dispatch(
+        action_key="zzt.test_action",
+        entity_type="purchase_request",
+        entity_id=entity_id,
+        payload={"request_id": entity_id},
+        actor_id=None,
+        channel=FORM_ACTION_CHANNEL_UI,
+        grace_seconds=0,
+    )
+
+    assert observed == [0], "no history row may exist while the action runs"
+    rows = (
+        db.query(SlaFormAction)
+        .filter(SlaFormAction.source_entity_id == entity_id)
+        .all()
+    )
+    assert [r.status for r in rows] == [FORM_ACTION_COMMITTED]
+
+
+def test_immediate_failure_records_a_failed_row_not_a_pending_one(db, monkeypatch):
+    """The failure still lands in history - but terminal, never pending."""
+
+    class _BoomSpy(_Spy):
+        def execute(self, _db, _payload):
+            raise RuntimeError("wrapped method exploded")
+
+    spy = _BoomSpy()
+    _register(monkeypatch, spy)
+    entity_id = _entity_id()
+
+    with pytest.raises(RuntimeError):
+        _service(db).dispatch(
+            action_key="zzt.test_action",
+            entity_type="purchase_request",
+            entity_id=entity_id,
+            payload={"request_id": entity_id},
+            actor_id=None,
+            channel=FORM_ACTION_CHANNEL_UI,
+            grace_seconds=0,
+        )
+
+    rows = (
+        db.query(SlaFormAction)
+        .filter(SlaFormAction.source_entity_id == entity_id)
+        .all()
+    )
+    assert [r.status for r in rows] == ["failed"]
+    assert "exploded" in rows[0].error_text
+
+
+def test_failed_undo_releases_the_claim_so_a_retry_can_succeed(db, monkeypatch):
+    """The claim commits before the reversal runs (needed for the two-undo race), so
+    a failing invert must hand the claim BACK - otherwise the row reads `undone`, the
+    domain was never reversed, and every retry is refused as already-undone forever."""
+
+    class _FlakySpy(_RevertSpy):
+        def __init__(self):
+            super().__init__()
+            self.attempts = 0
+
+        def invert(self, db_, record):
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("connection dropped mid-reversal")
+            super().invert(db_, record)
+
+    spy = _FlakySpy()
+    _register_invertible(monkeypatch, spy)
+    entity_id = _entity_id()
+    svc = _service(db)
+    _commit_one(db, svc, entity_id)
+
+    with pytest.raises(RuntimeError):
+        svc.undo(
+            source_entity_type="purchase_request",
+            source_entity_id=entity_id,
+            actor_id=None,
+            reason="first try",
+            has_permission=True,
+        )
+
+    row = db.query(SlaFormAction).filter(SlaFormAction.source_entity_id == entity_id).one()
+    assert row.status == FORM_ACTION_COMMITTED, "claim must be released on failure"
+    assert row.undone_at is None and row.undo_reason is None
+
+    # The retry now runs the whole reversal.
+    svc.undo(
+        source_entity_type="purchase_request",
+        source_entity_id=entity_id,
+        actor_id=None,
+        reason="second try",
+        has_permission=True,
+    )
+    db.refresh(row)
+    assert row.status == "undone"
+    assert spy.restored, "the retry actually reversed the state"
+
+
+def test_undo_is_refused_on_a_voided_form(db, monkeypatch):
+    """The void routes do not go through the dispatcher, so the guardrail cannot see
+    the transition in sibling action rows - it must read the entity itself. Undoing
+    on top would silently un-void the form."""
+    from app.models.procurement import PurchaseRequestHeader
+    from app.services.form_action_undo import BLOCK_STATUS_MOVED, evaluate
+
+    spy = _RevertSpy()
+    _register_invertible(monkeypatch, spy)
+    entity_id = _entity_id()
+    svc = _service(db)
+    _commit_one(db, svc, entity_id)
+
+    db.query(PurchaseRequestHeader).filter(
+        PurchaseRequestHeader.id == entity_id
+    ).update({"status": "voided"}, synchronize_session=False)
+    db.commit()
+
+    verdict = evaluate(
+        db,
+        source_entity_type="purchase_request",
+        source_entity_id=entity_id,
+        has_permission=True,
+    )
+    assert verdict.can_undo is False
+    assert verdict.blocked_reason == BLOCK_STATUS_MOVED
+
+    from app.services.error_handler import AppException
+
+    with pytest.raises(AppException):
+        svc.undo(
+            source_entity_type="purchase_request",
+            source_entity_id=entity_id,
+            actor_id=None,
+            reason="should be refused",
+            has_permission=True,
+        )
+    assert spy.restored == []
+
+
+def test_undo_is_refused_when_the_form_row_is_gone(db, monkeypatch):
+    """A hard-deleted form has nothing to restore onto - refuse instead of half-running
+    the tracker side effects."""
+    from app.models.procurement import PurchaseRequestHeader
+    from app.services.form_action_undo import BLOCK_STATUS_MOVED, evaluate
+
+    spy = _RevertSpy()
+    _register_invertible(monkeypatch, spy)
+    entity_id = _entity_id()
+    svc = _service(db)
+    _commit_one(db, svc, entity_id)
+
+    db.query(PurchaseRequestHeader).filter(
+        PurchaseRequestHeader.id == entity_id
+    ).delete(synchronize_session=False)
+    db.commit()
+
+    verdict = evaluate(
+        db,
+        source_entity_type="purchase_request",
+        source_entity_id=entity_id,
+        has_permission=True,
+    )
+    assert verdict.can_undo is False
+    assert verdict.blocked_reason == BLOCK_STATUS_MOVED
+
+
+def test_send_for_approval_declares_it_tells_the_contact():
+    """set_pending_approval messages the contact since the 2026-08 fix; the undo
+    dialog keys its disclosure off this flag, so a stale False hides the one
+    consequence the dialog exists to disclose."""
+    import app.services.form_actions  # noqa: F401
+    from app.services.form_action_registry import get_action
+
+    assert get_action("pr.send_for_approval").tells_contact is True
+
+
+def test_si_respond_capture_widens_to_the_submitted_fields(db):
+    """update_inquiry_and_reply writes every submitted field, so the snapshot must
+    cover them - a fixed 3-column capture makes undo restore a half-reverted record."""
+    import app.services.form_actions  # noqa: F401
+    from app.services.form_action_registry import get_action
+    from app.models.procurement import StockInquiry
+
+    inquiry = StockInquiry(
+        id=str(uuid.uuid4()),
+        inquiry_number=f"{MARKER}si",
+        status="pending_purchasing",
+        remark="original remark",
+        quantity=5,
+    )
+    db.add(inquiry)
+    db.commit()
+
+    action = get_action("si.purchasing_respond")
+    snapshot = action.capture(
+        db,
+        {
+            "inquiry_id": str(inquiry.id),
+            "inquiry_data": {"remark": "edited remark", "quantity": 12},
+        },
+    )
+
+    # Declared columns AND the payload-touched ones.
+    assert snapshot["status"] == "pending_purchasing"
+    assert snapshot["remark"] == "original remark"
+    assert str(snapshot["quantity"]) == "5"
+    assert "respond_inbox_url" in snapshot
+
+
+def test_restore_never_coerces_date_like_free_text(db, monkeypatch):
+    """An approver whose comment is '2025-10-01' must get their STRING back on undo,
+    not a datetime written into a String column. Only values that were datetimes at
+    capture time round-trip as datetimes (the $dt marker)."""
+    from app.services.form_actions import _jsonable, _restore
+
+    assert _restore(_jsonable("2025-10-01")) == "2025-10-01"
+    assert _restore(_jsonable("plain text")) == "plain text"
+    stamp = datetime(2026, 8, 11, 9, 30, 0)
+    assert _restore(_jsonable(stamp)) == stamp
+    # Legacy snapshots stored datetimes as bare ISO text - passes through unchanged
+    # (Postgres casts it on write to a timestamp column).
+    assert _restore("2026-08-11T09:30:00") == "2026-08-11T09:30:00"
+
+
+def test_contact_corrections_resolve_the_send_identifier(db, monkeypatch):
+    """`contact_id` is the internal respond_contacts UUID; the send API needs the
+    resolved identifier. Passing the raw FK 400s every correction, silently."""
+    from app.models.procurement import StockInquiry
+    from app.services import form_action_notify
+    from app.services.procurement_service import StockInquiryService
+
+    from app.models.access import RespondContact
+
+    # The resolver verifies against respond_contacts, so seed the real chain: an
+    # internal UUID row whose respond_io_id is what the send API actually needs.
+    internal_uuid = str(uuid.uuid4())
+    db.add(RespondContact(id=internal_uuid, respond_io_id="123456789", phone_number="+60123456789"))
+    db.commit()
+    inquiry = StockInquiry(
+        id=str(uuid.uuid4()),
+        inquiry_number=f"{MARKER}si-notify",
+        status="pending_purchasing",
+        contact_id=internal_uuid,
+        respond_inbox_url=f"https://app.respond.io/space/sp_x/inbox/{internal_uuid}",
+    )
+    db.add(inquiry)
+    db.commit()
+
+    sent: list[dict] = []
+    monkeypatch.setattr(
+        StockInquiryService,
+        "_enqueue_stock_inquiry_respond_message",
+        lambda self, **kwargs: sent.append(kwargs),
+    )
+
+    class _Record:
+        source_entity_type = "stock_inquiry"
+        source_entity_id = str(inquiry.id)
+        id = str(uuid.uuid4())
+
+    form_action_notify._notify_contact(
+        db, _Record(), number=f"{MARKER}si-notify", reason="testing"
+    )
+
+    assert len(sent) == 1
+    identifier = sent[0]["identifier"]
+    # A legacy inbox URL carries the INTERNAL uuid; the resolver must still hand the
+    # send path the numeric respond_io_id, never the raw FK.
+    assert identifier != internal_uuid
+    assert identifier == "123456789"
+
+
+def test_last_terminal_outcome_surfaces_the_voided_action(db, monkeypatch):
+    """A parked action that was voided (or failed) must be reportable - `pending`
+    going null looks identical to success otherwise, and the user walks away
+    believing their action applied (AC-U-4)."""
+    spy = _Spy()
+    _register(monkeypatch, spy)
+    entity_id = _entity_id()
+    svc = _service(db)
+
+    parked = svc.dispatch(
+        action_key="zzt.test_action",
+        entity_type="purchase_request",
+        entity_id=entity_id,
+        payload={"request_id": entity_id},
+        actor_id=None,
+        channel=FORM_ACTION_CHANNEL_UI,
+        grace_seconds=30,
+    )
+    row = db.query(SlaFormAction).filter(SlaFormAction.id == parked.action_id).one()
+    svc.void_as_ineligible(row, "someone else decided the form")
+
+    terminal = svc.last_terminal_outcome("purchase_request", entity_id)
+    assert terminal is not None
+    assert str(terminal.id) == parked.action_id
+    assert terminal.status == "ineligible"
+    assert "someone else decided" in terminal.error_text

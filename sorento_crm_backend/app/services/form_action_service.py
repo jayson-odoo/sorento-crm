@@ -154,19 +154,21 @@ class FormActionService:
             status=FORM_ACTION_PENDING,
             commit_at=_utc_naive_now() + timedelta(seconds=grace_seconds) if defers else None,
         )
-        self.db.add(row)
-        try:
-            self.db.flush()
-        except IntegrityError:
-            # The partial unique index caught a second pending action on this form.
-            # Rolling back keeps the session usable for the caller's error response.
-            self.db.rollback()
-            raise handle_conflict(
-                "Another action on this form is still pending. Wait for it to apply, "
-                "or undo it first."
-            )
 
         if defers:
+            # Only a DEFERRED action is ever persisted as `pending` - the row IS the
+            # parked work, and the partial unique index enforces one at a time.
+            self.db.add(row)
+            try:
+                self.db.flush()
+            except IntegrityError:
+                # The partial unique index caught a second pending action on this form.
+                # Rolling back keeps the session usable for the caller's error response.
+                self.db.rollback()
+                raise handle_conflict(
+                    "Another action on this form is still pending. Wait for it to apply, "
+                    "or undo it first."
+                )
             self.db.commit()
             _audit(
                 self.db,
@@ -185,6 +187,14 @@ class FormActionService:
                 window_seconds=grace_seconds,
             )
 
+        # Immediate path: the row is deliberately NOT in the session while the wrapped
+        # method runs. Services commit internally, and a flushed `pending` row with
+        # `commit_at=NULL` made durable by that internal commit is invisible to both
+        # the sweep (filters commit_at IS NOT NULL) and the lazy commit - a crash
+        # before the COMMITTED stamp then bricks the form: the partial unique index
+        # 409s every future action forever. Holding the row back also means two
+        # concurrent immediate actions no longer collide on that index; the wrapped
+        # method's own premise check arbitrates them, exactly as before this feature.
         result = self._execute(row, action)
         return DispatchResult(deferred=False, action_id=str(row.id), result=result)
 
@@ -270,7 +280,12 @@ class FormActionService:
         return str(row[0]) if row else None
 
     def _execute(self, row: SlaFormAction, action, *, already_claimed: bool = False):
-        """Run the real service method and stamp the outcome onto the history row."""
+        """Run the real service method and stamp the outcome onto the history row.
+
+        `already_claimed` (the deferred commit path) means the row is durable; the
+        immediate path hands in a row that is NOT in the session yet, so the wrapped
+        method's internal commits cannot persist it half-written.
+        """
         # The stage this action is about to close, recorded before it runs - the undo
         # has no other way to find which tracker to reopen once it is resolved.
         prior_tracking_id = self._active_tracker_id(
@@ -280,17 +295,25 @@ class FormActionService:
             result = action.execute(self.db, dict(row.payload_json or {}))
         except Exception as exc:
             self.db.rollback()
-            row_id = str(row.id)
-            self.db.query(SlaFormAction).filter(SlaFormAction.id == row_id).update(
-                {
-                    "status": FORM_ACTION_FAILED,
-                    "error_text": str(exc)[:2000],
-                    "resolved_at": _utc_naive_now(),
-                },
-                synchronize_session=False,
-            )
+            if already_claimed:
+                row_id = str(row.id)
+                self.db.query(SlaFormAction).filter(SlaFormAction.id == row_id).update(
+                    {
+                        "status": FORM_ACTION_FAILED,
+                        "error_text": str(exc)[:2000],
+                        "resolved_at": _utc_naive_now(),
+                    },
+                    synchronize_session=False,
+                )
+            else:
+                # The row was never persisted; record the failure as a fresh terminal
+                # row so the history still shows the attempt.
+                row.status = FORM_ACTION_FAILED
+                row.error_text = str(exc)[:2000]
+                row.resolved_at = _utc_naive_now()
+                self.db.add(row)
             self.db.commit()
-            logger.warning("Form action %s failed: %s", row_id, exc)
+            logger.warning("Form action %s failed: %s", row.id, exc)
             raise
 
         # Whatever stage is open now is the one the commit spawned - unless nothing
@@ -302,6 +325,9 @@ class FormActionService:
         row.committed_at = _utc_naive_now()
         row.prior_tracking_id = prior_tracking_id
         row.spawned_tracking_id = spawned if spawned != prior_tracking_id else None
+        # No-op for the already-persistent deferred row; first persistence for the
+        # immediate one - it enters history already committed, never as `pending`.
+        self.db.add(row)
         self.db.commit()
         _audit(
             self.db,
@@ -457,13 +483,37 @@ class FormActionService:
             raise handle_conflict("This action has already been undone.")
         self.db.commit()
 
-        action = action_for(row.action_key)
-        action.invert(self.db, row)
+        try:
+            action = action_for(row.action_key)
+            action.invert(self.db, row)
 
-        if row.spawned_tracking_id:
-            undo_ops.void_tracker(self.db, str(row.spawned_tracking_id), reason)
-        if row.prior_tracking_id:
-            undo_ops.reopen_tracker(self.db, str(row.prior_tracking_id))
+            if row.spawned_tracking_id:
+                undo_ops.void_tracker(self.db, str(row.spawned_tracking_id), reason)
+            if row.prior_tracking_id:
+                undo_ops.reopen_tracker(self.db, str(row.prior_tracking_id))
+        except Exception:
+            # The claim is durable but the reversal did not complete. Left as-is the
+            # row reads `undone` while the domain was never reversed, and every retry
+            # is refused as already-undone - a permanent half-undo. Hand the claim
+            # back so the retry can run the whole reversal again (invert and the
+            # tracker ops are idempotent: they write absolute prior values).
+            try:
+                self.db.rollback()
+                self.db.query(SlaFormAction).filter(SlaFormAction.id == row.id).update(
+                    {
+                        "status": FORM_ACTION_COMMITTED,
+                        "undone_by_id": None,
+                        "undone_at": None,
+                        "undo_reason": None,
+                    },
+                    synchronize_session=False,
+                )
+                self.db.commit()
+            except Exception:
+                logger.exception(
+                    "Could not release the undo claim on form action %s", row.id
+                )
+            raise
 
         try:
             from app.services.form_action_notify import notify_undo
@@ -497,6 +547,27 @@ class FormActionService:
                 SlaFormAction.source_entity_id == str(entity_id),
                 SlaFormAction.status == FORM_ACTION_PENDING,
             )
+            .first()
+        )
+
+    def last_terminal_outcome(
+        self, entity_type: str, entity_id: str
+    ) -> Optional[SlaFormAction]:
+        """The most recent action that ended `ineligible` or `failed`.
+
+        Rides on GET /current so the FE can tell the user WHY a parked action
+        vanished - without it, a deferred approve that was voided underneath (or blew
+        up at commit) just disappears: banner gone, CTAs back, no signal, and the
+        user walks away believing it applied (AC-U-4).
+        """
+        return (
+            self.db.query(SlaFormAction)
+            .filter(
+                SlaFormAction.source_entity_type == entity_type,
+                SlaFormAction.source_entity_id == str(entity_id),
+                SlaFormAction.status.in_([FORM_ACTION_INELIGIBLE, FORM_ACTION_FAILED]),
+            )
+            .order_by(SlaFormAction.resolved_at.desc().nullslast())
             .first()
         )
 

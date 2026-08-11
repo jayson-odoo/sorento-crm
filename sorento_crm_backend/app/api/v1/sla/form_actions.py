@@ -25,6 +25,13 @@ from app.services.form_action_registry import get_action
 from app.services.form_action_service import FormActionService
 from app.services.form_sla_service import FORM_SLA_TYPES
 
+# Module scope, not per-endpoint: the lazy commit in GET /current calls
+# `action_for(row.action_key)` and on an API worker that has never served a
+# dispatching request the registry would be empty - the poll for a due action would
+# 500 with a KeyError, react-query would stop polling, and the banner would vanish
+# while the action stayed parked server-side (the exact loss AC-D-5 forbids).
+import app.services.form_actions  # noqa: E402,F401  (registers the actions)
+
 router = APIRouter()
 
 
@@ -111,8 +118,28 @@ async def get_current_form_action(
                 service.commit_one(row)
                 row = service.pending_for(source_entity_type, source_entity_id)
 
+        # The terminal outcome of the most recent action that did NOT apply. The FE
+        # shows it only when it matches the pending action it was just watching, so
+        # an old failure cannot resurface on an unrelated page load.
+        terminal = service.last_terminal_outcome(source_entity_type, source_entity_id)
+        last_outcome = None
+        if terminal is not None:
+            terminal_action = get_action(terminal.action_key)
+            last_outcome = {
+                "action_id": str(terminal.id),
+                "action_key": terminal.action_key,
+                "action_label": terminal_action.label if terminal_action else "Action",
+                "status": terminal.status,
+                "reason": (terminal.error_text or "").strip()
+                or "the form changed while the action was waiting",
+                "resolved_at": (
+                    terminal.resolved_at.isoformat() if terminal.resolved_at else None
+                ),
+            }
+
         return {
-            "pending": _serialize_pending(db, row, current_user.get("id")) if row else None
+            "pending": _serialize_pending(db, row, current_user.get("id")) if row else None,
+            "last_outcome": last_outcome,
         }
     except HTTPException:
         raise

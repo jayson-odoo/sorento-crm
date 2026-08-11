@@ -65,6 +65,32 @@ def _user_name(db: Session, user_id: Optional[str]) -> Optional[str]:
     return ((user.name or user.email) if user else None) or None
 
 
+def _entity_status(db: Session, source_entity_type: str, source_entity_id: str):
+    """The form's CURRENT lifecycle status, or None when the row is gone.
+
+    The guardrail cannot rely on sibling `sla_form_actions` rows alone: the void
+    routes (and any future endpoint that skips the dispatcher) change the entity
+    without writing an action row, so "the last committed action" can predate a
+    transition the history never saw. Undoing on top of that would, e.g., silently
+    un-void a voided form while `voided_by`/`void_reason` stay populated.
+    """
+    from app.models.complaints import Complaint
+    from app.models.procurement import PurchaseRequestHeader, StockInquiry
+    from app.models.tickets import Ticket
+
+    model = {
+        "purchase_request": PurchaseRequestHeader,
+        "sponsorship_form": PurchaseRequestHeader,
+        "stock_inquiry": StockInquiry,
+        "complaint": Complaint,
+        "ticket": Ticket,
+    }.get(source_entity_type)
+    if model is None:
+        return None
+    row = db.query(model.status).filter(model.id == str(source_entity_id)).first()
+    return (str(row[0]).strip().lower() or None) if row and row[0] else None
+
+
 def evaluate(
     db: Session,
     *,
@@ -94,6 +120,15 @@ def evaluate(
     action_row = service.last_committed(source_entity_type, source_entity_id)
     if action_row is None:
         return UndoEligibility(can_undo=False, blocked_reason=BLOCK_NO_ACTION)
+
+    # A voided (or deleted) form is terminal through a route that never writes an
+    # action row, so the sibling-row checks below cannot see the transition. Undo
+    # would restore pre-action state OVER the void, silently un-voiding the form.
+    current_status = _entity_status(db, source_entity_type, source_entity_id)
+    if current_status is None or current_status == "voided":
+        return UndoEligibility(
+            can_undo=False, action=action_row, blocked_reason=BLOCK_STATUS_MOVED
+        )
 
     registered = get_action(action_row.action_key)
     if registered is None or registered.invert is None:
