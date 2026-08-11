@@ -23,20 +23,30 @@ import type { PlanLine } from './planLine';
 
 export type PlanDecisionKind = 'buy' | 'use_stock' | 'use_po' | 'skip';
 
+/**
+ * One decision is a MIXTURE, not a choice (S16, user: "we should allow mixture of
+ * actions"). A 200-unit shortage can be met by 50 from another bin, 100 already on a PO,
+ * and an order for the last 50 - that is ONE decision with three parts, and forcing the
+ * buyer to pick a single kind is what made "Use PO" look like it forbade buying.
+ *
+ * Zero/absent parts are omitted. `skip` is the exception: deliberately doing nothing is
+ * exclusive of every part, and still distinct from undecided (the absence of the entry).
+ */
 export interface PlanDecision {
-  kind: PlanDecisionKind;
-  /** Units to buy. Only meaningful for `buy`; the suggested quantity unless edited. */
-  qty?: number;
+  /** Units to order. */
+  buy?: number;
+  /**
+   * Units taken from other bins, with their sources. "Use stock" without a source is not
+   * a decision anybody can act on, and it is what makes the pool spendable - two lines
+   * drawing on the same units have to be able to see what the other took.
+   */
+  stock?: { qty: number; sources: { warehouse_id: string; warehouse_code: string; qty: number }[] };
+  /** Units left to the existing PO book - already ordered, nothing to do. */
+  po?: number;
+  /** Deliberately do nothing this round. Exclusive with the parts above. */
+  skip?: boolean;
   /** Why the buyer departed from the suggestion, carried onto the adjustment. */
   reason?: string;
-  /**
-   * Where a `use_stock` decision takes its stock from, and how much of each.
-   *
-   * Required for that kind: "use stock" without a source is not a decision anybody can act
-   * on, and it is what makes the pool spendable - two lines drawing on the same units have to
-   * be able to see what the other took.
-   */
-  sources?: { warehouse_id: string; warehouse_code: string; qty: number }[];
 }
 
 export type PlanDecisionMap = Readonly<Record<string, PlanDecision | undefined>>;
@@ -51,8 +61,8 @@ export type PlanDecisionMap = Readonly<Record<string, PlanDecision | undefined>>
  */
 export function decidedQty(line: PlanLine, decision: PlanDecision | undefined): number {
   if (!line.purchasable) return 0;
-  if (!decision || decision.kind !== 'buy') return 0;
-  return decision.qty ?? line.order_qty;
+  if (!decision || decision.skip) return 0;
+  return decision.buy ?? 0;
 }
 
 /**
@@ -108,10 +118,12 @@ export function planTotals(lines: PlanLine[], decisions: PlanDecisionMap): PlanT
       continue;
     }
     t.decided += 1;
-    if (d.kind === 'use_stock') t.usingStock += 1;
-    else if (d.kind === 'use_po') t.usingPo += 1;
-    else if (d.kind === 'skip') t.skipped += 1;
-    else {
+    // A mixture counts under every part it contains: "using stock" and "buying" are both
+    // true of a 50-stock + 150-buy decision, and the tiles say "includes", not "only".
+    if (d.skip) t.skipped += 1;
+    if ((d.stock?.qty ?? 0) > 0) t.usingStock += 1;
+    if ((d.po ?? 0) > 0) t.usingPo += 1;
+    if ((d.buy ?? 0) > 0) {
       t.buying += 1;
       const qty = decidedQty(line, d);
       t.units += qty;
@@ -168,7 +180,7 @@ export function proposeCuts(
 ): PlanLine[] {
   if (budget === null || !Number.isFinite(budget)) return [];
   const buys = lines
-    .filter((l) => decisions[l.id]?.kind === 'buy')
+    .filter((l) => (decisions[l.id]?.buy ?? 0) > 0)
     .map((l) => ({ line: l, cost: decidedCost(l, decisions[l.id]) }))
     .filter((x): x is { line: PlanLine; cost: number } => x.cost !== null && x.cost > 0);
 

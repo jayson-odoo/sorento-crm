@@ -151,10 +151,10 @@ export function usePlanLines(runId: string | null, enabled = true) {
     const out: Record<string, Record<string, number>> = {};
     for (const line of lines) {
       const d = decisions[line.id];
-      if (d?.kind !== 'use_stock' || !d.sources?.length) continue;
+      if (!d?.stock?.sources.length) continue;
       const key = line.product_id ?? '';
       const per = (out[key] ??= {});
-      for (const s of d.sources) per[s.warehouse_id] = (per[s.warehouse_id] ?? 0) + s.qty;
+      for (const s of d.stock.sources) per[s.warehouse_id] = (per[s.warehouse_id] ?? 0) + s.qty;
     }
     return out;
   }, [lines, decisions]);
@@ -169,9 +169,7 @@ export function usePlanLines(runId: string | null, enabled = true) {
       // Exclude what THIS line already took, or its own decision would shrink its own options.
       const own = decisions[line.id];
       const mine: Record<string, number> = {};
-      if (own?.kind === 'use_stock') {
-        for (const s of own.sources ?? []) mine[s.warehouse_id] = s.qty;
-      }
+      for (const s of own?.stock?.sources ?? []) mine[s.warehouse_id] = s.qty;
       const net: Record<string, number> = { ...taken };
       for (const [w, q] of Object.entries(mine)) net[w] = (net[w] ?? 0) - q;
       return proposeCover(

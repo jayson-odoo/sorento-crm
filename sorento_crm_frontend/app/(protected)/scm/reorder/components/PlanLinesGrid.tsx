@@ -32,7 +32,7 @@ import {
   type PlanLine,
   type PlanLineStatus,
 } from '../lib/planLine';
-import { decidedCost, decidedQty, type PlanDecisionKind, type PlanDecisionMap } from '../lib/planDecisions';
+import { decidedCost, decidedQty, type PlanDecision, type PlanDecisionMap } from '../lib/planDecisions';
 import { describeCover, NO_COVER, type CoverProposal } from '../lib/coverPlan';
 import {
   PRICE_ADVICE_LABEL,
@@ -127,15 +127,7 @@ export function PlanLinesGrid({
 }: {
   lines: PlanLine[];
   decisions: PlanDecisionMap;
-  onDecide: (
-    line: PlanLine,
-    next: {
-      kind: PlanDecisionKind;
-      qty?: number;
-      reason?: string;
-      sources?: { warehouse_id: string; warehouse_code: string; qty: number }[];
-    },
-  ) => void;
+  onDecide: (line: PlanLine, next: PlanDecision) => void;
   /** Return a line to undecided. Separate from `onDecide` because undecided is the absence
    *  of a decision, not a fourth kind of one. */
   onClear: (line: PlanLine) => void;
@@ -446,7 +438,7 @@ export function PlanLinesGrid({
           const line = row.original;
           if (!line.purchasable) return <span className="text-muted-foreground">{EM_DASH}</span>;
           const qty = decidedQty(line, decisions[line.id]) || line.order_qty;
-          const cost = decidedCost({ ...line }, { kind: 'buy', qty });
+          const cost = decidedCost({ ...line }, { buy: qty });
           // A price we do not hold is never rendered as a number: it is the reason the line
           // cannot be weighed against a budget. A dash rather than the words, because the
           // Status column on the same row already says "No price" and printing it twice is

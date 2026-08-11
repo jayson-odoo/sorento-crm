@@ -201,48 +201,41 @@ describe('PlanLinesGrid - the explanations are still there', () => {
     // The row handler is given the row, not the event, so it cannot tell them apart by
     // itself: adjusting a quantity would otherwise throw the dialog over your work.
     renderGrid([line()]);
-    fireEvent.click(screen.getByLabelText(/Quantity to buy for SKU-1/i));
+    fireEvent.click(screen.getByRole('button', { name: /Skip SKU-1/i }));
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
 
 describe('PlanLinesGrid - deciding', () => {
-  it('offers buy, use stock and skip on a purchasable line', () => {
+  it('offers Accept with the whole mixture, Adjust, and Skip on a purchasable line', () => {
     renderGrid([line()]);
-    expect(screen.getByRole('button', { name: /^Buy$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Use stock/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Buy 23/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Adjust the mix/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Skip SKU-1/i })).toBeInTheDocument();
   });
 
-  it('pre-fills the suggested quantity so agreeing is one click', () => {
-    renderGrid([line()]);
-    expect((screen.getByLabelText(/Quantity to buy for SKU-1/i) as HTMLInputElement).value).toBe('23');
-  });
-
-  it('records an edited quantity rather than the suggestion', () => {
+  it('Accept records the engine mixture in one click (S16)', () => {
     const { onDecide } = renderGrid([line()]);
-    fireEvent.change(screen.getByLabelText(/Quantity to buy for SKU-1/i), { target: { value: '24' } });
-    fireEvent.click(screen.getByRole('button', { name: /^Buy$/i }));
-    expect(onDecide).toHaveBeenCalledWith(expect.objectContaining({ id: 'r1' }), { kind: 'buy', qty: 24 });
+    fireEvent.click(screen.getByRole('button', { name: /Buy 23/ }));
+    expect(onDecide).toHaveBeenCalledWith(expect.objectContaining({ id: 'r1' }), { buy: 23 });
   });
 
-  it('never offers to buy an allocation', () => {
-    // It is stock to move, not stock to order.
-    renderGrid([line({ type: 'disposition' })]);
-    expect(screen.queryByRole('button', { name: /^Buy$/i })).toBeNull();
-    expect(screen.getByRole('button', { name: /Use stock/i })).toBeInTheDocument();
+  it('Adjust records an edited mixture, each part bounded by what exists', () => {
+    const { onDecide } = renderGrid([line()]);
+    fireEvent.click(screen.getByRole('button', { name: /Adjust the mix/i }));
+    fireEvent.change(screen.getByLabelText('Units to buy'), { target: { value: '24' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Record' }));
+    expect(onDecide).toHaveBeenCalledWith(expect.objectContaining({ id: 'r1' }), { buy: 24 });
   });
 
   it('offers a whole number of units, never a fraction of one', () => {
-    // order_qty is a demand rate times a horizon, so it is routinely fractional on real data
-    // (2,407.677748 on the live run). Rounded up: down would under-buy a shortage we just
-    // calculated.
     renderGrid([line({ order_qty: 2407.677748 })]);
-    expect((screen.getByLabelText(/Quantity to buy for SKU-1/i) as HTMLInputElement).value).toBe('2408');
+    expect(screen.getByRole('button', { name: /Buy 2,408/ })).toBeInTheDocument();
   });
 
   it('shows a settled line as settled, and lets it be reopened', () => {
-    const { onClear } = renderGrid([line()], { r1: { kind: 'buy', qty: 23 } });
-    expect(screen.getByText(/Buying 23/)).toBeInTheDocument();
+    const { onClear } = renderGrid([line()], { r1: { buy: 23 } });
+    expect(screen.getAllByText(/Buy 23/).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('button', { name: /Change/i }));
     expect(onClear).toHaveBeenCalled();
   });
@@ -256,7 +249,7 @@ describe('PlanLinesGrid - buy, cover, or both', () => {
 
   it('says buy when no other location holds any', () => {
     renderGrid([line({ order_qty: 188 })]);
-    expect(screen.getByText('Buy 188')).toBeInTheDocument();
+    expect(screen.getAllByText('Buy 188').length).toBeGreaterThan(0);
   });
 
   it('names the source when stock elsewhere covers it outright', () => {
@@ -286,22 +279,22 @@ describe('PlanLinesGrid - buy, cover, or both', () => {
     expect(screen.queryByText(/CS asked/)).not.toBeInTheDocument();
   });
 
-  it('refuses Use stock when nothing is free anywhere, and says why', () => {
-    // The reported bug: the button was offered on a row with nothing behind it.
+  it('cannot adjust stock in when nothing is free anywhere', () => {
     renderGrid([line({ order_qty: 188, on_hand: 0 })]);
-    const btn = screen.getByRole('button', { name: /Use stock/i });
-    expect(btn).toBeDisabled();
-    expect(btn).toHaveAttribute('title', expect.stringMatching(/No free stock at another location/i));
+    fireEvent.click(screen.getByRole('button', { name: /Adjust the mix/i }));
+    expect(screen.getByLabelText('Units from stock')).toBeDisabled();
   });
 
-  it('records where the stock comes from, not just that stock was used', () => {
+  it('Accept records where the stock comes from, not just that stock was used', () => {
     const { onDecide } = renderGrid([line({ order_qty: 1 })], {}, elsewhere);
-    fireEvent.click(screen.getByRole('button', { name: /Use stock/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Stock 1/ }));
     expect(onDecide).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'r1' }),
       expect.objectContaining({
-        kind: 'use_stock',
-        sources: [expect.objectContaining({ warehouse_code: 'BRW-BB', qty: 1 })],
+        stock: expect.objectContaining({
+          qty: 1,
+          sources: [expect.objectContaining({ warehouse_code: 'BRW-BB', qty: 1 })],
+        }),
       }),
     );
   });
@@ -309,11 +302,10 @@ describe('PlanLinesGrid - buy, cover, or both', () => {
   it('shows a settled cover with its source', () => {
     renderGrid([line()], {
       r1: {
-        kind: 'use_stock',
-        sources: [{ warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', qty: 5 }],
+        stock: { qty: 5, sources: [{ warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', qty: 5 }] },
       },
     } as PlanDecisionMap, elsewhere);
-    expect(screen.getByText(/Using stock 5 from BRW-BB/)).toBeInTheDocument();
+    expect(screen.getByText(/Stock 5 \(BRW-BB\)/)).toBeInTheDocument();
   });
 
   it('warns when the only cover crosses the dealer/project boundary', () => {
@@ -423,8 +415,8 @@ describe('the PO book offsets the buy (S15)', () => {
     expect(screen.getByText('Use PO 200 - already ordered')).toBeInTheDocument();
     expect(screen.queryByText(/^Buy /)).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Use PO' }));
-    expect(onDecide).toHaveBeenCalledWith(expect.anything(), { kind: 'use_po', qty: 200 });
+    fireEvent.click(screen.getByRole('button', { name: /PO 200/ }));
+    expect(onDecide).toHaveBeenCalledWith(expect.anything(), { po: 200 });
   });
 
   it('a partial PO leaves the remainder as the buy', () => {

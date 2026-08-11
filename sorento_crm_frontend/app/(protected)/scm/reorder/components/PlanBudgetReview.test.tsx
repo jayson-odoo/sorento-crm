@@ -52,12 +52,12 @@ beforeEach(() => vi.clearAllMocks());
 describe('PlanBudgetReview - what has been decided', () => {
   it('says how much of the plan is still unread, so a part-total cannot pass as a whole one', () => {
     const lines = [line({ id: 'a' }), line({ id: 'b' }), line({ id: 'c' })];
-    renderReview(lines, { a: { kind: 'buy' } } as PlanDecisionMap);
+    renderReview(lines, { a: { buy: 10 } } as PlanDecisionMap);
     expect(screen.getByText(/2 lines still to decide/i)).toBeInTheDocument();
   });
 
   it('gives no verdict at all until a budget is typed', () => {
-    renderReview([line()], { r1: { kind: 'buy' } } as PlanDecisionMap);
+    renderReview([line()], { r1: { buy: 10 } } as PlanDecisionMap);
     expect(screen.queryByText(/Within budget/i)).toBeNull();
     expect(screen.queryByText(/Over by/i)).toBeNull();
   });
@@ -65,7 +65,7 @@ describe('PlanBudgetReview - what has been decided', () => {
 
 describe('PlanBudgetReview - the verdict', () => {
   it('reports what is left when the decisions fit', () => {
-    renderReview([line()], { r1: { kind: 'buy' } } as PlanDecisionMap);
+    renderReview([line()], { r1: { buy: 10 } } as PlanDecisionMap);
     fireEvent.change(screen.getByLabelText(/Budget for this round/i), { target: { value: '500' } });
     expect(screen.getByText(/Within budget/i)).toBeInTheDocument();
     expect(screen.getByText(/RM 400/)).toBeInTheDocument();
@@ -78,7 +78,7 @@ describe('PlanBudgetReview - the verdict', () => {
       line({ id: 'c', rank: 3 }),
     ];
     renderReview(lines, {
-      a: { kind: 'buy' }, b: { kind: 'buy' }, c: { kind: 'buy' },
+      a: { buy: 10 }, b: { buy: 10 }, c: { buy: 10 },
     } as PlanDecisionMap);
     fireEvent.change(screen.getByLabelText(/Budget for this round/i), { target: { value: '250' } });
     expect(screen.getByText(/Over by/i)).toBeInTheDocument();
@@ -89,7 +89,7 @@ describe('PlanBudgetReview - the verdict', () => {
     // A clean "Within budget" over lines nobody could cost is arithmetically true and
     // misleading - the missing lines could cost anything.
     renderReview([line({ unit_cost: null, cash_impact: null })], {
-      r1: { kind: 'buy' },
+      r1: { buy: 10 },
     } as PlanDecisionMap);
     fireEvent.change(screen.getByLabelText(/Budget for this round/i), { target: { value: '100' } });
     expect(screen.getByText(/Within budget on what we can price/i)).toBeInTheDocument();
@@ -97,7 +97,7 @@ describe('PlanBudgetReview - the verdict', () => {
 
   it('says an unpriced line is missing from the total, in the singular', () => {
     renderReview([line({ unit_cost: null, cash_impact: null })], {
-      r1: { kind: 'buy' },
+      r1: { buy: 10 },
     } as PlanDecisionMap);
     expect(screen.getByText(/1 of the lines you are buying has no price/i)).toBeInTheDocument();
   });

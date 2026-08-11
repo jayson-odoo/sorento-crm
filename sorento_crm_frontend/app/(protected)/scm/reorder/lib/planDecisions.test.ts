@@ -14,6 +14,7 @@ import {
   decidedQty,
   planTotals,
   proposeCuts,
+  type PlanDecision,
   type PlanDecisionMap,
 } from './planDecisions';
 
@@ -40,7 +41,7 @@ function rec(over: Partial<ReorderRecommendation> = {}): ReorderRecommendation {
 }
 
 const line = (over: Partial<ReorderRecommendation> = {}): PlanLine => recToPlanLine(rec(over));
-const decisions = (m: Record<string, { kind: 'buy' | 'use_stock' | 'skip'; qty?: number }>) =>
+const decisions = (m: Record<string, PlanDecision>) =>
   m as PlanDecisionMap;
 
 describe('planLine - the classification is a field, not a place', () => {
@@ -103,26 +104,26 @@ describe('planTotals - silence is not consent', () => {
 
   it('adds up only what was actually decided', () => {
     const lines = [line({ id: 'a' }), line({ id: 'b' }), line({ id: 'c' })];
-    const t = planTotals(lines, decisions({ a: { kind: 'buy' }, b: { kind: 'use_stock' } }));
+    const t = planTotals(lines, decisions({ a: { buy: 10 }, b: { stock: { qty: 5, sources: [{ warehouse_id: 'w2', warehouse_code: 'W2', qty: 5 }] } } }));
     expect(t).toMatchObject({ decided: 2, undecided: 1, buying: 1, usingStock: 1, units: 10, cost: 100 });
   });
 
   it('honours an edited quantity', () => {
-    const t = planTotals([line({ id: 'a' })], decisions({ a: { kind: 'buy', qty: 4 } }));
+    const t = planTotals([line({ id: 'a' })], decisions({ a: { buy: 4 } }));
     expect(t.units).toBe(4);
     expect(t.cost).toBe(40);
   });
 
   it('spends nothing on a use-stock or a skip', () => {
     const lines = [line({ id: 'a' }), line({ id: 'b' })];
-    const t = planTotals(lines, decisions({ a: { kind: 'use_stock' }, b: { kind: 'skip' } }));
+    const t = planTotals(lines, decisions({ a: { stock: { qty: 5, sources: [{ warehouse_id: 'w2', warehouse_code: 'W2', qty: 5 }] } }, b: { skip: true } }));
     expect(t.cost).toBe(0);
     expect(t.units).toBe(0);
   });
 
   it('counts an unpriced buy separately and never sums it as zero', () => {
     const lines = [line({ id: 'a' }), line({ id: 'b', unit_cost: null, cash_impact: null })];
-    const t = planTotals(lines, decisions({ a: { kind: 'buy' }, b: { kind: 'buy' } }));
+    const t = planTotals(lines, decisions({ a: { buy: 10 }, b: { buy: 10 } }));
     expect(t.cost).toBe(100);
     expect(t.unpriced).toBe(1);
     expect(t.buying).toBe(2);
@@ -134,9 +135,9 @@ describe('planTotals - silence is not consent', () => {
     // site not to offer the choice.
     const alloc = line({ id: 'a', type: 'disposition' });
     expect(alloc.purchasable).toBe(false);
-    expect(decidedQty(alloc, { kind: 'buy' })).toBe(0);
-    expect(decidedCost(alloc, { kind: 'buy' })).toBe(0);
-    expect(planTotals([alloc], decisions({ a: { kind: 'buy' } }))).toMatchObject({
+    expect(decidedQty(alloc, { buy: 10 })).toBe(0);
+    expect(decidedCost(alloc, { buy: 10 })).toBe(0);
+    expect(planTotals([alloc], decisions({ a: { buy: 10 } }))).toMatchObject({
       cost: 0, units: 0, unpriced: 0,
     });
   });
@@ -144,19 +145,19 @@ describe('planTotals - silence is not consent', () => {
 
 describe('decidedQty', () => {
   it('is zero for anything that is not a buy', () => {
-    expect(decidedQty(line(), { kind: 'use_stock' })).toBe(0);
-    expect(decidedQty(line(), { kind: 'skip' })).toBe(0);
+    expect(decidedQty(line(), { stock: { qty: 5, sources: [{ warehouse_id: 'w2', warehouse_code: 'W2', qty: 5 }] } })).toBe(0);
+    expect(decidedQty(line(), { skip: true })).toBe(0);
     expect(decidedQty(line(), undefined)).toBe(0);
   });
 
   it('falls back to the suggested quantity', () => {
-    expect(decidedQty(line(), { kind: 'buy' })).toBe(10);
+    expect(decidedQty(line(), { buy: 10 })).toBe(10);
   });
 });
 
 describe('budgetVerdict - the budget is a question asked at the end', () => {
   it('gives no verdict until a budget is entered', () => {
-    const t = planTotals([line()], decisions({ r1: { kind: 'buy' } }));
+    const t = planTotals([line()], decisions({ r1: { buy: 10 } }));
     const v = budgetVerdict(t, null);
     expect(v.budget).toBeNull();
     expect(v.remaining).toBeNull();
@@ -164,23 +165,23 @@ describe('budgetVerdict - the budget is a question asked at the end', () => {
   });
 
   it('does NOT treat no budget as a budget of zero', () => {
-    const t = planTotals([line()], decisions({ r1: { kind: 'buy' } }));
+    const t = planTotals([line()], decisions({ r1: { buy: 10 } }));
     expect(budgetVerdict(t, null).over).toBe(false);
   });
 
   it('reports what is left when the decisions fit', () => {
-    const t = planTotals([line()], decisions({ r1: { kind: 'buy' } }));
+    const t = planTotals([line()], decisions({ r1: { buy: 10 } }));
     expect(budgetVerdict(t, 500)).toMatchObject({ over: false, remaining: 400 });
   });
 
   it('reports the overrun when they do not', () => {
-    const t = planTotals([line()], decisions({ r1: { kind: 'buy' } }));
+    const t = planTotals([line()], decisions({ r1: { buy: 10 } }));
     expect(budgetVerdict(t, 60)).toMatchObject({ over: true, remaining: -40 });
   });
 
   it('carries the unpriced count, so the verdict states its own incompleteness', () => {
     const lines = [line({ id: 'a' }), line({ id: 'b', unit_cost: null, cash_impact: null })];
-    const t = planTotals(lines, decisions({ a: { kind: 'buy' }, b: { kind: 'buy' } }));
+    const t = planTotals(lines, decisions({ a: { buy: 10 }, b: { buy: 10 } }));
     expect(budgetVerdict(t, 500).unpriced).toBe(1);
   });
 });
@@ -191,7 +192,7 @@ describe('proposeCuts - the allocator advises at the end instead of deciding at 
     line({ id: 'b', rank: 2, cash_impact: 100, unit_cost: 10 }),
     line({ id: 'c', rank: 3, cash_impact: 100, unit_cost: 10 }),
   ];
-  const allBuys = decisions({ a: { kind: 'buy' }, b: { kind: 'buy' }, c: { kind: 'buy' } });
+  const allBuys = decisions({ a: { buy: 10 }, b: { buy: 10 }, c: { buy: 10 } });
 
   it('proposes nothing when the decisions fit', () => {
     expect(proposeCuts(three, allBuys, 300)).toEqual([]);
@@ -213,12 +214,12 @@ describe('proposeCuts - the allocator advises at the end instead of deciding at 
       ...three,
       line({ id: 'z', rank: 99, unit_cost: null, cash_impact: null }),
     ];
-    const d = decisions({ ...allBuys, z: { kind: 'buy' } } as never);
+    const d = decisions({ ...allBuys, z: { buy: 10 } } as never);
     expect(proposeCuts(withUnpriced, d, 250).map((l) => l.id)).toEqual(['c']);
   });
 
   it('leaves lines the buyer did not decide to buy alone', () => {
-    const d = decisions({ a: { kind: 'buy' }, b: { kind: 'use_stock' }, c: { kind: 'skip' } });
+    const d = decisions({ a: { buy: 10 }, b: { stock: { qty: 5, sources: [{ warehouse_id: 'w2', warehouse_code: 'W2', qty: 5 }] } }, c: { skip: true } });
     expect(proposeCuts(three, d, 50).map((l) => l.id)).toEqual(['a']);
   });
 });
@@ -226,7 +227,7 @@ describe('proposeCuts - the allocator advises at the end instead of deciding at 
 describe('the use_po decision (S15)', () => {
   it('orders nothing, costs nothing, and is counted', () => {
     const l = line();
-    const d = { kind: 'use_po' as const, qty: 200 };
+    const d = { po: 200 };
 
     expect(decidedQty(l, d)).toBe(0);
     expect(decidedCost(l, d)).toBe(0);
