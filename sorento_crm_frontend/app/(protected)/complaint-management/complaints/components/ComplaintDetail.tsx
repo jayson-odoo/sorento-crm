@@ -335,7 +335,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
         </div>
         <div className="flex gap-2 flex-wrap items-center justify-end">
           {/* Business CTAs hide (not disable) while the handling lock is held by
-              someone else / unclaimed — keeps the header uncluttered. When the
+              someone else / unclaimed - keeps the header uncluttered. When the
               lock does not bite (tier 1, flag off, or I hold it) businessCtasEnabled
               is true and they render on their normal status+permission gates. */}
           {businessCtasEnabled && (

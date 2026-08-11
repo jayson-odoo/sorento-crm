@@ -69,9 +69,9 @@ function htmlToText(html: string): string {
 }
 
 function formatDuration(hours: number | string | null | undefined): string {
-  if (hours === null || hours === undefined) return '—';
+  if (hours === null || hours === undefined) return ' - ';
   const n = typeof hours === 'string' ? parseFloat(hours) : hours;
-  if (!Number.isFinite(n)) return '—';
+  if (!Number.isFinite(n)) return ' - ';
   if (n < 1) return `${Math.round(n * 60)}m`;
   return `${n.toFixed(1)}h`;
 }
@@ -250,7 +250,7 @@ export default function TicketDetailPage({ params }: PageProps) {
         // Parked, not applied - the countdown banner takes over from here.
         setEditingResolution(false);
         formAction.refresh();
-        toast.success('Resolution is on hold for a few seconds — you can still undo.');
+        toast.success('Resolution is on hold for a few seconds - you can still undo.');
         return;
       }
       setTicket(updated);
@@ -608,7 +608,7 @@ export default function TicketDetailPage({ params }: PageProps) {
                     <span>
                       {ticket.raised_by_actor?.display_name
                         ?? ticket.raised_by_user?.display_name
-                        ?? '—'}
+                        ?? ' - '}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
@@ -625,7 +625,7 @@ export default function TicketDetailPage({ params }: PageProps) {
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Due date</span>
-                    <span>{ticket.due_date ?? '—'}</span>
+                    <span>{ticket.due_date ?? ' - '}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Created</span>

@@ -254,7 +254,7 @@ function workflowInvalidate(queryClient: ReturnType<typeof useQueryClient>) {
 /** Deferred => countdown copy; immediate => the action's own success copy. */
 function toastActionResult(result: unknown, immediateMessage: string) {
   if (isDeferredFormAction(result)) {
-    toast.success('Action is on hold for a few seconds — you can still undo.');
+    toast.success('Action is on hold for a few seconds - you can still undo.');
   } else {
     toast.success(immediateMessage);
   }

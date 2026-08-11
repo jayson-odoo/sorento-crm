@@ -195,7 +195,7 @@ export default function PurchaseRequestDetail({
       await queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
       if (isDeferredDecision(result)) {
         formAction.refresh();
-        toast.success('Sending for approval — you can still undo.');
+        toast.success('Sending for approval - you can still undo.');
       } else {
         toast.success('Status set to Pending approval');
       }
@@ -410,7 +410,7 @@ export default function PurchaseRequestDetail({
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           {/* Business CTAs HIDE (not disable) while the handling lock is held by
-              someone else / unclaimed — keeps the header uncluttered. When the lock
+              someone else / unclaimed - keeps the header uncluttered. When the lock
               does not bite (tier 1, flag off, or I hold it) businessCtasEnabled is
               true and they render on their normal status+permission gates. */}
           {businessCtasEnabled && showPrimaryChangeToPending && (
@@ -441,7 +441,7 @@ export default function PurchaseRequestDetail({
               fires the SLA assignment, which notifies the approver, who then uses
               the in-system Approve/Reject below. The emailed link survives as an
               optional external fallback under the gear ("Copy approval link"). */}
-          {/* In-system approver decision — same effect as the emailed approval link,
+          {/* In-system approver decision - same effect as the emailed approval link,
               so the approver can decide without leaving the system. */}
           {businessCtasEnabled && isPendingApproval && canApprove && (
             <>
@@ -460,7 +460,7 @@ export default function PurchaseRequestDetail({
                     // instead so the countdown + Undo appear.
                     if (isDeferredDecision(result)) {
                       formAction.refresh();
-                      toast.success('Approving — you can still undo.');
+                      toast.success('Approving - you can still undo.');
                     } else {
                       toast.success('Request approved');
                     }
@@ -1009,31 +1009,31 @@ export default function PurchaseRequestDetail({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5 [&>div]:min-w-0 [&_p]:break-words">
                   <div>
                     <p className="text-sm text-muted-foreground">Purchase request number</p>
-                    <p className="font-medium tabular-nums">{request.request_number || '—'}</p>
+                    <p className="font-medium tabular-nums">{request.request_number || ' - '}</p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Submitted date</p>
                     <p className="font-medium">
                       {request.submitted_at
                         ? formatDate(new Date(request.submitted_at))
-                        : '—'}
+                        : ' - '}
                     </p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Customer Name</p>
-                    <p className="font-medium">{request.customer_name || '—'}</p>
+                    <p className="font-medium">{request.customer_name || ' - '}</p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">PIC</p>
-                    <p className="font-medium whitespace-pre-wrap">{request.pic || '—'}</p>
+                    <p className="font-medium whitespace-pre-wrap">{request.pic || ' - '}</p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Project Title</p>
-                    <p className="font-medium">{request.project_title || '—'}</p>
+                    <p className="font-medium">{request.project_title || ' - '}</p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Purpose</p>
-                    <p className="font-medium">{request.purpose || '—'}</p>
+                    <p className="font-medium">{request.purpose || ' - '}</p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Sales Type</p>
@@ -1045,7 +1045,7 @@ export default function PurchaseRequestDetail({
                           value={request.sales_type}
                         />
                       ) : (
-                        '—'
+                        ' - '
                       )}
                     </p>
                   </div>
@@ -1054,12 +1054,12 @@ export default function PurchaseRequestDetail({
                     <p className="font-medium">
                       {request.expected_delivery_date
                         ? formatDate(new Date(request.expected_delivery_date))
-                        : '—'}
+                        : ' - '}
                     </p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Expected date to receive PO</p>
-                    <p className="font-medium">{expectedPoDisplay || '—'}</p>
+                    <p className="font-medium">{expectedPoDisplay || ' - '}</p>
                   </div>
                   {(request.approver_email || request.approver_user_id) && !request.approved_at && (
                     <div className="sm:col-span-2">
@@ -1114,9 +1114,9 @@ export default function PurchaseRequestDetail({
                         {request.lines.map((line, idx) => (
                           <TableRow key={line.id}>
                             <TableCell>{idx + 1}</TableCell>
-                            <TableCell>{line.item_code ?? '—'}</TableCell>
-                            <TableCell>{line.quantity ?? '—'}</TableCell>
-                            <TableCell>{line.remark ?? '—'}</TableCell>
+                            <TableCell>{line.item_code ?? ' - '}</TableCell>
+                            <TableCell>{line.quantity ?? ' - '}</TableCell>
+                            <TableCell>{line.remark ?? ' - '}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -1164,35 +1164,35 @@ export default function PurchaseRequestDetail({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5 [&>div]:min-w-0 [&_p]:break-words">
                   <div>
                     <p className="text-sm text-muted-foreground">Sponsorship form number</p>
-                    <p className="font-medium tabular-nums">{request.request_number || '—'}</p>
+                    <p className="font-medium tabular-nums">{request.request_number || ' - '}</p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Submitted date</p>
                     <p className="font-medium">
                       {request.submitted_at
                         ? formatDate(new Date(request.submitted_at))
-                        : '—'}
+                        : ' - '}
                     </p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Customer Name</p>
-                    <p className="font-medium">{request.customer_name || '—'}</p>
+                    <p className="font-medium">{request.customer_name || ' - '}</p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">PIC</p>
-                    <p className="font-medium whitespace-pre-wrap">{request.pic || '—'}</p>
+                    <p className="font-medium whitespace-pre-wrap">{request.pic || ' - '}</p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Delivery Address</p>
-                    <p className="font-medium whitespace-pre-wrap">{request.delivery_address || '—'}</p>
+                    <p className="font-medium whitespace-pre-wrap">{request.delivery_address || ' - '}</p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Project Title</p>
-                    <p className="font-medium">{request.project_title || '—'}</p>
+                    <p className="font-medium">{request.project_title || ' - '}</p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Total Project Value</p>
-                    <p className="font-medium">{sponsorshipTotalDisplay || '—'}</p>
+                    <p className="font-medium">{sponsorshipTotalDisplay || ' - '}</p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Sponsor Subject</p>
@@ -1202,10 +1202,10 @@ export default function PurchaseRequestDetail({
                           table="purchase_requests"
                           column="sponsor_subject"
                           value={request.sponsor_subject}
-                          fallback="—"
+                          fallback=" - "
                         />
                       ) : (
-                        '—'
+                        ' - '
                       )}
                       {request.sponsor_subject === 'others' && request.sponsor_subject_other
                         ? `: ${request.sponsor_subject_other}`
@@ -1217,7 +1217,7 @@ export default function PurchaseRequestDetail({
                     <p className="font-medium">
                       {request.expected_delivery_date
                         ? formatDate(new Date(request.expected_delivery_date))
-                        : '—'}
+                        : ' - '}
                     </p>
                   </div>
                   {(request.approver_email || request.approver_user_id) && !request.approved_at && (
@@ -1276,15 +1276,15 @@ export default function PurchaseRequestDetail({
                           {request.lines.map((line, idx) => (
                             <TableRow key={line.id}>
                               <TableCell>{idx + 1}</TableCell>
-                              <TableCell>{line.item_code ?? '—'}</TableCell>
-                              <TableCell>{line.quantity ?? '—'}</TableCell>
+                              <TableCell>{line.item_code ?? ' - '}</TableCell>
+                              <TableCell>{line.quantity ?? ' - '}</TableCell>
                               <TableCell className="text-right">
-                                {line.unit_price != null ? formatCurrency(line.unit_price, currencyFormat) : '—'}
+                                {line.unit_price != null ? formatCurrency(line.unit_price, currencyFormat) : ' - '}
                               </TableCell>
                               <TableCell className="text-right">
-                                {line.total != null ? formatCurrency(line.total, currencyFormat) : '—'}
+                                {line.total != null ? formatCurrency(line.total, currencyFormat) : ' - '}
                               </TableCell>
-                              <TableCell>{line.remark ?? '—'}</TableCell>
+                              <TableCell>{line.remark ?? ' - '}</TableCell>
                             </TableRow>
                           ))}
                         </TableBody>
@@ -1352,7 +1352,7 @@ export default function PurchaseRequestDetail({
           </Sheet>
         )}
 
-        {/* Direct child of the 2-col grid — without the span it renders half-width while
+        {/* Direct child of the 2-col grid - without the span it renders half-width while
             every sibling block above it is full-width. */}
         <div className="lg:col-span-2 w-full">
           <AuditTrail entityType="purchase_request" entityId={requestId} title="Audit Trail" />
@@ -1402,7 +1402,7 @@ export default function PurchaseRequestDetail({
                     if (isDeferredDecision(rejectResult)) {
                       // Nothing sent yet, so claiming the contact was notified is false.
                       formAction.refresh();
-                      toast.success('Rejecting — you can still undo.');
+                      toast.success('Rejecting - you can still undo.');
                     } else {
                       toast.success('Submission rejected; contact has been notified.');
                     }
@@ -1422,14 +1422,14 @@ export default function PurchaseRequestDetail({
           </AlertDialogContent>
         </AlertDialog>
 
-        {/* In-system approver rejection (pending approval) — same as the email link. */}
+        {/* In-system approver rejection (pending approval) - same as the email link. */}
         <AlertDialog open={decisionRejectOpen} onOpenChange={setDecisionRejectOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Reject this request</AlertDialogTitle>
               <AlertDialogDescription>
                 Provide a reason. This records the rejection and notifies the
-                requester and contact — the same as rejecting via the approval link.
+                requester and contact - the same as rejecting via the approval link.
                 This action cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
@@ -1466,7 +1466,7 @@ export default function PurchaseRequestDetail({
                     if (isDeferredDecision(result)) {
                       // Nobody has been notified yet - saying they have would be wrong.
                       formAction.refresh();
-                      toast.success('Rejecting — you can still undo.');
+                      toast.success('Rejecting - you can still undo.');
                     } else {
                       toast.success('Request rejected; requester and contact notified.');
                     }
@@ -1598,7 +1598,7 @@ export default function PurchaseRequestDetail({
                     queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
                     if (isDeferredDecision(processResult)) {
                       formAction.refresh();
-                      toast.success('Processing — you can still undo.');
+                      toast.success('Processing - you can still undo.');
                     } else {
                       toast.success('Marked as processed by CS.');
                     }
@@ -1648,7 +1648,7 @@ export default function PurchaseRequestDetail({
                     queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
                     if (isDeferredDecision(closeResult)) {
                       formAction.refresh();
-                      toast.success('Closing — you can still undo.');
+                      toast.success('Closing - you can still undo.');
                     } else {
                       toast.success('Marked as closed.');
                     }

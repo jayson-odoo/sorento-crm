@@ -18,7 +18,7 @@ import type { FormUndoEligibility } from './formAction';
 
 /**
  * Post-grace undo confirmation. Names every consequence in plain terms and requires a
- * reason — an undo without one is unexplainable a month later (AC-PG-5).
+ * reason - an undo without one is unexplainable a month later (AC-PG-5).
  *
  * The consequence list is built from what the server told us about the action rather
  * than hardcoded per form, so a new registered action gets correct copy for free.
@@ -56,7 +56,7 @@ export function UndoActionDialog({
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent data-testid="undo-action-dialog">
-        {/* AlertDialogHeader defaults to `text-center sm:text-left` — centred copy on a
+        {/* AlertDialogHeader defaults to `text-center sm:text-left` - centred copy on a
             phone and left-aligned on a desktop is the same dialog reading two different
             ways. Pin it left at every width. */}
         <AlertDialogHeader className="text-left">
@@ -70,7 +70,7 @@ export function UndoActionDialog({
                 <li>Return the form to the person who acted, and restart their SLA clock.</li>
                 {eligibility.tells_contact ? (
                   <li>
-                    Send the contact a correction — they were already told this form had
+                    Send the contact a correction - they were already told this form had
                     moved on, and that message cannot be unsent.
                   </li>
                 ) : null}

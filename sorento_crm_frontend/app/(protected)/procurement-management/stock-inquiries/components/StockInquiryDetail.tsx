@@ -135,7 +135,7 @@ export default function StockInquiryDetail({
     handlingLock.businessCtasEnabled && !isVoided && !formAction.ctasDisabled;
   const [undoDialogOpen, setUndoDialogOpen] = useState(false);
   const lockedCtaTitle = !businessCtasEnabled
-    ? `Being handled by ${handlingLock.tracker?.handled_by_name ?? 'someone else'} — take over to act`
+    ? `Being handled by ${handlingLock.tracker?.handled_by_name ?? 'someone else'} - take over to act`
     : undefined;
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -172,7 +172,7 @@ export default function StockInquiryDetail({
    * resolves the interactive portal link and puts it last on its own line.
    *
    * Composing here previously sent the read-only `/view/...?token=` page built on the
-   * staff browser's own origin, with a ':' glued to the URL — WhatsApp pulled the colon
+   * staff browser's own origin, with a ':' glued to the URL - WhatsApp pulled the colon
    * into the href and the contact got an invalid link.
    */
   const buildPurchasingRespondMessage = useCallback(
@@ -310,7 +310,7 @@ export default function StockInquiryDetail({
         </div>
         <div className="flex items-center gap-2 flex-wrap sm:justify-end">
           {/* Workflow actions: HIDDEN (not disabled) while the handling lock is held
-              by someone else / unclaimed — keeps the header uncluttered. When the lock
+              by someone else / unclaimed - keeps the header uncluttered. When the lock
               does not bite (tier 1, flag off, or I hold it) businessCtasEnabled is true
               and they render on their normal status+permission gates. */}
           {businessCtasEnabled && inquiry.status === 'new' && canSubmitForProjectSales && (
@@ -944,7 +944,7 @@ export default function StockInquiryDetail({
 
       <ProductInquiryFormLayout>
         <InquiryFormTableRow label="Date">
-          <InquiryReadValue empty="—">
+          <InquiryReadValue empty=" - ">
             {inquiry.created_at
               ? format(new Date(inquiry.created_at), 'dd/MM/yy')
               : ''}
@@ -1034,12 +1034,12 @@ export default function StockInquiryDetail({
         {(inquiry.last_responded_at || inquiry.last_responded_by) && (
           <>
             <InquiryFormTableRow label="Last responded by">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty=" - ">
                 {inquiry.last_responded_by_name ?? inquiry.last_responded_by}
               </InquiryReadValue>
             </InquiryFormTableRow>
             <InquiryFormTableRow label="Last responded at">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty=" - ">
                 {inquiry.last_responded_at
                   ? formatDate(new Date(inquiry.last_responded_at))
                   : ''}
@@ -1052,12 +1052,12 @@ export default function StockInquiryDetail({
           (inquiry.rejection_reason != null && inquiry.rejection_reason !== '')) && (
           <>
             <InquiryFormTableRow label="Rejected by">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty=" - ">
                 {inquiry.rejected_by_name ?? inquiry.rejected_by}
               </InquiryReadValue>
             </InquiryFormTableRow>
             <InquiryFormTableRow label="Rejected at">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty=" - ">
                 {inquiry.rejected_at ? formatDate(new Date(inquiry.rejected_at)) : ''}
               </InquiryReadValue>
             </InquiryFormTableRow>
@@ -1074,12 +1074,12 @@ export default function StockInquiryDetail({
               <InquiryReadValue>{inquiry.reopen_reason}</InquiryReadValue>
             </InquiryFormTableRow>
             <InquiryFormTableRow label="Reopened by">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty=" - ">
                 {inquiry.reopened_by_name ?? inquiry.reopened_by}
               </InquiryReadValue>
             </InquiryFormTableRow>
             <InquiryFormTableRow label="Reopened at">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty=" - ">
                 {inquiry.reopened_at ? formatDate(new Date(inquiry.reopened_at)) : ''}
               </InquiryReadValue>
             </InquiryFormTableRow>

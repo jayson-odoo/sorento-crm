@@ -15,7 +15,7 @@ const RED =
 const MUTED = 'border-border bg-muted/40 text-muted-foreground';
 
 /**
- * The one banner that renders every form-action state (AC-U-7). Presentational only —
+ * The one banner that renders every form-action state (AC-U-7). Presentational only  - 
  * cancel / undo side effects belong to the caller, same split as HandlingLockBanner.
  *
  * Renders nothing in the `idle` and `undoable` states: `undoable` puts its affordance in
@@ -87,7 +87,7 @@ export function FormActionBanner({
         <p className="flex items-start gap-2 min-w-0">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" />
           <span>
-            <span className="font-medium">That action was not applied</span> — {view.reason}
+            <span className="font-medium">That action was not applied</span> - {view.reason}
           </span>
         </p>
         <Button size="sm" variant="ghost" className="shrink-0 w-fit" onClick={onDismissOutcome}>
@@ -103,7 +103,7 @@ export function FormActionBanner({
         <p className="flex items-start gap-2 min-w-0">
           <XCircle className="mt-0.5 size-4 shrink-0" />
           <span>
-            <span className="font-medium">That action failed</span> — {view.reason}. The form
+            <span className="font-medium">That action failed</span> - {view.reason}. The form
             is unchanged; try again.
           </span>
         </p>

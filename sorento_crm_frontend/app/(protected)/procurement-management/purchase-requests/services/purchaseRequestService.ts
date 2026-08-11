@@ -1,5 +1,9 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import {
+  isDeferredFormAction,
+  type DeferredFormAction,
+} from '@/app/(protected)/sla-management/_shared/formAction';
 import type {
   PurchaseRequest,
   PurchaseRequestFormData,
@@ -250,23 +254,11 @@ export async function sendApprovalLink(
  * Approve / Reject buttons). Behaves identically to the public approval link.
  * Reject requires a reason (`comments`).
  */
-/**
- * A deferred decision: the stage configures a grace window, so nothing has been written
- * or sent yet and the caller gets a pending action to offer an Undo against.
- */
-export interface DeferredApprovalDecision {
-  deferred: true;
-  pending_action_id: string;
-  action_key: string;
-  commit_at: string | null;
-  window_seconds: number | null;
-}
-
-export function isDeferredDecision(
-  result: PurchaseRequest | DeferredApprovalDecision,
-): result is DeferredApprovalDecision {
-  return (result as DeferredApprovalDecision)?.deferred === true;
-}
+// The 202 contract has ONE definition - the shared module the complaint, stock-inquiry
+// and ticket services already import. These aliases keep this service's existing import
+// surface working without a second copy of the shape that can drift.
+export type DeferredApprovalDecision = DeferredFormAction;
+export const isDeferredDecision = isDeferredFormAction;
 
 export async function submitApprovalDecision(
   id: string,

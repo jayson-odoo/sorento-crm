@@ -107,7 +107,7 @@ class ConversationSLATracking(Base):
     # The company this tracker escalates within. Stamped once at creation from the
     # contact (conversation SLA) or the spawning entity's contact (form SLA), then
     # read back by every escalation. NOT a CompanyScopedMixin: escalation runs from
-    # scheduler ticks and cross-company admin views that must still see the row —
+    # scheduler ticks and cross-company admin views that must still see the row  - 
     # the company governs which ladder is climbed, not who may read the tracker.
     # ORM-nullable / PG-NOT-NULL on purpose, matching the mixin's convention: the
     # scratch-schema fixtures insert before any stamp would fire.
@@ -124,7 +124,7 @@ class ConversationSLATracking(Base):
         default="00000000-0000-0000-0000-000000000001",
     )
     source_entity_type = Column(String(50), nullable=True)  # stock_inquiry | complaint
-    # Polymorphic (no FK) but always a uuid — see migration 300.
+    # Polymorphic (no FK) but always a uuid - see migration 300.
     source_entity_id = Column(UUID(as_uuid=False), nullable=True)
     agent_id = Column(UUID(as_uuid=False), ForeignKey("access_agents.id", ondelete="SET NULL"), nullable=True)  # FK to access_agents
     team_set_code = Column(String(100), nullable=True)  # Team assignment set code for escalation; cleared on resolve
@@ -197,7 +197,7 @@ class FormSLAConfig(Base):
         nullable=True,
     )
     # When set, the next stage (next_config_id) is spawned ONLY when the resolve
-    # was triggered by this specific event (e.g. 'approved' — so 'rejected' closes
+    # was triggered by this specific event (e.g. 'approved' - so 'rejected' closes
     # the stage without advancing to customer service). NULL = spawn on any resolve
     # (backward-compatible with existing single-event chains).
     advance_on_event = Column(String(100), nullable=True)
@@ -320,7 +320,7 @@ class SlaTakeoverRequest(Base):
     initiator_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     # Snapshot of the assignee being contested at create time (NULL = task was unassigned).
     contested_assignee_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    # Queue team context the row was shown under — drives tier re-derivation at commit.
+    # Queue team context the row was shown under - drives tier re-derivation at commit.
     team_id = Column(UUID(as_uuid=False), nullable=False)
     status = Column(String(16), nullable=False, server_default=TAKEOVER_PENDING)
     commit_at = Column(DateTime(timezone=False), nullable=False)  # naive UTC
@@ -385,7 +385,7 @@ class SlaFormAction(Base):
     action_key = Column(String(64), nullable=False)
     source_entity_type = Column(String(50), nullable=False)
     source_entity_id = Column(UUID(as_uuid=False), nullable=False)
-    # The resolve-event this action will emit — the guardrail reads it to find the
+    # The resolve-event this action will emit - the guardrail reads it to find the
     # stage the action closed.
     event_name = Column(String(64), nullable=True)
 

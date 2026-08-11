@@ -75,7 +75,7 @@ export const FORM_ACTION_FIXTURES: Record<FormActionScenario, MockFormActionStat
     eligibility: null,
   },
 
-  // commit_at already passed — the bar reads "Finalizing…" and CTAs stay disabled.
+  // commit_at already passed - the bar reads "Finalizing…" and CTAs stay disabled.
   committing: {
     pending: pendingAction({ commit_at: naiveUtcIn(-2) }),
     outcome: null,

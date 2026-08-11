@@ -470,54 +470,27 @@ async def decide_purchase_request_approval(
             u = db.query(User).filter(User.id == uid).first()
             if u:
                 approver_name = (u.name and u.name.strip()) or u.email or None
-        # Route the decision through the form-action dispatcher. With grace 0 (the
-        # shipped default) this is exactly today's call and returns today's body; with
-        # a grace window configured for this stage AND an in-app caller, it parks the
-        # action instead and answers 202 so the UI can offer an Undo before anything
-        # is written or sent (PLAN-form-sla-undo.md).
-        from app.models.sla import FORM_ACTION_CHANNEL_IMMEDIATE, FORM_ACTION_CHANNEL_UI
-        from app.services.form_action_grace import grace_seconds_for
-        from app.services.form_action_service import FormActionService
-        import app.services.form_actions  # noqa: F401  (registers the actions)
-
-        header_for_type = service.get_request(request_id)
-        entity_type = getattr(header_for_type, "request_type", None) or "purchase_request"
+        # Route the decision through the shared dispatcher glue - the same helper the
+        # other four PR/SF endpoints use. This was the one endpoint that hand-inlined
+        # the 202 contract, and it had already drifted from the shared copy.
         event_name = "approved" if body.action == "approved" else "approval_rejected"
-        # A machine caller has no browser to show a countdown in. Read it off the
-        # request header, which is exact regardless of which auth dependency guards
-        # the endpoint.
-        channel = (
-            FORM_ACTION_CHANNEL_IMMEDIATE
-            if request.headers.get("x-api-key")
-            else FORM_ACTION_CHANNEL_UI
-        )
-        outcome = FormActionService(db).dispatch(
+        outcome = _dispatch_form_action(
+            db,
+            current_user,
+            request,
+            request_id=request_id,
             action_key="pr.approval_decision",
-            entity_type=entity_type,
-            entity_id=request_id,
             payload={
-                "request_id": request_id,
                 "action": body.action,
                 "approved_by": approver_name,
                 "approval_comments": body.comments,
                 "actor_user_id": uid,
             },
-            actor_id=uid,
-            channel=channel,
-            grace_seconds=grace_seconds_for(db, entity_type, event_name=event_name),
+            event_name=event_name,
         )
-        if outcome.deferred:
-            return JSONResponse(
-                status_code=status.HTTP_202_ACCEPTED,
-                content={
-                    "deferred": True,
-                    "pending_action_id": outcome.action_id,
-                    "action_key": "pr.approval_decision",
-                    "commit_at": outcome.commit_at.isoformat() if outcome.commit_at else None,
-                    "window_seconds": outcome.window_seconds,
-                },
-            )
-        header = outcome.result
+        if isinstance(outcome, JSONResponse):
+            return outcome
+        header = outcome
         if getattr(header, "approver_user_id", None):
             user = db.query(User).filter(User.id == header.approver_user_id).first()
             if user:
