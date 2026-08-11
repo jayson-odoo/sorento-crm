@@ -21,12 +21,14 @@ suggested level leans the way the demand is leaning (AC-S13f.1).
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.company_scope_sql import company_sql_predicate
+from app.services.error_handler import AppException
 from app.services.scm import reorder_level_service as rl
 from app.services.scm import trajectory_service
 
@@ -107,6 +109,56 @@ def refresh_for_run(db: Session, run_id: str, *, as_of: Optional[date] = None) -
     return written
 
 
+def amend_suggestion(db: Session, *, product_id: str, warehouse_id: Optional[str],
+                     amended_level: Optional[float], amended_by: Optional[str]) -> dict:
+    """Record the buyer's own figure BESIDE the engine's suggestion (S14).
+
+    Never touches `suggested_level` (the engine's number stays arguable-with) and never
+    touches `level` (that changes in AutoCount, then comes back on the next upload).
+    `amended_level=None` withdraws the amendment. There must be a suggestion to amend:
+    an amendment of nothing would be a hand-set level wearing the wrong column.
+    """
+    co, co_params = company_sql_predicate(db, "rl.company_id", param_prefix="rla",
+                                          shared=True)
+    row = db.execute(text(f"""
+        SELECT rl.id::text AS id, rl.suggested_level
+          FROM scm.reorder_level rl
+         WHERE rl.product_id::text = :pid
+           AND COALESCE(rl.warehouse_id::text, '') = COALESCE(CAST(:wid AS text), '')
+           {("AND " + co) if co else ""}
+    """), {"pid": product_id, "wid": warehouse_id, **co_params}).mappings().first()
+    if row is None or row["suggested_level"] is None:
+        raise AppException(status_code=422,
+                           message="There is no suggestion to amend for this item.")
+
+    if amended_level is not None and amended_level < 0:
+        raise AppException(status_code=422,
+                           message="A reorder level cannot be negative.")
+
+    now = datetime.utcnow()
+    db.execute(text("""
+        UPDATE scm.reorder_level
+           SET amended_level = :al,
+               amended_at = CASE WHEN :al IS NULL THEN NULL ELSE :now END,
+               amended_by = CASE WHEN :al IS NULL THEN NULL ELSE :by END,
+               updated_at = :now
+         WHERE id = :id
+    """), {"id": row["id"], "al": amended_level, "by": amended_by, "now": now})
+    db.commit()
+
+    fresh = db.execute(text(
+        "SELECT suggested_level, amended_level, amended_at, amended_by "
+        "FROM scm.reorder_level WHERE id = :id"), {"id": row["id"]}).mappings().first()
+    return {
+        "product_id": product_id,
+        "warehouse_id": warehouse_id,
+        "suggested_level": float(fresh["suggested_level"]),
+        "amended_level": (float(fresh["amended_level"])
+                          if fresh["amended_level"] is not None else None),
+        "amended_at": fresh["amended_at"].isoformat() if fresh["amended_at"] else None,
+    }
+
+
 def suggestions_for_run(db: Session, run_id: str) -> dict[str, Any]:
     """Every stored suggestion for the run's plan pairs, keyed `product_id:warehouse_id`.
 
@@ -138,6 +190,11 @@ def suggestions_for_run(db: Session, run_id: str) -> dict[str, Any]:
             "suggested_level": float(row["suggested_level"]),
             "suggested_at": (row["suggested_at"].isoformat()
                              if row.get("suggested_at") else None),
+            # The buyer's own figure, beside the engine's - never instead of it (S14).
+            "amended_level": (float(row["amended_level"])
+                              if row.get("amended_level") is not None else None),
+            "amended_at": (row["amended_at"].isoformat()
+                           if row.get("amended_at") else None),
             "basis": row.get("suggestion_basis") or {},
         }
     return {"suggestions": out, "count": len(out)}

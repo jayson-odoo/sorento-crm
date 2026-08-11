@@ -176,7 +176,8 @@ def get_levels(db: Session, product_ids: list[str],
     rows = db.execute(text(f"""
         SELECT rl.id::text AS id, rl.product_id::text AS product_id,
                rl.warehouse_id::text AS warehouse_id, rl.level, rl.source,
-               rl.suggested_level, rl.suggested_at, rl.suggestion_basis, rl.notes
+               rl.suggested_level, rl.suggested_at, rl.suggestion_basis,
+               rl.amended_level, rl.amended_at, rl.amended_by, rl.notes
           FROM scm.reorder_level rl
          WHERE rl.product_id::text = ANY(:pids)
            {where_wh}
@@ -246,10 +247,15 @@ def store_suggestion(db: Session, *, product_id: str, warehouse_id: Optional[str
             VALUES (:id, :pid, :wid, :sl, :now, CAST(:basis AS jsonb), :co, :now)
         """), {**payload, "id": str(uuid.uuid4())})
     else:
+        # A fresh suggestion clears any amendment: the buyer amended THAT number, and
+        # carrying their edit under a recomputed one would present a stale judgement as
+        # current (S14).
         db.execute(text("""
             UPDATE scm.reorder_level
                SET suggested_level = :sl, suggested_at = :now,
-                   suggestion_basis = CAST(:basis AS jsonb), updated_at = :now
+                   suggestion_basis = CAST(:basis AS jsonb),
+                   amended_level = NULL, amended_at = NULL, amended_by = NULL,
+                   updated_at = :now
              WHERE id = :id
         """), {**payload, "id": row["id"]})
 

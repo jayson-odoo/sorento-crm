@@ -39,7 +39,17 @@ export interface LevelSuggestion {
   current_source: string | null;
   suggested_level: number;
   suggested_at: string | null;
+  /** The buyer's own figure, recorded BESIDE the engine's - never instead of it (S14).
+   *  Null = no amendment; a fresh planning run clears it. */
+  amended_level: number | null;
+  amended_at: string | null;
   basis: LevelBasis;
+}
+
+/** The figure the buyer will actually key into AutoCount: their amendment when they made
+ *  one, the engine's suggestion otherwise. */
+export function effectiveLevel(s: LevelSuggestion): number {
+  return s.amended_level ?? s.suggested_level;
 }
 
 export interface LevelSuggestionsPayload {
@@ -55,19 +65,25 @@ export function levelActionLabel(s: LevelSuggestion): {
   detail: string;
   changed: boolean;
 } {
+  const target = effectiveLevel(s);
+  const amended = s.amended_level !== null && s.amended_level !== s.suggested_level;
+
   // Suggesting "set it to 0" where none is set asks for a data-entry trip that changes
   // nothing. Not a change - but it still says so, because silence would read as "not
   // computed" rather than "nothing moved".
-  if (s.current_level === null && s.suggested_level === 0) {
+  if (s.current_level === null && target === 0) {
     return { label: 'No level needed', detail: 'nothing moved', changed: false };
   }
-  const changed = s.current_level === null || s.current_level !== s.suggested_level;
+  const changed = s.current_level === null || s.current_level !== target;
   if (!changed) {
-    return { label: `Level ${n(s.suggested_level)} still fits`, detail: 'no change needed', changed };
+    return { label: `Level ${n(target)} still fits`, detail: 'no change needed', changed };
   }
+  const now = s.current_level === null ? 'none set today' : `now ${n(s.current_level)}`;
   return {
-    label: `Set AutoCount level to ${n(s.suggested_level)}`,
-    detail: s.current_level === null ? 'none set today' : `now ${n(s.current_level)}`,
+    label: `Set AutoCount level to ${n(target)}`,
+    // The engine's number never disappears behind the amendment: an override the reader
+    // cannot compare against its source reads as the engine flip-flopping.
+    detail: amended ? `you set this; engine said ${n(s.suggested_level)}, ${now}` : now,
     changed,
   };
 }
@@ -114,7 +130,10 @@ export function levelRowsForExport(suggestions: Record<string, LevelSuggestion>)
   product_name: string;
   warehouse: string | null;
   current_level: number | null;
+  /** The figure to key in: the amendment when one was made, else the engine's. */
   suggested_level: number;
+  /** The engine's own figure, only when an amendment displaced it. */
+  engine_level: number | null;
   trend: string | null;
 }[] {
   return Object.values(suggestions)
@@ -124,7 +143,11 @@ export function levelRowsForExport(suggestions: Record<string, LevelSuggestion>)
       product_name: s.product_name,
       warehouse: s.warehouse_code,
       current_level: s.current_level,
-      suggested_level: s.suggested_level,
+      suggested_level: effectiveLevel(s),
+      engine_level:
+        s.amended_level !== null && s.amended_level !== s.suggested_level
+          ? s.suggested_level
+          : null,
       trend: s.basis.trend,
     }));
 }

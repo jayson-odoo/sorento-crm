@@ -5,7 +5,7 @@
  * "set it to 24" with the arithmetic behind it - never as something already done.
  */
 import React from 'react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { PlanLevelCell } from './PlanLevelCell';
 import type { LevelSuggestion } from '../lib/levelSuggestion';
@@ -26,8 +26,14 @@ const suggestion = (over: Partial<LevelSuggestion> = {}): LevelSuggestion => ({
   current_source: 'autocount',
   suggested_level: 24,
   suggested_at: '2026-08-10T00:00:00',
+  amended_level: null,
+  amended_at: null,
   basis: {
-    months: [],
+    months: [
+      { month: '2026-05', qty: 12 },
+      { month: '2026-06', qty: 12 },
+      { month: '2026-07', qty: 12 },
+    ],
     months_studied: 3,
     total_qty: 36,
     avg_monthly: 12,
@@ -69,5 +75,44 @@ describe('PlanLevelCell', () => {
     render(<PlanLevelCell suggestion={undefined} />);
 
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+});
+
+describe('the derivation and the amendment (S14)', () => {
+  it('shows the months behind the average, so the sums can be checked', () => {
+    render(<PlanLevelCell suggestion={suggestion()} />);
+    fireEvent.click(screen.getByRole('button', { name: /level suggestion/i }));
+
+    expect(screen.getByText('2026-06')).toBeInTheDocument();
+    expect(screen.getAllByText('12')).toHaveLength(3);
+  });
+
+  it('lets the buyer put their own figure beside the engine’s', async () => {
+    const onAmend = vi.fn();
+    render(<PlanLevelCell suggestion={suggestion()} onAmend={onAmend} />);
+    fireEvent.click(screen.getByRole('button', { name: /level suggestion/i }));
+
+    fireEvent.change(screen.getByLabelText('Your level'), { target: { value: '30' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await vi.waitFor(() => expect(onAmend).toHaveBeenCalledWith(expect.anything(), 30));
+  });
+
+  it('typing the engine’s own number back is a withdrawal, not an amendment', async () => {
+    const onAmend = vi.fn();
+    render(<PlanLevelCell suggestion={suggestion({ amended_level: 30 })} onAmend={onAmend} />);
+    fireEvent.click(screen.getByRole('button', { name: /level suggestion/i }));
+
+    fireEvent.change(screen.getByLabelText('Your level'), { target: { value: '24' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await vi.waitFor(() => expect(onAmend).toHaveBeenCalledWith(expect.anything(), null));
+  });
+
+  it('an amended row keeps the engine’s number in sight', () => {
+    render(<PlanLevelCell suggestion={suggestion({ amended_level: 30 })} />);
+
+    expect(screen.getByText('Set AutoCount level to 30')).toBeInTheDocument();
+    expect(screen.getByText(/engine said 24/)).toBeInTheDocument();
   });
 });

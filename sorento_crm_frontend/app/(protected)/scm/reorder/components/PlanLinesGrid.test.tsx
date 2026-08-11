@@ -26,6 +26,35 @@ if (!window.matchMedia) {
   });
 }
 
+// The filter popover uses the standard SearchableSelect. Mock it as a native <select> so
+// the options are in the DOM without driving a cmdk popover - the assertions here are
+// about which ROWS survive a filter, not about popover mechanics.
+vi.mock('@/components/common/SearchableSelect', () => ({
+  SearchableSelect: ({
+    value,
+    onChange,
+    options = [],
+    placeholder,
+  }: {
+    value?: string;
+    onChange?: (v: string) => void;
+    options?: Array<{ value: string; label: string }>;
+    placeholder?: string;
+  }) => (
+    <select
+      aria-label={placeholder}
+      value={value}
+      onChange={(e) => onChange?.(e.target.value)}
+    >
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
 function rec(over: Partial<ReorderRecommendation> = {}): ReorderRecommendation {
   return {
     id: 'r1', type: 'buy', sku: 'SKU-1', product_name: 'Product one',
@@ -329,5 +358,51 @@ describe('PlanLinesGrid - what price to use', () => {
     // The popover itself carries role="dialog", so the check is that ONE opened and not two.
     expect(screen.getByText(/ask for a fresh quote/i)).toBeInTheDocument();
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
+  });
+});
+
+describe('the suggestion filters (S14)', () => {
+  const openFilters = () => {
+    // Radix DropdownMenu opens on pointerdown, not click.
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Filters/ }), {
+      button: 0,
+      ctrlKey: false,
+    });
+  };
+  const pick = (placeholder: string, value: string) => {
+    fireEvent.change(screen.getByLabelText(placeholder), { target: { value } });
+  };
+
+  it('filters to one side of the business', () => {
+    renderGrid([
+      line({ id: 'p', sku: 'PROJ-1', segment: 'project' }),
+      line({ id: 'd', sku: 'DEAL-1', segment: 'dealer' }),
+    ]);
+    openFilters();
+    pick('Side', 'dealer');
+
+    expect(screen.getByText('DEAL-1')).toBeInTheDocument();
+    expect(screen.queryByText('PROJ-1')).not.toBeInTheDocument();
+  });
+
+  it('filters by the price answer', () => {
+    const advice: PriceAdvice = {
+      advice: 'stale',
+      last: { po_number: null, issue_date: '2020-01-01', unit_cost: 5, currency: 'USD', qty: 1 },
+      previous: null, age_days: 2000, movement_pct: null, currency_changed: false,
+      standing_cost: 5, standing_currency: 'USD', standing_gap_pct: null,
+      free_of_charge_lines: 0,
+    };
+    renderGrid(
+      [line({ id: 'a', sku: 'STALE-1' }), line({ id: 'b', sku: 'FRESH-1' })],
+      {},
+      [],
+      (l) => (l.sku === 'STALE-1' ? advice : { ...advice, advice: 'recent', age_days: 10 }),
+    );
+    openFilters();
+    pick('Price to use', 'stale');
+
+    expect(screen.getByText('STALE-1')).toBeInTheDocument();
+    expect(screen.queryByText('FRESH-1')).not.toBeInTheDocument();
   });
 });

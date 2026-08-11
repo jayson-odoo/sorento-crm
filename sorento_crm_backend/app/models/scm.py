@@ -128,6 +128,12 @@ class ReorderLevel(Base, CompanyScopedMixin):
     suggested_at = Column(DateTime(timezone=False), nullable=True)
     # The months studied, their average, the cover applied - so the number is arguable.
     suggestion_basis = Column(JSONB, nullable=True)
+    # S14: the buyer's amendment of the suggestion, kept BESIDE the engine's number so the
+    # screen can say "you set 30; the engine said 24". A fresh engine refresh clears it -
+    # the amendment was a judgement about that run's suggestion, not a standing override.
+    amended_level = Column(Numeric(14, 4), nullable=True)
+    amended_at = Column(DateTime(timezone=False), nullable=True)
+    amended_by = Column(String, nullable=True)
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)

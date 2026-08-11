@@ -673,6 +673,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
                 priceFor={planLines.priceFor}
                 cheaperFor={planLines.cheaperFor}
                 levelFor={planLines.levelFor}
+                onAmendLevel={planLines.amendLevel}
                 trendFor={planLines.trendFor}
                 staleAfterDays={planLines.staleAfterDays}
               />
@@ -684,7 +685,10 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
               />
               {/* S13f: the level changes to carry into AutoCount, as one list + CSV. */}
               <div className="flex justify-end">
-                <LevelChangesPanel suggestions={planLines.levelSuggestions} />
+                <LevelChangesPanel
+                  suggestions={planLines.levelSuggestions}
+                  onAmend={planLines.amendLevel}
+                />
               </div>
             </>
           )}

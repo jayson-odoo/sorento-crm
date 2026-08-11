@@ -657,6 +657,21 @@ export async function getLevelSuggestions(runId: string): Promise<LevelSuggestio
   return { suggestions: body.suggestions ?? {}, count: body.count ?? 0 };
 }
 
+export async function amendLevelSuggestion(input: {
+  product_id: string;
+  warehouse_id: string | null;
+  /** null withdraws the amendment, back to the engine's figure. */
+  amended_level: number | null;
+}): Promise<{ suggested_level: number; amended_level: number | null }> {
+  const res = await apiFetch('/api/v1/scm/reorder-levels/amend-suggestion', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to amend the level suggestion'));
+  return res.json();
+}
+
 export async function getPriceHistory(runId: string): Promise<PriceHistoryPayload> {
   const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/price-history`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load price history'));

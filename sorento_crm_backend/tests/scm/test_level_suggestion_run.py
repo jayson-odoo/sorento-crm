@@ -245,3 +245,121 @@ def _world_for_route(db, company_id: str) -> dict:
         {"id": _u(), "r": run_id, "p": pid, "w": wid, "co": company_id})
     db.flush()
     return {"run_id": run_id, "product_id": pid, "warehouse_id": wid}
+
+
+# --------------------------------------------------------------------------- #
+# S14: the buyer can amend the suggestion, and the engine's number stays visible
+# --------------------------------------------------------------------------- #
+
+def test_an_amendment_sits_beside_the_suggestion_and_touches_nothing_else():
+    from tests._pg_fixture import pg_session
+    with pg_session() as db:
+        w = _world(db, rising=True)
+        svc.refresh_for_run(db, w["run_id"], as_of=AS_OF)
+
+        out = svc.amend_suggestion(db, product_id=w["product_id"],
+                                   warehouse_id=w["warehouse_id"],
+                                   amended_level=30, amended_by="user-1")
+
+        assert out["amended_level"] == 30.0
+        row = db.execute(text(
+            "SELECT level, source, suggested_level, amended_level, amended_by "
+            "FROM scm.reorder_level WHERE product_id::text = :p AND warehouse_id::text = :w"),
+            {"p": w["product_id"], "w": w["warehouse_id"]}).mappings().first()
+        assert float(row["suggested_level"]) == 24.0  # the engine's number survives
+        assert float(row["amended_level"]) == 30.0
+        assert row["amended_by"] == "user-1"
+        assert float(row["level"]) == 20.0            # the stored level is never touched
+        assert row["source"] == "manual"
+
+
+def test_amending_to_none_clears_it_back_to_the_engines_number():
+    from tests._pg_fixture import pg_session
+    with pg_session() as db:
+        w = _world(db, rising=True)
+        svc.refresh_for_run(db, w["run_id"], as_of=AS_OF)
+        svc.amend_suggestion(db, product_id=w["product_id"], warehouse_id=w["warehouse_id"],
+                             amended_level=30, amended_by="user-1")
+
+        out = svc.amend_suggestion(db, product_id=w["product_id"],
+                                   warehouse_id=w["warehouse_id"],
+                                   amended_level=None, amended_by="user-1")
+
+        assert out["amended_level"] is None
+
+
+def test_there_is_nothing_to_amend_before_a_suggestion_exists():
+    from app.services.error_handler import AppException
+    from tests._pg_fixture import pg_session
+    with pg_session() as db:
+        w = _world(db, rising=True)  # no refresh: no suggestion yet
+
+        with pytest.raises(AppException):
+            svc.amend_suggestion(db, product_id=w["product_id"],
+                                 warehouse_id=w["warehouse_id"],
+                                 amended_level=30, amended_by="user-1")
+
+
+def test_a_fresh_engine_run_clears_the_amendment_because_it_judged_an_old_number():
+    from tests._pg_fixture import pg_session
+    with pg_session() as db:
+        w = _world(db, rising=True)
+        svc.refresh_for_run(db, w["run_id"], as_of=AS_OF)
+        svc.amend_suggestion(db, product_id=w["product_id"], warehouse_id=w["warehouse_id"],
+                             amended_level=30, amended_by="user-1")
+
+        svc.refresh_for_run(db, w["run_id"], as_of=AS_OF)
+
+        row = db.execute(text(
+            "SELECT amended_level FROM scm.reorder_level "
+            "WHERE product_id::text = :p AND warehouse_id::text = :w"),
+            {"p": w["product_id"], "w": w["warehouse_id"]}).mappings().first()
+        assert row["amended_level"] is None
+
+
+def test_the_run_report_carries_the_amendment_beside_the_engines_number():
+    from tests._pg_fixture import pg_session
+    with pg_session() as db:
+        w = _world(db, rising=True)
+        svc.refresh_for_run(db, w["run_id"], as_of=AS_OF)
+        svc.amend_suggestion(db, product_id=w["product_id"], warehouse_id=w["warehouse_id"],
+                             amended_level=30, amended_by="user-1")
+
+        out = svc.suggestions_for_run(db, w["run_id"])
+        entry = out["suggestions"][f"{w['product_id']}:{w['warehouse_id']}"]
+
+        assert entry["suggested_level"] == 24.0
+        assert entry["amended_level"] == 30.0
+
+
+def test_the_amend_endpoint_writes_and_rbac_holds(scm_app):
+    app, db, gcu, gcuk = scm_app
+    scope = as_company_user(app, db, gcu, gcuk)
+    company_id = next(iter(scope))
+    w = _world_for_route(db, company_id)
+    svc.refresh_for_run(db, w["run_id"], as_of=AS_OF)
+
+    with TestClient(app) as c:
+        r = c.post("/api/v1/scm/reorder-levels/amend-suggestion", json={
+            "product_id": w["product_id"], "warehouse_id": w["warehouse_id"],
+            "amended_level": 30,
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["amended_level"] == 30.0
+        assert r.json()["suggested_level"] == 24.0
+
+        # Validation: an item with no suggestion has nothing to amend.
+        bad = c.post("/api/v1/scm/reorder-levels/amend-suggestion", json={
+            "product_id": str(uuid.uuid4()), "amended_level": 10,
+        })
+        assert bad.status_code == 422
+
+    from app.dependencies import get_current_user, get_current_user_or_api_key
+    nobody = seed_user(db, None)
+    for dep in (gcu, gcuk):
+        app.dependency_overrides[dep] = lambda: {"id": nobody, "email": "x@y", "roles": []}
+    with TestClient(app) as c:
+        denied = c.post("/api/v1/scm/reorder-levels/amend-suggestion", json={
+            "product_id": w["product_id"], "amended_level": 30,
+        })
+    assert denied.status_code == 403

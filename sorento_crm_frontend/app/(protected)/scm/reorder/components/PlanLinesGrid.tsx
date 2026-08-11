@@ -34,7 +34,12 @@ import {
 } from '../lib/planLine';
 import { decidedCost, decidedQty, type PlanDecisionMap } from '../lib/planDecisions';
 import { describeCover, NO_COVER, type CoverProposal } from '../lib/coverPlan';
-import { PRICE_ADVICE_SORT, type CheaperAlternative, type PriceAdvice } from '../lib/priceAdvice';
+import {
+  PRICE_ADVICE_LABEL,
+  PRICE_ADVICE_SORT,
+  type CheaperAlternative,
+  type PriceAdvice,
+} from '../lib/priceAdvice';
 import { levelActionLabel, type LevelSuggestion } from '../lib/levelSuggestion';
 import { PlanLevelCell } from './PlanLevelCell';
 import type { TrajectoryEntry } from '../lib/trajectory';
@@ -110,6 +115,7 @@ export function PlanLinesGrid({
   priceFor,
   cheaperFor,
   levelFor,
+  onAmendLevel,
   trendFor,
   staleAfterDays = 180,
   statusFilter: statusFilterProp = null,
@@ -134,6 +140,8 @@ export function PlanLinesGrid({
   cheaperFor?: (line: PlanLine) => CheaperAlternative | null;
   /** S13f: the AutoCount level this run suggests for the line's product+location. */
   levelFor?: (line: PlanLine) => LevelSuggestion | undefined;
+  /** S14: record (or withdraw, with null) the buyer's own level figure. */
+  onAmendLevel?: (s: LevelSuggestion, amended: number | null) => Promise<void> | void;
   /** Is this product's demand sustaining or dying off, on this line's side. */
   trendFor?: (line: PlanLine) => TrajectoryEntry | undefined;
   /** The age past which the business stops trusting a price. Shown, not implied. */
@@ -156,6 +164,12 @@ export function PlanLinesGrid({
   // Undecided first by default is a deliberate bias toward the work that is left. It is a
   // filter, not a sort, so it never reorders the priority the engine computed.
   const [decidedFilter, setDecidedFilter] = useState<string>('all');
+  // S14: one filter per suggestion column, so the buyer can work one question at a time
+  // ("show me every stale price", "every level change", "project side only").
+  const [sideFilter, setSideFilter] = useState<string>('all');
+  const [priceFilter, setPriceFilter] = useState<string>('all');
+  const [actionFilter, setActionFilter] = useState<string>('all');
+  const [levelFilter, setLevelFilter] = useState<string>('all');
   // Row click opens the full derivation, as it did before the grid was rebuilt. The pager
   // steps through the rows in the order they are currently sorted and filtered, so "next"
   // means the next line the buyer is actually looking at.
@@ -167,6 +181,29 @@ export function PlanLinesGrid({
       if (statusFilter !== 'all' && l.status !== statusFilter) return false;
       if (decidedFilter === 'undecided' && decisions[l.id]) return false;
       if (decidedFilter === 'decided' && !decisions[l.id]) return false;
+      if (sideFilter !== 'all' && (l.rec.segment ?? 'project') !== sideFilter) return false;
+      if (priceFilter !== 'all') {
+        const advice = l.purchasable ? priceFor?.(l)?.advice : undefined;
+        if ((advice ?? 'none') !== priceFilter) return false;
+      }
+      if (actionFilter !== 'all') {
+        // The same derivation the Suggested-action cell renders, reduced to its kind.
+        const cover = l.purchasable ? (coverFor?.(l) ?? NO_COVER) : NO_COVER;
+        const buyQty = cover.coverQty > 0 ? cover.buyQty : Math.ceil(l.order_qty);
+        const kind = !l.purchasable
+          ? 'none'
+          : cover.coverQty > 0 && buyQty > 0
+            ? 'stock_and_buy'
+            : cover.coverQty > 0
+              ? 'use_stock'
+              : 'buy';
+        if (kind !== actionFilter) return false;
+      }
+      if (levelFilter !== 'all') {
+        const s = levelFor?.(l);
+        const state = !s ? 'none' : levelActionLabel(s).changed ? 'change' : 'keep';
+        if (state !== levelFilter) return false;
+      }
       if (!needle) return true;
       return (
         l.sku.toLowerCase().includes(needle) ||
@@ -175,7 +212,8 @@ export function PlanLinesGrid({
         l.supplier.name.toLowerCase().includes(needle)
       );
     });
-  }, [lines, searchQuery, statusFilter, decidedFilter, decisions]);
+  }, [lines, searchQuery, statusFilter, decidedFilter, sideFilter, priceFilter,
+      actionFilter, levelFilter, decisions, priceFor, coverFor, levelFor]);
 
   const columns = useMemo<ColumnDef<PlanLine>[]>(
     () => [
@@ -453,7 +491,7 @@ export function PlanLinesGrid({
         ),
         cell: ({ row }) => (
           <StopClick>
-            <PlanLevelCell suggestion={levelFor?.(row.original)} />
+            <PlanLevelCell suggestion={levelFor?.(row.original)} onAmend={onAmendLevel} />
           </StopClick>
         ),
         size: 190,
@@ -535,7 +573,7 @@ export function PlanLinesGrid({
         meta: { headerTitle: 'Decision', skeleton: <Skeleton className="h-8 w-40" /> },
       },
     ],
-    [decisions, onDecide, onClear, runId, coverFor, priceFor, cheaperFor, trendFor, levelFor, staleAfterDays],
+    [decisions, onDecide, onClear, runId, coverFor, priceFor, cheaperFor, trendFor, levelFor, onAmendLevel, staleAfterDays],
   );
 
   const [columnOrder, setColumnOrder] = useState<string[]>(() =>
@@ -600,8 +638,10 @@ export function PlanLinesGrid({
         }
         filters={{
           kind: 'custom',
-          active: statusFilter !== 'all' || decidedFilter !== 'all',
-          activeCount: (statusFilter !== 'all' ? 1 : 0) + (decidedFilter !== 'all' ? 1 : 0),
+          active: [statusFilter, decidedFilter, sideFilter, priceFilter, actionFilter,
+                   levelFilter].some((f) => f !== 'all'),
+          activeCount: [statusFilter, decidedFilter, sideFilter, priceFilter, actionFilter,
+                        levelFilter].filter((f) => f !== 'all').length,
           content: (
             <div className="space-y-3">
               <p className="text-sm font-medium">Filters</p>
@@ -620,6 +660,53 @@ export function PlanLinesGrid({
                   { value: 'decided', label: 'Already decided' },
                 ]}
                 placeholder="Decision"
+              />
+              <SearchableSelect
+                value={sideFilter}
+                onChange={setSideFilter}
+                options={[
+                  { value: 'all', label: 'Both sides' },
+                  { value: 'project', label: 'Project' },
+                  { value: 'dealer', label: 'Retail' },
+                ]}
+                placeholder="Side"
+              />
+              <SearchableSelect
+                value={priceFilter}
+                onChange={setPriceFilter}
+                options={[
+                  { value: 'all', label: 'Every price answer' },
+                  { value: 'zero_cost', label: PRICE_ADVICE_LABEL.zero_cost },
+                  { value: 'no_history', label: PRICE_ADVICE_LABEL.no_history },
+                  { value: 'unknown_age', label: PRICE_ADVICE_LABEL.unknown_age },
+                  { value: 'stale', label: PRICE_ADVICE_LABEL.stale },
+                  { value: 'moving', label: PRICE_ADVICE_LABEL.moving },
+                  { value: 'recent', label: PRICE_ADVICE_LABEL.recent },
+                  { value: 'none', label: 'No price information' },
+                ]}
+                placeholder="Price to use"
+              />
+              <SearchableSelect
+                value={actionFilter}
+                onChange={setActionFilter}
+                options={[
+                  { value: 'all', label: 'Every suggested action' },
+                  { value: 'buy', label: 'Buy only' },
+                  { value: 'use_stock', label: 'Use stock only' },
+                  { value: 'stock_and_buy', label: 'Use stock, then buy' },
+                ]}
+                placeholder="Suggested action"
+              />
+              <SearchableSelect
+                value={levelFilter}
+                onChange={setLevelFilter}
+                options={[
+                  { value: 'all', label: 'Every level answer' },
+                  { value: 'change', label: 'Level change suggested' },
+                  { value: 'keep', label: 'Level already fits' },
+                  { value: 'none', label: 'No level suggestion' },
+                ]}
+                placeholder="AutoCount level"
               />
             </div>
           ),

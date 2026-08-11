@@ -21,6 +21,8 @@ const suggestion = (over: Partial<LevelSuggestion> = {}): LevelSuggestion => ({
   current_source: 'autocount',
   suggested_level: 24,
   suggested_at: null,
+  amended_level: null,
+  amended_at: null,
   basis: {
     months: [], months_studied: 3, total_qty: 36, avg_monthly: 12, cover_months: 2,
     raw_level: 24, moq: null, order_multiple: null, trend: 'rising', no_movement: false,
@@ -67,5 +69,32 @@ describe('LevelChangesPanel', () => {
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     const blob = createObjectURL.mock.calls[0][0] as Blob;
     expect(blob.type).toContain('text/csv');
+  });
+});
+
+describe('amending from the list (S14)', () => {
+  it('saves the buyer’s figure on blur, as an amendment beside the engine’s', async () => {
+    const onAmend = vi.fn();
+    render(<LevelChangesPanel suggestions={{ a: suggestion() }} onAmend={onAmend} />);
+    fireEvent.click(screen.getByRole('button', { name: /1 AutoCount level to update/i }));
+
+    const input = screen.getByLabelText('Set level for SRT-100');
+    fireEvent.change(input, { target: { value: '30' } });
+    fireEvent.blur(input);
+
+    await vi.waitFor(() => expect(onAmend).toHaveBeenCalledWith(expect.anything(), 30));
+  });
+
+  it('shows the engine’s number beside an amended row', () => {
+    render(
+      <LevelChangesPanel
+        suggestions={{ a: suggestion({ amended_level: 30 }) }}
+        onAmend={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /1 AutoCount level to update/i }));
+
+    expect(screen.getByLabelText('Set level for SRT-100')).toHaveValue(30);
+    expect(screen.getByText('24')).toBeInTheDocument(); // the engine column
   });
 });

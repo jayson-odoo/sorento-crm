@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  amendLevelSuggestion,
   getCoverSources,
   getLevelSuggestions,
   getPriceHistory,
@@ -212,6 +213,20 @@ export function usePlanLines(runId: string | null, enabled = true) {
     [levels.data],
   );
 
+  /** S14: record (or withdraw, with null) the buyer's own figure beside the engine's. */
+  const qc = useQueryClient();
+  const amendLevel = useCallback(
+    async (s: LevelSuggestion, amended: number | null) => {
+      await amendLevelSuggestion({
+        product_id: s.product_id,
+        warehouse_id: s.warehouse_id,
+        amended_level: amended,
+      });
+      await qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'level-suggestions'] });
+    },
+    [qc, runId],
+  );
+
   /** The order trend for a line's product+side. Undefined = no opinion, render nothing. */
   const trendFor = useCallback(
     (line: PlanLine): TrajectoryEntry | undefined => {
@@ -232,6 +247,7 @@ export function usePlanLines(runId: string | null, enabled = true) {
     cheaperFor,
     trendFor,
     levelFor,
+    amendLevel,
     levelSuggestions: levels.data?.suggestions ?? {},
     staleAfterDays: prices.data?.stale_after_days ?? 180,
     coverSources: cover.data ?? {},

@@ -25,6 +25,8 @@ const entry = (over: Partial<LevelSuggestion> = {}): LevelSuggestion => ({
   current_source: 'autocount',
   suggested_level: 24,
   suggested_at: '2026-08-10T00:00:00',
+  amended_level: null,
+  amended_at: null,
   basis: {
     months: [],
     months_studied: 3,
@@ -121,6 +123,7 @@ describe('levelRowsForExport', () => {
       warehouse: 'BRW',
       current_level: 20,
       suggested_level: 24,
+      engine_level: null,
       trend: 'rising',
     });
   });
@@ -146,8 +149,38 @@ function entryForZero(over: Partial<LevelSuggestion> = {}): LevelSuggestion {
     product_id: 'p9', warehouse_id: 'w1', product_code: 'SRT-900', product_name: 'Dust',
     warehouse_code: 'BRW', warehouse_name: 'Branch West',
     current_level: null, current_source: null, suggested_level: 0, suggested_at: null,
+    amended_level: null, amended_at: null,
     basis: { months: [], months_studied: 3, total_qty: 0, avg_monthly: 0, cover_months: 2,
              raw_level: 0, moq: null, order_multiple: null, trend: null, no_movement: true },
     ...over,
   };
 }
+
+describe('the amendment (S14)', () => {
+  it('the buyer’s figure leads, with the engine’s number still in sight', () => {
+    const got = levelActionLabel(entry({ amended_level: 30 }));
+    expect(got).toEqual({
+      label: 'Set AutoCount level to 30',
+      detail: 'you set this; engine said 24, now 20',
+      changed: true,
+    });
+  });
+
+  it('an amendment back to the current level means no trip to AutoCount', () => {
+    const got = levelActionLabel(entry({ amended_level: 20 }));
+    expect(got.changed).toBe(false);
+    expect(got.label).toBe('Level 20 still fits');
+  });
+
+  it('the export carries the amended figure and names the engine’s beside it', () => {
+    const rows = levelRowsForExport({ a: entry({ amended_level: 30 }) });
+    expect(rows[0].suggested_level).toBe(30);
+    expect(rows[0].engine_level).toBe(24);
+  });
+
+  it('an unamended row exports the engine figure with no separate engine column value', () => {
+    const rows = levelRowsForExport({ a: entry() });
+    expect(rows[0].suggested_level).toBe(24);
+    expect(rows[0].engine_level).toBeNull();
+  });
+});

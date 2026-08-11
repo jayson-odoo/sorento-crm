@@ -101,6 +101,28 @@ def accept(payload: dict = Body(...), db: Session = Depends(get_db),
     return _row(row)
 
 
+@router.post("/reorder-levels/amend-suggestion")
+def amend(payload: dict = Body(...), db: Session = Depends(get_db),
+          user: dict = Depends(_EDIT)) -> dict[str, Any]:
+    """Record the buyer's own figure beside the engine's suggestion (S14).
+
+    The engine's number stays visible - "you set 30; the engine said 24" - and the stored
+    level is untouched: the change itself happens in AutoCount. `amended_level` null
+    withdraws the amendment. A fresh planning run clears amendments, because each one was
+    a judgement about that run's suggestion.
+    """
+    product_id = payload.get("product_id")
+    if not product_id:
+        raise AppException(status_code=422, message="product_id is required.")
+    amended = payload.get("amended_level")
+    from app.services.scm import level_suggestion_service
+    return level_suggestion_service.amend_suggestion(
+        db, product_id=str(product_id),
+        warehouse_id=(str(payload["warehouse_id"]) if payload.get("warehouse_id") else None),
+        amended_level=(float(amended) if amended is not None else None),
+        amended_by=str(user.get("id")) if isinstance(user, dict) and user.get("id") else None)
+
+
 @router.post("/reorder-levels/import/preview")
 async def preview_level_import(
     file: UploadFile = File(...),
