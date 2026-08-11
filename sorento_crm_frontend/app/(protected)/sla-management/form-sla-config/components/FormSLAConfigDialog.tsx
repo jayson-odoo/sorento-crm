@@ -147,6 +147,10 @@ export default function FormSLAConfigDialog({
   const [isActive, setIsActive] = useState(true);
   const [notifyAssignee, setNotifyAssignee] = useState(true);
   const [notifyOnEscalation, setNotifyOnEscalation] = useState(true);
+  // Blank = inherit the global default. Stored as NULL, not 0, so a stage that has
+  // never been configured keeps following the system setting rather than pinning
+  // itself to "no grace" forever.
+  const [graceSeconds, setGraceSeconds] = useState('');
 
   useEffect(() => {
     if (existing) {
@@ -163,6 +167,11 @@ export default function FormSLAConfigDialog({
       setIsActive(existing.is_active);
       setNotifyAssignee(existing.notify_assignee ?? true);
       setNotifyOnEscalation(existing.notify_on_escalation ?? true);
+      setGraceSeconds(
+        existing.grace_seconds === null || existing.grace_seconds === undefined
+          ? ''
+          : String(existing.grace_seconds),
+      );
     } else if (open) {
       setSourceType('stock_inquiry');
       setStageCode('');
@@ -177,6 +186,9 @@ export default function FormSLAConfigDialog({
       setIsActive(true);
       setNotifyAssignee(true);
       setNotifyOnEscalation(true);
+      // Without this, a new stage silently inherits the last-viewed stage's grace
+      // as an explicit pin instead of blank-inherits-global.
+      setGraceSeconds('');
     }
   }, [existing, open]);
 
@@ -237,6 +249,7 @@ export default function FormSLAConfigDialog({
       is_active: isActive,
       notify_assignee: notifyAssignee,
       notify_on_escalation: notifyOnEscalation,
+      grace_seconds: graceSeconds.trim() === '' ? null : Number(graceSeconds),
     });
   };
 
@@ -411,6 +424,25 @@ export default function FormSLAConfigDialog({
             <span className="text-xs text-muted-foreground">
               When off, escalating a tracker on this stage reassigns silently — the
               new assignee is not notified.
+            </span>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="grace-seconds">Undo grace window (seconds)</Label>
+            <Input
+              id="grace-seconds"
+              type="number"
+              min={0}
+              max={600}
+              inputMode="numeric"
+              placeholder="Leave blank to use the system default"
+              value={graceSeconds}
+              onChange={(e) => setGraceSeconds(e.target.value)}
+            />
+            <span className="text-xs text-muted-foreground">
+              How long an in-app action on this stage waits before it applies. During
+              the wait nothing is written and nobody is notified, so the person who
+              clicked can take it back. 0 disables the wait.
             </span>
           </div>
         </div>

@@ -199,6 +199,17 @@ def _handler_takeover_request_commit(db, task):
     return SlaTakeoverService(db).commit_due()
 
 
+def _handler_form_action_commit(db, task):
+    """Execute form-SLA actions whose grace window has closed.
+
+    The lazy commit on read (GET /form-actions/current) covers anyone looking at the
+    form; this sweep covers the ones nobody is looking at. See PLAN-form-sla-undo."""
+    from app.services.form_action_service import FormActionService
+    import app.services.form_actions  # noqa: F401  (registers the actions)
+
+    return FormActionService(db).commit_due()
+
+
 def _handler_chat_message_resolver(db, task):
     """Fill `respond_ts` / delivery status on chat rows from Respond itself.
 
@@ -442,6 +453,7 @@ def register_task_handlers():
     register_handler("product_discontinued_check", _handler_product_discontinued_check)
     register_handler("coverage_subscription_expiry", _handler_coverage_subscription_expiry)
     register_handler("takeover_request_commit", _handler_takeover_request_commit)
+    register_handler("form_action_commit", _handler_form_action_commit)
     register_handler("n8n_liveness_ping", lambda db, task: run_n8n_liveness_ping(db))
     register_handler("system_health_watchdog", lambda db, task: run_health_watchdog(db))
     register_handler("system_health_daily_digest", lambda db, task: run_health_daily_digest(db, task))

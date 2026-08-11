@@ -1,5 +1,9 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import {
+  isDeferredFormAction,
+  type DeferredFormAction,
+} from '@/app/(protected)/sla-management/_shared/formAction';
 import type {
   PurchaseRequest,
   PurchaseRequestFormData,
@@ -250,11 +254,17 @@ export async function sendApprovalLink(
  * Approve / Reject buttons). Behaves identically to the public approval link.
  * Reject requires a reason (`comments`).
  */
+// The 202 contract has ONE definition - the shared module the complaint, stock-inquiry
+// and ticket services already import. These aliases keep this service's existing import
+// surface working without a second copy of the shape that can drift.
+export type DeferredApprovalDecision = DeferredFormAction;
+export const isDeferredDecision = isDeferredFormAction;
+
 export async function submitApprovalDecision(
   id: string,
   action: 'approved' | 'rejected',
   comments?: string,
-): Promise<PurchaseRequest> {
+): Promise<PurchaseRequest | DeferredApprovalDecision> {
   const response = await apiFetch(
     `/api/v1/procurement/purchase-requests/${id}/approval-decision`,
     {
@@ -272,7 +282,7 @@ export async function submitApprovalDecision(
 export async function rejectSubmittedPurchaseRequest(
   id: string,
   rejectionReason: string,
-): Promise<PurchaseRequest> {
+): Promise<PurchaseRequest | DeferredApprovalDecision> {
   const response = await apiFetch(
     `/api/v1/procurement/purchase-requests/${id}/reject-submitted`,
     {
@@ -297,7 +307,7 @@ export async function rejectSubmittedPurchaseRequest(
   return response.json();
 }
 
-export async function setPendingApproval(id: string): Promise<PurchaseRequest> {
+export async function setPendingApproval(id: string): Promise<PurchaseRequest | DeferredApprovalDecision> {
   const response = await apiFetch(
     `/api/v1/procurement/purchase-requests/${id}/set-pending-approval`,
     { method: 'POST' },
@@ -315,7 +325,7 @@ async function finalizeRequestByCs(
   id: string,
   action: 'process' | 'close',
   note?: string,
-): Promise<PurchaseRequest> {
+): Promise<PurchaseRequest | DeferredApprovalDecision> {
   const response = await apiFetch(
     `/api/v1/procurement/purchase-requests/${id}/${action}`,
     {
@@ -336,14 +346,14 @@ async function finalizeRequestByCs(
 export function processPurchaseRequestByCs(
   id: string,
   note?: string,
-): Promise<PurchaseRequest> {
+): Promise<PurchaseRequest | DeferredApprovalDecision> {
   return finalizeRequestByCs(id, 'process', note);
 }
 
 export function closePurchaseRequestByCs(
   id: string,
   note?: string,
-): Promise<PurchaseRequest> {
+): Promise<PurchaseRequest | DeferredApprovalDecision> {
   return finalizeRequestByCs(id, 'close', note);
 }
 
