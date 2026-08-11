@@ -43,6 +43,12 @@ export interface LevelSuggestion {
    *  Null = no amendment; a fresh planning run clears it. */
   amended_level: number | null;
   amended_at: string | null;
+  /** The lot to order when stock hits the level: one cover of demand rounded up to a
+   *  purchasable pack. Null on suggestions stored before it existed - "not computed",
+   *  never "order nothing". */
+  suggested_quantity: number | null;
+  /** AutoCount's own reorder quantity as uploaded, beside the engine's. */
+  master_reorder_quantity: number | null;
   basis: LevelBasis;
 }
 
@@ -88,6 +94,16 @@ export function levelActionLabel(s: LevelSuggestion): {
   };
 }
 
+/** The quantity line under the level: "order 24 when it fires (AutoCount says 18)". */
+export function quantityActionLabel(s: LevelSuggestion): string | null {
+  if (s.suggested_quantity === null) return null;
+  const master = s.master_reorder_quantity;
+  const differs = master === null || master !== s.suggested_quantity;
+  if (!differs) return `Reorder qty ${n(s.suggested_quantity)} still fits`;
+  const now = master === null ? 'none set today' : `now ${n(master)}`;
+  return `Reorder qty ${n(s.suggested_quantity)}, ${now}`;
+}
+
 /**
  * The arithmetic, in a sentence the buyer can argue with.
  *
@@ -114,6 +130,11 @@ export function describeLevelSuggestion(s: LevelSuggestion | undefined): string 
     parts.push(`The supplier's minimum order of ${n(b.moq)} lifts it to ${n(s.suggested_level)}.`);
   } else if (b.order_multiple && s.suggested_level !== Math.ceil(b.raw_level)) {
     parts.push(`Rounded to the supplier's pack of ${n(b.order_multiple)}.`);
+  }
+  if (s.suggested_quantity !== null) {
+    parts.push(
+      `When it fires, order ${n(s.suggested_quantity)}: one cover of demand, rounded up to what the supplier sells.`,
+    );
   }
   return parts.join(' ');
 }

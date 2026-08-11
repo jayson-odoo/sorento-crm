@@ -27,6 +27,8 @@ const entry = (over: Partial<LevelSuggestion> = {}): LevelSuggestion => ({
   suggested_at: '2026-08-10T00:00:00',
   amended_level: null,
   amended_at: null,
+  suggested_quantity: null,
+  master_reorder_quantity: null,
   basis: {
     months: [],
     months_studied: 3,

@@ -47,6 +47,7 @@ import type { TrajectoryEntry } from '../lib/trajectory';
 import { PlanTrendPopover } from './PlanTrendPopover';
 import { PlanLineDecisionCell } from './PlanLineDecisionCell';
 import { PlanPriceCell } from './PlanPriceCell';
+import { PlanSupplierCell } from './PlanSupplierCell';
 import { PlanChecklistPopover } from './PlanChecklistPopover';
 import { PlanDemandPopover } from './PlanDemandPopover';
 import {
@@ -70,8 +71,17 @@ import type { ReorderRecommendation } from '../types/reorder.types';
  *
  * The offsets the engine netted (on hand, incoming, on order) are COLUMNS, because burying
  * them in a popover is what made the netting feel like a decision taken on the buyer's behalf.
- * Read left to right the row is an argument: this much is needed, this much we already have,
- * so this much to buy.
+ *
+ * Column order is a STORY, result first and explanation after, in chapters (user markup,
+ * 2026-08-11: "we should always tell the result / suggestive columns, then followed by
+ * explanation columns"):
+ *   1. what and how much - product, location, SUGGESTED QTY, then the arithmetic behind
+ *      it (SO / On hand / SPO / PO, named the way the source documents are named);
+ *   2. the action - suggested action, then the decision control that mirrors it;
+ *   3. the money - suggested price, suggested supplier, then the total cost they produce;
+ *   4. the AutoCount round-trip - suggested level + reorder qty.
+ * Net and runway are computed steps, not decisions, so they ship hidden and live on in
+ * the row-click derivation; the columns menu brings them back for whoever wants them.
  */
 
 const STATUS_VARIANT: Record<PlanLineStatus, 'primary' | 'warning' | 'secondary' | 'info'> = {
@@ -285,7 +295,7 @@ export function PlanLinesGrid({
       {
         id: 'side',
         accessorFn: (row) => row.rec.segment ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Side" visibility column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Order type" visibility column={column} />,
         // Project vs Retail, off the warehouse's segment. Never merged into one figure
         // anywhere on this screen (S13b): project demand is erratic and retail stable, so a
         // number spanning both describes neither. "Retail" not "Dealer" - the user's word.
@@ -298,9 +308,9 @@ export function PlanLinesGrid({
             </Badge>
           );
         },
-        size: 90,
+        size: 100,
         enableSorting: true,
-        meta: { headerTitle: 'Side', skeleton: <Skeleton className="h-5 w-14" /> },
+        meta: { headerTitle: 'Order type', skeleton: <Skeleton className="h-5 w-14" /> },
       },
       {
         id: 'status',
@@ -318,13 +328,25 @@ export function PlanLinesGrid({
       {
         id: 'needed',
         accessorFn: (row) => row.rec.outstanding_sales ?? 0,
-        header: ({ column }) => <DataGridColumnHeader title="Needed" visibility column={column} />,
-        cell: ({ row }) => (
-          <span className="tabular-nums">{numCell(row.original.rec.outstanding_sales)}</span>
+        // Named after the DOCUMENT it comes from (user markup, 2026-08-11: "the needed is
+        // SO right? I want to name it SO ... to make it relatable"). Same for SPO and PO
+        // below: the buyer reconciles these against AutoCount extracts carrying exactly
+        // these names, and a synonym is one more translation they have to hold in their
+        // head.
+        header: ({ column }) => (
+          <DataGridColumnHeader title="SO" visibility column={column} />
         ),
-        size: 90,
+        cell: ({ row }) => (
+          <span
+            className="tabular-nums"
+            title="Outstanding sales-order quantity - the demand this line covers"
+          >
+            {numCell(row.original.rec.outstanding_sales)}
+          </span>
+        ),
+        size: 80,
         enableSorting: true,
-        meta: { headerTitle: 'Needed', skeleton: <Skeleton className="h-4 w-10" /> },
+        meta: { headerTitle: 'SO (needed)', skeleton: <Skeleton className="h-4 w-10" /> },
       },
       // The three offsets, on the row rather than behind a popover. This is the arithmetic
       // that produced the suggested quantity, and the buyer has to be able to see it without
@@ -341,30 +363,34 @@ export function PlanLinesGrid({
       {
         id: 'incoming_spo',
         accessorFn: (row) => row.rec.incoming_spo ?? 0,
-        header: ({ column }) => <DataGridColumnHeader title="Incoming" visibility column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="SPO" visibility column={column} />,
         cell: ({ row }) => (
-          <span className="tabular-nums">{numCell(row.original.rec.incoming_spo)}</span>
+          <span className="tabular-nums" title="On the water - incoming SPO quantity">
+            {numCell(row.original.rec.incoming_spo)}
+          </span>
         ),
-        size: 90,
+        size: 80,
         enableSorting: true,
-        meta: { headerTitle: 'Incoming', skeleton: <Skeleton className="h-4 w-10" /> },
+        meta: { headerTitle: 'SPO (incoming)', skeleton: <Skeleton className="h-4 w-10" /> },
       },
       {
         id: 'outstanding_po',
         accessorFn: (row) => row.rec.outstanding_po ?? 0,
-        header: ({ column }) => <DataGridColumnHeader title="On order" visibility column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="PO" visibility column={column} />,
         cell: ({ row }) => (
-          <span className="tabular-nums">{numCell(row.original.rec.outstanding_po)}</span>
+          <span className="tabular-nums" title="Ordered, not yet received - open PO quantity">
+            {numCell(row.original.rec.outstanding_po)}
+          </span>
         ),
-        size: 90,
+        size: 80,
         enableSorting: true,
-        meta: { headerTitle: 'On order', skeleton: <Skeleton className="h-4 w-10" /> },
+        meta: { headerTitle: 'PO (on order)', skeleton: <Skeleton className="h-4 w-10" /> },
       },
       {
         id: 'suggested',
         accessorFn: (row) => row.order_qty,
         header: ({ column }) => (
-          <DataGridColumnHeader title="Suggested" visibility column={column} />
+          <DataGridColumnHeader title="Suggested qty" visibility column={column} />
         ),
         cell: ({ row }) =>
           row.original.purchasable ? (
@@ -395,7 +421,7 @@ export function PlanLinesGrid({
           ),
         size: 120,
         enableSorting: true,
-        meta: { headerTitle: 'Suggested', skeleton: <Skeleton className="h-4 w-10" /> },
+        meta: { headerTitle: 'Suggested qty', skeleton: <Skeleton className="h-4 w-10" /> },
       },
       {
         id: 'net',
@@ -433,7 +459,7 @@ export function PlanLinesGrid({
       {
         id: 'cost',
         accessorFn: (row) => decidedCost(row, decisions[row.id]) ?? -1,
-        header: ({ column }) => <DataGridColumnHeader title="Cost" visibility column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Total cost" visibility column={column} />,
         cell: ({ row }) => {
           const line = row.original;
           if (!line.purchasable) return <span className="text-muted-foreground">{EM_DASH}</span>;
@@ -453,7 +479,7 @@ export function PlanLinesGrid({
         },
         size: 120,
         enableSorting: true,
-        meta: { headerTitle: 'Cost', skeleton: <Skeleton className="h-4 w-16" /> },
+        meta: { headerTitle: 'Total cost', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
         id: 'price',
@@ -464,11 +490,13 @@ export function PlanLinesGrid({
           return p ? PRICE_ADVICE_SORT[p.advice] : 99;
         },
         header: ({ column }) => (
-          <DataGridColumnHeader title="Price to use" visibility column={column} />
+          <DataGridColumnHeader title="Suggested price" visibility column={column} />
         ),
         cell: ({ row }) => (
           <StopClick>
             <PlanPriceCell
+              unitCost={row.original.unit_cost}
+              currency={row.original.currency}
               price={priceFor?.(row.original)}
               cheaper={cheaperFor?.(row.original) ?? null}
               staleAfterDays={staleAfterDays}
@@ -476,9 +504,30 @@ export function PlanLinesGrid({
             />
           </StopClick>
         ),
-        size: 190,
+        size: 150,
         enableSorting: true,
-        meta: { headerTitle: 'Price to use', skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Suggested price', skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
+        id: 'supplier',
+        accessorFn: (row) => row.supplier?.name ?? '',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Suggested supplier" visibility column={column} />
+        ),
+        cell: ({ row }) => (
+          <StopClick>
+            <PlanSupplierCell
+              supplier={row.original.supplier ?? null}
+              alternatives={row.original.alternatives ?? []}
+              price={priceFor?.(row.original)}
+              cheaper={cheaperFor?.(row.original) ?? null}
+              purchasable={row.original.purchasable}
+            />
+          </StopClick>
+        ),
+        size: 180,
+        enableSorting: true,
+        meta: { headerTitle: 'Suggested supplier', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         id: 'level',
@@ -489,16 +538,16 @@ export function PlanLinesGrid({
           return levelActionLabel(s).changed ? 0 : 1;
         },
         header: ({ column }) => (
-          <DataGridColumnHeader title="AutoCount level" visibility column={column} />
+          <DataGridColumnHeader title="AutoCount level + qty" visibility column={column} />
         ),
         cell: ({ row }) => (
           <StopClick>
             <PlanLevelCell suggestion={levelFor?.(row.original)} onAmend={onAmendLevel} />
           </StopClick>
         ),
-        size: 190,
+        size: 200,
         enableSorting: true,
-        meta: { headerTitle: 'AutoCount level', skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'AutoCount level + qty', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         id: 'suggestion',
@@ -529,23 +578,35 @@ export function PlanLinesGrid({
             line.rec.segment === 'project' && cover.coverQty > 0
               ? `CS asked to buy ${fmtInt(Math.ceil(line.order_qty))}`
               : null;
+          // One shape per part - "verb, then the quantity" - in a fixed order (use what
+          // we hold, then what is already ordered, then buy). The detail behind each part
+          // (which warehouse, which PO) stays on the title; a row that mixes three
+          // sentence shapes is the "not intuitive" the user named.
           return (
             <div className="min-w-0 text-xs" title={describeCover(cover, (n) => fmtInt(n))}>
               {cover.coverQty > 0 ? (
-                <div className="truncate">
-                  {`Use stock ${cover.sources
+                <div
+                  className="truncate"
+                  title={cover.sources
                     .map((s) => `${fmtInt(s.qty)} from ${s.warehouse_code}`)
-                    .join(', ')}`}
+                    .join(', ')}
+                >
+                  {'Use stock '}
+                  <span className="font-medium tabular-nums">{fmtInt(cover.coverQty)}</span>
                 </div>
               ) : null}
               {usePo > 0 ? (
-                <div
-                  className="truncate"
-                  title={describePoBook(receipts).join('\n')}
-                >{`Use PO ${fmtInt(usePo)} - already ordered`}</div>
+                <div className="truncate" title={describePoBook(receipts).join('\n')}>
+                  {'Use PO '}
+                  <span className="font-medium tabular-nums">{fmtInt(usePo)}</span>
+                  <span className="text-muted-foreground"> already ordered</span>
+                </div>
               ) : null}
               {buyQty > 0 ? (
-                <div className="truncate font-medium">{`Buy ${fmtInt(buyQty)}`}</div>
+                <div className="truncate">
+                  {'Buy '}
+                  <span className="font-semibold tabular-nums">{fmtInt(buyQty)}</span>
+                </div>
               ) : null}
               {/* S15: what is arriving is ALREADY inside the net, so it is a note, never
                   a second offset - counting it again would cover the same demand twice. */}
@@ -598,18 +659,31 @@ export function PlanLinesGrid({
     [decisions, onDecide, onClear, runId, coverFor, priceFor, cheaperFor, trendFor, levelFor, onAmendLevel, poFor, staleAfterDays],
   );
 
-  const [columnOrder, setColumnOrder] = useState<string[]>(() =>
-    columns.map((c) => c.id as string),
-  );
+  // The story order (see the header comment): each chapter leads with its result and is
+  // followed by the columns that explain it. Deliberately NOT the definition order.
+  const [columnOrder, setColumnOrder] = useState<string[]>(() => [
+    'rank', 'side', 'sku', 'warehouse', 'status',
+    'suggested', 'needed', 'on_hand', 'incoming_spo', 'outstanding_po',
+    'suggestion', 'decision',
+    'price', 'supplier', 'cost',
+    'level',
+    'net', 'days_cover',
+  ]);
+  // Computed steps, not decisions: off by default, one columns-menu click to bring back.
+  const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>({
+    net: false,
+    days_cover: false,
+  });
 
   const table = useReactTable({
     columns,
     data: filtered,
     pageCount: Math.ceil(filtered.length / pagination.pageSize),
     getRowId: (row: PlanLine) => row.id,
-    state: { pagination, sorting, columnOrder },
+    state: { pagination, sorting, columnOrder, columnVisibility },
     columnResizeMode: 'onChange',
     onColumnOrderChange: setColumnOrder,
+    onColumnVisibilityChange: setColumnVisibility,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
@@ -687,11 +761,11 @@ export function PlanLinesGrid({
                 value={sideFilter}
                 onChange={setSideFilter}
                 options={[
-                  { value: 'all', label: 'Both sides' },
+                  { value: 'all', label: 'Both order types' },
                   { value: 'project', label: 'Project' },
                   { value: 'dealer', label: 'Retail' },
                 ]}
-                placeholder="Side"
+                placeholder="Order type"
               />
               <SearchableSelect
                 value={priceFilter}
@@ -706,7 +780,7 @@ export function PlanLinesGrid({
                   { value: 'recent', label: PRICE_ADVICE_LABEL.recent },
                   { value: 'none', label: 'No price information' },
                 ]}
-                placeholder="Price to use"
+                placeholder="Suggested price"
               />
               <SearchableSelect
                 value={actionFilter}

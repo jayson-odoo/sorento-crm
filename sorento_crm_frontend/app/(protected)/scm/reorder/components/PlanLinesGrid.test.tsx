@@ -138,17 +138,22 @@ describe('PlanLinesGrid - one list', () => {
 });
 
 describe('PlanLinesGrid - the netting is on the row', () => {
-  it('shows what is needed and each thing that offsets it', () => {
+  it('shows what is needed and each thing that offsets it, named after the documents', () => {
     // These were behind a popover, which is what made the netting feel like a decision taken
-    // on the buyer's behalf. Distinct values so a match cannot be the wrong column.
+    // on the buyer's behalf. Distinct values so a match cannot be the wrong column. The
+    // headers are the AutoCount document names the buyer reconciles against (SO / SPO / PO),
+    // not synonyms ("Needed" / "Incoming" / "On order").
     renderGrid([line({ rank: 7, outstanding_sales: 24, on_hand: 5, incoming_spo: 3,
                        outstanding_po: 2, order_qty: 14 })]);
+    expect(screen.getByText('SO')).toBeInTheDocument();
+    expect(screen.getByText('SPO')).toBeInTheDocument();
+    expect(screen.getByText('PO')).toBeInTheDocument();
     const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
-    expect(within(row).getByText('24')).toBeInTheDocument(); // needed
+    expect(within(row).getByText('24')).toBeInTheDocument(); // SO (needed)
     expect(within(row).getByText('5')).toBeInTheDocument(); // on hand
-    expect(within(row).getByText('3')).toBeInTheDocument(); // incoming
-    expect(within(row).getByText('2')).toBeInTheDocument(); // on order
-    expect(within(row).getByText('14')).toBeInTheDocument(); // suggested
+    expect(within(row).getByText('3')).toBeInTheDocument(); // SPO (incoming)
+    expect(within(row).getByText('2')).toBeInTheDocument(); // PO (on order)
+    expect(within(row).getAllByText('14').length).toBeGreaterThan(0); // suggested qty
   });
 
   it('shows a dash, not a zero, for a figure that is not on file', () => {
@@ -185,10 +190,16 @@ describe('PlanLinesGrid - the explanations are still there', () => {
     ).toBeInTheDocument();
   });
 
-  it('explains the net and the runway', () => {
+  it('ships net and runway hidden - computed steps, not decisions', () => {
+    // The user's markup (2026-08-11): "I don't really need net and runway". They stay
+    // available through the columns menu and inside the row-click derivation; by default
+    // the row reads suggestion -> explanation without them.
     renderGrid([line()]);
-    expect(screen.getByRole('button', { name: /Explain net/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Explain runway/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Explain net/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Explain runway/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('Product one'));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getAllByText(/Net position/i).length).toBeGreaterThan(0);
   });
 
   it('opens the full derivation when the row itself is clicked', () => {
@@ -253,18 +264,25 @@ describe('PlanLinesGrid - buy, cover, or both', () => {
   });
 
   it('names the source when stock elsewhere covers it outright', () => {
-    // The live BRW-IB case: nothing on hand HERE, but BRW-BB is holding some.
+    // The live BRW-IB case: nothing on hand HERE, but BRW-BB is holding some. The verb and
+    // quantity are the row; the source detail rides on the title.
     renderGrid([line({ order_qty: 1 })], {}, elsewhere);
-    expect(screen.getByText('Use stock 1 from BRW-BB')).toBeInTheDocument();
+    const part = screen.getByTitle('1 from BRW-BB');
+    expect(part).toHaveTextContent('Use stock 1');
   });
 
-  it('proposes the split as structured parts, one per line, never a sentence', () => {
+  it('proposes the split as uniform verb-quantity parts, one per line, never a sentence', () => {
     // The live DC1-BB case: 6 units exist anywhere else against a shortage of 188.
     // Structured is the user's own markup: "more structured and organized, instead of
-    // like a sentence".
+    // like a sentence" - every part is the same shape, verb then quantity.
     renderGrid([line({ order_qty: 188 })], {}, elsewhere);
-    expect(screen.getByText('Use stock 5 from BRW-BB, 1 from PJ-SR')).toBeInTheDocument();
-    expect(screen.getByText('Buy 182')).toBeInTheDocument();
+    // The row states the TOTAL to pull (6); which warehouse gives what stays on the title.
+    expect(screen.getByTitle('5 from BRW-BB, 1 from PJ-SR')).toHaveTextContent('Use stock 6');
+    const buyPart = screen
+      .getAllByText('Buy', { exact: false })
+      .map((el) => el.closest('div'))
+      .find((el) => el?.textContent === 'Buy 182');
+    expect(buyPart).toBeTruthy();
   });
 
   it('says when the engine is superseding CS on a project line', () => {
@@ -330,11 +348,13 @@ describe('PlanLinesGrid - what price to use', () => {
     free_of_charge_lines: 0,
   };
 
-  it('puts the age of the price on the row, beside what it costs', () => {
+  it('leads with the price to buy at, and the verdict rides under it', () => {
     renderGrid([line()], {}, [], () => stale);
 
+    // The row's unit_cost (10, USD default currency null on the fixture) is the headline;
+    // the verdict badge is the caveat under it.
     expect(screen.getByText('Ask new price')).toBeInTheDocument();
-    expect(screen.getByText(/USD 20\.37/)).toBeInTheDocument();
+    expect(screen.getByText('10.00')).toBeInTheDocument();
   });
 
   it('leaves the cell empty when there is no price opinion, rather than implying all is well', () => {
@@ -374,7 +394,7 @@ describe('the suggestion filters (S14)', () => {
       line({ id: 'd', sku: 'DEAL-1', segment: 'dealer' }),
     ]);
     openFilters();
-    pick('Side', 'dealer');
+    pick('Order type', 'dealer');
 
     expect(screen.getByText('DEAL-1')).toBeInTheDocument();
     expect(screen.queryByText('PROJ-1')).not.toBeInTheDocument();
@@ -395,10 +415,54 @@ describe('the suggestion filters (S14)', () => {
       (l) => (l.sku === 'STALE-1' ? advice : { ...advice, advice: 'recent', age_days: 10 }),
     );
     openFilters();
-    pick('Price to use', 'stale');
+    pick('Suggested price', 'stale');
 
     expect(screen.getByText('STALE-1')).toBeInTheDocument();
     expect(screen.queryByText('FRESH-1')).not.toBeInTheDocument();
+  });
+});
+
+describe('the column story - result first, explanation after (2026-08-11 markup)', () => {
+  const headerTexts = () =>
+    screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+
+  it('reads as chapters: what to do, why, the action, the money, the AutoCount pair', () => {
+    renderGrid([line()]);
+    const heads = headerTexts();
+    // Exact match: "PO" is a substring of "SPO" and would find the wrong column.
+    const at = (label: string) => heads.findIndex((h) => h.trim() === label);
+
+    // Chapter 1: the result (Suggested qty) comes BEFORE the arithmetic that explains it.
+    expect(at('Suggested qty')).toBeGreaterThan(at('Order type'));
+    expect(at('SO')).toBeGreaterThan(at('Suggested qty'));
+    expect(at('SPO')).toBeGreaterThan(at('On hand'));
+    expect(at('PO')).toBeGreaterThan(at('SPO'));
+    // Chapter 2: the action, then the decision that mirrors it.
+    expect(at('Suggested action')).toBeGreaterThan(at('PO'));
+    expect(at('Decision')).toBeGreaterThan(at('Suggested action'));
+    // Chapter 3: price and supplier first, the total they produce after.
+    expect(at('Suggested price')).toBeGreaterThan(at('Decision'));
+    expect(at('Suggested supplier')).toBeGreaterThan(at('Suggested price'));
+    expect(at('Total cost')).toBeGreaterThan(at('Suggested supplier'));
+    // Chapter 4: the AutoCount round-trip closes the row.
+    expect(at('AutoCount level + qty')).toBeGreaterThan(at('Total cost'));
+  });
+
+  it('puts the order type right after the priority, before the product', () => {
+    renderGrid([line()]);
+    const heads = headerTexts();
+    const orderType = heads.findIndex((h) => h.includes('Order type'));
+    const product = heads.findIndex((h) => h.includes('Product'));
+    expect(orderType).toBeGreaterThan(-1);
+    expect(orderType).toBeLessThan(product);
+  });
+
+  it('names the suggested supplier on the row, with the case for them behind it', () => {
+    renderGrid([line()]);
+    expect(screen.getByText('Acme')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /why this supplier/i }));
+    expect(screen.getByText(/only supplier linked to this product/i)).toBeInTheDocument();
+    expect(screen.getByText(/our own purchase records only/i)).toBeInTheDocument();
   });
 });
 
@@ -412,8 +476,9 @@ describe('the PO book offsets the buy (S15)', () => {
       [line({ order_qty: 200, recommended_qty: 200 })], {}, [], undefined, () => receipts,
     );
 
-    expect(screen.getByText('Use PO 200 - already ordered')).toBeInTheDocument();
-    expect(screen.queryByText(/^Buy /)).not.toBeInTheDocument();
+    const part = screen.getByText('already ordered').closest('div') as HTMLElement;
+    expect(part).toHaveTextContent('Use PO 200');
+    expect(screen.queryByText(/^Buy \d/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /PO 200/ }));
     expect(onDecide).toHaveBeenCalledWith(expect.anything(), { po: 200 });
@@ -425,8 +490,12 @@ describe('the PO book offsets the buy (S15)', () => {
       () => [{ ...receipts[0], remaining: 120 }],
     );
 
-    expect(screen.getByText('Use PO 120 - already ordered')).toBeInTheDocument();
-    expect(screen.getByText('Buy 80')).toBeInTheDocument();
+    expect(screen.getByText('already ordered').closest('div')).toHaveTextContent('Use PO 120');
+    const buyPart = screen
+      .getAllByText('Buy', { exact: false })
+      .map((el) => el.closest('div'))
+      .find((el) => el?.textContent === 'Buy 80');
+    expect(buyPart).toBeTruthy();
   });
 
   it('incoming SPO is named as already counted, never offered twice', () => {

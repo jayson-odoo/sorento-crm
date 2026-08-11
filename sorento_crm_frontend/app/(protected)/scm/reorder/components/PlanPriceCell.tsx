@@ -9,25 +9,21 @@ import {
   describeCheaper,
   describePriceAdvice,
   priceFootnotes,
-  rowFact,
   type CheaperAlternative,
   type PriceAdvice,
 } from '../lib/priceAdvice';
 
 /**
- * What we last paid, and whether to go back for a quote.
+ * Suggestion column: the PRICE to buy at. Result first, verdict second.
  *
- * > "i need to know the last PO for this product and this supplier, and the last purchase
- * >  date, i will know how has the market changed and make decision"
+ * > "we need a suggested price to buy ... now it just says ask new price last paid etc,
+ * >  very confusing, I need the price & supplier column, then only derive at the total
+ * >  cost" (user markup, 2026-08-11)
  *
- * The plan already used the last paid price as its cost, but only ever showed the number.
- * A number with no date behind it cannot be judged, and on this book almost every price is
- * from a 2020 import - so the cell leads with the age and the verdict, and keeps the figure
- * beside it.
- *
- * Its own column rather than a note on Cost: the quantity decision and the price decision
- * are two different questions, and folding one into the other is what hid the age for so
- * long.
+ * The first cut led with the verdict ("Ask new price") and kept the figure in small
+ * print, which read as a to-do list rather than a price column. Now the NUMBER the plan
+ * costs this line at is the headline, and the verdict rides under it as the caveat.
+ * The receipt (order number, exact date, the purchase before) stays in the popup.
  */
 
 const TONE_VARIANT = {
@@ -37,12 +33,25 @@ const TONE_VARIANT = {
   ok: 'success',
 } as const;
 
+function money(amount: number, currency: string | null): string {
+  const n = amount.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return currency ? `${currency} ${n}` : n;
+}
+
 export function PlanPriceCell({
+  unitCost,
+  currency,
   price,
   staleAfterDays,
   purchasable,
   cheaper = null,
 }: {
+  /** The price the plan is costing this line at - the suggestion itself. */
+  unitCost: number | null;
+  currency: string | null;
   price: PriceAdvice | undefined;
   staleAfterDays: number;
   purchasable: boolean;
@@ -52,21 +61,15 @@ export function PlanPriceCell({
   // An allocation moves stock we already own. There is no supplier and no price to judge.
   if (!purchasable) return <span className="text-muted-foreground">{EM_DASH}</span>;
 
-  // No opinion is not the same as a clean bill of health, so it renders as absence.
-  if (!price) {
-    return (
-      <span className="text-muted-foreground" title="No price history for this supplier">
-        {EM_DASH}
-      </span>
-    );
-  }
-
-  const notes = priceFootnotes(price);
+  // No price and no history: the line cannot be costed, and the Status column already
+  // says "No price". A dash, not a zero - zero is the trap this column exists to catch.
+  const hasFigure = unitCost !== null && unitCost > 0;
 
   // The switch is only the HEADLINE when the current price has nothing wrong with it:
   // a stale/zero/moved price is the more urgent question, and the cheaper name waits in
   // the popup. One suggestion per cell, or the reviewer reads neither.
-  const suggestSwitch = price.advice === 'recent' && cheaper != null;
+  const suggestSwitch = price?.advice === 'recent' && cheaper != null;
+  const notes = priceFootnotes(price);
   if (cheaper && !suggestSwitch) {
     notes.push(describeCheaper(cheaper));
   }
@@ -75,20 +78,31 @@ export function PlanPriceCell({
     <Popover>
       <PopoverTrigger asChild>
         <button type="button" className="min-w-0 text-left" aria-label="Price history">
-          <Badge
-            variant={suggestSwitch ? 'info' : TONE_VARIANT[PRICE_ADVICE_TONE[price.advice]]}
-            appearance="light"
-            size="sm"
-          >
-            {suggestSwitch ? `Ask ${cheaper!.supplier_code} instead` : PRICE_ADVICE_LABEL[price.advice]}
-          </Badge>
-          {/* One plain fact: the price and its age. The receipt (order number, exact
-              date) is popup material - on the row it is clutter a reviewer scans past. */}
-          <span className="mt-0.5 block truncate text-2xs text-muted-foreground">
-            {suggestSwitch
-              ? `Their price ${cheaper!.currency ?? ''} ${cheaper!.unit_cost?.toFixed(2)}, ${cheaper!.saving_pct}% less`.trim()
-              : rowFact(price)}
-          </span>
+          {hasFigure ? (
+            <span className="block truncate text-sm font-medium tabular-nums">
+              {money(unitCost, currency)}
+            </span>
+          ) : (
+            <span className="block text-muted-foreground" title="No usable price on file">
+              {EM_DASH}
+            </span>
+          )}
+          {price ? (
+            <Badge
+              variant={suggestSwitch ? 'info' : TONE_VARIANT[PRICE_ADVICE_TONE[price.advice]]}
+              appearance="light"
+              size="sm"
+              className="mt-0.5"
+            >
+              {suggestSwitch
+                ? `Ask ${cheaper!.supplier_code} instead`
+                : PRICE_ADVICE_LABEL[price.advice]}
+            </Badge>
+          ) : (
+            <span className="mt-0.5 block truncate text-2xs text-muted-foreground">
+              No purchase history
+            </span>
+          )}
         </button>
       </PopoverTrigger>
       <PopoverPortal>

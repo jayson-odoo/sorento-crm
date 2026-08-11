@@ -1,10 +1,11 @@
 /**
- * The price cell: what we last paid, how old it is, and whether to re-quote.
+ * The suggested-price cell: the number the plan costs the line at, then the verdict on it.
  *
- * > "should i use the last price, or should i rfq to get new price from supplier"
+ * > "we need a suggested price to buy ... I need the price & supplier column"
  *
- * The cell answers that and stops. The one thing it may never do is imply we know what the
- * item costs today.
+ * Result first, caveat second: the FIGURE is the headline and the verdict ("Ask new
+ * price") rides under it. The one thing the cell may never do is imply we know what the
+ * item costs today - every claim is about our own ledger.
  */
 import React from 'react';
 import { describe, it, expect } from 'vitest';
@@ -31,48 +32,67 @@ const advice = (over: Partial<PriceAdvice> = {}): PriceAdvice => ({
   ...over,
 });
 
-function renderCell(price: PriceAdvice | undefined, purchasable = true) {
-  render(<PlanPriceCell price={price} staleAfterDays={180} purchasable={purchasable} />);
+function renderCell(
+  price: PriceAdvice | undefined,
+  purchasable = true,
+  unitCost: number | null = 20.37,
+  currency: string | null = 'USD',
+) {
+  render(
+    <PlanPriceCell
+      unitCost={unitCost}
+      currency={currency}
+      price={price}
+      staleAfterDays={180}
+      purchasable={purchasable}
+    />,
+  );
 }
 
 describe('PlanPriceCell', () => {
-  it('shows the verdict and the price it is a verdict about', () => {
+  it('leads with the price the plan will buy at, verdict second', () => {
     renderCell(advice());
 
+    expect(screen.getByText('USD 20.37')).toBeInTheDocument();
     expect(screen.getByText('Ask new price')).toBeInTheDocument();
-    expect(screen.getByText(/USD 20\.37/)).toBeInTheDocument();
   });
 
-  it('puts the age on the row, because a price with no date cannot be judged', () => {
+  it('keeps the age behind the number - popup material, not row noise', () => {
     renderCell(advice());
 
+    expect(screen.queryByText(/5 years/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /price history/i }));
     expect(screen.getByText(/5 years/)).toBeInTheDocument();
   });
 
-  it('calls a zero-costed line out as the loudest thing on the row', () => {
-    renderCell(advice({ advice: 'zero_cost', standing_cost: 0 }));
+  it('calls a zero-costed line out and never prints the zero as a price', () => {
+    renderCell(advice({ advice: 'zero_cost', standing_cost: 0 }), true, 0);
 
     expect(screen.getByText('Fix zero price')).toBeInTheDocument();
+    expect(screen.queryByText(/USD 0\.00/)).not.toBeInTheDocument();
   });
 
-  it('says never bought rather than showing a price we do not have', () => {
-    renderCell(advice({ advice: 'no_history', last: null, age_days: null }));
+  it('says never bought in the popup rather than showing a price we do not have', () => {
+    renderCell(advice({ advice: 'no_history', last: null, age_days: null }), true, null);
 
     expect(screen.getByText('Get a quote')).toBeInTheDocument();
-    expect(screen.getByText(/never bought from this supplier/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /price history/i }));
+    expect(screen.getByText(/no purchase from this supplier/i)).toBeInTheDocument();
   });
 
   it('renders nothing for an allocation, which has no supplier to have a price with', () => {
     renderCell(advice(), false);
 
     expect(screen.queryByText('Ask new price')).not.toBeInTheDocument();
+    expect(screen.queryByText('USD 20.37')).not.toBeInTheDocument();
   });
 
-  it('has no opinion when the facts did not load, rather than implying the price is fine', () => {
+  it('still shows the figure with no verdict, but never implies the price is fine', () => {
     renderCell(undefined);
 
+    expect(screen.getByText('USD 20.37')).toBeInTheDocument();
     expect(screen.queryByText('Use last price')).not.toBeInTheDocument();
-    expect(screen.queryByText('Ask new price')).not.toBeInTheDocument();
+    expect(screen.getByText(/no purchase history/i)).toBeInTheDocument();
   });
 
   it('opens the full reasoning, and states the limit of it', () => {
@@ -110,7 +130,14 @@ describe('the change-supplier suggestion (S13e)', () => {
 
   function renderWithCheaper(price: PriceAdvice, c = cheaper) {
     render(
-      <PlanPriceCell price={price} staleAfterDays={180} purchasable cheaper={c} />,
+      <PlanPriceCell
+        unitCost={20.37}
+        currency="USD"
+        price={price}
+        staleAfterDays={180}
+        purchasable
+        cheaper={c}
+      />,
     );
   }
 
@@ -118,6 +145,7 @@ describe('the change-supplier suggestion (S13e)', () => {
     renderWithCheaper(advice({ advice: 'recent', age_days: 40 }));
 
     expect(screen.getByText('Ask S-B instead')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /price history/i }));
     expect(screen.getByText(/CNY 8\.00, 20% less/)).toBeInTheDocument();
   });
 
@@ -134,6 +162,8 @@ describe('the change-supplier suggestion (S13e)', () => {
   it('says use last price when nobody on the shortlist is cheaper', () => {
     render(
       <PlanPriceCell
+        unitCost={20.37}
+        currency="USD"
         price={advice({ advice: 'recent', age_days: 40 })}
         staleAfterDays={180}
         purchasable

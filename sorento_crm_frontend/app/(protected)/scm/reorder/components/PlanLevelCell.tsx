@@ -10,6 +10,7 @@ import {
   describeLevelSuggestion,
   effectiveLevel,
   levelActionLabel,
+  quantityActionLabel,
   type LevelSuggestion,
 } from '../lib/levelSuggestion';
 
@@ -81,6 +82,13 @@ export function PlanLevelCell({
           <span className="mt-0.5 block truncate text-2xs text-muted-foreground">
             {action.detail}
           </span>
+          {/* The second half of the AutoCount pair: the qty to order when the level
+              fires. Result on the row; its arithmetic stays in the popup. */}
+          {quantityActionLabel(suggestion) ? (
+            <span className="block truncate text-2xs text-muted-foreground">
+              {quantityActionLabel(suggestion)}
+            </span>
+          ) : null}
         </button>
       </PopoverTrigger>
       <PopoverPortal>
