@@ -117,15 +117,6 @@ def _is_task_due(task: ScheduledTask, now: datetime) -> bool:
     start_at = getattr(task, "start_at", None)
     if isinstance(start_at, datetime) and start_at > now:
         return False
-    # A skipped "run" is not a run - nobody did the work. Treating it as one lets a
-    # process WITHOUT the handler suppress the task for everyone (a worker on an older
-    # branch stamps last_run_at, and the one process that owns the handler never sees
-    # it as due - measured at 47% of `form_action_commit` ticks eaten locally). Current
-    # code no longer stamps on skip, but peers on older builds still do; this makes a
-    # handler-owning process immune to them. If EVERY process lacks the handler the
-    # task stays due and each sweep re-marks it skipped without writing run rows.
-    if getattr(task, "last_status", None) == "skipped":
-        return True
     last_run = getattr(task, "last_run_at", None)
     if not isinstance(last_run, datetime):
         return True
@@ -505,7 +496,7 @@ def update_task_after_run(
     db.commit()
 
 
-def mark_task_unhandled(db: Session, task_id: str) -> None:
+def mark_task_unhandled(db: Session, task_id: str) -> bool:
     """Record that THIS process cannot run the task, without consuming its tick.
 
     Deliberately leaves `last_run_at` (and `next_run_at`) alone. `_is_task_due` measures
@@ -517,14 +508,23 @@ def mark_task_unhandled(db: Session, task_id: str) -> None:
     Observed locally: 441 skipped vs 504 success on `form_action_commit`, i.e. 47% of
     ticks eaten by two workers running branches without the handler, which stretched a
     15s grace-window sweep out to 45s+ and looked exactly like "the message never sent".
+
+    Idempotent by content: an orphaned key (handler renamed or removed everywhere)
+    stays due on every heartbeat, and re-writing the same skip mark each tick would
+    cost an UPDATE+COMMIT per process per 10s forever. Returns True only when the
+    mark was actually written, so the caller can throttle its warning the same way.
     """
     task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
     if not task:
-        return
+        return False
+    reason = "no handler registered in this process"
+    if getattr(task, "last_status", None) == "skipped" and getattr(task, "last_error", None) == reason:
+        return False
     setattr(task, "last_status", "skipped")
-    setattr(task, "last_error", "no handler registered in this process")
+    setattr(task, "last_error", reason)
     setattr(task, "updated_at", datetime.utcnow())
     db.commit()
+    return True
 
 
 def run_due_tasks(db: Session) -> None:
@@ -555,12 +555,12 @@ def run_due_tasks(db: Session) -> None:
             # ~5.7k rows a day to `scheduled_task_runs` for work nobody performed.
             handler = TASK_HANDLERS.get(_task_key(task))
             if not handler:
-                mark_task_unhandled(db, _task_id(task))
-                logger.warning(
-                    "Scheduled task %s has no registered handler in this process; "
-                    "leaving it due for one that has.",
-                    _task_key(task),
-                )
+                if mark_task_unhandled(db, _task_id(task)):
+                    logger.warning(
+                        "Scheduled task %s has no registered handler in this process; "
+                        "leaving it due for one that has.",
+                        _task_key(task),
+                    )
                 continue
             run = create_run(db, _task_id(task), status="started")
             try:

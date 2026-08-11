@@ -114,16 +114,17 @@ def test_a_handled_task_still_consumes_its_tick():
         assert task.last_run_at is not None and task.last_run_at > before
 
 
-def test_a_skipped_task_is_immediately_due_for_a_process_with_the_handler():
-    """Peers on older builds still stamp `last_run_at` when they skip. A process that
-    owns the handler must treat a skipped task as due regardless, or one stale worker
-    starves the whole fleet."""
+def test_a_skipped_task_still_respects_its_interval():
+    """A skip mark must NOT make the task due early. The manual "Run now" path also
+    writes `last_status='skipped'` when the web process lacks the handler - if skipped
+    short-circuited the interval check, a daily digest would fire on the next 10s
+    heartbeat, hours off schedule, and an orphaned key would run on every tick."""
     from datetime import datetime
 
     with blank_session() as db:
-        key = f"probe_skipfast_{unique_code()}"
+        key = f"probe_skipwait_{unique_code()}"
         task = _due_task(db, key)
-        # An old-code peer just consumed the tick: fresh last_run_at, skipped status.
+        # Freshly consumed tick (an old-code peer, or a manual run) marked skipped.
         task.last_run_at = datetime.utcnow()
         task.last_status = "skipped"
         db.commit()
@@ -135,6 +136,29 @@ def test_a_skipped_task_is_immediately_due_for_a_process_with_the_handler():
         finally:
             TASK_HANDLERS.pop(key, None)
 
-        assert calls == [key], "the handler-owning process must reclaim a skipped task"
+        assert calls == [], "skipped must not override the interval"
         db.refresh(task)
-        assert task.last_status == "success"
+        assert task.last_status == "skipped"
+
+
+def test_repeated_unhandled_sweeps_write_the_mark_only_once():
+    """An orphaned key (no handler in ANY process) stays due forever. Without
+    idempotence every heartbeat would UPDATE+COMMIT the same row per process - dead
+    tuples and updated_at churn for nothing."""
+    from app.services.scheduled_task_service import mark_task_unhandled
+
+    with blank_session() as db:
+        key = f"probe_orphan_{unique_code()}"
+        task = _due_task(db, key)
+        TASK_HANDLERS.pop(key, None)
+
+        run_due_tasks(db)  # first sweep writes the mark
+        db.refresh(task)
+        first_updated = task.updated_at
+        assert task.last_status == "skipped"
+
+        # Second sweep: still unhandled, but the mark is already there - no write.
+        assert mark_task_unhandled(db, str(task.id)) is False
+        run_due_tasks(db)
+        db.refresh(task)
+        assert task.updated_at == first_updated
