@@ -222,3 +222,16 @@ describe('proposeCuts - the allocator advises at the end instead of deciding at 
     expect(proposeCuts(three, d, 50).map((l) => l.id)).toEqual(['a']);
   });
 });
+
+describe('the use_po decision (S15)', () => {
+  it('orders nothing, costs nothing, and is counted', () => {
+    const l = line();
+    const d = { kind: 'use_po' as const, qty: 200 };
+
+    expect(decidedQty(l, d)).toBe(0);
+    expect(decidedCost(l, d)).toBe(0);
+    expect(planTotals([l], { [l.id]: d })).toMatchObject({
+      decided: 1, usingPo: 1, buying: 0, units: 0, cost: 0,
+    });
+  });
+});

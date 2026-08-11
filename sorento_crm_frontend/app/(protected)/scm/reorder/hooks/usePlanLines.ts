@@ -6,6 +6,7 @@ import {
   amendLevelSuggestion,
   getCoverSources,
   getLevelSuggestions,
+  getPoBook,
   getPriceHistory,
   getTrajectory,
   getBuyRecommendationsForCash,
@@ -30,6 +31,7 @@ import {
 } from '../lib/priceAdvice';
 import { trajectoryKey, type TrajectoryEntry } from '../lib/trajectory';
 import { levelKey, type LevelSuggestion } from '../lib/levelSuggestion';
+import type { PoReceipt } from '../lib/poCover';
 
 /**
  * Every line of a plan, in one list, with the buyer's decisions over it.
@@ -100,6 +102,15 @@ export function usePlanLines(runId: string | null, enabled = true) {
     enabled: on,
     // Losing the level suggestions must not take the plan down: the row then shows no
     // third suggestion, which is what the screen said before S13f.
+    retry: false,
+  });
+
+  const poBook = useQuery({
+    queryKey: ['plan-lines', runId, 'po-book'],
+    queryFn: () => getPoBook(runId as string),
+    enabled: on,
+    // Losing the receipts must not take the plan down: the row then offers no PO offset,
+    // which is what the screen said before S15.
     retry: false,
   });
 
@@ -213,6 +224,15 @@ export function usePlanLines(runId: string | null, enabled = true) {
     [levels.data],
   );
 
+  /** S15: the open PO lines carrying this product to this warehouse. Empty = none. */
+  const poFor = useCallback(
+    (line: PlanLine): PoReceipt[] => {
+      const key = levelKey(line.product_id, line.warehouse_id);
+      return (key ? poBook.data?.po_book[key] : undefined) ?? [];
+    },
+    [poBook.data],
+  );
+
   /** S14: record (or withdraw, with null) the buyer's own figure beside the engine's. */
   const qc = useQueryClient();
   const amendLevel = useCallback(
@@ -247,6 +267,7 @@ export function usePlanLines(runId: string | null, enabled = true) {
     cheaperFor,
     trendFor,
     levelFor,
+    poFor,
     amendLevel,
     levelSuggestions: levels.data?.suggestions ?? {},
     staleAfterDays: prices.data?.stale_after_days ?? 180,

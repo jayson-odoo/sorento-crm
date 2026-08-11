@@ -674,6 +674,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
                 cheaperFor={planLines.cheaperFor}
                 levelFor={planLines.levelFor}
                 onAmendLevel={planLines.amendLevel}
+                poFor={planLines.poFor}
                 trendFor={planLines.trendFor}
                 staleAfterDays={planLines.staleAfterDays}
               />

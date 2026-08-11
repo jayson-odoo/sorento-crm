@@ -45,7 +45,7 @@ vi.mock('./PlanBudgetReview', () => ({ PlanBudgetReview: () => <div>budget-revie
 vi.mock('../hooks/usePlanLines', () => ({
   usePlanLines: () => ({
     lines: [], decisions: {}, decide: vi.fn(), clear: vi.fn(),
-    totals: { decided: 0, undecided: 0, buying: 0, usingStock: 0, skipped: 0, units: 0, cost: 0, unpriced: 0 },
+    totals: { decided: 0, undecided: 0, buying: 0, usingStock: 0, usingPo: 0, skipped: 0, units: 0, cost: 0, unpriced: 0 },
     levelSuggestions: {},
     isLoading: false, isError: false, error: null, refetch: vi.fn(),
   }),

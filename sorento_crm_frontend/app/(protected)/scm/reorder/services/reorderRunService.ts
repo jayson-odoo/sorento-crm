@@ -59,6 +59,7 @@ import type { SortingState } from '@tanstack/react-table';
 import { apiFetch } from '@/lib/api';
 import type { CoverSource } from '../lib/coverPlan';
 import type { LevelSuggestionsPayload } from '../lib/levelSuggestion';
+import type { PoReceipt } from '../lib/poCover';
 import type { PriceHistoryPayload } from '../lib/priceAdvice';
 import type { TrajectoryPayload } from '../lib/trajectory';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
@@ -655,6 +656,15 @@ export async function getLevelSuggestions(runId: string): Promise<LevelSuggestio
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load level suggestions'));
   const body = (await res.json()) as Partial<LevelSuggestionsPayload>;
   return { suggestions: body.suggestions ?? {}, count: body.count ?? 0 };
+}
+
+export async function getPoBook(
+  runId: string,
+): Promise<{ po_book: Record<string, PoReceipt[]> }> {
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/po-book`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the PO book'));
+  const body = (await res.json()) as { po_book?: Record<string, PoReceipt[]> };
+  return { po_book: body.po_book ?? {} };
 }
 
 export async function amendLevelSuggestion(input: {

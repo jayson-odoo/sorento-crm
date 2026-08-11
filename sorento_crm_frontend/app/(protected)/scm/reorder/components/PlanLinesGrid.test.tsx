@@ -14,6 +14,7 @@ import type { PlanDecisionMap } from '../lib/planDecisions';
 import { PlanLinesGrid } from './PlanLinesGrid';
 import { proposeCover, NO_COVER, type CoverSource } from '../lib/coverPlan';
 import type { PriceAdvice } from '../lib/priceAdvice';
+import type { PoReceipt } from '../lib/poCover';
 
 class ResizeObserverStub { observe() {} unobserve() {} disconnect() {} }
 (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
@@ -84,6 +85,7 @@ function renderGrid(
   decisions: PlanDecisionMap = {},
   free: CoverSource[] = [],
   priceFor?: (l: PlanLine) => PriceAdvice | undefined,
+  poFor?: (l: PlanLine) => PoReceipt[],
 ) {
   const onDecide = vi.fn();
   const onClear = vi.fn();
@@ -101,6 +103,7 @@ function renderGrid(
         onClear={onClear}
         coverFor={coverFor}
         priceFor={priceFor}
+        poFor={poFor}
         staleAfterDays={180}
       />
     </QueryClientProvider>,
@@ -404,5 +407,40 @@ describe('the suggestion filters (S14)', () => {
 
     expect(screen.getByText('STALE-1')).toBeInTheDocument();
     expect(screen.queryByText('FRESH-1')).not.toBeInTheDocument();
+  });
+});
+
+describe('the PO book offsets the buy (S15)', () => {
+  const receipts: PoReceipt[] = [
+    { po_number: 'PO-2026/07-0002', status: 'active', expected_date: '2026-08-10', remaining: 504 },
+  ];
+
+  it('a PO that covers the shortage replaces the buy with "Use PO"', () => {
+    const { onDecide } = renderGrid(
+      [line({ order_qty: 200, recommended_qty: 200 })], {}, [], undefined, () => receipts,
+    );
+
+    expect(screen.getByText('Use PO 200 - already ordered')).toBeInTheDocument();
+    expect(screen.queryByText(/^Buy /)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use PO' }));
+    expect(onDecide).toHaveBeenCalledWith(expect.anything(), { kind: 'use_po', qty: 200 });
+  });
+
+  it('a partial PO leaves the remainder as the buy', () => {
+    renderGrid(
+      [line({ order_qty: 200, recommended_qty: 200 })], {}, [], undefined,
+      () => [{ ...receipts[0], remaining: 120 }],
+    );
+
+    expect(screen.getByText('Use PO 120 - already ordered')).toBeInTheDocument();
+    expect(screen.getByText('Buy 80')).toBeInTheDocument();
+  });
+
+  it('incoming SPO is named as already counted, never offered twice', () => {
+    renderGrid([line({ order_qty: 200, incoming_spo: 50 })]);
+
+    expect(screen.getByText('50 arriving (SPO) already counted')).toBeInTheDocument();
+    expect(screen.queryByText(/Use SPO/)).not.toBeInTheDocument();
   });
 });

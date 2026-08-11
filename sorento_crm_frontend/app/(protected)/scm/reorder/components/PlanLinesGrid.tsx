@@ -32,7 +32,7 @@ import {
   type PlanLine,
   type PlanLineStatus,
 } from '../lib/planLine';
-import { decidedCost, decidedQty, type PlanDecisionMap } from '../lib/planDecisions';
+import { decidedCost, decidedQty, type PlanDecisionKind, type PlanDecisionMap } from '../lib/planDecisions';
 import { describeCover, NO_COVER, type CoverProposal } from '../lib/coverPlan';
 import {
   PRICE_ADVICE_LABEL,
@@ -41,6 +41,7 @@ import {
   type PriceAdvice,
 } from '../lib/priceAdvice';
 import { levelActionLabel, type LevelSuggestion } from '../lib/levelSuggestion';
+import { describePoBook, poOffset, type PoReceipt } from '../lib/poCover';
 import { PlanLevelCell } from './PlanLevelCell';
 import type { TrajectoryEntry } from '../lib/trajectory';
 import { PlanTrendPopover } from './PlanTrendPopover';
@@ -116,6 +117,7 @@ export function PlanLinesGrid({
   cheaperFor,
   levelFor,
   onAmendLevel,
+  poFor,
   trendFor,
   staleAfterDays = 180,
   statusFilter: statusFilterProp = null,
@@ -127,7 +129,12 @@ export function PlanLinesGrid({
   decisions: PlanDecisionMap;
   onDecide: (
     line: PlanLine,
-    next: { kind: 'buy' | 'use_stock' | 'skip'; qty?: number; reason?: string },
+    next: {
+      kind: PlanDecisionKind;
+      qty?: number;
+      reason?: string;
+      sources?: { warehouse_id: string; warehouse_code: string; qty: number }[];
+    },
   ) => void;
   /** Return a line to undecided. Separate from `onDecide` because undecided is the absence
    *  of a decision, not a fourth kind of one. */
@@ -142,6 +149,8 @@ export function PlanLinesGrid({
   levelFor?: (line: PlanLine) => LevelSuggestion | undefined;
   /** S14: record (or withdraw, with null) the buyer's own level figure. */
   onAmendLevel?: (s: LevelSuggestion, amended: number | null) => Promise<void> | void;
+  /** S15: the open PO lines already carrying this product to this warehouse. */
+  poFor?: (line: PlanLine) => PoReceipt[];
   /** Is this product's demand sustaining or dying off, on this line's side. */
   trendFor?: (line: PlanLine) => TrajectoryEntry | undefined;
   /** The age past which the business stops trusting a price. Shown, not implied. */
@@ -187,17 +196,18 @@ export function PlanLinesGrid({
         if ((advice ?? 'none') !== priceFilter) return false;
       }
       if (actionFilter !== 'all') {
-        // The same derivation the Suggested-action cell renders, reduced to its kind.
+        // "Includes X": the same derivation the Suggested-action cell renders. A row can
+        // suggest several parts (use stock + use PO + buy), so the filter matches any row
+        // whose suggestion CONTAINS the picked one rather than demanding an exact shape.
         const cover = l.purchasable ? (coverFor?.(l) ?? NO_COVER) : NO_COVER;
-        const buyQty = cover.coverQty > 0 ? cover.buyQty : Math.ceil(l.order_qty);
-        const kind = !l.purchasable
-          ? 'none'
-          : cover.coverQty > 0 && buyQty > 0
-            ? 'stock_and_buy'
-            : cover.coverQty > 0
-              ? 'use_stock'
-              : 'buy';
-        if (kind !== actionFilter) return false;
+        const afterStock = cover.coverQty > 0 ? cover.buyQty : Math.ceil(l.order_qty);
+        const poQty = (poFor?.(l) ?? []).reduce((t, r) => t + r.remaining, 0);
+        const { usePo, buy } = poOffset(afterStock, poQty);
+        const parts = new Set<string>();
+        if (l.purchasable && cover.coverQty > 0) parts.add('use_stock');
+        if (l.purchasable && usePo > 0) parts.add('use_po');
+        if (l.purchasable && buy > 0) parts.add('buy');
+        if (!parts.has(actionFilter)) return false;
       }
       if (levelFilter !== 'all') {
         const s = levelFor?.(l);
@@ -213,7 +223,7 @@ export function PlanLinesGrid({
       );
     });
   }, [lines, searchQuery, statusFilter, decidedFilter, sideFilter, priceFilter,
-      actionFilter, levelFilter, decisions, priceFor, coverFor, levelFor]);
+      actionFilter, levelFilter, decisions, priceFor, coverFor, levelFor, poFor]);
 
   const columns = useMemo<ColumnDef<PlanLine>[]>(
     () => [
@@ -512,7 +522,13 @@ export function PlanLinesGrid({
           // Structured parts, one per line, never a comma-joined sentence (user markup,
           // 2026-08-10: "I need it to be more structured and organized"). The full prose
           // stays on the title and in the decision cell's tooltip for anyone who wants it.
-          const buyQty = cover.coverQty > 0 ? cover.buyQty : Math.ceil(line.order_qty);
+          const afterStock = cover.coverQty > 0 ? cover.buyQty : Math.ceil(line.order_qty);
+          // S15: what is already ordered absorbs the buy BEFORE money does. The netting
+          // never counts the PO book; the suggestion does, and buying anyway stays one
+          // click away.
+          const receipts = poFor?.(line) ?? [];
+          const poQty = receipts.reduce((t, r) => t + r.remaining, 0);
+          const { usePo, buy: buyQty } = poOffset(afterStock, poQty);
           const crossing = cover.sources.some((x) => x.cross_segment);
           // A cover offer on a project line is purchasing superseding CS: the inquiry said
           // buy it all, and the engine found stock CS did not use. Said out loud, because a
@@ -530,8 +546,21 @@ export function PlanLinesGrid({
                     .join(', ')}`}
                 </div>
               ) : null}
+              {usePo > 0 ? (
+                <div
+                  className="truncate"
+                  title={describePoBook(receipts).join('\n')}
+                >{`Use PO ${fmtInt(usePo)} - already ordered`}</div>
+              ) : null}
               {buyQty > 0 ? (
                 <div className="truncate font-medium">{`Buy ${fmtInt(buyQty)}`}</div>
+              ) : null}
+              {/* S15: what is arriving is ALREADY inside the net, so it is a note, never
+                  a second offset - counting it again would cover the same demand twice. */}
+              {(line.rec.incoming_spo ?? 0) > 0 ? (
+                <span className="block truncate text-2xs text-muted-foreground">
+                  {`${fmtInt(line.rec.incoming_spo ?? 0)} arriving (SPO) already counted`}
+                </span>
               ) : null}
               {crossing ? (
                 <span className="text-2xs text-scm-overstock">crosses segment</span>
@@ -562,6 +591,7 @@ export function PlanLinesGrid({
             line={row.original}
             decision={decisions[row.original.id]}
             cover={coverFor?.(row.original) ?? NO_COVER}
+            poReceipts={poFor?.(row.original) ?? []}
             onDecide={(next) => onDecide(row.original, next)}
             onClear={() => onClear(row.original)}
           />
@@ -573,7 +603,7 @@ export function PlanLinesGrid({
         meta: { headerTitle: 'Decision', skeleton: <Skeleton className="h-8 w-40" /> },
       },
     ],
-    [decisions, onDecide, onClear, runId, coverFor, priceFor, cheaperFor, trendFor, levelFor, onAmendLevel, staleAfterDays],
+    [decisions, onDecide, onClear, runId, coverFor, priceFor, cheaperFor, trendFor, levelFor, onAmendLevel, poFor, staleAfterDays],
   );
 
   const [columnOrder, setColumnOrder] = useState<string[]>(() =>
@@ -691,9 +721,9 @@ export function PlanLinesGrid({
                 onChange={setActionFilter}
                 options={[
                   { value: 'all', label: 'Every suggested action' },
-                  { value: 'buy', label: 'Buy only' },
-                  { value: 'use_stock', label: 'Use stock only' },
-                  { value: 'stock_and_buy', label: 'Use stock, then buy' },
+                  { value: 'buy', label: 'Includes a buy' },
+                  { value: 'use_stock', label: 'Includes use stock' },
+                  { value: 'use_po', label: 'Includes use PO (already ordered)' },
                 ]}
                 placeholder="Suggested action"
               />

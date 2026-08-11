@@ -164,3 +164,27 @@ The actor is the buyer (purchasing). They arrive at Reorder Planning from the si
 4. Quantity cell: **structured, not a sentence** (presentation doctrine).
 5. Currency: **RMB** for purchases, settable per product, defaulting CNY (presentation
    doctrine + task 32 still open for the historical relabel).
+
+### S15 - the four ways to cover a shortage, all suggestive (user, 2026-08-11)
+
+> "buy (when no PO and no SPO, and even no stock), use PO (when there is outstanding PO),
+>  use SPO (when there is outstanding SPO), use stock (when there is stock) ... this should
+>  remain suggestive ... I was expecting the system to suggest me to use the PO quantity
+>  and don't need to order"
+
+Order of preference mirrors the buyer's seat: use what we own (stock), then what is
+arriving (SPO), then what is ordered (PO book), and buy only the remainder.
+
+* **AC-S15.1 [FE]** GIVEN a buy row whose warehouse has outstanding PO quantity, THEN the
+  suggested action offsets the shortage against it: "Use PO 504" replaces the buy when it
+  covers fully, "Use PO 100 + Buy 100" when partial. The engine's netting is unchanged -
+  the PO book (an AutoCount import that can be stale) never silently nets a buy away.
+* **AC-S15.2 [FE]** GIVEN the buyer agrees, THEN "Use PO" is a recordable decision like
+  "Use stock": it orders nothing, costs nothing, and is counted in the totals.
+* **AC-S15.3 [BE][FE]** The popup names the receipts: each open PO line (number, remaining
+  quantity, expected date) behind the offered figure, served per run.
+* **AC-S15.4 [FE]** Incoming SPO is ALREADY inside the net position (incoming = allocation,
+  the standing rule), so it is never offered as a second offset - instead the row says
+  "N arriving is already counted", and a row fully rescued by SPO lands in Covered with
+  the SPO named, not a bare "covered".
+* **AC-S15.5 [FE]** The suggested-action filter gains the new kinds.

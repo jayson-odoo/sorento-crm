@@ -10,6 +10,7 @@ import { fmtInt } from '../../lib/format';
 import type { PlanLine } from '../lib/planLine';
 import type { PlanDecision, PlanDecisionKind } from '../lib/planDecisions';
 import { describeCover, type CoverProposal } from '../lib/coverPlan';
+import { describePoBook, poOffset, type PoReceipt } from '../lib/poCover';
 
 /**
  * The same three choices on every row: buy this much, use the stock we already have, or skip.
@@ -27,6 +28,7 @@ import { describeCover, type CoverProposal } from '../lib/coverPlan';
 const KIND_LABEL: Record<PlanDecisionKind, string> = {
   buy: 'Buying',
   use_stock: 'Using stock',
+  use_po: 'Using PO',
   skip: 'Skipped',
 };
 
@@ -34,6 +36,7 @@ export function PlanLineDecisionCell({
   line,
   decision,
   cover,
+  poReceipts = [],
   onDecide,
   onClear,
 }: {
@@ -41,6 +44,8 @@ export function PlanLineDecisionCell({
   decision: PlanDecision | undefined;
   /** What the plan suggests: buy it, cover it from elsewhere, or both. */
   cover: CoverProposal;
+  /** S15: the open PO lines already carrying this product here. */
+  poReceipts?: PoReceipt[];
   onDecide: (next: {
     kind: PlanDecisionKind;
     qty?: number;
@@ -91,6 +96,13 @@ export function PlanLineDecisionCell({
         qty: s.qty,
       })),
     });
+
+  // S15: "Use PO" is a real action only when the book actually absorbs some of THIS buy.
+  // The netting never counted it; agreeing here is the buyer trusting a named receipt.
+  const afterStock = coverable ? cover.buyQty : suggested;
+  const poQty = poReceipts.reduce((t, r) => t + r.remaining, 0);
+  const { usePo } = poOffset(afterStock, poQty);
+  const takePo = () => onDecide({ kind: 'use_po', qty: usePo });
 
   if (decision) {
     return (
@@ -157,6 +169,18 @@ export function PlanLineDecisionCell({
         <PackageCheck className="size-3.5" />
         Use stock
       </Button>
+      {usePo > 0 ? (
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 px-2"
+          onClick={takePo}
+          title={`Already ordered: ${describePoBook(poReceipts).join(' ')}`}
+        >
+          <Check className="size-3.5" />
+          Use PO
+        </Button>
+      ) : null}
       <Button
         variant="ghost"
         size="sm"

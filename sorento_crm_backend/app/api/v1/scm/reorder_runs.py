@@ -27,7 +27,7 @@ from app.schemas.scm_reorder import (
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.scm import cover_service
 from app.services.scm import price_history_service
-from app.services.scm import level_suggestion_service, trajectory_service
+from app.services.scm import level_suggestion_service, po_book_service, trajectory_service
 from app.services.error_handler import AppException
 from app.services.scm import reorder_run_service as svc
 from app.services.scm import demand_source_service
@@ -408,6 +408,22 @@ def get_trajectory(
     """
     svc.assert_run_visible(db, run_id)
     return trajectory_service.trajectory_for_run(db, run_id)
+
+
+@router.get("/reorder-runs/{run_id}/po-book")
+def get_po_book(
+    run_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The open PO lines behind each row's "Use PO" suggestion (S15).
+
+    Keyed ``"{product_id}:{warehouse_id}"``. The engine never nets the PO book into a buy
+    (incoming = SPO allocation, the standing rule); this serves the receipts so "use the
+    PO, don't order" is a decision the buyer can verify against numbers and dates.
+    """
+    svc.assert_run_visible(db, run_id)
+    return po_book_service.po_book_for_run(db, run_id)
 
 
 @router.get("/reorder-runs/{run_id}/level-suggestions")

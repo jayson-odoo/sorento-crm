@@ -21,7 +21,7 @@
 import { m8CashImpact } from './planRow';
 import type { PlanLine } from './planLine';
 
-export type PlanDecisionKind = 'buy' | 'use_stock' | 'skip';
+export type PlanDecisionKind = 'buy' | 'use_stock' | 'use_po' | 'skip';
 
 export interface PlanDecision {
   kind: PlanDecisionKind;
@@ -80,6 +80,8 @@ export interface PlanTotals {
   undecided: number;
   buying: number;
   usingStock: number;
+  /** Lines resolved onto the existing PO book: nothing ordered, nothing spent (S15). */
+  usingPo: number;
   skipped: number;
   /** Units across every buy decision. */
   units: number;
@@ -96,7 +98,7 @@ export interface PlanTotals {
  */
 export function planTotals(lines: PlanLine[], decisions: PlanDecisionMap): PlanTotals {
   const t: PlanTotals = {
-    decided: 0, undecided: 0, buying: 0, usingStock: 0, skipped: 0,
+    decided: 0, undecided: 0, buying: 0, usingStock: 0, usingPo: 0, skipped: 0,
     units: 0, cost: 0, unpriced: 0,
   };
   for (const line of lines) {
@@ -107,6 +109,7 @@ export function planTotals(lines: PlanLine[], decisions: PlanDecisionMap): PlanT
     }
     t.decided += 1;
     if (d.kind === 'use_stock') t.usingStock += 1;
+    else if (d.kind === 'use_po') t.usingPo += 1;
     else if (d.kind === 'skip') t.skipped += 1;
     else {
       t.buying += 1;
