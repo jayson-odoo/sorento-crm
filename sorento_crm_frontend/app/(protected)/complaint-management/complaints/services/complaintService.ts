@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import type { DeferredFormAction } from '@/app/(protected)/sla-management/_shared/formAction';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
   Complaint,
@@ -130,7 +131,7 @@ export async function updateComplaintAndReply(
   return response.json();
 }
 
-export async function approveComplaint(id: string): Promise<Complaint> {
+export async function approveComplaint(id: string): Promise<Complaint | DeferredFormAction> {
   const response = await apiFetch(
     `/api/v1/complaints-management/complaints/${id}/approve`,
     { method: 'POST' },
@@ -147,7 +148,7 @@ export async function approveComplaint(id: string): Promise<Complaint> {
 export async function rejectComplaint(
   id: string,
   rejection_reason: string,
-): Promise<Complaint> {
+): Promise<Complaint | DeferredFormAction> {
   const response = await apiFetch(
     `/api/v1/complaints-management/complaints/${id}/reject`,
     {
@@ -168,7 +169,7 @@ export async function rejectComplaint(
 export async function processComplaintByCs(
   id: string,
   note?: string,
-): Promise<Complaint> {
+): Promise<Complaint | DeferredFormAction> {
   const response = await apiFetch(
     `/api/v1/complaints-management/complaints/${id}/process`,
     {
@@ -191,7 +192,7 @@ export async function processComplaintByCs(
 export async function closeComplaint(
   id: string,
   note?: string,
-): Promise<Complaint> {
+): Promise<Complaint | DeferredFormAction> {
   const response = await apiFetch(
     `/api/v1/complaints-management/complaints/${id}/close`,
     {

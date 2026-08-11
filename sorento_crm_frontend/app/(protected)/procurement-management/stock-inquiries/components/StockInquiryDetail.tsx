@@ -10,6 +10,9 @@ import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-manage
 import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHandlingLock';
 import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
 import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
+import { useFormAction } from '@/app/(protected)/sla-management/_shared/useFormAction';
+import { FormActionBanner } from '@/app/(protected)/sla-management/_shared/FormActionBanner';
+import { UndoActionDialog } from '@/app/(protected)/sla-management/_shared/UndoActionDialog';
 import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tracking/components/ReassignDialog';
 import { useReassignSLATracking } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
 import ResponseAttachmentDropzone from '@/app/(protected)/complaint-management/complaints/components/ResponseAttachmentDropzone';
@@ -120,7 +123,17 @@ export default function StockInquiryDetail({
   });
   // A voided stock inquiry is fully read-only - suppress every business CTA.
   const isVoided = (inquiry?.status ?? '').trim().toLowerCase() === 'voided';
-  const businessCtasEnabled = handlingLock.businessCtasEnabled && !isVoided;
+  // Form-action deferral (PLAN-form-sla-undo.md). While an action is pending its grace
+  // window, EVERY business CTA is suppressed - the form must commit against the state
+  // the action was requested on (AC-D-10), and a second action cannot queue (AC-D-7).
+  const formAction = useFormAction({
+    sourceEntityType: 'stock_inquiry',
+    sourceEntityId: isValidId ? inquiryId : null,
+    entityKey: inquiry?.updated_at,
+  });
+  const businessCtasEnabled =
+    handlingLock.businessCtasEnabled && !isVoided && !formAction.ctasDisabled;
+  const [undoDialogOpen, setUndoDialogOpen] = useState(false);
   const lockedCtaTitle = !businessCtasEnabled
     ? `Being handled by ${handlingLock.tracker?.handled_by_name ?? 'someone else'} — take over to act`
     : undefined;
@@ -405,7 +418,25 @@ export default function StockInquiryDetail({
             className="h-8 border border-border"
           />
           <DetailActionsMenu ariaLabel="Stock inquiry actions">
-            {!isVoided && (
+            {/* Post-grace Undo. Rendered only when the server says the last committed
+                action is reversible - eligibility is a server read, never a client
+                guess, and it is re-checked at execute time (AC-PG-6/7). */}
+            {formAction.view.kind === 'undoable' && (
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setUndoDialogOpen(true);
+                }}
+                data-testid="undo-action-menu-item"
+              >
+                <RotateCcw className="size-4" />
+                Undo last action
+              </DropdownMenuItem>
+            )}
+            {/* Edit is not lock-gated (deliberate), but a pending form action DOES
+                block it: the action must commit against the state it was requested on
+                (AC-D-10). The backend enforces the same rule; this keeps the UI honest. */}
+            {!isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
                 onClick={() =>
                   router.push(
@@ -527,7 +558,7 @@ export default function StockInquiryDetail({
               <FileDown className="size-4" />
               {exporting ? 'Exporting…' : 'Export to Excel'}
             </DropdownMenuItem>
-            {canVoid && !isVoided && (
+            {canVoid && !isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 onClick={() => setVoidDialogOpen(true)}
@@ -536,7 +567,7 @@ export default function StockInquiryDetail({
                 Void
               </DropdownMenuItem>
             )}
-            {!isVoided && (
+            {!isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 onClick={() => setDeleteDialogOpen(true)}
@@ -556,6 +587,28 @@ export default function StockInquiryDetail({
         onClaim={handlingLock.claim}
         onTakeOver={handlingLock.takeOver}
       />
+
+      <FormActionBanner
+        view={formAction.view}
+        onCancel={formAction.cancel}
+        onExpire={formAction.refresh}
+        onDismissOutcome={formAction.refresh}
+        isCancelling={formAction.isMutating}
+      />
+
+      {formAction.view.kind === 'undoable' && (
+        <UndoActionDialog
+          open={undoDialogOpen}
+          onOpenChange={setUndoDialogOpen}
+          eligibility={formAction.view.eligibility}
+          entityLabel={inquiry.inquiry_number || 'this stock inquiry'}
+          onConfirm={(reason) => {
+            formAction.undo(reason);
+            setUndoDialogOpen(false);
+          }}
+          isSubmitting={formAction.isMutating}
+        />
+      )}
 
       {/* Reject dialog */}
       <Dialog

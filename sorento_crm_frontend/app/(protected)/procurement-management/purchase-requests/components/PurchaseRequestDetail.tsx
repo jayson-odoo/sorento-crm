@@ -40,12 +40,15 @@ import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
-import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrCreateViewLink, rejectSubmittedPurchaseRequest, processPurchaseRequestByCs, closePurchaseRequestByCs, submitApprovalDecision } from '../services/purchaseRequestService';
+import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrCreateViewLink, rejectSubmittedPurchaseRequest, processPurchaseRequestByCs, closePurchaseRequestByCs, submitApprovalDecision, isDeferredDecision } from '../services/purchaseRequestService';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
 import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHandlingLock';
 import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
+import { useFormAction } from '@/app/(protected)/sla-management/_shared/useFormAction';
+import { FormActionBanner } from '@/app/(protected)/sla-management/_shared/FormActionBanner';
+import { UndoActionDialog } from '@/app/(protected)/sla-management/_shared/UndoActionDialog';
 import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
 import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tracking/components/ReassignDialog';
 import { useReassignSLATracking } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
@@ -54,7 +57,7 @@ import { VoidBanner } from '@/components/common/VoidBanner';
 import { VoidDialog } from '@/components/common/VoidDialog';
 import { useFormVoid } from '@/hooks/useFormVoid';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
-import { ArrowUpCircle, ThumbsUp, ThumbsDown, Ban, UserRoundCog } from 'lucide-react';
+import { ArrowUpCircle, ThumbsUp, ThumbsDown, Ban, UserRoundCog, Undo2 } from 'lucide-react';
 import { useHasPermission } from '@/hooks/usePermissions';
 import {
   AlertDialog,
@@ -158,12 +161,22 @@ export default function PurchaseRequestDetail({
   // it into businessCtasEnabled kills all the handling-gated CTAs at once; the
   // few ungated actions (Edit / Delete) are guarded on !isVoided individually.
   const isVoided = (request?.status ?? '').trim().toLowerCase() === 'voided';
-  const businessCtasEnabled = handlingLock.businessCtasEnabled && !isVoided;
+  // Form-action deferral (PLAN-form-sla-undo.md). While an action is pending its grace
+  // window, EVERY business CTA is suppressed - the form must commit against the state the
+  // action was requested on (AC-D-10), and a second action cannot be queued (AC-D-7).
+  const formAction = useFormAction({
+    sourceEntityType: requestTypeForNav,
+    sourceEntityId: isValidId ? requestId : null,
+    entityKey: request?.updated_at,
+  });
+  const businessCtasEnabled =
+    handlingLock.businessCtasEnabled && !isVoided && !formAction.ctasDisabled;
   const voidMutation = useFormVoid('procurement/purchase-requests', requestId, {
     queryKeysToInvalidate: [['purchase-request', requestId]],
   });
   const currencyFormat = useCurrencyFormat();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [undoDialogOpen, setUndoDialogOpen] = useState(false);
   const [approvalDialogOpen, setApprovalDialogOpen] = useState(false);
   const [approverUserId, setApproverUserId] = useState<string>('');
   const [approverEmail, setApproverEmail] = useState('');
@@ -178,9 +191,14 @@ export default function PurchaseRequestDetail({
   const changeToPending = useAction(async () => {
     if (!requestId) return;
     try {
-      await setPendingApproval(requestId);
+      const result = await setPendingApproval(requestId);
       await queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
-      toast.success('Status set to Pending approval');
+      if (isDeferredDecision(result)) {
+        formAction.refresh();
+        toast.success('Sending for approval — you can still undo.');
+      } else {
+        toast.success('Status set to Pending approval');
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to set pending approval');
     }
@@ -434,10 +452,18 @@ export default function PurchaseRequestDetail({
                 onClick={async () => {
                   setApproving(true);
                   try {
-                    await submitApprovalDecision(requestId, 'approved');
+                    const result = await submitApprovalDecision(requestId, 'approved');
                     queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
                     queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', requestTypeForNav, requestId] });
-                    toast.success('Request approved');
+                    // A deferred decision has written nothing and sent nothing, so
+                    // saying "approved" would be a lie. Refresh the form-action read
+                    // instead so the countdown + Undo appear.
+                    if (isDeferredDecision(result)) {
+                      formAction.refresh();
+                      toast.success('Approving — you can still undo.');
+                    } else {
+                      toast.success('Request approved');
+                    }
                   } catch (e) {
                     toast.error(e instanceof Error ? e.message : 'Failed to approve');
                   } finally {
@@ -477,6 +503,21 @@ export default function PurchaseRequestDetail({
             </Button>
           )}
           <DetailActionsMenu ariaLabel="Request actions">
+            {/* Post-grace Undo. Rendered only when the server says the last committed
+                action is reversible - eligibility is a server read, never a client
+                guess, and it is re-checked at execute time (AC-PG-6/7). */}
+            {formAction.view.kind === 'undoable' && (
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setUndoDialogOpen(true);
+                }}
+                data-testid="undo-action-menu-item"
+              >
+                <Undo2 className="size-4" />
+                Undo last action
+              </DropdownMenuItem>
+            )}
             {activeTracker && (
               <DropdownMenuItem
                 onSelect={(e) => {
@@ -670,7 +711,11 @@ export default function PurchaseRequestDetail({
             requestId={requestId}
             ariaLabel={requestTypeLabelLower(request.request_type)}
           />
-          {!isVoided && (
+          {/* Edit and Delete are NOT handling-lock gated (deliberate - see businessCtasEnabled),
+              but a pending form action DOES block them: the action must commit against the
+              state it was requested on, so nothing may mutate the row mid-window (AC-D-10).
+              The backend enforces the same rule; this only keeps the UI honest. */}
+          {!isVoided && !formAction.ctasDisabled && (
             <Button
               variant="outline"
               onClick={() => router.push(`${basePath}/${requestId}/edit`)}
@@ -679,7 +724,7 @@ export default function PurchaseRequestDetail({
               Edit
             </Button>
           )}
-          {!isVoided && (
+          {!isVoided && !formAction.ctasDisabled && (
             <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
               <Trash2 className="size-4" />
               Delete
@@ -694,6 +739,28 @@ export default function PurchaseRequestDetail({
         onClaim={handlingLock.claim}
         onTakeOver={handlingLock.takeOver}
       />
+
+      <FormActionBanner
+        view={formAction.view}
+        onCancel={formAction.cancel}
+        onExpire={formAction.refresh}
+        onDismissOutcome={formAction.refresh}
+        isCancelling={formAction.isMutating}
+      />
+
+      {formAction.view.kind === 'undoable' && (
+        <UndoActionDialog
+          open={undoDialogOpen}
+          onOpenChange={setUndoDialogOpen}
+          eligibility={formAction.view.eligibility}
+          entityLabel={request.request_number || typeLabel}
+          onConfirm={(reason) => {
+            formAction.undo(reason);
+            setUndoDialogOpen(false);
+          }}
+          isSubmitting={formAction.isMutating}
+        />
+      )}
 
       <Dialog open={approvalDialogOpen} onOpenChange={setApprovalDialogOpen}>
         <DialogContent className="sm:max-w-md">
@@ -909,7 +976,7 @@ export default function PurchaseRequestDetail({
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {isPurchaseRequest ? (
-          <div className="lg:col-span-2 max-w-5xl mx-auto w-full">
+          <div className="lg:col-span-2 w-full">
             <Card className="border-2 shadow-sm">
               <CardContent className="pt-6 pb-8 px-5 sm:px-10">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -1064,7 +1131,7 @@ export default function PurchaseRequestDetail({
             </Card>
           </div>
         ) : (
-          <div className="lg:col-span-2 max-w-5xl mx-auto w-full">
+          <div className="lg:col-span-2 w-full">
             <Card className="border-2 shadow-sm">
               <CardContent className="pt-6 pb-8 px-5 sm:px-10">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -1285,7 +1352,11 @@ export default function PurchaseRequestDetail({
           </Sheet>
         )}
 
-        <AuditTrail entityType="purchase_request" entityId={requestId} title="Audit Trail" />
+        {/* Direct child of the 2-col grid — without the span it renders half-width while
+            every sibling block above it is full-width. */}
+        <div className="lg:col-span-2 w-full">
+          <AuditTrail entityType="purchase_request" entityId={requestId} title="Audit Trail" />
+        </div>
 
         <AlertDialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
           <AlertDialogContent>
@@ -1321,11 +1392,20 @@ export default function PurchaseRequestDetail({
                   }
                   setRejecting(true);
                   try {
-                    await rejectSubmittedPurchaseRequest(requestId, rejectReason.trim());
+                    const rejectResult = await rejectSubmittedPurchaseRequest(
+                      requestId,
+                      rejectReason.trim(),
+                    );
                     queryClient.invalidateQueries({
                       queryKey: ['purchase-request', requestId],
                     });
-                    toast.success('Submission rejected; contact has been notified.');
+                    if (isDeferredDecision(rejectResult)) {
+                      // Nothing sent yet, so claiming the contact was notified is false.
+                      formAction.refresh();
+                      toast.success('Rejecting — you can still undo.');
+                    } else {
+                      toast.success('Submission rejected; contact has been notified.');
+                    }
                     setRejectDialogOpen(false);
                   } catch (err) {
                     toast.error(
@@ -1376,10 +1456,20 @@ export default function PurchaseRequestDetail({
                   }
                   setDecisionRejecting(true);
                   try {
-                    await submitApprovalDecision(requestId, 'rejected', decisionRejectReason.trim());
+                    const result = await submitApprovalDecision(
+                      requestId,
+                      'rejected',
+                      decisionRejectReason.trim(),
+                    );
                     queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
                     queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', requestTypeForNav, requestId] });
-                    toast.success('Request rejected; requester and contact notified.');
+                    if (isDeferredDecision(result)) {
+                      // Nobody has been notified yet - saying they have would be wrong.
+                      formAction.refresh();
+                      toast.success('Rejecting — you can still undo.');
+                    } else {
+                      toast.success('Request rejected; requester and contact notified.');
+                    }
                     setDecisionRejectOpen(false);
                   } catch (err) {
                     toast.error(err instanceof Error ? err.message : 'Failed to reject');
@@ -1504,9 +1594,14 @@ export default function PurchaseRequestDetail({
                   e.preventDefault();
                   setFinalizing(true);
                   try {
-                    await processPurchaseRequestByCs(requestId, finalizeNote);
+                    const processResult = await processPurchaseRequestByCs(requestId, finalizeNote);
                     queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
-                    toast.success('Marked as processed by CS.');
+                    if (isDeferredDecision(processResult)) {
+                      formAction.refresh();
+                      toast.success('Processing — you can still undo.');
+                    } else {
+                      toast.success('Marked as processed by CS.');
+                    }
                     setProcessDialogOpen(false);
                   } catch (err) {
                     toast.error(err instanceof Error ? err.message : 'Failed to mark processed by CS');
@@ -1549,9 +1644,14 @@ export default function PurchaseRequestDetail({
                   e.preventDefault();
                   setFinalizing(true);
                   try {
-                    await closePurchaseRequestByCs(requestId, finalizeNote);
+                    const closeResult = await closePurchaseRequestByCs(requestId, finalizeNote);
                     queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
-                    toast.success('Marked as closed.');
+                    if (isDeferredDecision(closeResult)) {
+                      formAction.refresh();
+                      toast.success('Closing — you can still undo.');
+                    } else {
+                      toast.success('Marked as closed.');
+                    }
                     setCloseCsDialogOpen(false);
                   } catch (err) {
                     toast.error(err instanceof Error ? err.message : 'Failed to close request');

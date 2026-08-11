@@ -250,11 +250,29 @@ export async function sendApprovalLink(
  * Approve / Reject buttons). Behaves identically to the public approval link.
  * Reject requires a reason (`comments`).
  */
+/**
+ * A deferred decision: the stage configures a grace window, so nothing has been written
+ * or sent yet and the caller gets a pending action to offer an Undo against.
+ */
+export interface DeferredApprovalDecision {
+  deferred: true;
+  pending_action_id: string;
+  action_key: string;
+  commit_at: string | null;
+  window_seconds: number | null;
+}
+
+export function isDeferredDecision(
+  result: PurchaseRequest | DeferredApprovalDecision,
+): result is DeferredApprovalDecision {
+  return (result as DeferredApprovalDecision)?.deferred === true;
+}
+
 export async function submitApprovalDecision(
   id: string,
   action: 'approved' | 'rejected',
   comments?: string,
-): Promise<PurchaseRequest> {
+): Promise<PurchaseRequest | DeferredApprovalDecision> {
   const response = await apiFetch(
     `/api/v1/procurement/purchase-requests/${id}/approval-decision`,
     {
@@ -272,7 +290,7 @@ export async function submitApprovalDecision(
 export async function rejectSubmittedPurchaseRequest(
   id: string,
   rejectionReason: string,
-): Promise<PurchaseRequest> {
+): Promise<PurchaseRequest | DeferredApprovalDecision> {
   const response = await apiFetch(
     `/api/v1/procurement/purchase-requests/${id}/reject-submitted`,
     {
@@ -297,7 +315,7 @@ export async function rejectSubmittedPurchaseRequest(
   return response.json();
 }
 
-export async function setPendingApproval(id: string): Promise<PurchaseRequest> {
+export async function setPendingApproval(id: string): Promise<PurchaseRequest | DeferredApprovalDecision> {
   const response = await apiFetch(
     `/api/v1/procurement/purchase-requests/${id}/set-pending-approval`,
     { method: 'POST' },
@@ -315,7 +333,7 @@ async function finalizeRequestByCs(
   id: string,
   action: 'process' | 'close',
   note?: string,
-): Promise<PurchaseRequest> {
+): Promise<PurchaseRequest | DeferredApprovalDecision> {
   const response = await apiFetch(
     `/api/v1/procurement/purchase-requests/${id}/${action}`,
     {
@@ -336,14 +354,14 @@ async function finalizeRequestByCs(
 export function processPurchaseRequestByCs(
   id: string,
   note?: string,
-): Promise<PurchaseRequest> {
+): Promise<PurchaseRequest | DeferredApprovalDecision> {
   return finalizeRequestByCs(id, 'process', note);
 }
 
 export function closePurchaseRequestByCs(
   id: string,
   note?: string,
-): Promise<PurchaseRequest> {
+): Promise<PurchaseRequest | DeferredApprovalDecision> {
   return finalizeRequestByCs(id, 'close', note);
 }
 

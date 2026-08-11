@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useState } from 'react';
+import { use, useEffect, useRef, useState } from 'react';
 import { sanitizedHtml } from '@/lib/sanitize';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -28,6 +28,10 @@ import {
 } from '@/components/common/toolbar';
 import EntityActivitiesLayout from '@/components/common/ActivitiesNotesPanel/EntityActivitiesLayout';
 import FormDetailWithSLATabs from '@/app/(protected)/sla-management/_shared/FormDetailWithSLATabs';
+import { useFormAction } from '@/app/(protected)/sla-management/_shared/useFormAction';
+import { FormActionBanner } from '@/app/(protected)/sla-management/_shared/FormActionBanner';
+import { UndoActionDialog } from '@/app/(protected)/sla-management/_shared/UndoActionDialog';
+import { isDeferredFormAction } from '@/app/(protected)/sla-management/_shared/formAction';
 import {
   cancelTicketDraft,
   changeTicketStatus,
@@ -41,7 +45,7 @@ import {
   updateTicketResponseAndReply,
 } from '../services/ticketService';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import { Trash2 } from 'lucide-react';
+import { Trash2, Undo2 } from 'lucide-react';
 import {
   TICKET_CATEGORIES,
   TICKET_PRIORITIES,
@@ -92,6 +96,26 @@ export default function TicketDetailPage({ params }: PageProps) {
   const [categoryDraft, setCategoryDraft] = useState<TicketCategory>('bug');
   const [busy, setBusy] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [undoDialogOpen, setUndoDialogOpen] = useState(false);
+
+  // Form-action deferral (PLAN-form-sla-undo.md). A resolve with a grace window
+  // answers 202 and parks; every mutating CTA is held down until it commits or is
+  // withdrawn - the action must run against the state it was requested on (AC-D-10).
+  const formAction = useFormAction({
+    sourceEntityType: 'ticket',
+    sourceEntityId: id,
+    entityKey: ticket?.updated_at,
+  });
+  // This page holds the ticket in plain state (no react-query), so the hook's
+  // invalidation cannot refetch it. Reload when the in-flight view settles.
+  const inFlight =
+    formAction.view.kind === 'pending' || formAction.view.kind === 'committing';
+  const wasInFlight = useRef(false);
+  useEffect(() => {
+    if (wasInFlight.current && !inFlight) void reload();
+    wasInFlight.current = inFlight;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inFlight]);
 
   async function reload() {
     setLoading(true);
@@ -222,6 +246,13 @@ export default function TicketDetailPage({ params }: PageProps) {
       const updated = reply
         ? await updateTicketResolutionAndReply(ticket.id, payload)
         : await updateTicketResolution(ticket.id, payload);
+      if (isDeferredFormAction(updated)) {
+        // Parked, not applied - the countdown banner takes over from here.
+        setEditingResolution(false);
+        formAction.refresh();
+        toast.success('Resolution is on hold for a few seconds — you can still undo.');
+        return;
+      }
       setTicket(updated);
       setEditingResolution(false);
       toast.success(reply ? 'Resolution sent and ticket marked resolved' : 'Resolution saved');
@@ -271,10 +302,20 @@ export default function TicketDetailPage({ params }: PageProps) {
             <Button variant="outline" onClick={() => router.push('/ticket-management/tickets')}>
               Back to list
             </Button>
+            {formAction.view.kind === 'undoable' && (
+              <Button
+                variant="outline"
+                onClick={() => setUndoDialogOpen(true)}
+                data-testid="undo-action-menu-item"
+              >
+                <Undo2 className="size-4" />
+                Undo last action
+              </Button>
+            )}
             <Button
               variant="destructive"
               onClick={() => setDeleteOpen(true)}
-              disabled={busy}
+              disabled={busy || formAction.ctasDisabled}
             >
               <Trash2 className="size-4" />
               Delete
@@ -282,6 +323,30 @@ export default function TicketDetailPage({ params }: PageProps) {
           </ToolbarActions>
         </Toolbar>
       </Container>
+
+      <Container>
+        <FormActionBanner
+          view={formAction.view}
+          onCancel={formAction.cancel}
+          onExpire={formAction.refresh}
+          onDismissOutcome={formAction.refresh}
+          isCancelling={formAction.isMutating}
+        />
+      </Container>
+
+      {formAction.view.kind === 'undoable' && (
+        <UndoActionDialog
+          open={undoDialogOpen}
+          onOpenChange={setUndoDialogOpen}
+          eligibility={formAction.view.eligibility}
+          entityLabel={ticket.ticket_number || 'this ticket'}
+          onConfirm={(reason) => {
+            formAction.undo(reason);
+            setUndoDialogOpen(false);
+          }}
+          isSubmitting={formAction.isMutating}
+        />
+      )}
 
       <EntityActivitiesLayout entityType="ticket" entityId={ticket.id}>
         <Container>
@@ -494,10 +559,10 @@ export default function TicketDetailPage({ params }: PageProps) {
                       <Button variant="outline" size="sm" onClick={() => { setEditingResolution(false); setResolutionDraft(ticket.resolution_html ?? ''); }} disabled={busy}>
                         Cancel
                       </Button>
-                      <Button variant="outline" size="sm" onClick={() => saveResolution(false)} disabled={busy || !htmlToText(resolutionDraft)}>
+                      <Button variant="outline" size="sm" onClick={() => saveResolution(false)} disabled={busy || formAction.ctasDisabled || !htmlToText(resolutionDraft)}>
                         Save
                       </Button>
-                      <Button size="sm" onClick={() => saveResolution(true)} disabled={busy || !htmlToText(resolutionDraft)}>
+                      <Button size="sm" onClick={() => saveResolution(true)} disabled={busy || formAction.ctasDisabled || !htmlToText(resolutionDraft)}>
                         Update &amp; Reply
                       </Button>
                     </div>
