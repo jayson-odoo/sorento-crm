@@ -319,8 +319,11 @@ CATALOG: tuple[ToolSpec, ...] = (
             "pass `attachment_type_code` with that name, e.g. \"Container Status\", case-insensitive. "
             "This is how you return THE document they asked for instead of a directory listing, so "
             "always pass it when a document class is identifiable. `attachment_type_id` takes the "
-            "same thing as a UUID if you happen to hold one (SINGULAR - there is no "
-            "`attachment_type_ids`), but the name is preferred: no lookup, nothing to get stale.\n"
+            "same thing as a UUID if you happen to hold one, but the name is preferred: no lookup, "
+            "nothing to get stale. They named SEVERAL kinds of document -> pass "
+            "`attachment_type_codes` (csv / JSON / repeated names) or `attachment_type_ids` (csv / "
+            "JSON / repeated UUIDs); each unions with its singular twin, so a row matching ANY of "
+            "the named types is returned.\n"
             "  • They named a SPECIFIC FILE you already hold the UUID for -> `attachment_ids`. "
             "Also available: `directory_id`, `uploaded_by` (canonical UUIDs).\n"
             "  • They named NO document at all -> this tool returns NOTHING, by design. "
@@ -343,8 +346,8 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (
             "page", "limit", "attachment_ids", "sort", "dir",
-            "directory_id", "attachment_type_id", "uploaded_by",
-            "attachment_type_code",
+            "directory_id", "attachment_type_id", "attachment_type_ids", "uploaded_by",
+            "attachment_type_code", "attachment_type_codes",
             "uploaded_at_from", "uploaded_at_to", "is_deleted", "resolve_signed_urls",
             "contact_id", "space_id",
         ),

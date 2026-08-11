@@ -54,6 +54,13 @@ def _serialize(config: FormSLAConfig) -> dict:
             str(config.next_config_id) if config.next_config_id is not None else None
         ),
         "advance_on_event": getattr(config, "advance_on_event", None),
+        # Manual dict builder: EVERY column the dialog edits must appear here, or the
+        # round-trip wipes it - the dialog seeds from this response and always sends
+        # the field back, so an omitted key reads as null and saves as null (the
+        # get_user / system_settings manual-builder family in CLAUDE.md).
+        "grace_seconds": getattr(config, "grace_seconds", None),
+        "notify_assignee": bool(getattr(config, "notify_assignee", False)),
+        "notify_on_escalation": bool(getattr(config, "notify_on_escalation", False)),
         "is_active": bool(config.is_active),
         "created_at": config.created_at,
         "updated_at": config.updated_at,

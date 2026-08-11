@@ -1,3 +1,6 @@
 playwright-report/
 test-results/
 tsconfig.tsbuildinfo
+# Dev-server build output when NEXT_DIST_DIR is set, so `next dev` never clobbers the
+# `.next/` build a running `next start` is serving. See next.config.mjs.
+.next-dev/

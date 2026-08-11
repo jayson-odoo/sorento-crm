@@ -60,6 +60,9 @@ class SystemSettingUpdate(BaseModel):
     default_product_standard_lead_time_days: Optional[int] = Field(None, ge=0, le=10950)
     # Takeover cooldown window in seconds (0 = instant). Cap at 1 hour.
     takeover_cooldown_seconds: Optional[int] = Field(None, ge=0, le=3600)
+    # Global default grace window for form-SLA actions. 0 = nothing defers, which is
+    # what ships; a stage may override it (form_sla_configs.grace_seconds).
+    form_sla_grace_seconds: Optional[int] = Field(None, ge=0, le=600)
     n8n_attachment_webhook_url: Optional[str] = None
     n8n_crm_chat_outbound_webhook_url: Optional[str] = None
     n8n_stock_inquiry_revise_webhook_url: Optional[str] = None
@@ -136,6 +139,9 @@ async def get_settings(
                 "default_product_supplier_id": settings.default_product_supplier_id if settings else None,
                 "default_product_standard_lead_time_days": (
                     settings.default_product_standard_lead_time_days if settings else None
+                ),
+                "form_sla_grace_seconds": (
+                    getattr(settings, "form_sla_grace_seconds", 0) if settings else 0
                 ),
                 "takeover_cooldown_seconds": (
                     getattr(settings, "takeover_cooldown_seconds", 60) if settings else None

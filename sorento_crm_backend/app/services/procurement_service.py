@@ -6772,8 +6772,43 @@ class PurchaseRequestService:
                 )
             except Exception as e:
                 logger.warning("Form SLA emit 'send_for_approval' failed for %s: %s", request_id, e)
+            # Tell the contact their form has entered approval. Every other transition
+            # on this form talks to them (approve, reject, processed, closed); this step
+            # was the one silent one, so from their side the form went quiet between
+            # submitting and hearing a decision. Guarded by `already_pending` so a
+            # redundant call cannot re-send it, and best-effort so a Respond.io failure
+            # never rolls back the committed status.
+            try:
+                self._notify_contact_on_pending_approval(header)
+            except Exception as e:
+                logger.warning(
+                    "Failed to send Respond.io pending-approval message for %s: %s",
+                    request_id,
+                    e,
+                )
         # Re-query with relationships loaded to avoid expired instance issues
         return self.get_request(request_id)
+
+    def _notify_contact_on_pending_approval(self, header) -> None:
+        """Notify the linked Respond.io contact that the form is now awaiting approval."""
+        request_number = (getattr(header, "request_number", None) or str(header.id)).strip()
+        rt = getattr(header, "request_type", None) or ""
+        type_word = "sponsorship form" if rt == "sponsorship_form" else "purchase request"
+        portal_url = self._purchase_request_portal_or_view_url(header, str(header.id))
+        message_text = (
+            f"Your {type_word} {request_number} has been sent for approval. "
+            f"We will let you know as soon as it is decided. "
+            f"You can view your submission here {portal_url}"
+        )
+        self._send_purchase_request_contact_message(
+            header,
+            message_text=message_text,
+            extra_context_vars={
+                "update": "Pending approval",
+                "portal_url": portal_url,
+                "view_url": (self._build_request_view_url(str(header.id)) or "").strip(),
+            },
+        )
 
     def reject_submitted(
         self,

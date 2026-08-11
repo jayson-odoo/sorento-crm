@@ -50,6 +50,8 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
       typeof raw.takeover_cooldown_seconds === 'number'
         ? raw.takeover_cooldown_seconds
         : 60,
+    formSlaGraceSeconds:
+      typeof raw.form_sla_grace_seconds === 'number' ? raw.form_sla_grace_seconds : 0,
     purchaseRequestDefaultApproverUserId:
       (raw.purchase_request_default_approver_user_id as string | null) ?? null,
     purchaseRequestDefaultApproverName:
@@ -136,6 +138,7 @@ function createDefaultSettings(): SystemSetting {
     defaultProductSupplierId: null,
     defaultProductStandardLeadTimeDays: 90,
     takeoverCooldownSeconds: 60,
+    formSlaGraceSeconds: 0,
     purchaseRequestDefaultApproverUserId: null,
     purchaseRequestDefaultApproverName: null,
     purchaseRequestDefaultApproverEmail: null,

@@ -1,5 +1,5 @@
 """SLA management schemas."""
-from pydantic import BaseModel, BeforeValidator, field_validator, model_validator, model_serializer, ConfigDict
+from pydantic import BaseModel, BeforeValidator, Field, field_validator, model_validator, model_serializer, ConfigDict
 from typing import Annotated, Optional
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -579,6 +579,9 @@ class FormSLAConfigBase(BaseModel):
     resolve_event: Optional[str] = None
     next_config_id: Optional[str] = None
     advance_on_event: Optional[str] = None
+    # Seconds an in-app action on this stage waits before it applies, so the actor can
+    # take it back before anyone is told. NULL = use the global default (which is 0).
+    grace_seconds: Optional[int] = Field(default=None, ge=0, le=600)
     is_active: bool = True
     notify_assignee: bool = True
     notify_on_escalation: bool = True
@@ -617,6 +620,7 @@ class FormSLAConfigUpdate(BaseModel):
     resolve_event: Optional[str] = None
     next_config_id: Optional[str] = None
     advance_on_event: Optional[str] = None
+    grace_seconds: Optional[int] = Field(default=None, ge=0, le=600)
     is_active: Optional[bool] = None
     notify_assignee: Optional[bool] = None
     notify_on_escalation: Optional[bool] = None

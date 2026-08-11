@@ -4,6 +4,7 @@ Exposes the deterministic entity resolver as an HTTP API so the MCP layer (or an
 external caller) can disambiguate codes mid-turn. The resolver itself lives in
 `app.services.entity_resolver`.
 """
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -24,8 +25,10 @@ from app.models.product import Brand, Product
 from app.models.resources import Attachment, AttachmentType
 from app.services.entity_resolver import (
     _canonical_entity_type,
+    fetch_product_brands,
     resolve_references,
     resolve_references_intersection,
+    token_word_coverage_for_rows,
 )
 
 
@@ -52,6 +55,8 @@ _RESOLVER_ENTITY_TYPES: frozenset[str] = frozenset({
     "category",
 })
 from app.services.query_normalizer import DOMAIN_STOPWORDS
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/references")
 
@@ -281,6 +286,123 @@ def _apply_limit(result: dict[str, Any], limit: int | None) -> dict[str, Any]:
             by_type.setdefault(m.get("entity_type", ""), []).append(m)
         new_result["by_entity_type"] = by_type
     return new_result
+
+
+def _apply_limit_marking_truncation(
+    result: dict[str, Any], limit: int | None
+) -> dict[str, Any]:
+    """`_apply_limit`, plus: any entity type it cut rows from joins
+    `_truncated_entity_types`, so the coverage claim over that type is flagged
+    incomplete rather than asserted as if the caller saw everything."""
+    if not isinstance(result, dict) or not isinstance(result.get("intersection"), list):
+        return _apply_limit(result, limit)
+    pre: dict[str, int] = {}
+    for m in result["intersection"]:
+        et = str((m or {}).get("entity_type") or "")
+        pre[et] = pre.get(et, 0) + 1
+    capped = _apply_limit(result, limit)
+    post: dict[str, int] = {}
+    for m in capped.get("intersection") or []:
+        et = str((m or {}).get("entity_type") or "")
+        post[et] = post.get(et, 0) + 1
+    cut = {t for t, n in pre.items() if post.get(t, 0) < n}
+    if cut:
+        capped["_truncated_entity_types"] = sorted(
+            set(capped.get("_truncated_entity_types") or []) | cut
+        )
+    return capped
+
+
+def _attach_and_coverage(result: dict[str, Any]) -> dict[str, Any]:
+    """Final step for every AND-shaped result: compute `token_coverage` over
+    the rows ACTUALLY being returned, then strip the transport keys.
+
+    Runs after `_apply_promotion_access_levels_filter`,
+    `_expand_products_via_promotions` and `_apply_limit` have all had their
+    turn — coverage computed any earlier describes rows a later stage removed
+    (the original version asserted "every word matched" on zero-row
+    entitlement-filtered responses). No-op for OR-shaped results.
+
+    Best-effort by design: the rows are the answer, the coverage is commentary
+    on them, so a coverage failure must never 500 a resolve that succeeded.
+    The transport-key strip is unconditional either way.
+    """
+    if not isinstance(result, dict) or "intersection" not in result:
+        return result
+    try:
+        truncated = frozenset(result.get("_truncated_entity_types") or [])
+        result["token_coverage"] = token_word_coverage_for_rows(
+            result.get("tokens") or [],
+            result.get("intersection") or [],
+            truncated_types=truncated,
+        )
+    except Exception:
+        logger.exception("token_coverage computation failed; omitting the field")
+    finally:
+        result.pop("_truncated_entity_types", None)
+        # The filters rebuild `by_entity_type` from the same row dicts as
+        # `intersection`, so the blob can appear in both views — strip both.
+        for m in result.get("intersection") or []:
+            if isinstance(m, dict):
+                m.pop("_match_blob", None)
+        for rows in (result.get("by_entity_type") or {}).values():
+            if isinstance(rows, list):
+                for m in rows:
+                    if isinstance(m, dict):
+                        m.pop("_match_blob", None)
+    return result
+
+
+def _stamp_brand_on_products(db: Session, result: dict[str, Any]) -> dict[str, Any]:
+    """Fill `display.brand` on any product row in the payload that lacks it.
+
+    The resolver stamps every match it builds itself (`_attach_brand_info`), but
+    this module builds product rows of its own - the through-promotion expansion
+    and the spec search - as plain dicts that never pass through it. Rather than
+    patch each builder (and every future one), sweep the finished payload: a row
+    that already carries a brand is left exactly as it is, so this is idempotent
+    and the brand-access path keeps the shape it always had.
+
+    Mutates in place: `by_entity_type` shares its `display` dicts with
+    `intersection`, so stamping once updates both views of the same row.
+    """
+    if not isinstance(result, dict):
+        return result
+
+    pending: list[dict[str, Any]] = []
+
+    def _collect(rows: Any) -> None:
+        if not isinstance(rows, list):
+            return
+        for row in rows:
+            if not isinstance(row, dict) or row.get("entity_type") != "product":
+                continue
+            display = row.get("display")
+            if not isinstance(display, dict) or "brand" in display or not row.get("uuid"):
+                continue
+            pending.append(row)
+
+    for tr in result.get("resolutions") or []:
+        if isinstance(tr, dict):
+            _collect(tr.get("matches"))
+            _collect(tr.get("alternatives"))
+    _collect(result.get("intersection"))
+    _collect(result.get("alternatives"))
+    for rows in (result.get("by_entity_type") or {}).values():
+        _collect(rows)
+
+    if not pending:
+        return result
+    try:
+        brands = fetch_product_brands(db, [str(r["uuid"]) for r in pending])
+    except Exception:  # noqa: BLE001 — brand is additive, never fatal
+        logger.exception("brand stamp on resolve payload failed")
+        return result
+    for row in pending:
+        key = str(row["uuid"])
+        if key in brands:
+            row["display"]["brand"] = brands[key]
+    return result
 
 
 def _resolve_promotion_ids_for_token(
@@ -1335,7 +1457,11 @@ def _resolve_input(
     result = _run(allowed_entity_types)
 
     if not (fallback_to_all_types and allowed_entity_types):
-        return result
+        # NOTE: `limit` is not applied on this exit — pre-existing behaviour,
+        # deliberately preserved (live callers see uncapped counts today, and
+        # capping here would move rows under them). Coverage/strip must still
+        # run on every AND-shaped exit.
+        return _attach_and_coverage(result)
 
     # ------------------------------------------------------------------
     # Per-token fallback (only for tokens unresolved under the whitelist).
@@ -1352,7 +1478,10 @@ def _resolve_input(
 
     if mode == "and":
         if not _result_has_zero_matches(result):
-            return _ret(result)
+            # Coverage LAST: it has to describe the post-limit rows, and the
+            # limit has to know which types it cut so their claims are
+            # flagged incomplete.
+            return _attach_and_coverage(_apply_limit_marking_truncation(result, limit))
         result = _run(allowed_entity_types, force_mode="or")
         fallback_match_mode_override = "or"
         fallback_reason = (
@@ -1520,16 +1649,19 @@ def resolve_reference(
     OR mode (default): per-token, returns canonical UUIDs + display payload + ambiguity signals.
     AND mode: cross-token intersection across each entity's concatenated searchable columns.
     """
-    return _resolve_input(
+    return _stamp_brand_on_products(
         db,
-        query,
-        tokens,
-        match_mode=match_mode,
-        allowed_entity_types=allowed_entity_types,
-        access_levels=access_levels,
-        fallback_to_all_types=fallback_to_all_types,
-        domain_hint=domain_hint or domain,
-        limit=limit,
+        _resolve_input(
+            db,
+            query,
+            tokens,
+            match_mode=match_mode,
+            allowed_entity_types=allowed_entity_types,
+            access_levels=access_levels,
+            fallback_to_all_types=fallback_to_all_types,
+            domain_hint=domain_hint or domain,
+            limit=limit,
+        ),
     )
 
 
@@ -1599,6 +1731,11 @@ def _emit_spec_matches(result: dict[str, Any], candidates: list[dict], token: st
             by_type.setdefault(match["entity_type"], []).append(match)
         result["by_entity_type"] = by_type
         result["empty"] = not spec_matches
+        # Coverage was computed inside _resolve_input over rows this branch just
+        # REPLACED — recompute over what the route actually sends, or the field
+        # describes rows that no longer exist. Spec rows carry no scored text,
+        # so this honestly yields no claims.
+        _attach_and_coverage(result)
     result.setdefault("resolutions", []).append(spec_resolution)
     # Something was found, so the token is no longer unresolved. Nothing else is
     # touched: `unresolved_tokens` and `alternatives` are what drive "did you
@@ -1652,7 +1789,7 @@ def resolve_reference_post(
             "unrecognized_terms": outcome["unrecognized_terms"],
         }
         _emit_spec_matches(result, outcome["candidates"], payload.query or "")
-        return result
+        return _stamp_brand_on_products(db, result)
 
     # Spec search is a FALLBACK, never a parallel path. It runs only when the caller
     # asked for it AND the normal (code-only) product probes found nothing, so the
@@ -1703,4 +1840,4 @@ def resolve_reference_post(
         if semantic_ms is not None:
             result["semantic_ms"] = semantic_ms
 
-    return result
+    return _stamp_brand_on_products(db, result)

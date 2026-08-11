@@ -1,6 +1,6 @@
 ---
 name: planner
-description: Designs implementation plans for sorento_crm features. Use at the start of any non-trivial feature/refactor to produce a step-by-step plan written to documentation/plans/PLAN-<slug>.md. Returns critical files, contract shapes, and the three-phase breakdown. Does NOT write feature code.
+description: DEPRECATED for normal features - planning happens in the MAIN session (plan mode), which holds the grill context and the strongest model. Spawn this agent ONLY for module-sized work needing parallel exploration of independent sub-plans (e.g. charting several SCM slices at once). Writes to documentation/plans/PLAN-<slug>.md. Does NOT write feature code.
 tools: Read, Grep, Glob, Bash, WebFetch, WebSearch, Write, Edit
 model: opus
 ---

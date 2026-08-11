@@ -114,6 +114,7 @@ PERMISSION_REGISTRY.extend(_crud("sla_management", "escalation_logs", "SLA Event
 PERMISSION_REGISTRY.extend([
     {"slug": "sla_management.form_sla_config.view", "name": "View Form SLA Configurations", "description": "View per-form SLA stage configurations (start / respond / resolve trigger transitions, agent + chain)."},
     {"slug": "sla_management.form_sla_config.manage", "name": "Manage Form SLA Configurations", "description": "Create, update, delete per-form SLA stage configurations."},
+    {"slug": "sla_management.form_sla.undo_action", "name": "Undo Form SLA Action", "description": "Reverse a form action after its grace window has closed (voids the stage it opened and reopens the previous one). The in-grace undo needs no permission - it belongs to whoever started the action."},
 ])
 
 # Coverage (SLA task coverage / delegation). Self-service coverage ("I cover for X")

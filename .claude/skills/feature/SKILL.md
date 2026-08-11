@@ -26,6 +26,29 @@ The plugin was written for a different repo. Where it disagrees with
    and has no concept of Phase 1. Never hand it the whole feature. Scope it to
    Phase 2, or run the phases yourself.
 
+## Who executes each step (delegation is part of the order)
+
+Every step has a named executor. Running a step in the wrong seat is the same
+process violation as skipping it. Deviations are recorded in the PR description.
+
+- **Main session** (strongest model, holds the grill context): steps 0-5
+  (journey, grill, UAC, plan, plan review, tickets), all user-in-the-loop
+  moments (grilling, `/lavish` markup, browser handoff), and orchestration.
+  Planning is NEVER delegated for normal features: the `planner` agent exists
+  only for module-sized work needing parallel exploration of independent
+  sub-plans.
+- **`coder` agent** (Agent tool): steps 6 and 7 implementation. Spawn with
+  `isolation: "worktree"` - the user codes concurrently in the main checkout,
+  so the coder must never share the working tree. Its prompt is ONLY: the PLAN
+  path, the UAC path, the slice id, and the phase (1 or 2). The files are the
+  contract; do not paraphrase them into the prompt.
+- **`tester` agent** (sonnet): test authoring and running in step 7 when split
+  from the coder. Asserts against UAC ids.
+- **`reviewer` agent + `/code-review`**: step 8. Optionally follow with
+  `/codex-review` (OpenAI model family, second opinion) on risky or large diffs.
+- Trivial one-file changes may run inline in the main session; say so instead
+  of silently absorbing a real slice.
+
 ## The pipeline
 
 ### Step 0 — Scope check
@@ -152,21 +175,22 @@ never a dev server.
 
 ## Skill map (quick reference)
 
-| step | skill |
-| ---- | ----- |
-| 0 scope unknown | `/wayfinder` |
-| 1 journey | manual — no skill |
-| 2 grill | `/grill-with-docs` (domain) or `/grill-me` (flow) |
-| 2b terms shifting | `/domain-modeling` |
-| 3 UAC + plan | `/to-spec`, output redirected to files |
-| 4 plan review | `/lavish` then `/grill-me` |
-| 5 tickets | `/to-tickets` |
-| 6 design options | `/prototype` (throwaway, before Phase 1) |
-| 7 TDD | `/tdd`, or `/implement` scoped to Phase 2 |
-| 8 review | `/code-review` (this repo's) |
-| bugs | `/triage` then `/diagnosing-bugs` |
-| periodic | `/improve-codebase-architecture`, `/codebase-design` |
-| context | `/handoff`, `/research` |
+| step | skill | executor |
+| ---- | ----- | -------- |
+| 0 scope unknown | `/wayfinder` | main session |
+| 1 journey | manual — no skill | main session |
+| 2 grill | `/grill-with-docs` (domain) or `/grill-me` (flow) | main session (user in loop) |
+| 2b terms shifting | `/domain-modeling` | main session |
+| 3 UAC + plan | `/to-spec`, output redirected to files | main session (plan mode) |
+| 4 plan review | `/lavish` then `/grill-me` | main session (user in loop) |
+| 5 tickets | `/to-tickets` | main session |
+| 6 design options | `/prototype` (throwaway, before Phase 1) | main session |
+| 6 Phase 1 FE mock | — | `coder` agent, worktree |
+| 7 TDD | `/tdd`, or `/implement` scoped to Phase 2 | `coder` agent, worktree; tests may split to `tester` |
+| 8 review | `/code-review` (this repo's), then optional `/codex-review` | `reviewer` agent + main session |
+| bugs | `/triage` then `/diagnosing-bugs` | main session |
+| periodic | `/improve-codebase-architecture`, `/codebase-design` | main session |
+| context | `/handoff`, `/research` | main session |
 
 ## Related
 
