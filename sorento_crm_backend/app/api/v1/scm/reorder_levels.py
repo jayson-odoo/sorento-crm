@@ -123,6 +123,25 @@ def amend(payload: dict = Body(...), db: Session = Depends(get_db),
         amended_by=str(user.get("id")) if isinstance(user, dict) and user.get("id") else None)
 
 
+@router.post("/product-lifecycle-decision")
+def record_lifecycle_decision(payload: dict = Body(...), db: Session = Depends(get_db),
+                              user: dict = Depends(_EDIT)) -> dict[str, Any]:
+    """Record the buyer's keep-or-discontinue answer to the health advisory.
+
+    `decision` is 'keep' | 'discontinue' | null (null withdraws, back to undecided).
+    Never touches `products.is_discontinued` - AutoCount's description derives that on
+    every sync, so marking it there stays the buyer's job; this row records what they
+    chose so the plan stops asking.
+    """
+    product_id = payload.get("product_id")
+    if not product_id:
+        raise AppException(status_code=422, message="product_id is required.")
+    from app.services.scm import product_economics_service
+    return product_economics_service.record_lifecycle_decision(
+        db, product_id=str(product_id), decision=payload.get("decision"),
+        decided_by=str(user.get("id")) if isinstance(user, dict) and user.get("id") else None)
+
+
 @router.post("/reorder-levels/import/preview")
 async def preview_level_import(
     file: UploadFile = File(...),

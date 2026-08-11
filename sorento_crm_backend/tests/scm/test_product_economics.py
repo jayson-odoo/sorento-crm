@@ -136,6 +136,43 @@ def test_no_movement_is_said_not_divided():
         assert e["no_movement"] is True
 
 
+def test_lifecycle_decision_records_overwrites_and_withdraws():
+    from tests._pg_fixture import pg_session
+    with pg_session() as db:
+        w = _world(db)
+        pid = w["product_id"]
+
+        svc.record_lifecycle_decision(db, product_id=pid, decision="discontinue",
+                                      decided_by=None)
+        e = svc.economics_for_run(db, w["run_id"], as_of=AS_OF)["products"][pid]
+        assert e["lifecycle_decision"] == "discontinue"
+        assert e["lifecycle_decided_at"] is not None
+
+        # A change of mind overwrites - the decision is the current answer, not a history.
+        svc.record_lifecycle_decision(db, product_id=pid, decision="keep", decided_by=None)
+        e = svc.economics_for_run(db, w["run_id"], as_of=AS_OF)["products"][pid]
+        assert e["lifecycle_decision"] == "keep"
+
+        # Null withdraws, back to undecided.
+        svc.record_lifecycle_decision(db, product_id=pid, decision=None, decided_by=None)
+        e = svc.economics_for_run(db, w["run_id"], as_of=AS_OF)["products"][pid]
+        assert e["lifecycle_decision"] is None
+
+
+def test_lifecycle_decision_rejects_unknown_words_and_products():
+    import pytest as _pytest
+    from app.services.error_handler import AppException
+    from tests._pg_fixture import pg_session
+    with pg_session() as db:
+        w = _world(db)
+        with _pytest.raises(AppException):
+            svc.record_lifecycle_decision(db, product_id=w["product_id"],
+                                          decision="pause", decided_by=None)
+        with _pytest.raises(AppException):
+            svc.record_lifecycle_decision(db, product_id=_u(), decision="keep",
+                                          decided_by=None)
+
+
 def test_thresholds_default_and_travel_with_the_payload():
     from tests._pg_fixture import pg_session
     with pg_session() as db:

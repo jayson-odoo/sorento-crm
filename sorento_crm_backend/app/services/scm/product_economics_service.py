@@ -25,13 +25,20 @@ draw the same line.
 from __future__ import annotations
 
 import logging
-from datetime import date
+import uuid as uuid_mod
+from datetime import date, datetime
 from typing import Any, Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.error_handler import AppException
+
 log = logging.getLogger(__name__)
+
+#: What a buyer can decide about a product's life. The advisory recomputes every run;
+#: the decision is the human answer to it, recorded until they change their mind.
+LIFECYCLE_DECISIONS = ("keep", "discontinue")
 
 #: The line the business draws, when the policy has not drawn one.
 DEFAULT_MARGIN_FLOOR_PCT = 15.0
@@ -106,6 +113,11 @@ def economics_for_run(db: Session, run_id: str,
         "AND day >= :start AND day < :end GROUP BY product_id"
     ), {"pids": pids, "start": start, "end": end}).mappings().all()}
 
+    decisions = {r["product_id"]: dict(r) for r in db.execute(text(
+        "SELECT product_id::text AS product_id, decision, decided_at "
+        "FROM scm.product_lifecycle_decision WHERE product_id::text = ANY(:pids)"
+    ), {"pids": pids}).mappings().all()}
+
     out: dict[str, Any] = {}
     for pid in pids:
         s = sold.get(pid)
@@ -133,6 +145,11 @@ def economics_for_run(db: Session, run_id: str,
             # by zero is not "infinite months", it is "the pace is zero", said as such.
             "turnover_months": round(held / monthly, 2) if monthly > 0 else None,
             "no_movement": monthly <= 0,
+            # The buyer's standing answer to the advisory, or None while undecided.
+            "lifecycle_decision": decisions.get(pid, {}).get("decision"),
+            "lifecycle_decided_at": (decisions[pid]["decided_at"].isoformat()
+                                     if pid in decisions and decisions[pid]["decided_at"]
+                                     else None),
         }
 
     return {
@@ -141,3 +158,39 @@ def economics_for_run(db: Session, run_id: str,
         "thresholds": _thresholds(db),
         "sell_window_months": SELL_WINDOW_MONTHS,
     }
+
+
+def record_lifecycle_decision(db: Session, *, product_id: str, decision: Optional[str],
+                              decided_by: Optional[str]) -> dict[str, Any]:
+    """Record (or withdraw, with None) the buyer's keep-or-discontinue call.
+
+    Overwrite-in-place: the decision is the CURRENT answer, not a history - the advisory
+    itself recomputes every run and asks again when the facts change. Never touches
+    `products.is_discontinued`, which AutoCount's description derives on every sync;
+    marking it there is the buyer's job, and this row is the reminder of what they chose.
+    """
+    if decision is not None and decision not in LIFECYCLE_DECISIONS:
+        raise AppException(status_code=422,
+                           message=f"decision must be one of {', '.join(LIFECYCLE_DECISIONS)}.")
+    exists = db.execute(text("SELECT 1 FROM products WHERE id::text = :p"),
+                        {"p": product_id}).first()
+    if exists is None:
+        raise AppException(status_code=404, message="Product not found.")
+
+    now = datetime.utcnow()
+    if decision is None:
+        db.execute(text(
+            "DELETE FROM scm.product_lifecycle_decision WHERE product_id::text = :p"),
+            {"p": product_id})
+    else:
+        db.execute(text("""
+            INSERT INTO scm.product_lifecycle_decision
+                (id, product_id, decision, decided_by, decided_at)
+            VALUES (:id, :p, :d, :by, :now)
+            ON CONFLICT (product_id)
+            DO UPDATE SET decision = :d, decided_by = :by, decided_at = :now
+        """), {"id": str(uuid_mod.uuid4()), "p": product_id, "d": decision,
+               "by": decided_by, "now": now})
+    db.commit()
+    return {"product_id": product_id, "decision": decision,
+            "decided_at": now.isoformat() if decision else None}
