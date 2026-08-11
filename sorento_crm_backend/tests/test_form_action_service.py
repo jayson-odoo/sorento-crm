@@ -1395,3 +1395,13 @@ def test_undo_notifications_carry_whatsapp_template_data(db, monkeypatch):
     assert data["whatsapp_use_case"] == "form_action_reopened"
     assert data["whatsapp_context_vars"]["message"]
     assert data["whatsapp_context_vars"]["entity_number"]
+
+
+def test_undo_use_cases_are_admin_configurable():
+    """The two undo WhatsApp use cases must be in TEMPLATE_DEFAULT_USE_CASES, or the
+    WhatsApp Templates admin page cannot list them and set_default refuses them -
+    the seeded defaults would be frozen at whatever migration 312c chose."""
+    from app.models.respond_template import TEMPLATE_DEFAULT_USE_CASES
+
+    assert "form_action_voided" in TEMPLATE_DEFAULT_USE_CASES
+    assert "form_action_reopened" in TEMPLATE_DEFAULT_USE_CASES
