@@ -216,6 +216,8 @@ export interface FormSLAConfig {
   is_active: boolean;
   notify_assignee?: boolean;
   notify_on_escalation?: boolean;
+  /** Undo grace window for this stage, in seconds. null = inherit the global default. */
+  grace_seconds?: number | null;
   policy_code?: string | null;
   policy_name?: string | null;
   next_stage_code?: string | null;
@@ -237,6 +239,8 @@ export interface FormSLAConfigInput {
   is_active?: boolean;
   notify_assignee?: boolean;
   notify_on_escalation?: boolean;
+  /** null = inherit the global default rather than pinning this stage to no grace. */
+  grace_seconds?: number | null;
 }
 
 export async function listFormSLAConfigs(filters: {
