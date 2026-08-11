@@ -45,7 +45,10 @@ def _world(db, *, rising: bool):
     db.flush()
     product = Product(id=_u(), product_code=unique_code("P"), product_name=f"{MARKER} p",
                       category_id=cat.id, base_uom_id=uom.id, list_price=0,
-                      is_active=True, is_discontinued=False)
+                      is_active=True, is_discontinued=False,
+                      # AutoCount's own reorder quantity, so the payload test can pin
+                      # that the master figure travels beside the engine's.
+                      reorder_quantity=18)
     db.add(product)
     db.flush()
     pid = str(product.id)
@@ -170,6 +173,26 @@ def test_the_run_report_carries_the_current_level_beside_the_suggestion():
         assert entry["current_source"] == "manual"
         assert entry["basis"]["avg_monthly"] == 12.0
         assert entry["product_code"], "the export names the product by code, not UUID"
+        # The lot to order when the level fires, beside AutoCount's own figure. One cover
+        # of demand (avg 12 x 2 = 24, already whole) rounded to a purchasable lot.
+        assert entry["suggested_quantity"] == 24.0
+        assert entry["master_reorder_quantity"] == 18.0
+
+
+def test_a_suggestion_stored_before_quantities_existed_reads_none_not_zero():
+    from tests._pg_fixture import pg_session
+    with pg_session() as db:
+        w = _world(db, rising=True)
+        svc.refresh_for_run(db, w["run_id"], as_of=AS_OF)
+        # Strip the key the way an old row genuinely lacks it.
+        db.execute(text(
+            "UPDATE scm.reorder_level "
+            "SET suggestion_basis = suggestion_basis - 'suggested_quantity' "
+            "WHERE product_id::text = :p"), {"p": w["product_id"]})
+
+        out = svc.suggestions_for_run(db, w["run_id"])
+        entry = out["suggestions"][f"{w['product_id']}:{w['warehouse_id']}"]
+        assert entry["suggested_quantity"] is None
 
 
 def test_the_endpoint_serves_the_list_and_rbac_holds(scm_app):

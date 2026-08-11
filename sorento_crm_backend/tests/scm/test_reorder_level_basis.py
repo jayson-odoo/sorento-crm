@@ -145,6 +145,40 @@ def test_no_months_studied_does_not_divide_by_zero():
     assert out["basis"]["months_studied"] == 0
 
 
+# --- reorder quantity suggestion ---------------------------------------------------------
+
+def test_quantity_is_one_cover_of_demand_in_whole_units():
+    out = rl.suggest_level(_months(30, 60, 30), cover_months=2)
+    # avg 40 x 2 = 80: already whole, so the quantity equals it.
+    assert out["quantity"] == 80.0
+    assert out["basis"]["suggested_quantity"] == 80.0
+
+
+def test_quantity_always_rounds_up_to_a_purchasable_lot():
+    # avg 10.333.. x 1.5 = 15.5: a PO line cannot order half a unit, so 16.
+    out = rl.suggest_level(_months(10, 11, 10), cover_months=1.5)
+    assert out["quantity"] == 16.0
+
+
+def test_quantity_rounds_up_regardless_of_a_falling_trend():
+    # Trend leans the LEVEL's rounding; the quantity is a lot to ORDER and a falling book
+    # must not round it below what one cover actually needs.
+    out = rl.suggest_level(_months(10, 11, 10), cover_months=1.5, trend="falling")
+    assert out["level"] == 15.0
+    assert out["quantity"] == 16.0
+
+
+def test_quantity_respects_moq_and_multiple_when_there_is_movement():
+    out = rl.suggest_level(_months(1, 1, 1), cover_months=2, moq=5.0, order_multiple=4.0)
+    # avg 1 x 2 = 2 -> floored at moq 5 -> rounded up to the next 4
+    assert out["quantity"] == 8.0
+
+
+def test_zero_quantity_is_not_pushed_up_to_the_moq():
+    out = rl.suggest_level(_months(0, 0, 0), cover_months=2, moq=50.0, order_multiple=10.0)
+    assert out["quantity"] == 0.0
+
+
 # --- level resolution --------------------------------------------------------------------
 
 def test_the_per_location_level_beats_the_product_wide_one():

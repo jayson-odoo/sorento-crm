@@ -135,8 +135,20 @@ def suggest_level(movement: list[dict[str, Any]], *, cover_months: float = DEFAU
     if order_multiple and float(order_multiple) > 0 and level > 0:
         m = float(order_multiple)
         level = math.ceil(level / m) * m
+    # The reorder QUANTITY: the lot to order when stock hits the level. One cover of
+    # demand, ALWAYS rounded up - the level is a trigger the trend may lean down, but a
+    # quantity is something a PO line orders, and half a unit or "slightly less than a
+    # cover" is not a thing the supplier sells. Same MOQ/multiple pack rounding as the
+    # level, and the same "no movement suggests 0, never a pallet" rule.
+    quantity = float(math.ceil(raw)) if raw > 0 else 0.0
+    if moq is not None and quantity > 0 and quantity < float(moq):
+        quantity = float(moq)
+    if order_multiple and float(order_multiple) > 0 and quantity > 0:
+        m = float(order_multiple)
+        quantity = math.ceil(quantity / m) * m
     return {
         "level": round(level, 4),
+        "quantity": round(quantity, 4),
         "basis": {
             "months": months,
             "months_studied": len(months),
@@ -148,6 +160,9 @@ def suggest_level(movement: list[dict[str, Any]], *, cover_months: float = DEFAU
             "order_multiple": order_multiple,
             # The verdict that shaped the rounding, or None when none was consulted.
             "trend": trend,
+            # Persisted inside the basis so it survives without a schema change; the
+            # payload lifts it to a top-level field beside `suggested_level`.
+            "suggested_quantity": round(quantity, 4),
             # Said explicitly so a 0 reads as "nothing moved", never as "not computed".
             "no_movement": total <= 0,
         },

@@ -48,6 +48,7 @@ def _plan_pairs(db: Session, run_id: str) -> list[dict]:
                COALESCE(w.segment, 'project') AS segment,
                rr.company_id::text  AS company_id,
                p.product_code, p.product_name,
+               p.reorder_quantity AS master_reorder_quantity,
                w.warehouse_code, w.warehouse_name
           FROM scm.reorder_recommendation rr
           JOIN products p ON p.id = rr.product_id
@@ -188,6 +189,18 @@ def suggestions_for_run(db: Session, run_id: str) -> dict[str, Any]:
             "current_level": float(row["level"]) if row.get("level") is not None else None,
             "current_source": row.get("source"),
             "suggested_level": float(row["suggested_level"]),
+            # The lot to order when stock hits the level. Lives in the stored basis
+            # (no schema change); older suggestions computed before it exist read None,
+            # never 0 - "not computed" and "order nothing" are different answers.
+            "suggested_quantity": (
+                float((row.get("suggestion_basis") or {})["suggested_quantity"])
+                if (row.get("suggestion_basis") or {}).get("suggested_quantity") is not None
+                else None),
+            # AutoCount's reorder quantity as uploaded, beside the engine's: where they
+            # disagree is where the master record needs updating.
+            "master_reorder_quantity": (
+                float(pair["master_reorder_quantity"])
+                if pair.get("master_reorder_quantity") is not None else None),
             "suggested_at": (row["suggested_at"].isoformat()
                              if row.get("suggested_at") else None),
             # The buyer's own figure, beside the engine's - never instead of it (S14).
