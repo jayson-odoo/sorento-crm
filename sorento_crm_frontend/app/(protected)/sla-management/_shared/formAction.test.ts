@@ -5,6 +5,7 @@ import {
   ctasDisabledForView,
   isDeferredFormAction,
   resolveFormActionView,
+  watchedOutcome,
   UNDO_BLOCKED_COPY,
   type FormUndoEligibility,
   type PendingFormAction,
@@ -19,7 +20,7 @@ function pending(overrides: Partial<PendingFormAction> = {}): PendingFormAction 
     action_label: 'Approval',
     requested_by_id: 'u1',
     requested_by_name: 'Sabrina',
-    // Naive UTC, exactly as the backend serializes it — no trailing Z.
+    // Naive UTC, exactly as the backend serializes it - no trailing Z.
     commit_at: '2026-08-10T09:30:10',
     window_seconds: 10,
     can_cancel: true,
@@ -43,7 +44,7 @@ function eligibility(overrides: Partial<FormUndoEligibility> = {}): FormUndoElig
 
 describe('asUtc', () => {
   it('treats a timezone-less backend timestamp as UTC', () => {
-    // Without this the browser parses it as LOCAL time — 8h out in UTC+8, which would
+    // Without this the browser parses it as LOCAL time - 8h out in UTC+8, which would
     // make a fresh countdown read as already finished.
     expect(asUtc('2026-08-10T09:30:10')).toBe('2026-08-10T09:30:10Z');
   });
@@ -187,5 +188,34 @@ describe('ctasDisabledForView', () => {
     expect(ctasDisabledForView({ kind: 'idle' })).toBe(false);
     expect(ctasDisabledForView({ kind: 'undoable', eligibility: eligibility() })).toBe(false);
     expect(ctasDisabledForView({ kind: 'failed', reason: 'x' })).toBe(false);
+  });
+});
+
+describe('watchedOutcome', () => {
+  const terminal = {
+    action_id: 'a1',
+    action_key: 'pr.approval_decision',
+    action_label: 'Approval',
+    status: 'ineligible',
+    reason: 'someone else decided the form',
+    resolved_at: '2026-08-11T01:00:00',
+  };
+
+  it('surfaces the outcome of the action the viewer was watching', () => {
+    expect(watchedOutcome(terminal, 'a1')).toEqual({
+      status: 'ineligible',
+      reason: 'someone else decided the form',
+    });
+  });
+
+  it('ignores an outcome belonging to some other action', () => {
+    // An old failure from last week must not resurface on an unrelated page load.
+    expect(watchedOutcome(terminal, 'a2')).toBeNull();
+    expect(watchedOutcome(terminal, null)).toBeNull();
+    expect(watchedOutcome(null, 'a1')).toBeNull();
+  });
+
+  it('only ineligible/failed count as outcomes', () => {
+    expect(watchedOutcome({ ...terminal, status: 'committed' }, 'a1')).toBeNull();
   });
 });

@@ -8,6 +8,8 @@ import { toast } from 'sonner';
 import {
   ctasDisabledForView,
   resolveFormActionView,
+  watchedOutcome,
+  type FormActionOutcome,
   type FormActionView,
 } from './formAction';
 import {
@@ -98,6 +100,8 @@ export function useFormAction(input: UseFormActionInput): UseFormActionResult {
   }, [queryClient, sourceEntityId]);
 
   const invalidate = useCallback(() => {
+    // `refresh` doubles as the outcome dismiss (the banner's onDismissOutcome).
+    setOutcome(null);
     queryClient.invalidateQueries({ queryKey: ['form-action-current'] });
     queryClient.invalidateQueries({ queryKey: ['form-action-eligibility'] });
     // The lock banner and the SLA banner are separate queries; a reversal moves the
@@ -106,6 +110,13 @@ export function useFormAction(input: UseFormActionInput): UseFormActionResult {
     queryClient.invalidateQueries({ queryKey: ['form-sla-trackers'] });
     invalidateEntity();
   }, [queryClient, invalidateEntity]);
+
+  // A parked action that did NOT apply (voided under a changed premise, or failed at
+  // commit) must say so - `pending` just going null looks identical to success, and
+  // the user walks away believing their action landed. The server reports the most
+  // recent terminal outcome; it is shown only when it belongs to the action THIS
+  // viewer was watching, and dismissed client-side.
+  const [outcome, setOutcome] = useState<FormActionOutcome | null>(null);
 
   // The grace window closes on the SERVER - by a sweep, or by the lazy commit inside
   // the poll below. Either way the first the client hears of it is `pending` going
@@ -116,9 +127,12 @@ export function useFormAction(input: UseFormActionInput): UseFormActionResult {
     if (lastPendingId.current && !currentId) {
       setSettling(true);
       invalidateEntity();
+      const terminal = watchedOutcome(current?.last_outcome, lastPendingId.current);
+      if (terminal) setOutcome(terminal);
     }
+    if (currentId) setOutcome(null);
     lastPendingId.current = currentId;
-  }, [pending, invalidateEntity]);
+  }, [pending, current, invalidateEntity]);
 
   // Release the CTAs only once the refetch this triggered has actually finished.
   const entityFetching = useIsFetching({
@@ -151,7 +165,7 @@ export function useFormAction(input: UseFormActionInput): UseFormActionResult {
 
   const view = resolveFormActionView({
     pending,
-    outcome: mocked ? FORM_ACTION_FIXTURES[scenario!].outcome : null,
+    outcome: mocked ? FORM_ACTION_FIXTURES[scenario!].outcome : outcome,
     eligibility: mocked
       ? FORM_ACTION_FIXTURES[scenario!].eligibility
       : (eligibility ?? null),

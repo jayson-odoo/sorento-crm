@@ -1,5 +1,5 @@
 /* -------------------------------------------------------------------------------------
- * Form SLA Undo — framework-free types + view-state resolver (PLAN-form-sla-undo.md).
+ * Form SLA Undo - framework-free types + view-state resolver (PLAN-form-sla-undo.md).
  *
  * Two mechanisms share one surface:
  *   - IN-GRACE: the click created a `pending` action and NOTHING else happened. Undo
@@ -9,7 +9,7 @@
  *     acted on.
  *
  * This module is deliberately React-free so the state machine is unit-testable without
- * rendering — same split as `handlingLock.ts`.
+ * rendering - same split as `handlingLock.ts`.
  * ----------------------------------------------------------------------------------- */
 
 /** Lifecycle of a row in `sla_form_actions`. */
@@ -56,13 +56,13 @@ export function isDeferredFormAction(result: unknown): result is DeferredFormAct
 export interface PendingFormAction {
   id: string;
   action_key: string;
-  /** Human label for the verb, e.g. "Approval" — server-supplied so copy stays in one place. */
+  /** Human label for the verb, e.g. "Approval" - server-supplied so copy stays in one place. */
   action_label: string;
   requested_by_id: string;
   requested_by_name: string;
   /** Naive UTC (no tz suffix), like every other tracking timestamp. */
   commit_at: string;
-  /** Full window in seconds — the bar's fixed denominator, so a remount cannot rescale it. */
+  /** Full window in seconds - the bar's fixed denominator, so a remount cannot rescale it. */
   window_seconds: number;
   /** Viewer-relative: the requester, or an admin. */
   can_cancel: boolean;
@@ -75,6 +75,31 @@ export interface PendingFormAction {
 export interface FormActionOutcome {
   status: Extract<FormActionStatus, 'ineligible' | 'failed'>;
   reason: string;
+}
+
+/** Rides on GET /current: the most recent action that ended without applying. */
+export interface LastFormActionOutcome {
+  action_id: string;
+  action_key: string;
+  action_label: string;
+  status: string;
+  reason: string;
+  resolved_at: string | null;
+}
+
+/**
+ * The outcome to SHOW, or null. Only the action the viewer just watched counts -
+ * they saw the countdown for `watchedId`, so its disappearance needs explaining;
+ * an old failure from last week must not resurface on an unrelated page load.
+ */
+export function watchedOutcome(
+  lastOutcome: LastFormActionOutcome | null | undefined,
+  watchedId: string | null,
+): FormActionOutcome | null {
+  if (!lastOutcome || !watchedId) return null;
+  if (lastOutcome.action_id !== watchedId) return null;
+  if (lastOutcome.status !== 'ineligible' && lastOutcome.status !== 'failed') return null;
+  return { status: lastOutcome.status, reason: lastOutcome.reason };
 }
 
 /** Rides on the form detail response so the FE never guesses (AC-PG-6). */
@@ -96,7 +121,7 @@ export interface FormUndoEligibility {
  * AC-U-7, so a screen cannot silently omit one.
  */
 export type FormActionView =
-  /** No pending action and nothing undoable — today's behaviour, render nothing. */
+  /** No pending action and nothing undoable - today's behaviour, render nothing. */
   | { kind: 'idle' }
   /** Counting down. Other CTAs disabled; Undo available to the requester/admin. */
   | { kind: 'pending'; action: PendingFormAction }
@@ -126,7 +151,7 @@ export function asUtc(iso: string): string {
 
 /**
  * Precedence matters: a pending action outranks undo eligibility, because while one is
- * in flight the previous committed action must not be reversible too — that would race
+ * in flight the previous committed action must not be reversible too - that would race
  * two writers on the same form.
  */
 export function resolveFormActionView(input: ResolveFormActionInput): FormActionView {

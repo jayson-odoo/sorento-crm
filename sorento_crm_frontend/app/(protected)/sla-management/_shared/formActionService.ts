@@ -3,6 +3,7 @@ import { extractApiError } from '@/lib/api-client';
 
 import type {
   FormUndoEligibility,
+  LastFormActionOutcome,
   PendingFormAction,
 } from './formAction';
 import type { FormSLASourceType } from './formSLAService';
@@ -21,6 +22,8 @@ import type { FormSLASourceType } from './formSLAService';
 
 export interface CurrentFormActionResponse {
   pending: PendingFormAction | null;
+  /** Most recent action that ended `ineligible`/`failed` - see watchedOutcome(). */
+  last_outcome?: LastFormActionOutcome | null;
 }
 
 export async function getCurrentFormAction(
