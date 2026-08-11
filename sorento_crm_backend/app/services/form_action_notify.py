@@ -64,17 +64,50 @@ def notify_undo(db: Session, record, *, actor_id: Optional[str], reason: str) ->
     who = _actor_name(db, actor_id)
     service = NotificationService(db)
 
-    def _send(user_id: Optional[str], title: str, body: str, event_type: str) -> None:
+    def _send(
+        user_id: Optional[str],
+        title: str,
+        body: str,
+        event_type: str,
+        tracker=None,
+        use_case: str = "form_action_reopened",
+    ) -> None:
         # Never notify the person who pressed Undo about their own action (AC-N-1/N-2).
         if not user_id or (actor_id and str(user_id) == str(actor_id)):
             return
+        data: dict = {"link": link, "reason": reason}
+        if tracker is not None:
+            # The whatsapp_* keys are what lets the delivery render an APPROVED
+            # template when the recipient's 24h window is closed. Without them the
+            # sender falls back to the sla_assignment use case with no vars - the
+            # escalation template filled with dashes, telling the recipient nothing.
+            try:
+                from app.services.form_sla_service import build_sla_whatsapp_data
+
+                data.update(
+                    build_sla_whatsapp_data(
+                        db,
+                        tracker,
+                        str(user_id),
+                        body,
+                        use_case=use_case,
+                        reason=reason,
+                        extra_vars={"sender_name": who},
+                    )
+                )
+            except Exception:
+                logger.warning(
+                    "Could not build WhatsApp template data for undo notification "
+                    "on tracker %s; out-of-window sends will be skipped",
+                    getattr(tracker, "id", None),
+                )
         try:
             service.create_with_channel_preferences(
                 user_id=str(user_id),
                 type="sla_form_action_undone",
                 title=title,
                 body=body,
-                data={"link": link, "reason": reason},
+                data=data,
                 source_entity_type=record.source_entity_type,
                 source_entity_id=str(record.source_entity_id),
                 event_type=event_type,
@@ -95,6 +128,8 @@ def notify_undo(db: Session, record, *, actor_id: Optional[str], reason: str) ->
             f"{who} undid the {label} on {number}, so the task assigned to you no longer "
             f"applies. Reason: {reason}",
             "form_action_undone_voided",
+            tracker=voided,
+            use_case="form_action_voided",
         )
 
     reopened = _tracker(db, record.prior_tracking_id)
@@ -105,6 +140,8 @@ def notify_undo(db: Session, record, *, actor_id: Optional[str], reason: str) ->
             f"{who} undid the {label} on {number}, so it has returned to you and the SLA "
             f"clock has restarted. Reason: {reason}",
             "form_action_undone_reopened",
+            tracker=reopened,
+            use_case="form_action_reopened",
         )
 
     # Always, regardless of `tells_contact`. That flag describes whether the FORWARD

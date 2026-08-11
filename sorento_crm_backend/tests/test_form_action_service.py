@@ -1340,3 +1340,58 @@ def test_last_terminal_outcome_surfaces_the_voided_action(db, monkeypatch):
     assert str(terminal.id) == parked.action_id
     assert terminal.status == "ineligible"
     assert "someone else decided" in terminal.error_text
+
+
+def test_undo_notifications_carry_whatsapp_template_data(db, monkeypatch):
+    """Out-of-window WhatsApp can only send an APPROVED template, chosen by
+    `whatsapp_use_case` and filled from `whatsapp_context_vars`. Without these keys
+    the delivery falls back to the sla_assignment use case with no vars - the
+    escalation template filled with dashes."""
+    import uuid as _uuid
+
+    from app.models.sla import SLAPolicy
+    from app.models.user import User
+    from app.services import form_action_notify
+
+    # A recipient distinct from the actor, or the self-notify guard drops the send.
+    recipient = User(
+        id=str(_uuid.uuid4()),
+        email=f"{MARKER}undo-wa@example.com",
+        name="Recipient",
+    )
+    db.add(recipient)
+    policy = SLAPolicy(code=MARKER + "wa", name=MARKER + "wa")
+    db.add(policy)
+    db.flush()
+
+    entity_id = _entity_id()
+    _seed_entity(db, entity_id)
+    reopened = _seed_tracker(db, entity_id=entity_id, policy_id=policy.id)
+    reopened.assigned_to_id = str(recipient.id)
+    db.commit()
+
+    captured: list[dict] = []
+    from app.services.notification_service import NotificationService
+
+    monkeypatch.setattr(
+        NotificationService,
+        "create_with_channel_preferences",
+        lambda self, **kwargs: captured.append(kwargs),
+    )
+
+    class _Record:
+        action_key = "pr.approval_decision"
+        source_entity_type = "purchase_request"
+        source_entity_id = entity_id
+        spawned_tracking_id = None
+        prior_tracking_id = str(reopened.id)
+        id = str(_uuid.uuid4())
+
+    form_action_notify.notify_undo(db, _Record(), actor_id=None, reason="tested")
+
+    staff = [k for k in captured if k.get("type") == "sla_form_action_undone"]
+    assert len(staff) == 1
+    data = staff[0]["data"]
+    assert data["whatsapp_use_case"] == "form_action_reopened"
+    assert data["whatsapp_context_vars"]["message"]
+    assert data["whatsapp_context_vars"]["entity_number"]
