@@ -2105,6 +2105,28 @@ class ConversationSLATrackingService:
             .first()
         )
 
+    def count_open_tickets_for_contact(self, contact: RespondContact) -> int:
+        """How many OPEN conversation-scope tickets this contact holds (AC-I2).
+
+        The counterpart to ``get_preferred_tracking_for_contact``: that one
+        reduces a multi-open contact to a single representative row, which
+        cannot answer "does this contact still have anything unresolved". n8n
+        gates the customer-facing "conversation closed and resolved" message on
+        this number, so it counts rows rather than picking one, and form-SLA
+        stage rows are excluded via ``conversation_tracking_scope()`` (they share
+        the table and belong to a different family).
+        """
+        return (
+            self.db.query(func.count(ConversationSLATracking.id))
+            .filter(
+                ConversationSLATracking.respond_contact_id == contact.id,
+                ConversationSLATracking.is_resolved.is_(False),
+                conversation_tracking_scope(),
+            )
+            .scalar()
+            or 0
+        )
+
     def resolve_respond_contact(
         self,
         *,

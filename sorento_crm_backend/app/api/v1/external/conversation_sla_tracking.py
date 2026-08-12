@@ -11,10 +11,76 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.api.v1.sla.sla_tracking import build_conversation_sla_tracking_response
-from app.schemas.sla import ConversationSLATrackingResponse
+from app.schemas.sla import ConversationSLAOpenCountResponse, ConversationSLATrackingResponse
 from app.services.sla_service import ConversationSLATrackingService
 
 router = APIRouter()
+
+
+@router.get(
+    "/open-count",
+    response_model=ConversationSLAOpenCountResponse,
+    summary="Count a contact's OPEN conversation SLA tickets",
+)
+async def get_conversation_sla_open_count(
+    contact_id: Optional[str] = Query(
+        None,
+        description="Respond.io contact id (respond_io_id) or CRM respond_contacts row id.",
+    ),
+    phone_number: Optional[str] = Query(
+        None,
+        description="Contact phone (E.164), e.g. +60123456789.",
+    ),
+    contact_phone: Optional[str] = Query(
+        None,
+        description="Alias for phone_number (same value).",
+    ),
+    _current_user: dict = Depends(get_external_api_user),
+    db: Session = Depends(get_db),
+):
+    """How many OPEN conversation-scope tickets a contact holds right now (AC-I2).
+
+    **Auth:** `X-API-Key` header.
+
+    **Query:** Provide **contact_id** and/or **phone_number** (or **contact_phone**),
+    resolved exactly like the sibling GET above. If both are sent they must refer to
+    the same contact.
+
+    **Always 200.** An unknown contact, a known contact with no tickets, and a contact
+    whose tickets are all resolved every return `{"contact_id": <resolved or null>,
+    "open_count": 0}`. The only 4xx is a caller mistake: no identifier at all, or two
+    identifiers that disagree.
+
+    Why this exists rather than reusing the sibling GET: n8n gates the customer-facing
+    "conversation closed and resolved" WhatsApp message on this number. The sibling GET
+    404s on "no contact" / "no tracking" and otherwise returns ONE sort-order-dependent
+    "preferred" row, so under multi-open tickets it cannot answer "is anything still
+    open for this contact". Either shape ends with a contact being told their still-open
+    enquiry is resolved. Form-SLA rows are excluded (`conversation_tracking_scope`).
+    """
+    phone = (phone_number or contact_phone or "").strip()
+    cid = (contact_id or "").strip()
+    if not cid and not phone:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide contact_id and/or phone_number (or contact_phone).",
+        )
+
+    service = ConversationSLATrackingService(db)
+    contact, conflict = service.resolve_respond_contact(
+        phone_number=phone or None, contact_id=cid or None
+    )
+    if conflict:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=conflict)
+    if not contact:
+        # Deliberately NOT a 404: "we have never heard of this contact" and "this
+        # contact has nothing open" are the same answer to the question n8n asks.
+        return ConversationSLAOpenCountResponse(contact_id=None, open_count=0)
+
+    return ConversationSLAOpenCountResponse(
+        contact_id=str(contact.id),
+        open_count=service.count_open_tickets_for_contact(contact),
+    )
 
 
 @router.get(

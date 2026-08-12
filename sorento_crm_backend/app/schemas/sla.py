@@ -295,6 +295,18 @@ class ConversationSLAEscalateRequest(BaseModel):
         return str(v).strip()
 
 
+class ConversationSLAOpenCountResponse(BaseModel):
+    """AC-I2: how many OPEN conversation-scope tickets a contact holds.
+
+    `contact_id` is the CRM `respond_contacts.id` the caller's identifier resolved
+    to, or null when nothing matched. An unknown contact is `open_count: 0` at
+    200, never a 404 - n8n reads this to decide whether it may tell the contact
+    their conversation is closed and resolved.
+    """
+    contact_id: Optional[str] = None
+    open_count: int = 0
+
+
 class SLAPolicySimple(BaseModel):
     """Simple policy reference for tracking responses."""
     id: str
