@@ -224,6 +224,45 @@ def _sync_legacy_columns(tables: tuple[str, ...]) -> None:
         real.dispose()
 
 
+def _sync_model_columns() -> None:
+    """Add to the sim database any column the MODELS declare that its tables lack.
+
+    ``create_all`` creates missing TABLES but never alters an existing one, so every
+    merge that adds a column to an existing model leaves the sim database one column
+    behind and the next seed dies on an INSERT naming it. This is the mirror of
+    ``_sync_legacy_columns`` (which covers the opposite case: columns only the real
+    database has). Additive only, never drops or retypes, idempotent.
+    """
+    from sqlalchemy import inspect, text
+    from sqlalchemy.schema import CreateColumn
+
+    import app.models  # noqa: F401 - populate Base.metadata with every model
+    from app.database import Base, engine
+
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names(schema="public"))
+    added: list[str] = []
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if table.schema not in (None, "public") or table.name not in existing_tables:
+                continue
+            have = {c["name"] for c in inspector.get_columns(table.name, schema="public")}
+            for column in table.columns:
+                if column.name in have:
+                    continue
+                ddl = CreateColumn(column).compile(engine).string
+                # A NOT NULL column with no default cannot be added to a populated table;
+                # the sim database is reseeded from empty every run, so relaxing it here
+                # keeps the seed honest without inventing a value.
+                ddl = ddl.replace(" NOT NULL", "") if column.server_default is None else ddl
+                conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN IF NOT EXISTS {ddl}'))
+                added.append(f"{table.name}.{column.name}")
+    if added:
+        print(f"[scm_sim] model columns added to the sim database: {sorted(added)}")
+    else:
+        print("[scm_sim] sim database columns match the models")
+
+
 def _apply_migration_only_ddl() -> None:
     """``create_all`` builds tables from the MODELS. Columns/tables that exist only in a
     migration (no model mapping) are silently absent, and the affected endpoints 500 at
@@ -355,6 +394,7 @@ def cmd_init() -> None:
     stamp_head()
     _fix_committed_v()
     _apply_migration_only_ddl()
+    _sync_model_columns()
     print(f"[scm_sim] sim database {db_name!r} is ready.")
     print("[scm_sim] REMINDER: run `python -m scripts.scm_sim seed-auth` next if you plan "
           "to `serve` this database - it has no users/roles yet, so nothing can log in "
