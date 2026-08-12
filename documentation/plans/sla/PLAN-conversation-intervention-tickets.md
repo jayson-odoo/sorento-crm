@@ -1,6 +1,6 @@
 # PLAN — Conversation Intervention Tickets
 
-Status: Phase 1 DONE + browser-verified 2026-08-12 (e91b225ce) - Phase 2 in progress
+Status: Phase 1 DONE (e91b225ce, browser-verified); Phase 2 S2a-S2c DONE (722e281f9, 498ec3e21, 3143155e0, 00a4e0f1c); S2d in progress
 UAC: conversation-intervention-tickets-acceptance-criteria.md
 
 ## Decision summary
@@ -40,13 +40,10 @@ UAC: conversation-intervention-tickets-acceptance-criteria.md
 
 ## Research items (resolve during Phase 1, before contract freeze)
 
-- R1. RESOLVED (Respond OpenAPI spec, verified 2026-08-12): `POST /contact/{identifier}/message`
-  supports message types `text`, `attachment`, `quick_reply`, `whatsapp_template`;
-  attachment subtypes `image | video | audio | file`. NO sticker type. NO reply-to /
-  quoted-context parameter. Composer scope: sticker omitted; reply-to implemented as
-  quote-prefix emulation (visual "> quoted text" prepended to the outgoing text - honest,
-  channel-agnostic). True quoted replies arrive with the future omnichannel swap (WhatsApp
-  Cloud API `context.message_id`).
+- R1. RESOLVED (Respond OpenAPI spec, 2026-08-12): types `text`, `attachment`
+  (`image|video|audio|file`), `quick_reply`, `whatsapp_template`. NO sticker, NO reply-to
+  parameter. Sticker omitted from composer; reply-to = quote-prefix emulation
+  (`buildQuotedReplyText`/`splitQuotedPrefix`); `reply_to_message_id` event-log only.
 - R2. Media delivery: Respond fetches attachments by URL - confirm URL lifetime requirements
   vs presigned S3/R2 expiry; CMYK-to-RGB conversion applies (existing rule).
 - R3. Who sets `is_responded` today (n8n agent-reply event? backend?) - map the full write
@@ -112,9 +109,35 @@ UAC: conversation-intervention-tickets-acceptance-criteria.md
   choice driven by the create response's `in_working_hours`; stop message_id refresh
   reliance; stop resolve-on-close calls; keep comment/tag optional. Contract doc = S1.4 +
   UAC sections A + H. Verify with a test-guard run (`is_test` path exists).
-- S3.3 Cutover order: deploy BE/FE first (n8n's existing single-create calls remain valid -
-  A1/A2 are backward compatible; out-of-hours branch keeps working until flipped), then
-  flip the n8n workflow. No deploy without explicit go.
+- S3.3 Cutover order (refined with the n8n peer session, 2026-08-12): deploy BE/FE first
+  (old n8n calls remain valid - A1/A2 backward compatible; out-of-hours branch keeps
+  working until flipped) -> verify old flow green -> flip DURING working hours with
+  `LLEN sorento-respond-assignee-queue == 0` verified (or right after a drain tick;
+  stranded queue items = lost enquiries) -> publish reworked sub to rrYXzE61gCNUck_zmXe-G
+  -> post-flip canary with the dev contact (437264483), user-gated. FLIP SCOPE also
+  includes `respond-close-convo` (-WkzJMQZHmsFQm6A2abLJ): gate/unpublish its
+  conversation-scope resolve leg (it resolves + unassigns + messages the contact on
+  Respond close events - AC-E4 noise/loop source). Post-flip tidy: remove the dead
+  drain leg in `schedule-working-day-detection` (ss9S83XF7ZtmnaUyFtYZc). Post-flip BE
+  hardening follow-up: reject conversation-scope is_resolved from API-key principals
+  (defense-in-depth; cannot ship pre-flip without breaking the old contract).
+  n8n create node moves to `POST .../conversation-sla-tracking/integration` (the bare
+  POST / lacks in_working_hours in its response_model); body drops policy_id/current_tier
+  (ignored), keeps agent_code/team_set_code/contact_phone_number, sends
+  assigned_to_id + source_message_id (string) + source_message_text + message_id.
+  AC-A5 note: the flow's is_test guard run is fail-closed proof ONLY (it short-circuits
+  all branch logic); functional verification = pin-data matrix on the fork
+  (vUfFUDjLAuMaeQE6), 5 cases incl. the assigned-branch create and already_active retry.
+  No deploy without explicit go.
+  CRITICAL (peer recon 2026-08-12): `respond-close-convo` resolves via RAW SQL with NO
+  is_resolved filter - one close event would mass-resolve OPEN siblings post-flip
+  (AC-E4 violation). Its edit is hard-mandatory at flip: If TRUE -> unassign, delete
+  tracking-update + event-log nodes, keep unassign + is_human_intervened clear; closing
+  message KEPT but gated on "contact has no open tickets" (empty open-rows GET). #133
+  (BE API-key resolve rejection) ships immediately post-flip, same day.
+  USER DECISION AT FLIP APPROVAL: keep or kill the contact-facing "conversation closed
+  and resolved" auto-message (currently kept, gated).
+  resolved_by pollution check: clean (zero non-UUID / orphan values on dev DB).
 
 ## Execution model (per PRINCIPLES.md - named executor per step)
 
