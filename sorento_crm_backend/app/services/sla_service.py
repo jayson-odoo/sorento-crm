@@ -296,7 +296,7 @@ class SLAPolicyService:
         config_count = self.db.query(func.count(FormSLAConfig.id)).filter(
             FormSLAConfig.policy_id == policy_id
         ).scalar() or 0
-        # Distinct team sets (agent, code) bound to this policy — every tier row of a
+        # Distinct team sets (agent, code) bound to this policy - every tier row of a
         # set shares the policy, so count distinct (agent_id, code) for a clean message.
         binding_count = self.db.query(
             func.count(func.distinct(func.concat(AgentTeam.agent_id, ':', AgentTeam.code)))
@@ -474,7 +474,7 @@ def compute_tracking_timings(tracking, tier) -> dict:
     responded_at = _to_aware_utc(tracking.responded_at)
     resolved_at = _to_aware_utc(tracking.resolved_at)
     due_at_resolution = _to_aware_utc(getattr(tracking, "due_at_resolution", None))
-    # float() — resolution_hours is a Decimal column; timedelta rejects Decimal.
+    # float() - resolution_hours is a Decimal column; timedelta rejects Decimal.
     resolution_hours = float(getattr(tier, "resolution_hours", None) or 24)
     resolution_due_at = due_at_resolution if due_at_resolution is not None else (
         (current_tier_started_at + timedelta(hours=resolution_hours)) if current_tier_started_at else None
@@ -524,12 +524,15 @@ def compute_tracking_timings(tracking, tier) -> dict:
 def conversation_tracking_scope():
     """SQLAlchemy filter selecting conversation-SLA rows only.
 
-    Conversation SLA (created by n8n, max one open per contact — mirrors the
-    Respond.io conversation) and form SLA stage rows (created by
-    form_sla_service, per-entity, multi-active) share this table. Form rows are
-    identified by source_entity_type in FORM_SLA_TYPES; everything contact-keyed
-    on the conversation side must apply this filter or it can falsely match a
-    form row (e.g. the create-time singleton check, thread-assignee lookups).
+    Conversation SLA (created by n8n; the invariant is now ONE open ticket
+    per (contact, triggering message) - a contact may hold several open
+    intervention tickets at once, per-enquiry, not one merged conversation)
+    and form SLA stage rows (created by form_sla_service, per-entity,
+    multi-active) share this table. Form rows are identified by
+    source_entity_type in FORM_SLA_TYPES; everything contact-keyed on the
+    conversation side must apply this filter or it can falsely match a form
+    row (e.g. the source_message_id idempotency check, thread-assignee
+    lookups).
     """
     from app.services.form_sla_service import FORM_SLA_TYPES
 
@@ -771,7 +774,7 @@ class ConversationSLATrackingService:
 
         scope="conversation" (default) lists contact-keyed conversation SLA rows;
         scope="form" lists per-entity form SLA stage rows (source_entity_type in
-        FORM_SLA_TYPES). Both live in the same table — see conversation_tracking_scope.
+        FORM_SLA_TYPES). Both live in the same table - see conversation_tracking_scope.
         """
         from app.services.form_sla_service import FORM_SLA_TYPES
         from sqlalchemy.orm import joinedload
@@ -1128,7 +1131,7 @@ class ConversationSLATrackingService:
                 "source_entity_type": r.source_entity_type,
                 "source_entity_id": r.source_entity_id,
                 # Authoritative form-vs-conversation flag (single source of truth so
-                # the widget never re-derives it and drifts — e.g. 'ticket' is a form
+                # the widget never re-derives it and drifts - e.g. 'ticket' is a form
                 # type the FE route map doesn't know). Conversation rows = false.
                 "is_form_sla": is_form_sla,
                 "reference": reference_by_row.get(str(r.id)),
@@ -1136,7 +1139,7 @@ class ConversationSLATrackingService:
                     respond_io_by_contact.get(contact_key) if contact_key else None
                 ),
                 "due_at": r.due_at.isoformat() if r.due_at else None,
-                # Resolution deadline — the Extend action targets this. Emitted so the
+                # Resolution deadline - the Extend action targets this. Emitted so the
                 # widget can gate the Extend button client-side (hidden when null) and
                 # the dialog can show "Current due" without a preview round-trip.
                 "due_at_resolution": (
@@ -1272,7 +1275,7 @@ class ConversationSLATrackingService:
 
     def _team_label_by_member(self, team_ids, member_ids) -> dict[str, tuple]:
         """For each member id, a representative (team_id, team_name) within the
-        visible set — context for the Team Tasks row (a user can be in several
+        visible set - context for the Team Tasks row (a user can be in several
         visible teams; the first by name is used for display)."""
         from app.models.access import Team, TeamMember
 
@@ -1486,7 +1489,7 @@ class ConversationSLATrackingService:
         Used by reassign, takeover, and escalate so the Respond conversation owner
         follows the CRM assignee. The actual Respond call + its outbox row (success
         AND failure, with the Respond HTTP status/body on 4xx/5xx) run on the
-        ``respond_io`` worker queue — decoupled from the request. Form-SLA rows have
+        ``respond_io`` worker queue - decoupled from the request. Form-SLA rows have
         no Respond conversation -> skipped; a missing assignee respond_user_id ->
         skipped. Enqueue is best-effort: never raises (post-commit side effect)."""
         import logging
@@ -1519,7 +1522,7 @@ class ConversationSLATrackingService:
                 queue_name="respond_io",
                 job_timeout=60,
             )
-        except Exception as exc:  # noqa: BLE001 — enqueue is best-effort
+        except Exception as exc:  # noqa: BLE001 - enqueue is best-effort
             log.warning(
                 "Respond assignee push enqueue failed for %s: %s",
                 getattr(tracking, "id", "?"),
@@ -1560,7 +1563,7 @@ class ConversationSLATrackingService:
                 str(tracking.id)
             ) or "an SLA task"
 
-            # New assignee — always. Same window-aware WhatsApp data as form SLA assign.
+            # New assignee - always. Same window-aware WhatsApp data as form SLA assign.
             new_title = "An SLA task was assigned to you"
             new_body = f"{ref} has been assigned to you."
             if detail:
@@ -1599,7 +1602,7 @@ class ConversationSLATrackingService:
                 whatsapp_pref_attr="notify_whatsapp_on_assignment",
             )
 
-            # Old assignee — only when actor != old assignee (someone moved your task).
+            # Old assignee - only when actor != old assignee (someone moved your task).
             if (
                 old_assignee_id
                 and str(old_assignee_id) != str(actor_id)
@@ -1631,7 +1634,7 @@ class ConversationSLATrackingService:
                     email_pref_attr="notify_email_on_assignment",
                     whatsapp_pref_attr="notify_whatsapp_on_assignment",
                 )
-        except Exception as e:  # noqa: BLE001 — best-effort; mutation already committed
+        except Exception as e:  # noqa: BLE001 - best-effort; mutation already committed
             log.warning(
                 "reassignment notify failed for %s: %s", getattr(tracking, "id", "?"), e
             )
@@ -1645,7 +1648,7 @@ class ConversationSLATrackingService:
         touch due_at / due_at_resolution / current_tier_started_at.
 
         Resolution order for (agent_id, team, tier):
-          1. The taker's own membership in the task's agent chain — pick the most
+          1. The taker's own membership in the task's agent chain - pick the most
              senior tier they hold (so escalation continues above them). This is what
              a user means by "take it onto my desk".
           2. Fall back to the passed queue ``team_id``'s AgentTeam link when the taker
@@ -1670,7 +1673,7 @@ class ConversationSLATrackingService:
             raise handle_not_found("User", user_id)
         old_assignee_id = getattr(tracking, "assigned_to_id", None)
 
-        # The queue team the row was shown under (assignee's team) — the fallback.
+        # The queue team the row was shown under (assignee's team) - the fallback.
         passed_link = (
             self.db.query(AgentTeam)
             .filter(AgentTeam.team_id == str(team_id))
@@ -1740,7 +1743,7 @@ class ConversationSLATrackingService:
 
     def _agent_link_for_user(self, agent_id, user_id):
         """The AgentTeam link representing ``user_id``'s standing in agent
-        ``agent_id``'s chain — the most senior tier they hold (so escalation
+        ``agent_id``'s chain - the most senior tier they hold (so escalation
         continues above them). None when the user isn't part of that chain.
         Shared by takeover (taker) and reassign (target) for tier re-derivation."""
         from app.models.access import AgentTeam, TeamMember
@@ -1907,7 +1910,7 @@ class ConversationSLATrackingService:
                     ),
                 )
             )
-        except Exception as e:  # noqa: BLE001 — mutation already committed
+        except Exception as e:  # noqa: BLE001 - mutation already committed
             log.warning(
                 "reassignment event log failed for %s: %s",
                 getattr(tracking, "id", "?"),
@@ -1920,7 +1923,7 @@ class ConversationSLATrackingService:
         """For each FORM SLA row, the concrete next action the assignee must take,
         derived from the stage's SLA config (not a generic "respond/resolve").
 
-        The active stage is identified by (source_entity_type, team_set_code) — the
+        The active stage is identified by (source_entity_type, team_set_code) - the
         tracker copies team_set_code from the config that spawned it, and that pair
         is unique per stage. The action humanizes the stage's respond_event (while
         unresponded) or its primary resolve_event (the advance_on_event, else the
@@ -2059,7 +2062,7 @@ class ConversationSLATrackingService:
 
         AC-F1 (multi-open consumer audit): a contact can now hold several open
         tickets simultaneously (per-enquiry identity, not a contact singleton). This
-        is a deliberate MOST-RECENT-OPEN reduction, not a bug — callers here are all
+        is a deliberate MOST-RECENT-OPEN reduction, not a bug - callers here are all
         "give me a representative snapshot for this contact" reads (external GET-by-
         contact summary, next-assignee's "is this contact already assigned"
         signal, legacy set-assignee-by-phone) that predate per-ticket identity and
@@ -2186,8 +2189,8 @@ class ConversationSLATrackingService:
         so this is a MOST-RECENT-OPEN pick among possibly-several matches, not a
         singleton lookup. Used as the legacy fallback in ``escalate_tracking``'s
         internal contact+policy resolution path (only when the caller has no
-        ``tracking_id`` — see that method). Callers that already hold a specific
-        tracking_id must NOT go through here — pass it directly instead.
+        ``tracking_id`` - see that method). Callers that already hold a specific
+        tracking_id must NOT go through here - pass it directly instead.
         """
         from sqlalchemy.orm import joinedload
         from app.models.sla import ConversationSLAEventLog
@@ -2219,17 +2222,17 @@ class ConversationSLATrackingService:
         """Get an OPEN conversation SLA tracking for a contact (policy-agnostic).
 
         AC-F1 (multi-open consumer audit): conversation SLA is NO LONGER max
-        one-open-per-contact — a contact can hold several open tickets at once
+        one-open-per-contact - a contact can hold several open tickets at once
         (per-enquiry identity). This is the primary resolution path for
         ``POST /integration/escalate`` (n8n's signal-only, contact-keyed escalation
         call, which carries no tracking_id): with 2+ open tickets for the contact,
-        it returns only the MOST-RECENTLY-CREATED open one — a documented, tested,
+        it returns only the MOST-RECENTLY-CREATED open one - a documented, tested,
         interim limitation, not a crash. A sibling open ticket on the same contact
         is simply not escalated by that call; it still surfaces separately via
         ``list_due_escalations`` (which is per-tracking_id) whenever ITS OWN due_at
         breaches. Precise per-ticket escalation requires n8n to send the ticket id
         (S3.2 cutover); until then this stays the accepted contact-only behavior
-        (regression net 3 — do not change without updating the n8n contract).
+        (regression net 3 - do not change without updating the n8n contract).
         Prefers an unresolved row; falls back to the most recent overall.
         """
         from sqlalchemy.orm import joinedload
@@ -2305,7 +2308,7 @@ class ConversationSLATrackingService:
         non-empty, the tier's round-robin pool is filtered to members serving those
         segments (members with a matching segment OR no segment set = serves all), and
         the cursor is segment-scoped. Empty / None -> unfiltered (round-robin over the
-        whole tier team on the legacy cursor) — byte-identical to prior behaviour.
+        whole tier team on the legacy cursor) - byte-identical to prior behaviour.
         """
         from app.services.user_service import AccessAgentService
         from app.models.access import AccessAgent
@@ -2394,7 +2397,7 @@ class ConversationSLATrackingService:
         tracking_id (AC-F1, multi-open consumer audit): when given, escalates THAT exact
         row via a direct id lookup. Callers that already resolved a specific ticket (the
         UI escalate route, keyed by tracking_id in the URL; the n8n integration route,
-        which resolves "the" tracking before calling here) MUST pass it — a contact can
+        which resolves "the" tracking before calling here) MUST pass it - a contact can
         now hold several open tickets on the same policy, so re-resolving by
         (respond_contact_id, policy_id) here can silently pick a DIFFERENT sibling than
         the one the caller intended (this was a real bug: the UI escalate action could
@@ -2494,7 +2497,7 @@ class ConversationSLATrackingService:
             )
         )
         self.db.refresh(tracking)
-        # Escalation changes the owner/tier — void any pending takeover (AC-VOID-3).
+        # Escalation changes the owner/tier - void any pending takeover (AC-VOID-3).
         from app.services.sla_takeover_service import SlaTakeoverService
 
         SlaTakeoverService(self.db).void_for_tracking(str(tracking.id), "escalated")
@@ -2505,7 +2508,7 @@ class ConversationSLATrackingService:
     def _extension_base(self, tracking: ConversationSLATracking) -> datetime:
         """Base point for an extension = the current due_at_resolution (naive UTC).
 
-        Always relative to the existing deadline, NEVER `now` — extending an overdue
+        Always relative to the existing deadline, NEVER `now` - extending an overdue
         row adds working days onto its original due (e.g. due 13/05 + 1 wd = 14/05),
         not onto today. The increment is still strictly after the current due (days>=1
         / target_date guard), so 'can only extend' holds even when the result is still
@@ -2772,14 +2775,14 @@ class ConversationSLATrackingService:
                     triggered_by_id=str(actor_user_id),
                 )
             )
-        except Exception as e:  # noqa: BLE001 — mutation already committed
+        except Exception as e:  # noqa: BLE001 - mutation already committed
             import logging
 
             logging.getLogger(__name__).warning(
                 "extend event log failed for %s: %s", getattr(tracking, "id", "?"), e
             )
 
-        # Best-effort: notify the NEXT escalation tier only (notify-only — no tier /
+        # Best-effort: notify the NEXT escalation tier only (notify-only - no tier /
         # clock mutation). Never raise (must not 500 a successful extend).
         self._notify_next_tier_deadline_extended(tracking, reason=reason)
         return tracking
@@ -2790,13 +2793,13 @@ class ConversationSLATrackingService:
         """Notify the higher tiers that the deadline was extended.
 
         Fans UP every tier above the current one (current+1 .. 3, capped at tier 3)
-        whose ``AgentTeam`` row has ``notify_on_extension = true`` — so the parent AND
+        whose ``AgentTeam`` row has ``notify_on_extension = true`` - so the parent AND
         the grandparent tier are reached when both opt in, while an admin can untick a
         tier to silence it. The tier chain is the agent team config
         (``AgentTeam(agent_id, tier, team_set_code, team_id)``), not parent_team_id.
 
         Per-tier recipient = that tier team's next round-robin assignee, resolved by
-        PEEKING the cursor (never advancing it — no tier/clock/RR mutation on extend).
+        PEEKING the cursor (never advancing it - no tier/clock/RR mutation on extend).
         Recipients are deduped so a shared member isn't double-sent. No higher tier
         configured / opted-in -> skip silently. Never raises.
         """
@@ -2858,7 +2861,7 @@ class ConversationSLATrackingService:
                 self._notify_user_deadline_extended(
                     tracking, recipient_user_id=str(next_id), reason=reason
                 )
-        except Exception as e:  # noqa: BLE001 — best-effort, extend already committed
+        except Exception as e:  # noqa: BLE001 - best-effort, extend already committed
             log.warning(
                 "deadline-extended notify failed for %s: %s",
                 getattr(tracking, "id", "?"),
@@ -2952,14 +2955,14 @@ class ConversationSLATrackingService:
     def list_due_escalations(self) -> list[dict]:
         """Work-list for the scheduled escalation runner (n8n).
 
-        Conversation-SLA rows (scope filter — never form rows) that are unresolved, in
+        Conversation-SLA rows (scope filter - never form rows) that are unresolved, in
         breach, and still escalatable (tier 1 or 2; tier 3 has nowhere to go). Split-clock
-        breach rule — the response clock stops on response (compute_tracking_timings), so
+        breach rule - the response clock stops on response (compute_tracking_timings), so
         escalation must not fire on a stopped clock:
         - not responded → breach when due_at (response deadline) passes
         - responded     → breach when due_at_resolution passes; never before
-        Each item carries everything the runner needs downstream — contact phone and
-        Respond.io id included — so n8n needs no SQL nodes, plus `breach_type`
+        Each item carries everything the runner needs downstream - contact phone and
+        Respond.io id included - so n8n needs no SQL nodes, plus `breach_type`
         ("response" | "resolution") for message templating. Datetime columns store naive
         UTC; compared against naive-UTC now and serialized as aware-UTC ISO.
         """
@@ -3043,7 +3046,7 @@ class ConversationSLATrackingService:
 
         AC-F1: not currently wired into any route (kept for callers that may want a
         single "who owns this contact's thread" answer). A contact can hold several
-        assigned open tickets at once, so this is a MOST-RECENT-OPEN pick — the
+        assigned open tickets at once, so this is a MOST-RECENT-OPEN pick - the
         explicit ``order_by`` below (matching ``get_preferred_tracking_for_contact``)
         replaces what used to be an undocumented, unordered ``.first()`` over a
         possibly-multi-row result.
@@ -3095,7 +3098,7 @@ class ConversationSLATrackingService:
         rows. CRM is now the assignee authority per-ticket (each open ticket has its
         own assignee); pulling "the" Respond.io conversation assignee back onto a
         SPECIFIC ticket is meaningless once a contact can hold several open tickets
-        against one shared Respond conversation — there is no longer a 1:1 mapping to
+        against one shared Respond conversation - there is no longer a 1:1 mapping to
         sync. Kept for form-SLA rows (unaffected; they never shared this ambiguity)
         and kept as a route (not retired to 404) so an existing caller gets a clear
         "deprecated, nothing changed" response instead of breaking.
@@ -3253,7 +3256,7 @@ class ConversationSLATrackingService:
 
         # Assignee-driven routing correction: re-derive agent/team(/tier) from the new
         # assignee's team membership so escalation follows the correct team afterwards.
-        # Unassign carries no routing signal — skip derivation.
+        # Unassign carries no routing signal - skip derivation.
         derivation = None
         if user is not None:
             derivation = self.apply_assignee_team_derivation(
@@ -3263,7 +3266,7 @@ class ConversationSLATrackingService:
         tracking = self.get_tracking(tracking_id)
 
         # Notify the NEW assignee (in-app + email/WhatsApp per their toggles), same as
-        # auto-assign on create. Only on a genuine change to a real user — unassign and
+        # auto-assign on create. Only on a genuine change to a real user - unassign and
         # re-setting the same person carry no new assignment. Best-effort (never raises);
         # the occurrence-keyed event_type dedups a no-op repeat at the same tier clock.
         new_assignee_id = getattr(tracking, "assigned_to_id", None)
@@ -3307,17 +3310,17 @@ class ConversationSLATrackingService:
         Resolve the (agent_id, team_set_code, tier, team_id) an assignee belongs to, for
         assignee-driven routing correction (PLAN-sla-assignee-team-derivation).
 
-        Step 1 — global tier-1 lookup: the user's unique tier-1-linked TEAM wins (team-level
+        Step 1 - global tier-1 lookup: the user's unique tier-1-linked TEAM wins (team-level
         invariant enforced in TeamService/AccessAgentService: a user belongs to at most one
         team that is linked at tier 1). The same team is commonly linked at tier 1 under
         many agents (shared executive pools), so among that team's tier-1 links prefer the
         tracking's current agent (agent stays put, only the team set flips); otherwise pick
-        the deterministic first link (code, then agent_id) — tier-2/3 configuration is
+        the deterministic first link (code, then agent_id) - tier-2/3 configuration is
         expected to be equivalent across those agents.
-        Step 2 — scoped tier-2/3 lookup: otherwise, if the user is in the tier-2/3 team of
+        Step 2 - scoped tier-2/3 lookup: otherwise, if the user is in the tier-2/3 team of
         the tracking's current (agent_id, team_set_code), keep agent/team and return the
         matched tier (lowest when in both).
-        Step 3 — None: unknown user, or a manager of some other team set (ambiguous).
+        Step 3 - None: unknown user, or a manager of some other team set (ambiguous).
         """
         import logging
         from app.models.access import AccessAgent, AgentTeam, TeamMember
@@ -3330,7 +3333,7 @@ class ConversationSLATrackingService:
         # Only CONVERSATION-SLA agents' tier-1 links participate in derivation.
         # Form-SLA agents route via FormSLAConfig stages, so a user may sit in
         # many form tier-1 teams; counting them here would falsely read as
-        # "multiple tier-1 teams" and abort derivation (plan decision 3c —
+        # "multiple tier-1 teams" and abort derivation (plan decision 3c -
         # conversation scope only). Mirrors the relaxed membership invariant.
         form_codes = form_sla_agent_codes(self.db)
         tier1_q = (
@@ -3347,7 +3350,7 @@ class ConversationSLATrackingService:
         ).all()
         distinct_teams = {str(l.team_id) for l in tier1_links}
         if len(distinct_teams) > 1:
-            # Team-level invariant violated (config predates enforcement) — ambiguous.
+            # Team-level invariant violated (config predates enforcement) - ambiguous.
             logging.getLogger(__name__).warning(
                 "User %s is a member of multiple tier-1-linked teams %s; "
                 "skipping assignee-driven routing.",
@@ -3412,10 +3415,10 @@ class ConversationSLATrackingService:
         from app.services.form_sla_service import FORM_SLA_TYPES
 
         tracking = self.get_tracking(tracking_id)
-        # Resolved trackings clear escalation routing on resolve — never resurrect it.
+        # Resolved trackings clear escalation routing on resolve - never resurrect it.
         if bool(getattr(tracking, "is_resolved", False)):
             return None
-        # Form SLA trackings own their routing via FormSLAConfig stages — assignee changes
+        # Form SLA trackings own their routing via FormSLAConfig stages - assignee changes
         # must not flip stage-configured agent/team. Conversation trackings only.
         if (getattr(tracking, "source_entity_type", None) or "") in FORM_SLA_TYPES:
             return None
@@ -3444,7 +3447,7 @@ class ConversationSLATrackingService:
         setattr(tracking, "current_tier", derived["tier"])
 
         # Restart the tier clock from the matched tier's policy hours. If the tier row is
-        # missing (misconfigured policy), keep existing clocks — routing fix still applies.
+        # missing (misconfigured policy), keep existing clocks - routing fix still applies.
         # Clamp past the policy's top defined tier rather than fabricate 24h (D7).
         tier_row = self._resolve_tier_with_clamp(tracking.policy_id, derived["tier"])
         if tier_row is not None:
@@ -3452,7 +3455,7 @@ class ConversationSLATrackingService:
             resolution_hours = float(getattr(tier_row, "resolution_hours", None) or 24.0)
             setattr(tracking, "current_tier_started_at", now_utc)
             # Routing-correction clock restart (team flip / misroute fix), not a real
-            # SLA escalation — keep calendar-hour math here. Working-hours math applies
+            # SLA escalation - keep calendar-hour math here. Working-hours math applies
             # to the SLA countdown itself (create_tracking + escalate_tracking).
             setattr(tracking, "due_at", now_utc + timedelta(hours=response_hours))
             setattr(tracking, "due_at_resolution", now_utc + timedelta(hours=resolution_hours))
@@ -3483,7 +3486,7 @@ class ConversationSLATrackingService:
         reason_parts = [f"assignee correction via {source}"]
         if team_changed:
             reason_parts.append(
-                f"team_set: {current_team_set or '—'} → {derived['team_set_code']}"
+                f"team_set: {current_team_set or ' - '} → {derived['team_set_code']}"
             )
         self.db.flush()
         self.create_event_log(
@@ -3525,7 +3528,7 @@ class ConversationSLATrackingService:
         tracking_dict = tracking_data.model_dump()
         contact_phone_number = tracking_dict.pop("contact_phone_number", None)
 
-        # Conversation SLA always starts at tier 1 — any n8n-supplied current_tier is
+        # Conversation SLA always starts at tier 1 - any n8n-supplied current_tier is
         # ignored (D2). Forced BEFORE the assignee/tier logic that reads current_tier.
         tracking_dict["current_tier"] = 1
 
@@ -3566,7 +3569,7 @@ class ConversationSLATrackingService:
             or (ato_raw is not None and str(ato_raw).strip() != "")
         )
         # Set when the RR branch resolved the assignee via get_escalation_assignee_for_tier,
-        # which already applied the coverage redirect — so the generic redirect below must
+        # which already applied the coverage redirect - so the generic redirect below must
         # NOT run again (would be a 2nd hop, violating one-hop). Explicit-assignee paths are
         # NOT redirected yet → the block below handles them.
         coverage_applied_in_rr = False
@@ -3716,8 +3719,8 @@ class ConversationSLATrackingService:
 
         # AC-A4/AC-A9: whether THIS request arrived inside the working window.
         # Computed once here (not tied to whether current_tier_started_at ends up
-        # auto-derived below) and stamped on every return path — including an
-        # idempotent retry — because n8n reads it from every response to pick its
+        # auto-derived below) and stamped on every return path - including an
+        # idempotent retry - because n8n reads it from every response to pick its
         # in-hours vs out-of-hours auto-reply, not only on the first insert.
         _normalized_start = _working_clock_start(self.db, now_utc)
         in_working_hours = _normalized_start == _to_aware_utc(now_utc)
@@ -3727,7 +3730,7 @@ class ConversationSLATrackingService:
             # initiated_at above keeps the true event instant for audit.
             tracking_dict["current_tier_started_at"] = _normalized_start
         else:
-            # Caller-supplied start is authoritative — stored verbatim, not normalized.
+            # Caller-supplied start is authoritative - stored verbatim, not normalized.
             tracking_dict["current_tier_started_at"] = _to_aware_utc(tracking_dict["current_tier_started_at"])
 
         # Reset escalation and resolution fields
@@ -3773,7 +3776,7 @@ class ConversationSLATrackingService:
         # keyed on the message that asked for a human. A contact may hold several
         # open tickets at once; only a retry of the SAME trigger message is
         # idempotent. Fall back to message_id (legacy n8n payloads carry no
-        # source_message_id yet), and — with neither — to the old one-open-per-
+        # source_message_id yet), and - with neither - to the old one-open-per-
         # contact singleton so a bare payload doesn't fan out.
         if not tracking_dict.get("source_message_id") and tracking_dict.get("message_id") is not None:
             tracking_dict["source_message_id"] = str(tracking_dict["message_id"])
@@ -3782,7 +3785,7 @@ class ConversationSLATrackingService:
         existing = None
         if identity_key:
             # FINDING 6: a ticket's identity is (contact, trigger message), not
-            # the message alone — WhatsApp message ids are not guaranteed
+            # the message alone - WhatsApp message ids are not guaranteed
             # globally unique across different contacts/threads. Without the
             # contact scope, a colliding id on a DIFFERENT contact would be
             # returned here as "already_active", handing that contact back
@@ -3795,7 +3798,7 @@ class ConversationSLATrackingService:
             ).first()
 
             if existing:
-                # AC-A2: retry of the same trigger message — the only case per-
+                # AC-A2: retry of the same trigger message - the only case per-
                 # enquiry idempotency covers. Nothing refreshes, not even
                 # message_id: this is a no-op read of the ticket already opened.
                 setattr(existing, "_already_active", True)
@@ -3803,7 +3806,7 @@ class ConversationSLATrackingService:
                 return existing
             # No open row for THIS message: always a fresh ticket (AC-A1), even
             # when the contact already holds other open tickets, and even when a
-            # PAST ticket for the same message id is resolved — that row is
+            # PAST ticket for the same message id is resolved - that row is
             # history now, never overwritten (per-enquiry identity, not a
             # contact-level singleton).
         else:
@@ -3823,7 +3826,7 @@ class ConversationSLATrackingService:
                     setattr(existing, "_in_working_hours", in_working_hours)
                     return existing
 
-                # Existing tracking is resolved — overwrite it for the new
+                # Existing tracking is resolved - overwrite it for the new
                 # conversation. History is carried by event logs (kept: FK by
                 # tracking id), not by rows.
                 preserve_fields = {"id", "created_at", "respond_contact_id"}
@@ -3867,7 +3870,7 @@ class ConversationSLATrackingService:
         create hit cannot produce duplicate assign logs.
 
         Best-effort: the tracking row is already committed when this runs, so a
-        failure here must not fail the create — n8n would get a 500 for a create
+        failure here must not fail the create - n8n would get a 500 for a create
         that succeeded, and its retry would take the idempotent path which never
         backfills the log. Log a warning and continue instead.
         """
@@ -3919,7 +3922,7 @@ class ConversationSLATrackingService:
         n8n/Respond; the CRM now owns it so it fires regardless of the routing channel.
 
         In-app always; email/WhatsApp gated by the recipient's own assignment toggles
-        (notify_email_on_assignment / notify_whatsapp_on_assignment) — same matrix as
+        (notify_email_on_assignment / notify_whatsapp_on_assignment) - same matrix as
         reassign/escalate. Best-effort: the tracking row is already committed, so a
         failure here must never fail the create (n8n would get a 500 for a create that
         succeeded, and its retry takes the idempotent path which never re-notifies).
@@ -3928,7 +3931,7 @@ class ConversationSLATrackingService:
         ``occurrence`` overrides the dedup-key suffix (event_type ``assigned:<occ>``).
         Create/overwrite pass None → the key derives from the tier-clock start, so a
         repeat inbound at the same clock dedups. Manual reassign passes the per-action
-        change moment so re-assigning back to a prior assignee (A→B→A) still notifies —
+        change moment so re-assigning back to a prior assignee (A→B→A) still notifies -
         the tier clock does NOT restart on a same-team reassign, so a tier-start key
         would collide with the earlier A→ notification and silently drop the send."""
         import logging
@@ -3990,7 +3993,7 @@ class ConversationSLATrackingService:
                 email_pref_attr="notify_email_on_assignment",
                 whatsapp_pref_attr="notify_whatsapp_on_assignment",
             )
-        except Exception as e:  # noqa: BLE001 — best-effort; row already committed
+        except Exception as e:  # noqa: BLE001 - best-effort; row already committed
             log.warning(
                 "assignment notify failed for %s: %s", getattr(tracking, "id", "?"), e
             )
@@ -4001,7 +4004,7 @@ class ConversationSLATrackingService:
         create previously had no assignment notify at all, so coverage subscribers never
         heard about INITIAL assignments (only reassign/escalate/takeover fanned out).
         Mirrors _notify_reassignment's fan-out. The assignee notification itself stays
-        with n8n/Respond — we only add the coverage copies here. Never raises."""
+        with n8n/Respond - we only add the coverage copies here. Never raises."""
         import logging
 
         log = logging.getLogger(__name__)
@@ -4018,7 +4021,7 @@ class ConversationSLATrackingService:
             base_url = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
             # Deep link to the dashboard "My pending tasks" → My Team, with the colleague's
             # task highlighted so the coverer can take it over (?team_task=<id>). NOT the
-            # detail page — the action they need (takeover) lives in the My Team widget.
+            # detail page - the action they need (takeover) lives in the My Team widget.
             team_link = f"{base_url}/?team_task={tracking.id}" if base_url else ""
             ref = (self._resolve_my_pending_references([tracking]) or {}).get(
                 str(tracking.id)
@@ -4036,7 +4039,7 @@ class ConversationSLATrackingService:
             if team_link:
                 cover_body += f"\n\nTake over: {team_link}"
             # Distinct event_type PER assignment occurrence so a re-assignment of the SAME
-            # (reused) conversation tracker after a resolve re-notifies coverers — the
+            # (reused) conversation tracker after a resolve re-notifies coverers - the
             # dedup key is (user, source_type, source_id, event_type) and the tracker id is
             # reused across conversations. Key off the assignment's start time (reset on
             # each new conversation). The email-key resolver strips the numeric suffix.
@@ -4091,7 +4094,7 @@ class ConversationSLATrackingService:
         # users.id) to the internal user id BEFORE checking ambiguity: it
         # identifies the ACTUAL replying user, which can differ from this
         # tracking's own assignee (the n8n fallback resolves `tracking` via a
-        # separate contact-level "preferred" lookup) — see
+        # separate contact-level "preferred" lookup) - see
         # is_ambiguous_fallback_response for why that distinction matters.
         ambiguous_responded_skipped = False
         if bool(update_data.get("is_responded")) and not bool(
@@ -4117,7 +4120,7 @@ class ConversationSLATrackingService:
             if self.is_ambiguous_fallback_response(
                 tracking, responded_by=_resolved_responded_by
             ):
-                # Strip ONLY the responded-family fields — the rest of the
+                # Strip ONLY the responded-family fields - the rest of the
                 # payload (assignment, tier, resolve, ...) still applies
                 # below, in this SAME call, instead of the whole update being
                 # silently discarded (the caller-visible marker is set on
@@ -4141,7 +4144,7 @@ class ConversationSLATrackingService:
                 )
             update_data["agent_id"] = str(_agent.id)
         elif "agent_code" in tracking_data.model_fields_set and raw_agent_code is None:
-            # Explicitly set to null — clear the FK
+            # Explicitly set to null - clear the FK
             update_data["agent_id"] = None
 
         # Explicitly clear assignee when assigned_to is None (keep in sync with Respond.io)
@@ -4315,7 +4318,7 @@ class ConversationSLATrackingService:
         # Force NULL for routing / external ids on resolve. Some session edge cases (e.g. after a prior
         # commit in the same request) can leave ORM-only clears from not flushing; a direct UPDATE
         # matches DB state (used by test-overrides "Mark as resolved" and all other resolve paths).
-        # Skip for form trackers — they keep agent / team / assignee for audit.
+        # Skip for form trackers - they keep agent / team / assignee for audit.
         from app.services.form_sla_service import FORM_SLA_TYPES as _FORM_TYPES
 
         if resolved_in_this_request and (
@@ -4331,7 +4334,7 @@ class ConversationSLATrackingService:
         self.db.refresh(tracking)
 
         # Resolving is the strongest "I'm on it" signal: void any pending takeover on
-        # this tracking (implicit veto, AC-VOID-1). Best-effort — never raises.
+        # this tracking (implicit veto, AC-VOID-1). Best-effort - never raises.
         if resolved_in_this_request:
             from app.services.sla_takeover_service import SlaTakeoverService
 
@@ -4339,20 +4342,20 @@ class ConversationSLATrackingService:
 
         # Best-effort: a resolved CONVERSATION SLA closes the matching Respond.io
         # conversation (Resolve = Respond close, per product decision). Form trackers
-        # are excluded — their Respond conversation lifecycle is owned elsewhere.
+        # are excluded - their Respond conversation lifecycle is owned elsewhere.
         # Post-commit side effect: must never raise (the resolve already succeeded);
         # the retry path is idempotent and would not re-attempt the close otherwise.
         #
         # AC-C3/AC-F1 (multi-open consumer audit): a contact can now hold several
         # open tickets against ONE shared Respond conversation. Closing that shared
         # conversation because ONE ticket resolved would sever transport for the
-        # sibling ticket's unfinished work — a real regression this predates only
+        # sibling ticket's unfinished work - a real regression this predates only
         # because there used to be at most one open ticket per contact. Only close
         # Respond when this was the contact's LAST open conversation-scope ticket;
         # skip (byte-identical to "do nothing") while any sibling remains open. Full
         # retirement of this side effect even for the single-ticket case (the literal
         # reading of AC-C3: "no Respond API call is made" on ANY ticket resolve) is an
-        # open product question for the dedicated ticket-resolve build — not applied
+        # open product question for the dedicated ticket-resolve build - not applied
         # here; flagged for an orchestrator decision.
         if resolved_in_this_request and (
             getattr(tracking, "source_entity_type", None) not in _FORM_TYPES
@@ -4362,7 +4365,7 @@ class ConversationSLATrackingService:
 
         # FINDING 5: caller-visible marker, set only once every other field
         # this call touched (assignment, tier, resolve, ...) has been applied
-        # and committed above — routes read it to report
+        # and committed above - routes read it to report
         # `ambiguous_responded_skipped` without re-deriving it.
         if ambiguous_responded_skipped:
             setattr(tracking, "_ambiguous_responded_skipped", True)
@@ -4374,7 +4377,7 @@ class ConversationSLATrackingService:
     ) -> bool:
         """True when another OPEN conversation-scope tracking exists for the same
         contact (AC-F1: multi-open tickets). Used to gate the Respond-close side
-        effect on resolve — see the caller's comment."""
+        effect on resolve - see the caller's comment."""
         contact_id = getattr(tracking, "respond_contact_id", None)
         if not contact_id:
             return False
@@ -4396,8 +4399,8 @@ class ConversationSLATrackingService:
         """Enqueue the Respond.io conversation close for a resolved conversation SLA.
 
         The actual close + its Respond outbox row (success AND failure, with the
-        Respond HTTP status/body on 4xx/5xx) run on the ``respond_io`` worker queue
-        — decoupled from the request so a Respond failure never blocks the resolve,
+        Respond HTTP status/body on 4xx/5xx) run on the ``respond_io`` worker queue,
+        decoupled from the request so a Respond failure never blocks the resolve,
         and so a prod failure is diagnosable via ``integration_logs``. Enqueue itself
         is best-effort (never raises; the resolve already committed)."""
         import logging
@@ -4413,7 +4416,7 @@ class ConversationSLATrackingService:
                 queue_name="respond_io",
                 job_timeout=60,
             )
-        except Exception as exc:  # noqa: BLE001 — enqueue is best-effort
+        except Exception as exc:  # noqa: BLE001 - enqueue is best-effort
             logger.warning(
                 "Resolve: failed to enqueue Respond.io close for tracking %s: %s",
                 getattr(tracking, "id", None),
@@ -4535,7 +4538,7 @@ class ConversationSLATrackingService:
 
         # Reopen (is_resolved explicitly False): recompute due dates from the (possibly just
         # overridden) current_tier_started_at so a previously-overdue row gets a clean clock.
-        # Skip when current_tier_started_at was supplied in this same request — its branch
+        # Skip when current_tier_started_at was supplied in this same request - its branch
         # above already recomputed due_at / due_at_resolution.
         if updates.get("is_resolved") is False and "current_tier_started_at" not in updates:
             started = _to_aware_utc(
@@ -5210,11 +5213,11 @@ class ConversationSLATrackingService:
         reason: str = "Responded from the CRM.",
     ) -> ConversationSLATracking:
         """Stamp is_responded/responded_at/responded_by/response_time on
-        ``tracking`` ONLY (UAC AC-E1) — a CRM-authoritative ticket-context send,
+        ``tracking`` ONLY (UAC AC-E1) - a CRM-authoritative ticket-context send,
         always unambiguous (the caller already picked this exact ticket in the
         drawer). Unlike the n8n Respond-app-reply fallback (the ambiguity guard
         in the ``PUT /{tracking_id}`` route, AC-E3), this never checks sibling
-        tickets. No-op when the ticket is already responded — only the FIRST
+        tickets. No-op when the ticket is already responded - only the FIRST
         reply stops the response clock; later sends on the same ticket are
         ordinary conversation, not a new "first response".
         """
@@ -5260,18 +5263,18 @@ class ConversationSLATrackingService:
         self, tracking: ConversationSLATracking, responded_by: Optional[str] = None
     ) -> bool:
         """UAC AC-E3: true when the REPLYING user holds 2+ OPEN, UNANSWERED
-        conversation-scope tickets for the same contact — the n8n
+        conversation-scope tickets for the same contact - the n8n
         Respond-app-reply fallback has no way to tell which enquiry they
         actually answered, so it must change nothing (the CRM ticket-send
         path, ``mark_ticket_responded``, is authoritative instead).
 
         ``responded_by`` is the replying user's internal id when the caller
         identified one (e.g. resolved from the payload in ``update_tracking``
-        before this call) — it takes priority over ``tracking``'s own
+        before this call) - it takes priority over ``tracking``'s own
         assignee. This matters: the n8n fallback resolves ``tracking`` itself
         via a SEPARATE contact-level "preferred" lookup that can differ from
         who actually replied, so keying purely on ``tracking.assigned_to_id``
-        can miss real ambiguity held by the true replier (FINDING 2a) — and
+        can miss real ambiguity held by the true replier (FINDING 2a) - and
         with neither an assignee, checking against nobody is meaningless, so
         it is never ambiguous.
 
@@ -5424,27 +5427,27 @@ class ConversationSLATrackingService:
     ) -> dict:
         """CRM-native ticket reply (UAC AC-D1/D2/D3, AC-E1).
 
-        Synchronous — the drawer needs the actually-attempted payload back
+        Synchronous - the drawer needs the actually-attempted payload back
         immediately to render the delivered state. ``files`` is a list of
         ``(content: bytes, filename: str, mime: str)`` tuples. Text-only sends
         reuse ``send_chat_message_for`` VERBATIM (AC-D2, the same smart-send
         machinery the complaint/stock-inquiry/purchase-request chat panels
-        already use — not forked). Attachments upload through CRM storage
+        already use - not forked). Attachments upload through CRM storage
         first, then ``RespondClient.send_attachment`` (no template fallback
-        exists for media, R1 — a closed window is a hard refusal, not a
+        exists for media, R1 - a closed window is a hard refusal, not a
         silent drop). ``text`` is expected to already carry the composer's
         ">"-quote prefix when replying (R1); ``reply_to_*`` are audit-only and
         are never sent to Respond. On success, stamps THIS ticket's response
         clock only; sibling tickets for the same contact are untouched.
 
-        FE CONTRACT — multi-attachment sends (FINDING 3 code-review fix):
+        FE CONTRACT - multi-attachment sends (FINDING 3 code-review fix):
         the window is resolved ONCE for the whole call (not re-checked per
         file); a caption ships as its own text turn WITH/BEFORE the first
         attachment attempt, so it is never lost to an unrelated later
         attachment failure; attachments are then sent SEQUENTIALLY, stopping
-        at the FIRST failure (Respond delivers in order — nothing after a
+        at the FIRST failure (Respond delivers in order - nothing after a
         failure is attempted, so a caller retrying does not resend files that
-        already landed). A per-file failure is NEVER raised as an exception —
+        already landed). A per-file failure is NEVER raised as an exception -
         the whole send always returns 200 with a structured result:
 
             {
@@ -5460,10 +5463,10 @@ class ConversationSLATrackingService:
 
         ``attachments`` is ``None`` on the text-only path. The response clock
         (``mark_ticket_responded``) is stamped whenever ANYTHING reached the
-        contact — the caption, at least one attachment, or both — even when
+        contact - the caption, at least one attachment, or both - even when
         ``attachments.failed`` is set. The FE is expected to render the
         delivered files as sent and the failed one with a retry affordance
-        (not implemented yet — tracked separately from this fix).
+        (not implemented yet - tracked separately from this fix).
         """
         from app.services.error_handler import AppException
         from app.services.form_sla_service import FORM_SLA_TYPES
@@ -5510,8 +5513,8 @@ class ConversationSLATrackingService:
             window_state = {"open": window.get("open"), "last_incoming_at": window.get("last_incoming_at")}
 
             # A caption ships as its own text turn WITH/BEFORE the first
-            # attachment — Respond's attachment message has no reliably-
-            # supported caption param (R1) — so it is never lost to a LATER
+            # attachment - Respond's attachment message has no reliably-
+            # supported caption param (R1) - so it is never lost to a LATER
             # attachment failing.
             if clean_text:
                 send_chat_message_for(
@@ -5591,7 +5594,7 @@ class ConversationSLATrackingService:
 
         # AC-E1: stamp THIS ticket's response clock only, and only if
         # something ACTUALLY reached the contact (a total attachment failure
-        # with no caption stamps nothing). Best-effort — the message already
+        # with no caption stamps nothing). Best-effort - the message already
         # reached the contact; a stamping bug must never turn a delivered
         # send into a 500 for the assignee.
         if anything_delivered:

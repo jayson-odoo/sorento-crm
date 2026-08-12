@@ -11,7 +11,7 @@ This pins:
      a notify-only (redirect_assignments=False) subscriber; idempotent-active does NOT.
   2. Coverage copy WORDING is for the COVERER ("assigned to <covered>", "You're
      receiving this because you cover for <covered>", a "Take over: <base>/?team_task=<id>"
-     deep link — NOT the detail page).
+     deep link - NOT the detail page).
   3. Re-notify per assignment OCCURRENCE: two assignments of the SAME reused tracker
      with DIFFERENT current_tier_started_at => TWO distinct coverage Notifications
      (different event_type "assigned:<ts>"); same start-time dedups to one.
@@ -76,7 +76,7 @@ def _seed(db) -> dict:
         )
     )
     # agent_code/team_set_code are required on ConversationSLATrackingCreate
-    # (743edf35b). No AgentTeam binding is seeded — create_tracking falls back
+    # (743edf35b). No AgentTeam binding is seeded - create_tracking falls back
     # to the payload's own policy_id (with a warning) when the agent/team-set
     # pair has no bound policy, which is all this fan-out test needs.
     agent_id = str(uuid.uuid4())
@@ -125,7 +125,7 @@ def _notify_only_coverage(db, coverer_id, assignee_id):
             subscriber_id=coverer_id,
             target_user_id=assignee_id,
             is_active=True,
-            redirect_assignments=False,  # notify-only — no redirect
+            redirect_assignments=False,  # notify-only - no redirect
         )
     )
     db.commit()
@@ -199,7 +199,7 @@ def test_idempotent_active_does_not_fan_out(db):
     assert len(notes_after_first) == 1
 
     # Second create is a retry of the SAME trigger message (post-S2a, ticket
-    # identity is per-enquiry keyed on source_message_id/message_id — a
+    # identity is per-enquiry keyed on source_message_id/message_id - a
     # DIFFERENT message_id would open a second ticket, not hit idempotency).
     second = service.create_tracking(_payload(seed, message_id=111))
     assert str(second.id) == str(first.id)
@@ -215,7 +215,7 @@ def test_overwrite_resolved_fans_out_again(db):
     service = ConversationSLATrackingService(db)
 
     # No message_id/source_message_id on either payload: post-S2a, a per-enquiry
-    # identity keeps a resolved ticket as history and never overwrites it — only
+    # identity keeps a resolved ticket as history and never overwrites it - only
     # the legacy no-identity contact-singleton branch overwrites a resolved row
     # in place, which is the behaviour this test pins.
     t0 = datetime(2026, 6, 1, 8, 0, 0)
@@ -309,7 +309,7 @@ def test_same_occurrence_dedups_to_one(db):
 
     The dedup key is (user, source_type, source_id, event_type) and source_id is
     the tracking id, so this only exercises the dedup path when both calls REUSE
-    the same row — no message_id on either payload, so both resolve via the
+    the same row - no message_id on either payload, so both resolve via the
     legacy no-identity contact-singleton branch (same as
     test_overwrite_resolved_fans_out_again).
     """
@@ -334,7 +334,7 @@ def test_same_occurrence_dedups_to_one(db):
 # CHANGE 4: email event-key resolver strips the numeric occurrence suffix
 # ---------------------------------------------------------------------------
 # CHANGE 4 lives in tests/test_notification_event_key_resolution.py
-# (test_assigned_occurrence_suffix_resolves_to_registered_key) — the dedicated home
+# (test_assigned_occurrence_suffix_resolves_to_registered_key) - the dedicated home
 # for _resolve_event_key cases. Kept there to avoid duplicating the same assertion
 # across files; the event_type these tests emit ("assigned:<ts>") is verified here
 # in test_two_occurrences_produce_two_distinct_coverage_notes.

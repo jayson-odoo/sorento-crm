@@ -12,7 +12,7 @@ This pins:
      event_type="assigned:<occ>"), with in_app + email deliveries (email pref default).
   2. Idempotent-active does NOT re-notify (repeat inbound on the open conversation).
   3. Overwrite-resolved (fresh conversation reusing the row) with a DIFFERENT start
-     time re-notifies — the occurrence-suffixed event_type dodges stale dedup on the
+     time re-notifies - the occurrence-suffixed event_type dodges stale dedup on the
      reused tracking id.
   4. Per-user gate: notify_email_on_assignment=False => in_app only, NO email delivery.
 
@@ -93,7 +93,7 @@ def _seed(
     db.add(AccessAgent(id=str(uuid.uuid4()), code="AG1", name="Agent Chain"))
     assignee_id = str(uuid.uuid4())
     # AC-G1 WhatsApp gating needs the ASSIGNEE (not the enquiry contact) to
-    # resolve to a RespondContact via resolve_user_respond_io_id — a distinct
+    # resolve to a RespondContact via resolve_user_respond_io_id - a distinct
     # RespondContact row keyed by the assignee's own WhatsApp number.
     assignee_respond_contact_id = None
     if link_assignee_whatsapp:
@@ -182,7 +182,7 @@ def test_new_row_notifies_primary_assignee(db, monkeypatch):
     assert note.source_entity_id == str(tracking.id)
     assert note.event_type == f"assigned:{int(t0.timestamp())}"
     # Worded "to you" (assignee), deep-links to the dashboard with the ticket
-    # targeted (UAC AC-G1) — the assignee answers from the "My Pending" drawer,
+    # targeted (UAC AC-G1) - the assignee answers from the "My Pending" drawer,
     # not the standalone SLA detail page or Respond.io.
     assert "assigned to you" in (note.body or "")
     assert f"/?ticket={tracking.id}" in (note.body or "")

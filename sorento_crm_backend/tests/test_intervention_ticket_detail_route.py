@@ -58,7 +58,7 @@ def db(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_admins(monkeypatch):
-    """No role tables are seeded here — pin every actor as a non-admin so the
+    """No role tables are seeded here - pin every actor as a non-admin so the
     outsider-scope test exercises the team-membership branch, not an accidental
     admin bypass."""
     monkeypatch.setattr(UserPermissionService, "get_user_role_slugs", lambda self, uid: set())
@@ -151,7 +151,7 @@ def client(db):
 
 @pytest.fixture
 def anon_client(db):
-    """No auth override at all — the real get_current_user runs and rejects
+    """No auth override at all - the real get_current_user runs and rejects
     the request before the route body executes."""
     from app.main import app
     from app.database import get_db
@@ -204,7 +204,7 @@ def test_outsider_viewer_gets_404_not_a_leak(client, db):
     resp = client.get(f"{BASE}/{tracking.id}/ticket")
 
     assert resp.status_code == 404, resp.text
-    # Never a 403 — a 403 would confirm the ticket exists to someone with no
+    # Never a 403 - a 403 would confirm the ticket exists to someone with no
     # visibility into it (matches the service-level get_ticket_detail pin).
     assert resp.status_code != 403
 

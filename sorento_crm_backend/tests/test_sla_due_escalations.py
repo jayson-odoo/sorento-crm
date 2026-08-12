@@ -139,7 +139,7 @@ def test_list_due_escalations_handles_missing_contact():
 
 
 # ---------------------------------------------------------------------------
-# Service: escalate_tracking — default reason + assignee-before-log ordering
+# Service: escalate_tracking - default reason + assignee-before-log ordering
 # ---------------------------------------------------------------------------
 
 def _run_escalate(service, tracking, **kwargs):
@@ -218,7 +218,7 @@ def test_escalate_tracking_without_assignee_keeps_existing():
 
 
 # ---------------------------------------------------------------------------
-# Service: list_due_escalations — split-clock breach filter (real SQL via sqlite)
+# Service: list_due_escalations - split-clock breach filter (real SQL via sqlite)
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -367,7 +367,7 @@ def test_due_escalations_route_empty(mock_service_cls, client):
 
 
 # ---------------------------------------------------------------------------
-# Route: /integration/escalate — optional reason, assignee pass-through, escalated_at
+# Route: /integration/escalate - optional reason, assignee pass-through, escalated_at
 # ---------------------------------------------------------------------------
 
 @patch("app.api.v1.sla.sla_tracking.IntegrationLogService")
@@ -391,7 +391,7 @@ def test_escalate_without_reason_passes_assignee_and_returns_escalated_at(
     svc.escalate_tracking.return_value = after
 
     # Explicit null must behave like omitting the field (validators don't run on the
-    # default, so the validator itself must accept None) — was a 422 before the fix.
+    # default, so the validator itself must accept None) - was a 422 before the fix.
     r = client.post(
         "/api/v1/sla-management/conversation-sla-tracking/integration/escalate",
         json={

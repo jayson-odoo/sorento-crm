@@ -4,7 +4,7 @@ Resolve = Respond close: resolving a conversation SLA best-effort closes the
 contact's Respond.io conversation. These pin the wire contract (URL, id: prefix,
 Bearer auth, closing-note body) and the best-effort swallow behavior.
 
-Endpoint is POST .../conversation/status with body {"status": "close", ...} —
+Endpoint is POST .../conversation/status with body {"status": "close", ...} -
 NOT a /conversation/close path (that 404s on Respond.io; see
 RespondClient.close_conversation's own docstring). These tests originally
 pinned the wrong (never-worked) path; updated to match the implementation.

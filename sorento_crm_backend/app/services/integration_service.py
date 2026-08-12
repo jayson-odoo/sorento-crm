@@ -101,7 +101,7 @@ class RespondClient:
 
     Credentials come from `respond_workspaces` (per-contact workspace when an
     identifier/contact resolves, else the default workspace). The env
-    RESPOND_API_KEY is a deprecated last-resort fallback only — being phased out.
+    RESPOND_API_KEY is a deprecated last-resort fallback only - being phased out.
     """
 
     def __init__(
@@ -249,10 +249,10 @@ class RespondClient:
     ) -> dict:
         """Send a media attachment to a contact. message type ``attachment``
         (R1, resolved 2026-08-12): subtypes are ``image`` / ``video`` / ``audio`` /
-        ``file`` only — Respond.io has no sticker send and no reply-to/context
+        ``file`` only - Respond.io has no sticker send and no reply-to/context
         parameter on this endpoint. ``url`` must be reachable by Respond's own
         fetcher: a permanent CDN link where the active storage provider serves
-        one (R2), or a long-lived signed URL otherwise — never a short presign
+        one (R2), or a long-lived signed URL otherwise - never a short presign
         (see ``respond_chat_template_service.upload_chat_attachment``).
         """
         if not self.api_key:
@@ -289,7 +289,7 @@ class RespondClient:
         form the closing note; a workspace may require category before closing, in
         which case omitting it yields a 4xx (callers treat close as best-effort).
         Endpoint: POST /v2/contact/{identifier}/conversation/status, body
-        {status: "close", category, summary}. (No /conversation/close path — that 404s.)
+        {status: "close", category, summary}. (No /conversation/close path - that 404s.)
         """
         if not self.api_key:
             raise ValueError("Respond API key is not configured.")
@@ -461,7 +461,7 @@ class RespondClient:
         cursor: Optional[str] = None
         seen_cursors: set[str] = set()
         with httpx.Client(timeout=15) as client:
-            for _ in range(100):  # hard page cap — guards against a cursor loop
+            for _ in range(100):  # hard page cap - guards against a cursor loop
                 params: dict = {"limit": 100}
                 if cursor:
                     params["cursorId"] = cursor
@@ -564,7 +564,7 @@ class IntegrationLogService:
         self.webhook_service = WebhookService()
     
     def create_integration_log(
-        self, 
+        self,
         log_data: IntegrationLogCreate,
         request_payload_dict: Optional[dict] = None
     ) -> IntegrationLog:
@@ -747,8 +747,8 @@ class IntegrationLogService:
             raise
     
     def update_integration_log(
-        self, 
-        log_id: str, 
+        self,
+        log_id: str,
         update_data: IntegrationLogUpdate
     ) -> IntegrationLog:
         """Update an integration log."""
@@ -865,7 +865,7 @@ class IntegrationLogService:
         Two passes per tick:
         1. Re-send `pending` / `processing` rows past `next_retry_at` (legacy behaviour).
         2. Mark `sent` rows older than the configured callback timeout as `failed`
-           with error_code=N8N_CALLBACK_TIMEOUT — drives the upload-activity drawer
+           with error_code=N8N_CALLBACK_TIMEOUT - drives the upload-activity drawer
            freshness invariant so users never see infinite "Processing…".
 
         See docs/plans/PLAN-upload-activity-drawer.md §4.5.
@@ -975,7 +975,7 @@ def log_respond_send(
     ``respond_io_tasks._send_and_log``.
 
     Every Respond.io send must leave an ``integration_logs`` trace on success AND
-    failure — local dev runs with deliberately-wrong credentials, so a 401'd send
+    failure - local dev runs with deliberately-wrong credentials, so a 401'd send
     still has to be readable from the Respond outbox. Synchronous senders that
     call ``RespondClient.send_message`` directly (portal link delivery, SLA
     conversation reply) previously wrote nothing at all, so those failures were

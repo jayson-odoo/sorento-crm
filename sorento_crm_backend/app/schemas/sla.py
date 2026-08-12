@@ -137,13 +137,13 @@ class ConversationSLATrackingCreate(BaseModel):
     respond_contact_id: Optional[str] = None  # FK to respond_contacts
     resolution_duration: Optional[Decimal] = None  # Will be reset to None
     # Required: the (agent_code, team_set_code) pair is the policy-resolution key.
-    # The backend owns policy selection — n8n's policy_id/current_tier are ignored.
+    # The backend owns policy selection - n8n's policy_id/current_tier are ignored.
     agent_code: str  # resolved → agent_id FK in service
     team_set_code: str  # team set; (agent_code, team_set_code) → SLA policy
     message_id: OptionalMessageId = None
     # Identity of a conversation intervention ticket: the message that asked for a
     # human. When absent, the service falls back to message_id, then (with neither)
-    # to the legacy one-open-per-contact singleton — see create_tracking.
+    # to the legacy one-open-per-contact singleton - see create_tracking.
     source_message_id: Optional[str] = None
     # The trigger message's own text (the enquiry) - stored verbatim so the
     # worklist snippet and the drawer's quoted header never re-fetch it.
@@ -253,12 +253,13 @@ class ConversationSLAEscalateRequest(BaseModel):
     respond_contact_id: CRM respond_contacts.id, Respond.io id, or phone (E.164 / variants).
     """
     respond_contact_id: str
-    # Optional: the open conversation tracking for the contact already stores its
-    # policy (tied at create via agent_code + team_set_code). The server resolves the
-    # row by respond_contact_id (one-open-per-contact) and uses THAT policy. policy_id
-    # here is only a fallback when no open row is found — legacy exact-match lookup.
+    # Optional: a contact can hold several open tickets at once (per-enquiry,
+    # not one merged conversation), so the server resolves a MOST-RECENT-OPEN
+    # pick for this (contact, policy) pair - see get_tracking_by_contact_and_
+    # policy - and uses THAT row's policy. policy_id here is only a fallback
+    # when no open row is found - legacy exact-match lookup.
     policy_id: Optional[str] = None
-    # Target tier after escalation (1–3), must be greater than the row's current tier.
+    # Target tier after escalation (1 - 3), must be greater than the row's current tier.
     # Omit (None) for signal-only escalation: the server escalates to current tier + 1,
     # or returns escalated=false when already at tier 3.
     current_tier: Optional[int] = None
@@ -486,7 +487,7 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
     updated_in_request: Optional[bool] = True
     # AC-E3: true when a PUT is_responded=true from the n8n Respond-app-reply
     # fallback was skipped because the resolved assignee holds 2+ open tickets
-    # for this contact (ambiguous which enquiry they answered) — see
+    # for this contact (ambiguous which enquiry they answered) - see
     # ConversationSLATrackingService.is_ambiguous_fallback_response.
     ambiguous_responded_skipped: Optional[bool] = False
     # Idempotent-create indicator: true when create found an open conversation

@@ -29,7 +29,7 @@ async def get_conversation_sla_tracking_by_contact(
     ),
     phone_number: Optional[str] = Query(
         None,
-        description="Contact phone (E.164), e.g. +60123456789. Also accepts contact_phone alias via duplicate param in docs only — use phone_number.",
+        description="Contact phone (E.164), e.g. +60123456789. Also accepts contact_phone alias via duplicate param in docs only - use phone_number.",
     ),
     contact_phone: Optional[str] = Query(
         None,
@@ -58,7 +58,7 @@ async def get_conversation_sla_tracking_by_contact(
     "conversation closed" event, that chain would resolve the WRONG ticket under
     multi-open (or an arbitrary one). No such inbound "resolve on Respond close"
     webhook exists in this backend today (`PUT /integration/{tracking_id}` is always
-    ticket_id-scoped by the caller) — this note exists so that assumption is never
+    ticket_id-scoped by the caller) - this note exists so that assumption is never
     silently reintroduced by wiring this GET into a resolve chain. Kept for backward
     compat (regression net 3) until the n8n contract moves to per-ticket ids (S3.2).
     """
