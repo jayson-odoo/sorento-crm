@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   describeMessageAttachments,
   buildQuotedReplyText,
+  splitMessageQuote,
   splitQuotedPrefix,
   QUOTE_EXCERPT_MAX_CHARS,
   type RespondMessageRenderable,
@@ -122,6 +123,53 @@ describe('buildQuotedReplyText / splitQuotedPrefix round-trip', () => {
     expect(splitQuotedPrefix('just a normal message')).toEqual({
       quoted: null,
       body: 'just a normal message',
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// splitMessageQuote - the ">" convention is OURS, so it is only parsed out of
+// OUTGOING traffic. An inbound contact message that happens to start with ">"
+// used to lose its leading lines into an italic quote block (and, when every
+// line was quoted, its whole body).
+// ---------------------------------------------------------------------------
+describe('splitMessageQuote (direction aware)', () => {
+  it('outgoing quoted reply still splits into quote + body', () => {
+    const item: RespondMessageRenderable = {
+      messageId: 1,
+      traffic: 'outgoing',
+      message: { type: 'text', text: '> Short by 2 boxes.\nChecking now.' },
+    };
+    expect(splitMessageQuote(item)).toEqual({
+      quoted: 'Short by 2 boxes.',
+      body: 'Checking now.',
+    });
+  });
+
+  it('inbound message starting with ">" renders verbatim, nothing lifted into a quote', () => {
+    const text = '> quoting the price list you sent\nis this still valid?';
+    const item: RespondMessageRenderable = {
+      messageId: 2,
+      traffic: 'incoming',
+      message: { type: 'text', text },
+    };
+    expect(splitMessageQuote(item)).toEqual({ quoted: null, body: text });
+  });
+
+  it('inbound message that is ENTIRELY ">" lines keeps a body (never an empty bubble)', () => {
+    const text = '> line one\n> line two';
+    const item: RespondMessageRenderable = {
+      messageId: 3,
+      traffic: 'incoming',
+      message: { type: 'text', text },
+    };
+    expect(splitMessageQuote(item)).toEqual({ quoted: null, body: text });
+  });
+
+  it('a message with no text at all yields an empty body, never throws', () => {
+    expect(splitMessageQuote({ messageId: 4, traffic: 'incoming' })).toEqual({
+      quoted: null,
+      body: '',
     });
   });
 });

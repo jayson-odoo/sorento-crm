@@ -22,7 +22,7 @@ import {
   formatBubbleTime,
   formatDatePillLabel,
   getReceiptTier,
-  splitQuotedPrefix,
+  splitMessageQuote,
   type MessageAttachmentDescriptor,
   type RespondMessageRenderable,
 } from '@/lib/respondIoChatRender';
@@ -165,7 +165,9 @@ export default function RespondChatList({
         )}
         {sortedItems.map((item, idx) => {
           const isOutgoing = item.traffic === 'outgoing';
-          const { quoted, body: text } = splitQuotedPrefix(item.message?.text ?? '');
+          // Direction aware: only OUR outgoing replies carry the ">" quote
+          // convention. A contact message starting with ">" renders verbatim.
+          const { quoted, body: text } = splitMessageQuote(item);
           const attachments = describeMessageAttachments(item);
           const displayMs = getRespondMessageDisplayTimeMs(item);
           const key = item.messageId != null ? String(item.messageId) : `msg-${idx}`;

@@ -480,7 +480,10 @@ export default function MyPendingSLAWidget() {
     const subline = isTeam
       ? `${teamItem.assignee_name ?? '—'} · ${teamItem.team_label ?? '—'} · Tier ${item.current_tier}`
       : ticket
-        ? ticket.enquiry_snippet ?? 'Enquiry from this contact'
+        ? // AC-E7: a snippet the n8n spine never mapped arrives blank or as
+          // whitespace, not null - trim before falling back so the row always
+          // says something.
+          ticket.enquiry_snippet?.trim() || 'Enquiry from this contact'
         : `Tier ${item.current_tier} · ${form ? mineItem.next_action ?? 'Action required' : 'Reply'}`;
     const atMaxTier = item.current_tier >= MAX_TIER;
     const highlighted = !!highlightId && item.id === highlightId;

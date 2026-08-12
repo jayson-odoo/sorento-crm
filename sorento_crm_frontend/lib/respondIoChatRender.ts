@@ -199,7 +199,16 @@ export function buildQuotedReplyText(quotedText: string, body: string): string {
   return `${QUOTE_LINE_PREFIX}${clipped}\n${body}`;
 }
 
-/** Split a message body into its leading ">"-quoted excerpt (if any) and the reply itself. */
+/**
+ * Split a message body into its leading ">"-quoted excerpt (if any) and the
+ * reply itself.
+ *
+ * ONLY valid on OUTGOING text: the ">" prefix is a convention WE write in
+ * `buildQuotedReplyText`, so it is only ours to read back. Render inbound
+ * traffic through `splitMessageQuote` (or verbatim) - a contact may legitimately
+ * start their own message with ">" and those lines are their message, not a
+ * quote of ours.
+ */
 export function splitQuotedPrefix(text: string): { quoted: string | null; body: string } {
   const raw = text ?? '';
   if (!raw.startsWith(QUOTE_LINE_PREFIX.trimEnd())) return { quoted: null, body: raw };
@@ -213,6 +222,23 @@ export function splitQuotedPrefix(text: string): { quoted: string | null; body: 
   }
   if (quoted.length === 0) return { quoted: null, body: raw };
   return { quoted: quoted.join('\n').trim(), body: lines.slice(i).join('\n').replace(/^\n+/, '') };
+}
+
+/**
+ * The quote block + body to render for ONE message, direction aware.
+ *
+ * Outgoing (user traffic) is ours, so a leading ">" block is the quoted-reply
+ * emulation and is lifted out into its own quote bubble. Inbound (the contact's
+ * own words) is rendered verbatim: stripping their leading ">" lines rewrites
+ * what they said, and on a message that is entirely ">" lines it would leave the
+ * bubble with no body at all.
+ */
+export function splitMessageQuote(
+  item: RespondMessageRenderable,
+): { quoted: string | null; body: string } {
+  const raw = item.message?.text ?? '';
+  if (item.traffic !== 'outgoing') return { quoted: null, body: raw };
+  return splitQuotedPrefix(raw);
 }
 
 /** Group messages by local date stamp (YYYY-MM-DD in browser tz) for date dividers. */

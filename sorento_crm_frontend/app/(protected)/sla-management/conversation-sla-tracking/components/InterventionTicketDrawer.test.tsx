@@ -163,6 +163,14 @@ describe('InterventionTicketDrawer', () => {
     expect(screen.getByTestId('chat-list')).toHaveTextContent('1 message(s)');
   });
 
+  it('AC-E7: a blank enquiry text falls back to a neutral header label', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket({ source_message_text: '  ' })));
+    renderDrawer();
+    await waitFor(() =>
+      expect(screen.getByText('No enquiry text captured.')).toBeInTheDocument(),
+    );
+  });
+
   it('composer: enabled + attachments on when the ticket allows sending', async () => {
     useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
     renderDrawer();

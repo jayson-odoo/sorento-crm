@@ -91,6 +91,39 @@ describe('RespondChatList — WhatsApp-style render', () => {
     expect(readTick?.getAttribute('class') || '').toMatch(/text-sky-500/);
   });
 
+  it('an inbound message starting with ">" renders verbatim, no quote block', () => {
+    const inboundQuoteLike: RespondMessageRenderable[] = [
+      {
+        messageId: 1,
+        traffic: 'incoming',
+        message: { type: 'text', text: '> is the promo price still valid?' },
+        status: [],
+        sender: { source: 'contact' },
+      },
+    ];
+    const { container } = render(<RespondChatList items={inboundQuoteLike} contactName="X" />);
+    expect(screen.getByText('> is the promo price still valid?')).toBeDefined();
+    // The italic quote block is a bordered aside; inbound must never produce one.
+    expect(container.querySelector('.border-emerald-500')).toBeNull();
+    expect(screen.queryByText('(no text)')).toBeNull();
+  });
+
+  it('an outgoing quoted reply still renders the quote block above the body', () => {
+    const outgoingQuoted: RespondMessageRenderable[] = [
+      {
+        messageId: 2,
+        traffic: 'outgoing',
+        message: { type: 'text', text: '> short by 2 boxes\nChecking now.' },
+        status: [{ value: 'sent', timestamp: day1Ms }],
+        sender: { source: 'user' },
+      },
+    ];
+    const { container } = render(<RespondChatList items={outgoingQuoted} contactName="X" />);
+    expect(screen.getByText('short by 2 boxes')).toBeDefined();
+    expect(screen.getByText('Checking now.')).toBeDefined();
+    expect(container.querySelector('.border-emerald-500')).not.toBeNull();
+  });
+
   it('uses WhatsApp background and bubble colors (only two bubble colors)', () => {
     const { container } = render(<RespondChatList items={items} contactName="X" />);
     const bg = container.querySelector('.bg-\\[\\#efeae2\\]');

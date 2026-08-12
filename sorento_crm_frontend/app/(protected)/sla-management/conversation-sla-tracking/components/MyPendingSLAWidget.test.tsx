@@ -642,6 +642,13 @@ describe('MyPendingSLAWidget clickable rows', () => {
     openSpy.mockRestore();
   });
 
+  it('AC-E7: a blank enquiry snippet falls back to a neutral label, never an empty row', async () => {
+    getMyPendingSLA.mockResolvedValue([{ ...ticketOne, enquiry_snippet: '   ' }]);
+    renderWidget();
+
+    expect(await screen.findByText('Enquiry from this contact')).toBeInTheDocument();
+  });
+
   it('deep link ?ticket= opens the drawer directly and strips the query param', async () => {
     extraParams = { ticket: 'ticket-2' };
     getMyPendingSLA.mockResolvedValue([ticketOne, ticketTwo]);
