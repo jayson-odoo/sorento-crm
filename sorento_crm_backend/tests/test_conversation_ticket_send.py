@@ -18,7 +18,7 @@ Run:
 from __future__ import annotations
 
 import uuid
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import text
@@ -544,3 +544,195 @@ def test_already_responded_sibling_never_inflates_ambiguity(db):
     db.commit()
 
     assert service.is_ambiguous_fallback_response(t1) is False
+
+
+# --------------------------------------------------------------------------- #
+# FINDING 3 (code review): multi-attachment sends re-resolved the window per  #
+# file (each a live Respond HTTP call, 15s timeout), sent the caption only    #
+# AFTER every attachment (never if one failed), raised 502 on the first       #
+# per-file failure (leaving files 1..N-1 delivered with no way to tell the    #
+# FE which ones), and skipped mark_ticket_responded on any exception even     #
+# when something DID reach the contact.                                      #
+# --------------------------------------------------------------------------- #
+
+
+def _fake_upload_chat_attachment(*, business_table, business_id, content, filename, mime):
+    return {"url": f"https://cdn.test/{filename}", "kind": "document"}
+
+
+class _FakeAttachmentClient:
+    """Stand-in for RespondClient.for_identifier(...) - records
+    send_attachment(identifier, attachment_type, url) calls; can fail on a
+    chosen filename (identified via the fake upload's filename-embedding url)."""
+
+    def __init__(self, fail_on_filename=None, fail_error="Respond 500 unavailable"):
+        self.calls = []
+        self.fail_on_filename = fail_on_filename
+        self.fail_error = fail_error
+
+    def send_attachment(self, identifier, attachment_type, url):
+        self.calls.append((identifier, attachment_type, url))
+        if self.fail_on_filename and url.endswith(self.fail_on_filename):
+            raise RuntimeError(self.fail_error)
+        return {"id": f"m-attachment-{len(self.calls)}"}
+
+
+def _respond_client_mock(*, text_client=None, attachment_client=None):
+    """A fake RespondClient CLASS: RespondClient() (direct instantiation, used
+    by the text/caption send path) returns text_client; RespondClient.for_identifier(...)
+    (the attachment send path) returns attachment_client."""
+    mock_cls = MagicMock(return_value=text_client or _FakeClient())
+    mock_cls.for_identifier = MagicMock(return_value=attachment_client or _FakeAttachmentClient())
+    return mock_cls
+
+
+def _counting_window(counter, *, open_=True):
+    def _inner(*_a, **_k):
+        counter["n"] = counter.get("n", 0) + 1
+        return {"open": open_, "last_incoming_at": None, "checked_at": "", "source": "x"}
+
+    return _inner
+
+
+def test_multi_attachment_send_resolves_the_window_exactly_once(db):
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed, source_message_id="wamid.msg-1")
+    service = ConversationSLATrackingService(db)
+
+    counter: dict = {}
+    attachment_client = _FakeAttachmentClient()
+    with patch(
+        "app.services.respond_messaging_service.get_window_state", _counting_window(counter)
+    ), patch(
+        "app.services.respond_chat_template_service.upload_chat_attachment",
+        _fake_upload_chat_attachment,
+    ), patch(
+        "app.services.integration_service.RespondClient",
+        _respond_client_mock(attachment_client=attachment_client),
+    ):
+        service.send_ticket_message(
+            str(t1.id),
+            text="",
+            files=[
+                (b"a", "a.pdf", "application/pdf"),
+                (b"b", "b.pdf", "application/pdf"),
+                (b"c", "c.pdf", "application/pdf"),
+            ],
+            reply_to_message_id=None,
+            reply_to_excerpt=None,
+            sender_user_id=seed["assignee_id"],
+            sender_name="Agent One",
+        )
+
+    assert counter["n"] == 1, "the window must be resolved ONCE for the whole send, not per file"
+    assert len(attachment_client.calls) == 3
+
+
+def test_caption_ships_even_when_a_later_attachment_fails(db):
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed, source_message_id="wamid.msg-1")
+    service = ConversationSLATrackingService(db)
+
+    text_client = _FakeClient()
+    attachment_client = _FakeAttachmentClient(fail_on_filename="b.pdf")
+    with patch(
+        "app.services.respond_messaging_service.get_window_state", _open_window
+    ), patch(
+        "app.services.respond_chat_template_service.upload_chat_attachment",
+        _fake_upload_chat_attachment,
+    ), patch(
+        "app.services.integration_service.RespondClient",
+        _respond_client_mock(text_client=text_client, attachment_client=attachment_client),
+    ):
+        result = service.send_ticket_message(
+            str(t1.id),
+            text="see attached",
+            files=[
+                (b"a", "a.pdf", "application/pdf"),
+                (b"b", "b.pdf", "application/pdf"),
+                (b"c", "c.pdf", "application/pdf"),
+            ],
+            reply_to_message_id=None,
+            reply_to_excerpt=None,
+            sender_user_id=seed["assignee_id"],
+            sender_name="Agent One",
+        )
+
+    assert text_client.send_message_calls == [("10025531", "see attached")], (
+        "the caption must ship even though file b.pdf failed - never dropped "
+        "because of an unrelated attachment failure"
+    )
+    assert result["attachments"]["delivered"] == ["a.pdf"], "a.pdf was sent before b.pdf failed"
+    assert result["attachments"]["failed"]["filename"] == "b.pdf"
+    assert "Respond 500" in result["attachments"]["failed"]["error"]
+    # c.pdf was never attempted - Respond delivers in order; nothing after the
+    # first failure is attempted so a caller retrying doesn't resend a.pdf.
+    assert len(attachment_client.calls) == 2
+
+    db.refresh(t1)
+    assert t1.is_responded is True, "a.pdf AND the caption reached the contact - must stamp"
+
+
+def test_partial_attachment_failure_returns_a_structured_result_not_a_raise(db):
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed, source_message_id="wamid.msg-1")
+    service = ConversationSLATrackingService(db)
+
+    attachment_client = _FakeAttachmentClient(fail_on_filename="only.pdf")
+    with patch(
+        "app.services.respond_messaging_service.get_window_state", _open_window
+    ), patch(
+        "app.services.respond_chat_template_service.upload_chat_attachment",
+        _fake_upload_chat_attachment,
+    ), patch(
+        "app.services.integration_service.RespondClient",
+        _respond_client_mock(attachment_client=attachment_client),
+    ):
+        result = service.send_ticket_message(
+            str(t1.id),
+            text="",
+            files=[(b"x", "only.pdf", "application/pdf")],
+            reply_to_message_id=None,
+            reply_to_excerpt=None,
+            sender_user_id=seed["assignee_id"],
+            sender_name="Agent One",
+        )
+
+    assert result["sent_as"] == "attachment"
+    assert result["attachments"]["delivered"] == []
+    assert result["attachments"]["failed"]["filename"] == "only.pdf"
+
+    db.refresh(t1)
+    assert t1.is_responded is False, "nothing reached the contact - must not stamp"
+
+
+def test_all_attachments_succeed_stamps_the_response_clock_and_reports_none_failed(db):
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed, source_message_id="wamid.msg-1")
+    service = ConversationSLATrackingService(db)
+
+    attachment_client = _FakeAttachmentClient()
+    with patch(
+        "app.services.respond_messaging_service.get_window_state", _open_window
+    ), patch(
+        "app.services.respond_chat_template_service.upload_chat_attachment",
+        _fake_upload_chat_attachment,
+    ), patch(
+        "app.services.integration_service.RespondClient",
+        _respond_client_mock(attachment_client=attachment_client),
+    ):
+        result = service.send_ticket_message(
+            str(t1.id),
+            text="",
+            files=[(b"a", "a.pdf", "application/pdf"), (b"b", "b.pdf", "application/pdf")],
+            reply_to_message_id=None,
+            reply_to_excerpt=None,
+            sender_user_id=seed["assignee_id"],
+            sender_name="Agent One",
+        )
+
+    assert result["attachments"]["delivered"] == ["a.pdf", "b.pdf"]
+    assert result["attachments"]["failed"] is None
+
+    db.refresh(t1)
+    assert t1.is_responded is True

@@ -1269,6 +1269,10 @@ async def send_intervention_ticket_message(
     quote-reply emulation) — sent verbatim; ``reply_to_*`` fields are
     audit-only and are never sent to Respond.io. Assignee-or-manager scoped,
     same as resolve/escalate.
+
+    A multi-file send never raises on a per-file failure — see the
+    ``attachments: {delivered, failed}`` FE contract documented on
+    ``ConversationSLATrackingService.send_ticket_message``'s docstring.
     """
     service = ConversationSLATrackingService(db)
     tracking = service.get_tracking(tracking_id, load_event_logs=False)

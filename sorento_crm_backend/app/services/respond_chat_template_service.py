@@ -607,6 +607,7 @@ def send_chat_attachment_for(
     business_table: str,
     business_id: str,
     created_by: Optional[str] = None,
+    window: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Send a single Respond.io attachment message (image/video/audio/file — R1).
 
@@ -617,12 +618,20 @@ def send_chat_attachment_for(
     silently gets dropped by WhatsApp. Writes an ``integration_log`` outbox row
     on success AND failure of the actual Respond call; NEVER mutates the
     entity (mirrors ``send_chat_message_for``).
+
+    ``window``: pass an ALREADY-RESOLVED window state (``get_window_state``'s
+    return shape) to skip this function's own lookup — the multi-attachment
+    caller (``ConversationSLATrackingService.send_ticket_message``) resolves
+    the window ONCE for the whole send instead of once per file (each a live
+    Respond HTTP call, 15s timeout). Omit to keep the single-call contract
+    (this function resolves it itself) for any other caller.
     """
     from app.services.error_handler import AppException
     from app.services.integration_service import RespondClient, log_respond_send
     from app.services.respond_messaging_service import get_window_state
 
-    window = get_window_state(db, identifier, respond_contact_id=respond_contact_id)
+    if window is None:
+        window = get_window_state(db, identifier, respond_contact_id=respond_contact_id)
     if not window.get("open"):
         raise AppException(
             status_code=422,

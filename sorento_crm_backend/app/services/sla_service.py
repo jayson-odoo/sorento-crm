@@ -5436,7 +5436,36 @@ class ConversationSLATrackingService:
         ">"-quote prefix when replying (R1); ``reply_to_*`` are audit-only and
         are never sent to Respond. On success, stamps THIS ticket's response
         clock only; sibling tickets for the same contact are untouched.
+
+        FE CONTRACT — multi-attachment sends (FINDING 3 code-review fix):
+        the window is resolved ONCE for the whole call (not re-checked per
+        file); a caption ships as its own text turn WITH/BEFORE the first
+        attachment attempt, so it is never lost to an unrelated later
+        attachment failure; attachments are then sent SEQUENTIALLY, stopping
+        at the FIRST failure (Respond delivers in order — nothing after a
+        failure is attempted, so a caller retrying does not resend files that
+        already landed). A per-file failure is NEVER raised as an exception —
+        the whole send always returns 200 with a structured result:
+
+            {
+              "sent_as": "attachment",
+              "rendered_text": str,
+              "flattened": False,
+              "window": {"open": bool, "expires_at": None},
+              "attachments": {
+                  "delivered": ["a.pdf", "b.pdf"],       # filenames, in order, that reached Respond
+                  "failed": {"filename": "c.pdf", "error": "..."} | None,
+              },
+            }
+
+        ``attachments`` is ``None`` on the text-only path. The response clock
+        (``mark_ticket_responded``) is stamped whenever ANYTHING reached the
+        contact — the caption, at least one attachment, or both — even when
+        ``attachments.failed`` is set. The FE is expected to render the
+        delivered files as sent and the failed one with a retry affordance
+        (not implemented yet — tracked separately from this fix).
         """
+        from app.services.error_handler import AppException
         from app.services.form_sla_service import FORM_SLA_TYPES
         from app.services.respond_chat_template_service import (
             send_chat_attachment_for,
@@ -5470,32 +5499,20 @@ class ConversationSLATrackingService:
         business_table = "conversation_sla_tracking"
         business_id = str(tracking.id)
 
+        attachments_result: Optional[dict] = None
+        anything_delivered = False
         if files:
-            for content, filename, mime in files:
-                uploaded = upload_chat_attachment(
-                    business_table=business_table,
-                    business_id=business_id,
-                    content=content,
-                    filename=filename,
-                    mime=mime,
-                )
-                send_chat_attachment_for(
-                    self.db,
-                    identifier=identifier,
-                    respond_contact_id=respond_contact_id,
-                    attachment_type=uploaded["kind"],
-                    url=uploaded["url"],
-                    business_table=business_table,
-                    business_id=business_id,
-                    created_by=sender_user_id,
-                )
-            sent_as = "attachment"
-            rendered_text = clean_text or f"{len(files)} attachment(s) sent"
-            flattened = False
+            # FINDING 3: resolve the window ONCE for the whole send (each
+            # resolution is a live Respond HTTP call, 15s timeout) instead of
+            # once per file, and pass it down so send_chat_attachment_for
+            # skips its own per-call lookup.
             window = get_window_state(self.db, identifier, respond_contact_id=respond_contact_id)
             window_state = {"open": window.get("open"), "last_incoming_at": window.get("last_incoming_at")}
-            # A caption alongside attachments ships as its own text turn — Respond's
-            # attachment message has no reliably-supported caption param (R1).
+
+            # A caption ships as its own text turn WITH/BEFORE the first
+            # attachment — Respond's attachment message has no reliably-
+            # supported caption param (R1) — so it is never lost to a LATER
+            # attachment failing.
             if clean_text:
                 send_chat_message_for(
                     self.db,
@@ -5508,6 +5525,52 @@ class ConversationSLATrackingService:
                     sender_name=sender_name,
                     created_by=sender_user_id,
                 )
+                anything_delivered = True
+
+            # Sequential, never all-or-nothing: a failure on file N must not
+            # undo files 1..N-1, which already reached the contact. Stop at
+            # the FIRST failure (Respond delivers in order; a caller retrying
+            # would otherwise resend files that already landed) and report
+            # exactly what got through instead of raising.
+            delivered: list[str] = []
+            failed: Optional[dict] = None
+            for content, filename, mime in files:
+                try:
+                    uploaded = upload_chat_attachment(
+                        business_table=business_table,
+                        business_id=business_id,
+                        content=content,
+                        filename=filename,
+                        mime=mime,
+                    )
+                    send_chat_attachment_for(
+                        self.db,
+                        identifier=identifier,
+                        respond_contact_id=respond_contact_id,
+                        attachment_type=uploaded["kind"],
+                        url=uploaded["url"],
+                        business_table=business_table,
+                        business_id=business_id,
+                        created_by=sender_user_id,
+                        window=window,
+                    )
+                except AppException as e:
+                    # AppException.detail is always the {message, detail, code}
+                    # dict (see error_handler.AppException.__init__) - prefer
+                    # the underlying Respond error string (`detail`) over the
+                    # generic user-facing `message`.
+                    _detail = e.detail if isinstance(e.detail, dict) else {}
+                    error_message = _detail.get("detail") or _detail.get("message") or str(e)
+                    failed = {"filename": filename, "error": str(error_message)}
+                    break
+                delivered.append(filename)
+
+            if delivered:
+                anything_delivered = True
+            attachments_result = {"delivered": delivered, "failed": failed}
+            sent_as = "attachment"
+            rendered_text = clean_text or f"{len(files)} attachment(s) sent"
+            flattened = False
         else:
             result = send_chat_message_for(
                 self.db,
@@ -5524,27 +5587,31 @@ class ConversationSLATrackingService:
             rendered_text = result["rendered_text"]
             flattened = result["flattened"]
             window_state = result["window_state"]
+            anything_delivered = True
 
-        # AC-E1: stamp THIS ticket's response clock only. Best-effort — the
-        # message already reached the contact; a stamping bug must never turn
-        # a delivered send into a 500 for the assignee.
-        try:
-            reason_bits = [f"sent_as={sent_as}"]
-            if reply_to_message_id:
-                reason_bits.append(f"reply_to_message_id={reply_to_message_id}")
-            if reply_to_excerpt:
-                reason_bits.append("quoted_reply=true")
-            self.mark_ticket_responded(
-                tracking,
-                responded_by_user_id=sender_user_id,
-                reason=f"CRM reply ({', '.join(reason_bits)})",
-            )
-        except Exception:  # noqa: BLE001
-            _module_logger.warning(
-                "send_ticket_message: response-clock stamp failed for %s",
-                tracking_id,
-                exc_info=True,
-            )
+        # AC-E1: stamp THIS ticket's response clock only, and only if
+        # something ACTUALLY reached the contact (a total attachment failure
+        # with no caption stamps nothing). Best-effort — the message already
+        # reached the contact; a stamping bug must never turn a delivered
+        # send into a 500 for the assignee.
+        if anything_delivered:
+            try:
+                reason_bits = [f"sent_as={sent_as}"]
+                if reply_to_message_id:
+                    reason_bits.append(f"reply_to_message_id={reply_to_message_id}")
+                if reply_to_excerpt:
+                    reason_bits.append("quoted_reply=true")
+                self.mark_ticket_responded(
+                    tracking,
+                    responded_by_user_id=sender_user_id,
+                    reason=f"CRM reply ({', '.join(reason_bits)})",
+                )
+            except Exception:  # noqa: BLE001
+                _module_logger.warning(
+                    "send_ticket_message: response-clock stamp failed for %s",
+                    tracking_id,
+                    exc_info=True,
+                )
 
         return {
             "sent_as": sent_as,
@@ -5554,4 +5621,5 @@ class ConversationSLATrackingService:
                 "open": bool(window_state.get("open")),
                 "expires_at": None,
             },
+            "attachments": attachments_result,
         }
