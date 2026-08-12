@@ -61,6 +61,20 @@ let handlingLockState: {
   refresh: handlingLockRefresh,
   isMutating: false,
 };
+
+// Form-action deferral: idle by default - these suites exercise other wiring. The
+// hook's own behaviour is covered by formAction.test.ts + the pytest/e2e layers.
+vi.mock('@/app/(protected)/sla-management/_shared/useFormAction', () => ({
+  useFormAction: () => ({
+    view: { kind: 'idle' },
+    ctasDisabled: false,
+    cancel: vi.fn(),
+    undo: vi.fn(),
+    refresh: vi.fn(),
+    isMutating: false,
+  }),
+}));
+
 vi.mock('@/app/(protected)/sla-management/_shared/useHandlingLock', () => ({
   useHandlingLock: () => handlingLockState,
 }));

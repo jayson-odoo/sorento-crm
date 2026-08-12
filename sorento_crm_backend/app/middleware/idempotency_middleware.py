@@ -197,7 +197,16 @@ class IdempotencyMiddleware:
 
         status_code = captured["status"]
         try:
-            if 200 <= status_code < 300 and len(captured["body"]) <= max_body:
+            # 202 is never cacheable. It means "accepted, not yet applied", and its body
+            # carries a single-use pending-action id. Replaying it hands the client an id
+            # that may since have been undone or committed, so the caller sees a stale
+            # countdown - or, as observed, no countdown at all because the handler never
+            # ran the second time. Duplicate submits of a deferred action are already
+            # blocked at the database by the one-pending-per-form unique index, so
+            # skipping the cache here loses no protection.
+            if status_code == 202:
+                r.delete(key)
+            elif 200 <= status_code < 300 and len(captured["body"]) <= max_body:
                 r.set(key, json.dumps({
                     "state": "done",
                     "status": status_code,

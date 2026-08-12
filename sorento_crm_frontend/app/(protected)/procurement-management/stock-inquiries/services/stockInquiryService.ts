@@ -5,6 +5,7 @@ import type {
   StockInquiryFormData,
   StockInquiryDetail,
 } from '../types/stockInquiry.types';
+import type { DeferredFormAction } from '@/app/(protected)/sla-management/_shared/formAction';
 import type {
   DataGridApiFetchParams,
   DataGridApiResponse,
@@ -115,7 +116,7 @@ export async function updateStockInquiry(
 export async function updateStockInquiryAndReply(
   id: string,
   data: Partial<StockInquiryFormData>,
-): Promise<StockInquiry> {
+): Promise<StockInquiry | DeferredFormAction> {
   const response = await apiFetch(
     `/api/v1/procurement/stock-inquiries/${id}/update-and-reply`,
     {
@@ -273,7 +274,7 @@ export async function submitStockInquiryForProjectSales(id: string): Promise<Sto
   return response.json();
 }
 
-export async function projectSalesApproveStockInquiry(id: string): Promise<StockInquiry> {
+export async function projectSalesApproveStockInquiry(id: string): Promise<StockInquiry | DeferredFormAction> {
   const response = await apiFetch(
     `/api/v1/procurement/stock-inquiries/${id}/project-sales-approve`,
     { method: 'POST' },
@@ -285,7 +286,7 @@ export async function projectSalesApproveStockInquiry(id: string): Promise<Stock
   return response.json();
 }
 
-export async function projectSalesRejectStockInquiry(id: string, reason?: string): Promise<StockInquiry> {
+export async function projectSalesRejectStockInquiry(id: string, reason?: string): Promise<StockInquiry | DeferredFormAction> {
   const response = await apiFetch(
     `/api/v1/procurement/stock-inquiries/${id}/project-sales-reject`,
     {
@@ -301,7 +302,7 @@ export async function projectSalesRejectStockInquiry(id: string, reason?: string
   return response.json();
 }
 
-export async function purchasingRejectStockInquiry(id: string, reason?: string): Promise<StockInquiry> {
+export async function purchasingRejectStockInquiry(id: string, reason?: string): Promise<StockInquiry | DeferredFormAction> {
   const response = await apiFetch(
     `/api/v1/procurement/stock-inquiries/${id}/purchasing-reject`,
     {

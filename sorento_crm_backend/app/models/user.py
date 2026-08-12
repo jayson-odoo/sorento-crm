@@ -257,6 +257,9 @@ class SystemSetting(Base):
     # during which the original assignee can reject and the initiator can cancel.
     # 0 = disabled (takeover commits instantly, pre-feature behavior). See PLAN-takeover-cooldown.
     takeover_cooldown_seconds = Column(Integer, nullable=False, server_default="60", default=60)
+    # Global default grace window for form-SLA actions (PLAN-form-sla-undo.md). 0 =
+    # every action fires immediately, i.e. today's behaviour; a stage may override it.
+    form_sla_grace_seconds = Column(Integer, nullable=False, server_default="0", default=0)
 
     # System-health observability (PLAN-system-health-observability):
     # daily digest + immediate watchdog alerts. Recipients = role ids (like notify_*_role_ids).

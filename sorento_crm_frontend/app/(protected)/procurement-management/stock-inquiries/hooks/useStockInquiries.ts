@@ -30,6 +30,7 @@ import {
   type ResponseAttachmentUploadResult,
 } from '../services/stockInquiryService';
 import type { StockInquiryFormData } from '../types/stockInquiry.types';
+import { isDeferredFormAction } from '@/app/(protected)/sla-management/_shared/formAction';
 
 export type StockInquiriesListParams = DataGridApiFetchParams & {
   statuses?: string[];
@@ -145,11 +146,10 @@ export function useUpdateStockInquiryAndReply() {
       id: string;
       data: Partial<StockInquiryFormData>;
     }) => updateStockInquiryAndReply(id, data),
-    onSuccess: (_, { id }) => {
-      queryClient.invalidateQueries({ queryKey: ['stock-inquiries'] });
-      queryClient.invalidateQueries({ queryKey: ['stock-inquiry'] });
+    onSuccess: (result, { id }) => {
+      workflowInvalidate(queryClient);
       queryClient.invalidateQueries({ queryKey: ['stock-inquiry-conversation', id] });
-      toast.success('Reply sent to customer successfully');
+      toastActionResult(result, 'Reply sent to customer successfully');
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to update and reply'),
@@ -266,6 +266,19 @@ export function useDeleteStockInquiryResponseAttachment() {
 function workflowInvalidate(queryClient: ReturnType<typeof useQueryClient>) {
   queryClient.invalidateQueries({ queryKey: ['stock-inquiries'] });
   queryClient.invalidateQueries({ queryKey: ['stock-inquiry'] });
+  // A 202 parks the action instead of moving the inquiry; the countdown banner reads
+  // these two queries, so they must refetch or the deferral is invisible until reload.
+  queryClient.invalidateQueries({ queryKey: ['form-action-current'] });
+  queryClient.invalidateQueries({ queryKey: ['form-action-eligibility'] });
+}
+
+/** Deferred => countdown copy; immediate => the action's own success copy. */
+function toastActionResult(result: unknown, immediateMessage: string) {
+  if (isDeferredFormAction(result)) {
+    toast.success('Action is on hold for a few seconds - you can still undo.');
+  } else {
+    toast.success(immediateMessage);
+  }
 }
 
 export function useSubmitStockInquiryForProjectSales() {
@@ -284,9 +297,9 @@ export function useProjectSalesApproveStockInquiry() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => projectSalesApproveStockInquiry(id),
-    onSuccess: () => {
+    onSuccess: (result) => {
       workflowInvalidate(queryClient);
-      toast.success('Approved; sent to purchasing');
+      toastActionResult(result, 'Approved; sent to purchasing');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to approve'),
   });
@@ -297,9 +310,9 @@ export function useProjectSalesRejectStockInquiry() {
   return useMutation({
     mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
       projectSalesRejectStockInquiry(id, reason),
-    onSuccess: () => {
+    onSuccess: (result) => {
       workflowInvalidate(queryClient);
-      toast.success('Rejected');
+      toastActionResult(result, 'Rejected');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to reject'),
   });
@@ -310,9 +323,9 @@ export function usePurchasingRejectStockInquiry() {
   return useMutation({
     mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
       purchasingRejectStockInquiry(id, reason),
-    onSuccess: () => {
+    onSuccess: (result) => {
       workflowInvalidate(queryClient);
-      toast.success('Rejected');
+      toastActionResult(result, 'Rejected');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to reject'),
   });

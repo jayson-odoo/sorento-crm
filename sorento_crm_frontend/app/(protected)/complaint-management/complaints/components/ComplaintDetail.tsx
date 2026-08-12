@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, FileDown, ArrowUpCircle, Ban, UserRoundCog } from 'lucide-react';
+import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, FileDown, ArrowUpCircle, Ban, UserRoundCog, Undo2 } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
@@ -15,6 +15,9 @@ import {
 } from '@/app/(protected)/sla-management/_shared/FormSkipAction';
 import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
 import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
+import { useFormAction } from '@/app/(protected)/sla-management/_shared/useFormAction';
+import { FormActionBanner } from '@/app/(protected)/sla-management/_shared/FormActionBanner';
+import { UndoActionDialog } from '@/app/(protected)/sla-management/_shared/UndoActionDialog';
 import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tracking/components/ReassignDialog';
 import { useReassignSLATracking } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
 import ResponseAttachmentDropzone from './ResponseAttachmentDropzone';
@@ -149,7 +152,17 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   });
   // A voided complaint is fully read-only - suppress every business CTA.
   const isVoided = (complaint?.status ?? '').trim().toLowerCase() === 'voided';
-  const businessCtasEnabled = handlingLock.businessCtasEnabled && !isVoided;
+  // Form-action deferral (PLAN-form-sla-undo.md). While an action is pending its grace
+  // window, EVERY business CTA is suppressed - the form must commit against the state
+  // the action was requested on (AC-D-10), and a second action cannot queue (AC-D-7).
+  const formAction = useFormAction({
+    sourceEntityType: 'complaint',
+    sourceEntityId: isValidId ? complaintId : null,
+    entityKey: complaint?.status,
+  });
+  const businessCtasEnabled =
+    handlingLock.businessCtasEnabled && !isVoided && !formAction.ctasDisabled;
+  const [undoDialogOpen, setUndoDialogOpen] = useState(false);
   // The technical team response may only be written while the complaint is still
   // waiting for one (UAC O1) - the backend returns 422 outside those statuses,
   // so the affordance is REMOVED rather than left to fail on a toast. Chat
@@ -332,7 +345,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
         </div>
         <div className="flex gap-2 flex-wrap items-center justify-end">
           {/* Business CTAs hide (not disable) while the handling lock is held by
-              someone else / unclaimed — keeps the header uncluttered. When the
+              someone else / unclaimed - keeps the header uncluttered. When the
               lock does not bite (tier 1, flag off, or I hold it) businessCtasEnabled
               is true and they render on their normal status+permission gates. */}
           {businessCtasEnabled && responseWritable && (
@@ -411,6 +424,21 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             className="h-8 border border-border"
           />
           <DetailActionsMenu ariaLabel="Complaint actions">
+            {/* Post-grace Undo. Rendered only when the server says the last committed
+                action is reversible - eligibility is a server read, never a client
+                guess, and it is re-checked at execute time (AC-PG-6/7). */}
+            {formAction.view.kind === 'undoable' && (
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setUndoDialogOpen(true);
+                }}
+                data-testid="undo-action-menu-item"
+              >
+                <Undo2 className="size-4" />
+                Undo last action
+              </DropdownMenuItem>
+            )}
             {activeTracker && (
               <DropdownMenuItem
                 onSelect={(e) => {
@@ -467,7 +495,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 Edit resolution
               </DropdownMenuItem>
             )}
-            {!isVoided && (
+            {!isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
                 onClick={() =>
                   router.push(`/complaint-management/complaints/${complaintId}/edit`)
@@ -538,7 +566,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                   : 'Update & Reply'}
               </DropdownMenuItem>
             )}
-            {canVoid && !isVoided && (
+            {canVoid && !isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 onClick={() => setVoidDialogOpen(true)}
@@ -547,7 +575,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 Void
               </DropdownMenuItem>
             )}
-            {!isVoided && (
+            {!isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 onClick={() => setDeleteDialogOpen(true)}
@@ -567,6 +595,28 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
         onClaim={handlingLock.claim}
         onTakeOver={handlingLock.takeOver}
       />
+
+      <FormActionBanner
+        view={formAction.view}
+        onCancel={formAction.cancel}
+        onExpire={formAction.refresh}
+        onDismissOutcome={formAction.refresh}
+        isCancelling={formAction.isMutating}
+      />
+
+      {formAction.view.kind === 'undoable' && (
+        <UndoActionDialog
+          open={undoDialogOpen}
+          onOpenChange={setUndoDialogOpen}
+          eligibility={formAction.view.eligibility}
+          entityLabel={complaint.complaint_number || 'this complaint'}
+          onConfirm={(reason) => {
+            formAction.undo(reason);
+            setUndoDialogOpen(false);
+          }}
+          isSubmitting={formAction.isMutating}
+        />
+      )}
 
       {complaint && (
         <ComplaintDeleteDialog

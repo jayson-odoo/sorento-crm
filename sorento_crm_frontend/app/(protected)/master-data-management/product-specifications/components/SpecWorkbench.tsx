@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import FindabilityPanel from './FindabilityPanel';
 import { getSpecRegistry } from '../services/productSpecService';
 import ProductSpecsList from './ProductSpecsList';
 import SearchTuning from './SearchTuning';
@@ -45,6 +46,7 @@ export default function SpecWorkbench() {
           </TabsTrigger>
           <TabsTrigger value="ranking">Ranking</TabsTrigger>
           <TabsTrigger value="catalogue">Catalogue</TabsTrigger>
+          <TabsTrigger value="findability">Flyer check</TabsTrigger>
         </TabsList>
 
         <TabsContent value="specs" className="mt-0 focus-visible:outline-none">
@@ -53,6 +55,10 @@ export default function SpecWorkbench() {
 
         <TabsContent value="ranking" className="mt-0 focus-visible:outline-none">
           <SearchTuning />
+        </TabsContent>
+
+        <TabsContent value="findability" className="mt-0 focus-visible:outline-none">
+          <FindabilityPanel />
         </TabsContent>
 
         <TabsContent value="catalogue" className="mt-0 focus-visible:outline-none">

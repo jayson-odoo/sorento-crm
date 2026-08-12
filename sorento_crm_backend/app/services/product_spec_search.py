@@ -21,9 +21,12 @@ Ticket: jayson-odoo/sorento-crm#76.
 """
 from __future__ import annotations
 
+import json
 import re
 from decimal import Decimal
 
+from sqlalchemy import cast, func, literal, or_
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from app.models.product import Product, ProductCategory
@@ -61,6 +64,18 @@ RELEVANCE_FLOOR = 1.5
 # Small on purpose: it orders products that all genuinely match, and must never
 # outweigh a product matching one more spec.
 _EXACTNESS_MARGIN = 0.02
+
+
+def _states(actual, target) -> bool:
+    """Does the stored value say `target`?
+
+    A stored value may be a LIST: SRTWT9605-RG is "Rose Gold + Matt Black", two finishes
+    on one product, and a customer asking for either is right. Scalars behave exactly as
+    before.
+    """
+    if isinstance(actual, (list, tuple, set)):
+        return any(str(a).strip().lower() == str(target).strip().lower() for a in actual)
+    return str(actual).strip().lower() == str(target).strip().lower()
 
 
 def _numeric_score(target: float, actual: float, tolerance: float, decay: float) -> float:
@@ -182,7 +197,43 @@ def _extract_quantities(haystack: str) -> list[tuple[float, int, int, str]]:
     return found
 
 
-def _resolve_quantities(haystack: str, rows) -> dict[str, float]:
+# The flyer states a size as "L750 x W165 x H247mm" and a salesperson quoting a card
+# says the same thing. The letter IS the statement of which dimension it is, so reading
+# it is not the guess the binder below refuses to make.
+_LABELLED_DIM_RE = re.compile(r"(?<![A-Za-z0-9])([LWHlwh])\s*(\d+(?:\.\d+)?)\s*(?:mm)?\b")
+_LABEL_TO_KEY = {"l": "dim_length", "w": "dim_width", "h": "dim_height"}
+
+# The largest number that can still be a COUNT. A key with no unit counts things -
+# towel bars, bowls, ways - and "grab bar 750mm" was binding 750 to bar_count because
+# the word "bar" sat next to it. A product with 750 bars does not exist, and the false
+# bind then PENALISED every real grab bar for not having 750 of them.
+_MAX_PLAUSIBLE_COUNT = 12
+
+# The smallest an OVERALL product dimension can plausibly be, in millimetres. The flyer
+# prints towel bars as "Length 23", meaning inches, and a bare number is read as
+# millimetres - so the card's own words asked for a 23mm towel bar and penalised every
+# real one. Deliberately limited to the three envelope dimensions: an 8mm thickness or a
+# 32mm trap is a perfectly ordinary measurement.
+_MIN_PLAUSIBLE_ENVELOPE_MM = 50
+_ENVELOPE_KEYS = {"dim_length", "dim_width", "dim_height"}
+
+
+# Did the customer say what unit they meant?
+_HAS_UNIT_RE = re.compile(r"(mm|cm|m|inch|inches|in|\"|”|'')\s*$", re.IGNORECASE)
+
+
+def _labelled_dimensions(haystack: str) -> dict[str, float]:
+    """Sizes the phrase labels for itself: L750 x W165 x H247mm."""
+    found: dict[str, float] = {}
+    for match in _LABELLED_DIM_RE.finditer(haystack):
+        key = _LABEL_TO_KEY[match.group(1).lower()]
+        found.setdefault(key, float(match.group(2)))
+    return found
+
+
+def _resolve_quantities(
+    haystack: str, rows, consumed: list[tuple[int, int]] | None = None
+) -> dict[str, float]:
     """Bind numbers in the phrase onto the numeric key whose own word sits nearest.
 
     Nothing here guesses. A quantity is only claimed when a key's synonym is within
@@ -192,7 +243,18 @@ def _resolve_quantities(haystack: str, rows) -> dict[str, float]:
     is exactly the kind of guess that puts a wrong product in front of a customer.
     """
     quantities = _extract_quantities(haystack)
-    if not quantities:
+    # Numbers another spec already claimed in words. "S/Steel 304" states a steel grade,
+    # and once the towel bar's own "Length 23" was rejected as too small to be
+    # millimetres, 304 was the next number near the word "length" - so the grade became
+    # the length. A number can only mean one thing.
+    if consumed:
+        quantities = [
+            q
+            for q in quantities
+            if not any(start <= q[1] and q[2] <= end for start, end in consumed)
+        ]
+    labelled = _labelled_dimensions(haystack)
+    if not quantities and not labelled:
         return {}
 
     numeric_keys = [r for r in rows if r.data_type == "numeric"]
@@ -208,11 +270,30 @@ def _resolve_quantities(haystack: str, rows) -> dict[str, float]:
                     # Distance from the word to the number, in either direction.
                     distance = start - anchor.end() if start >= anchor.end() else anchor.start() - end
                     if 0 <= distance <= _QUANTITY_BINDING_WINDOW:
+                        # A key with no unit counts things. 750 is not a count of
+                        # anything, and binding it anyway turned "grab bar 750mm" into
+                        # a search for a bar with 750 bars.
+                        if row.unit is None and (
+                            value > _MAX_PLAUSIBLE_COUNT or value != int(value)
+                        ):
+                            continue
+                        # Stated without a unit and too small to be millimetres: the
+                        # number is in some other unit and we do not know which.
+                        if (
+                            row.spec_key in _ENVELOPE_KEYS
+                            and value < _MIN_PLAUSIBLE_ENVELOPE_MM
+                            and not _HAS_UNIT_RE.search(_evidence)
+                        ):
+                            continue
                         current = claimed.get(row.spec_key)
                         if current is None or distance < current[0]:
                             claimed[row.spec_key] = (distance, value)
 
-    return {key: value for key, (_, value) in claimed.items()}
+    resolved = {key: value for key, (_, value) in claimed.items()}
+    # A size the phrase labelled for itself wins: "L750" says length outright, where the
+    # binder above only ever inferred it from a nearby word.
+    resolved.update(labelled)
+    return resolved
 
 
 def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
@@ -234,6 +315,9 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
     rows = active_registry(db)
 
     candidates: list[tuple[int, str, str]] = []
+    # Where a spec was stated in words, so a number inside those words is not also
+    # free to be read as a measurement.
+    spoken_spans: dict[tuple[str, str], list[tuple[int, int]]] = {}
     for row in rows:
         for value, synonyms in merged_synonyms(row).items():
             # `_self` names the key, not a value. Reading it as one would resolve
@@ -244,8 +328,12 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
                 phrase = str(synonym).lower().strip()
                 if not phrase:
                     continue
-                if re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", haystack):
+                hits = list(re.finditer(rf"(?<!\w){re.escape(phrase)}(?!\w)", haystack))
+                if hits:
                     candidates.append((len(phrase), row.spec_key, value))
+                    spoken_spans.setdefault((row.spec_key, value), []).extend(
+                        (m.start(), m.end()) for m in hits
+                    )
 
     # One value per key: the longest phrase that matched wins, so a specific reading
     # beats a generic one that happens to be a substring of the same words.
@@ -274,11 +362,69 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
     # direct statement, a nearby number is an inference about which measurement was
     # meant.
     already = {entry["key"] for entry in resolved}
-    for key, value in _resolve_quantities(haystack, rows).items():
+    consumed = [
+        span
+        for key, (_, value) in best.items()
+        for span in spoken_spans.get((key, value), [])
+    ]
+    for key, value in _resolve_quantities(haystack, rows, consumed).items():
         if key not in already:
             resolved.append({"key": key, "value": value})
 
     return resolved
+
+
+def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: list[str] | None = None) -> dict:
+    """The described set as a MEMBERSHIP clause — shape B's filter leg.
+
+    Class-only by decision: class coverage is broad, so a class filter is safe;
+    spec-VALUE derivation is partial, so a value filter silently undercounts, and
+    numeric entries carry ops (at_least, tolerance windows) that have no boolean
+    meaning. Non-class entries are dropped here and still reach the ranker as
+    boosts, so the customer's number is heard, just not membership-defining.
+
+    Three verdicts per word, because n8n renders them differently:
+      - names a class            -> membership
+      - names a known spec value -> dropped (recognized, boost-only)
+      - names nothing            -> `unrecognized_terms` (clarify, never "none")
+
+    Returns `{"clause", "class_labels", "unrecognized_terms"}`; `clause` is a
+    predicate over `ProductSpecifications.values`, or None when no class was named.
+    """
+    free_terms = [t for t in (free_terms or []) if t and t.strip()]
+
+    labels: set[str] = set()
+    for entry in specs or []:
+        if entry.get("key") == "class" and entry.get("value"):
+            labels.add(str(entry["value"]))
+
+    unrecognized: list[str] = []
+    for term in free_terms:
+        classes = resolve_classes_for_term(db, term)
+        if classes:
+            labels.update(classes)
+        elif not resolve_terms_to_specs(db, [term]):
+            unrecognized.append(term)
+
+    clause = None
+    if labels:
+        # Scalar branch is case-insensitive, matching the ranker's `_states`. The
+        # containment branch (case-sensitive, against the stored spelling the
+        # resolvers returned) exists because a value may be a LIST — two finishes
+        # on one product — and `#>>` renders a list as its JSON text.
+        lowered = [label.lower() for label in labels]
+        scalar = func.lower(ProductSpecifications.values["class"]["value"].astext).in_(lowered)
+        contained = [
+            ProductSpecifications.values["class"]["value"].op("@>")(cast(literal(json.dumps(label)), JSONB))
+            for label in sorted(labels)
+        ]
+        clause = or_(scalar, *contained)
+
+    return {
+        "clause": clause,
+        "class_labels": sorted(labels),
+        "unrecognized_terms": unrecognized,
+    }
 
 
 def _is_excluded(values: dict, exclusions: list[dict]) -> bool:
@@ -293,7 +439,8 @@ def _is_excluded(values: dict, exclusions: list[dict]) -> bool:
         actual = stored.get("value")
         if actual is None:
             continue
-        if str(actual).strip().lower() == str(refused).strip().lower():
+        # A two-tone product holding a refused tone is still refused.
+        if _states(actual, refused):
             return True
     return False
 
@@ -326,11 +473,16 @@ def search_specs(
     free_terms: list[str] | None = None,
     limit: int | None = None,
     floor: float | None = None,
+    product_ids: list[str] | None = None,
 ) -> dict:
     """Rank the catalog against extracted specs. Returns candidates and a floor verdict.
 
     `exclusions` are specs the customer refused. They are a filter rather than a
     negative weight: see the comment at the candidate loop.
+
+    `product_ids` restricts ranking to a caller-supplied whitelist (shape B's
+    stage 2: membership was decided in SQL, the ranker only ORDERS what already
+    qualifies). None means the whole catalog; an empty list ranks nothing.
     """
     specs = specs or []
     exclusions = exclusions or []
@@ -389,13 +541,17 @@ def search_specs(
         for label in resolve_classes_for_term(db, term)
     }
 
-    rows = (
+    candidate_query = (
         db.query(ProductSpecifications, Product, ProductCategory)
         .join(Product, Product.id == ProductSpecifications.product_id)
         .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
         .filter(Product.is_active.is_(True))
-        .all()
     )
+    if product_ids is not None:
+        candidate_query = candidate_query.filter(
+            ProductSpecifications.product_id.in_(list(product_ids))
+        )
+    rows = candidate_query.all()
 
     wanted_terms: set[str] = set()
     for term in free_terms:
@@ -464,11 +620,15 @@ def search_specs(
             if (provenance.get(key) or {}).get("source") == "flyer":
                 weight *= flyer_source_boost
             if key == "class":
-                if str(actual).lower() == str(target).lower():
+                if _states(actual, target):
                     score += class_boost
                     evidence += class_boost
                     matched.append(key)
-            elif isinstance(actual, (int, float, Decimal)) and isinstance(target, (int, float, Decimal)):
+            elif (
+                isinstance(actual, (int, float, Decimal))
+                and isinstance(target, (int, float, Decimal))
+                and not isinstance(actual, bool)
+            ):
                 tolerance, decay = match_windows.get(key, (0.0, 0.0))
                 # "above 900mm" is a THRESHOLD, not an approximate equality. Scored as
                 # equality, a 960mm basin sat 60mm from the target and a 850mm one sat
@@ -494,7 +654,7 @@ def search_specs(
                     # merely scored zero on bowl_count and still won on its other
                     # signals, which is what put it above real double-bowl sinks.
                     penalty += mismatch_penalty
-            elif str(actual).lower() == str(target).lower():
+            elif _states(actual, target):
                 score += weight
                 evidence += weight
                 matched.append(key)

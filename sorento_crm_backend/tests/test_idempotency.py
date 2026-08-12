@@ -32,6 +32,15 @@ def client():
         state["n"] += 1
         return JSONResponse(status_code=500, content={"ran": state["n"]})
 
+    # Allowlisted but answers 202 (a deferred form action) → must NOT be cached.
+    # The regression this pins: approve → undo → approve within the dedupe window
+    # returned the FIRST 202 from cache, so the second action was never parked and
+    # the countdown banner never re-appeared (PLAN-form-sla-undo.md).
+    @app.post("/api/v1/procurement/purchase-requests/{rid}/approval-decision")
+    async def decide(rid: str):
+        state["n"] += 1
+        return JSONResponse(status_code=202, content={"deferred": True, "ran": state["n"]})
+
     # NOT allowlisted (a create) → must run every time.
     @app.post("/api/v1/procurement/purchase-requests")
     async def create(payload: dict = Body(default={})):
@@ -87,3 +96,15 @@ def test_5xx_not_cached(client):
     r2 = client.post(url, headers=h)
     assert r1.status_code == 500 and r2.status_code == 500
     assert client.counter["n"] == 2               # error not cached → retry re-ran
+
+
+def test_202_deferred_not_cached(client):
+    """A 202 promises future work, not a result - replaying it from cache means the
+    second click parks NOTHING while telling the user it did."""
+    h = _auth()
+    url = "/api/v1/procurement/purchase-requests/zz/approval-decision"
+    r1 = client.post(url, headers=h)
+    r2 = client.post(url, headers=h)
+    assert r1.status_code == 202 and r2.status_code == 202
+    assert client.counter["n"] == 2               # both requests really ran
+    assert r2.headers.get("idempotent-replay") is None

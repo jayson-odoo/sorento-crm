@@ -223,6 +223,7 @@ export default function Page() {
         : NO_DEFAULT_SUPPLIER_VALUE,
     defaultProductStandardLeadTimeDays: settings?.defaultProductStandardLeadTimeDays ?? 90,
     takeoverCooldownSeconds: settings?.takeoverCooldownSeconds ?? 60,
+    formSlaGraceSeconds: settings?.formSlaGraceSeconds ?? 0,
     purchaseRequestDefaultApproverUserId:
       settings?.purchaseRequestDefaultApproverUserId &&
       settings.purchaseRequestDefaultApproverUserId.length > 0
@@ -272,6 +273,7 @@ export default function Page() {
           : NO_DEFAULT_SUPPLIER_VALUE,
       defaultProductStandardLeadTimeDays: settings.defaultProductStandardLeadTimeDays ?? 90,
       takeoverCooldownSeconds: settings.takeoverCooldownSeconds ?? 60,
+      formSlaGraceSeconds: settings.formSlaGraceSeconds ?? 0,
       purchaseRequestDefaultApproverUserId:
         settings.purchaseRequestDefaultApproverUserId &&
         settings.purchaseRequestDefaultApproverUserId.length > 0
@@ -305,6 +307,7 @@ export default function Page() {
             : values.defaultProductSupplierId,
         default_product_standard_lead_time_days: values.defaultProductStandardLeadTimeDays,
         takeover_cooldown_seconds: values.takeoverCooldownSeconds,
+        form_sla_grace_seconds: values.formSlaGraceSeconds,
         purchase_request_default_approver_user_id:
           values.purchaseRequestDefaultApproverUserId === NO_DEFAULT_APPROVER_VALUE
             ? null
@@ -831,6 +834,37 @@ export default function Page() {
                   <FormDescription>
                     Delay before a takeover commits, during which the original assignee can reject
                     and the initiator can cancel. Set to 0 to take over instantly.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="formSlaGraceSeconds"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Undo grace window (seconds)</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={600}
+                      value={field.value}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === '') return;
+                        const n = parseInt(v, 10);
+                        if (!Number.isNaN(n)) field.onChange(n);
+                      }}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Default wait before an in-app form action applies, for every SLA stage that
+                    does not set its own. During the wait nothing is written and nobody is
+                    notified, so the person who clicked can take it back. 0 disables the wait
+                    everywhere except stages that override it.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

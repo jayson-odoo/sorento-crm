@@ -13,13 +13,15 @@ when a product person types real phrases and says which results are wrong.
 """
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, text as sql_text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
+from app.models.product_spec import ProductFindabilityResult, ProductFindabilityRun
+from app.services.spec_findability import run_findability
 from app.models.product import Product, ProductCategory
 from app.models.product_spec import (
     ProductSpecRegistry,
@@ -533,5 +535,165 @@ async def preview_spec_search(
                 else None
             ),
         }
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+# --- Findability: can a customer find this product by describing it? ---------------
+#
+# The business's own test, automated. Open a flyer, read a card, say what is printed on
+# it, expect that product back. Run per flyer so the Cabana and Mocha flyers that follow
+# are new rows rather than new code.
+
+
+@router.get("/findability/flyers")
+def list_flyers(
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.view")),
+    db: Session = Depends(get_db),
+):
+    """Every flyer we hold card text for, and whether it has been swept."""
+    try:
+        rows = db.execute(
+            sql_text(
+                "SELECT f.source_id, f.source_label, COUNT(DISTINCT f.product_code) AS cards,"
+                "       MAX(r.created_at) AS last_run"
+                "  FROM product_flyer_text f"
+                "  LEFT JOIN product_findability_runs r ON r.source_id = f.source_id"
+                " GROUP BY f.source_id, f.source_label"
+                " ORDER BY f.source_label"
+            )
+        ).fetchall()
+        return {
+            "flyers": [
+                {
+                    "source_id": r.source_id,
+                    "source_label": r.source_label,
+                    "cards": r.cards,
+                    "last_run": r.last_run.isoformat() if r.last_run else None,
+                }
+                for r in rows
+            ]
+        }
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+def _sweep_in_background(source_id: str | None, window: int, limit: int | None) -> None:
+    """Its own session: the request that started this is long gone."""
+    from app.database import SessionLocal
+
+    with SessionLocal() as session:
+        try:
+            run_findability(session, source_id=source_id, window=window, limit=limit)
+        except Exception as exc:  # noqa: BLE001 - recorded on the run, not swallowed
+            logging.exception("findability sweep failed")
+            session.rollback()
+            latest = (
+                session.query(ProductFindabilityRun)
+                .order_by(ProductFindabilityRun.created_at.desc())
+                .first()
+            )
+            if latest and latest.status == "running":
+                latest.status = "failed"
+                latest.error = str(exc)[:2000]
+                session.commit()
+
+
+@router.post("/findability/run")
+def start_findability_run(
+    background: BackgroundTasks,
+    source_id: str | None = Query(None, description="Which flyer. Omitted means all."),
+    window: int = Query(25, ge=1, le=100),
+    limit: int | None = Query(None, description="First N cards only, for a quick look."),
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
+    db: Session = Depends(get_db),
+):
+    """Start a sweep. Returns immediately; a full flyer takes about half an hour."""
+    try:
+        background.add_task(_sweep_in_background, source_id, window, limit)
+        return {"started": True, "source_id": source_id}
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/findability/runs")
+def list_findability_runs(
+    source_id: str | None = Query(None),
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.view")),
+    db: Session = Depends(get_db),
+):
+    """Past sweeps, newest first. The comparison is the point."""
+    try:
+        query = db.query(ProductFindabilityRun)
+        if source_id:
+            query = query.filter(ProductFindabilityRun.source_id == source_id)
+        runs = query.order_by(ProductFindabilityRun.created_at.desc()).limit(30).all()
+        return {
+            "runs": [
+                {
+                    "id": r.id,
+                    "source_label": r.source_label,
+                    "window": r.window,
+                    "cards": r.cards,
+                    "found_by_card": r.found_by_card,
+                    "found_by_specs": r.found_by_specs,
+                    "not_found": r.not_found,
+                    "status": r.status,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                }
+                for r in runs
+            ]
+        }
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/findability/runs/{run_id}")
+def findability_run_detail(
+    run_id: str,
+    boundary: str | None = Query(None, description="Filter, e.g. 'none' for the gaps."),
+    q: str | None = Query(None, description="Product code contains."),
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.view")),
+    db: Session = Depends(get_db),
+):
+    """One sweep, card by card, with every angle that was tried."""
+    try:
+        run = db.query(ProductFindabilityRun).filter_by(id=run_id).first()
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        query = db.query(ProductFindabilityResult).filter_by(run_id=run_id)
+        if boundary:
+            query = query.filter(ProductFindabilityResult.boundary == boundary)
+        if q:
+            query = query.filter(ProductFindabilityResult.product_code.ilike(f"%{q}%"))
+        results = query.order_by(ProductFindabilityResult.product_code).all()
+
+        return {
+            "run": {
+                "id": run.id,
+                "source_label": run.source_label,
+                "window": run.window,
+                "cards": run.cards,
+                "found_by_card": run.found_by_card,
+                "found_by_specs": run.found_by_specs,
+                "not_found": run.not_found,
+                "status": run.status,
+                "error": run.error,
+                "created_at": run.created_at.isoformat() if run.created_at else None,
+            },
+            "results": [
+                {
+                    "product_code": r.product_code,
+                    "is_discontinued": r.is_discontinued,
+                    "phrase": r.phrase,
+                    "boundary": r.boundary,
+                    "ranks": r.ranks or {},
+                }
+                for r in results
+            ],
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))

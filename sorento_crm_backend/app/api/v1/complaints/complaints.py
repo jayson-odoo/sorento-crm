@@ -2,6 +2,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body, File, UploadFile
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional, Union, List, Any
 from app.database import get_db
@@ -1289,14 +1290,27 @@ async def approve_complaint(
     try:
         validate_uuid_path(complaint_id, resource="Complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
+        from app.services.form_action_dispatch import dispatch_or_defer
+
         service = ComplaintService(db)
-        service.decide_complaint(
-            complaint_id,
-            "approved",
-            respond_user_id=respond_user_id,
-            request_url=str(request.url) if request else "",
-            crm_sender_user_id=current_user.get("id"),
+        outcome = dispatch_or_defer(
+            db,
+            current_user,
+            request,
+            action_key="cx.decide",
+            entity_type="complaint",
+            entity_id=complaint_id,
+            payload={
+                "complaint_id": complaint_id,
+                "decision": "approved",
+                "respond_user_id": respond_user_id,
+                "request_url": str(request.url) if request else "",
+                "crm_sender_user_id": current_user.get("id"),
+            },
+            event_name="approved",
         )
+        if isinstance(outcome, JSONResponse):
+            return outcome
         db.commit()
         return service.get_complaint_with_attachments(complaint_id)
     except HTTPException:
@@ -1322,15 +1336,28 @@ async def reject_complaint(
     try:
         validate_uuid_path(complaint_id, resource="Complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
+        from app.services.form_action_dispatch import dispatch_or_defer
+
         service = ComplaintService(db)
-        service.decide_complaint(
-            complaint_id,
-            "rejected",
-            respond_user_id=respond_user_id,
-            request_url=str(request.url) if request else "",
-            crm_sender_user_id=current_user.get("id"),
-            rejection_reason=payload.rejection_reason,
+        outcome = dispatch_or_defer(
+            db,
+            current_user,
+            request,
+            action_key="cx.decide",
+            entity_type="complaint",
+            entity_id=complaint_id,
+            payload={
+                "complaint_id": complaint_id,
+                "decision": "rejected",
+                "respond_user_id": respond_user_id,
+                "request_url": str(request.url) if request else "",
+                "crm_sender_user_id": current_user.get("id"),
+                "rejection_reason": payload.rejection_reason,
+            },
+            event_name="rejected",
         )
+        if isinstance(outcome, JSONResponse):
+            return outcome
         db.commit()
         return service.get_complaint_with_attachments(complaint_id)
     except HTTPException:
@@ -1360,13 +1387,27 @@ async def process_complaint_by_cs(
     try:
         validate_uuid_path(complaint_id, resource="Complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
+        from app.services.form_action_dispatch import dispatch_or_defer
+
         service = ComplaintService(db)
-        service.mark_processed_by_cs(
-            complaint_id,
-            note=payload.note,
-            respond_user_id=respond_user_id,
-            crm_sender_user_id=current_user.get("id"),
+        outcome = dispatch_or_defer(
+            db,
+            current_user,
+            request,
+            action_key="cx.finalize",
+            entity_type="complaint",
+            entity_id=complaint_id,
+            payload={
+                "complaint_id": complaint_id,
+                "new_status": "processed_by_cs",
+                "note": payload.note,
+                "respond_user_id": respond_user_id,
+                "crm_sender_user_id": current_user.get("id"),
+            },
+            event_name="resolved",
         )
+        if isinstance(outcome, JSONResponse):
+            return outcome
         db.commit()
         return service.get_complaint_with_attachments(complaint_id)
     except HTTPException:
@@ -1396,13 +1437,27 @@ async def close_complaint(
     try:
         validate_uuid_path(complaint_id, resource="Complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
+        from app.services.form_action_dispatch import dispatch_or_defer
+
         service = ComplaintService(db)
-        service.close_complaint(
-            complaint_id,
-            note=payload.note,
-            respond_user_id=respond_user_id,
-            crm_sender_user_id=current_user.get("id"),
+        outcome = dispatch_or_defer(
+            db,
+            current_user,
+            request,
+            action_key="cx.finalize",
+            entity_type="complaint",
+            entity_id=complaint_id,
+            payload={
+                "complaint_id": complaint_id,
+                "new_status": "closed",
+                "note": payload.note,
+                "respond_user_id": respond_user_id,
+                "crm_sender_user_id": current_user.get("id"),
+            },
+            event_name="resolved",
         )
+        if isinstance(outcome, JSONResponse):
+            return outcome
         db.commit()
         return service.get_complaint_with_attachments(complaint_id)
     except HTTPException:

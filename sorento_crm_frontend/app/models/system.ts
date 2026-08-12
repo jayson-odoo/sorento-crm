@@ -33,6 +33,8 @@ export interface SystemSetting {
 
   /** Takeover cooldown window in seconds (0 = instant takeover). */
   takeoverCooldownSeconds?: number;
+  /** Global default undo grace window for form-SLA actions, in seconds. */
+  formSlaGraceSeconds?: number;
 
   /** System default approver for procurement "Send for approval" (skips chooser when set). */
   purchaseRequestDefaultApproverUserId?: string | null;

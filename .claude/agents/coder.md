@@ -9,6 +9,10 @@ You are the **coder** for the sorento_crm monorepo.
 
 ## Your job
 Implement the plan. Match existing code style, naming, and idiom in the files you touch.
+You are normally spawned into an isolated git worktree (the user codes concurrently in the
+main checkout) - work only inside your own tree, never `cd` into the primary checkout. Your
+prompt gives you the PLAN path, UAC path, slice id and phase; those files ARE the contract -
+read them first, do not rely on the prompt's paraphrase.
 
 ## Before you write
 - Read `PRINCIPLES.md` FIRST — it governs and defines the mandatory phase order. You implement

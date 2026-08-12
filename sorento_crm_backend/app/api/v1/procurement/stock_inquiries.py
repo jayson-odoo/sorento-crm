@@ -2,6 +2,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body, Response, File, UploadFile
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
@@ -504,16 +505,30 @@ async def update_stock_inquiry_and_reply(
         validate_uuid_path(inquiry_id, resource="Stock Inquiry")
         assert_can_act_on_form(db, inquiry_id, current_user, source_entity_type="stock_inquiry")
         respond_user_id = _respond_user_id_from_current_user(current_user)
-        service = StockInquiryService(db)
-        inquiry = service.update_inquiry_and_reply(
-            inquiry_id,
-            inquiry_data,
-            respond_user_id=respond_user_id,
-            request_url=str(request.url) if request else "",
-            crm_sender_user_id=current_user.get("id"),
+        from app.services.form_action_dispatch import dispatch_or_defer
+
+        outcome = dispatch_or_defer(
+            db,
+            current_user,
+            request,
+            action_key="si.purchasing_respond",
+            entity_type="stock_inquiry",
+            entity_id=inquiry_id,
+            payload={
+                "inquiry_id": inquiry_id,
+                # Parked in JSONB, so it must go in as a plain dict; the runner
+                # rehydrates it back into StockInquiryUpdate before calling the service.
+                "inquiry_data": inquiry_data.model_dump(mode="json", exclude_unset=True),
+                "respond_user_id": respond_user_id,
+                "request_url": str(request.url) if request else "",
+                "crm_sender_user_id": current_user.get("id"),
+            },
+            event_name="purchasing_respond",
         )
+        if isinstance(outcome, JSONResponse):
+            return outcome
         db.commit()
-        return inquiry
+        return outcome
     except HTTPException:
         raise
     except Exception as e:
@@ -550,6 +565,7 @@ async def submit_stock_inquiry_for_project_sales(
 )
 async def project_sales_approve_stock_inquiry(
     inquiry_id: str,
+    request: Request,
     current_user: dict = Depends(require_permission("procurement.stock_inquiries.project_sales_approve")),
     db: Session = Depends(get_db),
 ):
@@ -557,6 +573,8 @@ async def project_sales_approve_stock_inquiry(
     assert_can_act_on_form(db, inquiry_id, current_user, source_entity_type="stock_inquiry")
     try:
         validate_uuid_path(inquiry_id, resource="Stock Inquiry")
+        from app.services.form_action_dispatch import dispatch_or_defer
+
         service = StockInquiryService(db)
         user_id = (current_user or {}).get("id")
         respond_user_id = (
@@ -564,13 +582,24 @@ async def project_sales_approve_stock_inquiry(
             or (current_user or {}).get("respondUserId")
             or user_id
         )
-        inquiry = service.project_sales_approve_inquiry(
-            inquiry_id,
-            actor_user_id=user_id,
-            crm_sender_user_id=user_id,
-            respond_user_id_fallback=str(respond_user_id or ""),
+        outcome = dispatch_or_defer(
+            db,
+            current_user,
+            request,
+            action_key="si.project_sales_approve",
+            entity_type="stock_inquiry",
+            entity_id=inquiry_id,
+            payload={
+                "inquiry_id": inquiry_id,
+                "actor_user_id": user_id,
+                "crm_sender_user_id": user_id,
+                "respond_user_id_fallback": str(respond_user_id or ""),
+            },
+            event_name="project_sales_approve",
         )
-        return inquiry
+        # Deferred => the 202 JSONResponse; immediate => the service's inquiry, exactly
+        # what this route returned before.
+        return outcome
     except HTTPException:
         raise
     except Exception as e:
@@ -584,6 +613,7 @@ async def project_sales_approve_stock_inquiry(
 )
 async def project_sales_reject_stock_inquiry(
     inquiry_id: str,
+    request: Request,
     body: Optional[StockInquiryRejectReopenRequest] = Body(None),
     current_user: dict = Depends(require_permission("procurement.stock_inquiries.project_sales_reject")),
     db: Session = Depends(get_db),
@@ -592,6 +622,8 @@ async def project_sales_reject_stock_inquiry(
     assert_can_act_on_form(db, inquiry_id, current_user, source_entity_type="stock_inquiry")
     try:
         validate_uuid_path(inquiry_id, resource="Stock Inquiry")
+        from app.services.form_action_dispatch import dispatch_or_defer
+
         service = StockInquiryService(db)
         reason = body.reason if body else None
         user_id = (current_user or {}).get("id")
@@ -600,13 +632,24 @@ async def project_sales_reject_stock_inquiry(
             or (current_user or {}).get("respondUserId")
             or user_id
         )
-        service.project_sales_reject_inquiry(
-            inquiry_id,
-            reason=reason,
-            user_id=user_id,
-            crm_sender_user_id=user_id,
-            respond_user_id_fallback=str(respond_user_id or ""),
+        outcome = dispatch_or_defer(
+            db,
+            current_user,
+            request,
+            action_key="si.project_sales_reject",
+            entity_type="stock_inquiry",
+            entity_id=inquiry_id,
+            payload={
+                "inquiry_id": inquiry_id,
+                "reason": reason,
+                "user_id": user_id,
+                "crm_sender_user_id": user_id,
+                "respond_user_id_fallback": str(respond_user_id or ""),
+            },
+            event_name="project_sales_reject",
         )
+        if isinstance(outcome, JSONResponse):
+            return outcome
         return service.get_inquiry_for_response(inquiry_id)
     except HTTPException:
         raise
@@ -621,6 +664,7 @@ async def project_sales_reject_stock_inquiry(
 )
 async def purchasing_reject_stock_inquiry(
     inquiry_id: str,
+    request: Request,
     body: Optional[StockInquiryRejectReopenRequest] = Body(None),
     current_user: dict = Depends(require_permission("procurement.stock_inquiries.purchasing_reject")),
     db: Session = Depends(get_db),
@@ -629,6 +673,8 @@ async def purchasing_reject_stock_inquiry(
     assert_can_act_on_form(db, inquiry_id, current_user, source_entity_type="stock_inquiry")
     try:
         validate_uuid_path(inquiry_id, resource="Stock Inquiry")
+        from app.services.form_action_dispatch import dispatch_or_defer
+
         service = StockInquiryService(db)
         reason = body.reason if body else None
         user_id = (current_user or {}).get("id")
@@ -637,13 +683,24 @@ async def purchasing_reject_stock_inquiry(
             or (current_user or {}).get("respondUserId")
             or user_id
         )
-        service.purchasing_reject_inquiry(
-            inquiry_id,
-            reason=reason,
-            user_id=user_id,
-            crm_sender_user_id=user_id,
-            respond_user_id_fallback=str(respond_user_id or ""),
+        outcome = dispatch_or_defer(
+            db,
+            current_user,
+            request,
+            action_key="si.purchasing_decide",
+            entity_type="stock_inquiry",
+            entity_id=inquiry_id,
+            payload={
+                "inquiry_id": inquiry_id,
+                "reason": reason,
+                "user_id": user_id,
+                "crm_sender_user_id": user_id,
+                "respond_user_id_fallback": str(respond_user_id or ""),
+            },
+            event_name="purchasing_decide",
         )
+        if isinstance(outcome, JSONResponse):
+            return outcome
         return service.get_inquiry_for_response(inquiry_id)
     except HTTPException:
         raise
