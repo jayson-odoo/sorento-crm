@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 
 import { RevisionsSection } from './RevisionsSection';
 import type { FormRevisionEntry } from './RevisionTimeline';
@@ -22,6 +22,7 @@ function entry(overrides: Partial<FormRevisionEntry> = {}): FormRevisionEntry {
     voided_assignee_name: overrides.voided_assignee_name ?? null,
     voided_stages: overrides.voided_stages ?? null,
     changes: overrides.changes ?? [],
+    snapshot_fields: overrides.snapshot_fields ?? null,
   };
 }
 
@@ -239,6 +240,59 @@ describe('RevisionsSection', () => {
     expect(
       screen.queryByText(/4f1c0b2e-1111-2222-3333-444455556666/),
     ).not.toBeInTheDocument();
+  });
+
+  /**
+   * The captain's ask: not just the diff, the EXACT form at each version. Every
+   * entry carrying a labeled snapshot offers "View full form", and the dialog
+   * renders that entry's own values - the superseded ones, not today's.
+   */
+  it('opens the full form of a chosen revision, rendered from its snapshot', () => {
+    render(
+      <RevisionsSection
+        entries={[
+          entry({
+            snapshot_fields: [
+              { field: 'product_code', label: 'Product code', value: 'SRT-OLD' },
+              { field: 'quantity', label: 'Quantity', value: '5' },
+            ],
+          }),
+          entry({
+            id: 'rev-1',
+            version_no: 1,
+            revision_no: 1,
+            kind: 'revision',
+            label: 'Revision 1',
+            snapshot_fields: [
+              { field: 'product_code', label: 'Product code', value: 'SRT-NEW' },
+              { field: 'quantity', label: 'Quantity', value: '8' },
+            ],
+          }),
+        ]}
+      />,
+    );
+
+    const buttons = screen.getAllByTestId('revision-view-form');
+    expect(buttons).toHaveLength(2);
+
+    // Open the ORIGINAL: it must show its own superseded values.
+    fireEvent.click(buttons[0]);
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Product code')).toBeInTheDocument();
+    expect(within(dialog).getByText('SRT-OLD')).toBeInTheDocument();
+    expect(within(dialog).queryByText('SRT-NEW')).toBeNull();
+  });
+
+  it('offers no full-form view for an entry without a snapshot payload', () => {
+    render(
+      <RevisionsSection
+        entries={[
+          entry(),
+          entry({ id: 'r1', version_no: 1, revision_no: 1, label: 'Revision 1' }),
+        ]}
+      />,
+    );
+    expect(screen.queryAllByTestId('revision-view-form')).toHaveLength(0);
   });
 
   it('shows a loading state instead of the empty state while fetching', () => {

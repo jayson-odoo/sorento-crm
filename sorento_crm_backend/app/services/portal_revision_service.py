@@ -45,7 +45,6 @@ KIND_RESUBMISSION = "resubmission"
 
 VOID_REASON_REVISED = "revised_by_contact"
 
-REASON_MIN_LEN = 5
 REASON_MAX_LEN = 2000
 
 
@@ -120,6 +119,22 @@ class RevisionAdapter:
     # field list per type (UAC AB1); these are the read-only bits of context that
     # make a snapshot readable on its own (document number, status, line items).
     snapshot_extra_fields: tuple[str, ...] = ()
+    # The fields the PORTAL FORM of this type actually collects, in form order -
+    # what the read-only full-form viewer renders. Separate from the edit whitelist
+    # because purchase_request and sponsorship_form SHARE one whitelist tuple: read
+    # off that, a sponsorship form would show `sales_type` / `expected_po_date` and a
+    # purchase request would show `sponsor_subject` / `delivery_address`, neither of
+    # which their form ever asked for. The requestor's human-name sibling
+    # (salesperson / requested_by) stands in for the contact FK, which never renders.
+    snapshot_form_fields: tuple[str, ...] = ()
+    # Snapshot field -> lookup set_key. The stored value is the option CODE; the
+    # viewer must read the option LABEL, resolved server side so both surfaces
+    # cannot render it differently.
+    lookup_fields: dict = field(default_factory=dict)
+    # Snapshot fields holding a date, presented as DD/MM/YYYY. Named per type rather
+    # than sniffed from the value: a remark that happens to look like an ISO date is
+    # a remark, not a date.
+    date_display_fields: tuple[str, ...] = ()
     # Child lines -> list[dict]. None for a type with no lines (stock inquiry).
     serialize_lines: Optional[Callable[[Session, Any], list[dict]]] = None
     # UAC AB2: fields a revision may NEVER change. Subtracted from the payload,
@@ -147,6 +162,19 @@ _SI_ADAPTER = RevisionAdapter(
     label="stock inquiry",
     number_attr="inquiry_number",
     snapshot_extra_fields=("inquiry_number", "status"),
+    snapshot_form_fields=(
+        "product_code",
+        "item_description",
+        "quantity",
+        "delivery_date",
+        "project_customer",
+        "project_name",
+        "salesperson",
+        "remark",
+        "additional_remark",
+    ),
+    lookup_fields={},
+    date_display_fields=("delivery_date",),
     serialize_lines=None,  # a stock inquiry carries a single product, no lines
     # The requestor is the CS pin routing key: letting a revision change it silently
     # re-routes the inquiry to someone else's queue mid-life, which is a reassignment
@@ -158,6 +186,7 @@ _SI_ADAPTER = RevisionAdapter(
     status_for_stage=_si_status_for_stage,
     terminal_statuses=("rejected", "voided", "closed"),
     field_labels={
+        "inquiry_number": "Inquiry number",
         "product_code": "Product code",
         "item_description": "Item description",
         "project_customer": "Project customer",
@@ -180,6 +209,7 @@ _REQUEST_INVALIDATED = (
     "approval_signature_ref",
 )
 _REQUEST_LABELS = {
+    "request_number": "Request number",
     "customer_name": "Customer name",
     "pic": "PIC",
     "project_title": "Project title",
@@ -202,6 +232,19 @@ _PR_ADAPTER = RevisionAdapter(
     label="purchase request",
     number_attr="request_number",
     snapshot_extra_fields=("request_number", "status"),
+    snapshot_form_fields=(
+        "customer_name",
+        "pic",
+        "project_title",
+        "purpose",
+        "sales_type",
+        "expected_delivery_date",
+        "expected_po_date",
+        "requested_by",
+        "external_reference",
+    ),
+    lookup_fields={"sales_type": "procurement_sales_type"},
+    date_display_fields=("expected_delivery_date", "expected_po_date"),
     serialize_lines=_serialize_request_lines,
     frozen_on_revise=_REQUEST_FROZEN,
     invalidated_on_revise=_REQUEST_INVALIDATED,
@@ -217,6 +260,19 @@ _SF_ADAPTER = RevisionAdapter(
     label="sponsorship form",
     number_attr="request_number",
     snapshot_extra_fields=("request_number", "status"),
+    snapshot_form_fields=(
+        "customer_name",
+        "pic",
+        "delivery_address",
+        "project_title",
+        "total_project_value",
+        "sponsor_subject",
+        "sponsor_subject_other",
+        "expected_delivery_date",
+        "requested_by",
+    ),
+    lookup_fields={"sponsor_subject": "procurement_sponsor_subject"},
+    date_display_fields=("expected_delivery_date",),
     serialize_lines=_serialize_request_lines,
     frozen_on_revise=_REQUEST_FROZEN,
     invalidated_on_revise=_REQUEST_INVALIDATED,
@@ -287,6 +343,22 @@ def _jsonable(value: Any) -> Any:
 
 def _humanize(field_name: str) -> str:
     return field_name.replace("_", " ").strip().capitalize()
+
+
+def _format_display_date(value: Any) -> Optional[str]:
+    """A snapshotted date (``YYYY-MM-DD``) as the form shows it: ``DD/MM/YYYY``.
+
+    ``None`` for anything that is not one: several of these columns are free text
+    (a stock inquiry's ``delivery_date`` accepts "ASAP"), and a value that is not a
+    date must render exactly as the contact typed it.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").strftime("%d/%m/%Y")
+    except (ValueError, TypeError):
+        return None
 
 
 class PortalRevisionService:
@@ -642,6 +714,9 @@ class PortalRevisionService:
             }
         )
         urls = self._attachment_urls(rows)
+        # Option labels for the type's lookup-bound fields: one query for the whole
+        # lineage, never one per version.
+        lookup_labels = self._lookup_labels(adapter)
 
         out: list[dict] = []
         previous: Optional[dict] = None
@@ -682,10 +757,113 @@ class PortalRevisionService:
                         for entry in (row.voided_stages_json or [])
                     ],
                     "changes": self._diff(adapter, previous, snapshot),
+                    # The whole form as it stood at this version, labeled and in
+                    # form order, so either side can render it without a second
+                    # field list that would drift from the adapter's.
+                    "snapshot_fields": self._snapshot_fields(
+                        adapter, snapshot, lookup_labels
+                    ),
                 }
             )
             previous = snapshot
         return out
+
+    def _lookup_labels(self, adapter: Optional[RevisionAdapter]) -> dict:
+        """``{field: {lower(option value): option label}}`` for this type's
+        lookup-bound fields.
+
+        Read ONCE per history read, not per entry: a lineage is several versions
+        long and every one of them would otherwise re-query the same handful of
+        options. Inactive options are deliberately included - a superseded version
+        may name an option that has since been retired, and history has to render
+        the label it was chosen under rather than falling back to the raw code.
+        """
+        if adapter is None:
+            return {}
+        set_keys = {key for key in (adapter.lookup_fields or {}).values() if key}
+        if not set_keys:
+            return {}
+
+        from app.models.lookup import LookupOption, LookupSet
+
+        try:
+            rows = (
+                self.db.query(LookupSet.set_key, LookupOption.value, LookupOption.label)
+                .join(LookupOption, LookupOption.set_id == LookupSet.id)
+                .filter(LookupSet.set_key.in_(set_keys))
+                .all()
+            )
+        except Exception:  # noqa: BLE001 - a missing lookup table is not a 500
+            self.db.rollback()
+            return {}
+
+        by_set: dict[str, dict[str, str]] = {}
+        for set_key, value, label in rows:
+            by_set.setdefault(str(set_key), {})[str(value or "").strip().lower()] = label
+        return {
+            name: by_set.get(set_key, {})
+            for name, set_key in (adapter.lookup_fields or {}).items()
+        }
+
+    def _snapshot_fields(
+        self,
+        adapter: Optional[RevisionAdapter],
+        snapshot: dict,
+        lookup_labels: Optional[dict] = None,
+    ) -> list[dict]:
+        """One snapshot as an ordered ``[{field, label, value, display}]`` list -
+        the full form at that version, for the read-only revision viewer (both
+        sides).
+
+        Built at read time from the stored snapshot, never from the live row: the
+        viewer must show the form AS IT WAS. The field list is the type's OWN
+        portal form order (``snapshot_form_fields``), not the shared edit
+        whitelist, so a sponsorship form never shows purchase-request fields.
+        Contact FK columns (``*_contact_id``) never appear - the human name sits
+        in its sibling field and a raw id never reaches a screen.
+
+        ``status`` is stored but NOT rendered: the snapshot is written before the
+        post-revision status restart is applied, so it holds the superseded
+        version's status and would read as wrong information under an "as it was"
+        heading.
+
+        ``display`` is the human presentation of ``value`` (a lookup label, a
+        DD/MM/YYYY date), or ``None`` when the raw value already reads correctly.
+        Resolved here so both surfaces render the same string. ``products``
+        renders last, as the line items live at the bottom of the form itself.
+        """
+        if adapter is None:
+            return []
+        labels = lookup_labels or {}
+        fields: list[dict] = []
+
+        def _display(name: str, value: Any) -> Optional[str]:
+            if name in (adapter.lookup_fields or {}):
+                key = str(value or "").strip().lower()
+                return labels.get(name, {}).get(key) if key else None
+            if name in adapter.date_display_fields:
+                return _format_display_date(value)
+            return None
+
+        def _append(name: str) -> None:
+            value = snapshot.get(name)
+            fields.append(
+                {
+                    "field": name,
+                    "label": adapter.field_labels.get(name) or _humanize(name),
+                    "value": value,
+                    "display": _display(name, value),
+                }
+            )
+
+        _append(adapter.number_attr)
+        for name in adapter.snapshot_form_fields:
+            if name.endswith("_contact_id"):
+                continue
+            _append(name)
+        if adapter.serialize_lines is not None:
+            _append("products")
+        return fields
 
     def _attachment_urls(self, rows: list) -> dict:
         """``{attachment_id: signed url}`` for every file any snapshot references.
@@ -849,12 +1027,11 @@ class PortalRevisionService:
         if not policy.allowed:
             raise handle_unprocessable(policy.blocked_reason or _DISABLED_SENTENCE)
 
-        # 2. The reason is the only thing this journey asks for, so it is required.
+        # 2. The reason is the only thing this journey asks for, so it is required -
+        #    any non-empty length, by explicit decision (no character floor).
         reason_text = (reason or "").strip()
-        if len(reason_text) < REASON_MIN_LEN:
-            raise handle_unprocessable(
-                "Tell us what changed and why (at least 5 characters)."
-            )
+        if not reason_text:
+            raise handle_unprocessable("Tell us what changed and why.")
         if len(reason_text) > REASON_MAX_LEN:
             raise handle_unprocessable(
                 f"Keep the reason under {REASON_MAX_LEN} characters."

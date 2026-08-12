@@ -281,9 +281,9 @@ const FROZEN_ON_REVISE: Record<PortalSubmissionKind, readonly string[]> = {
 };
 
 /** Same sentence the server answers with, so a client-side block and a
- *  server-side one never read differently. */
-const REASON_TOO_SHORT = 'Tell us what changed and why (at least 5 characters).';
-const REASON_MIN_LEN = 5;
+ *  server-side one never read differently. Required but with no character
+ *  floor, by explicit decision - any non-empty reason is accepted. */
+const REASON_REQUIRED = 'Tell us what changed and why.';
 const REASON_MAX_LEN = 2000;
 
 function fieldSpansFullWidth(f: FieldDef): boolean {
@@ -757,8 +757,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       return;
     }
     const trimmed = reason.trim();
-    if (trimmed.length < REASON_MIN_LEN) {
-      setReasonError(REASON_TOO_SHORT);
+    if (!trimmed) {
+      setReasonError(REASON_REQUIRED);
       setTimeout(() => {
         const node = document.querySelector(
           '[data-field-name="revision_reason"]',

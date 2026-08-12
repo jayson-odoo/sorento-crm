@@ -1,6 +1,6 @@
 # UAC - Portal submission revisions
 
-Status: DRAFT. **Implementation on hold at the user's request** - discuss further before any code. Grilled 2026-08-10 (sections A-bis, C-bis, F-bis, F-ter, G7, I2a, J4, J5 came out of that pass), then reviewed by the user in Lavish 2026-08-10 (round 2 decisions below).
+Status: **IMPLEMENTED**, in review on PR #122. The earlier "implementation on hold at the user's request" note is superseded - the hold was lifted, the feature was built across all three adapters, and it is now in live testing. Grilled 2026-08-10 (sections A-bis, C-bis, F-bis, F-ter, G7, I2a, J4, J5 came out of that pass), then reviewed by the user in Lavish 2026-08-10 (round 2 decisions below).
 
 ## Round 2 decisions (Lavish review, 2026-08-10)
 
@@ -30,6 +30,18 @@ The user is right that **public view links are retired** - "no more system view 
 N6 itself stands, on better evidence: the **external API create endpoints** key off the document number to decide create-vs-resubmit. See the rewritten N6.
 
 Plus four review notes, folded in as ACs: revise entry point belongs in the long-press preview card (AC B6); attachments and chat stay exactly where they are today (AC H2a); the revision timeline follows the existing packing-list timeline pattern (AC G8); and the "chat can be sent from any status" permissiveness is removed rather than only fenced (section O).
+
+## Round 5 decisions (live testing on PR #122, 2026-08-13)
+
+Three changes reported by the user while testing a live stock inquiry.
+
+| # | Report | Outcome |
+|---|---|---|
+| R5-1 | *"I can see the revision history but I should be able to view the entire form in the previous revision"* | **Full-form view, portal side.** The history showed only the per-field diff. Each entry now opens the WHOLE form at that version, read-only. See AC G9. |
+| R5-2 | *"don't need this at least 5 characters limitation"* | **Minimum length removed**, both sides. Still required, still max 2000. See the rewritten D1. |
+| R5-3 | *"i supposed to be able to see the exact form across multiple revisions"* (office route) | **Same view, office side**, through the shared timeline so both sides cannot drift. See AC H6. |
+
+R5-1 and R5-3 are one capability in two places, so they ship as **one shared component** (`RevisionSnapshotDialog`), mounted by both `RevisionTimeline` (office) and `RevisionHistory` (portal). Every form type the shared timeline serves - stock inquiry, purchase request, sponsorship form - gets it at once, since all three office routes already read the same `list_revisions` payload.
 
 Slug: `portal-submission-revisions`
 Plan: `documentation/plans/PLAN-portal-submission-revisions.md`
@@ -136,7 +148,7 @@ Traceability: every AC names the journey step it serves.
 
 ### D. The reason - serves step 3
 
-- **D1** Reason is **required**, min 5 chars, max 2000. Blank or whitespace-only is rejected client- and server-side.
+- **D1** Reason is **required**, max 2000, with **no minimum length** (round 5). Blank or whitespace-only is rejected client- and server-side; any non-empty reason after trimming is accepted. The earlier "min 5 chars" floor is withdrawn at the user's request - it rejected honest short answers ("typo", "wrong qty") for no gain, since a contact intent on writing nothing useful defeats a 5-character floor anyway. Both sides answer with the same sentence, "Tell us what changed and why."
 - **D2** The reason is stored on the revision row, is immutable, and is shown verbatim in: the office banner, the office Revisions tab, the portal history, and the handler notification.
 
 ### E. Confirm before sending - serves step 4
@@ -179,6 +191,10 @@ Traceability: every AC names the journey step it serves.
 - **G5** History is strictly read-only from the portal. No edit, no delete, no re-submit-from-old-version.
 - **G6** An attachment removed during a revision is **unlinked, not destroyed**, whenever an earlier revision references it - so history previews never 404. Portal attachment delete becomes unlink-if-referenced.
 - **G8** The history renders as a **timeline**, following the existing packing-list timeline pattern (`PackingListDetail.tsx`, which also carries it as its own tab) rather than inventing a new visual language for the same idea.
+- **G9** (round 5) Every history entry whose payload carries a snapshot offers **"View full form"**, opening the **complete form as it stood at that version**, read-only: every field with its label, the line items, and the attachments as they were - including a file a later revision removed. G4's per-field diff answers "what changed"; G9 answers "what did I actually send". The diff alone cannot, because a field untouched by that revision never appears in it.
+- **G9a** The view renders **strictly from that revision's own stored snapshot**, never reconstructed from the live row. Reading today's values under an older version's heading would be a lie told confidently, which is worse than not offering the view. The `snapshot` dict already persisted per revision (G1) is sufficient - no new endpoint, no new table.
+- **G9b** The field **labels and their order come from the backend adapter** (`snapshot_fields`), the same field list that labels the diff. A second label map on the frontend would drift from the adapter the first time a field was renamed, and would then mislabel a historical record. Contact FK columns (`*_contact_id`) are omitted - the human name sits in the sibling field, and no UUID reaches a screen (cursor rule).
+- **G9c** The view is **read-only**: no inputs, no restore-from-this-version, no re-submit. G5 is unchanged.
 - **G7** Because removal unlinks, the per-entity attachment cap (`_check_quota` counts live `EntityAttachmentLink` rows) keeps counting the **current** version only. A contact revising three times does not burn a 10-file budget on files they already removed. This is a consequence of G6 and must be covered by a test, not left to luck.
 
 ### H. Revision visibility, office side - serves "what everyone else is told"
@@ -190,6 +206,8 @@ Traceability: every AC names the journey step it serves.
 - **H3a** A form can sit with **two stages open at once** (a purchase request with project sales and approval), and a revision voids all of them and tells all of their handlers (F1/F6). So the revision row records **every** voided stage - `voided_stages_json = [{stage_code, assignee_user_id}, ...]`, newest first - and the history payload exposes it as `voided_stages: [{stage_code, assignee_name}]`. The scalar `voided_stage_code` / `voided_assignee_user_id` stay populated with the newest stage, which is the common single-stage case every existing timeline renders. Recording only the newest under-reports a cancellation two people were just told about.
 - **H4** The stock inquiry **list** shows a "Rev N" badge, sourced from a denormalized `revision_no` column - no per-row query.
 - **H5** Office users cannot create, edit or delete revisions. The office side is read-only on this data.
+- **H6** (round 5) The Revisions tab offers the **same full-form view as G9**, from the **same shared component** (`RevisionSnapshotDialog`), so the office and the contact can never be shown different renderings of one stored version - the single most damaging way this feature could fail, since the two sides would be arguing about a record they see differently. It therefore lands for **every form type the shared timeline serves** (stock inquiry, purchase request, sponsorship form) in one change, not stock inquiry alone: all three office routes already read the same `list_revisions` payload.
+- **H6a** Attachments are listed **by name only** inside the view. Preview needs auth the two sides do not share (the portal passes its own token-authenticated `fetchBytes` per I2, the office uses the JWT session), and both surfaces already offer preview on the entry the view opens from - so the shared component stays free of a per-side preview path.
 
 ### I. Attachment preview in the portal - serves step 6 and every portal screen
 

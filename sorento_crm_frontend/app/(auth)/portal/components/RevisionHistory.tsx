@@ -3,11 +3,13 @@
 import { useMemo, useState } from 'react';
 import { Paperclip } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
+import { RevisionSnapshotDialog } from '@/components/common/RevisionSnapshotDialog';
 import { resolveVoidedStages } from '@/components/common/RevisionTimeline';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type {
@@ -116,6 +118,8 @@ export function RevisionHistory({
     items: AttachmentPreviewItem[];
     index: number;
   } | null>(null);
+  // The full form of one revision, opened read-only from its history entry.
+  const [snapshotEntry, setSnapshotEntry] = useState<PortalRevisionEntry | null>(null);
 
   const urlByAttachmentId = useMemo(() => {
     const out: Record<string, string> = {};
@@ -255,6 +259,23 @@ export function RevisionHistory({
                         ))}
                       </div>
                     )}
+
+                    {/* The complete form at this version, not only the change
+                        summary. Only offered when the payload carries the
+                        labeled snapshot. */}
+                    {(entry.snapshot_fields?.length ?? 0) > 0 && (
+                      <div className="pt-0.5">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setSnapshotEntry(entry)}
+                          data-testid="revision-view-form"
+                        >
+                          View full form
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 </li>
               );
@@ -269,6 +290,11 @@ export function RevisionHistory({
         items={preview?.items ?? []}
         startIndex={preview?.index ?? 0}
         fetchBytes={portalFetchBytes}
+      />
+
+      <RevisionSnapshotDialog
+        entry={snapshotEntry}
+        onOpenChange={(open) => !open && setSnapshotEntry(null)}
       />
     </Card>
   );

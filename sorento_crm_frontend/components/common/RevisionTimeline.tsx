@@ -1,7 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { RevisionSnapshotDialog } from './RevisionSnapshotDialog';
 
 /**
  * The lineage of a revisable portal submission, as one vertical timeline
@@ -37,6 +40,18 @@ export interface RevisionVoidedStage {
   assignee_name?: string | null;
 }
 
+/** One labeled field of a revision's snapshot, in form order - the backend
+ *  renders these from the adapter's own field list so neither side keeps a
+ *  second copy that could drift. `products` carries the line-item list. */
+export interface RevisionSnapshotField {
+  field: string;
+  label: string;
+  value: unknown;
+  /** Server-rendered presentation of `value` (a lookup option's label, a
+   *  DD/MM/YYYY date). Null when the raw value already reads correctly. */
+  display?: string | null;
+}
+
 export interface FormRevisionEntry {
   id: string;
   version_no: number;
@@ -57,6 +72,9 @@ export interface FormRevisionEntry {
    *  above, which `resolveVoidedStages` falls back to. */
   voided_stages?: RevisionVoidedStage[] | null;
   changes?: RevisionChange[] | null;
+  /** The whole form at this version, labeled and ordered. Optional: absent on a
+   *  payload from a backend that predates the full-form viewer. */
+  snapshot_fields?: RevisionSnapshotField[] | null;
 }
 
 /**
@@ -115,109 +133,133 @@ export interface RevisionTimelineProps {
 }
 
 export function RevisionTimeline({ entries, showVoidedStage = false }: RevisionTimelineProps) {
-  return (
-    <ol className="relative">
-      {entries.map((entry, index) => {
-        const changes = entry.changes ?? [];
-        const attachments = entry.attachments ?? [];
-        const invalidated = Object.entries(entry.invalidated ?? {}).filter(
-          ([key, value]) => INVALIDATED_LABELS[key] && value !== null && value !== '',
-        );
-        const voidedStages = resolveVoidedStages(entry);
+  // The full form of one revision, opened read-only from its timeline entry.
+  const [snapshotEntry, setSnapshotEntry] = useState<FormRevisionEntry | null>(null);
 
-        return (
-          <li key={entry.id} className="relative flex gap-4 pb-6 last:pb-0">
-            {index < entries.length - 1 && (
-              <span aria-hidden className="absolute start-[7px] top-4 h-full w-px bg-border" />
-            )}
-            <span
-              aria-hidden
-              className="relative mt-1 size-3.5 shrink-0 rounded-full bg-primary/70"
-            />
-            <div className="min-w-0 flex-1 space-y-2">
-              <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
-                <p className="text-sm font-medium break-words">{entry.label}</p>
-                {entry.submitted_at && (
-                  <p className="shrink-0 text-sm text-muted-foreground tabular-nums">
-                    {formatDateTimeInMalaysia(entry.submitted_at)}
-                  </p>
+  return (
+    <>
+      <ol className="relative">
+        {entries.map((entry, index) => {
+          const changes = entry.changes ?? [];
+          const attachments = entry.attachments ?? [];
+          const invalidated = Object.entries(entry.invalidated ?? {}).filter(
+            ([key, value]) => INVALIDATED_LABELS[key] && value !== null && value !== '',
+          );
+          const voidedStages = resolveVoidedStages(entry);
+
+          return (
+            <li key={entry.id} className="relative flex gap-4 pb-6 last:pb-0">
+              {index < entries.length - 1 && (
+                <span aria-hidden className="absolute start-[7px] top-4 h-full w-px bg-border" />
+              )}
+              <span
+                aria-hidden
+                className="relative mt-1 size-3.5 shrink-0 rounded-full bg-primary/70"
+              />
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
+                  <p className="text-sm font-medium break-words">{entry.label}</p>
+                  {entry.submitted_at && (
+                    <p className="shrink-0 text-sm text-muted-foreground tabular-nums">
+                      {formatDateTimeInMalaysia(entry.submitted_at)}
+                    </p>
+                  )}
+                </div>
+
+                {entry.submitted_by && (
+                  <p className="text-sm text-muted-foreground break-words">{entry.submitted_by}</p>
+                )}
+
+                {entry.reason ? (
+                  <p className="text-sm break-words whitespace-pre-wrap">{entry.reason}</p>
+                ) : null}
+
+                {showVoidedStage && voidedStages.length > 0 ? (
+                  <ul>
+                    {voidedStages.map((stage, stageIndex) => (
+                      <li
+                        key={`${entry.id}-voided-${stage.code}-${stageIndex}`}
+                        className="text-sm text-muted-foreground break-words"
+                        data-testid="revision-voided-stage"
+                      >
+                        {/* The label sits on the first line only, pluralised when a
+                            revision stopped more than one stage. One stage per line
+                            so a two-stage cancellation still reads at 375px. */}
+                        {stageIndex === 0
+                          ? `Voided stage${voidedStages.length > 1 ? 's' : ''}: `
+                          : ''}
+                        {humanizeStage(stage.code)}
+                        {stage.name ? ` · ${stage.name}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+
+                {changes.length > 0 && (
+                  <ul className="space-y-1">
+                    {changes.map((change) => (
+                      <li key={`${entry.id}-${change.field}`} className="text-sm break-words">
+                        <span className="text-muted-foreground">{change.label}: </span>
+                        <span className="line-through">{formatValue(change.from)}</span>
+                        <span className="text-muted-foreground"> to </span>
+                        <span className="font-medium">{formatValue(change.to)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {invalidated.length > 0 && (
+                  <ul className="space-y-1">
+                    {invalidated.map(([key, value]) => (
+                      <li key={`${entry.id}-inv-${key}`} className="text-sm break-words">
+                        <span className="text-muted-foreground">
+                          {INVALIDATED_LABELS[key]} (superseded):{' '}
+                        </span>
+                        <span className="whitespace-pre-wrap">{formatValue(value)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {attachments.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {attachments.map((attachment) => (
+                      <Badge
+                        key={`${entry.id}-${attachment.attachment_id}`}
+                        variant="secondary"
+                        className="max-w-[220px]"
+                      >
+                        <span className="truncate" title={attachment.filename ?? undefined}>
+                          {attachment.filename ?? 'Attachment'}
+                        </span>
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+
+                {/* The complete form at this version, not only the diff above.
+                    Only offered when the payload carries the labeled snapshot. */}
+                {(entry.snapshot_fields?.length ?? 0) > 0 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSnapshotEntry(entry)}
+                    data-testid="revision-view-form"
+                  >
+                    View full form
+                  </Button>
                 )}
               </div>
+            </li>
+          );
+        })}
+      </ol>
 
-              {entry.submitted_by && (
-                <p className="text-sm text-muted-foreground break-words">{entry.submitted_by}</p>
-              )}
-
-              {entry.reason ? (
-                <p className="text-sm break-words whitespace-pre-wrap">{entry.reason}</p>
-              ) : null}
-
-              {showVoidedStage && voidedStages.length > 0 ? (
-                <ul>
-                  {voidedStages.map((stage, stageIndex) => (
-                    <li
-                      key={`${entry.id}-voided-${stage.code}-${stageIndex}`}
-                      className="text-sm text-muted-foreground break-words"
-                      data-testid="revision-voided-stage"
-                    >
-                      {/* The label sits on the first line only, pluralised when a
-                          revision stopped more than one stage. One stage per line
-                          so a two-stage cancellation still reads at 375px. */}
-                      {stageIndex === 0
-                        ? `Voided stage${voidedStages.length > 1 ? 's' : ''}: `
-                        : ''}
-                      {humanizeStage(stage.code)}
-                      {stage.name ? ` · ${stage.name}` : ''}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-
-              {changes.length > 0 && (
-                <ul className="space-y-1">
-                  {changes.map((change) => (
-                    <li key={`${entry.id}-${change.field}`} className="text-sm break-words">
-                      <span className="text-muted-foreground">{change.label}: </span>
-                      <span className="line-through">{formatValue(change.from)}</span>
-                      <span className="text-muted-foreground"> to </span>
-                      <span className="font-medium">{formatValue(change.to)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {invalidated.length > 0 && (
-                <ul className="space-y-1">
-                  {invalidated.map(([key, value]) => (
-                    <li key={`${entry.id}-inv-${key}`} className="text-sm break-words">
-                      <span className="text-muted-foreground">
-                        {INVALIDATED_LABELS[key]} (superseded):{' '}
-                      </span>
-                      <span className="whitespace-pre-wrap">{formatValue(value)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {attachments.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {attachments.map((attachment) => (
-                    <Badge
-                      key={`${entry.id}-${attachment.attachment_id}`}
-                      variant="secondary"
-                      className="max-w-[220px]"
-                    >
-                      <span className="truncate" title={attachment.filename ?? undefined}>
-                        {attachment.filename ?? 'Attachment'}
-                      </span>
-                    </Badge>
-                  ))}
-                </div>
-              )}
-            </div>
-          </li>
-        );
-      })}
-    </ol>
+      <RevisionSnapshotDialog
+        entry={snapshotEntry}
+        onOpenChange={(open) => !open && setSnapshotEntry(null)}
+      />
+    </>
   );
 }

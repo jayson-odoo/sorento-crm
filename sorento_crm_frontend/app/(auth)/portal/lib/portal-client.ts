@@ -154,6 +154,17 @@ export interface PortalRevisionVoidedStage {
   assignee_name?: string | null;
 }
 
+/** One labeled field of a revision's snapshot, in form order - same shape the
+ *  office timeline reads, rendered by the backend from its adapter field list. */
+export interface PortalRevisionSnapshotField {
+  field: string;
+  label: string;
+  value: unknown;
+  /** Server-rendered presentation of `value` (a lookup option's label, a
+   *  DD/MM/YYYY date). Null when the raw value already reads correctly. */
+  display?: string | null;
+}
+
 export interface PortalRevisionEntry {
   id: string;
   version_no: number;
@@ -175,6 +186,9 @@ export interface PortalRevisionEntry {
    *  above, which the timeline falls back to. */
   voided_stages?: PortalRevisionVoidedStage[] | null;
   changes: PortalRevisionChange[];
+  /** The whole form at this version, labeled and ordered. Optional: absent on a
+   *  payload from a backend that predates the full-form viewer. */
+  snapshot_fields?: PortalRevisionSnapshotField[] | null;
 }
 
 export interface PortalSubmissionDetail extends PortalSubmissionSummary {

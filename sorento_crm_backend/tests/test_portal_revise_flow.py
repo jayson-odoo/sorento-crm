@@ -322,14 +322,21 @@ def test_a_stale_expected_revision_no_is_refused(db, kind):
 # ------------------------------------------------------------------ the reason
 
 
-@pytest.mark.parametrize("reason", ["", "   ", "hi"])
+@pytest.mark.parametrize("reason", ["", "   "])
 @pytest.mark.parametrize("kind", ("stock_inquiry",))
-def test_a_blank_or_too_short_reason_is_refused(db, kind, reason):
+def test_a_blank_reason_is_refused(db, kind, reason):
     _contact, token, row = _setup(db, kind)
     with pytest.raises(HTTPException) as exc:
         _revise(db, token, kind, row, reason=reason)
     assert exc.value.status_code == 422
     assert _reload(db, kind, str(row.id)).revision_no == 0
+
+
+def test_a_short_reason_is_accepted(db):
+    """No character floor, by explicit decision: any non-empty reason passes."""
+    _contact, token, row = _setup(db, "stock_inquiry")
+    _revise(db, token, "stock_inquiry", row, reason="hi")
+    assert _reload(db, "stock_inquiry", str(row.id)).revision_no == 1
 
 
 def test_an_over_long_reason_is_refused(db):
@@ -400,6 +407,154 @@ def test_history_labels_and_changes(db, kind):
     changed = {c["field"]: c for c in entries[1]["changes"]}
     assert changed[field]["to"] == value
     assert changed[field]["label"]  # a human label, never the raw column name
+
+
+@pytest.mark.parametrize("kind", REVISABLE_TYPES)
+def test_history_carries_the_full_form_per_version(db, kind):
+    """UAC G9/H6: every entry carries the WHOLE form at that version, labeled from
+    the adapter's own field list - for EVERY revisable type, since one shared
+    component renders it on both the portal and the office side.
+
+    The older entry keeps ITS OWN value: the view must show the form as it was,
+    never today's. Contact FKs are omitted - no UUID reaches a screen.
+    """
+    _contact, token, row = _setup(db, kind)
+    _revise(db, token, kind, row)
+
+    original, latest = PortalRevisionService(db).list_revisions(kind, str(row.id))
+    field, value = _changed_field(kind)
+
+    by_field = {f["field"]: f for f in latest["snapshot_fields"]}
+    assert set(by_field[field]) == {"field", "label", "value", "display"}
+    assert by_field[field]["value"] == value
+    assert by_field[field]["label"]  # human label, never the raw column name
+
+    # The superseded version still reads as it did, not as the entity reads now.
+    old_by_field = {f["field"]: f for f in original["snapshot_fields"]}
+    assert old_by_field[field]["value"] != value
+
+    # The document number is labeled too, and leads, as it does on the form.
+    number_field = "inquiry_number" if kind == "stock_inquiry" else "request_number"
+    assert latest["snapshot_fields"][0]["field"] == number_field
+    assert by_field[number_field]["label"] in ("Inquiry number", "Request number")
+    # Status is stored but never rendered: the snapshot is written before the
+    # post-revision restart, so it holds the SUPERSEDED status and would read as
+    # wrong information under an "as it was" heading.
+    assert "status" not in by_field
+    assert "status" in (latest["snapshot"] or {})
+
+    # The requestor FK is skipped; its human sibling stays.
+    fk, human = (
+        ("salesperson_contact_id", "salesperson")
+        if kind == "stock_inquiry"
+        else ("requested_by_contact_id", "requested_by")
+    )
+    assert fk not in by_field
+    assert human in by_field
+
+    # PR and SF SHARE one edit whitelist, so the rendered list has to come from the
+    # per-type form field list instead: neither may show the other's fields.
+    if kind == "purchase_request":
+        for absent in ("sponsor_subject", "delivery_address", "total_project_value"):
+            assert absent not in by_field
+    elif kind == "sponsorship_form":
+        for absent in ("purpose", "sales_type", "expected_po_date", "external_reference"):
+            assert absent not in by_field
+
+    # Line items ride along for the types that have them, and last, as on the form.
+    if kind == "stock_inquiry":
+        assert "products" not in by_field
+    else:
+        assert latest["snapshot_fields"][-1]["field"] == "products"
+        assert isinstance(by_field["products"]["value"], list)
+
+
+def _seed_lookup(db, set_key: str, value: str, label: str) -> None:
+    """One lookup set with one option, seeded by this test alone.
+
+    Nothing is borrowed from an existing table: CI's database is empty, so reading
+    "the live procurement_sales_type set" resolves to None there.
+    """
+    from app.models.lookup import LookupOption, LookupSet
+
+    set_id = str(uuid.uuid4())
+    db.add(LookupSet(id=set_id, set_key=set_key, name=set_key, is_active=True))
+    db.add(
+        LookupOption(
+            id=str(uuid.uuid4()),
+            set_id=set_id,
+            value=value,
+            label=label,
+            sort_order=0,
+            is_active=True,
+        )
+    )
+    db.commit()
+
+
+def test_history_renders_a_lookup_code_as_its_option_label(db):
+    """A lookup-bound field stores the option CODE. The full-form view must read the
+    LABEL, resolved server side so the portal and the office cannot differ."""
+    _seed_lookup(db, "procurement_sales_type", "cash_sales", "Cash sales")
+    _contact, token, row = _setup(db, "purchase_request", sales_type="cash_sales")
+    _revise(db, token, "purchase_request", row)
+
+    latest = PortalRevisionService(db).list_revisions("purchase_request", str(row.id))[1]
+    by_field = {f["field"]: f for f in latest["snapshot_fields"]}
+    assert by_field["sales_type"]["value"] == "cash_sales"
+    assert by_field["sales_type"]["display"] == "Cash sales"
+    # A field the server has nothing to add to carries no display at all.
+    assert by_field["project_title"]["display"] is None
+
+
+def test_history_renders_a_lookup_value_regardless_of_case(db):
+    """The stored code and the seeded option value may differ only in case (e.g. a
+    legacy row written as "Cash_Sales"). The service lowercases both sides before
+    matching, so the label still resolves rather than falling back to the raw code."""
+    _seed_lookup(db, "procurement_sales_type", "cash_sales", "Cash sales")
+    _contact, token, row = _setup(db, "purchase_request", sales_type="Cash_Sales")
+    _revise(db, token, "purchase_request", row)
+
+    latest = PortalRevisionService(db).list_revisions("purchase_request", str(row.id))[1]
+    by_field = {f["field"]: f for f in latest["snapshot_fields"]}
+    assert by_field["sales_type"]["value"] == "Cash_Sales"
+    assert by_field["sales_type"]["display"] == "Cash sales"
+
+
+def test_an_unseeded_lookup_option_leaves_the_display_empty(db):
+    """No matching option means no label to show, so `display` is null and the FE
+    falls back to the stored value rather than rendering a wrong name."""
+    _contact, token, row = _setup(db, "sponsorship_form", sponsor_subject="showroom")
+    _revise(db, token, "sponsorship_form", row)
+
+    latest = PortalRevisionService(db).list_revisions("sponsorship_form", str(row.id))[1]
+    by_field = {f["field"]: f for f in latest["snapshot_fields"]}
+    assert by_field["sponsor_subject"]["value"] == "showroom"
+    assert by_field["sponsor_subject"]["display"] is None
+
+
+def test_history_renders_a_snapshotted_date_the_way_the_form_shows_it(db):
+    """A date column snapshots as YYYY-MM-DD. The viewer shows DD/MM/YYYY, rendered
+    by the backend so neither surface has to guess a value's meaning from its shape."""
+    _contact, token, row = _setup(db, "stock_inquiry", delivery_date="2026-08-20")
+    _revise(db, token, "stock_inquiry", row)
+
+    latest = PortalRevisionService(db).list_revisions("stock_inquiry", str(row.id))[1]
+    by_field = {f["field"]: f for f in latest["snapshot_fields"]}
+    assert by_field["delivery_date"]["value"] == "2026-08-20"
+    assert by_field["delivery_date"]["display"] == "20/08/2026"
+
+
+def test_a_free_text_delivery_date_is_left_exactly_as_typed(db):
+    """`delivery_date` is free text on a stock inquiry: "ASAP" is not a date, so
+    there is nothing to reformat and the raw value must survive."""
+    _contact, token, row = _setup(db, "stock_inquiry", delivery_date="ASAP")
+    _revise(db, token, "stock_inquiry", row)
+
+    latest = PortalRevisionService(db).list_revisions("stock_inquiry", str(row.id))[1]
+    by_field = {f["field"]: f for f in latest["snapshot_fields"]}
+    assert by_field["delivery_date"]["value"] == "ASAP"
+    assert by_field["delivery_date"]["display"] is None
 
 
 @pytest.mark.parametrize("kind", REVISABLE_TYPES)

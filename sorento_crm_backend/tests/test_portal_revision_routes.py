@@ -147,16 +147,41 @@ def test_revise_refuses_a_stale_revision_no(client):
     assert response.status_code == 409
 
 
-def test_revise_refuses_a_blank_reason_before_it_reaches_the_service(client):
+def test_revise_refuses_a_blank_reason_with_the_shared_sentence(client):
+    """The schema declares no length: the SERVICE is the single validator, so ""
+    and "   " both come back as the one sentence the contact reads, never as a
+    pydantic envelope for one of the two."""
     c, _db = client
+    row, headers = _setup(client)
+
+    for reason in ("", "   "):
+        response = c.post(
+            f"{BASE}/submissions/stock_inquiry/{row.id}/revise",
+            headers=headers,
+            json={"reason": reason, "expected_revision_no": 0, "fields": {}},
+        )
+        assert response.status_code == 422, response.text
+        assert "Tell us what changed and why." in response.text
+
+
+def test_revise_refuses_a_missing_reason_key(client):
+    """`reason` is a required field on the payload model, not merely non-empty: an
+    omitted key is a pydantic 422 before the service ever runs, and no revision is
+    written."""
+    from app.models.procurement import StockInquiry
+
+    c, db = client
     row, headers = _setup(client)
 
     response = c.post(
         f"{BASE}/submissions/stock_inquiry/{row.id}/revise",
         headers=headers,
-        json={"reason": "", "expected_revision_no": 0, "fields": {}},
+        json={"expected_revision_no": 0, "fields": {}},
     )
-    assert response.status_code == 422
+    assert response.status_code == 422, response.text
+    db.expire_all()
+    fresh = db.query(StockInquiry).filter(StockInquiry.id == row.id).one()
+    assert fresh.revision_no == 0
 
 
 def test_revision_history_declares_every_field(client):
@@ -196,10 +221,52 @@ def test_revision_history_declares_every_field(client):
         # stages open at once and both handlers are told to stop.
         "voided_stages",
         "changes",
+        # The whole form at that version, labeled and ordered, for the read-only
+        # full-form viewer on both sides.
+        "snapshot_fields",
     } == set(latest)
     change = next(c for c in latest["changes"] if c["field"] == "product_code")
     assert change["to"] == "SRT-NEW"
     assert set(change) == {"field", "label", "from", "to"}
+
+
+def test_revision_history_renders_the_full_form_per_version(client):
+    """Each entry carries `snapshot_fields`: the form AS IT WAS at that version,
+    labeled from the adapter's own field list. The superseded value stays on the
+    older entry; the raw contact FK never appears (no UUIDs on screen)."""
+    c, _db = client
+    row, headers = _setup(client)
+    c.post(
+        f"{BASE}/submissions/stock_inquiry/{row.id}/revise",
+        headers=headers,
+        json={
+            "reason": "Wrong product code on the original",
+            "expected_revision_no": 0,
+            "fields": {"product_code": "SRT-NEW"},
+        },
+    )
+
+    response = c.get(f"{BASE}/submissions/stock_inquiry/{row.id}/revisions", headers=headers)
+    assert response.status_code == 200
+    original, latest = response.json()["items"]
+
+    by_field = {f["field"]: f for f in latest["snapshot_fields"]}
+    assert set(by_field["product_code"]) == {"field", "label", "value", "display"}
+    assert by_field["product_code"]["label"] == "Product code"
+    assert by_field["product_code"]["value"] == "SRT-NEW"
+    # The document number leads and is labeled, not a humanized column name.
+    assert latest["snapshot_fields"][0]["field"] == "inquiry_number"
+    assert by_field["inquiry_number"]["label"] == "Inquiry number"
+    # Status is stored but not rendered: the snapshot predates the post-revision
+    # restart, so it holds the superseded status.
+    assert "status" not in by_field
+    assert "status" in latest["snapshot"]
+    # The older version still shows ITS OWN value, not today's.
+    old_by_field = {f["field"]: f for f in original["snapshot_fields"]}
+    assert old_by_field["product_code"]["value"] != "SRT-NEW"
+    # The contact FK is skipped: a raw id has no place in the rendered form.
+    assert "salesperson_contact_id" not in by_field
+    assert "salesperson" in by_field
 
 
 def test_history_is_not_readable_with_another_contacts_token(client):

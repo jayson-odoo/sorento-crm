@@ -161,6 +161,51 @@ describe('RevisionHistory', () => {
     expect(changes[1]).toHaveTextContent('Urgent');
   });
 
+  /**
+   * The captain's ask: the whole form at any earlier version, not just the
+   * diff. Each entry carrying a labeled snapshot offers "View full form"; the
+   * dialog renders that entry's OWN values - superseded ones, never today's.
+   */
+  it('opens the full form of a chosen revision, rendered from its snapshot', () => {
+    render(
+      <RevisionHistory
+        entries={[
+          entry({
+            snapshot_fields: [
+              { field: 'product_code', label: 'Product code', value: 'SRT-OLD' },
+              { field: 'quantity', label: 'Quantity', value: '5' },
+            ],
+          }),
+          entry({
+            id: 'rev-1',
+            version_no: 1,
+            revision_no: 1,
+            kind: 'revision',
+            label: 'Revision 1',
+            snapshot_fields: [
+              { field: 'product_code', label: 'Product code', value: 'SRT-NEW' },
+              { field: 'quantity', label: 'Quantity', value: '8' },
+            ],
+          }),
+        ]}
+      />,
+    );
+
+    const buttons = screen.getAllByTestId('revision-view-form');
+    expect(buttons).toHaveLength(2);
+
+    fireEvent.click(buttons[0]);
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Product code')).toBeInTheDocument();
+    expect(within(dialog).getByText('SRT-OLD')).toBeInTheDocument();
+    expect(within(dialog).queryByText('SRT-NEW')).toBeNull();
+  });
+
+  it('offers no full-form view for an entry without a snapshot payload', () => {
+    render(<RevisionHistory entries={[entry()]} />);
+    expect(screen.queryAllByTestId('revision-view-form')).toHaveLength(0);
+  });
+
   it('opens the shared preview modal in place from a history entry, with the portal byte reader', () => {
     render(
       <RevisionHistory

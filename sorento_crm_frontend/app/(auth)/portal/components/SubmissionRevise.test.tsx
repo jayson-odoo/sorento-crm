@@ -253,22 +253,18 @@ describe('SubmissionForm - revise composer', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Revise' }));
     fireEvent.click(screen.getByRole('button', { name: 'Send revision' }));
 
-    expect(
-      screen.getByText('Tell us what changed and why (at least 5 characters).'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Tell us what changed and why.')).toBeInTheDocument();
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(reviseSubmission).not.toHaveBeenCalled();
   });
 
-  it('refuses a too-short reason as well', async () => {
+  it('accepts a short reason: no character floor, by explicit decision', async () => {
     await renderRevisable();
-    await openComposer('oops');
+    await openComposer('hi');
     fireEvent.click(screen.getByRole('button', { name: 'Send revision' }));
 
-    expect(
-      screen.getByText('Tell us what changed and why (at least 5 characters).'),
-    ).toBeInTheDocument();
-    expect(reviseSubmission).not.toHaveBeenCalled();
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
+    expect(screen.queryByText('Tell us what changed and why.')).toBeNull();
   });
 
   it('states the three consequences in the confirm dialog, in the contact’s terms', async () => {

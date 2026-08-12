@@ -36,6 +36,21 @@ vi.mock('@/app/(protected)/sla-management/_shared/HandlingLockBanner', () => ({
 vi.mock('@/app/(protected)/sla-management/_shared/HandlingLockActions', () => ({
   HandlingLockReleaseMenuItem: () => null,
 }));
+// Form-action deferral plumbing (PLAN-form-sla-undo.md). Mocked exactly as in
+// StockInquiryDetail.test.tsx: the real hook reads `useSearchParams`, which this
+// file's `next/navigation` mock does not provide, and the response gate under
+// test has nothing to do with the undo grace window.
+vi.mock('@/app/(protected)/sla-management/_shared/useFormAction', () => ({
+  useFormAction: () => ({
+    view: { kind: 'idle' },
+    ctasDisabled: false,
+    cancel: vi.fn(),
+    undo: vi.fn(),
+    refresh: vi.fn(),
+    isMutating: false,
+  }),
+}));
+
 vi.mock('@/app/(protected)/sla-management/_shared/useHandlingLock', () => ({
   useHandlingLock: () => ({
     state: 'not_escalated',

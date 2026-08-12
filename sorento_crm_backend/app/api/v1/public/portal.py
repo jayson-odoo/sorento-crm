@@ -699,6 +699,13 @@ class RevisionEntry(BaseModel):
     # {field, label, from, to} - `from` is a Python keyword, so this stays a plain
     # dict rather than a model that would have to alias around it.
     changes: list[dict] = []
+    # {field, label, value, display} - the WHOLE form at this version, labeled and
+    # ordered by the adapter, backing the read-only full-form view (UAC G9).
+    # `display` is the server-rendered presentation of `value` (a lookup option's
+    # label, a DD/MM/YYYY date) or null when the raw value already reads correctly,
+    # so both surfaces show the same string. Declared here or the response_model
+    # drops it, exactly as with `voided_stages` above.
+    snapshot_fields: list[dict] = []
 
 
 class RevisionListResponse(BaseModel):
@@ -708,7 +715,11 @@ class RevisionListResponse(BaseModel):
 class RevisePayload(BaseModel):
     """The submit payload plus the two things only a revision carries."""
 
-    reason: str = Field(..., min_length=1, max_length=2000)
+    # Length is NOT constrained here: the service is the single validator, so a
+    # blank reason reads as the same shared sentence ("Tell us what changed and
+    # why.") whether it arrived as "" or as whitespace, rather than as a pydantic
+    # envelope for one of the two.
+    reason: str = Field(...)
     # The revision_no the contact was looking at. A mismatch is a 409 (UAC C5).
     expected_revision_no: int = Field(..., ge=0)
     fields: dict = {}
