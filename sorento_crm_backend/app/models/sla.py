@@ -179,15 +179,20 @@ class ConversationSLATracking(Base):
             "source_entity_id",
         ),
         Index("ix_conversation_sla_tracking_handled_by_id", "handled_by_id"),
-        # One OPEN intervention ticket per triggering message. Replaces migration
-        # 180's one-open-row-per-contact singleton: a contact may now hold several
-        # open tickets, but an n8n retry of the same trigger message cannot open a
-        # second one. Declared on the model as well as in migration 321 because
-        # test/CI schemas come from create_all, which never runs migration bodies.
+        # One OPEN intervention ticket per (contact, triggering message). Replaces
+        # migration 180's one-open-row-per-contact singleton: a contact may now
+        # hold several open tickets, but an n8n retry of the same trigger message
+        # cannot open a second one. Contact-scoped (migration 323) because
+        # WhatsApp message ids are not guaranteed globally unique across
+        # different contacts/threads - a bare source_message_id key let two
+        # DIFFERENT contacts' colliding trigger messages fight over one row.
+        # Declared on the model as well as in the migration because test/CI
+        # schemas come from create_all, which never runs migration bodies.
         # Form-SLA rows are outside the predicate - the two families share this
         # table and must not constrain each other.
         Index(
-            "uq_conversation_sla_tracking_open_source_message",
+            "uq_conversation_sla_tracking_open_contact_source_message",
+            "respond_contact_id",
             "source_message_id",
             unique=True,
             postgresql_where=text(

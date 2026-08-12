@@ -3781,8 +3781,15 @@ class ConversationSLATrackingService:
 
         existing = None
         if identity_key:
+            # FINDING 6: a ticket's identity is (contact, trigger message), not
+            # the message alone — WhatsApp message ids are not guaranteed
+            # globally unique across different contacts/threads. Without the
+            # contact scope, a colliding id on a DIFFERENT contact would be
+            # returned here as "already_active", handing that contact back
+            # someone else's ticket.
             existing = self.db.query(ConversationSLATracking).filter(
                 ConversationSLATracking.source_message_id == identity_key,
+                ConversationSLATracking.respond_contact_id == tracking_dict["respond_contact_id"],
                 ConversationSLATracking.is_resolved.is_(False),
                 conversation_tracking_scope(),
             ).first()

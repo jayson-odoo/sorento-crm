@@ -52,9 +52,20 @@ _spec = importlib.util.spec_from_file_location("mig_321", _MIG_PATH)
 mig321 = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(mig321)
 
+_MIG_323_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "alembic",
+    "versions",
+    "323_ticket_source_message_contact_scope.py",
+)
+_spec_323 = importlib.util.spec_from_file_location("mig_323", _MIG_323_PATH)
+mig323 = importlib.util.module_from_spec(_spec_323)
+_spec_323.loader.exec_module(mig323)
+
 # Index names owned by this slice.
 OLD_CONTACT_SINGLETON_INDEX = "uq_conversation_sla_tracking_active_conversation_per_contact"
 NEW_SOURCE_MESSAGE_INDEX = "uq_conversation_sla_tracking_open_source_message"
+CONTACT_SOURCE_MESSAGE_INDEX = "uq_conversation_sla_tracking_open_contact_source_message"
 
 
 @pytest.fixture
@@ -420,6 +431,91 @@ def test_two_open_tickets_for_one_contact_are_allowed_by_the_database(db):
     assert len(_open_rows(db, seed["contact_id"])) == 2
 
 
+# ---------------------------------------------------------------------------
+# FINDING 6 (code review): a ticket's identity is (contact, trigger message),
+# not the message alone. WhatsApp message ids are not guaranteed globally
+# unique across different contacts/threads, so a bare source_message_id
+# lookup/index can hand contact B "already_active" pointing at contact A's
+# ticket on a coincidental id collision.
+# ---------------------------------------------------------------------------
+
+OTHER_PHONE = "+60129998888"
+
+
+def _second_contact(db, seed) -> str:
+    other_contact_id = str(uuid.uuid4())
+    db.add(
+        RespondContact(
+            id=other_contact_id, phone_number=OTHER_PHONE, name="Other Contact", session_vars={}
+        )
+    )
+    db.commit()
+    return other_contact_id
+
+
+def test_colliding_source_message_id_across_contacts_creates_two_tickets(db):
+    """The exact bug: contact B's create call must get its OWN ticket, never
+    contact A's, just because their trigger messages happen to share an id."""
+    seed = _seed(db)
+    _second_contact(db, seed)
+    service = ConversationSLATrackingService(db)
+
+    contact_a_ticket = service.create_tracking(_payload(seed, source_message_id="collide"))
+    contact_b_ticket = service.create_tracking(
+        ConversationSLATrackingCreate(
+            agent_code=seed["agent_code"],
+            team_set_code=seed["team_set_code"],
+            policy_id=seed["policy_id"],
+            current_tier=1,
+            assigned_to_id=seed["user_two"],
+            contact_phone_number=OTHER_PHONE,
+            source_message_id="collide",
+        )
+    )
+
+    assert str(contact_b_ticket.id) != str(contact_a_ticket.id), (
+        "a colliding source_message_id must never hand back ANOTHER contact's ticket"
+    )
+    assert bool(getattr(contact_b_ticket, "_already_active", False)) is False
+    assert str(contact_b_ticket.respond_contact_id) != str(contact_a_ticket.respond_contact_id)
+    assert len(_open_rows(db, seed["contact_id"])) == 1
+    assert len(_open_rows(db, str(contact_b_ticket.respond_contact_id))) == 1
+
+
+def test_two_open_tickets_with_the_same_message_id_but_different_contacts_are_allowed_by_the_database(
+    db,
+):
+    seed = _seed(db)
+    other_contact_id = _second_contact(db, seed)
+
+    db.add(
+        ConversationSLATracking(
+            id=str(uuid.uuid4()),
+            policy_id=seed["policy_id"],
+            current_tier=1,
+            due_at=datetime(2026, 6, 1, 12, 0, 0),
+            is_resolved=False,
+            respond_contact_id=seed["contact_id"],
+            source_message_id="collide",
+        )
+    )
+    db.add(
+        ConversationSLATracking(
+            id=str(uuid.uuid4()),
+            policy_id=seed["policy_id"],
+            current_tier=1,
+            due_at=datetime(2026, 6, 1, 12, 0, 0),
+            is_resolved=False,
+            respond_contact_id=other_contact_id,
+            source_message_id="collide",
+        )
+    )
+    db.commit()  # must not raise - different contacts, same message id
+
+    assert len(_open_rows(db, seed["contact_id"])) == 1
+    assert len(_open_rows(db, other_contact_id)) == 1
+
+
 def test_migration_backfills_the_column_and_swaps_the_indexes():
     """Run the real migration body against a pre-migration schema holding rows.
 
@@ -504,6 +600,84 @@ def test_migration_backfills_the_column_and_swaps_the_indexes():
             "SELECT count(*) FROM conversation_sla_tracking"
         ).scalar()
         assert still_there == 2
+
+
+def test_migration_323_swaps_to_the_contact_scoped_index():
+    """FINDING 6: run the real 323 migration body against a schema still on
+    321's shape (source_message_id alone) and confirm the swap - the OLD
+    index is gone, the NEW (contact, message) index is in place, and it
+    actually permits what 321 wrongly forbade: two different contacts
+    sharing a colliding source_message_id.
+
+    Its own scratch schema (DDL test), never the shared blank one.
+    """
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    with pg_empty_schema([ConversationSLATracking.__table__]) as session:
+        schema = session.get_bind()._execution_options["schema_translate_map"][None]
+        conn = session.connection()
+        conn.exec_driver_sql(f'SET search_path TO "{schema}"')
+
+        # Rewind create_all's current (post-323) index to 321's shape.
+        conn.exec_driver_sql(f"DROP INDEX IF EXISTS {CONTACT_SOURCE_MESSAGE_INDEX}")
+        conn.exec_driver_sql(
+            f"""
+            CREATE UNIQUE INDEX {NEW_SOURCE_MESSAGE_INDEX}
+            ON conversation_sla_tracking (source_message_id)
+            WHERE source_message_id IS NOT NULL
+              AND is_resolved = false
+              AND (source_entity_type IS NULL OR source_entity_type = 'conversation')
+            """
+        )
+
+        with Operations.context(MigrationContext.configure(conn)):
+            mig323.upgrade()
+
+        indexes = {
+            r[0]
+            for r in conn.exec_driver_sql(
+                "SELECT indexname FROM pg_indexes "
+                "WHERE tablename = 'conversation_sla_tracking' AND schemaname = %s",
+                (schema,),
+            ).fetchall()
+        }
+        assert NEW_SOURCE_MESSAGE_INDEX not in indexes
+        assert CONTACT_SOURCE_MESSAGE_INDEX in indexes
+
+        policy_id = str(uuid.uuid4())
+        conn.exec_driver_sql(
+            "INSERT INTO sla_policies (id, code, name, is_active) VALUES (%s, %s, %s, %s)",
+            (policy_id, "ZZT-MIG323", "Migration 323 policy", True),
+        )
+        contact_a, contact_b = str(uuid.uuid4()), str(uuid.uuid4())
+        for contact_id in (contact_a, contact_b):
+            conn.exec_driver_sql(
+                "INSERT INTO respond_contacts (id, phone_number, session_vars) "
+                "VALUES (%s, %s, %s)",
+                (contact_id, f"+601{contact_id[:8]}", "{}"),
+            )
+        for contact_id in (contact_a, contact_b):
+            conn.exec_driver_sql(
+                """
+                INSERT INTO conversation_sla_tracking
+                    (id, policy_id, current_tier, due_at, is_responded, is_resolved,
+                     synced_to_excel, respond_contact_id, source_message_id)
+                VALUES (%s, %s, 1, now(), false, false, false, %s, %s)
+                """,
+                (str(uuid.uuid4()), policy_id, contact_id, "collide"),
+            )  # must not raise - post-323, different contacts share the id fine
+
+        with pytest.raises(Exception):
+            conn.exec_driver_sql(
+                """
+                INSERT INTO conversation_sla_tracking
+                    (id, policy_id, current_tier, due_at, is_responded, is_resolved,
+                     synced_to_excel, respond_contact_id, source_message_id)
+                VALUES (%s, %s, 1, now(), false, false, false, %s, %s)
+                """,
+                (str(uuid.uuid4()), policy_id, contact_a, "collide"),
+            )
 
 
 # ---------------------------------------------------------------------------
