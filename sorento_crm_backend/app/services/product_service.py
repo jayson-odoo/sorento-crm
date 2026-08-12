@@ -106,6 +106,26 @@ def is_discontinued_from_description(description: Optional[str]) -> bool:
     return description.lstrip().startswith("****")
 
 
+#: Values an explicit Discontinued column may carry for "yes". AutoCount
+#: exports checkbox columns as "Checked"/"Unchecked".
+_DISCONTINUED_TRUE = {"CHECKED", "T", "TRUE", "1", "Y", "YES"}
+
+
+def is_discontinued_from_row(row: dict, description: Optional[str]) -> bool:
+    """Discontinued for one import row: explicit column wins, `****` is the fallback.
+
+    Some source files (e.g. the Mocha AutoCount item list) carry a real
+    `Discontinued` checkbox column, where leading asterisks in the description
+    are just a legacy naming style. Files without the column (Sorento) keep the
+    leading-`****` description convention. A blank cell in a file that has the
+    column falls back to the description rule too.
+    """
+    for key in ("is_discontinued", "Discontinued", "discontinued"):
+        if key in row and row[key] is not None and str(row[key]).strip() != "":
+            return str(row[key]).strip().upper() in _DISCONTINUED_TRUE
+    return is_discontinued_from_description(description)
+
+
 from app.models.procurement import ProductSupplier, Supplier
 from app.models.resources import Attachment, AttachmentType
 from app.schemas.product import (
@@ -1455,7 +1475,7 @@ class ProductService:
                     continue
 
                 parsed_l, parsed_w, parsed_h = parse_dimensions_from_description(description)
-                discontinued = is_discontinued_from_description(description)
+                discontinued = is_discontinued_from_row(row, description)
 
                 existing = existing_by_code.get(product_code)
                 if existing:
