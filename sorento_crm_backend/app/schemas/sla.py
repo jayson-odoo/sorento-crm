@@ -485,6 +485,10 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
     # branch its own routing without parsing a 4xx error envelope.
     already_resolved: Optional[bool] = False
     updated_in_request: Optional[bool] = True
+    # AC-I3: true when the caller set is_responded on a tracking that was already
+    # responded. The responded-family fields are dropped (clocks untouched) and the
+    # call still answers 200 - respond is idempotent exactly like resolve.
+    already_responded: Optional[bool] = False
     # AC-E3: true when a PUT is_responded=true from the n8n Respond-app-reply
     # fallback was skipped because the resolved assignee holds 2+ open tickets
     # for this contact (ambiguous which enquiry they answered) - see

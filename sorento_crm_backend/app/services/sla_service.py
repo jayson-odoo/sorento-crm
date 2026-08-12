@@ -409,6 +409,19 @@ def _to_aware_utc(dt: Optional[datetime]) -> Optional[datetime]:
     return dt.astimezone(timezone.utc)
 
 
+def _coerce_flag(value) -> bool:
+    """Coerce a JSON-ish truthy flag (True / 1 / "true" / "1") to bool.
+
+    Integration callers post `is_responded` / `is_resolved` as a real bool, an
+    int, or a string, so a bare `bool(value)` would read the string "false" as
+    True. Shared so the idempotency short-circuits and the field-application
+    branches below agree on what "the caller asked for this" means.
+    """
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1")
+    return value is True or value == 1
+
+
 def _working_clock_start(db, start_dt: Optional[datetime]) -> Optional[datetime]:
     """Normalize an SLA clock start to the next working-window open.
 
@@ -4096,6 +4109,23 @@ class ConversationSLATrackingService:
         # tracking's own assignee (the n8n fallback resolves `tracking` via a
         # separate contact-level "preferred" lookup) - see
         # is_ambiguous_fallback_response for why that distinction matters.
+        # AC-I3: a duplicate respond is idempotent, not a refusal. Resolve has
+        # short-circuited on `_already_resolved` for a while; respond raised a
+        # 400 instead, and that asymmetry produced 53 refusals across 19 contacts
+        # on production data (one contact hit 17 times). Under multi-open tickets
+        # the 400 is actively harmful: it aborts n8n's Respond-app-reply fallback
+        # before the genuinely unanswered sibling is stamped. Strip only the
+        # responded-family fields (same shape as the AC-E3 ambiguity guard below,
+        # FINDING 5) so a resolve / assignment riding in the same payload still
+        # applies, and hand the caller a marker to branch on.
+        already_responded_skipped = False
+        if _coerce_flag(update_data.get("is_responded")) and bool(
+            getattr(tracking, "is_responded", False)
+        ):
+            already_responded_skipped = True
+            for _field in ("is_responded", "responded_at", "responded_by", "response_time"):
+                update_data.pop(_field, None)
+
         ambiguous_responded_skipped = False
         if bool(update_data.get("is_responded")) and not bool(
             getattr(tracking, "is_responded", False)
@@ -4168,10 +4198,8 @@ class ConversationSLATrackingService:
             update_data["assigned_to_id"] = user.id
         
         # Coerce flags to bool for consistent handling (e.g. JSON "true", 1, or string "true")
-        is_responded = update_data.get("is_responded")
-        is_responded = is_responded is True or (isinstance(is_responded, str) and is_responded.lower() in ("true", "1")) or is_responded == 1
-        is_resolved = update_data.get("is_resolved")
-        is_resolved = is_resolved is True or (isinstance(is_resolved, str) and is_resolved.lower() in ("true", "1")) or is_resolved == 1
+        is_responded = _coerce_flag(update_data.get("is_responded"))
+        is_resolved = _coerce_flag(update_data.get("is_resolved"))
         # If client sent resolved_by or resolved_at without is_resolved, treat as marking resolved
         if not is_resolved and (update_data.get("resolved_by") or ("resolved_at" in update_data and update_data.get("resolved_at") is not None)):
             is_resolved = True
@@ -4183,10 +4211,10 @@ class ConversationSLATrackingService:
             setattr(tracking, "_already_resolved", True)
             return tracking
 
-        # Smart handling for is_responded (same as responded_at / responded_by)
+        # Smart handling for is_responded (same as responded_at / responded_by).
+        # An already-responded tracking never reaches here: the AC-I3 short-circuit
+        # above popped the responded-family fields out of update_data.
         if is_responded:
-            if bool(getattr(tracking, "is_responded", False)):
-                raise handle_validation_error("Conversation is already responded.")
             _resp_by = update_data.get("responded_by")
             if _resp_by is None or (isinstance(_resp_by, str) and not str(_resp_by).strip()):
                 _aid = self._resolve_tracking_assignee_user_id(tracking)
@@ -4369,6 +4397,11 @@ class ConversationSLATrackingService:
         # `ambiguous_responded_skipped` without re-deriving it.
         if ambiguous_responded_skipped:
             setattr(tracking, "_ambiguous_responded_skipped", True)
+        # AC-I3: same contract as `_already_resolved` - a transient marker the
+        # route reads and exposes as a response field. It dies on re-query, so
+        # routes must read it BEFORE calling get_tracking() again.
+        if already_responded_skipped:
+            setattr(tracking, "_already_responded", True)
 
         return tracking
 

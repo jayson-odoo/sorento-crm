@@ -1454,6 +1454,9 @@ async def update_sla_tracking(
         tracking = service.update_tracking(tracking_id_str, tracking_data)
         already_resolved = bool(getattr(tracking, "_already_resolved", False))
         ambiguous = bool(getattr(tracking, "_ambiguous_responded_skipped", False))
+        # AC-I3: a duplicate respond is idempotent, reported as a body field
+        # rather than the 400 it used to raise.
+        already_responded = bool(getattr(tracking, "_already_responded", False))
         tracking_id_result_str = str(getattr(tracking, "id"))
         external_reference = (
             str(getattr(getattr(tracking, "contact", None), "phone_number"))
@@ -1472,7 +1475,11 @@ async def update_sla_tracking(
                 status=(
                     "skipped_ambiguous_response"
                     if ambiguous
-                    else ("success" if not already_resolved else "skipped_already_resolved")
+                    else (
+                        "skipped_already_responded"
+                        if already_responded
+                        else ("success" if not already_resolved else "skipped_already_resolved")
+                    )
                 ),
             ),
             request_payload_dict=tracking_data.model_dump(exclude_unset=True),
@@ -1492,11 +1499,17 @@ async def update_sla_tracking(
         _non_responded_fields_requested = bool(
             set(tracking_data.model_fields_set) - _responded_family_fields
         )
+        # AC-I3 rides the same rule: when the responded-family fields were the
+        # ENTIRE payload and they were dropped (ambiguous OR already responded),
+        # nothing applied.
+        _responded_family_dropped = ambiguous or already_responded
         setattr(fresh, "already_resolved", already_resolved)
+        setattr(fresh, "already_responded", already_responded)
         setattr(
             fresh,
             "updated_in_request",
-            not already_resolved and (not ambiguous or _non_responded_fields_requested),
+            not already_resolved
+            and (not _responded_family_dropped or _non_responded_fields_requested),
         )
         setattr(fresh, "ambiguous_responded_skipped", ambiguous)
         return fresh
@@ -1719,12 +1732,22 @@ async def update_sla_tracking_status_integration(
         # calls, so the AC-E3 ambiguity guard now applies here too - a stamp it
         # skipped must not get a "response" event log written on top of it.
         ambiguous_responded_skipped = bool(getattr(tracking, "_ambiguous_responded_skipped", False))
+        # AC-I3: a duplicate respond short-circuits in the service now (it used to
+        # raise 400). The stamp did not happen, so no "response" event log is owed.
+        already_responded = bool(getattr(tracking, "_already_responded", False))
         if already_resolved:
             response.headers["X-SLA-Already-Resolved"] = "true"
             response.headers["X-SLA-Updated"] = "false"
+        if already_responded:
+            response.headers["X-SLA-Already-Responded"] = "true"
 
         # Create event logs for responded/resolved when applicable
-        if update_data.is_responded and not already_resolved and not ambiguous_responded_skipped:
+        if (
+            update_data.is_responded
+            and not already_resolved
+            and not ambiguous_responded_skipped
+            and not already_responded
+        ):
             # Convert responded_at to UTC before creating event log
             responded_at_utc = update_data.responded_at
             if isinstance(responded_at_utc, datetime) and responded_at_utc.tzinfo:
@@ -1789,7 +1812,11 @@ async def update_sla_tracking_status_integration(
                 status=(
                     "skipped_ambiguous_response"
                     if ambiguous_responded_skipped
-                    else ("success" if not already_resolved else "skipped_already_resolved")
+                    else (
+                        "skipped_already_responded"
+                        if already_responded
+                        else ("success" if not already_resolved else "skipped_already_resolved")
+                    )
                 ),
             ),
             request_payload_dict=update_data.model_dump(exclude_unset=True)
@@ -1801,6 +1828,17 @@ async def update_sla_tracking_status_integration(
                 "message": "Conversation is already resolved; no update applied.",
                 "tracking_id": tracking_id_result_str,
                 "already_resolved": True,
+                "already_responded": already_responded,
+                "updated": False,
+            }
+        if already_responded:
+            # AC-I3: 200 + marker, mirroring the already-resolved arm. n8n branches
+            # on `updated` and must never see a 4xx for a benign duplicate.
+            return {
+                "status": "skipped",
+                "message": "Conversation is already responded; response clocks untouched.",
+                "tracking_id": tracking_id_result_str,
+                "already_responded": True,
                 "updated": False,
             }
         return {
@@ -1808,6 +1846,7 @@ async def update_sla_tracking_status_integration(
             "message": "SLA tracking updated successfully.",
             "tracking_id": tracking_id_result_str,
             "ambiguous_responded_skipped": ambiguous_responded_skipped,
+            "already_responded": False,
         }
     except HTTPException:
         raise
