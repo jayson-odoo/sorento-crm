@@ -17,7 +17,7 @@ import {
 } from '../../_shared/hooks/useQuotationDocuments';
 import type { QuotationDocument } from '../../_shared/services/quotationDocumentService';
 import type { Project } from '../../_shared/types/project.types';
-import { formatMyrExact, sumMoney } from './POIntakeMoney';
+import { formatMyrExact, sumMoney } from '../../_shared/lib/money';
 
 /**
  * Every quotation DOCUMENT on this project: one row per letterhead the customer receives.
@@ -233,7 +233,9 @@ export function QuotationsPanel({ project }: { project: Project }) {
 }
 
 export function formatMyr(value: string): string {
-  const amount = Number(value);
-  if (Number.isNaN(amount)) return value;
-  return `RM ${amount.toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  // Delegates to the ONE money renderer. This used to be its own `Number()` +
+  // `toLocaleString` implementation - the float path every module docstring in
+  // `_shared/lib/money` exists to forbid - and the third spelling of "RM x,xxx.xx"
+  // in one directory. The name survives because six screens import it.
+  return formatMyrExact(value);
 }

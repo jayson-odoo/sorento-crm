@@ -32,7 +32,7 @@ import {
   PO_INTERPRETATION_LABELS,
 } from '../../_shared/types/poIntake.types';
 import { POIntakeAnnotationEditDialog } from './POIntakeAnnotationEditDialog';
-import { formatMyrExact, formatQty } from './POIntakeMoney';
+import { formatMyrExact, formatQty } from '../../_shared/lib/money';
 
 /**
  * Column preferences are keyed on this rather than on the pathname the DataGrid falls back
@@ -108,7 +108,7 @@ export function POIntakeAnnotationsGrid({
       {
         accessorKey: 'interpretation',
         header: ({ column }) => (
-          <DataGridColumnHeader title="What we read it as" column={column} />
+          <DataGridColumnHeader title="Reading" column={column} />
         ),
         cell: ({ row }) => (
           <span
@@ -122,14 +122,14 @@ export function POIntakeAnnotationsGrid({
         minSize: 130,
         enableSorting: false,
         meta: {
-          headerTitle: 'What we read it as',
+          headerTitle: 'Reading',
           skeleton: <Skeleton className="h-4 w-24" />,
         },
       },
       {
         accessorKey: 'raw_text',
         header: ({ column }) => (
-          <DataGridColumnHeader title="What is written" column={column} />
+          <DataGridColumnHeader title="Note" column={column} />
         ),
         cell: ({ row }) => (
           <span
@@ -143,7 +143,7 @@ export function POIntakeAnnotationsGrid({
         minSize: 160,
         enableSorting: false,
         meta: {
-          headerTitle: 'What is written',
+          headerTitle: 'Note',
           skeleton: <Skeleton className="h-4 w-40" />,
         },
       },

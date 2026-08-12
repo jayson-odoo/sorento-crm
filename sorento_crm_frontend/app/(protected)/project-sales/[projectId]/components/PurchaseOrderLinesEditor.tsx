@@ -22,7 +22,7 @@ import {
   type InlineLineColumn,
 } from '../../_shared/components/InlineLineTable';
 import { formatMyr } from './QuotationsPanel';
-import { isDecimalString, multiplyMoney } from './POIntakeMoney';
+import { isDecimalString, multiplyMoney } from '../../_shared/lib/money';
 
 /**
  * The lines of one PO, entered like a spreadsheet, with what each one was quoted at

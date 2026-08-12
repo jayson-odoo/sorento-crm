@@ -107,7 +107,7 @@ describe('POIntakeVersionsStrip', () => {
     const links = await screen.findAllByRole('link');
     expect(links[0]).toHaveAttribute('href', '/project-sales/p1/purchase-orders/v2');
     expect(links[1]).toHaveAttribute('href', '/project-sales/p1/purchase-orders/v1');
-    expect(screen.getByText('Version 2')).toBeInTheDocument();
+    expect(screen.getByText('v2')).toBeInTheDocument();
     expect(screen.getByText('Waiting to be read')).toBeInTheDocument();
     expect(screen.getAllByText('Not confirmed')).toHaveLength(2);
   });
@@ -130,7 +130,7 @@ describe('POIntakeVersionsStrip', () => {
 
     renderStrip();
 
-    expect(await screen.findByText('Version 1')).toBeInTheDocument();
+    expect(await screen.findByText('v1')).toBeInTheDocument();
     expect(screen.queryByText('Read')).toBeNull();
     expect(screen.getByRole('link', { name: /Review what we read/i })).toBeInTheDocument();
   });

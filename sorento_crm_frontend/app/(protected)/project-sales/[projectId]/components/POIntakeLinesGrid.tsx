@@ -27,7 +27,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 // it first; the endpoint and the shape are the generic ones.
 import { getProductsForVariantSelect } from '@/app/(protected)/master-data-management/products/services/productService';
 import type { POLineUpdateBody, POVersionLine } from '../../_shared/types/poIntake.types';
-import { formatMyrExact, formatQty, isDecimalString, multiplyMoney } from './POIntakeMoney';
+import { formatMyrExact, formatQty, isDecimalString, multiplyMoney } from '../../_shared/lib/money';
 
 export interface POIntakeLinesGridHandle {
   focusLine: (lineId: string) => void;

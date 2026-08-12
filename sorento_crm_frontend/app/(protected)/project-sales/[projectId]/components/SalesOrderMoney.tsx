@@ -1,4 +1,14 @@
 /**
+ * The ARBITRARY-PRECISION money variant, and deliberately not `_shared/lib/money`.
+ *
+ * The standard module is fixed-scale (2dp money, 4dp quantity), which is right for
+ * quotations and PO intake. Sales-order documents carry unit prices with MORE than two
+ * decimals as printed, and `formatUnitPrice` here preserves them; collapsing the two
+ * modules would either lose those digits or push arbitrary-scale parsing onto every
+ * screen that never needs it. Anything NOT specific to >2dp documents belongs in
+ * `_shared/lib/money`.
+ *
+
  * Decimal-string arithmetic and formatting for the sales order screens.
  *
  * Money and quantities arrive as strings ("392.85000", "1441735.07") and stay strings.

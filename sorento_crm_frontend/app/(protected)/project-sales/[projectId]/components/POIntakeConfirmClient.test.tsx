@@ -286,7 +286,9 @@ describe('POIntakeConfirmClient', () => {
     expect(screen.getByLabelText('PO number')).toHaveValue('HQ/26/01/041');
     expect(screen.getByLabelText('Filing reference')).toHaveValue('PS26-0143');
     expect(screen.getByLabelText('Quantity on line 1')).toHaveValue('927');
-    expect(screen.getByText('Handwriting on the paper')).toBeInTheDocument();
+    expect(
+      screen.getByText('Handwriting', { selector: '[data-slot="card-title"]' }),
+    ).toBeInTheDocument();
     expect(screen.getByTitle('Purchase order page 1')).toBeInTheDocument();
   });
 

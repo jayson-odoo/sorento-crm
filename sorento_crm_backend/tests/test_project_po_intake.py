@@ -590,6 +590,74 @@ def test_a_note_that_only_points_forward_is_a_successor_card():
     assert payload["po_number"] == "HQ/26/05/087"
 
 
+def test_the_models_classification_wins_over_the_keywords():
+    """The vision model read the PAGE - the strike-through, the arrow, the position -
+    and the keyword pass reads only the text. Here the text says "cancel", which the
+    keywords would take as cancel_line, but the model that saw the page says the note
+    amends a code. The model's reading stands; a wrong cancel_line moves money."""
+    interpretation, payload = classify_annotation(
+        "cancel old spec, use C-FH12",
+        "amendment",
+        [4],
+        model_kind="amend_code",
+        model_payload={"proposed_code": "C-FH12"},
+    )
+    assert interpretation == "amend_code"
+    assert payload["code"] == "C-FH12"
+    assert payload["line_nos"] == [4]
+
+
+def test_an_unknown_model_kind_falls_back_to_the_keywords():
+    """A prompt version that predates the `kind` field, or a model answer outside the
+    vocabulary, must lose NOTHING: the note still classifies exactly as it did before
+    the field existed."""
+    interpretation, payload = classify_annotation(
+        "cancel - refer to New P/O HQ/26/05/087",
+        "cancel this line",
+        [7],
+        model_kind="strikethrough_note",  # not in the vocabulary
+        model_payload={},
+    )
+    assert interpretation == "cancel_line"
+    assert payload["po_number"] == "HQ/26/05/087"
+
+
+def test_the_models_structured_extras_beat_the_regex_and_fall_back_to_it():
+    """The successor number the model names is taken as written; where an older prompt
+    names none, the regex still reads it out of the text."""
+    # Model names the successor: taken verbatim, even though the text also carries one.
+    _kind, payload = classify_annotation(
+        "cancel - refer to New P/O HQ/26/05/087",
+        None,
+        [7],
+        model_kind="cancel_line",
+        model_payload={"successor_po_number": "hq/26/05/099"},
+    )
+    assert payload["po_number"] == "HQ/26/05/099"
+
+    # Model silent on extras: the regex answers, so nothing regresses.
+    _kind, payload = classify_annotation(
+        "cancel - refer to New P/O HQ/26/05/087",
+        None,
+        [7],
+        model_kind="cancel_line",
+        model_payload={},
+    )
+    assert payload["po_number"] == "HQ/26/05/087"
+
+
+def test_a_model_amend_code_with_no_proposal_still_tries_the_regex():
+    interpretation, payload = classify_annotation(
+        "change SRTWC8613-RL to SRTWC8608-RL",
+        None,
+        [1],
+        model_kind="amend_code",
+        model_payload={},
+    )
+    assert interpretation == "amend_code"
+    assert payload["code"] == "SRTWC8608-RL"
+
+
 # ------------------------------------------------------------------------- confirm
 
 

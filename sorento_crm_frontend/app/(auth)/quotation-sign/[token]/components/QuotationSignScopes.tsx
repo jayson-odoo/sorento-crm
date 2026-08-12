@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   formatMyrExact,
   formatQty,
-} from '@/app/(protected)/project-sales/[projectId]/components/POIntakeMoney';
+} from '@/app/(protected)/project-sales/_shared/lib/money';
 import type {
   QuotationSignLine,
   QuotationSignScope,

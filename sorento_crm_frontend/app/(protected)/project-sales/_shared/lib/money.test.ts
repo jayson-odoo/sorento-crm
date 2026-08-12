@@ -15,9 +15,9 @@ import {
   multiplyMoney,
   subtractMoney,
   sumMoney,
-} from './POIntakeMoney';
+} from '../../_shared/lib/money';
 
-describe('POIntakeMoney', () => {
+describe('money', () => {
   it('sums two-decimal strings without float drift', () => {
     // 0.1 + 0.2 as floats is 0.30000000000000004; as cents it is 30.
     expect(sumMoney(['0.10', '0.20'])).toBe('0.30');

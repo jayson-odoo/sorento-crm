@@ -39,7 +39,7 @@ import {
   useQuotations,
 } from '../../../../_shared/hooks/useProjects';
 import { quotationStanding } from '../../../../_shared/lib/quotationDecision';
-import { sumMoney } from '../../../components/POIntakeMoney';
+import { sumMoney } from '../../../../_shared/lib/money';
 import {
   stagedLinesToBody,
   stagedScopeTotal,

@@ -2,7 +2,6 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
 import { ArrowLeft, CheckCircle2, Stamp } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -27,11 +26,6 @@ import {
   lineNeedsAttention,
   type POIntakeLinesGridHandle,
 } from './POIntakeLinesGrid';
-import {
-  PO_MOCK_PARAM,
-  isPOMockScenario,
-  usePOIntakeMockController,
-} from './POIntakeMocks';
 import { POIntakeTotalsBanner } from './POIntakeTotalsBanner';
 import { POIntakeUploadDialog } from './POIntakeUploadDialog';
 
@@ -49,15 +43,11 @@ export function POIntakeConfirmClient({
   projectId: string;
   versionId: string;
 }) {
-  const searchParams = useSearchParams();
-  const rawScenario = searchParams?.get(PO_MOCK_PARAM) ?? null;
-  const scenario = isPOMockScenario(rawScenario) ? rawScenario : null;
-
-  // Both controllers are created every render (hooks cannot be conditional); only one runs a
-  // query, and the mocked one never talks to the network.
-  const live = usePOIntakeController(versionId, { enabled: !scenario });
-  const mocked = usePOIntakeMockController(scenario);
-  const intake = scenario ? mocked : live;
+  // The Phase-1 mock controller is GONE from this page, deliberately. It was activated by a
+  // `?po_mock=` URL param, which meant a shareable link could put synthetic lines on a screen
+  // that shows purchase-order money. Loading/empty/error states are pinned by the component
+  // tests, which stub the service layer like every other test in the module.
+  const intake = usePOIntakeController(versionId);
 
   const project = useProject(projectId);
   const canEdit = project.data ? project.data.can_edit !== false : true;
@@ -158,13 +148,12 @@ export function POIntakeConfirmClient({
             </Link>
           </Button>
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline">{`Version ${version.version_no}`}</Badge>
+            <Badge variant="outline">{`v${version.version_no}`}</Badge>
             <PhaseBadge version={version} />
             {confirmed && <Badge variant="success">Confirmed</Badge>}
             {stamps.approved_at && <Badge variant="secondary">Approved</Badge>}
             {stamps.countersigned_at && <Badge variant="secondary">Countersigned</Badge>}
             {!canEdit && <Badge variant="outline">Read only</Badge>}
-            {intake.isMock && <Badge variant="warning">Sample data</Badge>}
           </div>
           <h1 className="mt-1 text-xl font-semibold">
             {stamps.po_number ? `PO ${stamps.po_number}` : 'PO number not read yet'}
@@ -288,9 +277,10 @@ export function POIntakeConfirmClient({
             <div className="min-w-0 flex-1 space-y-4">
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-sm">
-                    What the top of the document says
-                  </CardTitle>
+                  {/* Terse, like every other card in the system. "What the top of the
+                      document says" explained the screen to the reader, and the rule is
+                      that a screen needing that has already failed. */}
+                  <CardTitle className="text-sm">Header</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <POIntakeHeaderFields
@@ -330,7 +320,7 @@ export function POIntakeConfirmClient({
               <div ref={notesRef} className="min-w-0">
                 <Card>
                   <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <CardTitle className="text-sm">Handwriting on the paper</CardTitle>
+                    <CardTitle className="text-sm">Handwriting</CardTitle>
                     {unreviewed.length > 0 && (
                       <Badge variant="warning">{`${unreviewed.length} to review`}</Badge>
                     )}

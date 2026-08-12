@@ -222,8 +222,6 @@ export interface POIntakeController {
   rejectAnnotation: (annotationId: string, note: string) => Promise<void>;
   approve: () => Promise<void>;
   countersign: () => Promise<void>;
-  /** Mock scenarios say so out loud rather than pretending a write reached the server. */
-  isMock: boolean;
 }
 
 export const PO_INTERPRETATION_LABELS: Record<POAnnotationInterpretation, string> = {

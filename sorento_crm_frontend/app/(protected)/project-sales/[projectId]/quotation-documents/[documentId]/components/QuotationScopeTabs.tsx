@@ -4,7 +4,7 @@ import * as React from 'react';
 import { DollarSign, Plus } from 'lucide-react';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { formatMyrExact } from '../../../components/POIntakeMoney';
+import { formatMyrExact } from '../../../../_shared/lib/money';
 import type { QuotationScope } from '../../../../_shared/services/quotationDocumentService';
 
 /**

@@ -289,6 +289,5 @@ export function usePOIntakeController(
       if (!poId) return;
       await countersignMutation.mutateAsync().catch(() => undefined);
     },
-    isMock: false,
   };
 }

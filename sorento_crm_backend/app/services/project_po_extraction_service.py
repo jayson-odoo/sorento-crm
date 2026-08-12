@@ -407,18 +407,38 @@ def classify_annotation(
     text: Optional[str],
     meaning: Optional[str],
     refers_to_lines: Optional[Sequence[Any]],
+    model_kind: Optional[str] = None,
+    model_payload: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """Read a note into one of the six interpretations, plus what applying it needs.
 
-    Cancellation is tested first because it is the only reading that removes money, and
-    a note that both cancels and names a successor ("cancel - refer to New P/O
-    HQ/26/05/087") is ONE act by one hand: two cards for it would ask the reader the
-    same question twice, so the successor rides along in ``interpretation_json`` and is
-    applied by the same accept.
+    **The MODEL's classification wins when it gave one.** The vision model has already
+    read the page - it saw the strike-through, the arrow, the position of the note
+    against the line - and asking it for a ``kind`` from the fixed vocabulary is one
+    more field on an answer it is already writing. The keyword pass below re-derives
+    the same decision from the note's TEXT alone, which loses everything the model saw
+    and breaks the day the client writes "batal" instead of "cancel". It survives only
+    as the FALLBACK: for prompt versions that predate the ``kind`` field, and for the
+    odd answer where the model returns something outside the vocabulary.
+
+    Even under a model kind, the structured extras are cross-checked here: a successor
+    PO number or a proposed code the model names is taken, but where it names none the
+    regexes still try, so an older prompt loses nothing.
+
+    Cancellation is tested first in the fallback because it is the only reading that
+    removes money, and a note that both cancels and names a successor ("cancel - refer
+    to New P/O HQ/26/05/087") is ONE act by one hand: two cards for it would ask the
+    reader the same question twice, so the successor rides along in
+    ``interpretation_json`` and is applied by the same accept.
     """
     blob = f"{meaning or ''} {text or ''}".lower()
     lines = _int_list(refers_to_lines)
-    successor = successor_po_number(text)
+    extras = model_payload or {}
+    # Structured extras: the model's answer first, the regex second, so a prompt version
+    # that predates the fields loses nothing and a model that read the arrow wins.
+    successor = (
+        str(extras.get("successor_po_number") or "").strip().upper() or None
+    ) or successor_po_number(text)
     payload: Dict[str, Any] = {KEY_LINE_NOS: lines}
     if successor:
         # One key for "the PO this note points at", whether the note cancels and
@@ -426,6 +446,17 @@ def classify_annotation(
         # and the service end up disagreeing about which one to read.
         payload[KEY_PO_NUMBER] = successor
 
+    kind = str(model_kind or "").strip().lower() or None
+    if kind in INTERPRETATIONS:
+        if kind == INTERP_AMEND_CODE:
+            proposed = (
+                str(extras.get("proposed_code") or "").strip().upper() or None
+            ) or _proposed_code(text)
+            if proposed:
+                payload[KEY_CODE] = proposed
+        return kind, payload
+
+    # ------------- fallback: the note's text alone, by keyword. See the docstring.
     if any(word in blob for word in _CANCEL_WORDS):
         return INTERP_CANCEL, payload
     if any(word in blob for word in _SIGNATURE_WORDS):
@@ -1029,7 +1060,13 @@ class ProjectPOExtractionService:
                 if refers is None:
                     refers = note.get("refers_to_lines")
                 interpretation, payload = classify_annotation(
-                    text, note.get("meaning"), refers
+                    text,
+                    note.get("meaning"),
+                    refers,
+                    # The model classifies the note it just read; the keywords inside are
+                    # only the fallback for prompt versions that predate these fields.
+                    model_kind=note.get("kind"),
+                    model_payload=note,
                 )
                 annotation_specs.append(
                     {

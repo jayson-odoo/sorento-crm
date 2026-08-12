@@ -4,7 +4,7 @@ import * as React from 'react';
 import { AlertTriangle, CheckCircle2, CircleHelp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { POVersion } from '../../_shared/types/poIntake.types';
-import { formatMyrExact, isMoneyZero, subtractMoney, sumMoney } from './POIntakeMoney';
+import { formatMyrExact, isMoneyZero, subtractMoney, sumMoney } from '../../_shared/lib/money';
 
 /**
  * The first thing on the confirm screen, in money.

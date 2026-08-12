@@ -129,7 +129,7 @@ describe('POIntakeAnnotationsGrid', () => {
     // One header row plus one row per note.
     expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(4);
     expect(
-      screen.getByRole('columnheader', { name: /What is written/i }),
+      screen.getByRole('columnheader', { name: /Note/i }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole('columnheader', { name: /What accepting does/i }),

@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { formatMyrExact } from '../../../components/POIntakeMoney';
+import { formatMyrExact } from '../../../../_shared/lib/money';
 import type {
   QuotationDocument,
   QuotationDocumentBody,

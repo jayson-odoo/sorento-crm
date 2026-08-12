@@ -43,7 +43,7 @@ import AttachmentPreviewModal, {
 import { QuotationLinePhoto } from './QuotationLinePhoto';
 import { ReviseQuotationDialog } from './ReviseQuotationDialog';
 import { formatMyr } from './QuotationsPanel';
-import { formatMyrExact, isDecimalString, multiplyMoney, sumMoney } from './POIntakeMoney';
+import { formatMyrExact, isDecimalString, multiplyMoney, sumMoney } from '../../_shared/lib/money';
 
 const FLOOR_LEVEL_LABELS: Record<string, string> = {
   product: 'this product',

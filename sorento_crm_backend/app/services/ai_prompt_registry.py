@@ -438,7 +438,10 @@ def _po_extractor_fallback() -> str:
         "  ],\n"
         '  "annotations": [\n'
         '    {"text": "verbatim handwriting", "date": "26/1/26", "refers_to_items": [5,20,23],\n'
-        '     "meaning": "amend code and description"}\n'
+        '     "meaning": "amend code and description",\n'
+        '     "kind": "amend_code",\n'
+        '     "proposed_code": "SRTWC8608-RL",\n'
+        '     "successor_po_number": null}\n'
         "  ]\n"
         "}\n"
         "\n"
@@ -475,6 +478,20 @@ def _po_extractor_fallback() -> str:
         '  the paper reads "SS C-FH12" with SS crossed out, the note is "C-FH12".\n'
         '- Put EVERY handwritten note in "annotations", verbatim, including notes written\n'
         "  next to a line or in the margin. Do not merge two notes into one.\n"
+        '- Classify each note as "kind", judged from everything you can SEE - the words,\n'
+        "  the strike-through it sits beside, where on the page it points - not from\n"
+        "  keywords alone. Exactly one of:\n"
+        '  * "cancel_line" - the note cancels printed line items (whatever language or\n'
+        "    words it uses for that).\n"
+        '  * "amend_code" - it replaces a product code. Put the REPLACEMENT code, exactly\n'
+        '    as written, in "proposed_code".\n'
+        '  * "amend_description" - it changes wording, a size or a spec, not the code.\n'
+        '  * "successor_po" - it points at another purchase order. Put that PO number in\n'
+        '    "successor_po_number" (also fill this on a cancel_line note that names one).\n'
+        '  * "signature" - a signature, a chop, an approval stamp.\n'
+        '  * "other" - anything else. When unsure between two kinds, prefer "other" over\n'
+        "    guessing: a wrong cancel_line moves money.\n"
+        '- "proposed_code" and "successor_po_number" are null unless the note names one.\n'
         "- Numbers: no thousands separators, a dot decimal.\n"
         "- If a field is absent on this page use null. Report ONLY lines visible on THIS page.\n"
     )

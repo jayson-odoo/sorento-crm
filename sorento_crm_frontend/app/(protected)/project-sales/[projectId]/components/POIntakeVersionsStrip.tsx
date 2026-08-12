@@ -73,7 +73,7 @@ export function POIntakeVersionsStrip({
           >
             <span className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
               <FileText className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="font-medium">{`Version ${version.version_no}`}</span>
+              <span className="font-medium">{`v${version.version_no}`}</span>
               {version.extraction_state && (
                 <Badge
                   variant={
