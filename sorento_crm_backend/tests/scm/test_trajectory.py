@@ -118,6 +118,20 @@ def test_the_popup_names_who_bought_it(db_world):
     assert any(c["customer_name"] == f"{MARKER} Vivo Homes" for c in entry["customers"])
 
 
+def test_who_bought_it_carries_the_date_of_their_last_order(db_world):
+    """The FE renders "Who bought it" as a table (Customer | Qty | Last order date), so
+    each customer needs the MOST RECENT of their orders inside the studied window, not
+    just the total quantity."""
+    from app.services.scm.trajectory_service import trajectory_for_run
+
+    out = trajectory_for_run(db_world["db"], db_world["run_id"], as_of=AS_OF)
+    entry = out["series"][f"{db_world['product_id']}:project"]
+
+    customer = next(c for c in entry["customers"] if c["customer_name"] == f"{MARKER} Vivo Homes")
+    # Two orders on record for this customer: 2026-06-05 and 2026-07-12. The later one wins.
+    assert customer["last_order_date"] == "2026-07-12"
+
+
 def test_the_windows_come_from_the_policy_not_a_constant(db_world):
     from app.services.scm.trajectory_service import trajectory_for_run
 

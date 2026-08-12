@@ -31,6 +31,7 @@ from app.services.scm import (
     level_suggestion_service,
     po_book_service,
     product_economics_service,
+    purchase_trend_service,
     trajectory_service,
 )
 from app.services.error_handler import AppException
@@ -429,6 +430,24 @@ def get_po_book(
     """
     svc.assert_run_visible(db, run_id)
     return po_book_service.po_book_for_run(db, run_id)
+
+
+@router.get("/reorder-runs/{run_id}/purchase-trend")
+def get_purchase_trend(
+    run_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The mirror of the order trend, on the buy side: who we bought from, and when.
+
+    Keyed by product id, across every supplier - this is the whole purchase story for the
+    item, not narrowed to one supplier pair (that question is `price-history`'s). A small
+    monthly trend (`recent_qty` vs `previous_qty`) plus the last few purchase lines
+    (supplier, date, quantity, cost), newest first. A draft this run itself proposed is
+    never read back as a purchase we made.
+    """
+    svc.assert_run_visible(db, run_id)
+    return purchase_trend_service.purchase_trend_for_run(db, run_id)
 
 
 @router.get("/reorder-runs/{run_id}/product-economics")

@@ -28,6 +28,7 @@ from app.services.scm.trajectory import (
     DEFAULT_RETAIL_MONTHS,
     MOVEMENT_THRESHOLD_PCT,
     assess_trajectory,
+    month_shift as _month_shift,
 )
 
 #: Months of series shipped to the popup's line graph: the current year and the one before,
@@ -36,11 +37,6 @@ SERIES_MONTHS = 24
 
 #: Customers named per product+side. A few the reader can go and look at.
 CUSTOMER_SAMPLE = 5
-
-
-def _month_shift(d: date, months: int) -> date:
-    total = d.year * 12 + (d.month - 1) + months
-    return date(total // 12, total % 12 + 1, 1)
 
 
 def _windows(db: Session) -> dict[str, int]:
@@ -85,11 +81,12 @@ WITH pairs AS (
     LEFT JOIN warehouses w ON w.id = r.warehouse_id
     WHERE r.run_id::text = :run_id
 )
-SELECT product_id, segment, customer_name, qty FROM (
+SELECT product_id, segment, customer_name, qty, last_order_date FROM (
     SELECT sol.product_id::text AS product_id,
            COALESCE(w.segment, 'project') AS segment,
            COALESCE(c.customer_name, 'Unnamed customer') AS customer_name,
            SUM(sol.qty_ordered) AS qty,
+           MAX(so.order_date) AS last_order_date,
            ROW_NUMBER() OVER (
                PARTITION BY sol.product_id, COALESCE(w.segment, 'project')
                ORDER BY SUM(sol.qty_ordered) DESC
@@ -137,7 +134,13 @@ def trajectory_for_run(
     ).mappings().all():
         key = f"{r['product_id']}:{r['segment']}"
         customers.setdefault(key, []).append(
-            {"customer_name": r["customer_name"], "qty": float(r["qty"] or 0)}
+            {
+                "customer_name": r["customer_name"],
+                "qty": float(r["qty"] or 0),
+                "last_order_date": (
+                    r["last_order_date"].isoformat() if r["last_order_date"] else None
+                ),
+            }
         )
 
     def window_sum(series: dict[str, float], start: date, months: int) -> float:

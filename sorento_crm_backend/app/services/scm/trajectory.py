@@ -15,6 +15,7 @@ testable with no database in the picture.
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import NamedTuple, Optional
 
 #: Below this, two windows differ by noise, not by a trend worth telling a buyer about.
@@ -42,6 +43,17 @@ class Trajectory(NamedTuple):
     year_ago_qty: Optional[float]
     year_change_pct: Optional[float]
     movement_threshold_pct: float = MOVEMENT_THRESHOLD_PCT
+
+
+def month_shift(d: date, months: int) -> date:
+    """The first of the month `months` away from `d`'s month (negative walks back).
+
+    Shared between `trajectory_service` and `purchase_trend_service` - both window a
+    monthly series off "as of" and had drifted into copy-pasted copies of the same
+    arithmetic. One implementation here so the two can never diverge.
+    """
+    total = d.year * 12 + (d.month - 1) + months
+    return date(total // 12, total % 12 + 1, 1)
 
 
 def _pct(new: float, old: float) -> Optional[float]:
