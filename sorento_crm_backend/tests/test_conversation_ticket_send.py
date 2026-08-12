@@ -488,3 +488,59 @@ def test_no_contact_or_no_assignee_is_never_ambiguous(db):
     t1.assigned_to_id = None
     db.commit()
     assert service.is_ambiguous_fallback_response(t1) is False
+
+
+# --------------------------------------------------------------------------- #
+# FINDING 2 (code review): the predicate above keyed on the resolved          #
+# `tracking` argument's OWN assigned_to_id and counted ALL open siblings      #
+# (is_resolved=False only) - wrong in both directions. The tests above still  #
+# pass unchanged (they never exercise the new `responded_by` parameter, so    #
+# they pin the fallback-to-the-tracking's-own-assignee default, which is      #
+# unaffected), but they under-specified the contract: AC-E3 is about the      #
+# (contact, REPLYING user) pair, not "this pre-resolved row's own assignee".  #
+# These two pin the actual bugs the finding named.                           #
+# --------------------------------------------------------------------------- #
+
+
+def test_responded_by_param_finds_ambiguity_the_default_assignee_misses(db):
+    """(a) False negative: the n8n Respond-app-reply fallback resolves a
+    contact-level "preferred" tracking (t1, assigned to seed[assignee_id])
+    separately from identifying WHO actually replied (payload's
+    `responded_by`). The old code only ever asked "does t1's own assignee
+    hold 2+ open tickets?" - t1's assignee holds exactly one, so it always
+    answered False, even when the real replier (seed[other_assignee_id], who
+    holds TWO) is a completely different user. Passing `responded_by`
+    (resolved in update_tracking from the payload before this call) fixes it."""
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed, source_message_id="wamid.msg-1", assignee_id=seed["assignee_id"])
+    _create_ticket(db, seed, source_message_id="wamid.msg-2", assignee_id=seed["other_assignee_id"])
+    _create_ticket(db, seed, source_message_id="wamid.msg-3", assignee_id=seed["other_assignee_id"])
+    service = ConversationSLATrackingService(db)
+
+    assert (
+        service.is_ambiguous_fallback_response(t1, responded_by=seed["other_assignee_id"])
+        is True
+    ), "the ACTUAL replier holds 2 open unanswered tickets - ambiguous regardless of t1's own assignee"
+    assert (
+        service.is_ambiguous_fallback_response(t1, responded_by=seed["assignee_id"]) is False
+    ), "seed[assignee_id] really does hold exactly one open ticket (t1 itself)"
+    # No responded_by supplied at all -> unchanged default: falls back to the
+    # tracking's own assignee (seed[assignee_id], one ticket -> unambiguous).
+    assert service.is_ambiguous_fallback_response(t1) is False
+
+
+def test_already_responded_sibling_never_inflates_ambiguity(db):
+    """(b) False positive: the old query filtered only `is_resolved=False`,
+    so an ALREADY-RESPONDED-but-not-yet-resolved sibling (still "open") was
+    counted as a competing candidate even though it can no longer be the
+    ticket a NEW reply is answering. A lone still-unanswered ticket must
+    never be ambiguous."""
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed, source_message_id="wamid.msg-1")
+    t2 = _create_ticket(db, seed, source_message_id="wamid.msg-2")
+    service = ConversationSLATrackingService(db)
+
+    t2.is_responded = True
+    db.commit()
+
+    assert service.is_ambiguous_fallback_response(t1) is False

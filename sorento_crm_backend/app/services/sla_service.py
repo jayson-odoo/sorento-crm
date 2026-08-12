@@ -4078,15 +4078,39 @@ class ConversationSLATrackingService:
         # /{tracking_id} and PUT/POST /integration/{tracking_id} call) rather
         # than duplicated per-route: the sibling /integration/{tracking_id}
         # route has no auth dependency and used to stamp is_responded (plus
-        # write a "response" event log) with no ambiguity check at all. See
-        # is_ambiguous_fallback_response for the (contact, replying-user) rule.
-        if (
-            bool(update_data.get("is_responded"))
-            and not bool(getattr(tracking, "is_responded", False))
-            and self.is_ambiguous_fallback_response(tracking)
+        # write a "response" event log) with no ambiguity check at all.
+        #
+        # Resolve the payload's `responded_by` (respond_user_id / email /
+        # users.id) to the internal user id BEFORE checking ambiguity: it
+        # identifies the ACTUAL replying user, which can differ from this
+        # tracking's own assignee (the n8n fallback resolves `tracking` via a
+        # separate contact-level "preferred" lookup) — see
+        # is_ambiguous_fallback_response for why that distinction matters.
+        if bool(update_data.get("is_responded")) and not bool(
+            getattr(tracking, "is_responded", False)
         ):
-            setattr(tracking, "_ambiguous_responded_skipped", True)
-            return tracking
+            _raw_responded_by = update_data.get("responded_by")
+            _resolved_responded_by = None
+            if _raw_responded_by is not None and str(_raw_responded_by).strip():
+                _responded_by_value = str(_raw_responded_by).strip()
+                _responded_by_user = self.db.query(User).filter(
+                    (User.respond_user_id == _responded_by_value)
+                    | (User.id == _responded_by_value)
+                    | (User.email == _responded_by_value)
+                ).first()
+                if not _responded_by_user:
+                    raise handle_validation_error(
+                        f"User not found for responded_by (respond_user_id): {_responded_by_value}"
+                    )
+                _resolved_responded_by = _responded_by_user.id
+                # Reuse the already-resolved id below instead of re-querying it.
+                update_data["responded_by"] = _resolved_responded_by
+
+            if self.is_ambiguous_fallback_response(
+                tracking, responded_by=_resolved_responded_by
+            ):
+                setattr(tracking, "_ambiguous_responded_skipped", True)
+                return tracking
 
         # Resolve agent_code → agent_id FK if caller passed a code string
         raw_agent_code = update_data.pop("agent_code", None)
@@ -5210,12 +5234,30 @@ class ConversationSLATrackingService:
         )
         return tracking
 
-    def is_ambiguous_fallback_response(self, tracking: ConversationSLATracking) -> bool:
-        """UAC AC-E3: true when the replying user (this tracking's current
-        assignee) holds 2+ OPEN conversation-scope tickets for the same
-        contact — the n8n Respond-app-reply fallback has no way to tell which
-        enquiry they actually answered, so it must change nothing (the CRM
-        ticket-send path, ``mark_ticket_responded``, is authoritative instead).
+    def is_ambiguous_fallback_response(
+        self, tracking: ConversationSLATracking, responded_by: Optional[str] = None
+    ) -> bool:
+        """UAC AC-E3: true when the REPLYING user holds 2+ OPEN, UNANSWERED
+        conversation-scope tickets for the same contact — the n8n
+        Respond-app-reply fallback has no way to tell which enquiry they
+        actually answered, so it must change nothing (the CRM ticket-send
+        path, ``mark_ticket_responded``, is authoritative instead).
+
+        ``responded_by`` is the replying user's internal id when the caller
+        identified one (e.g. resolved from the payload in ``update_tracking``
+        before this call) — it takes priority over ``tracking``'s own
+        assignee. This matters: the n8n fallback resolves ``tracking`` itself
+        via a SEPARATE contact-level "preferred" lookup that can differ from
+        who actually replied, so keying purely on ``tracking.assigned_to_id``
+        can miss real ambiguity held by the true replier (FINDING 2a) — and
+        with neither an assignee, checking against nobody is meaningless, so
+        it is never ambiguous.
+
+        Only UNANSWERED siblings count: one already responded to (still open,
+        awaiting resolve) is no longer a candidate for "which ticket did this
+        NEW reply answer", so a lone still-unanswered ticket is never
+        ambiguous even with answered siblings around (FINDING 2b).
+
         Form-SLA rows are never ambiguous (per-entity, not contact-shared).
         """
         from app.services.form_sla_service import FORM_SLA_TYPES
@@ -5225,15 +5267,16 @@ class ConversationSLATrackingService:
         if bool(getattr(tracking, "is_responded", False)):
             return False
         contact_id = getattr(tracking, "respond_contact_id", None)
-        assignee_id = getattr(tracking, "assigned_to_id", None)
-        if not contact_id or not assignee_id:
+        target_assignee_id = responded_by or getattr(tracking, "assigned_to_id", None)
+        if not contact_id or not target_assignee_id:
             return False
         sibling_count = (
             self.db.query(ConversationSLATracking.id)
             .filter(
                 ConversationSLATracking.respond_contact_id == contact_id,
-                ConversationSLATracking.assigned_to_id == assignee_id,
+                ConversationSLATracking.assigned_to_id == target_assignee_id,
                 ConversationSLATracking.is_resolved.is_(False),
+                ConversationSLATracking.is_responded.is_(False),
                 conversation_tracking_scope(),
             )
             .count()
