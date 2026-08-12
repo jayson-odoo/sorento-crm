@@ -253,11 +253,20 @@ class ConversationSLAEscalateRequest(BaseModel):
     respond_contact_id: CRM respond_contacts.id, Respond.io id, or phone (E.164 / variants).
     """
     respond_contact_id: str
+    # AC-I5: the exact ticket to escalate. When present it WINS - the server
+    # escalates that row and never re-resolves by contact. GET
+    # /integration/due-escalations already returns one item per row, so the
+    # scheduler can pass the id straight through; without it, a contact holding
+    # several open tickets gets a most-recent-open pick, which can escalate a
+    # different sibling than the one that actually breached. Optional so the
+    # old contact-scoped contract keeps working.
+    tracking_id: Optional[str] = None
     # Optional: a contact can hold several open tickets at once (per-enquiry,
     # not one merged conversation), so the server resolves a MOST-RECENT-OPEN
     # pick for this (contact, policy) pair - see get_tracking_by_contact_and_
     # policy - and uses THAT row's policy. policy_id here is only a fallback
-    # when no open row is found - legacy exact-match lookup.
+    # when no open row is found - legacy exact-match lookup. Ignored entirely
+    # when tracking_id is given.
     policy_id: Optional[str] = None
     # Target tier after escalation (1 - 3), must be greater than the row's current tier.
     # Omit (None) for signal-only escalation: the server escalates to current tier + 1,
@@ -275,7 +284,7 @@ class ConversationSLAEscalateRequest(BaseModel):
             raise ValueError("respond_contact_id is required")
         return str(v).strip()
 
-    @field_validator("policy_id")
+    @field_validator("policy_id", "tracking_id")
     @classmethod
     def validate_policy_id(cls, v):
         # Optional fallback: blank / explicit null normalizes to None. The server

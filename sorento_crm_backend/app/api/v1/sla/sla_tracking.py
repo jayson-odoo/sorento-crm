@@ -837,9 +837,14 @@ async def list_due_escalations_integration(
 
     Returns unresolved conversation-SLA rows past their response due time at tier 1 or 2
     (tier 3 has nowhere to escalate to; form-SLA rows are excluded by scope). Each item
-    includes `phone_number` and `respond_io_id` so the runner needs no DB access: feed
-    `respond_contact_id` + `policy_id` straight into POST /integration/escalate
-    (signal-only - omit current_tier), and `phone_number` into contact resolution.
+    includes `phone_number` and `respond_io_id` so the runner needs no DB access.
+
+    Feed `tracking_id` (plus `respond_contact_id`) straight into POST
+    /integration/escalate, signal-only (omit current_tier). This is ONE ITEM PER
+    ROW, so the id is the honest thing to escalate on: dropping it and sending
+    only the contact makes the server fall back to a most-recent-open pick, which
+    under multi-open tickets escalates a sibling that has not breached while the
+    one listed here stays at its tier (AC-I5).
     """
     try:
         service = ConversationSLATrackingService(db)
@@ -862,7 +867,14 @@ async def escalate_sla_tracking_integration(
     db: Session = Depends(get_db),
 ):
     """
-    Escalate a conversation SLA tracking by respond_contact_id and policy_id (for external systems).
+    Escalate a conversation SLA tracking (for external systems).
+
+    **Which ticket (AC-I5):** pass `tracking_id` and that exact row escalates - it is
+    validated against `respond_contact_id` and takes precedence over everything else.
+    Omit it and the server falls back to the contact-scoped path (most-recent-open for
+    the contact, then the legacy contact+policy exact match), kept for back-compat.
+    Under multi-open intervention tickets only the id is precise, and
+    GET /integration/due-escalations hands one out per breaching row.
 
     Preferred (signal-only) mode: omit body.current_tier - the server escalates to the row's
     current tier + 1. When already at tier 3, no escalation happens and the response carries
@@ -886,15 +898,34 @@ async def escalate_sla_tracking_integration(
         if not internal_contact_id:
             raise handle_not_found("Respond contact", body.respond_contact_id)
 
-        # Source of truth = the open conversation tracking for this contact (one open
-        # per contact). Its stored policy_id is the agent-team-tied policy. body.policy_id
-        # is only a fallback - used when no open row is found (legacy exact-match lookup).
-        tracking = service.get_open_tracking_by_contact(internal_contact_id)
-        if not tracking and body.policy_id:
-            tracking = service.get_tracking_by_contact_and_policy(
-                internal_contact_id,
-                body.policy_id,
-            )
+        # AC-I5: an explicit tracking_id names the ticket and WINS. The scheduler
+        # gets one item PER ROW from GET /integration/due-escalations, so it always
+        # knows which ticket breached; re-resolving by contact here would let it
+        # escalate a different open sibling (bumping a ticket that is inside its
+        # SLA and notifying that assignee, while the breaching one stays at tier 1).
+        # The id is checked against the resolved contact so a mis-paired body can
+        # never escalate somebody else's ticket.
+        tracking = None
+        if body.tracking_id:
+            tracking = service.get_tracking(str(body.tracking_id), load_event_logs=False)
+            if str(getattr(tracking, "respond_contact_id", "") or "") != str(
+                internal_contact_id
+            ):
+                raise handle_validation_error(
+                    "tracking_id does not belong to respond_contact_id "
+                    f"{body.respond_contact_id}."
+                )
+        else:
+            # Back-compat contact-scoped path. Source of truth = the open conversation
+            # tracking for this contact; its stored policy_id is the agent-team-tied
+            # policy. body.policy_id is only a fallback - used when no open row is
+            # found (legacy exact-match lookup).
+            tracking = service.get_open_tracking_by_contact(internal_contact_id)
+            if not tracking and body.policy_id:
+                tracking = service.get_tracking_by_contact_and_policy(
+                    internal_contact_id,
+                    body.policy_id,
+                )
         if not tracking:
             raise handle_not_found(
                 "Conversation SLA tracking",
