@@ -50,6 +50,17 @@ async def get_conversation_sla_tracking_by_contact(
     If both identifiers are sent, they must refer to the same internal user record.
 
     **404:** No matching contact, or no SLA tracking for that contact.
+
+    **AC-E4 / AC-F1 caution (multi-open consumer audit):** a contact can now hold
+    several open tickets at once. Returning only the "preferred" (most-recently-
+    created open) one is fine for a read/summary, but if any caller chains this GET
+    with a resolve/update call on the returned `id` in response to a Respond.io
+    "conversation closed" event, that chain would resolve the WRONG ticket under
+    multi-open (or an arbitrary one). No such inbound "resolve on Respond close"
+    webhook exists in this backend today (`PUT /integration/{tracking_id}` is always
+    ticket_id-scoped by the caller) — this note exists so that assumption is never
+    silently reintroduced by wiring this GET into a resolve chain. Kept for backward
+    compat (regression net 3) until the n8n contract moves to per-ticket ids (S3.2).
     """
     phone = (phone_number or contact_phone or "").strip()
     cid = (contact_id or "").strip()

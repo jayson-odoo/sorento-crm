@@ -1971,7 +1971,19 @@ class ConversationSLATrackingService:
     def get_preferred_tracking_for_contact(
         self, contact: RespondContact
     ) -> Optional[ConversationSLATracking]:
-        """Prefer open tracking, else most recent by created_at."""
+        """The single "preferred" conversation-SLA row for a contact: open first, else
+        most recent by created_at.
+
+        AC-F1 (multi-open consumer audit): a contact can now hold several open
+        tickets simultaneously (per-enquiry identity, not a contact singleton). This
+        is a deliberate MOST-RECENT-OPEN reduction, not a bug — callers here are all
+        "give me a representative snapshot for this contact" reads (external GET-by-
+        contact summary, next-assignee's "is this contact already assigned"
+        signal, legacy set-assignee-by-phone) that predate per-ticket identity and
+        were never meant to enumerate every open ticket. Callers that need the FULL
+        open set (the worklist) use ``list_my_pending`` / ``list_tracking`` instead.
+        Pinned by tests/test_conversation_multi_open_consumer_audit.py.
+        """
         from sqlalchemy.orm import joinedload
         from app.models.sla import ConversationSLAEventLog
 
@@ -2086,6 +2098,13 @@ class ConversationSLATrackingService:
         """
         Get the conversation SLA tracking for a contact and policy.
         Prefers an unresolved (open) tracking; otherwise returns the most recent by created_at.
+
+        AC-F1: a contact can hold several open tickets on the SAME policy at once,
+        so this is a MOST-RECENT-OPEN pick among possibly-several matches, not a
+        singleton lookup. Used as the legacy fallback in ``escalate_tracking``'s
+        internal contact+policy resolution path (only when the caller has no
+        ``tracking_id`` — see that method). Callers that already hold a specific
+        tracking_id must NOT go through here — pass it directly instead.
         """
         from sqlalchemy.orm import joinedload
         from app.models.sla import ConversationSLAEventLog
@@ -2114,12 +2133,21 @@ class ConversationSLATrackingService:
         self,
         respond_contact_id: str,
     ) -> Optional[ConversationSLATracking]:
-        """Get the OPEN conversation SLA tracking for a contact (policy-agnostic).
+        """Get an OPEN conversation SLA tracking for a contact (policy-agnostic).
 
-        Conversation SLA is max one-open-per-contact (``conversation_tracking_scope``
-        excludes form-SLA rows), so the contact alone identifies the row to escalate —
-        its stored policy_id (tied at create via agent_code + team_set_code) is the
-        source of truth. Prefers an unresolved row; falls back to the most recent.
+        AC-F1 (multi-open consumer audit): conversation SLA is NO LONGER max
+        one-open-per-contact — a contact can hold several open tickets at once
+        (per-enquiry identity). This is the primary resolution path for
+        ``POST /integration/escalate`` (n8n's signal-only, contact-keyed escalation
+        call, which carries no tracking_id): with 2+ open tickets for the contact,
+        it returns only the MOST-RECENTLY-CREATED open one — a documented, tested,
+        interim limitation, not a crash. A sibling open ticket on the same contact
+        is simply not escalated by that call; it still surfaces separately via
+        ``list_due_escalations`` (which is per-tracking_id) whenever ITS OWN due_at
+        breaches. Precise per-ticket escalation requires n8n to send the ticket id
+        (S3.2 cutover); until then this stays the accepted contact-only behavior
+        (regression net 3 — do not change without updating the n8n contract).
+        Prefers an unresolved row; falls back to the most recent overall.
         """
         from sqlalchemy.orm import joinedload
         from app.models.sla import ConversationSLAEventLog
@@ -2266,25 +2294,42 @@ class ConversationSLATrackingService:
         escalation_reason: Optional[str] = None,
         assigned_to_id: Optional[str] = None,
         assigned_to_respond_user_id: Optional[str] = None,
+        tracking_id: Optional[str] = None,
     ) -> ConversationSLATracking:
         """
-        Escalate a conversation SLA tracking by respond_contact_id and policy_id: set new tier,
-        timestamps, and recalculate due_at (response) and due_at_resolution from policy tier KPIs.
-        Creates an escalation event log. Called by external system via integration API.
+        Escalate a conversation SLA tracking: set new tier, timestamps, and recalculate
+        due_at (response) and due_at_resolution from policy tier KPIs. Creates an
+        escalation event log. Called by external system via integration API and the UI
+        escalate action.
 
         escalation_reason None → auto-escalation default mentioning from_tier (signal-only
         callers like the scheduled n8n runner don't know the tier before the call).
         assigned_to_id / assigned_to_respond_user_id: the new tier assignee, applied BEFORE
         the event log is written so the escalation log records the new assignee, not the
         previous tier's (the caller resolves the assignee from the target tier first).
+
+        tracking_id (AC-F1, multi-open consumer audit): when given, escalates THAT exact
+        row via a direct id lookup. Callers that already resolved a specific ticket (the
+        UI escalate route, keyed by tracking_id in the URL; the n8n integration route,
+        which resolves "the" tracking before calling here) MUST pass it — a contact can
+        now hold several open tickets on the same policy, so re-resolving by
+        (respond_contact_id, policy_id) here can silently pick a DIFFERENT sibling than
+        the one the caller intended (this was a real bug: the UI escalate action could
+        escalate the wrong ticket for a contact with 2 open tickets on the same policy).
+        Omit only for legacy/back-compat callers that never had an id (none remain in
+        this codebase as of this audit, but the contact+policy fallback is kept for any
+        external caller still on the old contract).
         """
         from datetime import timedelta
 
-        tracking = self.get_tracking_by_contact_and_policy(respond_contact_id, policy_id)
+        if tracking_id:
+            tracking = self.get_tracking(str(tracking_id), load_event_logs=False)
+        else:
+            tracking = self.get_tracking_by_contact_and_policy(respond_contact_id, policy_id)
         if not tracking:
             raise handle_not_found(
                 "Conversation SLA tracking",
-                f"respond_contact_id={respond_contact_id}, policy_id={policy_id}",
+                f"tracking_id={tracking_id}, respond_contact_id={respond_contact_id}, policy_id={policy_id}",
             )
         if bool(getattr(tracking, "is_resolved", False)):
             raise handle_validation_error(
@@ -2912,6 +2957,13 @@ class ConversationSLATrackingService:
         If there is a conversation SLA tracking for this contact phone that already has an assignee,
         return that user's info (id, email, name, respond_user_id). Otherwise return None.
         Used by next-assignee API to avoid reassigning conversations that are already assigned.
+
+        AC-F1: not currently wired into any route (kept for callers that may want a
+        single "who owns this contact's thread" answer). A contact can hold several
+        assigned open tickets at once, so this is a MOST-RECENT-OPEN pick — the
+        explicit ``order_by`` below (matching ``get_preferred_tracking_for_contact``)
+        replaces what used to be an undocumented, unordered ``.first()`` over a
+        possibly-multi-row result.
         """
         from sqlalchemy.orm import joinedload
         from app.models.access import RespondContact
@@ -2930,6 +2982,10 @@ class ConversationSLATrackingService:
                 ConversationSLATracking.respond_contact_id == contact.id,
                 ConversationSLATracking.assigned_to_id.isnot(None),
                 conversation_tracking_scope(),
+            )
+            .order_by(
+                ConversationSLATracking.is_resolved.asc(),  # open first
+                ConversationSLATracking.created_at.desc(),
             )
             .first()
         )
@@ -2951,6 +3007,15 @@ class ConversationSLATrackingService:
         """
         Fetch contact from Respond.io by phone, get assignee.id, match to user by respond_user_id,
         and update tracking assigned_to if different. Uses existing Respond.io config (base URL, API key).
+
+        AC-F2 (multi-open consumer audit): deprecated no-op for conversation-family
+        rows. CRM is now the assignee authority per-ticket (each open ticket has its
+        own assignee); pulling "the" Respond.io conversation assignee back onto a
+        SPECIFIC ticket is meaningless once a contact can hold several open tickets
+        against one shared Respond conversation — there is no longer a 1:1 mapping to
+        sync. Kept for form-SLA rows (unaffected; they never shared this ambiguity)
+        and kept as a route (not retired to 404) so an existing caller gets a clear
+        "deprecated, nothing changed" response instead of breaking.
         """
         import json
         import logging
@@ -2960,6 +3025,20 @@ class ConversationSLATrackingService:
 
         logger = logging.getLogger(__name__)
         tracking = self.get_tracking(tracking_id)
+
+        from app.services.form_sla_service import FORM_SLA_TYPES
+
+        if getattr(tracking, "source_entity_type", None) not in FORM_SLA_TYPES:
+            return {
+                "updated": False,
+                "deprecated": True,
+                "message": (
+                    "Sync assignee from Respond.io is deprecated for conversation "
+                    "tickets: CRM is now the assignee authority (per-ticket, "
+                    "multi-open). No changes made."
+                ),
+            }
+
         phone = None
         if tracking.contact:
             phone = (getattr(tracking.contact, "phone_number", None) or "").strip()
@@ -4126,12 +4205,46 @@ class ConversationSLATrackingService:
         # are excluded — their Respond conversation lifecycle is owned elsewhere.
         # Post-commit side effect: must never raise (the resolve already succeeded);
         # the retry path is idempotent and would not re-attempt the close otherwise.
+        #
+        # AC-C3/AC-F1 (multi-open consumer audit): a contact can now hold several
+        # open tickets against ONE shared Respond conversation. Closing that shared
+        # conversation because ONE ticket resolved would sever transport for the
+        # sibling ticket's unfinished work — a real regression this predates only
+        # because there used to be at most one open ticket per contact. Only close
+        # Respond when this was the contact's LAST open conversation-scope ticket;
+        # skip (byte-identical to "do nothing") while any sibling remains open. Full
+        # retirement of this side effect even for the single-ticket case (the literal
+        # reading of AC-C3: "no Respond API call is made" on ANY ticket resolve) is an
+        # open product question for the dedicated ticket-resolve build — not applied
+        # here; flagged for an orchestrator decision.
         if resolved_in_this_request and (
             getattr(tracking, "source_entity_type", None) not in _FORM_TYPES
         ):
-            self._close_respond_conversation_best_effort(tracking)
+            if not self._has_other_open_conversation_siblings(tracking):
+                self._close_respond_conversation_best_effort(tracking)
 
         return tracking
+
+    def _has_other_open_conversation_siblings(
+        self, tracking: ConversationSLATracking
+    ) -> bool:
+        """True when another OPEN conversation-scope tracking exists for the same
+        contact (AC-F1: multi-open tickets). Used to gate the Respond-close side
+        effect on resolve — see the caller's comment."""
+        contact_id = getattr(tracking, "respond_contact_id", None)
+        if not contact_id:
+            return False
+        return (
+            self.db.query(ConversationSLATracking.id)
+            .filter(
+                ConversationSLATracking.respond_contact_id == contact_id,
+                ConversationSLATracking.id != tracking.id,
+                ConversationSLATracking.is_resolved.is_(False),
+                conversation_tracking_scope(),
+            )
+            .first()
+            is not None
+        )
 
     def _close_respond_conversation_best_effort(
         self, tracking: ConversationSLATracking

@@ -976,6 +976,14 @@ async def escalate_sla_tracking_integration(
 
         # Assignee is passed into the service so the escalation event log (written inside
         # escalate_tracking) records the NEW tier assignee, not the previous tier's.
+        # AC-F1: pass the id we already resolved above (via get_open_tracking_by_contact /
+        # get_tracking_by_contact_and_policy) so the mutation targets that EXACT row —
+        # never re-resolve by (contact, policy) here, which could now match a different
+        # open sibling ticket for the same contact/policy. The contact+policy resolution
+        # above stays a documented "most recent open" pick (known interim limitation for
+        # this contact-only n8n signal path; a contact with 2+ open tickets on the same
+        # policy has only its most-recently-created one escalated per call — closed by a
+        # future per-ticket n8n contract, S3.2).
         tracking = service.escalate_tracking(
             respond_contact_id=internal_contact_id,
             policy_id=effective_policy_id,
@@ -987,6 +995,7 @@ async def escalate_sla_tracking_integration(
                 if assignee.get("respond_user_id") is not None
                 else None
             ),
+            tracking_id=str(getattr(tracking, "id")),
         )
         tracking_id_str = str(getattr(tracking, "id"))
 
@@ -1164,12 +1173,19 @@ async def escalate_conversation_sla_tracking(
         contact_segments=contact_segments,
         company_id=_tracking_company_id(tracking),
     )
+    # AC-F1: escalate the EXACT row this route was called for (tracking_id is the URL
+    # param). Without this, escalate_tracking's internal (respond_contact_id, policy_id)
+    # resolution would silently pick whichever open ticket for this contact+policy was
+    # created most recently — which can be a DIFFERENT ticket than the one in the URL
+    # when the contact holds 2+ open tickets on the same policy. Fixed here, not just
+    # documented, because this is a manual admin action, not an interim n8n contract.
     tracking = service.escalate_tracking(
         respond_contact_id=str(contact_id),
         policy_id=str(getattr(tracking, "policy_id")),
         current_tier=target_tier,
         escalation_reason=f"manual: {reason}",
         assigned_to_id=str(assignee["id"]),
+        tracking_id=str(tracking_id),
         assigned_to_respond_user_id=(
             str(assignee["respond_user_id"])
             if assignee.get("respond_user_id") is not None
@@ -1395,7 +1411,14 @@ async def sync_assignee_from_respond(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    """Sync assignee from Respond.io: fetch contact by phone, match assignee.id to user respond_user_id, update assigned_to if different."""
+    """Sync assignee from Respond.io: fetch contact by phone, match assignee.id to user respond_user_id, update assigned_to if different.
+
+    AC-F2 (multi-open consumer audit): deprecated no-op for conversation-family
+    tickets — see ``ConversationSLATrackingService.sync_assignee_from_respond``.
+    Returns 200 with ``deprecated: true`` rather than erroring, so the existing UI
+    button keeps working (shows the deprecation message via the toast) without a
+    frontend change.
+    """
     try:
         service = ConversationSLATrackingService(db)
         result = service.sync_assignee_from_respond(str(tracking_id))
@@ -1526,7 +1549,18 @@ async def update_sla_tracking_status_integration(
     response: Response,
     db: Session = Depends(get_db)
 ):
-    """Update SLA tracking status fields from integration and log the request."""
+    """Update SLA tracking status fields from integration and log the request.
+
+    AC-E4 / AC-F1 (multi-open consumer audit): already ticket_id-scoped (the caller
+    supplies the exact tracking_id in the URL — there is no "resolve by contact"
+    variant), so it is NOT ambiguous under multi-open by itself. The audit risk is
+    entirely in HOW n8n picks the id: if a Respond "conversation closed" webhook
+    resolves a contact-keyed GET (e.g. the external preferred-tracking endpoint) and
+    feeds that id straight into `is_resolved=true` here, it can resolve the wrong
+    (or an arbitrary) open ticket for a contact holding several. Per AC-E4, resolution
+    driven purely by a Respond close event should stop once n8n moves to per-ticket
+    ids (S3.2) — kept working as-is until then (regression net 3).
+    """
     try:
         tracking_id_str = str(tracking_id)
         service = ConversationSLATrackingService(db)
