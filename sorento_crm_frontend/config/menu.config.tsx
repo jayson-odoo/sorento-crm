@@ -403,6 +403,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/scm/market-signals',
         permission: 'scm.dashboard.view',
       },
+      {
+        title: 'Simulation',
+        path: '/scm/simulation',
+        permission: 'scm.reorder.run',
+      },
     ],
   },
   {

@@ -24,6 +24,7 @@ from app.api.v1.scm import (
     reorder_levels,
     reorder_runs,
     sales_orders,
+    simulation,
 )
 
 router = APIRouter()
@@ -44,3 +45,4 @@ router.include_router(order_summary.router)
 router.include_router(plan_exceptions.router)
 router.include_router(purchase_history.router)
 router.include_router(fulfilment.router)
+router.include_router(simulation.router)
