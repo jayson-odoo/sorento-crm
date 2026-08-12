@@ -88,9 +88,11 @@ Format: per-AC id, Given/When/Then, tagged [BE] / [FE] / [E2E] / [T] (T = has au
   thread, and the composer.
 - **AC-C2 [E2E][T]** Given two open tickets for one contact, When each drawer is opened,
   Then both show the SAME thread but their own header and clocks.
-- **AC-C3 [FE][BE][T]** Given an open ticket, When Resolve is confirmed (AlertDialog,
-  standard copy), Then only that ticket resolves; the sibling stays open; no Respond API
-  call is made.
+- **AC-C3 [FE][BE][T]** Given an open ticket with an open sibling, When Resolve is
+  confirmed (AlertDialog, standard copy), Then only that ticket resolves; the sibling
+  stays open; NO Respond API call is made. When the resolved ticket was the contact's
+  LAST open ticket, the pre-existing best-effort Respond-conversation close fires
+  (transport tidy-up - unchanged single-ticket behavior; decision 2026-08-12).
 
 ### D. Full conversational send capability (Journey step 5)
 
@@ -113,10 +115,29 @@ Format: per-AC id, Given/When/Then, tagged [BE] / [FE] / [E2E] / [T] (T = has au
   set; T2 is untouched.
 - **AC-E2 [BE][T]** Given open tickets, When the contact sends an inbound message, Then no
   clock on any ticket changes.
-- **AC-E3 [BE][T]** Given user U replies from the Respond app (not CRM), When U maps to
-  exactly one open ticket for that contact, Then that ticket is marked responded; when U
-  holds 2+ open tickets for the contact, Then nothing changes (CRM reply path is
-  authoritative).
+- **AC-E3 [BE][T]** (REVISED 2026-08-13 - keys on the CONTACT first, replier second) Given a
+  staff member replies from the Respond app (not the CRM drawer), Then:
+  (1) the contact has exactly ONE open unanswered ticket -> stamp it responded regardless of
+  WHO replied (`responded_by` records the actual replier);
+  (2) the contact has 2+ open unanswered -> if the replier owns exactly one of them, stamp
+  that one; otherwise change nothing (`skipped_reason: "ambiguous"`);
+  (3) zero open unanswered -> `"no_open_ticket"`.
+  Rationale for the revision: the response clock measures "did the contact get a human
+  response", not "did the assigned person type it". A ticket raised on an ALREADY-ASSIGNED
+  Respond conversation is owned by the CRM round-robin pick (see AC-E6) while the Respond
+  conversation stays with someone else - so the old replier-keyed rule found zero tickets
+  for the replier and let a ticket breach while a human was actively answering it.
+- **AC-E6 [BE][T]** Given an intervention on a conversation Respond has already assigned to
+  another person, When the ticket is created with an explicit `assigned_to_id`, Then the
+  ticket is owned by that CRM round-robin pick and the backend does NOT re-resolve or
+  round-robin over it (verified in `create_tracking`'s `has_explicit_assignee` branch: an
+  unknown id is a 400, never a silent re-pick). The Respond conversation assignee stays
+  cosmetic. Rationale: enquiry #2 may belong to a different team than enquiry #1; forcing
+  ownership to the Respond assignee reinstates the one-assignee limitation this feature
+  removes and misroutes by topic.
+- **AC-E7 [FE][T]** Given a ticket whose `source_message_text` is blank or whitespace (the
+  n8n spine did not map `input_message`), When the worklist row renders, Then it shows a
+  neutral fallback label, never an empty row.
 - **AC-E4 [BE][T]** Given a Respond conversation-close event, When it reaches the CRM (or
   n8n), Then no ticket resolves - resolution is manual CRM resolve only.
 - **AC-E5 [BE][T]** Given a ticket breaching `due_at`, When the escalation scheduler ticks,
@@ -131,6 +152,56 @@ Format: per-AC id, Given/When/Then, tagged [BE] / [FE] / [E2E] / [T] (T = has au
 - **AC-F2 [BE]** `sync_assignee_from_respond` is retired or no-ops for conversation tickets.
 - **AC-F3 [BE][T]** Form-SLA rows (FORM_SLA_TYPES) are untouched: `conversation_tracking_scope()`
   still separates families; form-SLA suites pass unchanged.
+
+### I. Contract surface for n8n (added post-review 2026-08-13)
+
+- **AC-I1 [BE][T]** Given any create call to `POST .../conversation-sla-tracking/integration`
+  (fresh insert, idempotent retry, out-of-hours), When it returns 200, Then the body ALWAYS
+  contains the `in_working_hours` key. Rationale: n8n's strict type validation coerces an
+  ABSENT key to `false` and routes on silently - a dropped key would tell in-hours contacts
+  "we are outside working hours" with nothing red anywhere. The n8n side fails loudly on a
+  missing key via a sentinel; this test is the CRM-side half of that contract.
+- **AC-I2 [BE][T]** Given `GET /api/v1/external/conversation-sla-tracking/open-count`
+  with `contact_id` (or `phone_number`/`contact_phone`), When the contact is unknown, has no
+  tickets, or has zero OPEN tickets, Then it returns **200** with `{"contact_id": <resolved
+  or null>, "open_count": 0}` - never 404. With open tickets, `open_count` is the count of
+  OPEN conversation-scope rows only (form-SLA rows excluded via `conversation_tracking_scope`).
+  Rationale: n8n gates the Respond "conversation closed and resolved" contact message on this;
+  a 404-as-data or a sort-order-dependent read would silently tell a contact their still-open
+  enquiry is resolved.
+- **AC-I3 [BE][T]** Given a tracking that is ALREADY responded, When a caller sets
+  `is_responded` again, Then the service returns 200 with an `already_responded` marker and
+  leaves the clocks untouched - it does NOT raise 400. Rationale: resolve is already
+  idempotent (`_already_resolved`); respond was not, and that asymmetry produced 53 refusals
+  across 19 contacts on production data. Under multi-open the 400 aborts the fallback before
+  the genuinely unanswered sibling is stamped.
+
+- **AC-I4 [BE][T]** Given an agent replies in Respond, When n8n calls
+  `POST /api/v1/external/conversation-sla-tracking/agent-replied` with
+  `{contact_id, replied_by, replied_at?}`, Then the SERVER applies the REVISED AC-E3 rule in
+  one place and ALWAYS returns 200 with
+  `{matched, tracking_id, skipped_reason, open_ticket_count}`: contact has exactly one open
+  unanswered ticket -> stamped responded regardless of replier (idempotent per AC-I3); 2+ ->
+  narrow by replier, stamp only if the replier owns exactly one, else
+  `skipped_reason: "ambiguous"`; zero -> `"no_open_ticket"`. Skipped outcomes are counted
+  into `integration_log`.
+  Rationale (LIVE DEFECT, predates this feature): the n8n `respond-send-user` workflow
+  resolves rows in raw SQL with predicates `policy_id = <arbitrary first sla_policies row>`
+  AND `is_responded = false` AND `assigned_to = <replying user>` and NO CONTACT PREDICATE,
+  then PUTs once per returned row - so ONE reply to ONE contact stamps every unanswered
+  ticket that agent owns across ALL contacts. Verified exposure on the dev snapshot: one
+  assignee holds 5 open unanswered rows across 5 distinct contacts. The broken `LIMIT 1`
+  policy predicate currently NARROWS the blast radius by accident (NORMAL matches, WAREHOUSE
+  does not) - fixing policy resolution without the contact predicate makes it strictly worse.
+  This endpoint retires that SQL entirely.
+- **AC-I5 [BE][T]** Given the escalation scheduler, When it calls
+  `POST .../conversation-sla-tracking/integration/escalate` with an optional `tracking_id`,
+  Then that exact ticket escalates; contact+policy resolution stays only as the back-compat
+  path. Rationale: `GET /integration/due-escalations` already returns one item PER ROW, but
+  the escalate body is contact-scoped, so under multi-open the scheduler can escalate a
+  different sibling than the one that breached. (The schema comment on
+  `ConversationSLAEscalateRequest.policy_id` still asserts one-open-per-contact - fix with
+  finding 10.)
 
 ### G. Notifications (Journey step 2)
 
