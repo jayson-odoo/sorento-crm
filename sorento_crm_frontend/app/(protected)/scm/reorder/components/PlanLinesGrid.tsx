@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
+  CellContext,
   ColumnDef,
   PaginationState,
   SortingState,
@@ -17,7 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { DataGridListToolbar, type ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -25,7 +26,7 @@ import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/compon
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
-import { EM_DASH, fmtInt, fmtMoney, fmtSigned } from '../../lib/format';
+import { EM_DASH, fmtDecimal, fmtInt, fmtMoney, fmtSigned } from '../../lib/format';
 import {
   PLAN_LINE_STATUS_LABEL,
   PLAN_LINE_STATUS_ORDER,
@@ -33,7 +34,7 @@ import {
   type PlanLineStatus,
 } from '../lib/planLine';
 import { decidedCost, decidedQty, type PlanDecision, type PlanDecisionMap } from '../lib/planDecisions';
-import { describeCover, NO_COVER, type CoverProposal } from '../lib/coverPlan';
+import { NO_COVER, type CoverProposal } from '../lib/coverPlan';
 import {
   PRICE_ADVICE_LABEL,
   PRICE_ADVICE_SORT,
@@ -41,10 +42,12 @@ import {
   type PriceAdvice,
 } from '../lib/priceAdvice';
 import { levelActionLabel, type LevelSuggestion } from '../lib/levelSuggestion';
-import { describePoBook, poOffset, type PoReceipt } from '../lib/poCover';
+import { poOffset, type PoReceipt } from '../lib/poCover';
 import { PlanLevelCell } from './PlanLevelCell';
-import { trendAdvice, type TrajectoryEntry } from '../lib/trajectory';
+import type { TrajectoryEntry } from '../lib/trajectory';
+import type { ProductPurchaseTrend } from '../lib/purchaseTrend';
 import { PlanTrendPopover } from './PlanTrendPopover';
+import { PlanPurchaseTrendPopover } from './PlanPurchaseTrendPopover';
 import { PlanHealthCell } from './PlanHealthCell';
 import { PlanLineDecisionCell } from './PlanLineDecisionCell';
 import { PlanPriceCell } from './PlanPriceCell';
@@ -53,6 +56,7 @@ import {
   discontinueAdvice,
   marginOf,
   moqGap,
+  moqGapNote,
   type ProductEconomics,
 } from '../lib/productHealth';
 import { PlanChecklistPopover } from './PlanChecklistPopover';
@@ -61,8 +65,8 @@ import {
   DaysCoverDrill,
   ExplainNumber,
   NetDrill,
-  OrderQtyDrill,
 } from './PlanExplainDrills';
+import { OrderQtyLedger } from './PlanOrderQtyLedger';
 import { ReorderExplanationDialog } from './ReorderExplanationDialog';
 import type { ReorderRecommendation } from '../types/reorder.types';
 
@@ -72,9 +76,11 @@ import type { ReorderRecommendation } from '../types/reorder.types';
  * > "ALL should be in 1 table, 1 list, 1 data grid table, you don't tell me what's over or
  * >  within budget, because I haven't decided which one i want to buy"
  *
- * Replaces six separate surfaces. The classification the buyer used to navigate by is now the
- * `Status` column, and there is deliberately NO budget here: within and over are the result of
- * step 4, not a property of a line.
+ * Replaces six separate surfaces. `status` is still a field on the row (it drives the
+ * Filters popover and the summary tiles above), but it is not a COLUMN (user markup,
+ * 2026-08-12: "the status is not needed" - the merged Decision cell already says what a line
+ * is via its own mix). There is deliberately NO budget here: within and over are the result
+ * of step 4, not a property of a line.
  *
  * The offsets the engine netted (on hand, incoming, on order) are COLUMNS, because burying
  * them in a popover is what made the netting feel like a decision taken on the buyer's behalf.
@@ -84,21 +90,13 @@ import type { ReorderRecommendation } from '../types/reorder.types';
  * explanation columns"):
  *   1. what and how much - product, location, SUGGESTED QTY, then the arithmetic behind
  *      it (SO / On hand / SPO / PO, named the way the source documents are named);
- *   2. the action - suggested action, then the decision control that mirrors it;
+ *   2. the action - ONE Decision cell that carries the suggestion AND takes it (user markup,
+ *      2026-08-12: "I want the decision and suggestion to be made in 1 place");
  *   3. the money - suggested price, suggested supplier, then the total cost they produce;
  *   4. the AutoCount round-trip - suggested level + reorder qty.
  * Net and runway are computed steps, not decisions, so they ship hidden and live on in
  * the row-click derivation; the columns menu brings them back for whoever wants them.
  */
-
-const STATUS_VARIANT: Record<PlanLineStatus, 'primary' | 'warning' | 'secondary' | 'info'> = {
-  buy: 'primary',
-  no_price: 'warning',
-  needs_level: 'warning',
-  covered_by_stock: 'info',
-  allocation: 'secondary',
-  exception: 'warning',
-};
 
 /**
  * Swallows a click so it never reaches the row.
@@ -136,12 +134,18 @@ export function PlanLinesGrid({
   onAmendLevel,
   poFor,
   trendFor,
+  purchaseTrendFor,
+  purchaseTrendWindowMonths = 3,
+  onOpenPurchaseTrend,
   economicsFor,
   healthThresholds = { margin_floor_pct: 15, dead_turnover_months: 6 },
   onDecideLifecycle,
   staleAfterDays = 180,
   statusFilter: statusFilterProp = null,
   onStatusFilterChange,
+  decidedFilter: decidedFilterProp,
+  onDecidedFilterChange,
+  secondaryActions,
   runId,
   isLoading,
 }: {
@@ -165,6 +169,13 @@ export function PlanLinesGrid({
   poFor?: (line: PlanLine) => PoReceipt[];
   /** Is this product's demand sustaining or dying off, on this line's side. */
   trendFor?: (line: PlanLine) => TrajectoryEntry | undefined;
+  /** The mirror of `trendFor`, on the buy side: what we have actually purchased. */
+  purchaseTrendFor?: (line: PlanLine) => ProductPurchaseTrend | undefined;
+  /** The window the purchase-trend sentence compares (months). */
+  purchaseTrendWindowMonths?: number;
+  /** Fired the first time a PO cell's popover opens - lets the caller lazily start the
+   *  purchase-trend fetch instead of it running for every product on plan mount. */
+  onOpenPurchaseTrend?: () => void;
   /** What the product sells for and how fast it moves. Undefined = no opinion. */
   economicsFor?: (line: PlanLine) => ProductEconomics | undefined;
   /** The policy's lines for "thin margin" and "dead turnover". */
@@ -177,20 +188,36 @@ export function PlanLinesGrid({
    *  tiles can narrow it: they used to reveal a band, and there are no bands now. */
   statusFilter?: PlanLineStatus | null;
   onStatusFilterChange?: (next: PlanLineStatus | null) => void;
+  /** Undecided/decided the list is narrowed to, or 'all'. Controlled the same way
+   *  `statusFilter` is, so the decision-progress tile can toggle it - "clicking it shows
+   *  only what is left" - without owning a second copy of the filter. */
+  decidedFilter?: 'all' | 'undecided' | 'decided';
+  onDecidedFilterChange?: (next: 'all' | 'undecided' | 'decided') => void;
+  /** Quiet links to the reports this grid does not carry rows for (Order summary, Plan
+   *  exceptions, PO worklist) - rendered in the SAME row as Filters / Columns / Export,
+   *  never as a tile. Omit to hide them (e.g. the SCM simulation tab, which has none of
+   *  those reports). */
+  secondaryActions?: ToolbarAction[];
   /** The run on screen, threaded to each row's demand drill so it can fetch its order lines. */
   runId?: string | null;
   isLoading?: boolean;
 }) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
-  // Rank ascending is the engine's own priority order, so it is the order the buyer works in.
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'rank', desc: false }]);
+  // No column is actively sorted by default: the DEFAULT order comes from `ordered` below
+  // (undecided first, decided sunk to the bottom, rank-ordered within each). Clicking a
+  // header still sorts normally - the buyer overriding the default is a real request.
+  const [sorting, setSorting] = useState<SortingState>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const statusFilter: string = statusFilterProp ?? 'all';
   const setStatusFilter = (next: string) =>
     onStatusFilterChange?.(next === 'all' ? null : (next as PlanLineStatus));
-  // Undecided first by default is a deliberate bias toward the work that is left. It is a
-  // filter, not a sort, so it never reorders the priority the engine computed.
-  const [decidedFilter, setDecidedFilter] = useState<string>('all');
+  // Undecided/decided is its own filter, controllable the same way statusFilter is: the
+  // reorder page's decision-progress tile drives it from outside, and every other caller
+  // (the SCM simulation tab) leaves it uncontrolled and gets its own local toggle.
+  const [ownDecidedFilter, setOwnDecidedFilter] = useState<'all' | 'undecided' | 'decided'>('all');
+  const decidedFilter = decidedFilterProp ?? ownDecidedFilter;
+  const setDecidedFilter = (next: string) =>
+    (onDecidedFilterChange ?? setOwnDecidedFilter)(next as 'all' | 'undecided' | 'decided');
   // S14: one filter per suggestion column, so the buyer can work one question at a time
   // ("show me every stale price", "every level change", "project side only").
   const [sideFilter, setSideFilter] = useState<string>('all');
@@ -242,6 +269,84 @@ export function PlanLinesGrid({
     });
   }, [lines, searchQuery, statusFilter, decidedFilter, sideFilter, priceFilter,
       actionFilter, levelFilter, decisions, priceFor, coverFor, levelFor, poFor]);
+
+  // Undecided first, decided sunk to the bottom (user markup, 2026-08-12: "so they can decide
+  // until all outstanding decisions are cleared"). `filtered` is already rank-ordered (`lines`
+  // comes out of `toPlanLines` sorted by rank), and `Array.prototype.sort` is stable, so this
+  // grouping never disturbs the rank order WITHIN either group - only the two groups move.
+  const ordered = useMemo(
+    () => [...filtered].sort((a, b) => (decisions[a.id] ? 1 : 0) - (decisions[b.id] ? 1 : 0)),
+    [filtered, decisions],
+  );
+
+  /**
+   * The Suggested-qty popover's own open/close bug (user feedback, 2026-08-12: "after I
+   * tick, it shouldn't close the popup").
+   *
+   * `columns` below is recreated on every `decisions` change - it has to be, every OTHER
+   * column reads `decisions` too - which recreates every inline cell FUNCTION along with
+   * it. React identifies a functional component's fiber by (function reference, tree
+   * position); a fresh function reference is a different component type as far as
+   * reconciliation is concerned, so React unmounts and remounts the whole cell subtree on
+   * every toggle, discarding the ledger Popover's own open state with it. Not a Radix bug -
+   * confirmed by reproduction: the Popover trigger's DOM node is a literally different
+   * element after a decision commit.
+   *
+   * The fix is a STABLE cell renderer for this one column, built once via `useCallback`
+   * with an empty dependency list, reading its live inputs off a ref instead of closing
+   * over them - so `columnDef.cell` for 'suggested' never changes identity and the Popover
+   * survives a decision toggle, regardless of how often `columns` itself is rebuilt.
+   */
+  const suggestedQtyCellInputsRef = useRef({
+    decisions, coverFor, poFor, economicsFor, healthThresholds, trendFor, onDecide,
+  });
+  suggestedQtyCellInputsRef.current = {
+    decisions, coverFor, poFor, economicsFor, healthThresholds, trendFor, onDecide,
+  };
+  const renderSuggestedQtyCell = useCallback((ctx: CellContext<PlanLine, unknown>) => {
+    const original = ctx.row.original;
+    if (!original.purchasable) {
+      return <span className="text-muted-foreground">{EM_DASH}</span>;
+    }
+    const {
+      decisions: liveDecisions, coverFor: liveCoverFor, poFor: livePoFor,
+      economicsFor: liveEconomicsFor, healthThresholds: liveHealthThresholds,
+      trendFor: liveTrendFor, onDecide: liveOnDecide,
+    } = suggestedQtyCellInputsRef.current;
+    return (
+      <span className="inline-flex items-center gap-1">
+        <span className="tabular-nums">{fmtInt(original.order_qty)}</span>
+        <StopClick>
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                title="How we got this qty"
+                aria-label={`Explain order qty for ${original.sku}`}
+                className="rounded-sm text-muted-foreground/70 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Info className="size-3.5" aria-hidden />
+              </button>
+            </PopoverTrigger>
+            <PopoverPortal>
+              <PopoverContent align="end" collisionPadding={8} className="w-80 p-0 text-sm">
+                <OrderQtyLedger
+                  line={original}
+                  decision={liveDecisions[original.id]}
+                  cover={liveCoverFor?.(original) ?? NO_COVER}
+                  poReceipts={livePoFor?.(original) ?? []}
+                  economicsFor={liveEconomicsFor}
+                  healthThresholds={liveHealthThresholds}
+                  trend={liveTrendFor?.(original)}
+                  onDecide={(next) => liveOnDecide(original, next)}
+                />
+              </PopoverContent>
+            </PopoverPortal>
+          </Popover>
+        </StopClick>
+      </span>
+    );
+  }, []);
 
   const columns = useMemo<ColumnDef<PlanLine>[]>(
     () => [
@@ -329,19 +434,6 @@ export function PlanLinesGrid({
         meta: { headerTitle: 'Order type', skeleton: <Skeleton className="h-5 w-14" /> },
       },
       {
-        id: 'status',
-        accessorKey: 'status',
-        header: ({ column }) => <DataGridColumnHeader title="Status" visibility column={column} />,
-        cell: ({ row }) => (
-          <Badge variant={STATUS_VARIANT[row.original.status]} appearance="light" size="sm">
-            {PLAN_LINE_STATUS_LABEL[row.original.status]}
-          </Badge>
-        ),
-        size: 140,
-        enableSorting: true,
-        meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-5 w-20" /> },
-      },
-      {
         id: 'needed',
         accessorFn: (row) => row.rec.outstanding_sales ?? 0,
         // Named after the DOCUMENT it comes from (user markup, 2026-08-11: "the needed is
@@ -363,8 +455,21 @@ export function PlanLinesGrid({
             {/* The trend lives on the DEMAND column: it is a statement about the orders
                 behind this number, not about the action (user markup, 2026-08-11). */}
             <StopClick>
-              <PlanTrendPopover trend={trendFor?.(row.original)} />
+              <PlanTrendPopover
+                trend={trendFor?.(row.original)}
+                sellingPrice={economicsFor?.(row.original)?.avg_sell_price ?? null}
+              />
             </StopClick>
+            {/* The velocity behind the trend verdict - the fast/slow, high/low evidence a
+                bare "rising"/"falling" pill does not carry on its own. */}
+            {row.original.forecast_daily_demand ? (
+              <span
+                className="block truncate text-2xs text-muted-foreground"
+                title={`Average demand: ${fmtDecimal(row.original.forecast_daily_demand)}/day`}
+              >
+                {`avg ${fmtDecimal(row.original.forecast_daily_demand)}/day`}
+              </span>
+            ) : null}
           </div>
         ),
         size: 130,
@@ -400,10 +505,18 @@ export function PlanLinesGrid({
         id: 'outstanding_po',
         accessorFn: (row) => row.rec.outstanding_po ?? 0,
         header: ({ column }) => <DataGridColumnHeader title="PO" visibility column={column} />,
+        // The mirror of the SO cell's order-trend popup: who we bought it from, when, and
+        // at what cost - the same interaction, on the buy side.
         cell: ({ row }) => (
-          <span className="tabular-nums" title="Ordered, not yet received - open PO quantity">
-            {numCell(row.original.rec.outstanding_po)}
-          </span>
+          <StopClick>
+            <PlanPurchaseTrendPopover
+              qty={row.original.rec.outstanding_po}
+              trend={purchaseTrendFor?.(row.original)}
+              windowMonths={purchaseTrendWindowMonths}
+              price={priceFor?.(row.original)}
+              onOpen={onOpenPurchaseTrend}
+            />
+          </StopClick>
         ),
         size: 80,
         enableSorting: true,
@@ -415,33 +528,9 @@ export function PlanLinesGrid({
         header: ({ column }) => (
           <DataGridColumnHeader title="Suggested qty" visibility column={column} />
         ),
-        cell: ({ row }) =>
-          row.original.purchasable ? (
-            <span className="inline-flex items-center gap-1">
-              <span className="tabular-nums">{fmtInt(row.original.order_qty)}</span>
-              <StopClick>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    title="How we got this qty"
-                    aria-label={`Explain order qty for ${row.original.sku}`}
-                    className="rounded-sm text-muted-foreground/70 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <Info className="size-3.5" aria-hidden />
-                  </button>
-                </PopoverTrigger>
-                <PopoverPortal>
-                  <PopoverContent align="end" collisionPadding={8} className="w-80 p-0 text-sm">
-                    <OrderQtyDrill row={row.original} />
-                  </PopoverContent>
-                </PopoverPortal>
-              </Popover>
-              </StopClick>
-            </span>
-          ) : (
-            <span className="text-muted-foreground">{EM_DASH}</span>
-          ),
+        // Stable renderer (see `renderSuggestedQtyCell` above) - keeps the ledger Popover
+        // open across a decision toggle.
+        cell: renderSuggestedQtyCell,
         size: 120,
         enableSorting: true,
         meta: { headerTitle: 'Suggested qty', skeleton: <Skeleton className="h-4 w-10" /> },
@@ -489,9 +578,8 @@ export function PlanLinesGrid({
           const qty = decidedQty(line, decisions[line.id]) || line.order_qty;
           const cost = decidedCost({ ...line }, { buy: qty });
           // A price we do not hold is never rendered as a number: it is the reason the line
-          // cannot be weighed against a budget. A dash rather than the words, because the
-          // Status column on the same row already says "No price" and printing it twice is
-          // noise; the title carries the detail for anyone who hides that column.
+          // cannot be weighed against a budget. A dash rather than the words, so the row does
+          // not repeat "No price" twice; the title carries the detail.
           return cost === null ? (
             <span className="text-muted-foreground" title="No price on file, so this line cannot be costed">
               {EM_DASH}
@@ -551,6 +639,51 @@ export function PlanLinesGrid({
         size: 180,
         enableSorting: true,
         meta: { headerTitle: 'Suggested supplier', skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
+        id: 'reorder_level',
+        // The STORED level, distinct from the `level` column below (the engine's
+        // SUGGESTION for what it should be). The buyer's own figure wins when set;
+        // AutoCount's master figure is the fallback so the column is never blank just
+        // because nobody has set a level here yet.
+        accessorFn: (row) => row.rec.reorder_level ?? row.rec.master_reorder_level ?? -1,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Reorder level" visibility column={column} />
+        ),
+        cell: ({ row }) => {
+          const rec = row.original.rec;
+          const hasOwn = rec.reorder_level !== null && rec.reorder_level !== undefined;
+          const hasMaster =
+            rec.master_reorder_level !== null && rec.master_reorder_level !== undefined;
+          const level = hasOwn ? rec.reorder_level : hasMaster ? rec.master_reorder_level : null;
+          const source = hasOwn ? 'buyer level' : hasMaster ? 'AutoCount master' : 'not set';
+          return (
+            <span className="tabular-nums" title={`Source: ${source}`}>
+              {numCell(level)}
+            </span>
+          );
+        },
+        size: 110,
+        enableSorting: true,
+        meta: { headerTitle: 'Reorder level', skeleton: <Skeleton className="h-4 w-10" /> },
+      },
+      {
+        id: 'reorder_qty',
+        // AutoCount's own reorder quantity, uploaded (S13c) and read-only here - never
+        // computed by the engine. Distinct from `suggested_quantity` in the `level` column,
+        // which IS the engine's own arithmetic.
+        accessorFn: (row) => row.rec.master_reorder_quantity ?? -1,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Reorder qty" visibility column={column} />
+        ),
+        cell: ({ row }) => (
+          <span className="tabular-nums" title="AutoCount's own reorder quantity, as uploaded">
+            {numCell(row.original.rec.master_reorder_quantity)}
+          </span>
+        ),
+        size: 100,
+        enableSorting: true,
+        meta: { headerTitle: 'Reorder qty', skeleton: <Skeleton className="h-4 w-10" /> },
       },
       {
         id: 'level',
@@ -644,11 +777,7 @@ export function PlanLinesGrid({
                   }`}
                   title={gap.sentence}
                 >
-                  {gap.verdict === 'clears'
-                    ? `+${fmtInt(gap.extra)} extra, clears in ~${gap.months_to_clear} mo`
-                    : gap.verdict === 'slow'
-                      ? `+${fmtInt(gap.extra)} extra ≈ ${gap.months_to_clear} mo - promotion?`
-                      : `+${fmtInt(gap.extra)} extra, nothing selling to clear it`}
+                  {moqGapNote(gap, fmtInt)}
                 </span>
               ) : null}
             </div>
@@ -659,137 +788,10 @@ export function PlanLinesGrid({
         meta: { headerTitle: 'MOQ', skeleton: <Skeleton className="h-4 w-10" /> },
       },
       {
-        id: 'suggestion',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Suggested action" visibility column={column} />
-        ),
-        cell: ({ row }) => {
-          const line = row.original;
-          if (!line.purchasable) {
-            return <span className="text-muted-foreground">{EM_DASH}</span>;
-          }
-          const cover = coverFor?.(line) ?? NO_COVER;
-          // Structured parts, one per line, never a comma-joined sentence (user markup,
-          // 2026-08-10: "I need it to be more structured and organized"). The full prose
-          // stays on the title and in the decision cell's tooltip for anyone who wants it.
-          const afterStock = cover.coverQty > 0 ? cover.buyQty : Math.ceil(line.order_qty);
-          // S15: what is already ordered absorbs the buy BEFORE money does. The netting
-          // never counts the PO book; the suggestion does, and buying anyway stays one
-          // click away.
-          const receipts = poFor?.(line) ?? [];
-          const poQty = receipts.reduce((t, r) => t + r.remaining, 0);
-          const { usePo, buy: buyQty } = poOffset(afterStock, poQty);
-          const advice = trendAdvice(trendFor?.(line), buyQty);
-          // "Hot selling but the margin is so little": a consider-more on a thin or
-          // negative margin carries the caveat in the same breath, so enthusiasm about
-          // volume never travels without the economics of it.
-          const econ = economicsFor?.(line);
-          const margin = econ
-            ? marginOf(line.unit_cost_base, econ, healthThresholds.margin_floor_pct)
-            : null;
-          const thinMargin =
-            advice?.direction === 'more' &&
-            (margin?.tone === 'thin' || margin?.tone === 'negative') &&
-            margin.pct !== null;
-          const crossing = cover.sources.some((x) => x.cross_segment);
-          // A cover offer on a project line is purchasing superseding CS: the inquiry said
-          // buy it all, and the engine found stock CS did not use. Said out loud, because a
-          // quiet disagreement with CS reads as the engine miscounting.
-          const supersede =
-            line.rec.segment === 'project' && cover.coverQty > 0
-              ? `CS asked to buy ${fmtInt(Math.ceil(line.order_qty))}`
-              : null;
-          // One shape per part - "verb, then the quantity" - in a fixed order (use what
-          // we hold, then what is already ordered, then buy). The detail behind each part
-          // (which warehouse, which PO) stays on the title; a row that mixes three
-          // sentence shapes is the "not intuitive" the user named.
-          return (
-            <div className="min-w-0 text-xs" title={describeCover(cover, (n) => fmtInt(n))}>
-              {cover.coverQty > 0 ? (
-                <div
-                  className="truncate"
-                  title={cover.sources
-                    .map((s) => `${fmtInt(s.qty)} from ${s.warehouse_code}`)
-                    .join(', ')}
-                >
-                  {'Use stock '}
-                  <span className="font-medium tabular-nums">{fmtInt(cover.coverQty)}</span>
-                </div>
-              ) : null}
-              {usePo > 0 ? (
-                <div className="truncate" title={describePoBook(receipts).join('\n')}>
-                  {'Use PO '}
-                  <span className="font-medium tabular-nums">{fmtInt(usePo)}</span>
-                  <span className="text-muted-foreground"> already ordered</span>
-                </div>
-              ) : null}
-              {buyQty > 0 ? (
-                <div className="truncate">
-                  {'Buy '}
-                  <span className="font-semibold tabular-nums">{fmtInt(buyQty)}</span>
-                </div>
-              ) : null}
-              {/* S15: what is arriving is ALREADY inside the net, so it is a note, never
-                  a second offset - counting it again would cover the same demand twice. */}
-              {(line.rec.incoming_spo ?? 0) > 0 ? (
-                <span className="block truncate text-2xs text-muted-foreground">
-                  {`${fmtInt(line.rec.incoming_spo ?? 0)} arriving (SPO) already counted`}
-                </span>
-              ) : null}
-              {crossing ? (
-                <span className="text-2xs text-scm-overstock">crosses segment</span>
-              ) : null}
-              {supersede ? (
-                <span className="block truncate text-2xs text-muted-foreground">
-                  {supersede}
-                </span>
-              ) : null}
-              {/* The forecast advisory: the trend's own %-change applied to the buy,
-                  applied by a CLICK, never silently - committed demand stays the driver.
-                  The applied decision carries the reason so the departure explains itself. */}
-              {advice ? (
-                <StopClick>
-                  <button
-                    type="button"
-                    className="block truncate text-2xs text-scm-incoming underline decoration-dotted underline-offset-2 hover:text-primary"
-                    title={`Apply: adjust the buy to ${fmtInt(
-                      advice.direction === 'more' ? buyQty + advice.delta : buyQty - advice.delta,
-                    )}`}
-                    onClick={() =>
-                      onDecide(line, {
-                        ...(cover.coverQty > 0
-                          ? {
-                              stock: {
-                                qty: cover.coverQty,
-                                sources: cover.sources.map((s) => ({
-                                  warehouse_id: s.warehouse_id,
-                                  warehouse_code: s.warehouse_code,
-                                  qty: s.qty,
-                                })),
-                              },
-                            }
-                          : {}),
-                        ...(usePo > 0 ? { po: usePo } : {}),
-                        buy: advice.direction === 'more' ? buyQty + advice.delta : buyQty - advice.delta,
-                        reason: `Trend: orders ${advice.direction === 'more' ? 'rose' : 'fell'} ${advice.pct}%`,
-                      })
-                    }
-                  >
-                    {`Consider ${fmtInt(advice.delta)} ${advice.direction} - orders ${
-                      advice.direction === 'more' ? 'rose' : 'fell'
-                    } ${advice.pct}%${thinMargin ? `, but margin only ${margin!.pct}%` : ''}`}
-                  </button>
-                </StopClick>
-              ) : null}
-            </div>
-          );
-        },
-        size: 210,
-        enableSorting: false,
-        meta: { headerTitle: 'Suggested action', skeleton: <Skeleton className="h-4 w-28" /> },
-      },
-      {
         id: 'decision',
+        // The merged "Suggested action" + "Decision" column (user markup, 2026-08-12): one
+        // place to see the suggestion and take it. Wider than either of the two columns it
+        // replaces used to be alone, since it now carries what both of them said.
         header: ({ column }) => <DataGridColumnHeader title="Decision" visibility column={column} />,
         cell: ({ row }) => (
           <StopClick>
@@ -798,30 +800,34 @@ export function PlanLinesGrid({
             decision={decisions[row.original.id]}
             cover={coverFor?.(row.original) ?? NO_COVER}
             poReceipts={poFor?.(row.original) ?? []}
+            trend={trendFor?.(row.original)}
+            economics={economicsFor?.(row.original)}
+            healthThresholds={healthThresholds}
             onDecide={(next) => onDecide(row.original, next)}
             onClear={() => onClear(row.original)}
           />
           </StopClick>
         ),
-        size: 260,
+        size: 340,
         enableSorting: false,
         enableHiding: false,
         meta: { headerTitle: 'Decision', skeleton: <Skeleton className="h-8 w-40" /> },
       },
     ],
     [decisions, onDecide, onClear, runId, coverFor, priceFor, cheaperFor, trendFor,
-     levelFor, onAmendLevel, poFor, economicsFor, healthThresholds, onDecideLifecycle,
-     staleAfterDays],
+     levelFor, onAmendLevel, poFor, purchaseTrendFor, purchaseTrendWindowMonths,
+     onOpenPurchaseTrend, economicsFor, healthThresholds, onDecideLifecycle, staleAfterDays,
+     renderSuggestedQtyCell],
   );
 
   // The story order (see the header comment): each chapter leads with its result and is
   // followed by the columns that explain it. Deliberately NOT the definition order.
   const [columnOrder, setColumnOrder] = useState<string[]>(() => [
-    'rank', 'side', 'sku', 'warehouse', 'status',
+    'rank', 'side', 'sku', 'warehouse',
     'suggested', 'needed', 'on_hand', 'incoming_spo', 'outstanding_po',
-    'suggestion', 'decision',
+    'decision',
     'price', 'supplier', 'moq', 'cost',
-    'level', 'health',
+    'reorder_level', 'reorder_qty', 'level', 'health',
     'net', 'days_cover',
   ]);
   // Computed steps, not decisions: off by default, one columns-menu click to bring back.
@@ -832,8 +838,8 @@ export function PlanLinesGrid({
 
   const table = useReactTable({
     columns,
-    data: filtered,
-    pageCount: Math.ceil(filtered.length / pagination.pageSize),
+    data: ordered,
+    pageCount: Math.ceil(ordered.length / pagination.pageSize),
     getRowId: (row: PlanLine) => row.id,
     state: { pagination, sorting, columnOrder, columnVisibility },
     columnResizeMode: 'onChange',
@@ -850,7 +856,7 @@ export function PlanLinesGrid({
   const pageRecs = useMemo<ReorderRecommendation[]>(
     () => table.getRowModel().rows.map((r) => r.original.rec),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [table, filtered, pagination, sorting],
+    [table, ordered, pagination, sorting],
   );
 
   const statusOptions = useMemo(
@@ -865,6 +871,7 @@ export function PlanLinesGrid({
     <CardHeader className="block">
       <DataGridListToolbar
         table={table}
+        secondaryActions={secondaryActions}
         searchSlot={
           <div className="relative">
             <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />

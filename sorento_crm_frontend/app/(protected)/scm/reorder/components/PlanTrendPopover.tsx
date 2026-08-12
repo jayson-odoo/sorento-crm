@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic';
 import type { ApexOptions } from 'apexcharts';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
+import { fmtDate, fmtSupplierCost } from '../../lib/format';
 import {
   TRAJECTORY_ROW_LABEL,
   TRAJECTORY_TONE,
@@ -12,6 +13,16 @@ import {
   describeYearAgo,
   type TrajectoryEntry,
 } from '../lib/trajectory';
+
+/**
+ * A customer row, widened with `last_order_date` (backend: `trajectory_service.py`).
+ *
+ * The shared `TrajectoryEntry['customers']` element type does not carry this field yet -
+ * kept as a local widening here rather than edited into `lib/trajectory.ts` while that
+ * file is in flight elsewhere. Structurally compatible: the backend payload already
+ * includes it, so this is purely a read-side type, no runtime cast of substance.
+ */
+type CustomerRow = TrajectoryEntry['customers'][number] & { last_order_date?: string | null };
 
 const ApexChart = dynamic(() => import('react-apexcharts').then((mod) => mod.default), {
   ssr: false,
@@ -34,7 +45,17 @@ const TONE_CLASS = {
   warning: 'text-amber-600',
 } as const;
 
-export function PlanTrendPopover({ trend }: { trend: TrajectoryEntry | undefined }) {
+export function PlanTrendPopover({
+  trend,
+  sellingPrice,
+}: {
+  trend: TrajectoryEntry | undefined;
+  /** What this line sells for (realized average, or list price when nothing has sold) -
+   *  the same figure the health popover already carries, threaded here rather than
+   *  refetched (user markup, 2026-08-12: "similar to SO - what is the trend of purchase").
+   *  Omitted when we hold no opinion. */
+  sellingPrice?: number | null;
+}) {
   if (!trend) {
     return <span className="text-2xs text-muted-foreground">No order history</span>;
   }
@@ -80,17 +101,35 @@ export function PlanTrendPopover({ trend }: { trend: TrajectoryEntry | undefined
             <ApexChart options={options} series={series} type="line" height={160} />
           </div>
 
+          {sellingPrice != null ? (
+            <p className="mt-2 text-muted-foreground">
+              Selling price {fmtSupplierCost(sellingPrice, null)}
+            </p>
+          ) : null}
+
           <div className="mt-2">
             <p className="font-medium text-foreground">Who bought it</p>
             {trend.customers.length ? (
-              <ul className="mt-0.5 space-y-0.5 text-muted-foreground">
-                {trend.customers.map((c) => (
-                  <li key={c.customer_name} className="flex justify-between gap-2">
-                    <span className="truncate">{c.customer_name}</span>
-                    <span className="tabular-nums">{c.qty.toLocaleString()}</span>
-                  </li>
-                ))}
-              </ul>
+              <table className="mt-0.5 w-full text-muted-foreground">
+                <thead>
+                  <tr className="text-2xs uppercase text-muted-foreground/70">
+                    <th className="pb-0.5 text-left font-normal">Customer</th>
+                    <th className="pb-0.5 text-right font-normal">Qty</th>
+                    <th className="pb-0.5 text-right font-normal">Last order</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(trend.customers as CustomerRow[]).map((c) => (
+                    <tr key={c.customer_name}>
+                      <td className="max-w-40 truncate py-0.5" title={c.customer_name}>
+                        {c.customer_name}
+                      </td>
+                      <td className="py-0.5 text-right tabular-nums">{c.qty.toLocaleString()}</td>
+                      <td className="py-0.5 text-right tabular-nums">{fmtDate(c.last_order_date)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             ) : (
               <p className="text-muted-foreground">No orders in the window.</p>
             )}

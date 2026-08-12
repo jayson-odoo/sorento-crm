@@ -8,9 +8,11 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  coverForLine,
   describeCover,
   proposeCover,
   remainingFree,
+  type CoverableLine,
   type CoverSource,
 } from './coverPlan';
 
@@ -102,5 +104,58 @@ describe('remainingFree', () => {
 
   it('never goes negative when more was taken than existed', () => {
     expect(remainingFree([src('A', 5)], { 'wh-A': 99 })).toBe(0);
+  });
+});
+
+describe('coverForLine - a covered row reads its own pool, never a default buy', () => {
+  // SIM-P002: rec_type=covered, "150 available in this pool covers 15 committed" - but the
+  // grid defaulted the suggestion AND the decision cell to "Buy 15". Root cause: composing
+  // a covered row through `proposeCover` (the cross-warehouse free pool) instead of the
+  // row's own `covered_committed` / `covered_available` figures.
+  const coveredLine = (over: Partial<CoverableLine['rec']> = {}): CoverableLine => ({
+    order_qty: 15,
+    warehouse: 'BRW',
+    warehouse_id: 'wh-BRW',
+    status: 'covered_by_stock',
+    rec: { segment: 'dealer', covered_committed: 15, covered_available: 150, ...over },
+  });
+
+  it('is entirely a use-stock proposal when the pool covers the commitment', () => {
+    const p = coverForLine(coveredLine(), []); // empty cross-warehouse pool: never needed
+    expect(p).toMatchObject({ coverQty: 15, buyQty: 0, isSplit: false });
+    expect(p.sources).toEqual([
+      expect.objectContaining({ warehouse_code: 'BRW', qty: 15, cross_segment: false }),
+    ]);
+  });
+
+  it('ignores the cross-warehouse free pool entirely - the covered figures are authoritative', () => {
+    const elsewhere = [src('OTHER-WH', 999)];
+    const p = coverForLine(coveredLine(), elsewhere, { 'wh-OTHER-WH': 0 });
+    expect(p).toMatchObject({ coverQty: 15, buyQty: 0 });
+  });
+
+  it('buys the remainder when the pool falls short of the commitment', () => {
+    const p = coverForLine(coveredLine({ covered_available: 4 }), []);
+    expect(p).toMatchObject({ coverQty: 4, buyQty: 11, isSplit: true });
+  });
+
+  it('is a plain buy when the pool holds nothing', () => {
+    const p = coverForLine(coveredLine({ covered_available: 0 }), []);
+    expect(p).toMatchObject({ coverQty: 0, buyQty: 15 });
+    expect(p.sources).toEqual([]);
+  });
+
+  it('falls back to order_qty when covered_committed is absent, never NaN/negative', () => {
+    const p = coverForLine(coveredLine({ covered_committed: null, covered_available: 20 }), []);
+    expect(p).toMatchObject({ coverQty: 15, buyQty: 0 });
+  });
+
+  it('an ordinary buy line still proposes against the cross-warehouse pool as before', () => {
+    const buyLine: CoverableLine = {
+      order_qty: 10, warehouse: 'DC1', warehouse_id: 'wh-DC1', status: 'buy',
+      rec: { segment: 'project' },
+    };
+    const p = coverForLine(buyLine, [src('BRW-BB', 5)]);
+    expect(p).toMatchObject({ coverQty: 5, buyQty: 5 });
   });
 });

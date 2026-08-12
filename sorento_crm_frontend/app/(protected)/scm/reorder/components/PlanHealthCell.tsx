@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
-import { EM_DASH } from '../../lib/format';
+import { EM_DASH, fmtSupplierCost } from '../../lib/format';
 import type { DiscontinueAdvice, MarginVerdict, ProductEconomics } from '../lib/productHealth';
 
 /**
@@ -69,7 +69,12 @@ export function PlanHealthCell({
         <button type="button" className="min-w-0 text-left" aria-label="Product health">
           {margin ? (
             <Badge variant={MARGIN_VARIANT[margin.tone]} appearance="light" size="sm">
-              {margin.pct === null ? 'Margin unknown' : `Margin ${margin.pct}%`}
+              {/* The amount rides along with the percentage (user feedback, 2026-08-12) -
+                  the vs-list-price nuance already lives in the popover body below, so the
+                  pill's own subtitle for that case is gone rather than duplicated. */}
+              {margin.pct === null || margin.sell === null || margin.cost === null
+                ? 'Margin unknown'
+                : `Margin ${margin.pct}% (${fmtSupplierCost(margin.sell - margin.cost, null)})`}
             </Badge>
           ) : null}
           {decision ? (
@@ -84,10 +89,6 @@ export function PlanHealthCell({
             <span className="mt-0.5 block truncate text-2xs font-medium text-destructive">
               Consider discontinuing
             </span>
-          ) : margin?.sell_source === 'list_price' ? (
-            <span className="mt-0.5 block truncate text-2xs text-muted-foreground">
-              vs list price - nothing sold
-            </span>
           ) : null}
         </button>
       </PopoverTrigger>
@@ -98,6 +99,41 @@ export function PlanHealthCell({
               ? 'The factors argue for discontinuing this product.'
               : 'The product is earning its place.'}
           </p>
+
+          {/* The arithmetic behind "Margin 33.3%" - no prose, just the three figures the
+              badge is computed from, so the number can be checked at a glance. */}
+          {margin ? (
+            <div className="mt-2 border-t pt-2 text-2xs">
+              {margin.sell === null ? (
+                <p className="text-muted-foreground">Selling price not set - margin unknown.</p>
+              ) : margin.cost === null || margin.cost <= 0 ? (
+                <p className="text-muted-foreground">Cost not set - margin unknown.</p>
+              ) : (
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <p className="text-muted-foreground">Selling price</p>
+                    <p className="tabular-nums font-medium text-foreground">
+                      {fmtSupplierCost(margin.sell, null)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Cost</p>
+                    <p className="tabular-nums font-medium text-foreground">
+                      {fmtSupplierCost(margin.cost, null)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Margin</p>
+                    <p className="tabular-nums font-medium text-foreground">
+                      {fmtSupplierCost(margin.sell - margin.cost, null)}
+                      {margin.pct !== null ? ` (${margin.pct}%)` : ''}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : null}
+
           {advice?.factors.length ? (
             <ul className="mt-2 space-y-1 text-muted-foreground">
               {advice.factors.map((f) => (

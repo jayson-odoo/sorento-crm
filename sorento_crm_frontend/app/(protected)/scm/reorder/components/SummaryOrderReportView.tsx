@@ -11,7 +11,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { AlertCircle, ClipboardList, Search, X } from 'lucide-react';
+import { AlertCircle, ArrowLeft, ClipboardList, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -64,9 +64,12 @@ const numMeta = { headerClassName: 'text-right', cellClassName: 'text-right tabu
 export interface SummaryOrderReportViewProps {
   /** Opaque run key. Null reads the newest completed plan. Never rendered. */
   runId?: string | null;
+  /** Returns to the buy co-pilot. This report has no row in that grid to filter back to,
+   *  so it needs its own way out - the tile that used to open it is gone. */
+  onBack?: () => void;
 }
 
-export function SummaryOrderReportView({ runId = null }: SummaryOrderReportViewProps) {
+export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderReportViewProps) {
   // No `as_of`: the report states the date it was frozen for. Asking for a different one
   // would relabel a fixed position, so the only way to read another week is to name its run.
   const query = { run_id: runId };
@@ -320,9 +323,17 @@ export function SummaryOrderReportView({ runId = null }: SummaryOrderReportViewP
         <p className="max-w-sm text-sm text-muted-foreground">
           {error instanceof Error ? error.message : 'Failed to load the order summary.'}
         </p>
-        <Button variant="outline" onClick={() => void refetch()}>
-          Try again
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => void refetch()}>
+            Try again
+          </Button>
+          {onBack ? (
+            <Button variant="ghost" onClick={onBack}>
+              <ArrowLeft className="size-3.5" />
+              Back to plan
+            </Button>
+          ) : null}
+        </div>
       </Card>
     );
   }
@@ -339,6 +350,12 @@ export function SummaryOrderReportView({ runId = null }: SummaryOrderReportViewP
           No product is short in this plan. Upload the outstanding order book, or generate a plan,
           to build a new report.
         </p>
+        {onBack ? (
+          <Button variant="ghost" size="sm" onClick={onBack}>
+            <ArrowLeft className="size-3.5" />
+            Back to plan
+          </Button>
+        ) : null}
       </Card>
     );
   }
@@ -349,6 +366,12 @@ export function SummaryOrderReportView({ runId = null }: SummaryOrderReportViewP
     <div className="space-y-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
+          {onBack ? (
+            <Button variant="ghost" size="sm" className="-ms-2 mb-1 h-7 gap-1 px-2 text-muted-foreground" onClick={onBack}>
+              <ArrowLeft className="size-3.5" />
+              Back to plan
+            </Button>
+          ) : null}
           <h3 className="text-base font-semibold">Summary order report</h3>
           <p className="text-2xs text-muted-foreground">
             {!data

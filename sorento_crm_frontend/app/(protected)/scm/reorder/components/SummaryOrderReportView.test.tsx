@@ -76,9 +76,9 @@ function state(over: Record<string, unknown> = {}) {
 
 const mutate = vi.fn();
 
-function renderView(hookState: ReturnType<typeof state>) {
+function renderView(hookState: ReturnType<typeof state>, onBack?: () => void) {
   hooks.useOrderSummary.mockReturnValue(hookState);
-  render(<SummaryOrderReportView runId="run-2026-w32" />);
+  render(<SummaryOrderReportView runId="run-2026-w32" onBack={onBack} />);
   return hookState;
 }
 
@@ -245,5 +245,33 @@ describe('SummaryOrderReportView - the decision (AC-C2.7 / AC-C2.8)', () => {
     renderView(state({ data: REPORT }));
     fireEvent.click(screen.getByTestId('supplier-cell-SRTSK2210'));
     expect(screen.getByText('decision-sheet:SRTSK2210')).toBeInTheDocument();
+  });
+});
+
+describe('SummaryOrderReportView - onBack (this report has no row in the buy grid to return to)', () => {
+  it('renders no back link when the caller supplies none', () => {
+    renderView(state({ data: REPORT }));
+    expect(screen.queryByText('Back to plan')).not.toBeInTheDocument();
+  });
+
+  it('calls onBack when "Back to plan" is clicked, with data on screen', () => {
+    const onBack = vi.fn();
+    renderView(state({ data: REPORT }), onBack);
+    screen.getByText('Back to plan').click();
+    expect(onBack).toHaveBeenCalled();
+  });
+
+  it('still offers a way back on the error state', () => {
+    const onBack = vi.fn();
+    renderView(state({ isError: true, error: new Error('boom') }), onBack);
+    screen.getByText('Back to plan').click();
+    expect(onBack).toHaveBeenCalled();
+  });
+
+  it('still offers a way back on the empty state', () => {
+    const onBack = vi.fn();
+    renderView(state({ data: SUMMARY_ORDER_FIXTURES.emptyReport() }), onBack);
+    screen.getByText('Back to plan').click();
+    expect(onBack).toHaveBeenCalled();
   });
 });

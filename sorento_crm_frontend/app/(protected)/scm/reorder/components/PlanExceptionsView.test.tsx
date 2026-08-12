@@ -258,3 +258,44 @@ describe('PlanExceptionsView', () => {
     expect(screen.getByTestId('plan-exceptions-loading')).toBeInTheDocument();
   });
 });
+
+describe('PlanExceptionsView - onBack (this report has no row in the buy grid to return to)', () => {
+  // The tile that used to open this view also carried the way back to the plan; once
+  // it is gone, the screen needs its own exit.
+
+  it('renders no back link when the caller supplies none', () => {
+    ok(report());
+    render(<PlanExceptionsView />);
+    expect(screen.queryByText('Back to plan')).not.toBeInTheDocument();
+  });
+
+  it('calls onBack when "Back to plan" is clicked, with data on screen', () => {
+    ok(report());
+    const onBack = vi.fn();
+    render(<PlanExceptionsView onBack={onBack} />);
+    screen.getByText('Back to plan').click();
+    expect(onBack).toHaveBeenCalled();
+  });
+
+  it('still offers a way back on the error state', () => {
+    mockUsePlanExceptions.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new Error('backend exploded'),
+      refetch: vi.fn(),
+    });
+    const onBack = vi.fn();
+    render(<PlanExceptionsView onBack={onBack} />);
+    screen.getByText('Back to plan').click();
+    expect(onBack).toHaveBeenCalled();
+  });
+
+  it('still offers a way back on the empty state', () => {
+    ok(report({ rows: [] }));
+    const onBack = vi.fn();
+    render(<PlanExceptionsView onBack={onBack} />);
+    screen.getByText('Back to plan').click();
+    expect(onBack).toHaveBeenCalled();
+  });
+});

@@ -8,6 +8,8 @@ import {
   AlertTriangle,
   CalendarClock,
   CalendarDays,
+  ClipboardList,
+  FileSpreadsheet,
   History,
   Info,
   Loader2,
@@ -17,38 +19,25 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { recToDispositionRow, splitDispositionRows } from '../lib/planRow';
+import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { resetRunDecisions } from '../services/reorderRunService';
-import { useOrderSummary } from '../hooks/useSummaryOrder';
-import { usePlanExceptions } from '../hooks/usePlanExceptions';
-import { usePoWorklist } from '../hooks/usePoWorklist';
 import { PlanExceptionsView } from './PlanExceptionsView';
 import { PoWorklistView } from './PoWorklistView';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import {
   todayRunKey,
   runHistoryKey,
-  useAllDispositionRecommendations,
   useReorderRun,
-  useCoveredRecommendations,
-  useNeedsLevelRecommendations,
   useTodayRun,
   useSetAsideDemand,
   useUnlocatedDemand,
 } from '../hooks/useReorderRun';
-import { usePlanLines } from '../hooks/usePlanLines';
 import { useReorderPlan } from '../hooks/useReorderPlan';
 import { decisionsKey } from '../hooks/useDecisions';
 import type { ReorderRunHistoryItem } from '../services/reorderRunService';
 import type { OutstandingApplyResult } from '../services/outstandingImportService';
-import { PlanLinesGrid } from './PlanLinesGrid';
-import type { PlanLineStatus } from '../lib/planLine';
-import { PlanBudgetReview } from './PlanBudgetReview';
-import { LevelChangesPanel } from './LevelChangesPanel';
-import { CoveredByStockView } from './CoveredByStockView';
-import { NeedsLevelView } from './NeedsLevelView';
-import { PlanSection } from './PlanSection';
-import { DispositionResultsGrid } from './DispositionResultsGrid';
+import { PlanLinesSection } from './PlanLinesSection';
+import type { PlanTotals } from '../lib/planDecisions';
 import { UploadDataMenu } from './UploadDataMenu';
 import type {
   OrderInquiryResult,
@@ -98,28 +87,45 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const [modalOpen, setModalOpen] = useState(autoOpenRun);
   const [view, setView] = useState<ReorderPlanView>('buy');
   /**
-   * Which status the one list is filtered to, or null for all of it.
-   *
-   * The tiles used to reveal and scroll to a band. There are no bands now, so a tile filters
-   * the grid instead: same intent - "show me just those" - against a list that never moved.
+   * The decision-progress tile's own filter (user markup, 2026-08-12): "so they can decide
+   * until all outstanding decisions are cleared."
    */
-  const [statusFilter, setStatusFilter] = useState<PlanLineStatus | null>(null);
+  const [decidedFilter, setDecidedFilter] = useState<'all' | 'undecided' | 'decided'>('all');
+  const toggleUndecidedFilter = () =>
+    setDecidedFilter((f) => (f === 'undecided' ? 'all' : 'undecided'));
+  // Reported up from `PlanLinesSection` (which owns the actual decisions state) every time
+  // the decided/undecided split changes, so the tile can show it without a second copy.
+  const [progressTotals, setProgressTotals] = useState<PlanTotals | null>(null);
 
-  const selectView = (next: ReorderPlanView) => {
-    if (next === 'covered' || next === 'disposition' || next === 'needs_level') {
-      setStatusFilter(
-        next === 'covered'
-          ? 'covered_by_stock'
-          : next === 'disposition'
-            ? 'allocation'
-            : 'needs_level',
-      );
-      setView('buy');
-      return;
-    }
-    if (next === 'buy') setStatusFilter(null);
-    setView(next);
-  };
+  const selectView = (next: ReorderPlanView) => setView(next);
+  // Order summary / Plan exceptions / PO worklist have no row in the one grid to filter
+  // to (unlike Needs a level / Stock allocation, which are Status values on it), so their
+  // entry point lives here instead of a removed tile: quiet links in the grid's own
+  // toolbar, next to Filters / Columns / Export (user feedback, 2026-08-12: "I don't
+  // really need these" - the tile row, not the reports themselves).
+  const reportLinks: ToolbarAction[] = useMemo(
+    () => [
+      {
+        key: 'order_summary',
+        label: 'Order summary',
+        icon: FileSpreadsheet,
+        onClick: () => selectView('order_summary'),
+      },
+      {
+        key: 'plan_exceptions',
+        label: 'Plan exceptions',
+        icon: AlertTriangle,
+        onClick: () => selectView('plan_exceptions'),
+      },
+      {
+        key: 'po_worklist',
+        label: 'PO worklist',
+        icon: ClipboardList,
+        onClick: () => selectView('po_worklist'),
+      },
+    ],
+    [],
+  );
   // A history-selected run overrides today's; null = show today's default run.
   const [selectedRun, setSelectedRun] = useState<ReorderRunHistoryItem | null>(null);
 
@@ -139,30 +145,6 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const isToday =
     !!todayData && currentRunId === todayData.run_id && todayData.is_today;
 
-  // How many planned products still have no decided quantity. SUBSCRIBED to the report
-  // query with fetching DISABLED: the report is the whole book, and pulling it on every page
-  // load just to fill one tile is a cost nobody asked for, but reading the cache directly
-  // with `getQueryData` does not re-render when the panel below fills it, so the tile stayed
-  // on "open to count" with the report open on screen. `enabled: false` is the shape that
-  // gets both: no request of its own, and a re-render when the value arrives.
-  const { data: cachedOrderSummary } = useOrderSummary({ run_id: currentRunId }, false);
-  const orderSummaryPending = cachedOrderSummary
-    ? cachedOrderSummary.rows.filter((r) => r.chosen_qty === null).length
-    : null;
-
-  // Same shape for the worklist tile: subscribed, not fetched. A use-pool decision has
-  // no purchase order, so it is not something left to key and is excluded from the count
-  // even though it IS a row on the worklist.
-  const { data: cachedWorklist } = usePoWorklist({ run_id: currentRunId }, false);
-  const poWorklistPending = cachedWorklist
-    ? cachedWorklist.rows.filter((r) => r.chosen_qty > 0 && r.keyed_status !== 'keyed').length
-    : null;
-
-  // And the same for the exception tile. The count is the OPEN ones, not every exception
-  // in the batch: an approved exception is a decision already taken, and counting it would
-  // leave the tile reading 6 with nothing left to do.
-  const { data: cachedExceptions } = usePlanExceptions({ run_id: currentRunId }, false);
-  const planExceptionsOpen = cachedExceptions ? cachedExceptions.counts.open_count : null;
   const isPastRun = !!currentItem && !isToday;
   // Whether a run has actually happened today, which is what decides if there is anywhere
   // for "Back to today's plan" to go. Distinct from `isToday`, which asks whether the run
@@ -176,28 +158,6 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   const buildingFirstPlan = planInProgress && !!todayData && todayData.status !== 'completed';
 
   const plan = useReorderPlan(currentRunId, view === 'buy' && !!currentRunId);
-  // S11: one list for every planning line, decisions over it, no budget.
-  const planLines = usePlanLines(currentRunId, view === 'buy' && !!currentRunId);
-  // Fetched whenever a run is on screen, not only when its view is open, so the tile can
-  // carry a real count rather than a dash the user has to click to resolve.
-  const covered = useCoveredRecommendations(currentRunId, !!currentRunId);
-  const needsLevel = useNeedsLevelRecommendations(currentRunId, !!currentRunId);
-
-  // Disposition (Stock allocation) rows come from the same run (type=disposition).
-  // Fetched WHOLE (M8-F18) - kept enabled in the buy view too so the tile's
-  // actionable-only count is always live, and so the grid can split actionable
-  // (Discontinue / Promote) from FYI hold accurately (the actionable rows are few
-  // and scattered across a run that may carry >1000 hold rows).
-  const dispositionQuery = useAllDispositionRecommendations(currentRunId, !!currentRunId);
-  const dispositionRows = useMemo(
-    () => (dispositionQuery.data ?? []).map(recToDispositionRow),
-    [dispositionQuery.data],
-  );
-  // Only the actionable half is read here - the grid does its own splitting for display.
-  const { actionable: actionableDispositions } = useMemo(
-    () => splitDispositionRows(dispositionRows),
-    [dispositionRows],
-  );
 
   const summary = currentItem?.summary ?? null;
   const { date: dateLabel, time: timeLabel } = labelsFor(currentItem?.started_at ?? null);
@@ -585,51 +545,27 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         </div>
       ) : null}
 
-      {/* TODO(Phase 2, S3b/S4/S5): plan-exception, PO-worklist and order-summary
-          counts come from the run summary once those slices exist. Until then they
-          are the Phase-1 mock, which dies with `coverageMockStore` and
-          `summaryOrderMockStore`. */}
       <ReorderStatTiles
-        buyCount={summary?.buy_count ?? 0}
-        coveredCount={covered.data ? covered.data.length : null}
-        needsLevelCount={needsLevel.data ? needsLevel.data.length : null}
-        dispositionCount={actionableDispositions.length}
+        decided={progressTotals?.decided ?? 0}
+        total={progressTotals ? progressTotals.decided + progressTotals.undecided : 0}
+        cashCommitted={progressTotals?.cost ?? 0}
         cashTotal={summary?.total_cash_impact ?? 0}
-        // Null, not a number: the plan-exception and PO-worklist engines are S5 and S4, and
-        // until they exist there is nothing to count. These tiles previously rendered mock
-        // constants on the live page, so every user read "4 waiting on a decision" off
-        // nothing at all.
-        planExceptionCount={planExceptionsOpen}
-        poWorklistCount={poWorklistPending}
-        // From the report's own cache when it has been read, else null. Never a mock
-        // constant: this tile rendered a hard-coded 2 on the live page against a real 317.
-        orderSummaryPendingCount={orderSummaryPending}
-        activeView={view}
-        onSelectView={selectView}
+        undecidedFilterActive={decidedFilter === 'undecided'}
+        onToggleUndecidedFilter={toggleUndecidedFilter}
       />
 
-      {view === 'covered' ? (
-        // Demand the location's own stock covers. A separate view, never merged into the
-        // buy grid, so the Buy count and the cash total keep meaning purchases.
-        <CoveredByStockView
-          runId={currentRunId}
-          rows={covered.data ?? []}
-          isLoading={covered.isLoading}
-          isError={covered.isError}
-          error={covered.error}
-        />
-      ) : view === 'plan_exceptions' ? (
+      {view === 'plan_exceptions' ? (
         // Where the plan disagrees with supply already placed (S5, AC-D2). Reads the SAME
         // run as the plan above, so a past run shows the batch that week produced.
-        <PlanExceptionsView runId={currentRunId} />
+        <PlanExceptionsView runId={currentRunId} onBack={() => selectView('buy')} />
       ) : view === 'po_worklist' ? (
         // What Mr Loo decided, ready to be keyed (S4, AC-E2.1). Reads the SAME run as
         // the plan above, so a past run's worklist is that week's decisions.
-        <PoWorklistView runId={currentRunId} />
+        <PoWorklistView runId={currentRunId} onBack={() => selectView('buy')} />
       ) : view === 'order_summary' ? (
         // The weekly sheet Mr Loo decides order quantities on (S3b, AC-C2.1). Reads
         // the SAME run as the plan above, so a past run reports the week it was.
-        <SummaryOrderReportView runId={currentRunId} />
+        <SummaryOrderReportView runId={currentRunId} onBack={() => selectView('buy')} />
       ) : (
         // ONE LIST (S11). Every planning line lives in a single DataGrid where what the plan
         // found is a STATUS COLUMN, not a place the row lives. The six bands this replaces
@@ -643,59 +579,13 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
             onApplyProposalLine={plan.applyProposalLine}
             onApplyActions={plan.applyActions}
           />
-          {planLines.isLoading ? (
-            <Skeleton className="h-72 w-full rounded-xl" />
-          ) : planLines.isError ? (
-            <Card className="flex flex-col items-center gap-3 p-10 text-center">
-              <span className="flex size-10 items-center justify-center rounded-full bg-destructive/10 text-destructive">
-                <AlertCircle className="size-5" aria-hidden />
-              </span>
-              <p className="max-w-sm text-sm text-muted-foreground">
-                {planLines.error instanceof Error
-                  ? planLines.error.message
-                  : 'Failed to load the plan.'}
-              </p>
-              <Button variant="outline" onClick={() => planLines.refetch()}>
-                Try again
-              </Button>
-            </Card>
-          ) : (
-            <>
-              <PlanLinesGrid
-                runId={currentRunId}
-                statusFilter={statusFilter}
-                onStatusFilterChange={setStatusFilter}
-                lines={planLines.lines}
-                decisions={planLines.decisions}
-                onDecide={(line, next) => planLines.decide(line, next)}
-                onClear={(line) => planLines.clear(line)}
-                coverFor={planLines.coverFor}
-                priceFor={planLines.priceFor}
-                cheaperFor={planLines.cheaperFor}
-                levelFor={planLines.levelFor}
-                onAmendLevel={planLines.amendLevel}
-                poFor={planLines.poFor}
-                trendFor={planLines.trendFor}
-                economicsFor={planLines.economicsFor}
-                healthThresholds={planLines.healthThresholds}
-                onDecideLifecycle={planLines.decideLifecycle}
-                staleAfterDays={planLines.staleAfterDays}
-              />
-              {/* Last, and only here: what it costs and whether that works. */}
-              <PlanBudgetReview
-                lines={planLines.lines}
-                decisions={planLines.decisions}
-                totals={planLines.totals}
-              />
-              {/* S13f: the level changes to carry into AutoCount, as one list + CSV. */}
-              <div className="flex justify-end">
-                <LevelChangesPanel
-                  suggestions={planLines.levelSuggestions}
-                  onAmend={planLines.amendLevel}
-                />
-              </div>
-            </>
-          )}
+          <PlanLinesSection
+            runId={currentRunId}
+            decidedFilter={decidedFilter}
+            onDecidedFilterChange={setDecidedFilter}
+            onTotalsChange={setProgressTotals}
+            secondaryActions={reportLinks}
+          />
         </>
       )}
 

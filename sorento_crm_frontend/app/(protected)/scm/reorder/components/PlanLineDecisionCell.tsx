@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { Check, Pencil, X } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
@@ -11,22 +10,37 @@ import type { PlanLine } from '../lib/planLine';
 import type { PlanDecision } from '../lib/planDecisions';
 import { describeCover, type CoverProposal } from '../lib/coverPlan';
 import { describePoBook, poOffset, type PoReceipt } from '../lib/poCover';
+import { trendAdvice, type TrajectoryEntry } from '../lib/trajectory';
+import { marginOf, type ProductEconomics } from '../lib/productHealth';
 
 /**
- * One decision per row, and the decision is a MIXTURE (S16).
+ * The decision AND the suggestion, in ONE place (user markup, 2026-08-12).
  *
- * > "imo it should be buy / use stock / use PO / use SPO etc, but we should allow mixture
- * >  of actions"
+ * > "I want the decision and suggestion to be made in 1 place instead of going to multiple
+ * >  places. I want the decision to be emphasized: the user sees the table, they know exactly
+ * >  which button/cell/icon to click to make the decision, and after they made it, they know
+ * >  which one has been made, which one hasn't, so they can decide until all outstanding
+ * >  decisions are cleared."
  *
- * The engine proposes a composition - stock from named bins, then the PO book, then a buy
- * for the remainder - and Accept records exactly that in one click. Adjust opens the same
- * three numbers for editing, each bounded by what actually exists. Incoming SPO is already
- * inside the net position, so it appears on the suggestion as a note, never as a fourth
- * number that would cover the same demand twice.
+ * This used to be two columns: a text-only "Suggested action" column explaining the mix, and a
+ * separate "Decision" column with the Accept / Adjust / Skip controls next to it - the same
+ * fact, described twice, in two places the eye had to travel between. They are now one cell.
  *
- * Nothing here mentions a budget: what this costs is a question for after the decisions.
- * An undecided cell shows the actions and no state, because "I have not decided" has to
- * look different from every decision, including from skipping.
+ * An UNDECIDED row leads with ONE loud button carrying the whole mix ("Buy 1,100" /
+ * "Stock 15 (BRW-BB) + PO 120"), because that button IS the decision - clicking it takes the
+ * suggestion exactly as offered. Adjust and Skip sit beside it, smaller, for the two other
+ * things a buyer does with a suggestion. Whatever else there is to know about the suggestion
+ * (stock crossing a segment boundary, CS being superseded, an SPO already counted, a trend
+ * argument for more or fewer) sits underneath in quiet type - present, but never competing with
+ * the button for attention.
+ *
+ * A DECIDED row goes quiet: a check (or an X for a skip) and the mix actually taken, in the
+ * PAST tense ("Bought 1,100" - the tense itself is the "this one is done" signal, since the
+ * numbers alone would read the same as the suggestion), with a small "Change" to reopen it.
+ * Reading down the column now answers "which ones are left" without opening anything.
+ *
+ * The composition math (stock, then the PO book, then a buy for the remainder) is untouched -
+ * only where its words are printed moved.
  */
 
 export function PlanLineDecisionCell({
@@ -34,6 +48,9 @@ export function PlanLineDecisionCell({
   decision,
   cover,
   poReceipts = [],
+  trend,
+  economics,
+  healthThresholds = { margin_floor_pct: 15, dead_turnover_months: 6 },
   onDecide,
   onClear,
 }: {
@@ -43,6 +60,14 @@ export function PlanLineDecisionCell({
   cover: CoverProposal;
   /** S15: the open PO lines already carrying this product here. */
   poReceipts?: PoReceipt[];
+  /** The order-trend verdict behind the "consider more/fewer" advisory. Undefined = no
+   *  opinion, so the advisory line is simply absent. */
+  trend?: TrajectoryEntry;
+  /** What the product sells for and how fast it turns, so a "buy more" advisory can carry
+   *  its thin-margin caveat in the same breath. Undefined = no opinion. */
+  economics?: ProductEconomics;
+  /** The policy's lines for "thin margin". */
+  healthThresholds?: { margin_floor_pct: number; dead_turnover_months: number };
   onDecide: (next: PlanDecision) => void;
   /** Put the line back to undecided. Its own callback rather than a decision field,
    *  because undecided is the ABSENCE of a decision and must not become one. */
@@ -74,14 +99,16 @@ export function PlanLineDecisionCell({
     ...(suggestedPo > 0 ? { po: suggestedPo } : {}),
   };
 
-  const summary = (d: PlanDecision): string => {
+  // The SAME shape, suggestion or decision - only the buy verb changes tense. That tense is
+  // the "made / not made" signal: a decided row must not read exactly like an undecided one.
+  const summary = (d: PlanDecision, decided = false): string => {
     if (d.skip) return 'Skipped';
     const parts: string[] = [];
     if ((d.stock?.qty ?? 0) > 0) {
       parts.push(`Stock ${fmtInt(d.stock!.qty)} (${d.stock!.sources.map((s) => s.warehouse_code).join(', ')})`);
     }
     if ((d.po ?? 0) > 0) parts.push(`PO ${fmtInt(d.po!)}`);
-    if ((d.buy ?? 0) > 0) parts.push(`Buy ${fmtInt(d.buy!)}`);
+    if ((d.buy ?? 0) > 0) parts.push(`${decided ? 'Bought' : 'Buy'} ${fmtInt(d.buy!)}`);
     return parts.length ? parts.join(' + ') : 'Nothing';
   };
 
@@ -95,18 +122,16 @@ export function PlanLineDecisionCell({
 
   if (decision) {
     return (
-      <div className="flex min-w-0 items-center gap-2">
-        <Badge
-          variant={decision.skip ? 'secondary' : 'primary'}
-          appearance="light"
-          size="sm"
-          className="min-w-0"
-        >
-          <span className="truncate" title={summary(decision)}>
-            {summary(decision)}
-          </span>
-        </Badge>
-        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onClear}>
+      <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-md bg-muted/50 px-2 py-1.5">
+        {decision.skip ? (
+          <X className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        ) : (
+          <Check className="size-3.5 shrink-0 text-scm-incoming" aria-hidden />
+        )}
+        <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground" title={summary(decision, true)}>
+          {summary(decision, true)}
+        </span>
+        <Button variant="ghost" size="sm" className="h-7 shrink-0 px-2 text-xs" onClick={onClear}>
           Change
         </Button>
       </div>
@@ -115,37 +140,102 @@ export function PlanLineDecisionCell({
 
   const canAccept = line.purchasable && (suggestedBuy > 0 || stockQty > 0 || suggestedPo > 0);
 
+  // What used to be the separate "Suggested action" column: the notes a buyer needs beyond
+  // the mix itself. Quiet, underneath the button, never a second place to look for them.
+  const advice = trendAdvice(trend, suggestedBuy);
+  const margin = economics ? marginOf(line.unit_cost_base, economics, healthThresholds.margin_floor_pct) : null;
+  const thinMargin =
+    advice?.direction === 'more' &&
+    (margin?.tone === 'thin' || margin?.tone === 'negative') &&
+    margin?.pct !== null;
+  // A cover offer on a project line is purchasing superseding CS: the inquiry said buy it
+  // all, and the engine found stock CS did not use. Said out loud, because a quiet
+  // disagreement with CS reads as the engine miscounting.
+  const crossing = cover.sources.some((s) => s.cross_segment);
+  const supersede =
+    line.rec.segment === 'project' && cover.coverQty > 0 ? `CS asked to buy ${fmtInt(needed)}` : null;
+
   return (
-    <div className="flex items-center gap-1.5">
-      <Button
-        size="sm"
-        className="h-8 px-2"
-        onClick={() => onDecide(suggested)}
-        disabled={!canAccept}
-        title={acceptTitle}
-      >
-        <Check className="size-3.5" />
-        <span className="max-w-40 truncate">{summary(suggested)}</span>
-      </Button>
+    <div className="min-w-0 space-y-1">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {/* The loudest thing in the row: this button IS the decision. */}
+        <Button
+          size="sm"
+          className="h-8 px-2"
+          onClick={() => onDecide(suggested)}
+          disabled={!canAccept}
+          title={acceptTitle}
+        >
+          <Check className="size-3.5 shrink-0" />
+          <span className="max-w-44 truncate">{summary(suggested)}</span>
+        </Button>
+        {line.purchasable ? (
+          <AdjustMixture
+            line={line}
+            suggested={suggested}
+            stockMax={stockQty}
+            poMax={poQty}
+            cover={cover}
+            onDecide={onDecide}
+          />
+        ) : null}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 px-2"
+          onClick={() => onDecide({ skip: true })}
+          title={`Skip ${line.sku} this round`}
+        >
+          <X className="size-3.5" />
+        </Button>
+      </div>
       {line.purchasable ? (
-        <AdjustMixture
-          line={line}
-          suggested={suggested}
-          stockMax={stockQty}
-          poMax={poQty}
-          cover={cover}
-          onDecide={onDecide}
-        />
+        <div className="min-w-0 text-2xs text-muted-foreground">
+          {/* S15: what is arriving is ALREADY inside the net, so it is a note, never a
+              second offset - counting it again would cover the same demand twice. */}
+          {(line.rec.incoming_spo ?? 0) > 0 ? (
+            <span className="block truncate">
+              {`${fmtInt(line.rec.incoming_spo ?? 0)} arriving (SPO) already counted`}
+            </span>
+          ) : null}
+          {crossing ? <span className="block text-scm-overstock">crosses segment</span> : null}
+          {supersede ? <span className="block truncate">{supersede}</span> : null}
+          {/* The forecast advisory: the trend's own %-change applied to the buy, applied by a
+              CLICK, never silently - committed demand stays the driver. */}
+          {advice ? (
+            <button
+              type="button"
+              className="block truncate text-scm-incoming underline decoration-dotted underline-offset-2 hover:text-primary"
+              title={`Apply: adjust the buy to ${fmtInt(
+                advice.direction === 'more' ? suggestedBuy + advice.delta : suggestedBuy - advice.delta,
+              )}`}
+              onClick={() =>
+                onDecide({
+                  ...(stockQty > 0
+                    ? {
+                        stock: {
+                          qty: stockQty,
+                          sources: cover.sources.map((s) => ({
+                            warehouse_id: s.warehouse_id,
+                            warehouse_code: s.warehouse_code,
+                            qty: s.qty,
+                          })),
+                        },
+                      }
+                    : {}),
+                  ...(suggestedPo > 0 ? { po: suggestedPo } : {}),
+                  buy: advice.direction === 'more' ? suggestedBuy + advice.delta : suggestedBuy - advice.delta,
+                  reason: `Trend: orders ${advice.direction === 'more' ? 'rose' : 'fell'} ${advice.pct}%`,
+                })
+              }
+            >
+              {`Consider ${fmtInt(advice.delta)} ${advice.direction} - orders ${
+                advice.direction === 'more' ? 'rose' : 'fell'
+              } ${advice.pct}%${thinMargin ? `, but margin only ${margin!.pct}%` : ''}`}
+            </button>
+          ) : null}
+        </div>
       ) : null}
-      <Button
-        variant="ghost"
-        size="sm"
-        className="h-8 px-2"
-        onClick={() => onDecide({ skip: true })}
-        title={`Skip ${line.sku} this round`}
-      >
-        <X className="size-3.5" />
-      </Button>
     </div>
   );
 }

@@ -10,7 +10,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { AlertCircle, ClipboardCheck, Search, X } from 'lucide-react';
+import { AlertCircle, ArrowLeft, ClipboardCheck, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -109,9 +109,12 @@ function KeyedPill({ status }: { status: KeyedStatus }) {
 export interface PoWorklistViewProps {
   /** Opaque run key. Null reads the newest completed plan. Never rendered. */
   runId?: string | null;
+  /** Returns to the buy co-pilot. This report has no row in that grid to filter back to,
+   *  so it needs its own way out - the tile that used to open it is gone. */
+  onBack?: () => void;
 }
 
-export function PoWorklistView({ runId = null }: PoWorklistViewProps) {
+export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
   const query = { run_id: runId };
   const { data, isLoading, isError, error, refetch } = usePoWorklist(query);
   const setStatus = useSetKeyedStatus(query);
@@ -400,9 +403,17 @@ export function PoWorklistView({ runId = null }: PoWorklistViewProps) {
         </span>
         <p className="text-sm font-medium">The PO worklist could not be loaded.</p>
         <p className="text-2xs text-muted-foreground">{(error as Error)?.message}</p>
-        <Button size="sm" variant="outline" onClick={() => void refetch()}>
-          Try again
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => void refetch()}>
+            Try again
+          </Button>
+          {onBack ? (
+            <Button size="sm" variant="ghost" onClick={onBack}>
+              <ArrowLeft className="size-3.5" />
+              Back to plan
+            </Button>
+          ) : null}
+        </div>
       </Card>
     );
   }
@@ -416,6 +427,12 @@ export function PoWorklistView({ runId = null }: PoWorklistViewProps) {
     <div className="space-y-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
+          {onBack ? (
+            <Button variant="ghost" size="sm" className="-ms-2 mb-1 h-7 gap-1 px-2 text-muted-foreground" onClick={onBack}>
+              <ArrowLeft className="size-3.5" />
+              Back to plan
+            </Button>
+          ) : null}
           <h3 className="text-base font-semibold">PO worklist</h3>
           <p className="text-2xs text-muted-foreground">
             {total === 0

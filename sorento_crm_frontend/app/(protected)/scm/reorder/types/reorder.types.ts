@@ -203,8 +203,12 @@ export interface ReorderRecommendation {
   moq: number | null;
   /** Supplier pack / order multiple applied when rounding. */
   order_multiple: number | null;
-  /** Policy type that drove the decision (reorder_point / periodic_review / min_max). */
-  policy_type: ReorderReason | null;
+  /**
+   * Policy basis that drove the decision. Usually a `ReorderReason`; also `reorder_level`
+   * on a manual-mode line (S1's global toggle, or a per-product override) - the engine has
+   * supported that basis since before S1, this type simply had not caught up to it.
+   */
+  policy_type: ReorderReason | 'reorder_level' | null;
   /** Which supplier-selection rule chose the supplier. */
   supplier_selection: 'primary' | 'best_score' | 'lowest_cost' | null;
   /**
@@ -292,6 +296,9 @@ export interface ReorderRecommendation {
    *  arrives as `needs_level` rather than as a buy. */
   reorder_level?: number | null;
   reorder_level_source?: string | null;
+  /** When the buyer's level was set. Not yet emitted by the backend (S3 ledger renders it
+   *  conditionally so this can be threaded through later with no FE change). */
+  reorder_level_set_at?: string | null;
   /** The reorder settings held on the PRODUCT record. Shown beside what the plan computed;
    *  the engine does not read them. Null means not set, which is not zero. */
   /** The window the daily demand rate was averaged over, so the row can show the units

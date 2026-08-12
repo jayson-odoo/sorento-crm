@@ -184,3 +184,17 @@ export function moqGap(
         : `Need ${fmt(needed)}, MOQ forces ${fmt(orderedQty)}: nothing is selling to clear the ${fmt(extra)} extra - a promotion or a lower MOQ is the honest path.`;
   return { moq, needed, extra, months_to_clear: months, verdict, sentence };
 }
+
+/**
+ * The short pump-up note shown beside a quantity, reused everywhere a `MoqGap` is rendered
+ * (the MOQ column, and the order-qty ledger's THE BUY block, S3) so the wording can never
+ * drift between the two. `fmt` is the caller's own integer formatter (`fmtInt`), matching
+ * `describeCover`'s pattern of taking the formatter rather than importing one.
+ */
+export function moqGapNote(gap: MoqGap, fmt: (n: number) => string): string {
+  return gap.verdict === 'clears'
+    ? `+${fmt(gap.extra)} extra, clears in ~${gap.months_to_clear} mo`
+    : gap.verdict === 'slow'
+      ? `+${fmt(gap.extra)} extra ≈ ${gap.months_to_clear} mo - promotion?`
+      : `+${fmt(gap.extra)} extra, nothing selling to clear it`;
+}

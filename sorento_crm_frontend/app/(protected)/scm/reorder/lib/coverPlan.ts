@@ -117,3 +117,62 @@ export function remainingFree(
     0,
   );
 }
+
+/**
+ * The minimal shape ``coverForLine`` needs off a plan line - kept structural rather than
+ * importing `PlanLine` so this stays a leaf module.
+ */
+export interface CoverableLine {
+  order_qty: number;
+  warehouse: string;
+  warehouse_id: string | null;
+  status: string;
+  rec: {
+    segment?: string | null;
+    warehouse_code?: string | null;
+    covered_committed?: number | null;
+    covered_available?: number | null;
+  };
+}
+
+/**
+ * The ONE place a line's cover proposal is composed, for every rec_type. Both the
+ * "Suggested action" cell and the Decision cell read off this, so they can never disagree.
+ *
+ * A `covered_by_stock` row already carries the engine's own use-stock-or-buy verdict
+ * (`covered_committed` / `covered_available` - this SAME pool's own on-hand + on-order, not
+ * another warehouse's free pool - see `_covered_rec` in `reorder_run_service.py`). Composing
+ * it the same way as an ordinary buy line defaulted it to a full "Buy": `proposeCover`
+ * deliberately excludes the line's OWN warehouse (it is already inside the net), so this
+ * row's own-pool coverage was invisible to it, and the cross-warehouse free pool usually had
+ * nothing spare either - the row read "Buy 15" for a line the engine itself called covered.
+ */
+export function coverForLine(
+  line: CoverableLine,
+  free: CoverSource[] | undefined,
+  taken: TakenByWarehouse = {},
+): CoverProposal {
+  if (line.status === 'covered_by_stock') {
+    const committed = line.rec.covered_committed ?? line.order_qty;
+    const available = Math.max(0, line.rec.covered_available ?? 0);
+    if (!(committed > 0)) return NO_COVER;
+    const covered = Math.min(committed, available);
+    const buyQty = Math.max(0, committed - covered);
+    if (covered <= 0) return { coverQty: 0, buyQty, sources: [], isSplit: false };
+    return {
+      coverQty: covered,
+      buyQty,
+      sources: [
+        {
+          warehouse_id: line.warehouse_id ?? '',
+          warehouse_code: line.rec.warehouse_code ?? line.warehouse,
+          segment: line.rec.segment ?? null,
+          qty: covered,
+          cross_segment: false,
+        },
+      ],
+      isSplit: covered > 0 && buyQty > 0,
+    };
+  }
+  return proposeCover(Math.ceil(line.order_qty), line.warehouse_id, line.rec.segment ?? null, free, taken);
+}

@@ -10,7 +10,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { AlertCircle, Search, ShieldCheck, X } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Search, ShieldCheck, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -90,9 +90,12 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
 export interface PlanExceptionsViewProps {
   /** Opaque run key. Null reads the newest completed plan. Never rendered. */
   runId?: string | null;
+  /** Returns to the buy co-pilot. This report has no row in that grid to filter back to,
+   *  so it needs its own way out - the tile that used to open it is gone. */
+  onBack?: () => void;
 }
 
-export function PlanExceptionsView({ runId = null }: PlanExceptionsViewProps) {
+export function PlanExceptionsView({ runId = null, onBack }: PlanExceptionsViewProps) {
   const query = { run_id: runId };
   const { data, isLoading, isError, error, refetch } = usePlanExceptions(query);
   const decide = useDecidePlanException(query);
@@ -289,9 +292,17 @@ export function PlanExceptionsView({ runId = null }: PlanExceptionsViewProps) {
         </span>
         <p className="text-sm font-medium">Plan exceptions could not be loaded.</p>
         <p className="text-2xs text-muted-foreground">{(error as Error)?.message}</p>
-        <Button size="sm" variant="outline" onClick={() => void refetch()}>
-          Try again
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => void refetch()}>
+            Try again
+          </Button>
+          {onBack ? (
+            <Button size="sm" variant="ghost" onClick={onBack}>
+              <ArrowLeft className="size-3.5" />
+              Back to plan
+            </Button>
+          ) : null}
+        </div>
       </Card>
     );
   }
@@ -303,6 +314,12 @@ export function PlanExceptionsView({ runId = null }: PlanExceptionsViewProps) {
     <div className="space-y-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
+          {onBack ? (
+            <Button variant="ghost" size="sm" className="-ms-2 mb-1 h-7 gap-1 px-2 text-muted-foreground" onClick={onBack}>
+              <ArrowLeft className="size-3.5" />
+              Back to plan
+            </Button>
+          ) : null}
           <h3 className="text-base font-semibold">Plan exceptions</h3>
           <p className="text-2xs text-muted-foreground">
             {counts

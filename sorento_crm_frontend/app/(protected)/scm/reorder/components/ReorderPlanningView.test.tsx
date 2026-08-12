@@ -4,31 +4,30 @@
  * state on a fresh install, and reflects a PAST run in its header with that run's
  * date + time.
  *   M8-D3 opens to today's plan · M8-D4 empty state + Manual plan · M8-D11 past-run header
- *   M8-C12 "Stock allocation" summary card
+ *
+ * The secondary tile row (Needs a level, Stock allocation, Order summary, Plan
+ * exceptions, PO worklist) is gone (user feedback, 2026-08-12: "I don't really need
+ * these"); Order summary / Plan exceptions / PO worklist moved to quiet links in the
+ * grid's own toolbar (`secondaryActions`, forwarded to the mocked `PlanLinesGrid`).
  *
  * The data hooks + heavy child grids are mocked so the orchestration is isolated.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import type { TodayRun } from '../services/reorderRunService';
 
 const useTodayRun = vi.fn();
 const useReorderRun = vi.fn();
-const useAllDispositionRecommendations = vi.fn();
 const useUnlocatedDemand = vi.fn();
 const useSetAsideDemand = vi.fn();
-const useCoveredRecommendations = vi.fn();
-const useNeedsLevelRecommendations = vi.fn();
 vi.mock('../hooks/useReorderRun', () => ({
   useTodayRun: () => useTodayRun(),
   useReorderRun: () => useReorderRun(),
   useUnlocatedDemand: () => useUnlocatedDemand(),
   useSetAsideDemand: () => useSetAsideDemand(),
-  useCoveredRecommendations: (...a: unknown[]) => useCoveredRecommendations(...a),
-  useNeedsLevelRecommendations: (...a: unknown[]) => useNeedsLevelRecommendations(...a),
-  useAllDispositionRecommendations: (...a: unknown[]) => useAllDispositionRecommendations(...a),
   todayRunKey: ['scm', 'reorder', 'today'],
   runHistoryKey: ['scm', 'reorder', 'history'],
   unlocatedDemandKey: ['scm', 'reorder', 'unlocated-demand'],
@@ -40,7 +39,15 @@ vi.mock('../hooks/useReorderPlan', () => ({ useReorderPlan: (...a: unknown[]) =>
 vi.mock('../hooks/useDecisions', () => ({ decisionsKey: (id: string | null) => ['scm', 'reorder', 'decisions', id] }));
 
 // Heavy children stubbed to sentinels so we assert orchestration, not their internals.
-vi.mock('./PlanLinesGrid', () => ({ PlanLinesGrid: () => <div>plan-lines-grid</div> }));
+// PlanLinesGrid's props are captured so the `secondaryActions` wiring (the removed
+// tiles' replacement entry points) can be exercised without rendering the real grid.
+const planLinesGridProps = vi.fn();
+vi.mock('./PlanLinesGrid', () => ({
+  PlanLinesGrid: (props: { secondaryActions?: ToolbarAction[] }) => {
+    planLinesGridProps(props);
+    return <div>plan-lines-grid</div>;
+  },
+}));
 vi.mock('./PlanBudgetReview', () => ({ PlanBudgetReview: () => <div>budget-review</div> }));
 vi.mock('../hooks/usePlanLines', () => ({
   usePlanLines: () => ({
@@ -51,12 +58,38 @@ vi.mock('../hooks/usePlanLines', () => ({
   }),
 }));
 vi.mock('./PlanAssistant', () => ({ PlanAssistant: () => <div>plan-assistant</div> }));
-vi.mock('./DispositionResultsGrid', () => ({ DispositionResultsGrid: () => <div>disposition-grid</div> }));
 vi.mock('./RunHistoryPanel', () => ({ RunHistoryPanel: () => <div>run-history</div> }));
 vi.mock('./RunPlanningModal', () => ({ RunPlanningModal: ({ open }: { open: boolean }) => (open ? <div>manual-plan-modal</div> : null) }));
 // Its own channels and dialogs are UploadDataMenu.test.tsx's subject. What this file
 // checks is that the page OFFERS it, in both the populated and the empty state.
 vi.mock('./UploadDataMenu', () => ({ UploadDataMenu: () => <div>upload-data-menu</div> }));
+// The three reports have no row in the buy grid to filter back to, so each takes an
+// `onBack`. Stubbed to a sentinel + a button that calls it, so the round trip
+// (open the report -> back to plan) can be exercised the same way a click would.
+vi.mock('./PlanExceptionsView', () => ({
+  PlanExceptionsView: ({ onBack }: { onBack?: () => void }) => (
+    <div>
+      plan-exceptions-view
+      <button onClick={onBack}>exceptions-back-to-plan</button>
+    </div>
+  ),
+}));
+vi.mock('./PoWorklistView', () => ({
+  PoWorklistView: ({ onBack }: { onBack?: () => void }) => (
+    <div>
+      po-worklist-view
+      <button onClick={onBack}>worklist-back-to-plan</button>
+    </div>
+  ),
+}));
+vi.mock('./SummaryOrderReportView', () => ({
+  SummaryOrderReportView: ({ onBack }: { onBack?: () => void }) => (
+    <div>
+      summary-order-report-view
+      <button onClick={onBack}>summary-back-to-plan</button>
+    </div>
+  ),
+}));
 
 import { ReorderPlanningView } from './ReorderPlanningView';
 
@@ -90,24 +123,26 @@ function renderView() {
 beforeEach(() => {
   useTodayRun.mockReset();
   useReorderRun.mockReset().mockReturnValue({ run: null, isRunning: false, isComplete: false, isFailed: false, error: null, start: vi.fn(), reset: vi.fn() });
-  useAllDispositionRecommendations.mockReset().mockReturnValue({ data: [], isLoading: false });
   useUnlocatedDemand.mockReset().mockReturnValue({ data: undefined, isLoading: false });
   useSetAsideDemand.mockReset().mockReturnValue({ data: undefined, isLoading: false });
-  useCoveredRecommendations.mockReset().mockReturnValue({ data: [], isLoading: false, isError: false, error: null });
-  useNeedsLevelRecommendations.mockReset().mockReturnValue({ data: [], isLoading: false, isError: false, error: null });
   useReorderPlan.mockReset().mockReturnValue({ isLoading: false, isError: false, error: null, refetch: vi.fn(), applyProposalLine: vi.fn(), rows: [] });
+  planLinesGridProps.mockReset();
 });
 
-describe('ReorderPlanningView - opens to today (M8-D3 / M8-C12)', () => {
+/** The `secondaryActions` `PlanLinesGrid` was last rendered with - the removed tiles'
+ *  replacement entry points to Order summary / Plan exceptions / PO worklist. */
+function lastSecondaryActions(): ToolbarAction[] {
+  const call = planLinesGridProps.mock.calls.at(-1);
+  return (call?.[0]?.secondaryActions ?? []) as ToolbarAction[];
+}
+
+describe('ReorderPlanningView - opens to today (M8-D3)', () => {
   it('renders today’s plan header + the buy co-pilot without a run click', () => {
     stubToday(todayRun());
     renderView();
     expect(screen.getByText(/Today's plan · /)).toBeInTheDocument();
     expect(screen.getByText('plan-lines-grid')).toBeInTheDocument();
     expect(screen.getByText('plan-assistant')).toBeInTheDocument();
-    // M8-C12 - the disposition card is labelled "Stock allocation"
-    // Named twice now, deliberately: the tile and the band it opens.
-    expect(screen.getAllByText('Stock allocation').length).toBeGreaterThan(0);
   });
 });
 
@@ -321,13 +356,11 @@ describe('ReorderPlanningView - one list, not six bands (S11)', () => {
 
   it('no longer splits the plan into bands', () => {
     // Covered by stock, Needs a level and Stock allocation were separate collapsible
-    // sections with their own tables. They are values of the grid's Status column now, so
-    // their tables must be gone rather than merely collapsed. The TILES keep those labels -
-    // they are counts, and they now narrow the one list instead of revealing a band.
+    // sections with their own tables. They are values of the grid's Status column now,
+    // so their tables must be gone rather than merely collapsed.
     stubToday(todayRun());
     renderView();
 
-    expect(screen.queryByText('disposition-grid')).toBeNull();
     expect(screen.getAllByText('plan-lines-grid')).toHaveLength(1);
   });
 
@@ -336,5 +369,130 @@ describe('ReorderPlanningView - one list, not six bands (S11)', () => {
     renderView();
 
     expect(screen.getByText('budget-review')).toBeInTheDocument();
+  });
+});
+
+describe('ReorderPlanningView - the decision-progress tile replaces Buy / Covered by stock', () => {
+  // > "I want the decision to be emphasized ... so they can decide until all outstanding
+  // >  decisions are cleared." The old Buy / Covered by stock tiles counted a STATUS the
+  // >  user said he no longer trusted at a glance.
+
+  it('never renders a Buy or Covered by stock tile', () => {
+    stubToday(todayRun());
+    renderView();
+
+    expect(screen.queryByText('Buy')).not.toBeInTheDocument();
+    expect(screen.queryByText('Covered by stock')).not.toBeInTheDocument();
+  });
+
+  it('renders the decision-progress tile, wired from the real PlanLinesSection', () => {
+    // `usePlanLines` is mocked with decided:0/undecided:0, so PlanLinesSection reports
+    // that up via `onTotalsChange` for real - this pins the wiring, not just the tile's
+    // own math (unit-tested in ReorderStatTiles.test.tsx).
+    stubToday(todayRun());
+    renderView();
+
+    expect(screen.getByText('Decisions')).toBeInTheDocument();
+    expect(screen.getByText('0 of 0 made')).toBeInTheDocument();
+  });
+
+  it('splits cash into committed-so-far and if-all-accepted', () => {
+    stubToday(todayRun());
+    renderView();
+
+    expect(screen.getByText('Cash committed so far')).toBeInTheDocument();
+    expect(screen.getByText('Cash if all accepted')).toBeInTheDocument();
+    // total_cash_impact from the run summary fixture (125000).
+    expect(screen.getByText('RM 125,000')).toBeInTheDocument();
+  });
+
+  it('clicking the decision-progress tile does not throw', () => {
+    stubToday(todayRun());
+    renderView();
+
+    expect(() => fireEvent.click(screen.getByText('Decisions'))).not.toThrow();
+  });
+});
+
+describe('ReorderPlanningView - the secondary tile row is gone (direct user feedback, 2026-08-12: "I don\'t really need these")', () => {
+  it('never renders Needs a level, Stock allocation, Order summary, Plan exceptions or PO worklist as a tile', () => {
+    stubToday(todayRun());
+    renderView();
+
+    expect(screen.queryByText('Needs a level')).not.toBeInTheDocument();
+    expect(screen.queryByText('Stock allocation')).not.toBeInTheDocument();
+    expect(screen.queryByText('Order summary')).not.toBeInTheDocument();
+    expect(screen.queryByText('Plan exceptions')).not.toBeInTheDocument();
+    expect(screen.queryByText('PO worklist')).not.toBeInTheDocument();
+  });
+
+  it('does not fetch the counts that only ever fed those tiles', () => {
+    // needs-level / disposition / order-summary / plan-exceptions / PO-worklist counts
+    // were read solely to fill a tile that no longer exists - nothing else in the page
+    // computed from them. `useNeedsLevelRecommendations` and
+    // `useAllDispositionRecommendations` are deliberately NOT mocked in this file
+    // (unlike before this change): a lingering call to either would throw here, since
+    // the `../hooks/useReorderRun` mock factory no longer exports them. Needs a level
+    // and Stock allocation stayed reachable as a Status filter ON `PlanLinesGrid`
+    // (unit-tested there), which is why they need no query of their own either.
+    stubToday(todayRun());
+    expect(() => renderView()).not.toThrow();
+  });
+});
+
+describe('ReorderPlanningView - Order summary / Plan exceptions / PO worklist moved to the grid toolbar', () => {
+  // Both are genuinely separate reports with no row in the one grid to filter to, so
+  // removing their tile could not just delete access (unlike Needs a level / Stock
+  // allocation): the entry point moved to a quiet link next to Filters / Columns /
+  // Export instead, threaded to `PlanLinesGrid` as `secondaryActions`.
+
+  it('forwards exactly the three report links to the grid toolbar, quiet (not a tile)', () => {
+    stubToday(todayRun());
+    renderView();
+
+    const actions = lastSecondaryActions();
+    expect(actions.map((a) => a.key)).toEqual(['order_summary', 'plan_exceptions', 'po_worklist']);
+    expect(actions.map((a) => a.label)).toEqual(['Order summary', 'Plan exceptions', 'PO worklist']);
+  });
+
+  it('opens the Order summary report and can return to the plan', () => {
+    stubToday(todayRun());
+    renderView();
+
+    act(() => {
+      lastSecondaryActions().find((a) => a.key === 'order_summary')!.onClick?.();
+    });
+    expect(screen.getByText('summary-order-report-view')).toBeInTheDocument();
+    expect(screen.queryByText('plan-lines-grid')).toBeNull();
+
+    fireEvent.click(screen.getByText('summary-back-to-plan'));
+    expect(screen.getByText('plan-lines-grid')).toBeInTheDocument();
+    expect(screen.queryByText('summary-order-report-view')).toBeNull();
+  });
+
+  it('opens Plan exceptions and can return to the plan', () => {
+    stubToday(todayRun());
+    renderView();
+
+    act(() => {
+      lastSecondaryActions().find((a) => a.key === 'plan_exceptions')!.onClick?.();
+    });
+    expect(screen.getByText('plan-exceptions-view')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('exceptions-back-to-plan'));
+    expect(screen.getByText('plan-lines-grid')).toBeInTheDocument();
+  });
+
+  it('opens the PO worklist and can return to the plan', () => {
+    stubToday(todayRun());
+    renderView();
+
+    act(() => {
+      lastSecondaryActions().find((a) => a.key === 'po_worklist')!.onClick?.();
+    });
+    expect(screen.getByText('po-worklist-view')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('worklist-back-to-plan'));
+    expect(screen.getByText('plan-lines-grid')).toBeInTheDocument();
   });
 });

@@ -4,15 +4,16 @@
  * The six bands this replaces sorted the work for the buyer, and two of them delivered a
  * verdict - Within budget, Over budget - before the buyer had decided anything.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReorderRecommendation } from '../types/reorder.types';
 import { recToPlanLine, type PlanLine } from '../lib/planLine';
-import type { PlanDecisionMap } from '../lib/planDecisions';
+import { planTotals, type PlanDecision, type PlanDecisionMap } from '../lib/planDecisions';
 import { PlanLinesGrid } from './PlanLinesGrid';
-import { proposeCover, NO_COVER, type CoverSource } from '../lib/coverPlan';
+import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
+import { coverForLine, NO_COVER, type CoverSource } from '../lib/coverPlan';
 import type { PriceAdvice } from '../lib/priceAdvice';
 import type { PoReceipt } from '../lib/poCover';
 import type { TrajectoryEntry } from '../lib/trajectory';
@@ -91,13 +92,11 @@ function renderGrid(
   trendFor?: (l: PlanLine) => TrajectoryEntry | undefined,
   economicsFor?: (l: PlanLine) => ProductEconomics | undefined,
   onDecideLifecycle?: (productId: string, decision: 'keep' | 'discontinue' | null) => void,
+  secondaryActions?: ToolbarAction[],
 ) {
   const onDecide = vi.fn();
   const onClear = vi.fn();
-  const coverFor = (l: PlanLine) =>
-    l.purchasable
-      ? proposeCover(Math.ceil(l.order_qty), l.warehouse_id ?? null, l.rec.segment ?? null, free)
-      : NO_COVER;
+  const coverFor = (l: PlanLine) => (l.purchasable ? coverForLine(l, free) : NO_COVER);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
@@ -112,6 +111,7 @@ function renderGrid(
         trendFor={trendFor}
         economicsFor={economicsFor}
         onDecideLifecycle={onDecideLifecycle}
+        secondaryActions={secondaryActions}
         staleAfterDays={180}
       />
     </QueryClientProvider>,
@@ -131,11 +131,6 @@ describe('PlanLinesGrid - one list', () => {
     expect(screen.getByText('BUY-1')).toBeInTheDocument();
     expect(screen.getByText('COV-1')).toBeInTheDocument();
     expect(screen.getByText('ALLOC-1')).toBeInTheDocument();
-  });
-
-  it('says what the plan found as a column, not as a section', () => {
-    renderGrid([line({ id: 'b', type: 'covered' })]);
-    expect(screen.getByText('Covered by stock')).toBeInTheDocument();
   });
 
   it('mentions no budget anywhere, because nothing is decided yet', () => {
@@ -171,13 +166,112 @@ describe('PlanLinesGrid - the netting is on the row', () => {
   });
 
   it('never prints a number for a line it cannot price', () => {
-    // The Status column names it once; the Cost cell shows a dash carrying the reason,
-    // rather than repeating the words or - far worse - printing a zero.
+    // The Cost cell shows a dash carrying the reason, rather than printing a zero.
     renderGrid([line({ unit_cost: null, cash_impact: null })]);
-    expect(screen.getByText('No price')).toBeInTheDocument(); // the status badge
     expect(
       screen.getByTitle(/No price on file, so this line cannot be costed/i),
     ).toBeInTheDocument();
+  });
+});
+
+describe('PlanLinesGrid - one Decision column, not two (user markup, 2026-08-12)', () => {
+  // > "I want the decision and suggestion to be made in 1 place instead of going to
+  // >  multiple places ... after I made it, I know which one has been made, which one
+  // >  hasn't, so they can decide until all outstanding decisions are cleared."
+
+  it('never renders a Status column', () => {
+    renderGrid([line()]);
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(heads).not.toContain('Status');
+  });
+
+  it('never renders a separate Suggested action column', () => {
+    renderGrid([line()]);
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(heads).not.toContain('Suggested action');
+  });
+
+  it('an undecided row leads with ONE prominent button carrying the full mix', () => {
+    renderGrid([line({ order_qty: 1100 })]);
+    const btn = screen.getByRole('button', { name: /Buy 1,100/ });
+    expect(btn).toBeInTheDocument();
+    // Loudest element in the row: the solid primary variant (filled background).
+    expect(btn.className).toMatch(/bg-primary/);
+  });
+
+  it('a decided row goes quiet: past tense + Change, no loud button', () => {
+    renderGrid([line({ order_qty: 1100 })], { r1: { buy: 1100 } });
+    expect(screen.getByText('Bought 1,100')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Change/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Buy 1,100/ })).not.toBeInTheDocument();
+  });
+
+  it('undecided rows sort first, decided rows sink to the bottom, rank preserved within each', () => {
+    renderGrid(
+      [
+        line({ id: 'a', sku: 'FIRST', rank: 1 }),
+        line({ id: 'b', sku: 'SECOND', rank: 2 }),
+        line({ id: 'c', sku: 'THIRD', rank: 3 }),
+      ],
+      { a: { buy: 23 } }, // only the highest-ranked line ('a') is decided
+    );
+    const skus = screen
+      .getAllByText(/^(FIRST|SECOND|THIRD)$/)
+      .map((el) => el.textContent);
+    expect(skus).toEqual(['SECOND', 'THIRD', 'FIRST']);
+  });
+
+  it('honours a controlled decidedFilter prop, narrowing to undecided lines', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <PlanLinesGrid
+          lines={[
+            line({ id: 'a', sku: 'DECIDED-1' }),
+            line({ id: 'b', sku: 'UNDECIDED-1', rank: 2 }),
+          ]}
+          decisions={{ a: { buy: 23 } } as PlanDecisionMap}
+          onDecide={vi.fn()}
+          onClear={vi.fn()}
+          decidedFilter="undecided"
+          onDecidedFilterChange={vi.fn()}
+          staleAfterDays={180}
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText('UNDECIDED-1')).toBeInTheDocument();
+    expect(screen.queryByText('DECIDED-1')).not.toBeInTheDocument();
+  });
+
+  it('a manual-mode (reorder_level) line renders the same composition in the merged cell', () => {
+    // The label comes off the same composition source regardless of policy basis, so this
+    // is automatic - pinned so a future change to the ledger cannot quietly break it.
+    renderGrid([line({ policy_type: 'reorder_level', reorder_level: 42, order_qty: 50 })]);
+    expect(screen.getByRole('button', { name: /Buy 50/ })).toBeInTheDocument();
+  });
+});
+
+describe('PlanLinesGrid - the velocity evidence under the Trend pill', () => {
+  it('shows the average daily rate, to one decimal', () => {
+    renderGrid([line({ forecast_daily_demand: 20 })]);
+    const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).getByText('avg 20.0/day')).toBeInTheDocument();
+  });
+
+  it('formats a fractional rate to one decimal', () => {
+    renderGrid([line({ forecast_daily_demand: 0.55 })]);
+    const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).getByText('avg 0.6/day')).toBeInTheDocument();
+  });
+
+  it('is absent when there is no measurable rate (null or zero)', () => {
+    renderGrid([line({ forecast_daily_demand: null })]);
+    let row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).queryByText(/avg .*\/day/)).not.toBeInTheDocument();
+
+    renderGrid([line({ forecast_daily_demand: 0 })]);
+    row = screen.getAllByText('SKU-1').at(-1)!.closest('tr') as HTMLElement;
+    expect(within(row).queryByText(/avg .*\/day/)).not.toBeInTheDocument();
   });
 });
 
@@ -223,6 +317,73 @@ describe('PlanLinesGrid - the explanations are still there', () => {
     fireEvent.click(screen.getByRole('button', { name: /Skip SKU-1/i }));
     expect(screen.queryByRole('dialog')).toBeNull();
   });
+
+  it('the "Explain order qty" trigger opens the ledger, not the old drill (S3)', () => {
+    // The popover CONTENT changed (three blocks: THE LINE / COVER BEFORE BUYING / THE BUY)
+    // while the trigger and its aria-label stayed put, so a buyer's muscle memory still
+    // works. `PlanOrderQtyLedger.test.tsx` covers the content in depth; this pins that the
+    // grid actually wires it up off the SAME cover/decision state the row uses.
+    renderGrid([line({ recommended_qty: 23, on_hand: 1, incoming_spo: 0, outstanding_sales: 24 })]);
+    fireEvent.click(screen.getByRole('button', { name: /Explain order qty for SKU-1/i }));
+    expect(screen.getByText('The line')).toBeInTheDocument();
+    expect(screen.getByText('Cover before buying')).toBeInTheDocument();
+    expect(screen.getByText('The buy')).toBeInTheDocument();
+    expect(screen.getByText('Net now')).toBeInTheDocument();
+    expect(screen.getByText('Gap to line')).toBeInTheDocument();
+  });
+
+  it('a manual-mode (reorder_level) line shows the level, not the ROP formula', () => {
+    renderGrid([
+      line({ policy_type: 'reorder_level', reorder_level: 42, reorder_level_source: 'manual' }),
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: /Explain order qty for SKU-1/i }));
+    // The grid ALSO has a "Reorder level" column header - scope to the ledger popover
+    // (identified by its own header) so the assertion is about the ledger, not the column.
+    const ledger = screen.getByText(/^Order qty = /).parentElement as HTMLElement;
+    expect(within(ledger).getByText('Reorder level')).toBeInTheDocument();
+    expect(within(ledger).queryByText('Safety stock')).not.toBeInTheDocument();
+  });
+
+  it('the ledger Popover stays open across a decision toggle (Fix A, user feedback, 2026-08-12)', () => {
+    // A real, STATEFUL harness - `decisions` is recomputed and re-passed on every decide,
+    // exactly as `PlanLinesSection`/`usePlanLines` do it, and exactly the condition that
+    // used to recreate every column's cell function and remount the ledger Popover closed.
+    function StatefulHarness() {
+      const [decisions, setDecisions] = useState<PlanDecisionMap>({});
+      const lines = [
+        line({ order_qty: 40, recommended_qty: 40, forecast_daily_demand: 2, review_days: 30 }),
+      ];
+      return (
+        <PlanLinesGrid
+          lines={lines}
+          decisions={decisions}
+          onDecide={(l, next) => setDecisions((d) => ({ ...d, [l.id]: next }))}
+          onClear={(l) => setDecisions((d) => {
+            const rest = { ...d };
+            delete rest[l.id];
+            return rest;
+          })}
+          staleAfterDays={180}
+        />
+      );
+    }
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <StatefulHarness />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Explain order qty for SKU-1/i }));
+    expect(screen.getByText('The buy')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Add 60' }));
+
+    // The decision committed (the row re-rendered with a fresh `decisions` object) AND the
+    // popover content is still mounted and open - the toggle no longer closes the popup.
+    expect(screen.getByText('The buy')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Added 60' })).toBeInTheDocument();
+  });
 });
 
 describe('PlanLinesGrid - deciding', () => {
@@ -252,9 +413,11 @@ describe('PlanLinesGrid - deciding', () => {
     expect(screen.getByRole('button', { name: /Buy 2,408/ })).toBeInTheDocument();
   });
 
-  it('shows a settled line as settled, and lets it be reopened', () => {
+  it('shows a settled line as settled, past tense, and lets it be reopened', () => {
+    // Past tense IS the "made / not made" signal (user markup, 2026-08-12) - the numbers
+    // alone would read exactly like the suggestion.
     const { onClear } = renderGrid([line()], { r1: { buy: 23 } });
-    expect(screen.getAllByText(/Buy 23/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Bought 23/).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('button', { name: /Change/i }));
     expect(onClear).toHaveBeenCalled();
   });
@@ -272,25 +435,20 @@ describe('PlanLinesGrid - buy, cover, or both', () => {
   });
 
   it('names the source when stock elsewhere covers it outright', () => {
-    // The live BRW-IB case: nothing on hand HERE, but BRW-BB is holding some. The verb and
-    // quantity are the row; the source detail rides on the title.
+    // The live BRW-IB case: nothing on hand HERE, but BRW-BB is holding some. The mix and
+    // quantity are the button label; the source detail rides on the title.
     renderGrid([line({ order_qty: 1 })], {}, elsewhere);
-    const part = screen.getByTitle('1 from BRW-BB');
-    expect(part).toHaveTextContent('Use stock 1');
+    expect(screen.getByRole('button', { name: /Stock 1 \(BRW-BB\)/ })).toBeInTheDocument();
   });
 
-  it('proposes the split as uniform verb-quantity parts, one per line, never a sentence', () => {
+  it('proposes the split as ONE button carrying both parts, never a sentence', () => {
     // The live DC1-BB case: 6 units exist anywhere else against a shortage of 188.
     // Structured is the user's own markup: "more structured and organized, instead of
-    // like a sentence" - every part is the same shape, verb then quantity.
+    // like a sentence" - the button's own label is the structure now (verb, quantity,
+    // repeated per part), not a multi-line prose block.
     renderGrid([line({ order_qty: 188 })], {}, elsewhere);
-    // The row states the TOTAL to pull (6); which warehouse gives what stays on the title.
-    expect(screen.getByTitle('5 from BRW-BB, 1 from PJ-SR')).toHaveTextContent('Use stock 6');
-    const buyPart = screen
-      .getAllByText('Buy', { exact: false })
-      .map((el) => el.closest('div'))
-      .find((el) => el?.textContent === 'Buy 182');
-    expect(buyPart).toBeTruthy();
+    const btn = screen.getByRole('button', { name: /Stock 6 \(BRW-BB, PJ-SR\)/ });
+    expect(btn).toHaveTextContent('Buy 182');
   });
 
   it('says when the engine is superseding CS on a project line', () => {
@@ -339,6 +497,49 @@ describe('PlanLinesGrid - buy, cover, or both', () => {
       { warehouse_id: 'wh-D', warehouse_code: 'DEALER', segment: 'dealer', qty: 50 },
     ]);
     expect(screen.getByText(/crosses segment/i)).toBeInTheDocument();
+  });
+});
+
+describe('PlanLinesGrid - a covered row leads with use-stock, never a default buy', () => {
+  // The live SIM-P002 bug: rec_type=covered, "150 available in this pool covers 15
+  // committed" - the row's own POOL, not another warehouse's free stock (the cross-
+  // warehouse pool below is deliberately EMPTY, to pin that the covered row never needs it).
+  const coveredLine = () =>
+    line({
+      id: 'r1', sku: 'COV-1', type: 'covered', order_qty: 15,
+      warehouse_code: 'BRW', warehouse_name: 'Butterworth',
+      covered_committed: 15, covered_available: 150,
+      reason_label: '150 available in this pool covers 15 committed',
+    });
+
+  it("the decision cell's primary button is Stock, not Buy", () => {
+    renderGrid([coveredLine()]);
+    const stockButton = screen.getByRole('button', { name: /Stock 15/ });
+    expect(stockButton).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Buy \d/ })).not.toBeInTheDocument();
+  });
+
+  it('accepting it records stock, not a buy, and attaches no money', () => {
+    const { onDecide } = renderGrid([coveredLine()]);
+    fireEvent.click(screen.getByRole('button', { name: /Stock 15/ }));
+    const decision = onDecide.mock.calls[0][1] as PlanDecision;
+    expect(decision.buy ?? 0).toBe(0);
+    expect(decision.stock?.qty).toBe(15);
+
+    const totals = planTotals([coveredLine()], { r1: decision } as PlanDecisionMap);
+    expect(totals).toMatchObject({ buying: 0, usingStock: 1, units: 0, cost: 0 });
+  });
+
+  it('still proposes a partial buy when the pool falls short of the commitment', () => {
+    renderGrid([
+      line({
+        id: 'r1', sku: 'COV-2', type: 'covered', order_qty: 15,
+        warehouse_code: 'BRW', warehouse_name: 'Butterworth',
+        covered_committed: 15, covered_available: 4,
+      }),
+    ]);
+    const btn = screen.getByRole('button', { name: /Stock 4/ });
+    expect(btn).toHaveTextContent('Buy 11');
   });
 });
 
@@ -445,9 +646,8 @@ describe('the column story - result first, explanation after (2026-08-11 markup)
     expect(at('SO')).toBeGreaterThan(at('Suggested qty'));
     expect(at('SPO')).toBeGreaterThan(at('On hand'));
     expect(at('PO')).toBeGreaterThan(at('SPO'));
-    // Chapter 2: the action, then the decision that mirrors it.
-    expect(at('Suggested action')).toBeGreaterThan(at('PO'));
-    expect(at('Decision')).toBeGreaterThan(at('Suggested action'));
+    // Chapter 2: ONE Decision cell carries the suggestion AND takes it (merged, 2026-08-12).
+    expect(at('Decision')).toBeGreaterThan(at('PO'));
     // Chapter 3: price and supplier first, the total they produce after.
     expect(at('Suggested price')).toBeGreaterThan(at('Decision'));
     expect(at('Suggested supplier')).toBeGreaterThan(at('Suggested price'));
@@ -533,10 +733,10 @@ describe('product health (2026-08-11 markup)', () => {
     months: [], customers: [], agents: [], agents_available: false,
   };
 
-  it('closes the row with the margin the item really earns', () => {
-    // rec fixture: unit_cost 10 vs sells 100 -> 90% margin.
+  it('closes the row with the margin the item really earns, and the amount behind it', () => {
+    // rec fixture: unit_cost 10 vs sells 100 -> 90% margin, RM 90.00 margin amount.
     renderGrid([line()], {}, [], undefined, undefined, undefined, () => econ());
-    expect(screen.getByText('Margin 90%')).toBeInTheDocument();
+    expect(screen.getByText('Margin 90% (RM 90.00)')).toBeInTheDocument();
   });
 
   it('asks to consider discontinuing a dead product, with the whole case behind it', () => {
@@ -626,11 +826,10 @@ describe('the PO book offsets the buy (S15)', () => {
       [line({ order_qty: 200, recommended_qty: 200 })], {}, [], undefined, () => receipts,
     );
 
-    const part = screen.getByText('already ordered').closest('div') as HTMLElement;
-    expect(part).toHaveTextContent('Use PO 200');
-    expect(screen.queryByText(/^Buy \d/)).not.toBeInTheDocument();
+    const btn = screen.getByRole('button', { name: /PO 200/ });
+    expect(btn).not.toHaveTextContent(/Buy \d/);
 
-    fireEvent.click(screen.getByRole('button', { name: /PO 200/ }));
+    fireEvent.click(btn);
     expect(onDecide).toHaveBeenCalledWith(expect.anything(), { po: 200 });
   });
 
@@ -640,12 +839,8 @@ describe('the PO book offsets the buy (S15)', () => {
       () => [{ ...receipts[0], remaining: 120 }],
     );
 
-    expect(screen.getByText('already ordered').closest('div')).toHaveTextContent('Use PO 120');
-    const buyPart = screen
-      .getAllByText('Buy', { exact: false })
-      .map((el) => el.closest('div'))
-      .find((el) => el?.textContent === 'Buy 80');
-    expect(buyPart).toBeTruthy();
+    const btn = screen.getByRole('button', { name: /PO 120/ });
+    expect(btn).toHaveTextContent('Buy 80');
   });
 
   it('incoming SPO is named as already counted, never offered twice', () => {
@@ -653,5 +848,70 @@ describe('the PO book offsets the buy (S15)', () => {
 
     expect(screen.getByText('50 arriving (SPO) already counted')).toBeInTheDocument();
     expect(screen.queryByText(/Use SPO/)).not.toBeInTheDocument();
+  });
+});
+
+describe('the Reorder level and Reorder qty columns - the STORED figures, not the suggestion', () => {
+  it('has its own headers, distinct from the AutoCount level suggestion column', () => {
+    renderGrid([line()]);
+    const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(heads).toContain('Reorder level');
+    expect(heads).toContain('Reorder qty');
+    expect(heads).toContain('AutoCount level + qty');
+  });
+
+  it("shows the buyer's own level and names it as the source", () => {
+    renderGrid([line({ reorder_level: 42, master_reorder_level: 10, master_reorder_quantity: 24 })]);
+    const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).getByTitle('Source: buyer level')).toHaveTextContent('42');
+    expect(
+      within(row).getByTitle("AutoCount's own reorder quantity, as uploaded"),
+    ).toHaveTextContent('24');
+  });
+
+  it('falls back to the AutoCount master level when the buyer has not set one', () => {
+    renderGrid([line({ reorder_level: null, master_reorder_level: 10, master_reorder_quantity: null })]);
+    const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).getByTitle('Source: AutoCount master')).toHaveTextContent('10');
+  });
+
+  it('shows a dash, never a zero, when neither figure is on file', () => {
+    renderGrid([line({ reorder_level: null, master_reorder_level: null, master_reorder_quantity: null })]);
+    const row = screen.getByText('SKU-1').closest('tr') as HTMLElement;
+    expect(within(row).getByTitle('Source: not set')).toHaveTextContent('-');
+    expect(
+      within(row).getByTitle("AutoCount's own reorder quantity, as uploaded"),
+    ).toHaveTextContent('-');
+  });
+});
+
+describe('PlanLinesGrid - secondaryActions (the removed tiles\' replacement entry points)', () => {
+  // Order summary / Plan exceptions / PO worklist have no row on this grid to filter
+  // to, so instead of a tile they are quiet links in this SAME toolbar row, next to
+  // Filters / Columns / Export - never rendered unless the caller supplies them.
+
+  it('renders nothing extra when no secondaryActions are supplied', () => {
+    renderGrid([line()]);
+    expect(screen.queryByRole('button', { name: /Actions/i })).not.toBeInTheDocument();
+  });
+
+  it('collapses the supplied links into a single quiet "Actions" overflow', () => {
+    const onClick = vi.fn();
+    renderGrid([line()], {}, [], undefined, undefined, undefined, undefined, undefined, [
+      { key: 'order_summary', label: 'Order summary', onClick },
+      { key: 'plan_exceptions', label: 'Plan exceptions', onClick: vi.fn() },
+      { key: 'po_worklist', label: 'PO worklist', onClick: vi.fn() },
+    ]);
+
+    const trigger = screen.getByRole('button', { name: /Actions/i });
+    // Radix opens on pointerdown, which jsdom does not synthesise from fireEvent.click.
+    fireEvent.keyDown(trigger, { key: 'Enter' });
+
+    expect(screen.getByRole('menuitem', { name: 'Order summary' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Plan exceptions' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'PO worklist' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Order summary' }));
+    expect(onClick).toHaveBeenCalledTimes(1);
   });
 });

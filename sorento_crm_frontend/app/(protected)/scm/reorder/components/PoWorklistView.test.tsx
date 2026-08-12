@@ -80,9 +80,9 @@ function state(over: Record<string, unknown> = {}) {
   };
 }
 
-function renderView(s: Record<string, unknown>) {
+function renderView(s: Record<string, unknown>, onBack?: () => void) {
   mockUsePoWorklist.mockReturnValue(s);
-  return render(<PoWorklistView runId="run-2026-w32" />);
+  return render(<PoWorklistView runId="run-2026-w32" onBack={onBack} />);
 }
 
 function rowFor(code: string) {
@@ -307,5 +307,33 @@ describe('PoWorklistView - the states around the data', () => {
     );
     // Two rows, one of which needs no PO at all, so only ONE is left to key.
     expect(screen.getByText(/1 of 2 still to key/)).toBeInTheDocument();
+  });
+});
+
+describe('PoWorklistView - onBack (this report has no row in the buy grid to return to)', () => {
+  it('renders no back link when the caller supplies none', () => {
+    renderView(state());
+    expect(screen.queryByText('Back to plan')).not.toBeInTheDocument();
+  });
+
+  it('calls onBack when "Back to plan" is clicked, with data on screen', () => {
+    const onBack = vi.fn();
+    renderView(state(), onBack);
+    screen.getByText('Back to plan').click();
+    expect(onBack).toHaveBeenCalled();
+  });
+
+  it('still offers a way back on the error state', () => {
+    const onBack = vi.fn();
+    renderView(state({ isError: true, error: new Error('boom'), data: undefined }), onBack);
+    screen.getByText('Back to plan').click();
+    expect(onBack).toHaveBeenCalled();
+  });
+
+  it('still offers a way back on the empty state', () => {
+    const onBack = vi.fn();
+    renderView(state({ data: { run_id: 'r', as_of: null, rows: [] } }), onBack);
+    screen.getByText('Back to plan').click();
+    expect(onBack).toHaveBeenCalled();
   });
 });

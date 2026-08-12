@@ -99,6 +99,8 @@ const POLICY_TYPE_LABEL: Record<string, string> = {
   reorder_point: 'Reorder point',
   min_max: 'Min / Max',
   periodic_review: 'Periodic review',
+  // S1's global toggle (or a per-product override) can freeze this basis onto a row too.
+  reorder_level: 'Reorder level (manual)',
 };
 
 const SELECTION_LABEL: Record<string, string> = {

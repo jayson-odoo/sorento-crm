@@ -62,6 +62,7 @@ import type { LevelSuggestionsPayload } from '../lib/levelSuggestion';
 import type { EconomicsPayload } from '../lib/productHealth';
 import type { PoReceipt } from '../lib/poCover';
 import type { PriceHistoryPayload } from '../lib/priceAdvice';
+import type { PurchaseTrendPayload } from '../lib/purchaseTrend';
 import type { TrajectoryPayload } from '../lib/trajectory';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
@@ -707,6 +708,17 @@ export async function amendLevelSuggestion(input: {
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to amend the level suggestion'));
   return res.json();
+}
+
+/**
+ * The mirror of the order trend, on the buy side: who we bought from, and when (per
+ * product, across every supplier - `price-history` narrows to one supplier pair instead).
+ */
+export async function getPurchaseTrend(runId: string): Promise<PurchaseTrendPayload> {
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/purchase-trend`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the purchase trend'));
+  const body = (await res.json()) as Partial<PurchaseTrendPayload>;
+  return { window_months: body.window_months ?? 3, products: body.products ?? {} };
 }
 
 export async function getPriceHistory(runId: string): Promise<PriceHistoryPayload> {

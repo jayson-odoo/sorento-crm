@@ -1,33 +1,22 @@
 'use client';
 
-import {
-  AlertTriangle,
-  ClipboardList,
-  FileSpreadsheet,
-  Gauge,
-  PackageCheck,
-  PackageX,
-  ShoppingCart,
-  Wallet,
-} from 'lucide-react';
+import { CheckCircle2, Wallet } from 'lucide-react';
 import { Card } from '@/components/ui/card';
+import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 import { fmtInt, fmtMoney } from '../../lib/format';
 
-/** Which recommendation set the plan view is filtered to. Cash impact is a stat,
- *  not a view, so it never appears here. */
-export type ReorderPlanView =
-  | 'buy'
-  | 'covered'
-  | 'needs_level'
-  | 'disposition'
-  | 'order_summary'
-  | 'plan_exceptions'
-  | 'po_worklist';
-
-/** Shown instead of a count when nothing computes it yet. */
-const UNKNOWN_VALUE = '-';
-const UNKNOWN_SUBLABEL = 'not computed yet';
+/**
+ * Which recommendation set the plan view is filtered to. Cash impact is a stat, not a
+ * view, so it never appears here. `needs_level` and `disposition` (Stock allocation) are
+ * NOT views here either (user feedback, 2026-08-12: "I don't really need these" tiles) -
+ * both are already reachable as a Status filter on the one grid (`buy`), so removing the
+ * shortcut tile lost nothing. `order_summary` / `plan_exceptions` / `po_worklist` are
+ * genuinely separate reports with no row in the grid to filter to, so THEIR entry points
+ * moved to a quiet action in the grid's own toolbar (`PlanLinesGrid`'s secondary actions,
+ * next to Filters / Columns / Export) instead of disappearing.
+ */
+export type ReorderPlanView = 'buy' | 'order_summary' | 'plan_exceptions' | 'po_worklist';
 
 function Tile({
   label,
@@ -36,9 +25,6 @@ function Tile({
   icon: Icon,
   valueClass,
   iconClass,
-  active,
-  activeRingClass,
-  onClick,
 }: {
   label: string;
   value: string;
@@ -46,42 +32,13 @@ function Tile({
   icon: typeof Wallet;
   valueClass?: string;
   iconClass?: string;
-  active?: boolean;
-  activeRingClass?: string;
-  onClick?: () => void;
 }) {
-  const clickable = !!onClick;
   return (
-    <Card
-      role={clickable ? 'button' : undefined}
-      tabIndex={clickable ? 0 : undefined}
-      onClick={onClick}
-      onKeyDown={
-        clickable
-          ? (e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onClick?.();
-              }
-            }
-          : undefined
-      }
-      aria-pressed={clickable ? active : undefined}
-      title={clickable ? `Show ${label} recommendations` : undefined}
-      className={cn(
-        'p-4',
-        clickable &&
-          'cursor-pointer transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        active && cn('ring-2 ring-inset', activeRingClass ?? 'ring-primary'),
-      )}
-    >
+    <Card className="p-4">
       <div className="flex items-start justify-between gap-2">
-        {/* NOT truncated. Seven tiles across one row cut every label to "Covered b..." /
-          "Stock alloc...", so the tiles could not be found by the words they are called by.
-          They wrap onto two rows instead, which costs a little height and nothing else. */}
-      <div className="min-w-0 text-xs font-medium text-muted-foreground" title={label}>
-        {label}
-      </div>
+        <div className="min-w-0 text-xs font-medium text-muted-foreground" title={label}>
+          {label}
+        </div>
         <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted', iconClass)}>
           <Icon className="size-4.5" aria-hidden />
         </span>
@@ -105,181 +62,132 @@ function Tile({
 }
 
 /**
- * SCM M8 summary cards for today's plan (M8-C0), now five - Buy,
- * Stock allocation, Cash impact, Plan exceptions, PO worklist. Buy and Stock
- * allocation are clickable FILTERS
- * that switch the plan table between the buy cash co-pilot and the read-only
- * allocation list (the selected card shows an active ring); Cash impact is a stat
- * only. The Stock allocation count is ACTIONABLE dispositions only (Discontinue /
- * Promote); FYI "hold" lines are excluded and shown as a muted "N on hold" sub-label
- * (M8-F18). The internal view key stays `disposition` (M8-C12 relabels the UI only).
- * The prior Today's-plan / Stock-warning / Within-budget / Over-budget cards are gone:
- * within/over counts live in the table section headers, and stock warning moved
- * to the SCM dashboard (M8-B). Prototype: counts are mock.
+ * The PRIMARY tile (user markup, 2026-08-12): "I want the decision to be emphasized ... so
+ * they can decide until all outstanding decisions are cleared." Replaces the Buy / Covered by
+ * stock tiles, which reported a STATUS classification the user said he doubted ("a line can
+ * be buy + PO + SPO + use stock in any combination ... I go straight to the table"). Progress
+ * against decisions taken is unambiguous in a way a status count never was: every line counts
+ * exactly once, whichever mixture it was decided as.
  *
- * Plan exceptions and the PO worklist are TILES, not pages (AC-B9), so a count is
- * visible without navigating. Plan exceptions is still a stat only: its engine is S5,
- * and a card that switched to a view that does not exist yet would be worse than a
- * plain count. The PO worklist became the FOURTH clickable view in S4.
+ * Clicking it narrows the grid to undecided lines, same mechanism as every other tile here -
+ * a filter, never a navigation.
+ */
+function DecisionProgressTile({
+  decided,
+  total,
+  active,
+  onClick,
+}: {
+  decided: number;
+  total: number;
+  active: boolean;
+  onClick?: () => void;
+}) {
+  const pct = total > 0 ? Math.round((decided / total) * 100) : 0;
+  const complete = total > 0 && decided === total;
+  const subLabel =
+    total === 0 ? 'nothing to decide yet' : complete ? `All ${fmtInt(total)} decided` : `${fmtInt(total - decided)} left to decide`;
+  const clickable = !!onClick;
+
+  return (
+    <Card
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={
+        clickable
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onClick?.();
+              }
+            }
+          : undefined
+      }
+      aria-pressed={clickable ? active : undefined}
+      title={clickable ? 'Show only lines still to decide' : undefined}
+      className={cn(
+        'p-4 sm:col-span-2',
+        clickable &&
+          'cursor-pointer transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        active && 'ring-2 ring-inset ring-primary',
+      )}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 text-xs font-medium text-muted-foreground">Decisions</div>
+        <span
+          className={cn(
+            'flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted',
+            complete && 'bg-scm-incoming-soft text-scm-incoming',
+          )}
+        >
+          <CheckCircle2 className="size-4.5" aria-hidden />
+        </span>
+      </div>
+      <div className="mt-1 w-full min-w-0 truncate text-2xl font-semibold tabular-nums tracking-tight">
+        {`${fmtInt(decided)} of ${fmtInt(total)} made`}
+      </div>
+      <Progress value={pct} className="mt-2" indicatorClassName={complete ? 'bg-scm-incoming' : undefined} />
+      <div className="mt-1 w-full min-w-0 truncate text-2xs text-muted-foreground">{subLabel}</div>
+    </Card>
+  );
+}
+
+/**
+ * SCM M8 summary cards for today's plan, reworked around DECISION PROGRESS (user markup,
+ * 2026-08-12): "I want the decision to be emphasized ... so they can decide until all
+ * outstanding decisions are cleared." The old Buy / Covered by stock tiles counted a STATUS
+ * the user said he no longer trusted at a glance - a line can be buy + PO + SPO + use stock
+ * in any combination, so "Buy 31" never matched what the table actually showed. They are
+ * gone. The PRIMARY tile now reports how much of the plan has actually been decided, and
+ * Cash impact splits into what is ACTUALLY committed (the decided buys) versus what EVERY
+ * suggestion would cost if accepted as-is - two different numbers the single old tile
+ * conflated.
  *
- * Order summary (S3b, AC-C2.1) is the THIRD clickable view: the weekly sheet Mr Loo
- * decides order quantities on. Its count is the products still waiting for a
- * quantity, which is the only question he has when he opens it.
+ * The secondary row (Needs a level, Stock allocation, Order summary, Plan exceptions, PO
+ * worklist) is gone entirely (direct user feedback, 2026-08-12: "I don't really need
+ * these"). It is not a loss of reach: Needs a level and Stock allocation are Status values
+ * on the same grid these tiles used to shortcut into, still one Filters click away; Order
+ * summary, Plan exceptions and PO worklist are separate reports whose entry point moved to
+ * a quiet action in the grid's toolbar rather than disappearing (see `PlanLinesGrid`).
  */
 export function ReorderStatTiles({
-  buyCount,
-  coveredCount = null,
-  needsLevelCount = null,
-  dispositionCount,
+  decided,
+  total,
+  cashCommitted,
   cashTotal,
-  planExceptionCount = null,
-  poWorklistCount = null,
-  orderSummaryPendingCount = null,
-  activeView,
-  onSelectView,
+  undecidedFilterActive = false,
+  onToggleUndecidedFilter,
 }: {
-  buyCount: number;
-  /** Demand the location's own stock covers, waiting on use-stock-or-buy. Null until
-   *  the set has been read once. */
-  coveredCount?: number | null;
-  needsLevelCount?: number | null;
-  /** ACTIONABLE dispositions only (Discontinue / Promote) - hold lines are excluded
-   *  from the plan entirely and are NOT surfaced here (they carry no action). */
-  dispositionCount: number;
+  /** Lines the buyer has settled, whichever way (buy, stock, PO, skip - any mixture). */
+  decided: number;
+  /** Every line on the plan, decided or not. */
+  total: number;
+  /** Sum of the buy cost on every DECIDED line - what is actually committed so far. */
+  cashCommitted: number;
+  /** What EVERY suggestion would cost if every one of them were accepted as offered - the
+   *  existing cash-impact figure, unrelated to what has actually been decided. */
   cashTotal: number;
-  /** Open plan exceptions waiting on a decision (S5). */
-  /** Null when no engine computes it yet. NOT 0: zero reads as "nothing waiting". */
-  planExceptionCount?: number | null;
-  /** Decided buys still to be keyed into AutoCount (S4). */
-  /** Null when no engine computes it yet. NOT 0: zero reads as "nothing left to key". */
-  poWorklistCount?: number | null;
-  /** Short products with no order quantity decided yet (S3b). */
-  /** Null until the report has been read once. See the tile body for why it is
-   *  not fetched eagerly. */
-  orderSummaryPendingCount?: number | null;
-  activeView: ReorderPlanView;
-  onSelectView: (view: ReorderPlanView) => void;
+  /** Whether the grid is currently narrowed to undecided lines by the Decisions tile. */
+  undecidedFilterActive?: boolean;
+  onToggleUndecidedFilter?: () => void;
 }) {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <DecisionProgressTile
+        decided={decided}
+        total={total}
+        active={undecidedFilterActive}
+        onClick={onToggleUndecidedFilter}
+      />
       <Tile
-        label="Buy"
-        value={fmtInt(buyCount)}
-        icon={ShoppingCart}
+        label="Cash committed so far"
+        value={fmtMoney(cashCommitted)}
+        icon={Wallet}
         valueClass="text-scm-incoming"
         iconClass="bg-scm-incoming-soft text-scm-incoming"
-        active={activeView === 'buy'}
-        activeRingClass="ring-scm-incoming"
-        onClick={() => onSelectView('buy')}
       />
-      {/* Demand the location's own stock covers. Its own tile, never folded into Buy:
-          it is a choice nobody has taken, and counting it as a purchase would report money
-          as committed that no one agreed to spend. */}
-      <Tile
-        label="Covered by stock"
-        value={coveredCount === null ? UNKNOWN_VALUE : fmtInt(coveredCount)}
-        subLabel={
-          coveredCount === null
-            ? UNKNOWN_SUBLABEL
-            : coveredCount
-              ? 'use stock, or buy anyway'
-              : 'nothing waiting on that choice'
-        }
-        icon={PackageCheck}
-        active={activeView === 'covered'}
-        onClick={() => onSelectView('covered')}
-      />
-      {/* Items the plan could not size. Its own tile because it is the one thing on this
-          page that is neither a decision nor a purchase: it is setup work, and folding it
-          anywhere else would make a plan that skipped items look complete. */}
-      <Tile
-        label="Needs a level"
-        value={needsLevelCount === null ? UNKNOWN_VALUE : fmtInt(needsLevelCount)}
-        subLabel={
-          needsLevelCount === null
-            ? UNKNOWN_SUBLABEL
-            : needsLevelCount
-              ? 'no reorder level set yet'
-              : 'every item has a level'
-        }
-        icon={Gauge}
-        active={activeView === 'needs_level'}
-        onClick={() => onSelectView('needs_level')}
-      />
-      <Tile
-        label="Stock allocation"
-        value={fmtInt(dispositionCount)}
-        icon={PackageX}
-        valueClass="text-scm-overstock"
-        iconClass="bg-scm-overstock-soft text-scm-overstock"
-        active={activeView === 'disposition'}
-        activeRingClass="ring-scm-overstock"
-        onClick={() => onSelectView('disposition')}
-      />
-      <Tile
-        label="Order summary"
-        // Null until the report has actually been read. It used to render a hard-coded
-        // mock constant of 2 against a real book of 317 undecided rows - the same defect
-        // as the plan-exception tile, and worse for being plausible. The count is NOT
-        // fetched eagerly to fill it: the report is the whole book, and pulling it on every
-        // page load to populate one tile is a cost nobody asked for. Open the report and
-        // the tile becomes true.
-        value={
-          orderSummaryPendingCount === null
-            ? UNKNOWN_VALUE
-            : fmtInt(orderSummaryPendingCount)
-        }
-        subLabel={
-          orderSummaryPendingCount === null
-            ? 'open to count'
-            : orderSummaryPendingCount
-              ? 'waiting on a quantity'
-              : 'every planned item decided'
-        }
-        icon={FileSpreadsheet}
-        active={activeView === 'order_summary'}
-        onClick={() => onSelectView('order_summary')}
-      />
-      <Tile label="Cash impact" value={fmtMoney(cashTotal)} icon={Wallet} />
-      {/* Reads "not computed" until the batch exists. A number here has to come from
-          somewhere: a fabricated count is a decision made on invented data, and a 0 is worse
-          still, because "nothing waiting" is itself a claim. */}
-      <Tile
-        label="Plan exceptions"
-        value={planExceptionCount === null ? UNKNOWN_VALUE : fmtInt(planExceptionCount)}
-        subLabel={
-          planExceptionCount === null
-            ? UNKNOWN_SUBLABEL
-            : planExceptionCount
-              ? 'waiting on a decision'
-              : 'nothing disagrees with placed supply'
-        }
-        icon={AlertTriangle}
-        valueClass={planExceptionCount ? 'text-scm-stockout' : undefined}
-        iconClass={planExceptionCount ? 'bg-scm-stockout-soft text-scm-stockout' : undefined}
-        // Clickable from S5 on, and clickable even at "not computed": the queue is what
-        // somebody comes to this tile for, and a tile that refuses to open until a count
-        // has already been fetched makes the empty state unreachable.
-        active={activeView === 'plan_exceptions'}
-        onClick={() => onSelectView('plan_exceptions')}
-      />
-      <Tile
-        label="PO worklist"
-        value={poWorklistCount === null ? UNKNOWN_VALUE : fmtInt(poWorklistCount)}
-        subLabel={
-          poWorklistCount === null
-            ? UNKNOWN_SUBLABEL
-            : poWorklistCount
-              ? 'not yet keyed into AutoCount'
-              : 'nothing left to key'
-        }
-        icon={ClipboardList}
-        // Clickable from S4 on. It stays a plain count until the worklist has been read
-        // once, for the same reason as the order-summary tile: the list is fetched when
-        // it is opened, not on every page load to fill a tile.
-        active={activeView === 'po_worklist'}
-        onClick={() => onSelectView('po_worklist')}
-      />
+      <Tile label="Cash if all accepted" value={fmtMoney(cashTotal)} icon={Wallet} />
     </div>
   );
 }

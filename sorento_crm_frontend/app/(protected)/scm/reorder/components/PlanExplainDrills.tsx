@@ -4,9 +4,9 @@ import Link from 'next/link';
 import { Info } from 'lucide-react';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
-import { EM_DASH, fmtDecimal, fmtInt, fmtSigned, fmtSupplierCost } from '../../lib/format';
+import { EM_DASH, fmtDecimal, fmtInt, fmtSigned } from '../../lib/format';
 import { useExplainDemand, useExplainNet } from '../hooks/useDrills';
-import { m8CashImpact, type M8PlanRow } from '../lib/planRow';
+import type { M8PlanRow } from '../lib/planRow';
 
 /**
  * The explain drills - why this quantity, why this net, why this runway.
@@ -50,7 +50,9 @@ export function ExplainNumber({
   );
 }
 
-function DrillHeader({ title }: { title: string }) {
+/** Shared by every drill/ledger popover in this module family, so the header treatment
+ *  (border, weight, size) can never drift between them. */
+export function DrillHeader({ title }: { title: string }) {
   return <div className="border-b px-3 py-2 text-xs font-semibold">{title}</div>;
 }
 
@@ -245,150 +247,10 @@ export function DaysCoverDrill({ row }: { row: M8PlanRow }) {
   );
 }
 
-/** Order qty drill - SS / ROP / order-up-to / rounded inputs (M8-A4), plus the
- *  reorder-point formula with its actual inputs (M8-F5). */
-export function OrderQtyDrill({
-  row,
-}: {
-  row: M8PlanRow;
-}) {
-  const q = row.order_qty_inputs;
-  // A pooled buy is sized once for every location that shares stock, then split. Saying so
-  // is the difference between "why 55" answering itself and the reader doing arithmetic
-  // that cannot work.
-  const alloc = row.rec.allocation ?? [];
-  const pooled = alloc.length > 1;
-  const demandRate = row.forecast_daily_demand;
-  const leadDays = row.supplier.lead_time_days;
-  const line = (label: string, value: number | null) => (
-    <div className="flex justify-between text-xs">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="tabular-nums">{value === null ? EM_DASH : fmtInt(value)}</span>
-    </div>
-  );
-  return (
-    <div>
-      <DrillHeader title={`Order qty = ${fmtInt(q.rounded_qty)}`} />
-
-      {/* The on-hand offsets panel that used to sit here is GONE. It asked the buyer whether
-          to use stock that is already inside the net position, which was never a decision -
-          "Use what is on hand at BRW-IB" is arithmetic that has already happened. The real
-          choice is buy versus cover from ANOTHER location, and that lives on the row as the
-          suggested action. See lib/coverPlan. */}
-      <div className="space-y-1 px-3 py-2">
-        {line('Safety stock', q.safety_stock)}
-        {line('Reorder point', q.reorder_point)}
-        {/* On a pooled row the order-up-to belongs to the POOL, not to this bin, so it is
-            labelled as such. Otherwise the reader tries order-up-to minus this location's
-            net and gets a number that is nowhere on the row. */}
-        {line(pooled ? 'Order-up-to level (whole pool)' : 'Order-up-to level', q.order_up_to)}
-        {line('MoQ', q.moq)}
-        {line('Order multiple', q.order_multiple)}
-        <div className="mt-1 flex justify-between border-t pt-1 text-xs font-medium">
-          <span>{pooled ? 'This location\u2019s share' : 'Rounded order qty'}</span>
-          <span className="tabular-nums">{fmtInt(q.rounded_qty)}</span>
-        </div>
-      </div>
-
-      {pooled ? (
-        <div className="border-t px-3 py-2">
-          <div className="mb-1 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-            Bought for the whole pool
-          </div>
-          <p className="text-2xs text-muted-foreground">
-            One purchase covers {alloc.length} locations that share stock. It is sized once
-            against the pool, then placed where the shortage is.
-          </p>
-          <div className="mt-1 space-y-0.5">
-            {alloc.map((a) => (
-              <div key={a.warehouse_code ?? String(a.qty)} className="flex justify-between text-2xs">
-                <span
-                  className={
-                    a.warehouse_code === row.rec.warehouse_code
-                      ? 'font-medium'
-                      : 'text-muted-foreground'
-                  }
-                >
-                  {a.warehouse_code ?? EM_DASH}
-                </span>
-                <span className="tabular-nums">{fmtInt(a.qty)}</span>
-              </div>
-            ))}
-            <div className="mt-1 flex justify-between border-t pt-1 text-2xs font-medium">
-              <span>Pool total</span>
-              <span className="tabular-nums">
-                {fmtInt(alloc.reduce((t, a) => t + (a.qty ?? 0), 0))}
-              </span>
-            </div>
-          </div>
-        </div>
-      ) : null}
-      {/* Where the daily rate comes from, and how many days of it are being bought. Both
-          were invisible: the row showed "1.0/day" with no way to see the deliveries behind
-          it, and an order-up-to with no way to see it was 51 days of cover. */}
-      <div className="border-t px-3 py-2">
-        <div className="mb-1 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-          Order-up-to level
-        </div>
-        <p className="text-2xs text-muted-foreground">
-          S = reorder point + demand rate x review period
-        </p>
-        <div className="mt-1 flex items-baseline justify-between gap-2 text-xs">
-          <span className="tabular-nums text-muted-foreground">
-            {q.reorder_point === null ? EM_DASH : fmtInt(q.reorder_point)} +{' '}
-            {demandRate == null ? EM_DASH : fmtDecimal(demandRate)}/day x{' '}
-            {fmtInt(row.rec.review_days ?? null)}d review
-          </span>
-          <span className="tabular-nums font-semibold">
-            {q.order_up_to === null ? EM_DASH : fmtInt(q.order_up_to)}
-          </span>
-        </div>
-        {row.rec.safety_days != null && row.rec.review_days != null ? (
-          <p className="mt-1 text-2xs text-muted-foreground">
-            {fmtInt(
-              (row.rec.safety_days ?? 0) + (leadDays ?? 0) + (row.rec.review_days ?? 0),
-            )}{' '}
-            days of cover ({fmtInt(row.rec.safety_days)} safety + {fmtInt(leadDays)} lead +{' '}
-            {fmtInt(row.rec.review_days)} review)
-          </p>
-        ) : null}
-      </div>
-
-      {demandRate != null && row.rec.demand_window_days ? (
-        <div className="border-t px-3 py-2">
-          <div className="mb-1 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-            Where the rate comes from
-          </div>
-          <p className="text-2xs text-muted-foreground">
-            {fmtInt(demandRate * row.rec.demand_window_days)} units left this location over
-            the last {fmtInt(row.rec.demand_window_days)} days, which averages{' '}
-            {fmtDecimal(demandRate)} a day. Past deliveries, not the open orders.
-          </p>
-        </div>
-      ) : null}
-
-      {/* Reorder-point explain (M8-F5): the formula + the frozen inputs behind it. */}
-      <div className="border-t px-3 py-2">
-        <div className="mb-1 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-          Reorder point
-        </div>
-        <p className="text-2xs text-muted-foreground">
-          ROP = safety stock + demand rate x lead time
-        </p>
-        <div className="mt-1 flex items-baseline justify-between gap-2 text-xs">
-          <span className="tabular-nums text-muted-foreground">
-            {/* One decimal, so the sum shown equals the answer shown. Rounding safety stock
-                to a whole number printed "7 + 1.0/day x 14d = 22", which is off by one and
-                reads as a broken calculation. */}
-            {q.safety_stock === null ? EM_DASH : fmtDecimal(q.safety_stock)} +{' '}
-            {demandRate == null ? EM_DASH : fmtDecimal(demandRate)}/day x{' '}
-            {fmtInt(leadDays)}d lead
-          </span>
-          <span className="tabular-nums font-semibold">
-            {q.reorder_point === null ? EM_DASH : fmtInt(q.reorder_point)}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
+/**
+ * The order-qty derivation that used to live here (SS / ROP / order-up-to / rounded inputs,
+ * plus the reorder-point formula) is now the auto-mode half of THE LINE block in the
+ * order-qty ledger (S3, `PlanOrderQtyLedger.tsx`), which replaced this popover's content -
+ * the ledger also adds the net breakdown, the live cover toggles, and THE BUY block the
+ * old drill never had. See that file for the current derivation copy.
+ */

@@ -9,6 +9,7 @@ import {
   getPoBook,
   getPriceHistory,
   getProductEconomics,
+  getPurchaseTrend,
   getTrajectory,
   recordLifecycleDecision,
   getBuyRecommendationsForCash,
@@ -19,7 +20,7 @@ import {
 import { toPlanLines, type PlanLine } from '../lib/planLine';
 import {
   NO_COVER,
-  proposeCover,
+  coverForLine,
   type CoverProposal,
   type CoverSource,
   type TakenByWarehouse,
@@ -35,6 +36,7 @@ import {
 import { trajectoryKey, type TrajectoryEntry } from '../lib/trajectory';
 import { levelKey, type LevelSuggestion } from '../lib/levelSuggestion';
 import type { PoReceipt } from '../lib/poCover';
+import type { ProductPurchaseTrend } from '../lib/purchaseTrend';
 
 /**
  * Every line of a plan, in one list, with the buyer's decisions over it.
@@ -105,6 +107,25 @@ export function usePlanLines(runId: string | null, enabled = true) {
     enabled: on,
     // Losing the level suggestions must not take the plan down: the row then shows no
     // third suggestion, which is what the screen said before S13f.
+    retry: false,
+  });
+
+  // Lazy, not eager (fix-cluster, 2026-08-12): unlike every other plan-lines fetch, the
+  // purchase-trend query is not needed to render the grid at all - the PO cell shows the
+  // bare figure until its popover opens, same as `priceFor`'s underlying fetch is used only
+  // inside a popup. Fetching it for every product on plan mount was pure waste on a plan
+  // most of whose rows the buyer never opens the PO popover for. `requestPurchaseTrend`
+  // flips the flag once the FIRST popover opens; react-query then caches the response the
+  // normal way, so every later popover on the run is free.
+  const [purchaseTrendWanted, setPurchaseTrendWanted] = useState(false);
+  const requestPurchaseTrend = useCallback(() => setPurchaseTrendWanted(true), []);
+  const purchaseTrend = useQuery({
+    queryKey: ['plan-lines', runId, 'purchase-trend'],
+    queryFn: () => getPurchaseTrend(runId as string),
+    enabled: on && purchaseTrendWanted,
+    // Losing the purchase trend must not take the plan down: the PO cell's popup then
+    // reads "never purchased", the same honest fallback the order-trend cell already uses
+    // for a product it has no opinion on.
     retry: false,
   });
 
@@ -184,13 +205,7 @@ export function usePlanLines(runId: string | null, enabled = true) {
       for (const s of own?.stock?.sources ?? []) mine[s.warehouse_id] = s.qty;
       const net: Record<string, number> = { ...taken };
       for (const [w, q] of Object.entries(mine)) net[w] = (net[w] ?? 0) - q;
-      return proposeCover(
-        Math.ceil(line.order_qty),
-        line.warehouse_id ?? null,
-        line.rec.segment ?? null,
-        free,
-        net,
-      );
+      return coverForLine(line, free, net);
     },
     [cover.data, takenByProduct, decisions],
   );
@@ -232,6 +247,14 @@ export function usePlanLines(runId: string | null, enabled = true) {
       return key ? levels.data?.suggestions[key] : undefined;
     },
     [levels.data],
+  );
+
+  /** The mirror of `trendFor`, on the buy side: what we have actually purchased for a
+   *  line's product. Undefined = no opinion (fetch failed or nothing on the run). */
+  const purchaseTrendFor = useCallback(
+    (line: PlanLine): ProductPurchaseTrend | undefined =>
+      line.product_id ? purchaseTrend.data?.products[line.product_id] : undefined,
+    [purchaseTrend.data],
   );
 
   /** S15: the open PO lines carrying this product to this warehouse. Empty = none. */
@@ -296,6 +319,9 @@ export function usePlanLines(runId: string | null, enabled = true) {
     trendFor,
     levelFor,
     poFor,
+    purchaseTrendFor,
+    purchaseTrendWindowMonths: purchaseTrend.data?.window_months ?? 3,
+    requestPurchaseTrend,
     economicsFor,
     decideLifecycle,
     healthThresholds: economics.data?.thresholds ?? {
