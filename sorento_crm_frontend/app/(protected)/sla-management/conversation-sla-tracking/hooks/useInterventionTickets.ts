@@ -43,6 +43,10 @@ export function useSendInterventionTicketMessage(id: string) {
       queryClient.invalidateQueries({ queryKey: ['sla-tracking-conversation', id] });
       queryClient.invalidateQueries({ queryKey: ['intervention-ticket', id] });
       queryClient.invalidateQueries({ queryKey: ['intervention-tickets', 'mine'] });
+      // A partially-delivered multi-file send returns 200: the composer names
+      // the file that did not make it and keeps it staged, so a blanket
+      // "Message sent" here would contradict it.
+      if (result.attachments?.failed) return;
       toast.success(
         result.sent_as === 'template' ? 'Delivered as a template message' : 'Message sent',
       );

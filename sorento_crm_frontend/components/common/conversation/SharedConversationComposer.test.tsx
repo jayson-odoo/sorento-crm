@@ -242,6 +242,81 @@ describe('SharedConversationComposer', () => {
     expect(screen.getByRole('button', { name: /use response/i })).toBeInTheDocument();
   });
 
+  // ------------------------------------------------ partial attachment failure
+
+  /** Stage `names` on the composer's hidden file input. */
+  function attach(names: string[]) {
+    const input = screen.getByTestId('composer-file-input') as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: names.map((n) => new File(['x'], n, { type: 'application/pdf' })) },
+    });
+  }
+
+  it('FINDING 3: a partial multi-file send clears only the delivered files', async () => {
+    const sendAdapter = vi.fn().mockResolvedValue({
+      sent_as: 'attachment',
+      attachments: {
+        delivered: ['a.pdf'],
+        failed: { filename: 'b.pdf', error: 'Respond 500 unavailable' },
+      },
+    });
+    renderComposer({ mode: 'conversation', attachmentsEnabled: true, sendAdapter });
+    await waitFor(() => expect(screen.getByTestId('composer-file-input')).toBeInTheDocument());
+
+    attach(['a.pdf', 'b.pdf', 'c.pdf']);
+    expect(screen.getByTestId('composer-attachments').textContent).toContain('a.pdf');
+
+    fireEvent.click(screen.getByRole('button', { name: /^Send$/i }));
+
+    await waitFor(() => expect(sendAdapter).toHaveBeenCalled());
+    // a.pdf reached the contact -> gone. b.pdf failed and c.pdf was never
+    // attempted -> both stay staged so a retry cannot double-send a.pdf.
+    await waitFor(() => {
+      const staged = screen.getByTestId('composer-attachments').textContent ?? '';
+      expect(staged).not.toContain('a.pdf');
+      expect(staged).toContain('b.pdf');
+      expect(staged).toContain('c.pdf');
+    });
+    // The failed one is marked, and the toast names it.
+    expect(screen.getByTestId('composer-attachment-failed').textContent).toContain('b.pdf');
+    expect(toast.error).toHaveBeenCalledWith(
+      'b.pdf was not sent: Respond 500 unavailable',
+    );
+  });
+
+  it('FINDING 3: an all-delivered send clears every file and marks nothing failed', async () => {
+    const sendAdapter = vi.fn().mockResolvedValue({
+      sent_as: 'attachment',
+      attachments: { delivered: ['a.pdf', 'b.pdf'], failed: null },
+    });
+    renderComposer({ mode: 'conversation', attachmentsEnabled: true, sendAdapter });
+    await waitFor(() => expect(screen.getByTestId('composer-file-input')).toBeInTheDocument());
+
+    attach(['a.pdf', 'b.pdf']);
+    fireEvent.click(screen.getByRole('button', { name: /^Send$/i }));
+
+    await waitFor(() => expect(sendAdapter).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.queryByTestId('composer-attachments')).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId('composer-attachment-failed')).not.toBeInTheDocument();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it('FINDING 3: a thrown send keeps every file staged (nothing reached the contact)', async () => {
+    const sendAdapter = vi.fn().mockRejectedValue(new Error('Network down'));
+    renderComposer({ mode: 'conversation', attachmentsEnabled: true, sendAdapter });
+    await waitFor(() => expect(screen.getByTestId('composer-file-input')).toBeInTheDocument());
+
+    attach(['a.pdf', 'b.pdf']);
+    fireEvent.click(screen.getByRole('button', { name: /^Send$/i }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Network down'));
+    const staged = screen.getByTestId('composer-attachments').textContent ?? '';
+    expect(staged).toContain('a.pdf');
+    expect(staged).toContain('b.pdf');
+  });
+
   // ------------------------------------------------- template send attribution
 
   it('FINDING 4: a manual template send carries the ticket id so the clock stops', async () => {

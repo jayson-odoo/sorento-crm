@@ -102,6 +102,12 @@
  *        is_responded / responded_at / responded_by / response_time on this ticket
  *        only; sibling tickets for the same contact are untouched
  *      - an `integration_log` outbox row is written on success AND failure
+ *      - a multi-file send is NEVER all-or-nothing and never 502s on one file:
+ *        the caption ships first, attachments go sequentially and stop at the
+ *        first failure, and the call returns 200 with
+ *        `attachments: { delivered: string[], failed: {filename, error} | null }`.
+ *        The composer clears ONLY the delivered files and keeps the rest staged,
+ *        so a retry cannot resend what the contact already has.
  *    R1 (resolved 2026-08-12): Respond.io supports text / attachment
  *    (image, video, audio, file) / quick_reply / whatsapp_template. There is NO
  *    sticker type and NO reply-to/context parameter, so:
@@ -212,6 +218,18 @@ export interface SendTicketMessageInput {
   reply_to_excerpt?: string | null;
 }
 
+/**
+ * Per-file outcome of a multi-attachment send. The backend never fails a send
+ * all-or-nothing: attachments go sequentially and stop at the FIRST failure, so
+ * `delivered` is the ordered prefix that actually reached the contact and
+ * `failed` names the one that did not (everything after it was not attempted).
+ * `null` on the text-only path.
+ */
+export interface SendTicketAttachmentsOutcome {
+  delivered: string[];
+  failed: { filename: string; error: string } | null;
+}
+
 export interface SendTicketMessageResult {
   sent_as: 'text' | 'template' | 'attachment';
   /** Exactly what the contact received. */
@@ -219,6 +237,7 @@ export interface SendTicketMessageResult {
   /** True when the text was flattened to fit a template parameter. */
   flattened: boolean;
   window: TicketWindowState;
+  attachments?: SendTicketAttachmentsOutcome | null;
 }
 
 /** C. Drawer header + composer state for one ticket. */

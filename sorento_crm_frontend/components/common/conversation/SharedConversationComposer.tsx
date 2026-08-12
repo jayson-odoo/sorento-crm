@@ -58,7 +58,18 @@ interface SharedConversationComposerProps {
     files: File[];
     replyToMessageId?: string | number | null;
     replyToExcerpt?: string | null;
-  }) => Promise<{ sent_as: 'text' | 'template' | 'attachment' }>;
+  }) => Promise<{
+    sent_as: 'text' | 'template' | 'attachment';
+    /**
+     * Per-file outcome of a multi-attachment send. The backend delivers files
+     * in order and stops at the first failure, so `delivered` is the ordered
+     * prefix the contact actually received.
+     */
+    attachments?: {
+      delivered: string[];
+      failed: { filename: string; error: string } | null;
+    } | null;
+  }>;
   /**
    * Supplies the 24h window + out-of-window template instead of the composer
    * fetching them, for callers that already loaded them with the record.
@@ -110,6 +121,8 @@ export default function SharedConversationComposer({
   const [viewLinkLoading, setViewLinkLoading] = useState(false);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [sendError, setSendError] = useState<{ message: string; settingsUrl: string } | null>(null);
+  /** The staged file the last send could not deliver (marked on its chip). */
+  const [failedFileName, setFailedFileName] = useState<string | null>(null);
   const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const appliedPrefillKeyRef = useRef(0);
@@ -155,25 +168,39 @@ export default function SharedConversationComposer({
   const handleSend = async () => {
     const typed = replyText.trim();
     if (!canSubmit || sending || !canReply) return;
+    // The exact files this send is carrying: the per-file outcome below is
+    // positional (the backend delivers in order and stops at the first
+    // failure), so it must be matched against THIS list, not later state.
+    const sentFiles = files;
     // Respond.io carries no reply-to reference, so a quoted reply ships as a
     // ">" prefixed excerpt above the body (rendered as a quote by WhatsApp and
     // by our own chat list).
     const text = replyTo?.excerpt ? buildQuotedReplyText(replyTo.excerpt, typed) : typed;
     setSending(true);
     setSendError(null);
+    setFailedFileName(null);
     try {
       const result = sendAdapter
         ? await sendAdapter({
             text,
-            files,
+            files: sentFiles,
             replyToMessageId: replyTo?.messageId ?? null,
             replyToExcerpt: replyTo?.excerpt ?? null,
           })
         : await sendConversationMessage(entityType, entityId, text);
+      // Partial delivery: the text and the delivered files are gone for good
+      // (the contact has them), so only what did NOT reach them stays staged -
+      // otherwise a retry sends the same photo to the customer twice.
+      const failed = 'attachments' in result ? (result.attachments?.failed ?? null) : null;
+      const deliveredCount =
+        'attachments' in result ? (result.attachments?.delivered?.length ?? 0) : 0;
       setReplyText('');
-      setFiles([]);
+      setFiles(failed ? sentFiles.slice(deliveredCount) : []);
+      setFailedFileName(failed?.filename ?? null);
       onClearReplyTo?.();
-      if (!sendAdapter) {
+      if (failed) {
+        toast.error(`${failed.filename} was not sent: ${failed.error}`);
+      } else if (!sendAdapter) {
         // The adapter owns its own success feedback (it knows what it sent).
         toast.success(
           result.sent_as === 'template' ? 'Delivered as a template message' : 'Message sent',
@@ -257,26 +284,35 @@ export default function SharedConversationComposer({
   const attachmentChips =
     attachmentsEnabled && files.length > 0 ? (
       <div className="flex flex-wrap gap-1.5" data-testid="composer-attachments">
-        {files.map((file, idx) => (
-          <span
-            key={`${file.name}-${idx}`}
-            className="inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-xs"
-            title={file.name}
-          >
-            <Paperclip className="size-3 shrink-0" />
-            <span className="truncate">{file.name}</span>
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              className="size-4 shrink-0"
-              aria-label={`Remove ${file.name}`}
-              onClick={() => setFiles((prev) => prev.filter((_, i) => i !== idx))}
+        {files.map((file, idx) => {
+          const notSent = failedFileName === file.name;
+          return (
+            <span
+              key={`${file.name}-${idx}`}
+              data-testid={notSent ? 'composer-attachment-failed' : 'composer-attachment'}
+              className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-xs${
+                notSent ? ' border-destructive text-destructive' : ''
+              }`}
+              title={notSent ? `${file.name} - not sent` : file.name}
             >
-              <X className="size-3" />
-            </Button>
-          </span>
-        ))}
+              <Paperclip className="size-3 shrink-0" />
+              <span className="truncate">{file.name}</span>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="size-4 shrink-0"
+                aria-label={`Remove ${file.name}`}
+                onClick={() => {
+                  if (notSent) setFailedFileName(null);
+                  setFiles((prev) => prev.filter((_, i) => i !== idx));
+                }}
+              >
+                <X className="size-3" />
+              </Button>
+            </span>
+          );
+        })}
       </div>
     ) : null;
 
