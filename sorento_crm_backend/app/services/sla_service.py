@@ -4069,10 +4069,24 @@ class ConversationSLATrackingService:
         from datetime import datetime, timezone
         from decimal import Decimal, ROUND_HALF_UP
         from app.models.user import User
-        
+
         tracking = self.get_tracking(tracking_id)
-        
+
         update_data = tracking_data.model_dump(exclude_unset=True)
+
+        # AC-E3 guard, enforced HERE (the shared update path both PUT
+        # /{tracking_id} and PUT/POST /integration/{tracking_id} call) rather
+        # than duplicated per-route: the sibling /integration/{tracking_id}
+        # route has no auth dependency and used to stamp is_responded (plus
+        # write a "response" event log) with no ambiguity check at all. See
+        # is_ambiguous_fallback_response for the (contact, replying-user) rule.
+        if (
+            bool(update_data.get("is_responded"))
+            and not bool(getattr(tracking, "is_responded", False))
+            and self.is_ambiguous_fallback_response(tracking)
+        ):
+            setattr(tracking, "_ambiguous_responded_skipped", True)
+            return tracking
 
         # Resolve agent_code → agent_id FK if caller passed a code string
         raw_agent_code = update_data.pop("agent_code", None)

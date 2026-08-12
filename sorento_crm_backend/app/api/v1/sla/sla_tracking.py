@@ -1697,12 +1697,16 @@ async def update_sla_tracking_status_integration(
 
         tracking = service.update_tracking(tracking_id_str, ConversationSLATrackingUpdate(**update_dict))
         already_resolved = bool(getattr(tracking, "_already_resolved", False))
+        # FINDING 1: update_tracking is the shared path PUT /{tracking_id} also
+        # calls, so the AC-E3 ambiguity guard now applies here too — a stamp it
+        # skipped must not get a "response" event log written on top of it.
+        ambiguous_responded_skipped = bool(getattr(tracking, "_ambiguous_responded_skipped", False))
         if already_resolved:
             response.headers["X-SLA-Already-Resolved"] = "true"
             response.headers["X-SLA-Updated"] = "false"
 
         # Create event logs for responded/resolved when applicable
-        if update_data.is_responded and not already_resolved:
+        if update_data.is_responded and not already_resolved and not ambiguous_responded_skipped:
             # Convert responded_at to UTC before creating event log
             responded_at_utc = update_data.responded_at
             if isinstance(responded_at_utc, datetime) and responded_at_utc.tzinfo:
@@ -1764,7 +1768,11 @@ async def update_sla_tracking_status_integration(
                 direction="inbound",
                 endpoint=str(request.url),
                 http_method="PUT",
-                status="success" if not already_resolved else "skipped_already_resolved",
+                status=(
+                    "skipped_ambiguous_response"
+                    if ambiguous_responded_skipped
+                    else ("success" if not already_resolved else "skipped_already_resolved")
+                ),
             ),
             request_payload_dict=update_data.model_dump(exclude_unset=True)
         )
@@ -1777,7 +1785,12 @@ async def update_sla_tracking_status_integration(
                 "already_resolved": True,
                 "updated": False,
             }
-        return {"status": "success", "message": "SLA tracking updated successfully.", "tracking_id": tracking_id_result_str}
+        return {
+            "status": "success",
+            "message": "SLA tracking updated successfully.",
+            "tracking_id": tracking_id_result_str,
+            "ambiguous_responded_skipped": ambiguous_responded_skipped,
+        }
     except HTTPException:
         raise
     except Exception as e:
