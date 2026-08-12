@@ -54,17 +54,15 @@ import { toast } from "sonner";
 import {
   PurchaseRequestFormSchema,
   type PurchaseRequestSchemaType,
-} from "../forms/purchase-request-schema";
-import type { PurchaseRequestFormData } from "../types/purchaseRequest.types";
-import PurchaseRequestAttachmentsSection from "./PurchaseRequestAttachmentsSection";
-import { PurchaseRequestDocumentEditCard } from "./PurchaseRequestDocumentEditCard";
-import { usePublicViewLinksEnabled } from "@/hooks/usePublicViewLinksEnabled";
-import {
-  purchaseRequestNumberFieldLabel,
-  purchaseRequestNumberReplyPhrase,
-} from "../lib/purchase-request-field-labels";
-import LookupBoundField from "@/components/common/LookupBoundField";
-import { cn } from "@/lib/utils";
+} from '../forms/purchase-request-schema';
+import type { PurchaseRequestFormData } from '../types/purchaseRequest.types';
+import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSection';
+import { PurchaseRequestDocumentEditCard } from './PurchaseRequestDocumentEditCard';
+import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
+import { purchaseRequestNumberFieldLabel, purchaseRequestNumberReplyPhrase } from '../lib/purchase-request-field-labels';
+import LookupBoundField from '@/components/common/LookupBoundField';
+import { RequestorContactSelect } from '@/app/(protected)/master-data-management/shared/components/RequestorContactSelect';
+import { cn } from '@/lib/utils';
 
 const PURCHASE_REQUESTS_EDIT = "/procurement-management/purchase-requests";
 const SPONSORSHIP_FORMS_EDIT = "/procurement-management/sponsorship-forms";
@@ -128,6 +126,7 @@ export default function PurchaseRequestForm({
       request_number: null,
       request_date: null,
       customer_name: null,
+      pic: null,
       project_title: null,
       project_id: null,
       purpose: null,
@@ -141,6 +140,7 @@ export default function PurchaseRequestForm({
       expected_po_date: null,
       expected_po_date_text: null,
       requested_by: null,
+      requested_by_contact_id: null,
       requested_at: null,
       products: [
         {
@@ -213,6 +213,7 @@ export default function PurchaseRequestForm({
           ? new Date(request.request_date).toISOString().split("T")[0]
           : null,
         customer_name: request.customer_name ?? null,
+        pic: request.pic ?? null,
         project_title: request.project_title ?? null,
         project_id: request.project_id ?? null,
         purpose: request.purpose ?? null,
@@ -233,6 +234,7 @@ export default function PurchaseRequestForm({
           : null,
         expected_po_date_text: request.expected_po_date_text ?? null,
         requested_by: request.requested_by ?? null,
+        requested_by_contact_id: request.requested_by_contact_id ?? null,
         requested_at: request.requested_at
           ? new Date(request.requested_at).toISOString().split("T")[0]
           : null,
@@ -253,6 +255,8 @@ export default function PurchaseRequestForm({
         request_number: data.request_number ?? undefined,
         request_date: data.request_date || undefined,
         customer_name: data.customer_name || undefined,
+        // Empty string must become undefined, not "" — "not given" is one value.
+        pic: data.pic || undefined,
         project_title: data.project_title || undefined,
         project_id: data.project_id || null,
         purpose: data.purpose ?? undefined,
@@ -279,6 +283,7 @@ export default function PurchaseRequestForm({
         expected_po_date: data.expected_po_date || undefined,
         expected_po_date_text: data.expected_po_date_text || undefined,
         requested_by: data.requested_by || undefined,
+        requested_by_contact_id: data.requested_by_contact_id ?? null,
         requested_at: data.requested_at || undefined,
         products: data.products
           .filter(
@@ -415,6 +420,23 @@ export default function PurchaseRequestForm({
                           placeholder="Customer name"
                           {...field}
                           value={field.value ?? ""}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="pic"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>PIC</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="Name and contact number"
+                          {...field}
+                          value={field.value ?? ''}
                         />
                       </FormControl>
                       <FormMessage />
@@ -681,15 +703,18 @@ export default function PurchaseRequestForm({
                 )}
                 <FormField
                   control={form.control}
-                  name="requested_by"
+                  name="requested_by_contact_id"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Requested By</FormLabel>
                       <FormControl>
-                        <Input
-                          placeholder="Name"
-                          {...field}
-                          value={field.value ?? ""}
+                        <RequestorContactSelect
+                          value={field.value}
+                          onChange={field.onChange}
+                          submitterContactId={request?.contact_id}
+                          savedContactId={request?.requested_by_contact_id}
+                          savedContactName={request?.requested_by_contact_name ?? request?.requested_by}
+                          placeholder="Select requestor"
                         />
                       </FormControl>
                       <FormMessage />
@@ -1102,6 +1127,7 @@ export default function PurchaseRequestForm({
                           expected_po_date_text:
                             values.expected_po_date_text ?? undefined,
                           requested_by: values.requested_by ?? undefined,
+                          requested_by_contact_id: values.requested_by_contact_id ?? null,
                           requested_at: values.requested_at ?? undefined,
                           products: (values.products ?? []).map((p) => ({
                             item_code: p.item_code ?? undefined,

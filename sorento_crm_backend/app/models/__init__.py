@@ -5,6 +5,7 @@ from app.models.company import Company, UserCompany, RespondContactCompany
 from app.models.user import User, UserRole, UserRoleAssignment, UserPermission, UserRolePermission, SystemLog, SystemSetting, UserQuickAccess, UserListColumnConfig
 from app.models.auth import VerificationToken
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure
+from app.models.product_spec import ProductSpecRegistry, ProductSpecifications, ProductSpecException
 from app.models.order import Order, OrderStatus, Customer, CustomerContact, OrderLine, SalesOrder, SalesOrderLine
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine, PurchaseOrder, PurchaseOrderLine
@@ -23,6 +24,7 @@ from app.models.entity_attachment import EntityAttachmentLink
 from app.models.attachment_field_link import AttachmentFieldLink
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog, FormSLAConfig
 from app.models.resources import Attachment, AttachmentType
+from app.models.certificate import Certificate, CertificateRevision, CertificateProduct
 from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondContact, respond_contact_access_types, MarketSegment, respond_contact_market_segments, team_member_market_segments
 from app.models.respond_workspace import RespondWorkspace
 from app.models.respond_template import (
@@ -188,6 +190,9 @@ __all__ = [
     "FormSLAConfig",
     "Attachment",
     "AttachmentType",
+    "Certificate",
+    "CertificateRevision",
+    "CertificateProduct",
     "AccessAgent",
     "ContactAgentAccess",
     "ContactAccessType",

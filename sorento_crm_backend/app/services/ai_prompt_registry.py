@@ -531,6 +531,57 @@ def _schedule_extractor_fallback() -> str:
 # --------------------------------------------------------------------------- #
 
 
+def _spec_understanding_fallback() -> str:
+    """System prompt for spec search's semantic reader (`product_spec_understanding`).
+
+    Maps a customer's sanitaryware sentence onto the Spec Registry. The registry is
+    handed to it at call time and every key/value it returns is validated back against
+    those rows, so this prompt governs JUDGEMENT - when to stay silent, and what counts
+    as evidence for a value - never what exists.
+    """
+    return """You read a customer's sanitaryware enquiry and map it onto a fixed \
+vocabulary of product specifications.
+
+You will be given the ONLY specifications that exist. Use nothing else.
+
+Rules:
+- Return a specification ONLY when the customer's words genuinely mean it. Silence is \
+correct and expected; a wrong specification is worse than a missing one, because it \
+puts the wrong product in front of a buyer.
+- Never invent a spec_key or an enum value. Use the exact strings given to you.
+- Understand meaning, not just words: misspellings, plurals, local phrasing, and \
+descriptions of a thing rather than its name ("the pipe goes into the wall" = a P-trap, \
+"pipe goes into the floor" = an S-trap).
+- For numeric specs return a plain number in the unit stated for that key. Convert if \
+the customer used another unit (8 inch = 203.2 mm).
+- When the customer sets a LIMIT rather than a target, say so with "op": "at_least" or \
+"at_most" - "above 900mm", "at least 1.5m", "minimum 900" are at_least; "under 600mm", \
+"no more than 800", "maximum 700" are at_most. Leave "op" out when they name a size they \
+want ("600mm basin"), which means about that size.
+- A brand name or a product class IS a specification whenever it appears in the list \
+you were given. Return it, even when the customer says nothing else — "cabana wc" is a \
+brand and a class, not an empty enquiry.
+- Put words that carry meaning but map onto no spec — a model name, a room, a colour \
+you were not given — into free_terms. A word you cannot place is a free term. Never \
+file it under the nearest-looking value: an unrecognised word is not evidence for any \
+specification.
+- Prefer a misspelling of a WORD you were given over a resemblance to a NAME. \
+"interlignet" is "intelligent", not a brand you have never heard of.
+- If the customer is not describing a product at all, return empty lists.
+- A specification the customer RULES OUT goes in `exclusions`, never in `specs`. "not \
+glass", "no glass", "anything but glass", "without a drainer" all mean the customer does \
+not want it — putting it in `specs` asks for the exact thing they refused. Same key and \
+value rules apply: exact strings, and silence when you are not sure it is a refusal.
+- A refusal is not a request for the opposite. "not glass" excludes glass; it does not \
+select ceramic.
+
+Reply with JSON only:
+{"specs": [{"key": "<spec_key>", "value": <string|number|boolean>, \
+"op": "at_least|at_most (numbers only, omit for about)"}], \
+"exclusions": [{"key": "<spec_key>", "value": <string|number|boolean>}], \
+"free_terms": ["..."], "notes": "<one short sentence on anything ambiguous>"}"""
+
+
 @dataclass(frozen=True)
 class PromptKeySpec:
     name: str
@@ -669,6 +720,15 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         activates_in=None,
         variables=[],
         fallback=_scm_recommendation_explainer_fallback,
+    ),
+    # --- Spec search (product recommendation by description) ---
+    "spec_understanding": PromptKeySpec(
+        name="spec_understanding",
+        role="Spec understanding — read a customer's product description onto the Spec Registry",
+        active=True,
+        activates_in=None,
+        variables=[],
+        fallback=_spec_understanding_fallback,
     ),
     "scm_market_advisory": PromptKeySpec(
         name="scm_market_advisory",
@@ -816,6 +876,31 @@ def get_prompt(
         text=row.template, version=row.version, expires_at=now + CACHE_TTL_SECONDS
     )
     return RenderedPrompt(text=row.template, name=name, version=row.version)
+
+
+def agent_model(db: Session, name: str, label: str = "production") -> tuple[str | None, str | None]:
+    """(provider, model) this agent runs on, or (None, None) for the global default.
+
+    Deliberately NOT cached alongside the prompt text: this is read once per call on a
+    path that is already making a network round trip, and a stale model is the kind of
+    thing someone changes precisely because they want the next request to use it.
+    Never raises - an unreachable DB means "use the global default", same as unset.
+    """
+    if name not in PROMPT_KEYS:
+        return None, None
+    try:
+        row = (
+            db.query(AIPromptLabel)
+            .filter(AIPromptLabel.name == name, AIPromptLabel.label == label)
+            .first()
+        )
+    except Exception:
+        logger.warning("agent model lookup failed name=%s label=%s", name, label, exc_info=True)
+        _safe_rollback(db)
+        return None, None
+    if row is None:
+        return None, None
+    return (row.provider or None), (row.model or None)
 
 
 def render(

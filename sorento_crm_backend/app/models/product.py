@@ -26,10 +26,24 @@ class ProductCategory(Base, CompanyScopedMixin):
     parent_category_id = Column(UUID(as_uuid=False), ForeignKey("product_categories.id", ondelete="SET NULL"), nullable=True)
     is_active = Column(Boolean, default=True, server_default=text("true"), nullable=False)
     display_order = Column(Integer, default=0, nullable=True)
+    # The class/brand signal decoded out of category_code (SRT-KS -> Kitchen Sink /
+    # Sorento). category_name is a verbatim copy of category_code on every live row,
+    # so without these the highest-coverage ranking signal in the catalog is
+    # unreadable. Populated by app/services/product_class_signal.py, never by parsing
+    # the code at query time. A NULL class_label means "not classified", which is a
+    # reportable state, not a default.
+    class_label = Column(String(100), nullable=True)
+    brand_hint = Column(String(100), nullable=True)
+    # Customer phrasings for the class ("sinki", "dapur"), matched case-insensitively
+    # alongside class_label so catalog language and customer language can differ.
+    search_synonyms = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    # False for categories with no class meaning (MISC, PROJECT, SRTPART, VD) so they
+    # cannot masquerade as a searchable class.
+    is_searchable = Column(Boolean, default=True, server_default=text("true"), nullable=False)
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
-    
+
     parent = relationship("ProductCategory", remote_side=[id], back_populates="children")
     children = relationship("ProductCategory", back_populates="parent")
     products = relationship("Product", back_populates="category")

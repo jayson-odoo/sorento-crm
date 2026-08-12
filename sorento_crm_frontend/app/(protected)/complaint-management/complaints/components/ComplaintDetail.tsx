@@ -4,13 +4,24 @@ import { useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, FileDown, ArrowUpCircle, Ban } from 'lucide-react';
+import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, FileDown, ArrowUpCircle, Ban, UserRoundCog, Undo2 } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
 import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHandlingLock';
+import { useFormSkip } from '@/app/(protected)/sla-management/_shared/useFormSkip';
+import {
+  FormSkipDialog,
+  FormSkipMenuItem,
+} from '@/app/(protected)/sla-management/_shared/FormSkipAction';
 import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
 import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
+import { useFormAction } from '@/app/(protected)/sla-management/_shared/useFormAction';
+import { FormActionBanner } from '@/app/(protected)/sla-management/_shared/FormActionBanner';
+import { UndoActionDialog } from '@/app/(protected)/sla-management/_shared/UndoActionDialog';
+import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tracking/components/ReassignDialog';
+import { useReassignSLATracking } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
+import ResponseAttachmentDropzone from './ResponseAttachmentDropzone';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { VoidBanner } from '@/components/common/VoidBanner';
 import { VoidDialog } from '@/components/common/VoidDialog';
@@ -43,6 +54,7 @@ import {
   useExportComplaintPdf,
   useNotifyComplaintRootCause,
   useNotifyComplaintResolution,
+  useUploadComplaintResponseAttachments,
 } from '../hooks/useComplaints';
 import { useHasPermission } from '@/hooks/usePermissions';
 import {
@@ -62,6 +74,9 @@ import {
 import { toast } from 'sonner';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import ComplaintDeleteDialog from './ComplaintDeleteDialog';
+import ComplaintNotifiableFieldDialog from './ComplaintNotifiableFieldDialog';
+import { useComplaintRootCausesSelect } from '@/app/(protected)/complaint-management/complaint-root-causes/hooks/useComplaintRootCauses';
+import { useComplaintResolutionsSelect } from '@/app/(protected)/complaint-management/complaint-resolutions/hooks/useComplaintResolutions';
 import ComplaintNavigation from './ComplaintNavigation';
 import ComplaintManualAttachmentsSection from './ComplaintManualAttachmentsSection';
 import ComplaintConversationPanel from './ComplaintConversationPanel';
@@ -99,20 +114,26 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const canProcess = useHasPermission('complaint_management.complaints.resolve');
   const canClose = useHasPermission('complaint_management.complaints.close');
   const canVoid = useHasPermission('complaint_management.complaints.void');
+  const canReassign = useHasPermission('sla_management.conversation_sla_tracking.reassign');
+  // Update & Reply POSTs notify-root-cause / notify-resolution, both of which
+  // require complaint edit on the backend - gate on the same permission or a
+  // chat-only user is offered a button that 403s.
+  const canEditComplaint = useHasPermission('complaint_management.complaints.edit');
+  const reassignMutation = useReassignSLATracking();
+  const [reassignOpen, setReassignOpen] = useState(false);
+  const uploadResponseAttachmentsMutation = useUploadComplaintResponseAttachments();
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [processDialogOpen, setProcessDialogOpen] = useState(false);
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const [finalizeNote, setFinalizeNote] = useState('');
-  const [notifyRootCauseOpen, setNotifyRootCauseOpen] = useState(false);
-  const [notifyResolutionOpen, setNotifyResolutionOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   // Escalate the active form-SLA stage from the gear menu.
   const queryClient = useQueryClient();
   const [escalateOpen, setEscalateOpen] = useState(false);
-  // Extend the active form-SLA deadline (with reason) from the gear menu — same
+  // Extend the active form-SLA deadline (with reason) from the gear menu - same
   // flow as conversation SLA (notifies the next/parent tier).
   const [extendOpen, setExtendOpen] = useState(false);
   const [escalateReason, setEscalateReason] = useState('');
@@ -124,15 +145,42 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
     enabled: !!isValidId,
   });
   const activeTracker = (slaTrackers ?? []).find((t) => !t.is_resolved) ?? null;
-  // Handling-lock ("I'm handling this") — live off the form-SLA handling tracker query.
+  // Handling-lock ("I'm handling this") - live off the form-SLA handling tracker query.
   const handlingLock = useHandlingLock({
     sourceEntityType: 'complaint',
     sourceEntityId: isValidId ? complaintId : null,
     entityKey: complaint?.status,
   });
-  // A voided complaint is fully read-only — suppress every business CTA.
+  // A voided complaint is fully read-only - suppress every business CTA.
   const isVoided = (complaint?.status ?? '').trim().toLowerCase() === 'voided';
-  const businessCtasEnabled = handlingLock.businessCtasEnabled && !isVoided;
+  // Form-action deferral (PLAN-form-sla-undo.md). While an action is pending its grace
+  // window, EVERY business CTA is suppressed - the form must commit against the state
+  // the action was requested on (AC-D-10), and a second action cannot queue (AC-D-7).
+  const formAction = useFormAction({
+    sourceEntityType: 'complaint',
+    sourceEntityId: isValidId ? complaintId : null,
+    entityKey: complaint?.status,
+  });
+  const businessCtasEnabled =
+    handlingLock.businessCtasEnabled && !isVoided && !formAction.ctasDisabled;
+  const [undoDialogOpen, setUndoDialogOpen] = useState(false);
+  // "Settled on site" - the third technical-team outcome beside Approve and Reject.
+  // The technician fixed the issue during the visit, so no replacement DO is arranged
+  // and the customer-service stage never spawns. Config-driven: the item only appears
+  // when the ACTIVE stage declares a skip, which is why it can't leak into the CS stage
+  // (that config declares none). The status gate mirrors Approve/Reject.
+  const [skipDialogOpen, setSkipDialogOpen] = useState(false);
+  const formSkip = useFormSkip({
+    sourceEntityType: 'complaint',
+    sourceEntityId: isValidId ? complaintId : null,
+    permission: 'complaint_management.complaints.settle_on_site',
+    entityKey: complaint?.status,
+    enabled: businessCtasEnabled && complaint?.status === 'responded',
+    onSkipped: () => {
+      setSkipDialogOpen(false);
+      queryClient.invalidateQueries({ queryKey: ['complaint', complaintId] });
+    },
+  });
   const voidMutation = useFormVoid('complaints-management/complaints', complaintId, {
     queryKeysToInvalidate: [['complaint', complaintId]],
   });
@@ -140,6 +188,14 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
   const [editTechnicalResponseOpen, setEditTechnicalResponseOpen] = useState(false);
   const [editTechnicalResponseValue, setEditTechnicalResponseValue] = useState('');
+  const [responseAttachmentFiles, setResponseAttachmentFiles] = useState<File[]>([]);
+  // Root cause / resolution get the same edit-then-notify treatment as the
+  // technical team response: pick the value in a popup, then Update (record only)
+  // or Update & Reply (record + tell the contact what it is).
+  const [editRootCauseOpen, setEditRootCauseOpen] = useState(false);
+  const [editResolutionOpen, setEditResolutionOpen] = useState(false);
+  const { data: rootCauseOptions = [] } = useComplaintRootCausesSelect();
+  const { data: resolutionOptions = [] } = useComplaintResolutionsSelect();
   const [replyComposePrefill, setReplyComposePrefill] = useState<{
     key: number;
     text: string;
@@ -164,10 +220,46 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
     [complaintId, updateComplaintAndReplyMutation],
   );
 
+  // Save the picked root cause / resolution FK, then (for "Update & Reply") send the
+  // Respond.io update message via the existing notify endpoint. The update has to land
+  // first - the notify endpoint reads the value off the saved record.
+  const saveNotifiableField = useCallback(
+    async (field: 'root_cause_id' | 'resolution_id', id: string | null) => {
+      await updateComplaintMutation.mutateAsync({
+        id: complaintId,
+        data:
+          field === 'root_cause_id' ? { root_cause_id: id } : { resolution_id: id },
+      });
+    },
+    [complaintId, updateComplaintMutation],
+  );
+
   const sendComplaintUpdateAndReplyFromSavedRecord = useCallback(async () => {
     if (!complaint) return;
     await sendComplaintUpdateAndReplyViaRespond(complaint.technical_team_response ?? '');
   }, [complaint, sendComplaintUpdateAndReplyViaRespond]);
+
+  const closeEditTechnicalResponse = useCallback(() => {
+    setEditTechnicalResponseOpen(false);
+    setResponseAttachmentFiles([]);
+  }, []);
+
+  /** Uploads staged attachments before the response text is saved. Returns false
+   *  (and leaves the popup open with the files intact) on any upload failure, so
+   *  the response text is never silently saved without the attachments. */
+  const uploadStagedResponseAttachments = useCallback(async () => {
+    if (responseAttachmentFiles.length === 0) return true;
+    try {
+      await uploadResponseAttachmentsMutation.mutateAsync({
+        complaintId,
+        files: responseAttachmentFiles,
+      });
+      setResponseAttachmentFiles([]);
+      return true;
+    } catch {
+      return false; // toast already shown by the mutation
+    }
+  }, [responseAttachmentFiles, uploadResponseAttachmentsMutation, complaintId]);
 
   if (!isValidId) {
     return (
@@ -244,7 +336,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
         </div>
         <div className="flex gap-2 flex-wrap items-center justify-end">
           {/* Business CTAs hide (not disable) while the handling lock is held by
-              someone else / unclaimed — keeps the header uncluttered. When the
+              someone else / unclaimed - keeps the header uncluttered. When the
               lock does not bite (tier 1, flag off, or I hold it) businessCtasEnabled
               is true and they render on their normal status+permission gates. */}
           {businessCtasEnabled && (
@@ -323,6 +415,21 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             className="h-8 border border-border"
           />
           <DetailActionsMenu ariaLabel="Complaint actions">
+            {/* Post-grace Undo. Rendered only when the server says the last committed
+                action is reversible - eligibility is a server read, never a client
+                guess, and it is re-checked at execute time (AC-PG-6/7). */}
+            {formAction.view.kind === 'undoable' && (
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setUndoDialogOpen(true);
+                }}
+                data-testid="undo-action-menu-item"
+              >
+                <Undo2 className="size-4" />
+                Undo last action
+              </DropdownMenuItem>
+            )}
             {activeTracker && (
               <DropdownMenuItem
                 onSelect={(e) => {
@@ -339,10 +446,22 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               activeTracker={activeTracker}
               onSelect={() => setExtendOpen(true)}
             />
+            {canReassign && activeTracker && !isVoided && (
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setReassignOpen(true);
+                }}
+              >
+                <UserRoundCog className="size-4" />
+                Reassign
+              </DropdownMenuItem>
+            )}
             <HandlingLockReleaseMenuItem
               state={handlingLock.state}
               onRelease={handlingLock.release}
             />
+            <FormSkipMenuItem skip={formSkip} onSelect={() => setSkipDialogOpen(true)} />
             {businessCtasEnabled && complaint.status === 'approved' && canClose && (
               <DropdownMenuItem
                 disabled={closeComplaintMutation.isPending}
@@ -355,7 +474,19 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 Mark as closed
               </DropdownMenuItem>
             )}
-            {!isVoided && (
+            {businessCtasEnabled && (
+              <DropdownMenuItem onClick={() => setEditRootCauseOpen(true)}>
+                <Edit className="size-4" />
+                Edit root cause
+              </DropdownMenuItem>
+            )}
+            {businessCtasEnabled && (
+              <DropdownMenuItem onClick={() => setEditResolutionOpen(true)}>
+                <Edit className="size-4" />
+                Edit resolution
+              </DropdownMenuItem>
+            )}
+            {!isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
                 onClick={() =>
                   router.push(`/complaint-management/complaints/${complaintId}/edit`)
@@ -426,7 +557,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                   : 'Update & Reply'}
               </DropdownMenuItem>
             )}
-            {canVoid && !isVoided && (
+            {canVoid && !isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 onClick={() => setVoidDialogOpen(true)}
@@ -435,7 +566,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 Void
               </DropdownMenuItem>
             )}
-            {!isVoided && (
+            {!isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 onClick={() => setDeleteDialogOpen(true)}
@@ -456,6 +587,28 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
         onTakeOver={handlingLock.takeOver}
       />
 
+      <FormActionBanner
+        view={formAction.view}
+        onCancel={formAction.cancel}
+        onExpire={formAction.refresh}
+        onDismissOutcome={formAction.refresh}
+        isCancelling={formAction.isMutating}
+      />
+
+      {formAction.view.kind === 'undoable' && (
+        <UndoActionDialog
+          open={undoDialogOpen}
+          onOpenChange={setUndoDialogOpen}
+          eligibility={formAction.view.eligibility}
+          entityLabel={complaint.complaint_number || 'this complaint'}
+          onConfirm={(reason) => {
+            formAction.undo(reason);
+            setUndoDialogOpen(false);
+          }}
+          isSubmitting={formAction.isMutating}
+        />
+      )}
+
       {complaint && (
         <ComplaintDeleteDialog
           open={deleteDialogOpen}
@@ -466,70 +619,6 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           }}
         />
       )}
-
-      <AlertDialog open={notifyRootCauseOpen} onOpenChange={setNotifyRootCauseOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Notify salesperson on root cause?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to update the salesperson on{' '}
-              <span className="font-medium">{complaint.root_cause_name ?? '—'}</span>? A
-              Respond.io message will be sent to the customer&apos;s conversation.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={notifyRootCauseMutation.isPending}>
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              disabled={notifyRootCauseMutation.isPending}
-              onClick={async (e) => {
-                e.preventDefault();
-                try {
-                  await notifyRootCauseMutation.mutateAsync(complaintId);
-                  setNotifyRootCauseOpen(false);
-                } catch {
-                  /* toast in hook */
-                }
-              }}
-            >
-              Notify
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog open={notifyResolutionOpen} onOpenChange={setNotifyResolutionOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Notify salesperson on resolution?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to update the salesperson on{' '}
-              <span className="font-medium">{complaint.resolution_name ?? '—'}</span>? A
-              Respond.io message will be sent to the customer&apos;s conversation.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={notifyResolutionMutation.isPending}>
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              disabled={notifyResolutionMutation.isPending}
-              onClick={async (e) => {
-                e.preventDefault();
-                try {
-                  await notifyResolutionMutation.mutateAsync(complaintId);
-                  setNotifyResolutionOpen(false);
-                } catch {
-                  /* toast in hook */
-                }
-              }}
-            >
-              Notify
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <AlertDialog open={approveDialogOpen} onOpenChange={setApproveDialogOpen}>
         <AlertDialogContent>
@@ -561,6 +650,14 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <FormSkipDialog
+        skip={formSkip}
+        open={skipDialogOpen}
+        onOpenChange={setSkipDialogOpen}
+        consequence="The technician settled this complaint during the site visit, so no replacement will be arranged and customer service will not be assigned."
+        detail="The complaint is closed as settled on site."
+      />
 
       <AlertDialog open={processDialogOpen} onOpenChange={setProcessDialogOpen}>
         <AlertDialogContent>
@@ -687,7 +784,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 try {
                   const res = await escalateFormTracking(activeTracker.id, escalateReason.trim());
                   queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', 'complaint', complaintId] });
-                  handlingLock.refresh(); // lock banner keys on a separate query — refetch so it appears without reload
+                  handlingLock.refresh(); // lock banner keys on a separate query - refetch so it appears without reload
                   toast.success(`Escalated to tier ${res.current_tier}`);
                   setEscalateOpen(false);
                 } catch (err) {
@@ -711,6 +808,26 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
         onExtended={() =>
           queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', 'complaint', complaintId] })
         }
+      />
+
+      <ReassignDialog
+        open={reassignOpen}
+        onOpenChange={setReassignOpen}
+        taskLabel={`Complaint${complaint.complaint_number ? ` · ${complaint.complaint_number}` : ''}`}
+        submitting={reassignMutation.isPending}
+        onConfirm={(userId) => {
+          if (!activeTracker) return;
+          reassignMutation.mutate(
+            { id: activeTracker.id, userId },
+            {
+              onSuccess: () => {
+                queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', 'complaint', complaintId] });
+                handlingLock.refresh(); // lock banner keys on a separate query - refetch so it appears without reload
+                setReassignOpen(false);
+              },
+            },
+          );
+        }}
       />
 
       <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
@@ -768,7 +885,13 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={editTechnicalResponseOpen} onOpenChange={setEditTechnicalResponseOpen}>
+      <Dialog
+        open={editTechnicalResponseOpen}
+        onOpenChange={(open) => {
+          setEditTechnicalResponseOpen(open);
+          if (!open) setResponseAttachmentFiles([]);
+        }}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Edit technical team response</DialogTitle>
@@ -787,15 +910,36 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               className="resize-none"
             />
           </div>
+          <div className="space-y-2">
+            <Label>Attachments</Label>
+            <ResponseAttachmentDropzone
+              files={responseAttachmentFiles}
+              onFilesChange={setResponseAttachmentFiles}
+              disabled={uploadResponseAttachmentsMutation.isPending}
+            />
+          </div>
           <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
-            <Button variant="outline" onClick={() => setEditTechnicalResponseOpen(false)}>
+            <Button variant="outline" onClick={closeEditTechnicalResponse}>
               Cancel
             </Button>
             <Button
               variant="outline"
               data-guide-target="complaint-management.complaints.tech-team.save-response"
-              disabled={updateComplaintMutation.isPending}
+              // Blank response = nothing to save or send. Disable up front instead
+              // of accepting the click and rejecting it with a toast afterwards.
+              disabled={
+                !editTechnicalResponseValue.trim() ||
+                updateComplaintMutation.isPending ||
+                uploadResponseAttachmentsMutation.isPending
+              }
+              title={
+                !editTechnicalResponseValue.trim()
+                  ? 'Enter a technical team response first.'
+                  : undefined
+              }
               onClick={async () => {
+                const uploaded = await uploadStagedResponseAttachments();
+                if (!uploaded) return;
                 try {
                   await updateComplaintMutation.mutateAsync({
                     id: complaintId,
@@ -807,18 +951,29 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 }
               }}
             >
-              {updateComplaintMutation.isPending ? 'Saving…' : 'Save only'}
+              {updateComplaintMutation.isPending || uploadResponseAttachmentsMutation.isPending
+                ? 'Saving…'
+                : 'Save only'}
             </Button>
             {canUseRespondChat && (
               <Button
                 variant="primary"
                 data-guide-target="complaint-management.complaints.tech-team.update-reply"
                 disabled={
+                  !editTechnicalResponseValue.trim() ||
                   updateComplaintMutation.isPending ||
                   openingReplySheet ||
-                  updateComplaintAndReplyMutation.isPending
+                  updateComplaintAndReplyMutation.isPending ||
+                  uploadResponseAttachmentsMutation.isPending
+                }
+                title={
+                  !editTechnicalResponseValue.trim()
+                    ? 'Enter a technical team response first.'
+                    : undefined
                 }
                 onClick={async () => {
+                  const uploaded = await uploadStagedResponseAttachments();
+                  if (!uploaded) return;
                   setOpeningReplySheet(true);
                   try {
                     await sendComplaintUpdateAndReplyViaRespond(editTechnicalResponseValue);
@@ -839,6 +994,36 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ComplaintNotifiableFieldDialog
+        open={editRootCauseOpen}
+        onOpenChange={setEditRootCauseOpen}
+        kind="root_cause"
+        value={complaint.root_cause_id ?? null}
+        options={rootCauseOptions}
+        canReply={canUseRespondChat && canEditComplaint}
+        isPending={updateComplaintMutation.isPending || notifyRootCauseMutation.isPending}
+        onUpdate={(id) => saveNotifiableField('root_cause_id', id)}
+        onUpdateAndReply={async (id) => {
+          await saveNotifiableField('root_cause_id', id);
+          await notifyRootCauseMutation.mutateAsync(complaintId);
+        }}
+      />
+
+      <ComplaintNotifiableFieldDialog
+        open={editResolutionOpen}
+        onOpenChange={setEditResolutionOpen}
+        kind="resolution"
+        value={complaint.resolution_id ?? null}
+        options={resolutionOptions}
+        canReply={canUseRespondChat && canEditComplaint}
+        isPending={updateComplaintMutation.isPending || notifyResolutionMutation.isPending}
+        onUpdate={(id) => saveNotifiableField('resolution_id', id)}
+        onUpdateAndReply={async (id) => {
+          await saveNotifiableField('resolution_id', id);
+          await notifyResolutionMutation.mutateAsync(complaintId);
+        }}
+      />
 
       {complaint.status === 'rejected' && (
         <RejectionReasonBanner
@@ -1048,56 +1233,42 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             </div>
           )}
           <div>
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-sm text-muted-foreground">Root Cause</p>
-              <Button
-                variant="outline"
-                size="sm"
-                data-guide-target="complaint-management.complaints.tech-team.notify-root-cause"
-                onClick={() => setNotifyRootCauseOpen(true)}
-                disabled={
-                  isVoided ||
-                  !complaint.root_cause_id ||
-                  !complaint.respond_inbox_url ||
-                  notifyRootCauseMutation.isPending
-                }
-                aria-label="Notify salesperson on root cause"
-              >
-                Notify salesperson
-              </Button>
+            {/* Edit only: the popup's "Update & Reply" is the single way to tell
+                the salesperson, so a separate Notify button is redundant. */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="min-w-0 text-sm text-muted-foreground">Root Cause</p>
+              {businessCtasEnabled && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-guide-target="complaint-management.complaints.tech-team.edit-root-cause"
+                  onClick={() => setEditRootCauseOpen(true)}
+                  aria-label="Edit root cause"
+                >
+                  <Edit className="size-4" />
+                  Edit
+                </Button>
+              )}
             </div>
             <p className="font-medium">{complaint.root_cause_name ?? '-'}</p>
-            {complaint.root_cause_notified_at && (
-              <p className="text-xs text-muted-foreground">
-                Last notified {formatDateTimeInMalaysia(complaint.root_cause_notified_at)}
-              </p>
-            )}
           </div>
           <div>
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-sm text-muted-foreground">Resolution</p>
-              <Button
-                variant="outline"
-                size="sm"
-                data-guide-target="complaint-management.complaints.tech-team.notify-resolution"
-                onClick={() => setNotifyResolutionOpen(true)}
-                disabled={
-                  isVoided ||
-                  !complaint.resolution_id ||
-                  !complaint.respond_inbox_url ||
-                  notifyResolutionMutation.isPending
-                }
-                aria-label="Notify salesperson on resolution"
-              >
-                Notify salesperson
-              </Button>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="min-w-0 text-sm text-muted-foreground">Resolution</p>
+              {businessCtasEnabled && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-guide-target="complaint-management.complaints.tech-team.edit-resolution"
+                  onClick={() => setEditResolutionOpen(true)}
+                  aria-label="Edit resolution"
+                >
+                  <Edit className="size-4" />
+                  Edit
+                </Button>
+              )}
             </div>
             <p className="font-medium">{complaint.resolution_name ?? '-'}</p>
-            {complaint.resolution_notified_at && (
-              <p className="text-xs text-muted-foreground">
-                Last notified {formatDateTimeInMalaysia(complaint.resolution_notified_at)}
-              </p>
-            )}
           </div>
           <div>
             <div className="flex items-center justify-between gap-2">

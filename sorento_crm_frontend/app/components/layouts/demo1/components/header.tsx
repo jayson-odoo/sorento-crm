@@ -108,7 +108,7 @@ export function Header() {
             and confusing (removed 2026-06-30). ms-auto keeps utilities right-aligned. */}
 
         {/* HeaderTopbar */}
-        <div className="flex items-center gap-3 ms-auto">
+        <div className="flex items-center gap-1.5 sm:gap-3 ms-auto min-w-0">
           {pathname.startsWith('/store-client') ? (
             <StoreClientTopbar />
           ) : (

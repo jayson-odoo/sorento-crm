@@ -400,3 +400,81 @@ def test_reassign_scope_b_enforced(db):
 
     with pytest.raises(AppException):
         ConversationSLATrackingService(db).reassign(tid, me, outsider)
+
+
+# ---- admin bypass ---------------------------------------------------------
+# An admin opening a form detail page sees the form AND its open SLA task, so
+# refusing Reassign there (with a "not found, someone deleted it" message) reads
+# as a bug. Admin / superadmin bypass the team-membership scope on both sides:
+# the task's current assignee AND the hand-off target.
+
+
+def _make_admin(db, user_id: str) -> None:
+    """Give `user_id` the admin role slug."""
+    from app.models.user import UserRole, UserRoleAssignment
+
+    role_id = str(uuid.uuid4())
+    db.add(UserRole(id=role_id, name="Admin", slug="admin"))
+    db.flush()
+    db.add(UserRoleAssignment(id=str(uuid.uuid4()), user_id=user_id, role_id=role_id))
+    db.commit()
+
+
+def test_reassign_denied_message_names_the_real_reason_not_deleted(db):
+    """Out-of-scope must not claim the row is missing: the user is looking at it."""
+    pid = _policy(db)
+    me = _user(db, "cs-agent")
+    outsider = _user(db, "purchasing-owner")
+    my_team = _team(db, "Mine")
+    other = _team(db, "Other")
+    _member(db, my_team, me)
+    _member(db, other, outsider)
+    tid = _track(db, pid, assignee=outsider, src="stock_inquiry")
+
+    with pytest.raises(AppException) as exc:
+        ConversationSLATrackingService(db).reassign(tid, me, outsider)
+    message = str(exc.value.detail.get("message", "")).lower()
+    assert "outside your teams" in message
+    assert "deleted" not in message
+
+
+@patch("app.services.sla_service.ConversationSLATrackingService._notify_reassignment")
+def test_admin_can_reassign_a_task_owned_by_another_team(notify, db):
+    pid = _policy(db)
+    admin = _user(db, "admin-user")
+    outsider = _user(db, "purchasing-owner")
+    target = _user(db, "purchasing-peer")
+    other = _team(db, "Purchasing")
+    _member(db, other, outsider)
+    _member(db, other, target)
+    _make_admin(db, admin)
+    tid = _track(db, pid, assignee=outsider, src="stock_inquiry")
+
+    updated = ConversationSLATrackingService(db).reassign(tid, admin, target)
+    assert str(updated.assigned_to_id) == target
+
+
+def test_admin_picker_lists_users_outside_their_own_teams(db):
+    admin = _user(db, "admin-user")
+    outsider = _user(db, "purchasing-owner")
+    _member(db, _team(db, "Purchasing"), outsider)
+    _make_admin(db, admin)
+
+    ids = {u["id"] for u in ConversationSLATrackingService(db).list_visible_users(admin)}
+    # Admin sees everyone but themselves, so the picker matches what they can save.
+    assert outsider in ids
+    assert admin not in ids
+
+
+def test_non_admin_picker_still_scoped_to_their_teams(db):
+    me = _user(db, "cs-agent")
+    peer = _user(db, "cs-peer")
+    outsider = _user(db, "purchasing-owner")
+    mine = _team(db, "Mine")
+    _member(db, mine, me)
+    _member(db, mine, peer)
+    _member(db, _team(db, "Purchasing"), outsider)
+
+    ids = {u["id"] for u in ConversationSLATrackingService(db).list_visible_users(me)}
+    assert peer in ids
+    assert outsider not in ids

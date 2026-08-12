@@ -37,7 +37,7 @@ export interface InboundShipmentLine {
   }>;
 }
 
-export interface PackingList {
+export interface PackingList extends ClearanceFields {
   id: string;
   shipment_number: string | null;
   supplier_id: string;
@@ -78,6 +78,53 @@ export interface PackingList {
   spo_allocations_count?: number;
   display_total_items?: number | null;
   display_total_cartons?: number | null;
+}
+
+/**
+ * Container-status clearance fields.
+ *
+ * PHASE 1 CONTRACT (mocked). These arrive on the same `inbound_shipments` row as
+ * the packing list: one Container Status sheet row = one packing list. Every field
+ * is optional because a caller without entitlement receives the keys **absent**,
+ * not null - absent means "you may not see this", null means "not reached yet".
+ * See documentation/plans/purchasing/container-status-tracking-acceptance-criteria.md
+ * sections B and C.
+ */
+export interface ClearanceFields {
+  /** Yard / warehouse location code (sheet column LOC). */
+  loc?: string | null;
+  liner_code?: string | null;
+  china_forwarder?: string | null;
+  malaysia_forwarder?: string | null;
+  consignee?: string | null;
+  /** Free days before demurrage / detention starts. */
+  free_days_available?: number | null;
+  stacked?: string | null;
+
+  loading_date?: string | null;
+  etc_date?: string | null;
+  etd_date?: string | null;
+  /** First-published ETA. */
+  /** Revised ETA - the accurate one. Doubles as de-facto arrival. */
+  eta_delay_date?: string | null;
+  inspection_date?: string | null;
+  approval_date?: string | null;
+  gatepass_date?: string | null;
+  delivery_warehouse?: string | null;
+  warehouse_arrival_date?: string | null;
+  informed_collection_date?: string | null;
+  collection_date?: string | null;
+
+  /*
+   * ATA, ORI DOC RECEIVED, K1 SUBMISSION and YARD ARRIVALS are deliberately absent.
+   * They exist on the sheet but are filled 6 / 4 / 4 / 4 times across 407
+   * containers and nothing reads them, so they are not columns, not imported and
+   * not shown. The retained source file keeps the history (D34).
+   */
+
+  coa_permit_no?: string | null;
+  /** Which workbook tab the row came from. Traceability only - never derives status. */
+  source_sheet?: string | null;
 }
 
 export interface PackingListDetail extends PackingList {

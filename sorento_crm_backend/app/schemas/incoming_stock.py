@@ -7,6 +7,9 @@ These schemas enforce the business rules from next_agents/incoming_stock_enquiri
 - ONLY show human-readable identifiers: product_code, shipment_number, container_number, warehouse_code,
   ETA, filenames.
 - ONLY show `remaining_incoming_quantity` (= quantity_shipped - quantity_received, clamped to >= 0).
+- Allocation state is surfaced as `unallocated_quantity` (the GAP against quantity_shipped),
+  never as the shipped base itself — the base plus the already-public remaining would let a
+  consumer derive `quantity_received`.
 """
 from __future__ import annotations
 
@@ -44,6 +47,7 @@ class IncomingShipmentForProduct(BaseModel):
     estimated_arrival_date: Optional[date] = None
     batch_number: Optional[str] = None
     remaining_incoming_quantity: int
+    unallocated_quantity: Optional[int] = None
     warehouse_allocations: List[WarehouseAllocation] = []
     attachment: Optional[AttachmentInfo] = None
 
@@ -77,6 +81,7 @@ class IncomingProductInShipment(BaseModel):
     is_discontinued: bool = False
     batch_number: Optional[str] = None
     remaining_incoming_quantity: int
+    unallocated_quantity: Optional[int] = None
     warehouse_allocations: List[WarehouseAllocation] = []
 
 

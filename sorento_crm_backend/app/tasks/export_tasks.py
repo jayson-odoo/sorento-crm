@@ -84,6 +84,111 @@ def generate_complaint_pdf(download_id: str, complaint_id: str, user_id: str) ->
         db.close()
 
 
+def generate_stock_inquiry_pdf(download_id: str, inquiry_id: str, user_id: str) -> dict:
+    """Render a product inquiry PDF, store it, and update the download row.
+
+    Best-effort and self-contained: any failure marks the download 'failed' with
+    a readable message rather than raising into RQ's failed registry.
+    """
+    db = SessionLocal()
+    # Worker sessions default to the fail-closed UNSET scope; stock inquiries are a
+    # global (non-owned) entity and their attachments are shared, so run this
+    # export system-wide (all companies) - same as the complaint export.
+    set_company_scope(db, None)
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+
+        from app.services.stock_inquiry_pdf_service import StockInquiryPDFService
+
+        pdf_bytes, filename = StockInquiryPDFService(db).render_pdf(inquiry_id)
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/product-inquiry-pdf/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=pdf_bytes,
+            file_path=key,
+            content_type="application/pdf",
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        logger.info(
+            "generate_stock_inquiry_pdf: download %s ready (%d bytes)", download_id, len(pdf_bytes)
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(pdf_bytes)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_stock_inquiry_pdf failed for download %s", download_id)
+        try:
+            svc.mark_failed(download_id, str(e))
+        except Exception:
+            logger.exception(
+                "generate_stock_inquiry_pdf: could not mark download %s failed", download_id
+            )
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
+    finally:
+        db.close()
+
+
+def generate_purchase_request_pdf(download_id: str, request_id: str, user_id: str) -> dict:
+    """Render a purchase request / sponsorship form PDF, store it, update the row.
+
+    Best-effort and self-contained: any failure marks the download 'failed' with a
+    readable message rather than raising into RQ's failed registry. Mirrors
+    generate_stock_inquiry_pdf.
+    """
+    db = SessionLocal()
+    # Worker sessions default to the fail-closed UNSET scope. PR/SF are global
+    # (non-owned) and their attachments are shared, so export system-wide - the
+    # same choice the complaint and stock-inquiry exports make.
+    set_company_scope(db, None)
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+
+        from app.services.purchase_request_pdf_service import PurchaseRequestPDFService
+
+        pdf_bytes, filename = PurchaseRequestPDFService(db).render_pdf(request_id)
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/purchase-request-pdf/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=pdf_bytes,
+            file_path=key,
+            content_type="application/pdf",
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        logger.info(
+            "generate_purchase_request_pdf: download %s ready (%d bytes)",
+            download_id,
+            len(pdf_bytes),
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(pdf_bytes)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_purchase_request_pdf failed for download %s", download_id)
+        try:
+            svc.mark_failed(download_id, str(e))
+        except Exception:
+            logger.exception(
+                "generate_purchase_request_pdf: could not mark download %s failed", download_id
+            )
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
+    finally:
+        db.close()
+
+
 def generate_promotions_pdf(
     download_id: str, promotion_ids: list, user_id: str, company_id: Optional[str] = None
 ) -> dict:

@@ -6,14 +6,10 @@ info, product lines, defect description, technical response, resolution, and
 embedded image attachments. Internal-only fields (audit trail, assignee, SLA)
 are deliberately excluded.
 
-WeasyPrint needs native cairo/pango/gdk-pixbuf libs; the import is guarded so the
-API/worker never crash if they're missing — the caller marks the download failed
-with a clear message instead.
+Attachment embedding, image classification and the guarded WeasyPrint call live
+in ``app.services.pdf_render``, shared with the other entity PDF exports.
 """
-import base64
 import logging
-import mimetypes
-import os
 from datetime import date, datetime
 from html import escape
 from typing import Optional
@@ -21,35 +17,22 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.models.complaints import Complaint
-from app.services.storage_router import extract_key, get_backend, normalize_provider
+from app.services.pdf_render import (
+    PDFRenderingUnavailable,
+    embedded_images,
+    image_mime,
+    names_list_html,
+    non_image_names,
+    photos_section_html,
+    render_html,
+)
 
 logger = logging.getLogger(__name__)
 
-_IMAGE_MIME_PREFIX = "image/"
-# Fallback when the stored mime_type is missing/generic (e.g. WhatsApp .jpeg
-# uploads land as application/octet-stream or NULL). Extension wins so any photo
-# type renders in the PHOTOS section instead of being dumped under OTHER.
-_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".heic", ".heif", ".tif", ".tiff"}
+# Back-compat alias: the image-classification tests import this name from here.
+_image_mime = image_mime
 
-
-def _image_mime(att) -> Optional[str]:
-    """Return an image/* mime for an attachment, or None if not an image.
-
-    Trusts a stored image/* mime first; otherwise infers from the filename
-    extension so photos with missing/generic mime_type still count as images.
-    """
-    mime = (getattr(att, "mime_type", None) or "").lower()
-    if mime.startswith(_IMAGE_MIME_PREFIX):
-        return mime
-    name = getattr(att, "original_filename", None) or getattr(att, "file_path", None) or ""
-    ext = os.path.splitext(str(name))[1].lower()
-    if ext in _IMAGE_EXTS:
-        return mimetypes.types_map.get(ext) or f"image/{ext.lstrip('.')}"
-    return None
-
-
-class PDFRenderingUnavailable(RuntimeError):
-    """Raised when WeasyPrint cannot render (native libs missing)."""
+__all__ = ["ComplaintPDFService", "PDFRenderingUnavailable"]
 
 
 def _fmt(value) -> str:
@@ -87,32 +70,7 @@ class ComplaintPDFService:
         Non-image attachments are listed by filename only (handled by the caller
         via _other_attachment_names). Best-effort: a failed fetch is skipped.
         """
-        out: list[dict] = []
-        for link in self._attachment_links(complaint):
-            att = getattr(link, "attachment", None)
-            if att is None:
-                continue
-            mime = _image_mime(att)
-            if mime is None:
-                continue
-            try:
-                provider = normalize_provider(getattr(att, "storage_provider", None))
-                key = extract_key(getattr(att, "file_path", None))
-                if not key:
-                    continue
-                raw = get_backend(provider).download_file(key)
-                b64 = base64.b64encode(raw).decode("ascii")
-                out.append(
-                    {
-                        "name": getattr(att, "original_filename", None) or "image",
-                        "data_uri": f"data:{mime};base64,{b64}",
-                    }
-                )
-            except Exception:  # pragma: no cover - best-effort per image
-                logger.warning(
-                    "complaint PDF: failed to embed attachment %s", getattr(att, "id", "?"), exc_info=True
-                )
-        return out
+        return embedded_images(self._attachment_links(complaint), context="complaint PDF")
 
     def _attachment_links(self, complaint: Complaint) -> list:
         """Linked attachments for the complaint, from the generic
@@ -127,14 +85,7 @@ class ComplaintPDFService:
             return []
 
     def _other_attachment_names(self, complaint: Complaint) -> list[str]:
-        names: list[str] = []
-        for link in self._attachment_links(complaint):
-            att = getattr(link, "attachment", None)
-            if att is None:
-                continue
-            if _image_mime(att) is None:
-                names.append(getattr(att, "original_filename", None) or "attachment")
-        return names
+        return non_image_names(self._attachment_links(complaint))
 
     def _html(self, complaint: Complaint) -> str:
         rc = getattr(complaint, "root_cause", None)
@@ -182,23 +133,8 @@ class ComplaintPDFService:
         else:
             products_html = "<p class='empty'>No product lines recorded.</p>"
 
-        images = self._image_data_uris(complaint)
-        if images:
-            imgs_html = "".join(
-                f"<figure><img src='{img['data_uri']}'/>"
-                f"<figcaption>{escape(img['name'])}</figcaption></figure>"
-                for img in images
-            )
-            photos_html = f"<div class='photos'>{imgs_html}</div>"
-        else:
-            photos_html = "<p class='empty'>No photo attachments.</p>"
-
-        other = self._other_attachment_names(complaint)
-        other_html = (
-            "<ul>" + "".join(f"<li>{escape(n)}</li>" for n in other) + "</ul>"
-            if other
-            else "<p class='empty'>None.</p>"
-        )
+        photos_html = photos_section_html(self._image_data_uris(complaint))
+        other_html = names_list_html(self._other_attachment_names(complaint))
 
         defect = _fmt(getattr(complaint, "defect_description", None))
         tech = _fmt(getattr(complaint, "technical_team_response", None))
@@ -267,17 +203,4 @@ class ComplaintPDFService:
         """Return (pdf_bytes, filename). Raises PDFRenderingUnavailable if WeasyPrint
         cannot render (native libs missing)."""
         complaint = self._load(complaint_id)
-        html = self._html(complaint)
-        try:
-            from weasyprint import HTML  # noqa: WPS433 (guarded optional dep)
-        except Exception as e:  # ImportError or native-lib load error
-            raise PDFRenderingUnavailable(
-                f"PDF rendering is unavailable on this host (WeasyPrint import failed: {e})."
-            ) from e
-        try:
-            pdf_bytes = HTML(string=html).write_pdf()
-        except Exception as e:
-            raise PDFRenderingUnavailable(
-                f"PDF rendering failed (WeasyPrint native libraries missing or broken: {e})."
-            ) from e
-        return pdf_bytes, self.build_filename(complaint)
+        return render_html(self._html(complaint)), self.build_filename(complaint)

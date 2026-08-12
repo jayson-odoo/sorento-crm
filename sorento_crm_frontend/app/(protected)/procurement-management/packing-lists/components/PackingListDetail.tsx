@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Edit, Trash2, Link as LinkIcon, Search, X, ArrowUpDown, ArrowUp, ArrowDown, Link2, Unlink, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -28,6 +29,8 @@ import { useDownloadAttachment } from '@/app/(protected)/resource-management/att
 import { getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import { toast } from 'sonner';
 import ComplaintLinkAttachmentBrowserDialog from '@/app/(protected)/complaint-management/complaints/components/ComplaintLinkAttachmentBrowserDialog';
+import ClearanceDeliveryCard from './ClearanceDeliveryCard';
+import { CLEARANCE_ATTRIBUTE_FIELDS } from '../forms/packing-list-schema';
 
 interface PackingListDetailProps {
   packingListId: string;
@@ -37,9 +40,24 @@ export default function PackingListDetail({
   packingListId,
 }: PackingListDetailProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: packingList, isLoading } = usePackingList(packingListId);
+
+  // `?tab=` so a tab survives a refresh and can be linked to directly. Written
+  // with replace() so tab switching does not fill the back button with history.
+  const TABS = ['timeline', 'details', 'documents', 'lines'] as const;
+  const requestedTab = searchParams.get('tab');
+  const activeTab = TABS.includes(requestedTab as (typeof TABS)[number])
+    ? (requestedTab as string)
+    : 'timeline';
+  const setActiveTab = (next: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('tab', next);
+    router.replace(`?${params.toString()}`, { scroll: false });
+  };
   const updatePackingListMutation = useUpdatePackingList();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const lineCount = packingList?.shipment_lines?.length ?? 0;
   const [linkAttachmentDialogOpen, setLinkAttachmentDialogOpen] = useState(false);
   const [shipmentLinesSearch, setShipmentLinesSearch] = useState('');
   const [sortField, setSortField] = useState<'product' | 'quantity_shipped' | 'spo_allocated' | 'quantity_received' | 'status'>('product');
@@ -242,10 +260,14 @@ export default function PackingListDetail({
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-bold">
+      {/* Header. `flex items-center justify-between` does NOT wrap: at phone width
+          the 305px action group cannot fit beside the title, so it was pushed past
+          the viewport and dragged the whole page into horizontal scroll (measured
+          504px of content in a 360px viewport - the table below is already clipped
+          by its own scroller, so the header was the only real offender). */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 space-y-1">
+          <h1 className="text-2xl font-bold break-words">
             {packingList.shipping_container_number || packingList.shipment_number || `Packing list ${packingList.id.slice(0, 8)}`}
           </h1>
           <p className="text-sm text-muted-foreground">
@@ -256,7 +278,7 @@ export default function PackingListDetail({
               : '-'}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <PackingListNavigation packingListId={packingListId} />
           <Button
             variant="outline"
@@ -290,8 +312,37 @@ export default function PackingListDetail({
         />
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-2">
+      {/* Tabs, not stacked sections: four cards down one page meant scrolling past
+          the timeline to reach the lines. `?tab=` keeps a tab linkable and keeps
+          the choice on a refresh. */}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="w-full justify-start overflow-x-auto">
+          <TabsTrigger value="timeline">Timeline</TabsTrigger>
+          <TabsTrigger value="details">Details</TabsTrigger>
+          <TabsTrigger value="documents">Documents</TabsTrigger>
+          <TabsTrigger value="lines">
+            Shipment Lines
+            {lineCount > 0 && (
+              <Badge variant="secondary" className="ms-2">
+                {lineCount}
+              </Badge>
+            )}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="timeline" className="mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Clearance &amp; Delivery</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ClearanceDeliveryCard packingList={packingList} />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="details" className="mt-6">
+        <Card>
           <CardHeader>
             <CardTitle>Shipment Information</CardTitle>
           </CardHeader>
@@ -371,6 +422,43 @@ export default function PackingListDetail({
           </CardContent>
         </Card>
 
+        {/* The non-date clearance attributes. Rendered here because the edit form
+            can set them and this tab is where their read-only counterpart belongs:
+            the timeline above covers the DATES, and a field you can type but never
+            see afterwards reads as a save that did not work.
+
+            Always rendered, every row, even when empty - per the CRUD standard a
+            section is never hidden on missing data, and "-" is the honest answer
+            for a container that has not cleared yet. */}
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle>Clearance Details</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {CLEARANCE_ATTRIBUTE_FIELDS.map((f) => {
+                const value = (packingList as unknown as Record<string, unknown>)[f.name];
+                return (
+                  <div key={f.name} className="min-w-0">
+                    <p className="text-sm text-muted-foreground">{f.label}</p>
+                    <p className="font-medium break-words">
+                      {value === null || value === undefined || value === '' ? '-' : String(value)}
+                    </p>
+                  </div>
+                );
+              })}
+              <div className="min-w-0">
+                {/* Provenance, not an editable attribute - it says which workbook
+                    tab the row came from, so it is shown but never typed. */}
+                <p className="text-sm text-muted-foreground">Source sheet</p>
+                <p className="font-medium break-words">{packingList.source_sheet || '-'}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        </TabsContent>
+
+        <TabsContent value="documents" className="mt-6">
         <Card>
           <CardHeader>
             <CardTitle>Related Documents</CardTitle>
@@ -466,21 +554,32 @@ export default function PackingListDetail({
               )}
           </CardContent>
         </Card>
-      </div>
+        </TabsContent>
 
-      {/* Line Items */}
-      {packingList.shipment_lines &&
-        packingList.shipment_lines.length > 0 && (
+        <TabsContent value="lines" className="mt-6">
+        {!packingList.shipment_lines || packingList.shipment_lines.length === 0 ? (
           <Card>
-            <CardHeader className="flex-row items-center justify-between gap-3">
-              <CardTitle>Shipment Lines</CardTitle>
-              <div className="relative flex items-center gap-2">
+            <CardContent className="py-10 text-center">
+              <p className="text-sm font-medium">No shipment lines</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                This packing list has no product lines yet. They arrive with the
+                packing list import, or can be added by editing the packing list.
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            {/* Same non-wrapping trap as the page header: "Shipment Lines" plus a
+                224px search box does not fit the 286px of card content at 375px. */}
+            <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <CardTitle className="min-w-0 break-words">Shipment Lines</CardTitle>
+              <div className="relative flex w-full items-center gap-2 sm:w-auto">
                 <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <Input
                   placeholder="Search by product code"
                   value={shipmentLinesSearch}
                   onChange={(e) => setShipmentLinesSearch(e.target.value)}
-                  className="ps-9 w-56"
+                  className="ps-9 w-full sm:w-56"
                 />
                 {shipmentLinesSearch && (
                   <Button
@@ -716,6 +815,8 @@ export default function PackingListDetail({
             </CardContent>
           </Card>
         )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

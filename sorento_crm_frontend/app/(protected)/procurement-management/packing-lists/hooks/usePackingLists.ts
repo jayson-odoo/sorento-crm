@@ -13,6 +13,7 @@ import {
   deletePackingList,
   bulkDeletePackingLists,
   PACKING_LIST_NEIGHBOURS_PATH,
+  getClearanceCheckpoints,
   type PackingListsListParams,
 } from '../services/packingListService';
 import type { PackingListFormData } from '../types/packingList.types';
@@ -123,5 +124,20 @@ export function useBulkDeletePackingLists() {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to bulk delete packing lists'),
+  });
+}
+
+/**
+ * Checkpoint definitions for the clearance timeline.
+ *
+ * Configuration that changes when an admin edits it, not per-record data, so it
+ * is cached hard and shared by every packing list detail page in the session.
+ */
+export function useClearanceCheckpoints() {
+  return useQuery({
+    queryKey: ['clearance-checkpoints'],
+    queryFn: getClearanceCheckpoints,
+    staleTime: 1000 * 60 * 30,
+    retry: 1,
   });
 }

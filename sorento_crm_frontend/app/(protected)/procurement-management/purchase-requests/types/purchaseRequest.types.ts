@@ -20,6 +20,10 @@ export interface PurchaseRequestAttachment {
   file_size_bytes?: number | null;
   uploaded_at?: string | null;
   link_type?: string | null;
+  /** Uploader attribution (S1) - names only, never a UUID. */
+  uploader_kind?: 'user' | 'contact' | 'system' | null;
+  uploaded_by_name?: string | null;
+  uploaded_by_role?: 'contact' | 'staff' | null;
 }
 
 export interface PurchaseRequest {
@@ -28,6 +32,8 @@ export interface PurchaseRequest {
   request_number?: string | null;
   request_date?: string | null;
   customer_name?: string | null;
+  /** Site contact, free text ("name and contact number"). Optional. */
+  pic?: string | null;
   project_title?: string | null;
   /** AC-L3: reportable link to a registered project. `project_code` is the display value. */
   project_id?: string | null;
@@ -44,8 +50,13 @@ export interface PurchaseRequest {
   expected_po_date?: string | null;
   expected_po_date_text?: string | null;
   requested_by?: string | null;
+  /** Contact FK routing key (CS pin lookup). `requested_by` stays the display
+   *  label, derived server-side when this FK is set. */
+  requested_by_contact_id?: string | null;
+  /** Resolved live contact name when the FK is set; falls back to `requested_by`. */
+  requested_by_contact_name?: string | null;
   requested_at?: string | null;
-  /** Top document "Date" — auto-stamped on submit (read-only). */
+  /** Top document "Date" - auto-stamped on submit (read-only). */
   submitted_at?: string | null;
   assigned_to_id?: string | null;
   assigned_to_name?: string | null;
@@ -105,6 +116,7 @@ export interface PurchaseRequestFormData {
   request_number?: string | null;
   request_date?: string;
   customer_name?: string;
+  pic?: string | null;
   project_title?: string;
   project_id?: string | null;
   purpose?: string;
@@ -118,6 +130,7 @@ export interface PurchaseRequestFormData {
   expected_po_date?: string;
   expected_po_date_text?: string;
   requested_by?: string;
+  requested_by_contact_id?: string | null;
   requested_at?: string;
   contact_id?: string | null;
   space_id?: string | null;

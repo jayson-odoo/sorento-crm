@@ -59,6 +59,10 @@ def test_seed_creates_every_key_at_v1_with_a_production_label(seeded: Session):
     # explainer and market advisory), and a hardcoded total turns every one of those into a
     # false failure that says nothing about whether seeding actually works.
     assert names == set(PROMPT_KEYS.keys())
+    # Counted against PROMPT_KEYS, not a literal: the key set grows (semantic_parser,
+    # ideate_extractor, the SCM pair, spec_understanding...) and a hardcoded number
+    # fails on every addition while proving nothing about the seed.
+    assert len(names) == len(PROMPT_KEYS)
     for name in PROMPT_KEYS:
         versions = [r.version for r in seeded.query(AIPromptVersion).filter_by(name=name).all()]
         assert versions == [1]
@@ -467,3 +471,49 @@ def test_is_write_tool_classification():
     assert not _is_write_tool("crm_inventory_stock_balance_list")
     assert not _is_write_tool("crm_master_products_get")
     assert not _is_write_tool("")
+
+
+# --------------------------------------------------------------------------- #
+# per-agent LLM: which model this agent runs on
+# --------------------------------------------------------------------------- #
+def test_an_agent_with_no_model_set_uses_the_global_default(seeded: Session):
+    # Every row means this today, so shipping the column must change nothing until
+    # somebody sets a value.
+    assert ai_prompt_registry.agent_model(seeded, "spec_understanding") == (None, None)
+
+
+def test_setting_an_agents_model_is_readable_at_runtime(seeded: Session):
+    AIPromptService(seeded).set_agent_model(
+        "spec_understanding", label="production", provider="openai", model="gpt-5.4-mini"
+    )
+
+    assert ai_prompt_registry.agent_model(seeded, "spec_understanding") == (
+        "openai",
+        "gpt-5.4-mini",
+    )
+
+
+def test_clearing_an_agents_model_returns_it_to_the_global_default(seeded: Session):
+    svc = AIPromptService(seeded)
+    svc.set_agent_model("spec_understanding", label="production", provider="openai", model="gpt-5.4-mini")
+    svc.set_agent_model("spec_understanding", label="production", provider="", model="")
+
+    assert ai_prompt_registry.agent_model(seeded, "spec_understanding") == (None, None)
+
+
+def test_one_agents_model_does_not_leak_to_another(seeded: Session):
+    AIPromptService(seeded).set_agent_model(
+        "spec_understanding", label="production", provider="openai", model="gpt-5.4-mini"
+    )
+
+    assert ai_prompt_registry.agent_model(seeded, "semantic_parser") == (None, None)
+
+
+def test_the_model_shows_up_in_the_agent_list(seeded: Session):
+    AIPromptService(seeded).set_agent_model(
+        "spec_understanding", label="production", provider="openai", model="gpt-5.4-mini"
+    )
+
+    row = next(r for r in AIPromptService(seeded).list_keys() if r["name"] == "spec_understanding")
+    assert row["model"] == "gpt-5.4-mini"
+    assert row["provider"] == "openai"

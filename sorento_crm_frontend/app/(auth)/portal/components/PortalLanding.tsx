@@ -73,7 +73,13 @@ function statusVariant(row: PortalSubmissionSummary): BadgeVariant {
   if (row.is_draft) return 'secondary';
   const s = (row.status || '').toLowerCase();
   if (s === 'rejected' || s === 'cancelled') return 'destructive';
-  if (s === 'approved' || s === 'completed' || s === 'fulfilled' || s === 'closed') {
+  if (
+    s === 'approved' ||
+    s === 'completed' ||
+    s === 'fulfilled' ||
+    s === 'settled_on_site' ||
+    s === 'closed'
+  ) {
     return 'success';
   }
   if (s === 'responded' || s === 'replied') return 'info';
@@ -90,7 +96,13 @@ function statusCardClass(row: PortalSubmissionSummary): string {
   if (s === 'rejected' || s === 'cancelled') {
     return 'bg-destructive/5 border-destructive/40';
   }
-  if (s === 'approved' || s === 'completed' || s === 'fulfilled' || s === 'closed') {
+  if (
+    s === 'approved' ||
+    s === 'completed' ||
+    s === 'fulfilled' ||
+    s === 'settled_on_site' ||
+    s === 'closed'
+  ) {
     return 'bg-success/5 border-success/40';
   }
   if (s === 'responded' || s === 'replied') {

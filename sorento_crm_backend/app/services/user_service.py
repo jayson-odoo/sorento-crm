@@ -1,6 +1,7 @@
 """User management service for business logic."""
 import html as html_module
 import secrets
+from fastapi import HTTPException
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, func
 from sqlalchemy import inspect as sa_inspect
@@ -280,9 +281,23 @@ class UserService:
         respond_synced: Optional[str] = None,
         status: Optional[str] = None,
         trashed: str = "exclude",
+        company_id: Optional[str] = None,
     ):
-        """List users for select dropdowns. Defaults to non-trashed only."""
+        """List users for select dropdowns. Defaults to non-trashed only.
+
+        ``company_id`` narrows to users holding a grant for that company. Users are
+        SHARED across companies, so the default stays unfiltered; the team-member
+        picker passes it because team membership requires the grant (AC-G1) - and
+        offering a user who cannot be added is just an error waiting to happen.
+        """
         q = self.db.query(User)
+
+        if company_id:
+            from app.models.company import UserCompany
+
+            q = q.join(UserCompany, UserCompany.user_id == User.id).filter(
+                UserCompany.company_id == str(company_id)
+            )
 
         if trashed == "only":
             q = q.filter(User.is_trashed == True)
@@ -1488,18 +1503,24 @@ class AccessAgentService:
         from sqlalchemy import and_
         from sqlalchemy.orm import selectinload
 
+        from app.models.base import company_scope
         from app.services.market_segment_service import segment_key_for
-        # Check agent is linked to this team
-        link = (
-            self.db.query(AgentTeam)
-            .filter(
-                and_(
-                    AgentTeam.agent_id == agent_id,
-                    AgentTeam.team_id == team_id,
+        # Check agent is linked to this team. Read scope-free: `team_id` is passed in
+        # already resolved for the work item's company (by get_team_id_by_tier), so
+        # the ambient company must not veto it - otherwise a caller switched to
+        # another company sees "no available assignee" for a fully staffed team.
+        # The team_id predicate pins one team, hence one company.
+        with company_scope(self.db, None):
+            link = (
+                self.db.query(AgentTeam)
+                .filter(
+                    and_(
+                        AgentTeam.agent_id == agent_id,
+                        AgentTeam.team_id == team_id,
+                    )
                 )
+                .first()
             )
-            .first()
-        )
         if not link:
             return None
         # Get team members (user_ids) in order. Per-team RR opt-out: members with
@@ -1663,16 +1684,20 @@ class AccessAgentService:
         """
         from sqlalchemy import and_
 
-        link = (
-            self.db.query(AgentTeam)
-            .filter(
-                and_(
-                    AgentTeam.agent_id == agent_id,
-                    AgentTeam.team_id == team_id,
+        from app.models.base import company_scope
+
+        # Same reasoning as get_next_assignee: team_id already names the company.
+        with company_scope(self.db, None):
+            link = (
+                self.db.query(AgentTeam)
+                .filter(
+                    and_(
+                        AgentTeam.agent_id == agent_id,
+                        AgentTeam.team_id == team_id,
+                    )
                 )
+                .first()
             )
-            .first()
-        )
         if not link:
             return None
         members = (
@@ -1791,7 +1816,15 @@ class AccessAgentService:
         return last_id, user_ids[next_idx]
 
     def list_agent_teams_with_round_robin_state(self, agent_id: str) -> list[dict]:
-        """Return assignments with team name, tier, members (ordered), last_assigned, next_in_line (read-only peek)."""
+        """This company's assignments, with team name, tier, members (ordered),
+        last_assigned and next_in_line (read-only peek).
+
+        Company isolation here comes from the scope filter, not an explicit
+        predicate: verified against the running stack that this returns the agent's
+        7 Sorento rows under Sorento and nothing under Mocha. Note the filter DOES
+        reach this query even though it selects bare columns rather than loading
+        AgentTeam entities.
+        """
         rows = (
             self.db.query(
                 AgentTeam.code,
@@ -1800,7 +1833,9 @@ class AccessAgentService:
                 AgentTeam.policy_id,
                 AgentTeam.notify_on_extension,
             )
-            .filter(AgentTeam.agent_id == agent_id)
+            .filter(
+                AgentTeam.agent_id == agent_id,
+            )
             .all()
         )
         result = []
@@ -1903,6 +1938,14 @@ class AccessAgentService:
                     AgentTeam.tier == 1,
                     AgentTeam.agent_id != agent_id,
                     AgentTeam.team_id.notin_(team_ids),
+                    # Per company (AC-H4). The invariant exists so escalation can
+                    # derive ONE tier-1 team for a user; across companies there is no
+                    # ambiguity, since the two ladders are separate. Filtered
+                    # explicitly rather than left to the scope filter: this is a
+                    # multi-entity join selecting bare columns, and it was observed
+                    # matching a Sorento membership while the active company was
+                    # Mocha, blocking a legitimate Mocha tier-1 assignment.
+                    AgentTeam.company_id == self._active_company_id(),
                 )
             )
             # A conflict against a FORM-SLA agent's tier-1 team must NOT block —
@@ -1964,8 +2007,194 @@ class AccessAgentService:
                 [(str(t), str(aid), str(c), int(tr)) for t, aid, c, tr in reused] + local_reuse,
             )
 
+    # ------------------------------------------------ field-level access
+
+    def list_field_access(self, agent_id: str, contact_id: str | None = None) -> dict:
+        """The complete tick-list of fields this agent may reveal.
+
+        Built from the CODE registry, not from whatever rows happen to exist, so a
+        field added after the migration ran still appears (unticked) instead of
+        being invisible and therefore ungrantable.
+
+        With `contact_id`, each field also carries what THIS contact actually gets:
+        `override` (None = follows the agent) and `effective`. An admin deciding
+        "should this dealer see the gatepass" needs to see the inherited value in
+        the same row, or they cannot tell an explicit deny from an untouched
+        default - and those are different intentions.
+        """
+        from app.models.access import AccessAgent, AgentFieldAccess, RespondContact
+        from app.services.field_access import GATED_FIELDS, field_label
+
+        agent = self.db.query(AccessAgent).filter(AccessAgent.id == agent_id).one_or_none()
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Access agent not found")
+
+        rows = (
+            self.db.query(AgentFieldAccess)
+            .filter(AgentFieldAccess.agent_code == agent.code)
+            .all()
+        )
+        defaults = {
+            (r.resource, r.field_key): bool(r.is_allowed)
+            for r in rows
+            if r.contact_id is None
+        }
+
+        overrides_for_contact = {
+            (r.resource, r.field_key): bool(r.is_allowed)
+            for r in rows
+            if contact_id and r.contact_id == str(contact_id)
+        }
+
+        fields = []
+        for resource, owned in GATED_FIELDS.items():
+            for field_key, owner_code in owned.items():
+                if owner_code != agent.code:
+                    continue
+                # No row means denied, so the tick is empty rather than absent.
+                default = defaults.get((resource, field_key), False)
+                entry = {
+                    "resource": resource,
+                    "field_key": field_key,
+                    "label": field_label(field_key),
+                    "is_allowed": default,
+                }
+                if contact_id:
+                    override = overrides_for_contact.get((resource, field_key))
+                    entry["override"] = override
+                    entry["effective"] = default if override is None else override
+                fields.append(entry)
+
+        override_rows = [r for r in rows if r.contact_id is not None]
+        names = {}
+        if override_rows:
+            names = dict(
+                self.db.query(RespondContact.id, RespondContact.name)
+                .filter(RespondContact.id.in_({r.contact_id for r in override_rows}))
+                .all()
+            )
+        overrides = [
+            {
+                "resource": r.resource,
+                "field_key": r.field_key,
+                "label": field_label(r.field_key),
+                "contact_id": r.contact_id,
+                "contact_name": names.get(r.contact_id),
+                "is_allowed": bool(r.is_allowed),
+            }
+            for r in override_rows
+        ]
+
+        return {"agent_code": agent.code, "fields": fields, "overrides": overrides}
+
+    def set_field_access(
+        self, agent_id: str, entries: list[dict], actor: str | None = None
+    ) -> None:
+        """Upsert the given ticks. Entries not sent are left alone.
+
+        Deliberately not a replace-all: the screen may be showing one resource
+        while another admin edits a second, and a blanket delete would silently
+        revoke fields nobody touched.
+        """
+        import uuid as _uuid
+
+        from app.models.access import AccessAgent, AgentFieldAccess
+        from app.services.field_access import GATED_FIELDS
+
+        agent = self.db.query(AccessAgent).filter(AccessAgent.id == agent_id).one_or_none()
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Access agent not found")
+
+        for entry in entries or []:
+            resource = entry.get("resource")
+            field_key = entry.get("field_key")
+            owner = GATED_FIELDS.get(resource, {}).get(field_key)
+            if owner is None:
+                # An unregistered field gates nothing, so a row for it would be a
+                # tick that silently does not work. Reject rather than store it.
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{resource}.{field_key} is not a gated field",
+                )
+            if owner != agent.code:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{resource}.{field_key} belongs to agent '{owner}', not '{agent.code}'",
+                )
+
+            contact_id = entry.get("contact_id") or None
+            existing = (
+                self.db.query(AgentFieldAccess)
+                .filter(
+                    AgentFieldAccess.agent_code == agent.code,
+                    AgentFieldAccess.resource == resource,
+                    AgentFieldAccess.field_key == field_key,
+                    AgentFieldAccess.contact_id.is_(None)
+                    if contact_id is None
+                    else AgentFieldAccess.contact_id == contact_id,
+                )
+                .one_or_none()
+            )
+            wanted = entry.get("is_allowed", True)
+            if wanted is None:
+                # Clear the override: this contact goes back to following the agent.
+                # Only meaningful per-contact - a null agent-wide would mean "deny
+                # by absence", which is what is_allowed=False already says.
+                if contact_id is None:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="is_allowed=null only clears a per-contact override",
+                    )
+                if existing is not None:
+                    self.db.delete(existing)
+                continue
+
+            if existing is not None:
+                existing.is_allowed = bool(wanted)
+                # Attribution goes on updated_by, not created_by: the bootstrap
+                # pre-seeds every row denied, so this branch is the one a real
+                # grant takes and created_by would be NULL forever.
+                existing.updated_by = actor
+            else:
+                self.db.add(
+                    AgentFieldAccess(
+                        id=str(_uuid.uuid4()),
+                        agent_code=agent.code,
+                        resource=resource,
+                        field_key=field_key,
+                        contact_id=contact_id,
+                        is_allowed=bool(wanted),
+                        created_by=actor,
+                        updated_by=actor,
+                    )
+                )
+
+        self.db.commit()
+
+    def _active_company_id(self) -> str:
+        """The single company this write applies to.
+
+        An agent's Team Sets screen edits ONE company at a time (the active one), so
+        every write here is scoped to it. Falls back to the incumbent when the scope
+        is not a single company - a system / all-companies caller editing team sets
+        means Sorento, never "all of them at once".
+        """
+        from app.models.base import get_company_scope
+        from app.services.company_routing_service import DEFAULT_COMPANY_ID
+
+        scope = get_company_scope(self.db)
+        if isinstance(scope, frozenset) and len(scope) == 1:
+            return str(next(iter(scope)))
+        return DEFAULT_COMPANY_ID
+
     def set_agent_teams(self, agent_id: str, assignments: list[dict]) -> None:
-        """Replace agent's team links with the given assignments [{code, team_id, tier?}...]."""
+        """Replace THIS COMPANY's team links for the agent with the given assignments.
+
+        Scoped to one company deliberately. The old unscoped delete would wipe the
+        other company's team sets every time an admin saved this screen, because the
+        payload only ever contains the company they are looking at.
+        """
+        company_id = self._active_company_id()
         seen_keys: set[tuple[str, str | int]] = set()
         for a in assignments or []:
             raw_code = a.get("code")
@@ -1998,7 +2227,12 @@ class AccessAgentService:
             if code and policy_id and code not in policy_by_code:
                 policy_by_code[code] = policy_id
 
-        self.db.query(AgentTeam).filter(AgentTeam.agent_id == agent_id).delete()
+        # company_id is filtered EXPLICITLY, not left to the scope filter: whether the
+        # auto-filter reaches a bulk DELETE is a SQLAlchemy detail, and being wrong
+        # about it here deletes the other company's routing.
+        self.db.query(AgentTeam).filter(
+            AgentTeam.agent_id == agent_id, AgentTeam.company_id == company_id
+        ).delete(synchronize_session=False)
         for a in assignments or []:
             raw_code = a.get("code")
             code = str(raw_code).strip() if raw_code is not None else ""
@@ -2012,28 +2246,51 @@ class AccessAgentService:
                     code=code,
                     team_id=team_id,
                     tier=tier,
+                    company_id=company_id,
                     policy_id=policy_by_code.get(code),
                     notify_on_extension=bool(a.get("notify_on_extension", True)),
                 ))
         try:
             self.db.commit()
-        except IntegrityError:
+        except IntegrityError as exc:
             self.db.rollback()
+            # Not every integrity error here is a duplicate code. Picking another
+            # company's SLA policy trips the (policy_id, company_id) composite FK,
+            # and reporting that as "duplicate code" sends the admin looking at the
+            # wrong field entirely.
+            detail = str(getattr(exc, "orig", exc))
+            if "fk_agent_teams_policy_company" in detail:
+                raise handle_validation_error(
+                    "That SLA policy belongs to another company. Pick a policy from "
+                    "this company, or create one for it."
+                ) from None
+            if "fk_agent_teams_team_company" in detail:
+                raise handle_validation_error(
+                    "That team belongs to another company. Pick a team from this company."
+                ) from None
             raise handle_validation_error(
                 "cannot have duplicate code in different groups"
             ) from None
 
-    def get_team_id_by_code(self, agent_id: str, code: str) -> str | None:
-        """Resolve team_id for agent+code. If several tiers share this code, returns one row (undefined which). Prefer get_team_id_by_tier + list_team_ids_for_agent_code for round-robin."""
+    def get_team_id_by_code(
+        self, agent_id: str, code: str, *, company_id: str
+    ) -> str | None:
+        """Resolve team_id for agent+code+company. If several tiers share this code, returns one row (undefined which). Prefer get_team_id_by_tier + list_team_ids_for_agent_code for round-robin."""
         row = (
             self.db.query(AgentTeam.team_id)
-            .filter(AgentTeam.agent_id == agent_id, AgentTeam.code == code)
+            .filter(
+                AgentTeam.agent_id == agent_id,
+                AgentTeam.code == code,
+                AgentTeam.company_id == str(company_id),
+            )
             .first()
         )
         return str(row[0]) if row else None
 
-    def list_team_ids_for_agent_code(self, agent_id: str, code: str) -> list[str]:
-        """All team_ids for this agent with the given assignment code (e.g. one per SLA tier)."""
+    def list_team_ids_for_agent_code(
+        self, agent_id: str, code: str, *, company_id: str
+    ) -> list[str]:
+        """All team_ids for this agent+company with the given assignment code (e.g. one per SLA tier)."""
         from sqlalchemy import and_
 
         c = str(code).strip() if code is not None else ""
@@ -2041,45 +2298,91 @@ class AccessAgentService:
             return []
         rows = (
             self.db.query(AgentTeam.team_id)
-            .filter(and_(AgentTeam.agent_id == agent_id, AgentTeam.code == c))
+            .filter(
+                and_(
+                    AgentTeam.agent_id == agent_id,
+                    AgentTeam.code == c,
+                    AgentTeam.company_id == str(company_id),
+                )
+            )
             .all()
         )
         return [str(r[0]) for r in rows]
 
     def get_team_id_by_tier(
-        self, agent_id: str, tier: int, team_set_code: Optional[str] = None
+        self,
+        agent_id: str,
+        tier: int,
+        team_set_code: Optional[str] = None,
+        *,
+        company_id: str,
     ) -> str | None:
-        """Resolve team_id for agent+tier, optionally constrained to one team set code."""
+        """Resolve team_id for agent+tier+company, optionally constrained to one team set code.
+
+        ``company_id`` is keyword-only and required on purpose: a positional optional
+        would let a call site silently keep the old cross-company behaviour, which is
+        the bug class this exists to close. A missed caller is a TypeError at import
+        or test time, not a wrong assignment in production.
+        """
         if tier is None or tier < 1 or tier > 3:
             return None
 
-        query = self.db.query(AgentTeam.team_id).filter(
-            AgentTeam.agent_id == agent_id,
-            AgentTeam.tier == tier,
-        )
-        if team_set_code:
-            query = query.filter(AgentTeam.code == team_set_code)
+        # Read the ladder under the company the CALLER named, not the company the
+        # request happens to be switched to. `AgentTeam` is company-scoped, so the
+        # ambient filter would be ANDed on top and silently win: an admin switched to
+        # company B acting on a company-A tracker got an empty ladder and a manual
+        # escalate that 422'd with "No higher-tier team configured" on a ladder that
+        # was fully configured (AC-E3 - the ladder is the tracker's company's).
+        # Safe scope-free: the explicit `company_id` predicate below pins exactly one
+        # company, so suspending the ambient filter cannot widen the result.
+        from app.models.base import company_scope
 
-        rows = query.all()
+        with company_scope(self.db, None):
+            query = self.db.query(AgentTeam.team_id).filter(
+                AgentTeam.agent_id == agent_id,
+                AgentTeam.tier == tier,
+                AgentTeam.company_id == str(company_id),
+            )
+            if team_set_code:
+                query = query.filter(AgentTeam.code == team_set_code)
+
+            rows = query.all()
         if not rows:
             return None
-        if len(rows) > 1 and not team_set_code:
-            raise handle_conflict(
-                f"Multiple team sets found for tier {tier}. Provide team_set_code to resolve escalation target."
+        if len(rows) > 1:
+            # Previously this returned rows[0] whenever a team_set_code was given, so
+            # the FIRST duplicate row won silently. With company in the key that
+            # duplicate could be another company's team, i.e. a silent wrong-company
+            # escalation. Ambiguity is now always an error (AC-C6).
+            detail = (
+                f"Multiple team sets found for tier {tier}. Provide team_set_code to "
+                "resolve escalation target."
+                if not team_set_code
+                else (
+                    f"Multiple teams found for tier {tier} in team set "
+                    f"{team_set_code!r} for this company. Remove the duplicate team-set row."
+                )
             )
+            raise handle_conflict(detail)
         return str(rows[0][0])
 
     def get_tier_team_and_notify(
-        self, agent_id: str, tier: int, team_set_code: Optional[str] = None
+        self,
+        agent_id: str,
+        tier: int,
+        team_set_code: Optional[str] = None,
+        *,
+        company_id: str,
     ) -> Optional[tuple[str, bool]]:
-        """``(team_id, notify_on_extension)`` for agent+tier (constrained to a team set),
-        or None when no team is configured at that exact tier. Used by the extension
-        notify fan-up to decide, per tier, whether that tier's team is notified."""
+        """``(team_id, notify_on_extension)`` for agent+tier+company (constrained to a
+        team set), or None when no team is configured at that exact tier. Used by the
+        extension notify fan-up to decide, per tier, whether that tier's team is notified."""
         if tier is None or tier < 1 or tier > 3:
             return None
         query = self.db.query(AgentTeam.team_id, AgentTeam.notify_on_extension).filter(
             AgentTeam.agent_id == agent_id,
             AgentTeam.tier == tier,
+            AgentTeam.company_id == str(company_id),
         )
         if team_set_code:
             query = query.filter(AgentTeam.code == team_set_code)
@@ -2097,8 +2400,14 @@ class AccessAgentService:
         agent = self.db.query(AccessAgent.id).filter(AccessAgent.code == code).first()
         return str(agent[0]) if agent else None
 
-    def resolve_policy_id_for(self, agent_id: str, team_set_code: str) -> Optional[str]:
-        """Resolve the single SLA policy bound to ``(agent_id, team_set_code)`` (D4).
+    def resolve_policy_id_for(
+        self, agent_id: str, team_set_code: str, *, company_id: str
+    ) -> Optional[str]:
+        """Resolve the single SLA policy bound to ``(agent_id, team_set_code, company)``.
+
+        Company-scoped because policies are now per company: without it, a team set
+        configured in both companies returns two distinct policy ids and this raises
+        a bogus "inconsistent binding" 409.
 
         Distinct non-null ``policy_id`` over the team-set rows:
         - zero rows  -> None (caller decides: rollout fallback vs 422 end-state)
@@ -2113,6 +2422,7 @@ class AccessAgentService:
             .filter(
                 AgentTeam.agent_id == agent_id,
                 AgentTeam.code == c,
+                AgentTeam.company_id == str(company_id),
                 AgentTeam.policy_id.isnot(None),
             )
             .distinct()
@@ -2128,7 +2438,12 @@ class AccessAgentService:
         return next(iter(policy_ids))
 
     def resolve_team_with_tier_fallback(
-        self, agent_id: str, start_tier: int, team_set_code: Optional[str] = None
+        self,
+        agent_id: str,
+        start_tier: int,
+        team_set_code: Optional[str] = None,
+        *,
+        company_id: str,
     ) -> Optional[tuple]:
         """Find the first existing team at or ABOVE ``start_tier`` for this agent's
         team set, returning ``(team_id, actual_tier)`` or None.
@@ -2145,20 +2460,29 @@ class AccessAgentService:
         if s < 1:
             s = 1
         for tier in range(s, 4):
-            team_id = self.get_team_id_by_tier(agent_id, tier, team_set_code=team_set_code)
+            team_id = self.get_team_id_by_tier(
+                agent_id, tier, team_set_code=team_set_code, company_id=company_id
+            )
             if team_id:
                 return team_id, tier
         return None
 
     def get_user_tier_in_team_set(
-        self, agent_id: str, user_id: str, team_set_code: Optional[str] = None
+        self,
+        agent_id: str,
+        user_id: str,
+        team_set_code: Optional[str] = None,
+        *,
+        company_id: str,
     ) -> Optional[int]:
         """Return the tier (1-3) at which ``user_id`` is a member of this agent's
         team set, or None if not a member of any tier. Used to route a form's
         configured default approver to their own tier in the approval team set
         (e.g. a director sitting at tier 3) instead of the tier-1 default."""
         for tier in (1, 2, 3):
-            team_id = self.get_team_id_by_tier(agent_id, tier, team_set_code=team_set_code)
+            team_id = self.get_team_id_by_tier(
+                agent_id, tier, team_set_code=team_set_code, company_id=company_id
+            )
             if not team_id:
                 continue
             member = (
@@ -2253,6 +2577,73 @@ class TeamService:
                     "Cannot set that parent: it is a descendant of this team (cannot create a cycle)."
                 )
 
+    def _guard_parent_team_company(
+        self, company_id: Optional[str], parent_team_id: Optional[str]
+    ) -> None:
+        """A team's parent must belong to the same company (AC-C7).
+
+        Not cosmetic: ``descendant_team_ids`` grants a parent team's members
+        visibility and act rights over EVERY descendant at any depth, so a
+        cross-company parent hands one brand's staff the other brand's work. This is
+        the write-side half of the check migration 320 performs before locking the
+        column in.
+        """
+        if not parent_team_id:
+            return
+        # Read the parent WITHOUT the company filter. Teams are company-scoped now, so
+        # a scoped read of another company's team returns None, and the guard would
+        # report "not found" for the very case it exists to catch.
+        from app.models.base import company_scope
+
+        with company_scope(self.db, None):
+            parent = self.db.query(Team).filter(Team.id == str(parent_team_id)).first()
+        if parent is None:
+            raise handle_validation_error("Parent team not found.")
+        parent_company = str(getattr(parent, "company_id", "") or "")
+        if company_id and parent_company and parent_company != str(company_id):
+            raise handle_validation_error(
+                "A team's parent must belong to the same company. A parent team's "
+                "members can act on every team below it, so the hierarchy cannot "
+                "cross companies."
+            )
+
+    def _guard_member_company_grant(self, team_id: str, user_id: str) -> None:
+        """A user may only join a team in a company they are granted (AC-G1).
+
+        Membership drives assignment, so a member with no grant for the team's
+        company would be handed work in a company they cannot even open.
+        """
+        from app.models.base import company_scope
+        from app.models.company import Company, UserCompany
+
+        # Scope-free for the same reason as the parent guard: a scoped read of another
+        # company's team returns None, and returning early on None would make this
+        # guard fail OPEN in exactly the cross-company case it is meant to block.
+        with company_scope(self.db, None):
+            team = self.db.query(Team).filter(Team.id == str(team_id)).first()
+        company_id = str(getattr(team, "company_id", "") or "") if team else ""
+        if not company_id:
+            return
+        granted = (
+            self.db.query(UserCompany.id)
+            .filter(
+                UserCompany.user_id == str(user_id),
+                UserCompany.company_id == company_id,
+            )
+            .first()
+        )
+        if granted is None:
+            company = (
+                self.db.query(Company.name, Company.code)
+                .filter(Company.id == company_id)
+                .first()
+            )
+            label = (company[0] or company[1]) if company else company_id
+            raise handle_validation_error(
+                f"That user has no access to {label}. Grant them the company before "
+                "adding them to one of its teams."
+            )
+
     def _member_previews_for(self, team_ids) -> dict:
         """Grouped member preview ({user_id, name}) per team id. One query, no N+1.
 
@@ -2319,6 +2710,13 @@ class TeamService:
         # New team has no id yet, so only the self-parent case is possible here;
         # descendant cycles are impossible until children exist.
         self._guard_parent_team_cycle(None, payload.get("parent_team_id"))
+        # company_id is auto-stamped from the request scope by CompanyScopedMixin's
+        # before_insert, so read it back from the scope rather than the payload.
+        from app.models.base import get_company_scope
+
+        scope = get_company_scope(self.db)
+        stamped = next(iter(scope)) if isinstance(scope, frozenset) and len(scope) == 1 else None
+        self._guard_parent_team_company(stamped, payload.get("parent_team_id"))
         t = Team(**payload)
         self.db.add(t)
         self.db.commit()
@@ -2331,6 +2729,10 @@ class TeamService:
         payload = data.model_dump(exclude_unset=True)
         if "parent_team_id" in payload:
             self._guard_parent_team_cycle(team_id, payload.get("parent_team_id"))
+            self._guard_parent_team_company(
+                str(getattr(t, "company_id", "") or "") or None,
+                payload.get("parent_team_id"),
+            )
         for k, v in payload.items():
             setattr(t, k, v)
         self.db.commit()
@@ -2427,6 +2829,7 @@ class TeamService:
         )
         if existing:
             raise handle_conflict("User is already a member of this team.")
+        self._guard_member_company_grant(team_id, user_id)
         self._validate_tier1_membership_invariant(team_id, user_id)
         m = TeamMember(
             team_id=team_id,

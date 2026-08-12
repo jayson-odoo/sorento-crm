@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   AlertDialog,
@@ -21,6 +21,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
 import {
   DebtorLookupItem,
   DOLookupItem,
@@ -28,6 +32,7 @@ import {
   PortalContact,
   PortalSubmissionDetail,
   PortalSubmissionKind,
+  PortalSubmissionNeighbours,
   PortalOwnerMismatchError,
   PortalUnauthorizedError,
   ProductLookupItem,
@@ -36,7 +41,9 @@ import {
   fetchMe,
   lookupProjects,
   type ProjectLookupItem,
+  fetchRequestorOptions,
   fetchSubmission,
+  fetchSubmissionNeighbours,
   lookupDebtors,
   lookupDeliveryOrders,
   lookupProducts,
@@ -46,7 +53,7 @@ import {
   submitDraft,
   uploadAttachment,
 } from '../lib/portal-client';
-import { portalHomePath, portalVerifyPath } from '../lib/portal-paths';
+import { portalDetailPath, portalHomePath, portalVerifyPath } from '../lib/portal-paths';
 import { cleanLineItems } from '../lib/line-items';
 import { AIExtractDialog, AIExtractApplyPayload } from './AIExtractDialog';
 import { AttachmentDropzone } from './AttachmentDropzone';
@@ -85,14 +92,15 @@ type WidgetKind =
   | 'do-multi-filter'
   | 'pill-product'
   | 'pill-text'
-  | 'product-quantities';
+  | 'product-quantities'
+  | 'contact-select';
 
 interface FieldDef {
   name: string;
   label: string;
   widget?: WidgetKind;
   setKey?: string;
-  defaultFromContact?: 'fullname' | 'first_name';
+  defaultFromContact?: 'fullname' | 'first_name' | 'contact_id';
   defaultToday?: boolean;
   placeholder?: string;
   required?: boolean;
@@ -106,6 +114,13 @@ interface FieldDef {
    * and says something useful.
    */
   requiredWhen?: (contact: PortalContact | null) => boolean;
+  /**
+   * `contact-select` only: name of the legacy free-text sibling column
+   * (e.g. `requested_by`, `salesperson`) carrying the display label for the
+   * saved contact id. Used to build `selectedOption` so a saved-but-now-
+   * ineligible contact still renders its name instead of a blank / UUID.
+   */
+  legacyLabelField?: string;
 }
 
 const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
@@ -116,7 +131,14 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
     { name: 'delivery_date', label: 'Required delivery date', widget: 'date' },
     { name: 'project_customer', label: 'Project customer', widget: 'debtor-async' },
     { name: 'project_name', label: 'Project name' },
-    { name: 'salesperson', label: 'Salesperson', defaultFromContact: 'fullname' },
+    {
+      name: 'salesperson_contact_id',
+      label: 'Salesperson',
+      widget: 'contact-select',
+      legacyLabelField: 'salesperson',
+      defaultFromContact: 'contact_id',
+      required: true,
+    },
     { name: 'remark', label: 'Remark', widget: 'textarea' },
     { name: 'additional_remark', label: 'Additional remark', widget: 'textarea' },
   ],
@@ -187,6 +209,7 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
   ],
   purchase_request: [
     { name: 'customer_name', label: 'Customer name', widget: 'debtor-async' },
+    { name: 'pic', label: 'PIC', placeholder: 'Name and contact number' },
     { name: 'project_title', label: 'Project title' },
     { name: 'purpose', label: 'Purpose', widget: 'textarea' },
     {
@@ -201,7 +224,14 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       widget: 'date',
     },
     { name: 'expected_po_date', label: 'Expected PO date', widget: 'date' },
-    { name: 'requested_by', label: 'Requested by', defaultFromContact: 'fullname' },
+    {
+      name: 'requested_by_contact_id',
+      label: 'Requested by',
+      widget: 'contact-select',
+      legacyLabelField: 'requested_by',
+      defaultFromContact: 'contact_id',
+      required: true,
+    },
     { name: 'external_reference', label: 'External reference' },
   ],
   // Field order mirrors the system document view (PurchaseRequestDocumentEditCard /
@@ -209,6 +239,7 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
   // Sponsor Subject → Date of Delivery → Request date → Requested by.
   sponsorship_form: [
     { name: 'customer_name', label: 'Customer name', widget: 'debtor-async' },
+    { name: 'pic', label: 'PIC', placeholder: 'Name and contact number' },
     { name: 'delivery_address', label: 'Delivery address', widget: 'textarea' },
     { name: 'project_title', label: 'Project title' },
     {
@@ -237,7 +268,14 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       label: 'Expected delivery date',
       widget: 'date',
     },
-    { name: 'requested_by', label: 'Requested by', defaultFromContact: 'fullname' },
+    {
+      name: 'requested_by_contact_id',
+      label: 'Requested by',
+      widget: 'contact-select',
+      legacyLabelField: 'requested_by',
+      defaultFromContact: 'contact_id',
+      required: true,
+    },
   ],
 };
 
@@ -256,8 +294,8 @@ interface Props {
   submissionId?: string;
   /** Active contact slug from the deep-link URL. Threaded into the verify
    *  redirect so a second device (with no stored slug) still lands on the
-   *  slug-mode verify card — which resolves "this {kind} belongs to {name}"
-   *  and the OTP flow — instead of the legacy "message us" dead end. */
+   *  slug-mode verify card - which resolves "this {kind} belongs to {name}"
+   *  and the OTP flow - instead of the legacy "message us" dead end. */
   slug?: string;
 }
 
@@ -279,6 +317,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [contact, setContact] = useState<PortalContact | null>(null);
   const [invalidFields, setInvalidFields] = useState<Set<string>>(new Set());
+  const [staffPreviewOpen, setStaffPreviewOpen] = useState(false);
+  const [neighbours, setNeighbours] = useState<PortalSubmissionNeighbours | null>(null);
 
   const fieldDefs = FIELDS[kind];
   const showLines = HAS_LINES.includes(kind);
@@ -305,12 +345,58 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
 
   const defaultsFromContact = useMemo(() => {
     const name = contact?.name?.trim() ?? '';
-    if (!name) return { first_name: '', fullname: '' };
+    const contactId = contact?.contact_id ?? '';
+    if (!name) return { first_name: '', fullname: '', contactId };
     const parts = name.split(/\s+/);
     const [first, ...rest] = parts;
     void rest;
-    return { first_name: first ?? '', fullname: name };
+    return { first_name: first ?? '', fullname: name, contactId };
   }, [contact]);
+
+  // Portal record navigation (edge chevrons + arrow keys). Same-kind, newest
+  // first, token-scoped to the contact's own submissions - internal detail
+  // pages keep their own separate top-right counter (untouched by this).
+  useEffect(() => {
+    if (!submissionId) {
+      setNeighbours(null);
+      return;
+    }
+    let cancelled = false;
+    fetchSubmissionNeighbours(kind, submissionId)
+      .then((n) => {
+        if (!cancelled) setNeighbours(n);
+      })
+      .catch(() => {
+        if (!cancelled) setNeighbours(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [kind, submissionId]);
+
+  useEffect(() => {
+    if (!neighbours) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      const isEditable = (el: Element | null) =>
+        !!el &&
+        (el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          el.tagName === 'SELECT' ||
+          (el as HTMLElement).isContentEditable);
+      if (isEditable(e.target as Element | null) || isEditable(document.activeElement)) return;
+      if (document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]')) {
+        return;
+      }
+      if (e.key === 'ArrowLeft' && neighbours.prev_id) {
+        router.push(portalDetailPath(kind, neighbours.prev_id, slug));
+      } else if (e.key === 'ArrowRight' && neighbours.next_id) {
+        router.push(portalDetailPath(kind, neighbours.next_id, slug));
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [neighbours, kind, slug, router]);
 
   useEffect(() => {
     if (!submissionId) {
@@ -326,6 +412,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           next[f.name] = defaultsFromContact.fullname;
         } else if (f.defaultFromContact === 'first_name') {
           next[f.name] = defaultsFromContact.first_name;
+        } else if (f.defaultFromContact === 'contact_id') {
+          next[f.name] = defaultsFromContact.contactId;
         } else if (f.defaultToday) {
           next[f.name] = new Date().toISOString().slice(0, 10);
         } else {
@@ -407,7 +495,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           router.replace(portalVerifyPath({ slug, reason: 'expired', type: kind, id: submissionId }));
           return;
         }
-        // Logged in as a different contact than the form's owner — send them to
+        // Logged in as a different contact than the form's owner - send them to
         // the owner's confirm-identity card (deep-link slug), keep their token.
         if (e instanceof PortalOwnerMismatchError) {
           router.replace(portalVerifyPath({ slug, reason: 'expired', type: kind, id: submissionId }));
@@ -692,7 +780,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     if (doNumbers.length === 0) return;
 
     // Best-effort lookup. Each DO not in the system simply contributes nothing
-    // to the enrichment — the field still keeps the AI-provided pill.
+    // to the enrichment - the field still keeps the AI-provided pill.
     const items: DOLookupItem[] = [];
     for (const dn of doNumbers) {
       try {
@@ -700,7 +788,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         const exact = matches.find((m) => m.order_number === dn);
         if (exact) items.push(exact);
       } catch {
-        // ignore — DO not resolvable, treat as free-text only.
+        // ignore - DO not resolvable, treat as free-text only.
       }
     }
     if (items.length === 0) return;
@@ -753,7 +841,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           const exact = matches.find((m) => m.product_code === code);
           productType = (exact?.category_code ?? exact?.category_name ?? '').trim();
         } catch {
-          // best-effort — leave blank, user can fill
+          // best-effort - leave blank, user can fill
         }
       }
       out.push({ product_code: code, product_type: productType, quantity: existing?.quantity ?? '' });
@@ -837,7 +925,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const responseInfo = (() => {
     if (kind === 'stock_inquiry') {
       const v = ((detail?.purchasing_response as string | null | undefined) ?? '').trim();
-      return v ? { label: 'Comment / reply by purchasing', value: v } : null;
+      return v ? { label: 'Comment / reply by purchasing', value: v, team: 'purchasing' } : null;
     }
     if (kind === 'complaint') {
       let v = ((detail?.technical_team_response as string | null | undefined) ?? '').trim();
@@ -846,10 +934,36 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         const idx = v.lastIndexOf(': ');
         if (idx !== -1) v = v.slice(idx + 2).trim();
       }
-      return v ? { label: 'Technical team response', value: v } : null;
+      return v ? { label: 'Technical team response', value: v, team: 'technical team' } : null;
     }
     return null;
   })();
+
+  // Staff (purchasing / technical) response attachments - surfaced at the top
+  // of the reply banner, scoped away from the contact's own uploads below.
+  // Count is derived from the loaded attachments, never typed.
+  const staffAttachments = attachments.filter((a) => a.uploader_kind === 'user');
+  const staffPreviewItems: AttachmentPreviewItem[] = staffAttachments.map((a) => ({
+    id: a.link_id,
+    name: a.filename || 'Attachment',
+    url: a.url ?? '',
+    sizeBytes: a.size,
+  }));
+
+  // "Requested by" / "Salesperson" contact-select: pre-select the saved id and
+  // resolve a NAME to show (never a UUID) - the legacy free-text sibling
+  // column carries the point-in-time label, falling back to the submitting
+  // contact's own name for a brand-new form.
+  const resolveContactOption = (field: FieldDef): SearchableSelectOption | undefined => {
+    if (field.widget !== 'contact-select') return undefined;
+    const id = typeof fields[field.name] === 'string' ? (fields[field.name] as string) : '';
+    if (!id) return undefined;
+    const legacyLabel = field.legacyLabelField
+      ? ((detail as Record<string, unknown> | null)?.[field.legacyLabelField] as string | undefined)
+      : undefined;
+    const label = (legacyLabel ?? '').trim() || defaultsFromContact.fullname || 'You';
+    return { value: id, label };
+  };
 
   return (
     <div className="min-h-screen max-w-7xl mx-auto px-4 py-6 space-y-4">
@@ -874,7 +988,19 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
             </Button>
           )}
           {detail?.reference && (
-            <span className="text-sm text-muted-foreground">{detail.reference}</span>
+            <span className="text-sm text-muted-foreground">
+              {detail.reference}
+              {neighbours && (
+                <span className="ml-2 text-xs text-muted-foreground/70">
+                  {neighbours.position} / {neighbours.total}
+                </span>
+              )}
+            </span>
+          )}
+          {!detail?.reference && neighbours && (
+            <span className="text-xs text-muted-foreground/70">
+              {neighbours.position} / {neighbours.total}
+            </span>
           )}
         </div>
       </div>
@@ -895,6 +1021,22 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         <div className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3 text-sm">
           <p className="font-medium text-emerald-700 dark:text-emerald-400">{responseInfo.label}</p>
           <p className="mt-1 whitespace-pre-wrap text-foreground">{responseInfo.value}</p>
+          {staffAttachments.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-xs text-emerald-700/80 dark:text-emerald-400/80">
+                {staffAttachments.length} attachment{staffAttachments.length === 1 ? '' : 's'} from{' '}
+                {responseInfo.team}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setStaffPreviewOpen(true)}
+              >
+                View attachment{staffAttachments.length === 1 ? '' : 's'} ({staffAttachments.length})
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
@@ -908,6 +1050,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           isEditable={isEditable}
           statusBadge={statusBadge}
           onProductItemSelected={handleProductItemSelected}
+          resolveContactOption={resolveContactOption}
         />
       ) : kind === 'complaint' ? (
         <ComplaintFormSection
@@ -938,6 +1081,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           statusBadge={statusBadge}
           onProductItemSelected={handleProductItemSelected}
           contact={contact}
+          resolveContactOption={resolveContactOption}
         />
       )}
 
@@ -1224,6 +1368,33 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AttachmentPreviewModal
+        open={staffPreviewOpen}
+        onOpenChange={setStaffPreviewOpen}
+        items={staffPreviewItems}
+      />
+
+      {neighbours?.prev_id && (
+        <button
+          type="button"
+          onClick={() => router.push(portalDetailPath(kind, neighbours.prev_id as string, slug))}
+          aria-label="Previous submission"
+          className="fixed left-1 top-1/2 z-30 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/80 opacity-60 shadow-sm backdrop-blur transition hover:opacity-100 sm:left-3 sm:size-10"
+        >
+          <ChevronLeft className="h-4 w-4 sm:h-5 sm:w-5" />
+        </button>
+      )}
+      {neighbours?.next_id && (
+        <button
+          type="button"
+          onClick={() => router.push(portalDetailPath(kind, neighbours.next_id as string, slug))}
+          aria-label="Next submission"
+          className="fixed right-1 top-1/2 z-30 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/80 opacity-60 shadow-sm backdrop-blur transition hover:opacity-100 sm:right-3 sm:size-10"
+        >
+          <ChevronRight className="h-4 w-4 sm:h-5 sm:w-5" />
+        </button>
+      )}
     </div>
   );
 }
@@ -1247,6 +1418,10 @@ interface SectionProps {
   setComplaintLines?: Dispatch<SetStateAction<ComplaintLine[]>>;
   /** Needed for `FieldDef.requiredWhen`: some fields are mandatory per CONTACT (AC-F4). */
   contact?: PortalContact | null;
+  /** `contact-select` fields only - resolves the picker's pre-selected option
+   *  (id + human-readable name) so a saved-but-ineligible contact still shows
+   *  its name instead of a blank or a UUID. */
+  resolveContactOption?: (field: FieldDef) => SearchableSelectOption | undefined;
 }
 
 function StockInquiryFormSection({
@@ -1258,6 +1433,7 @@ function StockInquiryFormSection({
   isEditable,
   statusBadge,
   onProductItemSelected,
+  resolveContactOption,
 }: SectionProps) {
   const fieldByName = useMemo(() => {
     const out: Record<string, FieldDef> = {};
@@ -1290,10 +1466,11 @@ function StockInquiryFormSection({
         </InquiryFormTableRow>
         <InquiryFormTableRow label="Sales person">
           <FieldControl
-            field={fieldByName.salesperson}
-            value={fields.salesperson ?? ''}
-            onChange={(v) => setFieldValue('salesperson', v)}
+            field={fieldByName.salesperson_contact_id}
+            value={fields.salesperson_contact_id ?? ''}
+            onChange={(v) => setFieldValue('salesperson_contact_id', v)}
             disabled={!isEditable}
+            contactOption={resolveContactOption?.(fieldByName.salesperson_contact_id)}
           />
         </InquiryFormTableRow>
         <InquiryFormTableRow label="Product code">
@@ -1367,7 +1544,7 @@ function StockInquiryFormSection({
 }
 
 /** Per-product lines table for complaints: searchable product code (auto-derives
- * product type from the master category), quantity, add/remove — mirrors the
+ * product type from the master category), quantity, add/remove - mirrors the
  * purchase-request / sponsorship Items table. */
 function ComplaintLinesTable({
   lines,
@@ -1549,6 +1726,7 @@ function PurchaseRequestFormSection({
   statusBadge,
   onProductItemSelected,
   contact,
+  resolveContactOption,
 }: SectionProps & { kind: PortalSubmissionKind }) {
   const heading =
     kind === 'sponsorship_form' ? 'Project Sales Sponsorship Form' : 'Purchase Request';
@@ -1582,6 +1760,7 @@ function PurchaseRequestFormSection({
                     onItemSelect={(item) => onProductItemSelected(f.name, item)}
                     disabled={!isEditable}
                     contact={contact}
+                    contactOption={resolveContactOption?.(f)}
                   />
                 </div>
               ))}
@@ -1602,6 +1781,7 @@ function FieldInput({
   invalid,
   disabled,
   contact,
+  contactOption,
 }: {
   field: FieldDef;
   value: string | string[];
@@ -1615,6 +1795,7 @@ function FieldInput({
   invalid?: boolean;
   disabled?: boolean;
   contact?: PortalContact | null;
+  contactOption?: SearchableSelectOption;
 }) {
   // The asterisk has to agree with what submit actually enforces, or a flagged contact
   // gets stopped by a field that never said it was needed.
@@ -1641,6 +1822,7 @@ function FieldInput({
           onDOItemsChange={onDOItemsChange}
           onDOProductsConfirmed={onDOProductsConfirmed}
           disabled={disabled}
+          contactOption={contactOption}
         />
       </div>
       {invalid && (
@@ -1658,6 +1840,7 @@ function FieldControl({
   onDOItemsChange,
   onDOProductsConfirmed,
   disabled,
+  contactOption,
 }: {
   field: FieldDef;
   value: string | string[];
@@ -1668,6 +1851,7 @@ function FieldControl({
     items: DOLookupItem[];
     productCodes: string[];
   }) => void;
+  contactOption?: SearchableSelectOption;
   disabled?: boolean;
 }) {
   const widget: WidgetKind = field.widget ?? 'text';
@@ -1811,6 +1995,22 @@ function FieldControl({
           value={stringValue}
           onChange={(csv) => onChange(csv)}
           placeholder={field.placeholder ?? 'Type and press Enter'}
+          disabled={disabled}
+        />
+      );
+    case 'contact-select':
+      return (
+        <SearchableSelect
+          id={field.name}
+          value={stringValue}
+          onChange={(v) => onChange(v)}
+          fetchOptions={async (q) => {
+            const { items } = await fetchRequestorOptions(q);
+            return items.map((o) => ({ value: o.id, label: o.name }));
+          }}
+          selectedOption={contactOption}
+          placeholder={field.placeholder ?? 'Select...'}
+          emptyMessage="No one matches yet."
           disabled={disabled}
         />
       );

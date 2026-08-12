@@ -1,5 +1,5 @@
 """SLA management schemas."""
-from pydantic import BaseModel, BeforeValidator, field_validator, model_validator, model_serializer, ConfigDict
+from pydantic import BaseModel, BeforeValidator, Field, field_validator, model_validator, model_serializer, ConfigDict
 from typing import Annotated, Optional
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -556,7 +556,16 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
         return self
 
 
-_FORM_SLA_TYPES = ("stock_inquiry", "purchase_request", "sponsorship_form", "complaint", "ticket")
+# Must stay in lockstep with form_sla_service.FORM_SLA_TYPES; a type in one but not
+# the other is a live bug (see tests/test_form_sla_types_consistency.py).
+_FORM_SLA_TYPES = (
+    "stock_inquiry",
+    "purchase_request",
+    "sponsorship_form",
+    "complaint",
+    "ticket",
+    "workflow_submission",
+)
 
 
 class FormSLAConfigBase(BaseModel):
@@ -570,6 +579,9 @@ class FormSLAConfigBase(BaseModel):
     resolve_event: Optional[str] = None
     next_config_id: Optional[str] = None
     advance_on_event: Optional[str] = None
+    # Seconds an in-app action on this stage waits before it applies, so the actor can
+    # take it back before anyone is told. NULL = use the global default (which is 0).
+    grace_seconds: Optional[int] = Field(default=None, ge=0, le=600)
     is_active: bool = True
     notify_assignee: bool = True
     notify_on_escalation: bool = True
@@ -608,6 +620,7 @@ class FormSLAConfigUpdate(BaseModel):
     resolve_event: Optional[str] = None
     next_config_id: Optional[str] = None
     advance_on_event: Optional[str] = None
+    grace_seconds: Optional[int] = Field(default=None, ge=0, le=600)
     is_active: Optional[bool] = None
     notify_assignee: Optional[bool] = None
     notify_on_escalation: Optional[bool] = None

@@ -17,6 +17,7 @@ import {
   deletePurchaseRequestAttachment,
   getPurchaseRequestConversation,
   PURCHASE_REQUEST_NEIGHBOURS_PATH,
+  exportPurchaseRequestPdf,
 } from '../services/purchaseRequestService';
 import type {
   PurchaseRequestUpdateAndReplyData,
@@ -198,5 +199,26 @@ export function usePurchaseRequestConversation(
       }),
     enabled: !!requestId && (options?.enabled !== false),
     staleTime: 30 * 1000,
+  });
+}
+
+/**
+ * Queue a printable PR / SF PDF. Rendering is async on the RQ worker, so success
+ * only means "queued" — invalidate the downloads feeds so the drawer and the
+ * per-entity chip pick it up.
+ */
+export function useExportPurchaseRequestPdf() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => exportPurchaseRequestPdf(id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: ['my-downloads'] });
+      queryClient.invalidateQueries({
+        queryKey: ['entity-downloads', 'purchase_request', id],
+      });
+      toast.success('Preparing PDF… it will appear in My Downloads.');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to start PDF export'),
   });
 }

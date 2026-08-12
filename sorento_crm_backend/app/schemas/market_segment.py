@@ -11,6 +11,9 @@ class MarketSegmentBase(BaseModel):
     description: Optional[str] = None
     is_active: bool = True
     sort_order: Optional[int] = None
+    # Contacts in this segment are offered in the requestor picker ("Requested by" /
+    # "Salesperson") on PR / SF / stock inquiry. Admin-visible indicator.
+    is_requestor_selectable: bool = False
 
 
 class MarketSegmentCreate(MarketSegmentBase):
@@ -22,6 +25,7 @@ class MarketSegmentUpdate(BaseModel):
     description: Optional[str] = None
     is_active: Optional[bool] = None
     sort_order: Optional[int] = None
+    is_requestor_selectable: Optional[bool] = None
 
 
 class MarketSegmentResponse(MarketSegmentBase):

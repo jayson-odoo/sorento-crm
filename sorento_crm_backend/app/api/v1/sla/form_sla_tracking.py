@@ -90,7 +90,62 @@ def _serialize(
             if viewer_is_admin is not None
             else _actor_is_admin(db, viewer_user_id)
         )
+
+    # Skip capability (UAC-form-sla-skip-stage). Rides along on the tracker query the
+    # detail page already runs rather than costing a second round-trip. `can_skip` is
+    # resolved server-side because the permission is per-entity-type and lives in the
+    # adapter - config alone must never be able to authorise an action.
+    out.update(_skip_fields(db, t, viewer_user_id))
     return out
+
+
+def _skip_fields(
+    db: Session, t: ConversationSLATracking, viewer_user_id: Optional[str]
+) -> dict:
+    """`skip_event` / `skip_action_label` / `can_skip` for this tracker's active stage.
+
+    The stage config is found by (source_entity_type, team_set_code) - the tracker
+    copies `team_set_code` from the config that spawned it, and that pair uniquely
+    identifies a stage.
+    """
+    from app.models.sla import FormSLAConfig
+    from app.services.form_skip_registry import get_skip_adapter
+
+    blank = {"skip_event": None, "skip_action_label": None, "can_skip": False}
+    if bool(getattr(t, "is_resolved", False)):
+        return blank
+    try:
+        config = (
+            db.query(FormSLAConfig)
+            .filter(
+                FormSLAConfig.source_entity_type == t.source_entity_type,
+                FormSLAConfig.team_set_code == t.team_set_code,
+                FormSLAConfig.is_active.is_(True),
+            )
+            .first()
+        )
+    except Exception:
+        # Migrations behind (columns absent) must not break the detail page.
+        return blank
+    skip_event = (getattr(config, "skip_event", None) or "").strip() if config else ""
+    if not skip_event:
+        return blank
+
+    adapter = get_skip_adapter(t.source_entity_type)
+    can_skip = False
+    if adapter is not None and viewer_user_id:
+        from app.services.user_service import UserPermissionService
+
+        can_skip = bool(
+            UserPermissionService(db).check_user_has_permission(
+                viewer_user_id, adapter.permission_slug
+            )
+        )
+    return {
+        "skip_event": skip_event,
+        "skip_action_label": getattr(config, "skip_action_label", None),
+        "can_skip": can_skip,
+    }
 
 
 @router.get("")

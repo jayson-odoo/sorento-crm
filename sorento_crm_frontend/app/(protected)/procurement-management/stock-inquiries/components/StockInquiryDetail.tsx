@@ -3,13 +3,19 @@
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Edit, Trash2, FileDown, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle, Ban } from 'lucide-react';
+import { Edit, Trash2, FileDown, Printer, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle, Ban, UserRoundCog } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
 import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHandlingLock';
 import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
 import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
+import { useFormAction } from '@/app/(protected)/sla-management/_shared/useFormAction';
+import { FormActionBanner } from '@/app/(protected)/sla-management/_shared/FormActionBanner';
+import { UndoActionDialog } from '@/app/(protected)/sla-management/_shared/UndoActionDialog';
+import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tracking/components/ReassignDialog';
+import { useReassignSLATracking } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
+import ResponseAttachmentDropzone from '@/app/(protected)/complaint-management/complaints/components/ResponseAttachmentDropzone';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { VoidBanner } from '@/components/common/VoidBanner';
 import { VoidDialog } from '@/components/common/VoidDialog';
@@ -44,6 +50,8 @@ import {
   useProjectSalesRejectStockInquiry,
   usePurchasingRejectStockInquiry,
   useReopenStockInquiry,
+  useUploadStockInquiryResponseAttachments,
+  useExportStockInquiryPdf,
 } from '../hooks/useStockInquiries';
 import { getOrCreateStockInquiryViewLink } from '../services/stockInquiryService';
 import { toast } from 'sonner';
@@ -53,6 +61,7 @@ import StockInquiryDeleteDialog from './stock-inquiry-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
 import StockInquiryNavigation from './StockInquiryNavigation';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import StockInquiryAttachmentsSection from './StockInquiryAttachmentsSection';
 import StockInquiryConversationPanel from './StockInquiryConversationPanel';
 import { STOCK_INQUIRY_STATUS_LABELS } from '../types/stockInquiry.types';
@@ -78,6 +87,10 @@ export default function StockInquiryDetail({
   const projectSalesRejectMutation = useProjectSalesRejectStockInquiry();
   const purchasingRejectMutation = usePurchasingRejectStockInquiry();
   const reopenMutation = useReopenStockInquiry();
+  const uploadResponseAttachmentsMutation = useUploadStockInquiryResponseAttachments();
+  const exportPdfMutation = useExportStockInquiryPdf();
+  const reassignMutation = useReassignSLATracking();
+  const canReassign = useHasPermission('sla_management.conversation_sla_tracking.reassign');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [replyComposePrefill, setReplyComposePrefill] = useState<{
     key: number;
@@ -102,23 +115,35 @@ export default function StockInquiryDetail({
     enabled: !!isValidId,
   });
   const activeTracker = (slaTrackers ?? []).find((t) => !t.is_resolved) ?? null;
-  // Handling-lock ("I'm handling this") — live off the form-SLA handling tracker query.
+  // Handling-lock ("I'm handling this") - live off the form-SLA handling tracker query.
   const handlingLock = useHandlingLock({
     sourceEntityType: 'stock_inquiry',
     sourceEntityId: isValidId ? inquiryId : null,
     entityKey: inquiry?.updated_at,
   });
-  // A voided stock inquiry is fully read-only — suppress every business CTA.
+  // A voided stock inquiry is fully read-only - suppress every business CTA.
   const isVoided = (inquiry?.status ?? '').trim().toLowerCase() === 'voided';
-  const businessCtasEnabled = handlingLock.businessCtasEnabled && !isVoided;
+  // Form-action deferral (PLAN-form-sla-undo.md). While an action is pending its grace
+  // window, EVERY business CTA is suppressed - the form must commit against the state
+  // the action was requested on (AC-D-10), and a second action cannot queue (AC-D-7).
+  const formAction = useFormAction({
+    sourceEntityType: 'stock_inquiry',
+    sourceEntityId: isValidId ? inquiryId : null,
+    entityKey: inquiry?.updated_at,
+  });
+  const businessCtasEnabled =
+    handlingLock.businessCtasEnabled && !isVoided && !formAction.ctasDisabled;
+  const [undoDialogOpen, setUndoDialogOpen] = useState(false);
   const lockedCtaTitle = !businessCtasEnabled
-    ? `Being handled by ${handlingLock.tracker?.handled_by_name ?? 'someone else'} — take over to act`
+    ? `Being handled by ${handlingLock.tracker?.handled_by_name ?? 'someone else'} - take over to act`
     : undefined;
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
   const [editPurchasingResponseOpen, setEditPurchasingResponseOpen] = useState(false);
   const [editPurchasingResponseValue, setEditPurchasingResponseValue] = useState('');
+  const [responseAttachmentFiles, setResponseAttachmentFiles] = useState<File[]>([]);
+  const [reassignOpen, setReassignOpen] = useState(false);
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
   const canSubmitForProjectSales = useHasPermission('procurement.stock_inquiries.submit_for_project_sales');
   const canProjectSalesApprove = useHasPermission('procurement.stock_inquiries.project_sales_approve');
@@ -141,30 +166,26 @@ export default function StockInquiryDetail({
     }
   };
 
+  /**
+   * Only the purchasing wording. The preamble and the contact link are composed
+   * server-side by `StockInquiryService.compose_stock_inquiry_reply_message`, which
+   * resolves the interactive portal link and puts it last on its own line.
+   *
+   * Composing here previously sent the read-only `/view/...?token=` page built on the
+   * staff browser's own origin, with a ':' glued to the URL - WhatsApp pulled the colon
+   * into the href and the contact got an invalid link.
+   */
   const buildPurchasingRespondMessage = useCallback(
-    async (purchasingResponseText: string) => {
-      let viewUrl = '';
-      if (publicViewLinksEnabled) {
-        try {
-          const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-          const res = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
-          viewUrl = res.view_url ?? '';
-        } catch {
-          // continue without view link
-        }
-      }
-      const body = (purchasingResponseText ?? '').trim();
-      const linkPart = viewUrl ? ` ${viewUrl}` : '';
-      const fullMessage = `There is a response to your stock inquiry${linkPart}: ${body}`;
-      return { body, fullMessage };
-    },
-    [inquiryId, publicViewLinksEnabled],
+    async (purchasingResponseText: string) => ({
+      body: (purchasingResponseText ?? '').trim(),
+    }),
+    [],
   );
 
-  /** Persists short purchasing response when `skipSaveShort` is false, then sends the composed message via Respond.io */
+  /** Persists the purchasing response when `skipSaveShort` is false, then sends it via Respond.io */
   const sendPurchasingUpdateAndReplyViaRespond = useCallback(
     async (purchasingResponseText: string, options?: { skipSaveShort?: boolean }) => {
-      const { body, fullMessage } = await buildPurchasingRespondMessage(purchasingResponseText);
+      const { body } = await buildPurchasingRespondMessage(purchasingResponseText);
       if (!body) {
         toast.error('Enter a purchasing response before sending.');
         return;
@@ -177,7 +198,7 @@ export default function StockInquiryDetail({
       }
       await updateAndReplyMutation.mutateAsync({
         id: inquiryId,
-        data: { purchasing_response: fullMessage },
+        data: { purchasing_response: body },
       });
     },
     [
@@ -194,6 +215,28 @@ export default function StockInquiryDetail({
       skipSaveShort: true,
     });
   }, [inquiry, sendPurchasingUpdateAndReplyViaRespond]);
+
+  const closeEditPurchasingResponse = useCallback(() => {
+    setEditPurchasingResponseOpen(false);
+    setResponseAttachmentFiles([]);
+  }, []);
+
+  /** Uploads staged attachments before the response text is saved. Returns false
+   *  (and leaves the popup open with the files intact) on any upload failure, so
+   *  the response text is never silently saved without the attachments. */
+  const uploadStagedResponseAttachments = useCallback(async () => {
+    if (responseAttachmentFiles.length === 0) return true;
+    try {
+      await uploadResponseAttachmentsMutation.mutateAsync({
+        inquiryId,
+        files: responseAttachmentFiles,
+      });
+      setResponseAttachmentFiles([]);
+      return true;
+    } catch {
+      return false; // toast already shown by the mutation
+    }
+  }, [responseAttachmentFiles, uploadResponseAttachmentsMutation, inquiryId]);
 
   if (!isValidId) {
     return (
@@ -267,7 +310,7 @@ export default function StockInquiryDetail({
         </div>
         <div className="flex items-center gap-2 flex-wrap sm:justify-end">
           {/* Workflow actions: HIDDEN (not disabled) while the handling lock is held
-              by someone else / unclaimed — keeps the header uncluttered. When the lock
+              by someone else / unclaimed - keeps the header uncluttered. When the lock
               does not bite (tier 1, flag off, or I hold it) businessCtasEnabled is true
               and they render on their normal status+permission gates. */}
           {businessCtasEnabled && inquiry.status === 'new' && canSubmitForProjectSales && (
@@ -368,8 +411,32 @@ export default function StockInquiryDetail({
                 : 'Reopen to pending project sales'}
             </Button>
           )}
+          <EntityDownloadsButton
+            entityType="stock_inquiry"
+            entityId={inquiryId}
+            label={inquiry.inquiry_number ?? undefined}
+            className="h-8 border border-border"
+          />
           <DetailActionsMenu ariaLabel="Stock inquiry actions">
-            {!isVoided && (
+            {/* Post-grace Undo. Rendered only when the server says the last committed
+                action is reversible - eligibility is a server read, never a client
+                guess, and it is re-checked at execute time (AC-PG-6/7). */}
+            {formAction.view.kind === 'undoable' && (
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setUndoDialogOpen(true);
+                }}
+                data-testid="undo-action-menu-item"
+              >
+                <RotateCcw className="size-4" />
+                Undo last action
+              </DropdownMenuItem>
+            )}
+            {/* Edit is not lock-gated (deliberate), but a pending form action DOES
+                block it: the action must commit against the state it was requested on
+                (AC-D-10). The backend enforces the same rule; this keeps the UI honest. */}
+            {!isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
                 onClick={() =>
                   router.push(
@@ -394,6 +461,17 @@ export default function StockInquiryDetail({
               </DropdownMenuItem>
             )}
             <SlaExtendMenuItem activeTracker={activeTracker} onSelect={() => setExtendOpen(true)} />
+            {canReassign && activeTracker && !isVoided && (
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setReassignOpen(true);
+                }}
+              >
+                <UserRoundCog className="size-4" />
+                Reassign
+              </DropdownMenuItem>
+            )}
             <HandlingLockReleaseMenuItem
               state={handlingLock.state}
               onRelease={handlingLock.release}
@@ -463,13 +541,24 @@ export default function StockInquiryDetail({
                 </DropdownMenuItem>
               )}
             <DropdownMenuItem
+              data-guide-target="procurement.stock-inquiries.download-pdf"
+              disabled={exportPdfMutation.isPending}
+              onSelect={(e) => {
+                e.preventDefault();
+                exportPdfMutation.mutate(inquiryId);
+              }}
+            >
+              <Printer className="size-4" />
+              {exportPdfMutation.isPending ? 'Preparing…' : 'Print / Download PDF'}
+            </DropdownMenuItem>
+            <DropdownMenuItem
               onClick={handleExportExcel}
               disabled={exporting}
             >
               <FileDown className="size-4" />
               {exporting ? 'Exporting…' : 'Export to Excel'}
             </DropdownMenuItem>
-            {canVoid && !isVoided && (
+            {canVoid && !isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 onClick={() => setVoidDialogOpen(true)}
@@ -478,7 +567,7 @@ export default function StockInquiryDetail({
                 Void
               </DropdownMenuItem>
             )}
-            {!isVoided && (
+            {!isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 onClick={() => setDeleteDialogOpen(true)}
@@ -498,6 +587,28 @@ export default function StockInquiryDetail({
         onClaim={handlingLock.claim}
         onTakeOver={handlingLock.takeOver}
       />
+
+      <FormActionBanner
+        view={formAction.view}
+        onCancel={formAction.cancel}
+        onExpire={formAction.refresh}
+        onDismissOutcome={formAction.refresh}
+        isCancelling={formAction.isMutating}
+      />
+
+      {formAction.view.kind === 'undoable' && (
+        <UndoActionDialog
+          open={undoDialogOpen}
+          onOpenChange={setUndoDialogOpen}
+          eligibility={formAction.view.eligibility}
+          entityLabel={inquiry.inquiry_number || 'this stock inquiry'}
+          onConfirm={(reason) => {
+            formAction.undo(reason);
+            setUndoDialogOpen(false);
+          }}
+          isSubmitting={formAction.isMutating}
+        />
+      )}
 
       {/* Reject dialog */}
       <Dialog
@@ -628,7 +739,7 @@ export default function StockInquiryDetail({
                 try {
                   const res = await escalateFormTracking(activeTracker.id, escalateReason.trim());
                   queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', 'stock_inquiry', inquiryId] });
-                  handlingLock.refresh(); // lock banner keys on a separate query — refetch so it appears without reload
+                  handlingLock.refresh(); // lock banner keys on a separate query - refetch so it appears without reload
                   toast.success(`Escalated to tier ${res.current_tier}`);
                   setEscalateOpen(false);
                 } catch (err) {
@@ -654,6 +765,26 @@ export default function StockInquiryDetail({
         }
       />
 
+      <ReassignDialog
+        open={reassignOpen}
+        onOpenChange={setReassignOpen}
+        taskLabel={`Stock Inquiry${inquiry.inquiry_number ? ` · ${inquiry.inquiry_number}` : ''}`}
+        submitting={reassignMutation.isPending}
+        onConfirm={(userId) => {
+          if (!activeTracker) return;
+          reassignMutation.mutate(
+            { id: activeTracker.id, userId },
+            {
+              onSuccess: () => {
+                queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', 'stock_inquiry', inquiryId] });
+                handlingLock.refresh(); // lock banner keys on a separate query - refetch so it appears without reload
+                setReassignOpen(false);
+              },
+            },
+          );
+        }}
+      />
+
       {inquiry && (
         <StockInquiryDeleteDialog
           open={deleteDialogOpen}
@@ -665,7 +796,13 @@ export default function StockInquiryDetail({
         />
       )}
 
-      <Dialog open={editPurchasingResponseOpen} onOpenChange={setEditPurchasingResponseOpen}>
+      <Dialog
+        open={editPurchasingResponseOpen}
+        onOpenChange={(open) => {
+          setEditPurchasingResponseOpen(open);
+          if (!open) setResponseAttachmentFiles([]);
+        }}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Edit purchasing response</DialogTitle>
@@ -684,15 +821,36 @@ export default function StockInquiryDetail({
               className="resize-none"
             />
           </div>
+          <div className="space-y-2">
+            <Label>Attachments</Label>
+            <ResponseAttachmentDropzone
+              files={responseAttachmentFiles}
+              onFilesChange={setResponseAttachmentFiles}
+              disabled={uploadResponseAttachmentsMutation.isPending}
+            />
+          </div>
           <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
-            <Button variant="outline" onClick={() => setEditPurchasingResponseOpen(false)}>
+            <Button variant="outline" onClick={closeEditPurchasingResponse}>
               Cancel
             </Button>
             <Button
               variant="outline"
               data-guide-target="procurement.stock-inquiries.save-response-button"
-              disabled={updateInquiryMutation.isPending}
+              // Blank response = nothing to save or send. Disable up front instead
+              // of accepting the click and rejecting it with a toast afterwards.
+              disabled={
+                !editPurchasingResponseValue.trim() ||
+                updateInquiryMutation.isPending ||
+                uploadResponseAttachmentsMutation.isPending
+              }
+              title={
+                !editPurchasingResponseValue.trim()
+                  ? 'Enter a purchasing response first.'
+                  : undefined
+              }
               onClick={async () => {
+                const uploaded = await uploadStagedResponseAttachments();
+                if (!uploaded) return;
                 try {
                   await updateInquiryMutation.mutateAsync({
                     id: inquiryId,
@@ -704,7 +862,9 @@ export default function StockInquiryDetail({
                 }
               }}
             >
-              {updateInquiryMutation.isPending ? 'Saving…' : 'Save only'}
+              {updateInquiryMutation.isPending || uploadResponseAttachmentsMutation.isPending
+                ? 'Saving…'
+                : 'Save only'}
             </Button>
             {inquiry.respond_inbox_url &&
               (inquiry.status === 'pending_purchasing' || inquiry.status === 'responded') && (
@@ -712,13 +872,21 @@ export default function StockInquiryDetail({
                   variant="primary"
                   data-guide-target="procurement.stock-inquiries.update-and-reply-button"
                   disabled={
+                    !editPurchasingResponseValue.trim() ||
                     updateInquiryMutation.isPending ||
                     openingReplySheet ||
                     updateAndReplyMutation.isPending ||
+                    uploadResponseAttachmentsMutation.isPending ||
                     !businessCtasEnabled
                   }
-                  title={lockedCtaTitle}
+                  title={
+                    !editPurchasingResponseValue.trim()
+                      ? 'Enter a purchasing response first.'
+                      : lockedCtaTitle
+                  }
                   onClick={async () => {
+                    const uploaded = await uploadStagedResponseAttachments();
+                    if (!uploaded) return;
                     setOpeningReplySheet(true);
                     try {
                       await sendPurchasingUpdateAndReplyViaRespond(editPurchasingResponseValue);
@@ -776,7 +944,7 @@ export default function StockInquiryDetail({
 
       <ProductInquiryFormLayout>
         <InquiryFormTableRow label="Date">
-          <InquiryReadValue empty="—">
+          <InquiryReadValue empty=" - ">
             {inquiry.created_at
               ? format(new Date(inquiry.created_at), 'dd/MM/yy')
               : ''}
@@ -786,7 +954,7 @@ export default function StockInquiryDetail({
           <InquiryReadValue>{inquiry.inquiry_number}</InquiryReadValue>
         </InquiryFormTableRow>
         <InquiryFormTableRow label="Sales person">
-          <InquiryReadValue>{inquiry.salesperson}</InquiryReadValue>
+          <InquiryReadValue>{inquiry.salesperson_contact_name ?? inquiry.salesperson}</InquiryReadValue>
         </InquiryFormTableRow>
         <InquiryFormTableRow label="Product code">
           <InquiryReadValue>{inquiry.product_code}</InquiryReadValue>
@@ -866,12 +1034,12 @@ export default function StockInquiryDetail({
         {(inquiry.last_responded_at || inquiry.last_responded_by) && (
           <>
             <InquiryFormTableRow label="Last responded by">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty=" - ">
                 {inquiry.last_responded_by_name ?? inquiry.last_responded_by}
               </InquiryReadValue>
             </InquiryFormTableRow>
             <InquiryFormTableRow label="Last responded at">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty=" - ">
                 {inquiry.last_responded_at
                   ? formatDate(new Date(inquiry.last_responded_at))
                   : ''}
@@ -884,12 +1052,12 @@ export default function StockInquiryDetail({
           (inquiry.rejection_reason != null && inquiry.rejection_reason !== '')) && (
           <>
             <InquiryFormTableRow label="Rejected by">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty=" - ">
                 {inquiry.rejected_by_name ?? inquiry.rejected_by}
               </InquiryReadValue>
             </InquiryFormTableRow>
             <InquiryFormTableRow label="Rejected at">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty=" - ">
                 {inquiry.rejected_at ? formatDate(new Date(inquiry.rejected_at)) : ''}
               </InquiryReadValue>
             </InquiryFormTableRow>
@@ -906,12 +1074,12 @@ export default function StockInquiryDetail({
               <InquiryReadValue>{inquiry.reopen_reason}</InquiryReadValue>
             </InquiryFormTableRow>
             <InquiryFormTableRow label="Reopened by">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty=" - ">
                 {inquiry.reopened_by_name ?? inquiry.reopened_by}
               </InquiryReadValue>
             </InquiryFormTableRow>
             <InquiryFormTableRow label="Reopened at">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty=" - ">
                 {inquiry.reopened_at ? formatDate(new Date(inquiry.reopened_at)) : ''}
               </InquiryReadValue>
             </InquiryFormTableRow>

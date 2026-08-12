@@ -21,7 +21,10 @@ from app.main import app  # noqa: F401  (import first: app.dependencies alone is
 from app.dependencies import get_current_user_or_api_key, get_db, get_external_api_user
 from app.models.access import RespondContact
 from app.models.chat_history import ChatHistory
-from app.services.conversation_variables_service import get_referenced_result_set
+from app.services.conversation_variables_service import (
+    get_referenced_result_set,
+    get_referenced_state,
+)
 from tests._external_auth import external_permissions_granted
 from tests._pg_fixture import blank_session
 
@@ -265,6 +268,254 @@ def test_get_referenced_result_set_scoped_to_contact(client, db):
         get_referenced_result_set(db, respond_io_id="other-contact", message_id=MESSAGE_ID)
         is None
     )
+
+
+# -------------------------------- referenced_state (quoted-turn pointer)
+#
+# A quote-reply names an OUTGOING message_id. That row's `turn_id` identifies the
+# turn; the INCOMING row of the same turn carries `state_trace`, whose `after` is
+# the state that turn wrote. The endpoint returns a 4-key projection of it, so the
+# parser can rebase continuity onto the quoted turn instead of the latest one.
+
+TURN_ID = "exec-4242"
+AFTER_STATE = {
+    "domain_hint": "promotion",
+    "intent_hint": "check_promotion",
+    "entities": [{"raw": "stop valve", "entity_type": "product", "dym_slot": 0}],
+    "dym_offer": {
+        "candidates": [
+            {
+                "code": "SRTWC287",
+                "for_raw": "stop valve",
+                "for_canonical": "SORENTO STOP VALVE",
+                "entity_type": "product",
+                "uuid": "11111111-1111-1111-1111-111111111111",
+                "picked": False,
+            }
+        ],
+        "ttl": 2,
+    },
+    # withheld by the projection
+    "last_result_set": {"n": 4, "first": "Promotion: A"},
+    "selection_context": "member_offer",
+    "response": "Would you like me to escalate this?",
+    "access_levels": ["dealer"],
+    "routing": {"suggested_team": "cs"},
+}
+
+
+def _seed_quoted_turn(
+    client,
+    *,
+    turn_id: str | None = TURN_ID,
+    incoming_turn_id: str | None = TURN_ID,
+    state_trace: dict | None = None,
+    message_id: str = MESSAGE_ID,
+    contact_id: str = RESPOND_IO_ID,
+    sent_at: int = 1780751906900,
+) -> None:
+    """Seed the pair a quote-reply resolves through: the quoted OUTGOING row
+    (carries `message_id`) and the turn's INCOMING row (carries `state_trace`)."""
+    client.post(
+        "/api/v1/external/chat-history/messages",
+        json=_ingest_payload(
+            contact_id=contact_id,
+            type="outgoing",
+            message_id=message_id,
+            turn_id=turn_id,
+            sent_at=sent_at,
+        ),
+    )
+    payload = _ingest_payload(
+        contact_id=contact_id,
+        type="incoming",
+        message="promo for stop valve",
+        message_id=None,
+        result=None,
+        turn_id=incoming_turn_id,
+        sent_at=sent_at - 1000,
+    )
+    if state_trace is not None:
+        payload["state_trace"] = state_trace
+    client.post("/api/v1/external/chat-history/messages", json=payload)
+
+
+def test_conversation_variables_injects_referenced_state(client, db):
+    _seed_contact(db)
+    _seed_quoted_turn(client, state_trace={"v": 1, "after": AFTER_STATE})
+
+    r = client.get(
+        f"/api/v1/external/conversation-variables/{RESPOND_IO_ID}",
+        params={"message_id": MESSAGE_ID},
+    )
+    assert r.status_code == 200
+    rs = r.json()["session_vars"]["referenced_state"]
+    assert rs["domain_hint"] == "promotion"
+    assert rs["intent_hint"] == "check_promotion"
+    assert rs["entities"] == AFTER_STATE["entities"]
+    assert rs["dym_offer"] == AFTER_STATE["dym_offer"]
+
+
+def test_referenced_state_absent_without_message_id(client, db):
+    _seed_contact(db)
+    r = client.get(f"/api/v1/external/conversation-variables/{RESPOND_IO_ID}")
+    assert r.status_code == 200
+    assert "referenced_state" not in r.json()["session_vars"]
+
+
+def test_referenced_state_null_when_turn_id_null(client, db):
+    """Proactive send / console row: no turn_id, so no turn to resolve."""
+    _seed_contact(db)
+    _seed_quoted_turn(
+        client,
+        turn_id=None,
+        incoming_turn_id=None,
+        state_trace={"v": 1, "after": AFTER_STATE},
+    )
+    r = client.get(
+        f"/api/v1/external/conversation-variables/{RESPOND_IO_ID}",
+        params={"message_id": MESSAGE_ID},
+    )
+    assert r.status_code == 200
+    assert r.json()["session_vars"]["referenced_state"] is None
+
+
+def test_referenced_state_null_when_state_trace_null(client, db):
+    """Turn resolves, but predates the state_trace writer."""
+    _seed_contact(db)
+    _seed_quoted_turn(client, state_trace=None)
+    assert (
+        get_referenced_state(db, respond_io_id=RESPOND_IO_ID, message_id=MESSAGE_ID)
+        is None
+    )
+
+
+def test_referenced_state_null_when_after_is_json_null(client, db):
+    """`after: null` = the turn wrote no state. MISS, never `{}`.
+
+    Returning an empty baseline would WIPE continuity in the parser rebase, which is
+    strictly worse than the pre-pointer behaviour of falling back to recency.
+    """
+    _seed_contact(db)
+    _seed_quoted_turn(client, state_trace={"v": 1, "before": {"x": 1}, "after": None})
+    assert (
+        get_referenced_state(db, respond_io_id=RESPOND_IO_ID, message_id=MESSAGE_ID)
+        is None
+    )
+
+
+def test_referenced_state_scoped_to_contact(client, db):
+    _seed_contact(db)
+    _seed_quoted_turn(client, state_trace={"v": 1, "after": AFTER_STATE})
+    assert (
+        get_referenced_state(db, respond_io_id="other-contact", message_id=MESSAGE_ID)
+        is None
+    )
+
+
+def test_referenced_state_picks_latest_on_duplicate_message_id(client, db):
+    """`(contact_id, message_id)` is indexed but NOT unique — newest turn wins."""
+    _seed_contact(db)
+    _seed_quoted_turn(
+        client,
+        turn_id="exec-old",
+        incoming_turn_id="exec-old",
+        state_trace={"v": 1, "after": {**AFTER_STATE, "domain_hint": "orders"}},
+        sent_at=1780751000000,
+    )
+    _seed_quoted_turn(
+        client,
+        turn_id="exec-new",
+        incoming_turn_id="exec-new",
+        state_trace={"v": 1, "after": {**AFTER_STATE, "domain_hint": "promotion"}},
+        sent_at=1780759000000,
+    )
+    rs = get_referenced_state(
+        db, respond_io_id=RESPOND_IO_ID, message_id=MESSAGE_ID
+    )
+    assert rs is not None
+    assert rs["domain_hint"] == "promotion"
+
+
+def test_referenced_state_projection_withholds_internal_keys(client, db):
+    """Contract boundary: exactly four keys, whatever else `after` carries.
+
+    Without this, a future `after` key starts leaking silently — and two of the
+    withheld keys are safety properties (`selection_context` -> wrong-member assign,
+    `access_levels` -> stale re-grant), not tidiness.
+    """
+    _seed_contact(db)
+    _seed_quoted_turn(
+        client,
+        state_trace={
+            "v": 1,
+            "before": {"entities": []},
+            "parser_raw": {"domain_hint": "x"},
+            "parser_applied": {"domain_hint": "y"},
+            "after": AFTER_STATE,
+        },
+    )
+    rs = get_referenced_state(db, respond_io_id=RESPOND_IO_ID, message_id=MESSAGE_ID)
+    assert rs is not None
+    assert set(rs) == {"domain_hint", "intent_hint", "entities", "dym_offer"}
+
+
+def test_referenced_state_dym_offer_candidates_survive(client, db):
+    """`trim()` never descends into `dym_offer`, so its candidates arrive intact."""
+    _seed_contact(db)
+    _seed_quoted_turn(client, state_trace={"v": 1, "after": AFTER_STATE})
+    rs = get_referenced_state(db, respond_io_id=RESPOND_IO_ID, message_id=MESSAGE_ID)
+    assert rs is not None
+    cand = rs["dym_offer"]["candidates"][0]
+    assert cand["code"] == "SRTWC287"
+    assert cand["for_raw"] == "stop valve"
+    assert cand["entity_type"] == "product"
+    assert cand["uuid"] == "11111111-1111-1111-1111-111111111111"
+
+
+def test_referenced_state_tolerates_non_dict_entities(client, db):
+    """`trim()` collapses list-valued keys to `{n, first}`; entities must not 500."""
+    _seed_contact(db)
+    _seed_quoted_turn(
+        client,
+        state_trace={
+            "v": 1,
+            "after": {
+                "domain_hint": "promotion",
+                "intent_hint": None,
+                "entities": {"n": 3, "first": "stop valve"},
+                "dym_offer": [],
+            },
+        },
+    )
+    r = client.get(
+        f"/api/v1/external/conversation-variables/{RESPOND_IO_ID}",
+        params={"message_id": MESSAGE_ID},
+    )
+    assert r.status_code == 200
+    rs = r.json()["session_vars"]["referenced_state"]
+    assert rs["entities"] == []
+    assert rs["dym_offer"] is None
+
+
+def test_referenced_state_resolves_when_quoting_own_incoming_message(client, db):
+    """Quoting your OWN earlier message: the anchor row is the incoming row itself,
+    whose turn_id resolves to its own turn — the semantically right answer."""
+    _seed_contact(db)
+    client.post(
+        "/api/v1/external/chat-history/messages",
+        json=_ingest_payload(
+            type="incoming",
+            message="promo for stop valve",
+            message_id=MESSAGE_ID,
+            result=None,
+            turn_id=TURN_ID,
+            state_trace={"v": 1, "after": AFTER_STATE},
+        ),
+    )
+    rs = get_referenced_state(db, respond_io_id=RESPOND_IO_ID, message_id=MESSAGE_ID)
+    assert rs is not None
+    assert rs["domain_hint"] == "promotion"
 
 
 # ------------------------------------------- respond_ts derived at ingest

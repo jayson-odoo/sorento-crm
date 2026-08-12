@@ -18,6 +18,10 @@ export const COMPLAINT_STATUS_PILL_CLASS: Record<string, string> = {
   // a non-green hue so the terminal "Fulfilled" state is unmistakably distinct
   // from the emerald processed_by_cs / resolved states.
   fulfilled: 'bg-violet-100 text-violet-800',
+  // Terminal without customer service: the technician settled the issue during the
+  // site visit, so no replacement DO exists. Teal keeps it distinct from both the
+  // emerald CS states and the violet delivered-replacement state.
+  settled_on_site: 'bg-teal-100 text-teal-800',
   closed: 'bg-slate-200 text-slate-700',
 };
 
@@ -25,6 +29,7 @@ export const COMPLAINT_STATUS_PILL_CLASS: Record<string, string> = {
 const COMPLAINT_STATUS_LABEL: Record<string, string> = {
   processed_by_cs: 'Processed by CS',
   fulfilled: 'Fulfilled',
+  settled_on_site: 'Settled on site',
 };
 
 export function complaintStatusPillClass(status?: string | null): string {

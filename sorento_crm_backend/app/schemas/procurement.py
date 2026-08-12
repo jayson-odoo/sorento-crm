@@ -151,7 +151,44 @@ class InboundShipmentLineResponse(InboundShipmentLineBase):
         from_attributes = True
 
 
-class InboundShipmentBase(BaseModel):
+class ClearanceFields(BaseModel):
+    """Container status fields carried on every shipment payload.
+
+    Mirrors `ClearanceFields` in
+    packing-lists/types/packingList.types.ts one-for-one; a pytest parity check
+    (tests/test_container_status_schema.py) fails if the two drift, because a
+    field missing on one side does not error - it just never reaches the UI.
+
+    Inherited by `InboundShipmentBase`, so the list response, the detail response
+    and the create payload all get them from one place rather than from three
+    hand-maintained field lists.
+    """
+
+    loc: Optional[str] = None
+    liner_code: Optional[str] = None
+    china_forwarder: Optional[str] = None
+    malaysia_forwarder: Optional[str] = None
+    consignee: Optional[str] = None
+    free_days_available: Optional[int] = None
+    stacked: Optional[str] = None
+
+    loading_date: Optional[date] = None
+    etc_date: Optional[date] = None
+    etd_date: Optional[date] = None
+    eta_delay_date: Optional[date] = None
+    inspection_date: Optional[date] = None
+    approval_date: Optional[date] = None
+    gatepass_date: Optional[date] = None
+    delivery_warehouse: Optional[str] = None
+    warehouse_arrival_date: Optional[date] = None
+    informed_collection_date: Optional[date] = None
+    collection_date: Optional[date] = None
+
+    coa_permit_no: Optional[str] = None
+    source_sheet: Optional[str] = None
+
+
+class InboundShipmentBase(ClearanceFields):
     shipment_number: Optional[str] = None
     supplier_id: Optional[str] = None
     shipment_date: date
@@ -171,7 +208,17 @@ class InboundShipmentCreate(InboundShipmentBase):
     shipment_lines: Optional[List[InboundShipmentLineCreate]] = None
 
 
-class InboundShipmentUpdate(BaseModel):
+class InboundShipmentUpdate(ClearanceFields):
+    """Everything editable on a packing list, INCLUDING the clearance fields.
+
+    They are here because the workbook is not the only way these dates arrive:
+    when the import has not run, or a liner publishes a revision between imports,
+    someone has to be able to type the date in. Without them on this schema the
+    PUT accepted the payload and silently dropped it - `update_shipment` setattrs
+    whatever `exclude_unset` yields, so a field absent from the schema never
+    reaches the row and the save looks successful.
+    """
+
     supplier_id: Optional[str] = None
     shipment_date: Optional[date] = None
     estimated_arrival_date: Optional[date] = None
@@ -438,7 +485,7 @@ class PickingHeaderBase(BaseModel):
 
     # source_entity_id is physically a uuid column on picking_headers (the model
     # declares String, but the live column is uuid), so SQLAlchemy hands back a
-    # UUID object that strict str validation rejects — coerce like the user ids.
+    # UUID object that strict str validation rejects - coerce like the user ids.
     @field_validator(
         "picked_by_user_id", "inspected_by_user_id", "source_entity_id", mode="before"
     )
@@ -476,6 +523,13 @@ class PickingHeaderResponse(PickingHeaderBase):
     picking_lines: Optional[List[PickingLineResponse]] = None
     lines_count: Optional[int] = 0
     items_count: Optional[int] = 0
+    # Provenance: how this GRN got here. `source_system` is 'ui' | 'import' |
+    # 'external_api'; the two labels are resolved server-side because the UI must
+    # never print a UUID. All None for rows created before this was recorded,
+    # which reads as "unknown" rather than guessing an author.
+    source_system: Optional[str] = None
+    created_by_label: Optional[str] = None
+    import_filename: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -527,6 +581,11 @@ def _coerce_scope_id_to_string(v: object) -> Optional[str]:
 
 class StockInquiryBase(BaseModel):
     salesperson: Optional[str] = None
+    # Requestor FK (the salesman this inquiry is FOR) - drives CS pin routing.
+    # `contact_id` stays the submitter. The resolved display name is a READ-ONLY
+    # derived field and lives on the response schemas only: on a create/update
+    # base it would ride into `StockInquiry(**data)` and 500 the whole route.
+    salesperson_contact_id: Optional[str] = None
     product_code: Optional[str] = None
     item_description: Optional[str] = None
     project_customer: Optional[str] = None
@@ -585,6 +644,7 @@ class StockInquiryCreate(StockInquiryBase):
 
 class StockInquiryUpdate(BaseModel):
     salesperson: Optional[str] = None
+    salesperson_contact_id: Optional[str] = None
     product_code: Optional[str] = None
     item_description: Optional[str] = None
     project_customer: Optional[str] = None
@@ -634,6 +694,13 @@ class StockInquiryAttachmentResponse(BaseModel):
     file_size_bytes: Optional[int] = None
     uploaded_at: Optional[datetime] = None
     link_type: Optional[str] = None
+    # Uploader attribution (UAC B2/B5) - omitting these here silently drops what
+    # serialize_link computes and the panel renders "Unknown".
+    mime_type: Optional[str] = None
+    uploader_kind: Optional[str] = None
+    uploaded_by_name: Optional[str] = None
+    uploaded_by_role: Optional[str] = None
+    can_unlink: Optional[bool] = None
 
 
 class StockInquiryRejectReopenRequest(BaseModel):
@@ -645,6 +712,9 @@ class StockInquiryRejectReopenRequest(BaseModel):
 
 class StockInquiryResponse(StockInquiryBase):
     id: str
+    # Requestor display name, resolved live from the FK so a contact rename
+    # fixes every screen with no backfill. Read-only, response-only.
+    salesperson_contact_name: Optional[str] = None
     system_id: Optional[str] = None
     form_type: Optional[str] = None
     inquiry_number: Optional[str] = None
@@ -673,6 +743,9 @@ class StockInquiryResponse(StockInquiryBase):
     voided_at: Optional[datetime] = None
     voided_by_name: Optional[str] = None
     voided_by_wa_phone: Optional[str] = None
+    # How many PDF exports the VIEWING user has taken of this record (list path only;
+    # 0 on the detail path, which does not batch the count).
+    print_count: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     attachments: Optional[List[StockInquiryAttachmentResponse]] = []
@@ -709,6 +782,8 @@ class PurchaseRequestHeaderBase(BaseModel):
     request_number: Optional[str] = None  # User-assignable form number (e.g. PR-2026-001)
     request_date: Optional[date] = None
     customer_name: Optional[str] = None
+    # Site contact, free text ("name and contact number"). Optional.
+    pic: Optional[str] = None
     project_title: Optional[str] = None
     # AC-F3: the sponsorship-to-project link. Nullable everywhere, and project_title
     # stays as the display fallback for the rows that predate it (AC-F6).
@@ -724,6 +799,11 @@ class PurchaseRequestHeaderBase(BaseModel):
     expected_po_date: Optional[date] = None
     expected_po_date_text: Optional[str] = None
     requested_by: Optional[str] = None
+    # Requestor FK (the person the request is FOR) - drives CS pin routing.
+    # `contact_id` stays the submitter, who keeps receiving every update. The
+    # resolved display name is a READ-ONLY derived field and lives on the
+    # response schemas only (see StockInquiryBase for why it must not sit here).
+    requested_by_contact_id: Optional[str] = None
     requested_at: Optional[date] = None  # DEPRECATED — see submitted_at + request_date
     submitted_at: Optional[datetime] = None  # auto-stamped on submit; top "Date" on the document (read-only)
     status: Optional[str] = None
@@ -769,6 +849,8 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     request_number: Optional[str] = None
     request_date: Optional[date] = None
     customer_name: Optional[str] = None
+    # Site contact, free text ("name and contact number"). Optional.
+    pic: Optional[str] = None
     project_title: Optional[str] = None
     # AC-F3: the sponsorship-to-project link. Nullable everywhere, and project_title
     # stays as the display fallback for the rows that predate it (AC-F6).
@@ -784,6 +866,7 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     expected_po_date: Optional[date] = None
     expected_po_date_text: Optional[str] = None
     requested_by: Optional[str] = None
+    requested_by_contact_id: Optional[str] = None
     requested_at: Optional[date] = None
     status: Optional[str] = None
     contact_id: Optional[str] = None
@@ -822,6 +905,8 @@ class PurchaseRequestUpdateAndReply(PurchaseRequestHeaderUpdate):
 class PurchaseRequestHeaderListResponse(PurchaseRequestHeaderBase):
     """Response for list endpoint (no lines)."""
     id: str
+    # Requestor display name, resolved live from the FK (read-only, response-only).
+    requested_by_contact_name: Optional[str] = None
     request_number: Optional[str] = None
     view_url: Optional[str] = None
     respond_inbox_url: Optional[str] = None
@@ -846,6 +931,13 @@ class PurchaseRequestAttachmentResponse(BaseModel):
     file_size_bytes: Optional[int] = None
     uploaded_at: Optional[datetime] = None
     link_type: Optional[str] = None
+    # Uploader attribution (UAC B2/B5) - omitting these here silently drops what
+    # serialize_link computes and the panel renders "Unknown".
+    mime_type: Optional[str] = None
+    uploader_kind: Optional[str] = None
+    uploaded_by_name: Optional[str] = None
+    uploaded_by_role: Optional[str] = None
+    can_unlink: Optional[bool] = None
 
 
 class PurchaseRequestAttachmentLinkRequest(BaseModel):
@@ -857,6 +949,8 @@ class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
     # Resolved for display (AC-L3): the office-side detail page shows a project CODE, never a
     # UUID, matching what the portal already resolves for contacts.
     project_code: Optional[str] = None
+    # Requestor display name, resolved live from the FK (read-only, response-only).
+    requested_by_contact_name: Optional[str] = None
     request_number: Optional[str] = None
     view_url: Optional[str] = None
     respond_inbox_url: Optional[str] = None
@@ -933,6 +1027,8 @@ class PublicApprovalSummaryResponse(BaseModel):
     request_number: Optional[str] = None
     request_type: str
     customer_name: Optional[str] = None
+    # Site contact, free text ("name and contact number"). Optional.
+    pic: Optional[str] = None
     project_title: Optional[str] = None
     # AC-F3: the sponsorship-to-project link. Nullable everywhere, and project_title
     # stays as the display fallback for the rows that predate it (AC-F6).
@@ -945,6 +1041,8 @@ class PublicApprovalSummaryResponse(BaseModel):
     sales_type: Optional[str] = None  # PR sales type (project/cash_sales); null for SF
     sponsor_subject_other: Optional[str] = None  # sponsorship form: free-text when 'others'
     requested_by: Optional[str] = None
+    requested_by_contact_id: Optional[str] = None
+    requested_by_contact_name: Optional[str] = None
     request_date: Optional[date] = None
     submitted_at: Optional[datetime] = None  # top "Date" on the document (auto-stamped on submit)
     created_at: Optional[datetime] = None

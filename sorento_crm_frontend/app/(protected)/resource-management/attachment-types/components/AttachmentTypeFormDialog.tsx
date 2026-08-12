@@ -32,7 +32,6 @@ import {
   AttachmentTypeSchema,
   type AttachmentTypeSchemaType,
 } from '../forms/attachment-type-schema';
-import type { AttachmentType } from '../types/attachmentType.types';
 
 interface AttachmentTypeFormDialogProps {
   open: boolean;
@@ -57,7 +56,11 @@ export default function AttachmentTypeFormDialog({
       description: '',
       allowed_extensions: '',
       max_file_size_mb: 10,
+      max_count_per_entity: null,
       supports_field_linkage: false,
+      triggers_n8n_webhook: true,
+      is_certificate: false,
+      max_validity_months: null,
     },
     mode: 'onSubmit',
   });
@@ -71,7 +74,11 @@ export default function AttachmentTypeFormDialog({
           description: attachmentType.description || '',
           allowed_extensions: attachmentType.allowed_extensions,
           max_file_size_mb: attachmentType.max_file_size_mb,
+          max_count_per_entity: attachmentType.max_count_per_entity ?? null,
           supports_field_linkage: attachmentType.supports_field_linkage ?? false,
+          triggers_n8n_webhook: attachmentType.triggers_n8n_webhook ?? true,
+          is_certificate: attachmentType.is_certificate ?? false,
+          max_validity_months: attachmentType.max_validity_months ?? null,
         });
       } else {
         form.reset({
@@ -79,7 +86,11 @@ export default function AttachmentTypeFormDialog({
           description: '',
           allowed_extensions: '',
           max_file_size_mb: 10,
+          max_count_per_entity: null,
           supports_field_linkage: false,
+          triggers_n8n_webhook: true,
+          is_certificate: false,
+          max_validity_months: null,
         });
       }
     }
@@ -95,7 +106,11 @@ export default function AttachmentTypeFormDialog({
             description: data.description || undefined,
             allowed_extensions: data.allowed_extensions,
             max_file_size_mb: data.max_file_size_mb,
+            max_count_per_entity: data.max_count_per_entity ?? null,
             supports_field_linkage: data.supports_field_linkage ?? false,
+            triggers_n8n_webhook: data.triggers_n8n_webhook ?? true,
+            is_certificate: data.is_certificate ?? false,
+            max_validity_months: data.max_validity_months ?? null,
           },
         });
       } else {
@@ -104,12 +119,16 @@ export default function AttachmentTypeFormDialog({
           description: data.description || undefined,
           allowed_extensions: data.allowed_extensions,
           max_file_size_mb: data.max_file_size_mb,
+          max_count_per_entity: data.max_count_per_entity ?? null,
           supports_field_linkage: data.supports_field_linkage ?? false,
+          triggers_n8n_webhook: data.triggers_n8n_webhook ?? true,
+          is_certificate: data.is_certificate ?? false,
+          max_validity_months: data.max_validity_months ?? null,
         });
       }
       onOpenChange(false);
       form.reset();
-    } catch (error) {
+    } catch {
       // Error handled by mutation
     }
   };
@@ -195,6 +214,35 @@ export default function AttachmentTypeFormDialog({
 
             <FormField
               control={form.control}
+              name="max_count_per_entity"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Max attachments per record</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={1}
+                      placeholder="Leave blank for unlimited"
+                      value={field.value ?? ''}
+                      onChange={(e) => {
+                        const raw = e.target.value.trim();
+                        // Blank clears the cap (NULL = unlimited); don't coerce to 0,
+                        // which would read as "no uploads allowed".
+                        field.onChange(raw === '' ? null : parseInt(raw, 10));
+                      }}
+                    />
+                  </FormControl>
+                  <p className="text-xs text-muted-foreground">
+                    How many files of this type one record may hold. Blank = unlimited. Portal
+                    uploads are rejected once a record reaches this count.
+                  </p>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
               name="supports_field_linkage"
               render={({ field }) => (
                 <FormItem className="flex flex-row items-start gap-2 rounded-md border p-3">
@@ -214,6 +262,88 @@ export default function AttachmentTypeFormDialog({
                 </FormItem>
               )}
             />
+
+            <FormField
+              control={form.control}
+              name="triggers_n8n_webhook"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-start gap-2 rounded-md border p-3">
+                  <FormControl>
+                    <Checkbox
+                      checked={field.value !== false}
+                      onCheckedChange={(v) => field.onChange(v === true)}
+                    />
+                  </FormControl>
+                  <div className="space-y-0.5">
+                    <FormLabel className="cursor-pointer">
+                      Send uploads to the automation (n8n)
+                    </FormLabel>
+                    <p className="text-xs text-muted-foreground">
+                      On for document types the automation reads and links (product photos,
+                      catalogues, certificates). Turn it OFF for types it never handles - a
+                      background file like a stock list or an imported workbook otherwise waits
+                      on a reply that never comes, and sits on &quot;Processing&quot; in Upload
+                      activity forever.
+                    </p>
+                  </div>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="is_certificate"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-start gap-2 rounded-md border p-3">
+                  <FormControl>
+                    <Checkbox
+                      checked={!!field.value}
+                      onCheckedChange={(v) => field.onChange(v === true)}
+                    />
+                  </FormControl>
+                  <div className="space-y-0.5">
+                    <FormLabel className="cursor-pointer">
+                      Files of this type are certificates
+                    </FormLabel>
+                    <p className="text-xs text-muted-foreground">
+                      When on, an upload of this type that arrives with certificate details
+                      (scheme, number, validity) also files a certificate in the register, so it
+                      can be renewed and chased before it expires. Off = the file is linked to
+                      products exactly as before.
+                    </p>
+                  </div>
+                </FormItem>
+              )}
+            />
+
+            {form.watch('is_certificate') && (
+              <FormField
+                control={form.control}
+                name="max_validity_months"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Maximum validity (months)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min={1}
+                        placeholder="Leave blank for no limit"
+                        value={field.value ?? ''}
+                        onChange={(e) =>
+                          field.onChange(e.target.value === '' ? null : Number(e.target.value))
+                        }
+                      />
+                    </FormControl>
+                    <p className="text-xs text-muted-foreground">
+                      How long a certificate of this type can plausibly run. A document read as
+                      valid for longer is flagged for review rather than trusted. Blank = no
+                      limit.
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
 
             <DialogFooter>
               <Button

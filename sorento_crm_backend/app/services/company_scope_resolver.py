@@ -25,6 +25,8 @@ Decision table (PLAN §3.9 / §3.11, four-state — see ``app/models/base.py``):
   X-API-Key + contact_id&space_id resolved     | frozenset(contact's company_ids)
   X-API-Key + contact params, contact/none     | frozenset()  (empty → 0 rows, AC-F3)
   X-API-Key, no contact params                 | None (all companies, backward-compat)
+  Portal / public view token (header or ?token) | frozenset(contact's companies)
+                                                |   → incumbent when it has none
   no principal / public / unauth               | UNSET (fail-closed, 0 rows)
 
 Resilient by construction: ANY resolver exception → ``UNSET`` (fail-closed) + a
@@ -200,6 +202,78 @@ def _resolve_api_key_scope(db: Session, request: Request) -> CompanyScope:
     return frozenset(company_ids)
 
 
+def _portal_token_value(request: Request) -> Optional[str]:
+    """The portal/public-view token, wherever that surface puts it.
+
+    Two shapes in the wild: the public ``/view`` + approval links pass
+    ``?token=``, while the submission portal (``/portal/c/<slug>/...``) sends
+    ``X-Portal-Token`` (the token lives in localStorage, never in the URL).
+    Both must resolve a scope; checking only the query param left the whole
+    slug portal fail-closed.
+    """
+    header = (request.headers.get("X-Portal-Token") or "").strip()
+    if header:
+        return header
+    return (request.query_params.get("token") or "").strip() or None
+
+
+def _portal_token_scope(request: Request, db: Session) -> Optional[CompanyScope]:
+    """Scope for the contact-facing surfaces, which authenticate with a portal
+    token instead of a JWT or an API key.
+
+    Those requests carry no Bearer and no X-API-Key, so they used to fall through
+    to ``UNSET`` (fail-closed) - which silently emptied every company-scoped read
+    on the portal: the debtor lookup, the delivery-order picker and any owned
+    table behind the submission form returned zero rows.
+
+    The scope is the TOKEN'S OWN CONTACT companies (``respond_contact_companies``,
+    the admin-managed M2M shown as "Companies" on Edit Contact) - the same
+    identity rule the X-API-Key path uses, so a Sorento contact never sees another
+    company's delivery orders. A contact with no company rows falls back to the
+    incumbent company rather than to zero rows: every pre-multi-company row
+    carries the incumbent id, and a contact-facing form that silently shows an
+    empty customer list is worse than showing the legacy default.
+
+    Returns None when this is not a portal request (caller keeps its own
+    fallback).
+    """
+    path = request.url.path or ""
+    if "/public/" not in path:
+        return None
+    raw = _portal_token_value(request)
+    if not raw:
+        return None
+
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    try:
+        from app.models.company import RespondContactCompany
+        from app.models.portal import PortalToken
+
+        row = (
+            db.query(PortalToken.contact_id)
+            .filter(PortalToken.token == raw)
+            .first()
+        )
+        if row and row[0]:
+            company_ids = {
+                str(cid)
+                for (cid,) in db.query(RespondContactCompany.company_id)
+                .filter(RespondContactCompany.respond_contact_id == str(row[0]))
+                .all()
+                if cid
+            }
+            if company_ids:
+                return frozenset(company_ids)
+    except Exception as exc:  # noqa: BLE001 - resolver must never 500
+        logger.warning("portal token company resolve failed: %s", exc)
+
+    # Unknown / unverified token, or a contact with no company membership: the
+    # route's own auth still 401s an invalid token, so this is not an
+    # authorisation decision - only which company's rows a valid one reads.
+    return frozenset({DEFAULT_COMPANY_ID})
+
+
 def resolve_company_scope(request: Request, db: Session) -> CompanyScope:
     """Pure resolver (no session mutation) — exposed for tests. Never raises."""
     api_key = request.headers.get("X-API-Key")
@@ -210,6 +284,9 @@ def resolve_company_scope(request: Request, db: Session) -> CompanyScope:
     token = _bearer_token(request)
     if token:
         return _resolve_user_scope(db, token, request)
+    portal_scope = _portal_token_scope(request, db)
+    if portal_scope is not None:
+        return portal_scope
     return UNSET
 
 

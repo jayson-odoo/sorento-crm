@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { isDeferredFormAction } from '@/app/(protected)/sla-management/_shared/formAction';
 import { buildDataGridParams } from '@/lib/api-client';
 import {
   useRecordNeighbours,
@@ -7,6 +8,7 @@ import {
 } from '@/hooks/useRecordNeighbours';
 import {
   COMPLAINT_NEIGHBOURS_PATH,
+  complaintListExtraParams,
   type ComplaintsListParams,
 } from '../services/complaintService';
 import {
@@ -27,24 +29,27 @@ import {
   bulkDeleteComplaints,
   linkComplaintAttachment,
   deleteComplaintAttachment,
+  uploadComplaintResponseAttachment,
+  deleteComplaintResponseAttachment,
   syncComplaintAssigneeFromRespond,
+  type ResponseAttachmentUploadResult,
 } from '../services/complaintService';
 import type { ComplaintFormData } from '../types/complaint.types';
 
 /**
  * Prev/next neighbours of a complaint within the active filtered+sorted list set.
  * Serializes the list query (search/sort/assignee/status) with `buildDataGridParams`
- * — the same serialization the list page uses — so the backend honours filters
+ * - the same serialization the list page uses - so the backend honours filters
  * identically. `page`/`limit` are sent but ignored by the neighbours endpoint.
  */
 export function useComplaintNeighbours(
   complaintId: string | null,
   listParams: ComplaintsListParams,
 ): RecordNeighboursResult {
-  const params = buildDataGridParams(listParams, {
-    assigned_to: listParams.assigned_to,
-    status: listParams.status,
-  });
+  const params = buildDataGridParams(
+    listParams,
+    complaintListExtraParams(listParams),
+  );
   return useRecordNeighbours(COMPLAINT_NEIGHBOURS_PATH, complaintId, params);
 }
 
@@ -58,6 +63,9 @@ export function useComplaints(params: ComplaintsListParams) {
       params.searchQuery,
       params.assigned_to,
       params.status,
+      // Join, not the array: a fresh array literal each render would be a new key.
+      params.root_cause_ids?.join(',') ?? '',
+      params.resolution_ids?.join(',') ?? '',
     ],
     queryFn: () => getComplaints(params),
     staleTime: Infinity,
@@ -133,15 +141,36 @@ export function useUpdateComplaintAndReply() {
   });
 }
 
+/** Refetch everything a decision touches, including the countdown banner's reads. */
+function decisionInvalidate(
+  queryClient: ReturnType<typeof useQueryClient>,
+  id: string,
+) {
+  queryClient.invalidateQueries({ queryKey: ['complaints'] });
+  queryClient.invalidateQueries({ queryKey: ['complaint'] });
+  queryClient.invalidateQueries({ queryKey: ['complaint-conversation', id] });
+  // A 202 parks the action instead of moving the complaint; the countdown banner
+  // reads these, so they must refetch or the deferral is invisible until reload.
+  queryClient.invalidateQueries({ queryKey: ['form-action-current'] });
+  queryClient.invalidateQueries({ queryKey: ['form-action-eligibility'] });
+}
+
+/** Deferred => countdown copy; immediate => the action's own success copy. */
+function toastActionResult(result: unknown, immediateMessage: string) {
+  if (isDeferredFormAction(result)) {
+    toast.success('Action is on hold for a few seconds - you can still undo.');
+  } else {
+    toast.success(immediateMessage);
+  }
+}
+
 export function useApproveComplaint() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => approveComplaint(id),
-    onSuccess: (_, id) => {
-      queryClient.invalidateQueries({ queryKey: ['complaints'] });
-      queryClient.invalidateQueries({ queryKey: ['complaint'] });
-      queryClient.invalidateQueries({ queryKey: ['complaint-conversation', id] });
-      toast.success('Complaint approved and customer notified.');
+    onSuccess: (result, id) => {
+      decisionInvalidate(queryClient, id);
+      toastActionResult(result, 'Complaint approved and customer notified.');
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to approve complaint'),
@@ -153,11 +182,9 @@ export function useRejectComplaint() {
   return useMutation({
     mutationFn: ({ id, rejection_reason }: { id: string; rejection_reason: string }) =>
       rejectComplaint(id, rejection_reason),
-    onSuccess: (_, { id }) => {
-      queryClient.invalidateQueries({ queryKey: ['complaints'] });
-      queryClient.invalidateQueries({ queryKey: ['complaint'] });
-      queryClient.invalidateQueries({ queryKey: ['complaint-conversation', id] });
-      toast.success('Complaint rejected and customer notified.');
+    onSuccess: (result, { id }) => {
+      decisionInvalidate(queryClient, id);
+      toastActionResult(result, 'Complaint rejected and customer notified.');
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to reject complaint'),
@@ -169,11 +196,9 @@ export function useProcessComplaintByCs() {
   return useMutation({
     mutationFn: ({ id, note }: { id: string; note?: string }) =>
       processComplaintByCs(id, note),
-    onSuccess: (_, { id }) => {
-      queryClient.invalidateQueries({ queryKey: ['complaints'] });
-      queryClient.invalidateQueries({ queryKey: ['complaint'] });
-      queryClient.invalidateQueries({ queryKey: ['complaint-conversation', id] });
-      toast.success('Complaint marked as processed by CS.');
+    onSuccess: (result, { id }) => {
+      decisionInvalidate(queryClient, id);
+      toastActionResult(result, 'Complaint marked as processed by CS.');
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to mark complaint processed by CS'),
@@ -185,11 +210,9 @@ export function useCloseComplaint() {
   return useMutation({
     mutationFn: ({ id, note }: { id: string; note?: string }) =>
       closeComplaint(id, note),
-    onSuccess: (_, { id }) => {
-      queryClient.invalidateQueries({ queryKey: ['complaints'] });
-      queryClient.invalidateQueries({ queryKey: ['complaint'] });
-      queryClient.invalidateQueries({ queryKey: ['complaint-conversation', id] });
-      toast.success('Complaint marked as closed.');
+    onSuccess: (result, { id }) => {
+      decisionInvalidate(queryClient, id);
+      toastActionResult(result, 'Complaint marked as closed.');
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to close complaint'),
@@ -308,6 +331,51 @@ export function useDeleteComplaintAttachment() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (linkId: string) => deleteComplaintAttachment(linkId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['complaint'] });
+      queryClient.invalidateQueries({ queryKey: ['complaints'] });
+      toast.success('Attachment unlinked successfully');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to unlink attachment'),
+  });
+}
+
+/**
+ * Uploads staged response-attachment files sequentially (one request per file, per
+ * the backend contract). On a partial failure, best-effort rolls back the links
+ * already created in this batch so a failed submit never leaves an orphaned
+ * upload - the caller's Save/Update & Reply must not proceed on error.
+ */
+export function useUploadComplaintResponseAttachments() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ complaintId, files }: { complaintId: string; files: File[] }) => {
+      const uploaded: ResponseAttachmentUploadResult[] = [];
+      try {
+        for (const file of files) {
+          uploaded.push(await uploadComplaintResponseAttachment(complaintId, file));
+        }
+      } catch (err) {
+        await Promise.allSettled(
+          uploaded.map((u) => deleteComplaintResponseAttachment(u.link_id)),
+        );
+        throw err;
+      }
+      return uploaded;
+    },
+    onSuccess: (_data, { complaintId }) => {
+      queryClient.invalidateQueries({ queryKey: ['complaint', complaintId] });
+      queryClient.invalidateQueries({ queryKey: ['complaints'] });
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to upload attachment'),
+  });
+}
+
+export function useDeleteComplaintResponseAttachment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (linkId: string) => deleteComplaintResponseAttachment(linkId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['complaint'] });
       queryClient.invalidateQueries({ queryKey: ['complaints'] });

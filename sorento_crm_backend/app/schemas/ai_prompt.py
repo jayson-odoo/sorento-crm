@@ -21,6 +21,9 @@ class PromptKeySummary(BaseModel):
     variables: list[str] = Field(default_factory=list)
     production_version: Optional[int] = None
     staging_version: Optional[int] = None
+    # The LLM this agent runs on in production. None = the global assistant model.
+    provider: Optional[str] = None
+    model: Optional[str] = None
     latest_version: Optional[int] = None
     updated_at: Optional[datetime] = None
     updated_by_name: Optional[str] = None
@@ -77,6 +80,19 @@ class SetLabelRequest(BaseModel):
 
 class SetLabelResponse(BaseModel):
     labels: dict[str, Optional[int]] = Field(default_factory=dict)
+
+
+class SetAgentModelRequest(BaseModel):
+    """Point one agent at one LLM. Empty strings clear the override."""
+
+    label: str = Field(default="production", description="production | staging")
+    provider: Optional[str] = Field(default=None, max_length=64)
+    model: Optional[str] = Field(default=None, max_length=128)
+
+
+class SetAgentModelResponse(BaseModel):
+    provider: Optional[str] = None
+    model: Optional[str] = None
 
 
 class DryRunRequest(BaseModel):

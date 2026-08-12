@@ -79,12 +79,15 @@ def eligible_user_ids(db: Session, tracker: ConversationSLATracking) -> set[str]
         return set()
     from app.services.user_service import AccessAgentService
 
+    from app.services.sla_service import _tracking_company_id
+
     svc = AccessAgentService(db)
     current = int(getattr(tracker, "current_tier", 1) or 1)
+    company_id = _tracking_company_id(tracker)
     team_ids: list[str] = []
     for tier in range(1, current + 1):
         team_id = svc.get_team_id_by_tier(
-            agent_id, tier, team_set_code=tracker.team_set_code
+            agent_id, tier, team_set_code=tracker.team_set_code, company_id=company_id
         )
         if team_id:
             team_ids.append(team_id)

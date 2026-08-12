@@ -124,6 +124,11 @@ async def get_users_select(
     respond_synced: Optional[str] = Query(None),
     status: Optional[str] = Query(None, description="Filter by status, e.g. ACTIVE for active users only"),
     trashed: Optional[str] = Query("exclude", description="exclude (default), only, or all"),
+    company_id: Optional[str] = Query(
+        None,
+        description="Only users holding a grant for this company. Used by the team-member "
+        "picker, since team membership requires the grant.",
+    ),
     current_user: dict = Depends(require_permission("user_management.users.view")),
     db: Session = Depends(get_db)
 ):
@@ -135,6 +140,7 @@ async def get_users_select(
             respond_synced=respond_synced,
             status=status,
             trashed=trashed or "exclude",
+            company_id=company_id,
         )
         return [UserSelectResponse.model_validate(user) for user in users]
     except Exception as e:

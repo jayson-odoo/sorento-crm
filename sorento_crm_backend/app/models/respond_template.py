@@ -78,6 +78,13 @@ TEMPLATE_DEFAULT_USE_CASES = (
     "sla_handling_claimed",     # -> assignee + other eligible members: "X is now handling this"
     "sla_handling_taken_over",  # -> displaced holder: "X took over handling"
     "sla_handling_released",    # -> eligible pool: "handling released — open again"
+    # Form-action undo (PLAN-form-sla-undo). Sent when a committed form action is
+    # reversed: the assignee whose spawned task was voided, and the previous holder
+    # whose stage reopened (clock restarted). Migration 312c seeds both onto the
+    # generic `update` template (sender_name + message + link); remappable here like
+    # any other. Map ``message`` at minimum - it carries the full notification body.
+    "form_action_voided",     # -> voided assignee: "your task on X no longer applies"
+    "form_action_reopened",   # -> reopened holder: "X is back with you, clock restarted"
     # Product discontinued — batch notification to subscribed staff. Sent when their
     # 24h window is closed (the usual case). Map params to ``discontinued_count`` +
     # ``discontinued_link`` (deep link to the product list filtered to that batch).

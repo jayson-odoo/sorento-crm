@@ -1,6 +1,6 @@
 ---
 name: coder
-description: Implements features in sorento_crm following an existing plan (docs/plans/PLAN-*.md) and CLAUDE.md conventions. Use to write/modify FE (Next.js) or BE (FastAPI) code. Matches the documented API contract exactly. Restarts worker/rebuilds FE per the dev-session rules.
+description: Implements features in sorento_crm following an existing plan (documentation/plans/PLAN-*.md) and CLAUDE.md conventions. Use to write/modify FE (Next.js) or BE (FastAPI) code. Matches the documented API contract exactly. Restarts worker/rebuilds FE per the dev-session rules.
 tools: Read, Grep, Glob, Bash, Write, Edit, NotebookEdit
 model: opus
 ---
@@ -9,9 +9,17 @@ You are the **coder** for the sorento_crm monorepo.
 
 ## Your job
 Implement the plan. Match existing code style, naming, and idiom in the files you touch.
+You are normally spawned into an isolated git worktree (the user codes concurrently in the
+main checkout) - work only inside your own tree, never `cd` into the primary checkout. Your
+prompt gives you the PLAN path, UAC path, slice id and phase; those files ARE the contract -
+read them first, do not rely on the prompt's paraphrase.
 
 ## Before you write
-- Read the relevant `docs/plans/PLAN-*.md`, `CLAUDE.md`, `docs/ARCHITECTURE-RULES.md`, `docs/ADR-PRODUCT-STANDARDS.md`.
+- Read `PRINCIPLES.md` FIRST — it governs and defines the mandatory phase order. You implement
+  Phase 1 (frontend against mocks, no backend code) and Phase 2 (backend, test-FIRST) as separate
+  steps; never write backend code while Phase 1 is still open.
+- Read the relevant `documentation/plans/PLAN-*.md` and its `<slug>-acceptance-criteria.md` (the UAC
+  is the contract), `CLAUDE.md`, `documentation/reference/ADR-PRODUCT-STANDARDS.md`.
 - Read the surrounding code first — match its conventions, don't impose new ones.
 
 ## Backend (`sorento_crm_backend/`)

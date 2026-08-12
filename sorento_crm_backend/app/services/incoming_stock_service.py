@@ -17,6 +17,8 @@ This service enforces the rules from next_agents/incoming_stock_enquiries.txt:
     * warehouse_code, warehouse_name, allocated_quantity (aggregated per warehouse)
     * attachment filename / file_path / mime_type (only when present)
     * remaining_incoming_quantity (computed server-side)
+    * unallocated_quantity (computed server-side — the GAP only, never the shipped base;
+      see `_unallocated_quantity`)
 
 The source of truth for "still incoming" is `inbound_shipment_lines`; `spo_allocations` is used
 only to aggregate warehouse allocation summaries. GRN / picking data is NEVER read here — it is
@@ -41,6 +43,13 @@ from app.models.procurement import (
 )
 from app.models.product import Product
 from app.models.resources import Attachment
+from app.services.field_access import GATED_FIELDS
+
+#: The gated columns, selected unconditionally - the route strips whatever this
+#: caller may not see. Leaving one out here reads as None on the row and would be
+#: served to an ENTITLED caller as "not reached yet": a silent wrong answer rather
+#: than a crash. That bug shipped for one build.
+CLEARANCE_KEYS = tuple(GATED_FIELDS["incoming_stock"])
 from app.services.identifier_resolver import resolve_identifier
 from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
 
@@ -62,6 +71,35 @@ def _still_incoming_filter():
         ~InboundShipmentLine.line_status.in_(_RECEIVED_STATUSES),
         remaining > 0,
     )
+
+
+def _unallocated_quantity(
+    quantity_shipped: Any, allocations: list[dict[str, Any]]
+) -> Optional[int]:
+    """How much of this incoming line is not yet claimed by any warehouse (SPO allocation).
+
+    Only the GAP is returned, never the shipped base. `remaining_incoming_quantity`
+    (= shipped - received) is already public, so exposing the base too would let any
+    consumer derive `quantity_received`, which the rules at the top of this module forbid.
+
+    The base is `quantity_shipped`, NOT `remaining_incoming_quantity`: allocations are
+    made against the shipped amount and are never decremented as goods are received,
+    so on a partially-received line the two have different bases.
+
+    Returns None when there is nothing to flag:
+      * no allocations at all — the empty `warehouse_allocations` list is itself the signal
+      * fully allocated
+      * over-allocated (data error; clamp rather than report a negative gap)
+    """
+    if not allocations:
+        return None
+    try:
+        base = int(quantity_shipped or 0)
+    except (TypeError, ValueError):
+        return None
+    allocated = sum(int(a.get("allocated_quantity") or 0) for a in allocations)
+    gap = base - allocated
+    return gap if gap > 0 else None
 
 
 def _attachment_payload(attachment: Optional[Attachment]) -> Optional[dict[str, Any]]:
@@ -227,6 +265,9 @@ class IncomingStockService:
                 InboundShipmentLine.shipment_id,
                 InboundShipmentLine.product_id,
                 InboundShipmentLine.batch_number,
+                # Allocation base — used to derive the gap, never emitted (see
+                # `_unallocated_quantity`).
+                InboundShipmentLine.quantity_shipped,
                 remaining,
                 InboundShipment.shipment_number,
                 InboundShipment.shipping_container_number,
@@ -299,6 +340,9 @@ class IncomingStockService:
                     "estimated_arrival_date": r.estimated_arrival_date,
                     "batch_number": r.batch_number,
                     "remaining_incoming_quantity": int(r.remaining_incoming or 0),
+                    "unallocated_quantity": _unallocated_quantity(
+                        r.quantity_shipped, ship_allocations
+                    ),
                     "warehouse_allocations": ship_allocations,
                     "attachment": attachment_map.get(str(r.shipment_id)),
                 }
@@ -527,6 +571,11 @@ class IncomingStockService:
                 InboundShipment.shipment_number,
                 InboundShipment.shipping_container_number,
                 InboundShipment.estimated_arrival_date,
+                # Clearance columns are selected explicitly. This query returns
+                # column tuples, not ORM instances, so a getattr on a column that
+                # was not selected reads as None - which the entitlement gate would
+                # then happily pass through as "not reached yet".
+                *(getattr(InboundShipment, key) for key in CLEARANCE_KEYS),
             )
             .join(
                 InboundShipmentLine,
@@ -583,6 +632,7 @@ class IncomingStockService:
                 InboundShipmentLine.shipment_id,
                 InboundShipmentLine.product_id,
                 InboundShipmentLine.batch_number,
+                InboundShipmentLine.quantity_shipped,
                 remaining,
                 Product.product_code,
                 Product.product_name,
@@ -600,15 +650,17 @@ class IncomingStockService:
         lines_by_ship: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for r in line_rows:
             skey = str(r.shipment_id)
+            allocations = warehouse_map.get((skey, str(r.product_id)), [])
             lines_by_ship[skey].append(
                 {
                     "product_code": r.product_code,
                     "product_name": r.product_name,
                     "batch_number": r.batch_number,
                     "remaining_incoming_quantity": int(r.remaining_incoming or 0),
-                    "warehouse_allocations": warehouse_map.get(
-                        (skey, str(r.product_id)), []
+                    "unallocated_quantity": _unallocated_quantity(
+                        r.quantity_shipped, allocations
                     ),
+                    "warehouse_allocations": allocations,
                 }
             )
 
@@ -617,6 +669,10 @@ class IncomingStockService:
                 "shipment_number": s.shipment_number,
                 "shipping_container_number": s.shipping_container_number,
                 "estimated_arrival_date": s.estimated_arrival_date,
+                # Container clearance. Present for every caller HERE and stripped
+                # by the entitlement gate at the route, so the gate has exactly one
+                # implementation instead of one per query path.
+                **{key: getattr(s, key, None) for key in CLEARANCE_KEYS},
                 "attachment": attachment_map.get(str(s.id)),
                 "lines": lines_by_ship.get(str(s.id), []),
             }
@@ -659,6 +715,7 @@ class IncomingStockService:
         line_rows = (
             self.db.query(
                 InboundShipmentLine.product_id,
+                InboundShipmentLine.quantity_shipped,
                 remaining,
                 Product.product_code,
                 Product.product_name,
@@ -695,15 +752,20 @@ class IncomingStockService:
         pairs = [(str(shipment_uuid), str(r.product_id)) for r in line_rows]
         warehouse_map = self._warehouse_allocations_for(pairs)
 
-        products = [
-            {
-                "product_code": r.product_code,
-                "product_name": r.product_name,
-                "remaining_incoming_quantity": int(r.remaining_incoming or 0),
-                "warehouse_allocations": warehouse_map.get((str(shipment_uuid), str(r.product_id)), []),
-            }
-            for r in line_rows
-        ]
+        products = []
+        for r in line_rows:
+            allocations = warehouse_map.get((str(shipment_uuid), str(r.product_id)), [])
+            products.append(
+                {
+                    "product_code": r.product_code,
+                    "product_name": r.product_name,
+                    "remaining_incoming_quantity": int(r.remaining_incoming or 0),
+                    "unallocated_quantity": _unallocated_quantity(
+                        r.quantity_shipped, allocations
+                    ),
+                    "warehouse_allocations": allocations,
+                }
+            )
 
         return {
             "data": {

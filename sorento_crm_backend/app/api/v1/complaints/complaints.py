@@ -1,7 +1,8 @@
 """Complaints API routes."""
 import logging
 
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body, File, UploadFile
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional, Union, List, Any
 from app.database import get_db
@@ -203,6 +204,18 @@ def _respond_user_id_from_current_user(current_user: dict) -> str:
     raise HTTPException(status_code=400, detail="User respond_user_id or id is required for Update & Reply.")
 
 
+def _csv_ids(raw: Optional[str]) -> Optional[list[str]]:
+    """Parse a comma-separated id filter param into a clean list, or None when empty.
+
+    None (not []) for "no filter" so the service can tell "not filtering" apart from
+    "filtering on nothing", which must never silently match every row.
+    """
+    if not raw:
+        return None
+    ids = [part.strip() for part in str(raw).split(",") if part.strip()]
+    return ids or None
+
+
 @router.get("/", response_model=ListResponse[ComplaintResponse])
 async def get_complaints(
     page: int = Query(1, ge=1),
@@ -210,12 +223,18 @@ async def get_complaints(
     query: Optional[str] = Query(None),
     assigned_to: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    root_cause_ids: Optional[str] = Query(
+        None, description="Comma-separated root cause ids; matches complaints with ANY of them"
+    ),
+    resolution_ids: Optional[str] = Query(
+        None, description="Comma-separated resolution ids; matches complaints with ANY of them"
+    ),
     sort: Optional[str] = Query("complaint_date"),
     dir: Optional[str] = Query("asc"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get complaints with pagination, search, assignee/status filters, and sorting."""
+    """Get complaints with pagination, search, assignee/status/root-cause/resolution filters, and sorting."""
     try:
         service = ComplaintService(db)
         result = service.list_complaints(
@@ -229,6 +248,8 @@ async def get_complaints(
             contact_id=None,
             space_id=None,
             viewer_user_id=(current_user or {}).get("id"),
+            root_cause_ids=_csv_ids(root_cause_ids),
+            resolution_ids=_csv_ids(resolution_ids),
         )
         return result
     except HTTPException:
@@ -243,6 +264,8 @@ async def get_complaint_neighbours(
     query: Optional[str] = Query(None),
     assigned_to: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    root_cause_ids: Optional[str] = Query(None, description="Comma-separated root cause ids"),
+    resolution_ids: Optional[str] = Query(None, description="Comma-separated resolution ids"),
     sort: Optional[str] = Query("complaint_date"),
     dir: Optional[str] = Query("asc"),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -264,6 +287,8 @@ async def get_complaint_neighbours(
             status=status,
             sort_field=sort or "complaint_date",
             sort_dir=dir or "asc",
+            root_cause_ids=_csv_ids(root_cause_ids),
+            resolution_ids=_csv_ids(resolution_ids),
         )
     except HTTPException:
         raise
@@ -372,6 +397,56 @@ async def link_attachment_to_complaint(
             created_by=created_by,
         )
         return {"message": "Attachment linked successfully", "link_id": link.id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{complaint_id}/response-attachments", status_code=status.HTTP_201_CREATED)
+async def upload_complaint_response_attachment(
+    complaint_id: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Upload a staff response attachment onto the complaint, staged in the
+    "Edit technical team response" modal alongside the reply text. Uses the
+    response_attachment type (its own quota, independent of the contact's
+    portal_submission cap - UAC C4/D9) and stamps uploader_kind='user'."""
+    try:
+        validate_uuid_path(complaint_id, resource="Complaint")
+        service = ComplaintService(db)
+        complaint = service.get_complaint(complaint_id)
+        contents = await file.read()
+        from app.services.entity_attachment_service import create_response_attachment
+
+        return create_response_attachment(
+            db,
+            entity_type="complaint",
+            entity_id=str(complaint.id),
+            contents=contents,
+            filename=file.filename,
+            content_type=file.content_type,
+            uploaded_by=(current_user or {}).get("id"),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/response-attachments/{link_id}", status_code=status.HTTP_200_OK)
+async def delete_complaint_response_attachment(
+    link_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Hard-unlink a staff-uploaded response attachment from a complaint (UAC F4)."""
+    try:
+        service = ComplaintService(db)
+        service.delete_complaint_attachment(link_id)
+        return {"message": "Attachment unlinked successfully"}
     except HTTPException:
         raise
     except Exception as e:
@@ -618,7 +693,7 @@ def _raise_do_lookup_guidance(
             "this submit tool already searched for you."
         )
     elif provided_filters:
-        # Back-compat fallback — kept only when inline search was not run (e.g., search disabled).
+        # Back-compat fallback - kept only when inline search was not run (e.g., search disabled).
         detail["recommended_tools"] = [
             "crm_order_management_orders_by_product_list",
             "crm_order_management_orders_list",
@@ -1198,14 +1273,27 @@ async def approve_complaint(
     try:
         validate_uuid_path(complaint_id, resource="Complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
+        from app.services.form_action_dispatch import dispatch_or_defer
+
         service = ComplaintService(db)
-        service.decide_complaint(
-            complaint_id,
-            "approved",
-            respond_user_id=respond_user_id,
-            request_url=str(request.url) if request else "",
-            crm_sender_user_id=current_user.get("id"),
+        outcome = dispatch_or_defer(
+            db,
+            current_user,
+            request,
+            action_key="cx.decide",
+            entity_type="complaint",
+            entity_id=complaint_id,
+            payload={
+                "complaint_id": complaint_id,
+                "decision": "approved",
+                "respond_user_id": respond_user_id,
+                "request_url": str(request.url) if request else "",
+                "crm_sender_user_id": current_user.get("id"),
+            },
+            event_name="approved",
         )
+        if isinstance(outcome, JSONResponse):
+            return outcome
         db.commit()
         return service.get_complaint_with_attachments(complaint_id)
     except HTTPException:
@@ -1227,15 +1315,28 @@ async def reject_complaint(
     try:
         validate_uuid_path(complaint_id, resource="Complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
+        from app.services.form_action_dispatch import dispatch_or_defer
+
         service = ComplaintService(db)
-        service.decide_complaint(
-            complaint_id,
-            "rejected",
-            respond_user_id=respond_user_id,
-            request_url=str(request.url) if request else "",
-            crm_sender_user_id=current_user.get("id"),
-            rejection_reason=payload.rejection_reason,
+        outcome = dispatch_or_defer(
+            db,
+            current_user,
+            request,
+            action_key="cx.decide",
+            entity_type="complaint",
+            entity_id=complaint_id,
+            payload={
+                "complaint_id": complaint_id,
+                "decision": "rejected",
+                "respond_user_id": respond_user_id,
+                "request_url": str(request.url) if request else "",
+                "crm_sender_user_id": current_user.get("id"),
+                "rejection_reason": payload.rejection_reason,
+            },
+            event_name="rejected",
         )
+        if isinstance(outcome, JSONResponse):
+            return outcome
         db.commit()
         return service.get_complaint_with_attachments(complaint_id)
     except HTTPException:
@@ -1261,13 +1362,27 @@ async def process_complaint_by_cs(
     try:
         validate_uuid_path(complaint_id, resource="Complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
+        from app.services.form_action_dispatch import dispatch_or_defer
+
         service = ComplaintService(db)
-        service.mark_processed_by_cs(
-            complaint_id,
-            note=payload.note,
-            respond_user_id=respond_user_id,
-            crm_sender_user_id=current_user.get("id"),
+        outcome = dispatch_or_defer(
+            db,
+            current_user,
+            request,
+            action_key="cx.finalize",
+            entity_type="complaint",
+            entity_id=complaint_id,
+            payload={
+                "complaint_id": complaint_id,
+                "new_status": "processed_by_cs",
+                "note": payload.note,
+                "respond_user_id": respond_user_id,
+                "crm_sender_user_id": current_user.get("id"),
+            },
+            event_name="resolved",
         )
+        if isinstance(outcome, JSONResponse):
+            return outcome
         db.commit()
         return service.get_complaint_with_attachments(complaint_id)
     except HTTPException:
@@ -1293,13 +1408,27 @@ async def close_complaint(
     try:
         validate_uuid_path(complaint_id, resource="Complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
+        from app.services.form_action_dispatch import dispatch_or_defer
+
         service = ComplaintService(db)
-        service.close_complaint(
-            complaint_id,
-            note=payload.note,
-            respond_user_id=respond_user_id,
-            crm_sender_user_id=current_user.get("id"),
+        outcome = dispatch_or_defer(
+            db,
+            current_user,
+            request,
+            action_key="cx.finalize",
+            entity_type="complaint",
+            entity_id=complaint_id,
+            payload={
+                "complaint_id": complaint_id,
+                "new_status": "closed",
+                "note": payload.note,
+                "respond_user_id": respond_user_id,
+                "crm_sender_user_id": current_user.get("id"),
+            },
+            event_name="resolved",
         )
+        if isinstance(outcome, JSONResponse):
+            return outcome
         db.commit()
         return service.get_complaint_with_attachments(complaint_id)
     except HTTPException:

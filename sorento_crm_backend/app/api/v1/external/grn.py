@@ -175,6 +175,9 @@ def create_grn(
     )
 
     # The integration's principal is a real users row, so attribution is recorded.
+    # `source_system` marks it as the integration rather than a person: this path
+    # writes no import job and no audit row, so without the marker a GRN that
+    # landed in the wrong company looks like it appeared from nowhere.
     created_by = current_user["id"]
     service = PickingHeaderService(db)
-    return service.create_grn(grn, created_by=created_by)
+    return service.create_grn(grn, created_by=created_by, source_system="external_api")

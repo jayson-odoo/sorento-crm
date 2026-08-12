@@ -1,7 +1,7 @@
 /**
- * Portal API client — token-scoped, no NextAuth session.
+ * Portal API client - token-scoped, no NextAuth session.
  *
- * The token is stored in localStorage (device trust — survives tab close;
+ * The token is stored in localStorage (device trust - survives tab close;
  * the BE gives verified tokens a sliding 30-day TTL) and sent as
  * `X-Portal-Token` on every request. On 401 the caller is responsible for
  * redirecting to the verify page.
@@ -21,7 +21,7 @@ export type PortalSubmissionKind =
   | 'purchase_request'
   | 'sponsorship_form';
 
-/** Canonical kind list — single source for route guards, tab lists, labels. */
+/** Canonical kind list - single source for route guards, tab lists, labels. */
 export const SUBMISSION_KINDS: readonly PortalSubmissionKind[] = [
   'complaint',
   'stock_inquiry',
@@ -91,6 +91,9 @@ export interface PortalSubmissionSummary {
   purpose?: string | null;
 }
 
+export type PortalAttachmentUploaderKind = 'user' | 'contact' | 'system' | null;
+export type PortalAttachmentUploaderRole = 'contact' | 'staff' | 'unknown';
+
 export interface PortalAttachment {
   link_id: string;
   attachment_id: string;
@@ -99,6 +102,13 @@ export interface PortalAttachment {
   url: string | null;
   content_type?: string | null;
   uploaded_at?: string | null;
+  /** 'user' = uploaded by CRM staff, 'contact' = uploaded by this contact,
+   *  'system' = worker-created. Absent/null on legacy rows. */
+  uploader_kind?: PortalAttachmentUploaderKind;
+  uploaded_by_name?: string | null;
+  uploaded_by_role?: PortalAttachmentUploaderRole;
+  /** false for staff ('user') uploads - the contact cannot unlink those. */
+  can_unlink?: boolean;
 }
 
 export interface PortalSubmissionDetail extends PortalSubmissionSummary {
@@ -116,7 +126,7 @@ export class PortalUnauthorizedError extends Error {
 
 /**
  * The submission exists but belongs to a different contact than the current
- * session (403 OWNER_MISMATCH). The current token stays valid — the caller
+ * session (403 OWNER_MISMATCH). The current token stays valid - the caller
  * should route to the owner's confirm-identity card (the deep-link slug), not
  * clear the session.
  */
@@ -287,7 +297,7 @@ export async function fetchMeWithGrace(): Promise<PortalContact> {
     return await fetchMe();
   } catch (firstErr) {
     if (firstErr instanceof PortalUnauthorizedError && tokenIsFresh && existing) {
-      // Restore to the SAME store it came from — an impersonation token must
+      // Restore to the SAME store it came from - an impersonation token must
       // not be promoted into localStorage by the retry.
       writePortalToken(existing, { impersonation: wasImpersonation });
       await new Promise((r) => setTimeout(r, 500));
@@ -323,7 +333,7 @@ export async function fetchSubmission(
 ): Promise<PortalSubmissionDetail> {
   const res = await portalFetch(`/api/v1/public/portal/submissions/${kind}/${encodeURIComponent(id)}`);
   // 403 OWNER_MISMATCH: session is valid but the form belongs to another
-  // contact — surface as a typed error so the caller offers owner login.
+  // contact - surface as a typed error so the caller offers owner login.
   if (res.status === 403) {
     // The global handler flattens AppException to {message, detail, code}.
     const body = await res.clone().json().catch(() => ({}));
@@ -439,7 +449,7 @@ export interface PortalTokenInfo {
 }
 
 // ---------------------------------------------------------------------------
-// Bookmarkable slug links (see docs/plans/PLAN-portal-bookmarkable-links.md)
+// Bookmarkable slug links (see documentation/plans/PLAN-portal-bookmarkable-links.md)
 // ---------------------------------------------------------------------------
 
 export interface PortalSlugInfo {
@@ -450,7 +460,7 @@ export interface PortalSlugInfo {
   whatsapp_number: string | null;
 }
 
-/** GET /api/v1/public/portal/slug-info/{slug} — null mirrors the 404. */
+/** GET /api/v1/public/portal/slug-info/{slug} - null mirrors the 404. */
 export async function fetchSlugInfo(slug: string): Promise<PortalSlugInfo | null> {
   const res = await fetch(
     `/api/v1/public/portal/slug-info/${encodeURIComponent(slug)}`,
@@ -461,7 +471,7 @@ export async function fetchSlugInfo(slug: string): Promise<PortalSlugInfo | null
 }
 
 /**
- * POST /api/v1/public/portal/logout — revokes the active token server-side
+ * POST /api/v1/public/portal/logout - revokes the active token server-side
  * (clearing client storage alone would leave a copied token valid).
  */
 export async function portalLogout(): Promise<void> {
@@ -607,6 +617,57 @@ export interface LookupSetResult {
   defaultValue: string | null;
 }
 
+// ---------------------------------------------------------------------------
+// Requestor picker ("Requested by" / "Salesperson") - segment-gated contacts
+// ---------------------------------------------------------------------------
+
+export interface RequestorOption {
+  id: string;
+  name: string;
+}
+
+export interface RequestorOptionsResult {
+  items: RequestorOption[];
+  hasMore: boolean;
+}
+
+/** GET /api/v1/public/portal/requestor-options?q= - names only, segment-gated
+ *  (plus the submitting contact, always included server-side). */
+export async function fetchRequestorOptions(q?: string): Promise<RequestorOptionsResult> {
+  const usp = new URLSearchParams();
+  if (q && q.trim()) usp.set('q', q.trim());
+  const qs = usp.toString();
+  const res = await portalFetch(`/api/v1/public/portal/requestor-options${qs ? `?${qs}` : ''}`);
+  const data = await unwrap<{ items?: RequestorOption[]; has_more?: boolean }>(
+    res,
+    'Failed to load requestor options.',
+  );
+  return { items: data.items ?? [], hasMore: Boolean(data.has_more) };
+}
+
+// ---------------------------------------------------------------------------
+// Record navigation (previous/next submission of the same kind)
+// ---------------------------------------------------------------------------
+
+export interface PortalSubmissionNeighbours {
+  prev_id: string | null;
+  next_id: string | null;
+  position: number;
+  total: number;
+}
+
+/** GET .../submissions/{kind}/{id}/neighbours - token-scoped to the contact's
+ *  own submissions of the same kind, newest first. */
+export async function fetchSubmissionNeighbours(
+  kind: PortalSubmissionKind,
+  id: string,
+): Promise<PortalSubmissionNeighbours> {
+  const res = await portalFetch(
+    `/api/v1/public/portal/submissions/${kind}/${encodeURIComponent(id)}/neighbours`,
+  );
+  return unwrap<PortalSubmissionNeighbours>(res, 'Failed to load navigation.');
+}
+
 const _lookupSetCache: Record<string, LookupSetResult> = {};
 export async function lookupSet(setKey: string): Promise<LookupSetResult> {
   if (_lookupSetCache[setKey]) return _lookupSetCache[setKey];
@@ -625,7 +686,7 @@ export async function lookupSet(setKey: string): Promise<LookupSetResult> {
 }
 
 // ---------------------------------------------------------------------------
-// AI Extract — generic form prefill from attachments (images + PDFs)
+// AI Extract - generic form prefill from attachments (images + PDFs)
 // ---------------------------------------------------------------------------
 
 export interface AIExtractFieldMeta {

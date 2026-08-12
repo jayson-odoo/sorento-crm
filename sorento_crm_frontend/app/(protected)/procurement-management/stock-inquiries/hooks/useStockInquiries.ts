@@ -17,14 +17,19 @@ import {
   bulkDeleteStockInquiries,
   linkStockInquiryAttachment,
   deleteStockInquiryAttachment,
+  uploadStockInquiryResponseAttachment,
+  deleteStockInquiryResponseAttachment,
   submitStockInquiryForProjectSales,
   projectSalesApproveStockInquiry,
   projectSalesRejectStockInquiry,
   purchasingRejectStockInquiry,
   reopenStockInquiry,
   getStockInquiryConversation,
+  exportStockInquiryPdf,
+  type ResponseAttachmentUploadResult,
 } from '../services/stockInquiryService';
 import type { StockInquiryFormData } from '../types/stockInquiry.types';
+import { isDeferredFormAction } from '@/app/(protected)/sla-management/_shared/formAction';
 
 export type StockInquiriesListParams = DataGridApiFetchParams & {
   statuses?: string[];
@@ -33,7 +38,7 @@ export type StockInquiriesListParams = DataGridApiFetchParams & {
 /**
  * Prev/next neighbours of a stock inquiry within the active filtered+sorted list
  * set. Serializes the list query (search/sort/status) with `buildDataGridParams`
- * — the same serialization the list page uses — so the backend honours filters
+ * - the same serialization the list page uses - so the backend honours filters
  * identically. `page`/`limit` are sent but ignored by the neighbours endpoint.
  */
 export function useStockInquiryNeighbours(
@@ -120,11 +125,10 @@ export function useUpdateStockInquiryAndReply() {
       id: string;
       data: Partial<StockInquiryFormData>;
     }) => updateStockInquiryAndReply(id, data),
-    onSuccess: (_, { id }) => {
-      queryClient.invalidateQueries({ queryKey: ['stock-inquiries'] });
-      queryClient.invalidateQueries({ queryKey: ['stock-inquiry'] });
+    onSuccess: (result, { id }) => {
+      workflowInvalidate(queryClient);
       queryClient.invalidateQueries({ queryKey: ['stock-inquiry-conversation', id] });
-      toast.success('Reply sent to customer successfully');
+      toastActionResult(result, 'Reply sent to customer successfully');
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to update and reply'),
@@ -193,9 +197,67 @@ export function useDeleteStockInquiryAttachment() {
   });
 }
 
+/**
+ * Uploads staged response-attachment files sequentially (one request per file, per
+ * the backend contract). On a partial failure, best-effort rolls back the links
+ * already created in this batch so a failed submit never leaves an orphaned
+ * upload - the caller's Save/Update & Reply must not proceed on error.
+ */
+export function useUploadStockInquiryResponseAttachments() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ inquiryId, files }: { inquiryId: string; files: File[] }) => {
+      const uploaded: ResponseAttachmentUploadResult[] = [];
+      try {
+        for (const file of files) {
+          uploaded.push(await uploadStockInquiryResponseAttachment(inquiryId, file));
+        }
+      } catch (err) {
+        await Promise.allSettled(
+          uploaded.map((u) => deleteStockInquiryResponseAttachment(u.link_id)),
+        );
+        throw err;
+      }
+      return uploaded;
+    },
+    onSuccess: (_data, { inquiryId }) => {
+      queryClient.invalidateQueries({ queryKey: ['stock-inquiry', inquiryId] });
+      queryClient.invalidateQueries({ queryKey: ['stock-inquiries'] });
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to upload attachment'),
+  });
+}
+
+export function useDeleteStockInquiryResponseAttachment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (linkId: string) => deleteStockInquiryResponseAttachment(linkId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['stock-inquiry'] });
+      queryClient.invalidateQueries({ queryKey: ['stock-inquiries'] });
+      toast.success('Attachment unlinked successfully');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to unlink attachment'),
+  });
+}
+
 function workflowInvalidate(queryClient: ReturnType<typeof useQueryClient>) {
   queryClient.invalidateQueries({ queryKey: ['stock-inquiries'] });
   queryClient.invalidateQueries({ queryKey: ['stock-inquiry'] });
+  // A 202 parks the action instead of moving the inquiry; the countdown banner reads
+  // these two queries, so they must refetch or the deferral is invisible until reload.
+  queryClient.invalidateQueries({ queryKey: ['form-action-current'] });
+  queryClient.invalidateQueries({ queryKey: ['form-action-eligibility'] });
+}
+
+/** Deferred => countdown copy; immediate => the action's own success copy. */
+function toastActionResult(result: unknown, immediateMessage: string) {
+  if (isDeferredFormAction(result)) {
+    toast.success('Action is on hold for a few seconds - you can still undo.');
+  } else {
+    toast.success(immediateMessage);
+  }
 }
 
 export function useSubmitStockInquiryForProjectSales() {
@@ -214,9 +276,9 @@ export function useProjectSalesApproveStockInquiry() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => projectSalesApproveStockInquiry(id),
-    onSuccess: () => {
+    onSuccess: (result) => {
       workflowInvalidate(queryClient);
-      toast.success('Approved; sent to purchasing');
+      toastActionResult(result, 'Approved; sent to purchasing');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to approve'),
   });
@@ -227,9 +289,9 @@ export function useProjectSalesRejectStockInquiry() {
   return useMutation({
     mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
       projectSalesRejectStockInquiry(id, reason),
-    onSuccess: () => {
+    onSuccess: (result) => {
       workflowInvalidate(queryClient);
-      toast.success('Rejected');
+      toastActionResult(result, 'Rejected');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to reject'),
   });
@@ -240,9 +302,9 @@ export function usePurchasingRejectStockInquiry() {
   return useMutation({
     mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
       purchasingRejectStockInquiry(id, reason),
-    onSuccess: () => {
+    onSuccess: (result) => {
       workflowInvalidate(queryClient);
-      toast.success('Rejected');
+      toastActionResult(result, 'Rejected');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to reject'),
   });
@@ -258,6 +320,28 @@ export function useReopenStockInquiry() {
       toast.success('Reopened to pending project sales');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to reopen'),
+  });
+}
+
+/**
+ * Queue the printable Stock Inquiry Form PDF. The render happens on the worker,
+ * so success only means "queued" - invalidate the downloads feeds (drawer + the
+ * per-entity chip) and the list, whose Print Count column just changed.
+ */
+export function useExportStockInquiryPdf() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => exportStockInquiryPdf(id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: ['my-downloads'] });
+      queryClient.invalidateQueries({
+        queryKey: ['entity-downloads', 'stock_inquiry', id],
+      });
+      queryClient.invalidateQueries({ queryKey: ['stock-inquiries'] });
+      toast.success('Preparing PDF… it will appear in My Downloads.');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to start PDF export'),
   });
 }
 

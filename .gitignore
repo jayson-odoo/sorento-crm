@@ -19,6 +19,12 @@ sorento_crm_backend/.next/*
 # Playwright MCP scratch (console logs, page snapshots)
 .playwright-mcp/
 
+# Claude-managed dev server logs
+.devlogs/
+
+# Lavish review artifacts (regenerated from the plan docs)
+.lavish/
+
 # OS files
 .DS_Store
 
@@ -39,3 +45,7 @@ private_key.pem
 
 # Lavish review artifacts (local review surfaces, not deliverables)
 .lavish/
+
+# Pre-trial snapshot written by scripts/container_status_trial.py - holds live
+# clearance data, and is per-environment. Keep it on the box, out of the repo.
+sorento_crm_backend/scripts/container_status_trial_snapshot.json

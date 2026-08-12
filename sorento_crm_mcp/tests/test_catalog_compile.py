@@ -139,3 +139,88 @@ def test_the_forecast_tool_refuses_to_offer_a_total():
     assert "NEVER BE ADDED TOGETHER" in spec.description
     assert "SPECULATIVE" in spec.description
     assert "undated" in spec.description
+def test_product_attachments_accepts_certificate_ids_as_a_narrower():
+    """`certificate_ids` must be BOTH a query param and a recognised narrowing
+    key. Listed as one but not the other, "the files for this certificate"
+    returns an empty page while the filter itself works - a silent wrong answer,
+    not an error.
+    """
+    spec = next(s for s in CATALOG if s.name == "crm_master_product_attachments_list")
+    assert "certificate_ids" in spec.query_params
+    assert "certificate_ids" in TOOL_REQUIRED_NARROWING_FILTERS[spec.name]
+    # And the agent has to be told, or it will never pass it.
+    assert "certificate_ids" in spec.description
+
+
+@pytest.mark.asyncio
+async def test_certificate_ids_alone_reaches_the_backend():
+    """Not short-circuited: the request must actually carry the filter."""
+    spec = next(s for s in CATALOG if s.name == "crm_master_product_attachments_list")
+    fn = _compile_tool(spec)
+    out = await fn(
+        _FakeCtx(_FakeClient()),
+        certificate_ids="11111111-1111-4111-8111-111111111111",
+    )  # type: ignore[arg-type]
+    assert "certificate_ids" in out
+
+
+def test_contact_id_alone_is_not_a_narrowing_filter():
+    """Asking for nothing must return nothing.
+
+    `contact_id` scopes the answer to that contact's entitlements, which bounds
+    the result to a handful of files - but a document request has to name a
+    DOCUMENT. Returning everything a contact may have is a directory listing, not
+    an answer, so the contact is a scope and never the filter.
+    """
+    spec = next(s for s in CATALOG if s.name == "crm_resource_attachments_list")
+    assert "contact_id" in spec.query_params, "still accepted, as a scope"
+    assert "contact_id" not in TOOL_REQUIRED_NARROWING_FILTERS[spec.name]
+
+
+def test_resource_attachments_type_filter_takes_singular_and_plural():
+    """Both forms are accepted, and BOTH count as a narrower.
+
+    A plural form missing from the narrowing list is worse than one missing from
+    query_params: the filter reaches the backend but the tool short-circuits to a
+    silent empty page first.
+    """
+    spec = next(s for s in CATALOG if s.name == "crm_resource_attachments_list")
+    for param in (
+        "attachment_type_id",
+        "attachment_type_ids",
+        "attachment_type_code",
+        "attachment_type_codes",
+    ):
+        assert param in spec.query_params
+        assert param in TOOL_REQUIRED_NARROWING_FILTERS[spec.name]
+
+
+@pytest.mark.asyncio
+async def test_attachment_type_ids_alone_reaches_the_backend():
+    spec = next(s for s in CATALOG if s.name == "crm_resource_attachments_list")
+    fn = _compile_tool(spec)
+    out = await fn(
+        _FakeCtx(_FakeClient()),
+        attachment_type_ids="11111111-1111-4111-8111-111111111111,22222222-2222-4222-8222-222222222222",
+    )  # type: ignore[arg-type]
+    assert "attachment_type_ids" in out
+
+
+@pytest.mark.asyncio
+async def test_attachment_type_codes_alone_reaches_the_backend():
+    spec = next(s for s in CATALOG if s.name == "crm_resource_attachments_list")
+    fn = _compile_tool(spec)
+    out = await fn(
+        _FakeCtx(_FakeClient()),
+        attachment_type_codes="Container Status,catalogue",
+    )  # type: ignore[arg-type]
+    assert "attachment_type_codes" in out
+
+
+@pytest.mark.asyncio
+async def test_contact_id_alone_is_short_circuited():
+    """No document named -> empty page, and the backend is never called."""
+    spec = next(s for s in CATALOG if s.name == "crm_resource_attachments_list")
+    fn = _compile_tool(spec)
+    out = await fn(_FakeCtx(_FakeClient()), contact_id="rio_10532f")  # type: ignore[arg-type]
+    assert "rio_10532f" not in out

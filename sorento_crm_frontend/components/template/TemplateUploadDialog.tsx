@@ -40,6 +40,10 @@ interface TemplateUploadDialogProps {
   onTest?: (data: any[], file?: File) => Promise<ValidateImportResult>;
   accept?: string;
   maxRows?: number; // If undefined, no limit
+  /** Override the dialog heading. Default: the generic Excel-upload copy. */
+  title?: string;
+  /** Override the sub-heading. Default: the generic Excel-upload copy. */
+  description?: string;
 }
 
 export function TemplateUploadDialog({
@@ -49,6 +53,8 @@ export function TemplateUploadDialog({
   onTest,
   accept: acceptProp,
   maxRows = 100000, // Increased default to 100,000 rows
+  title = 'Upload Excel File',
+  description = 'Upload an Excel file to create or update records. The file should match the template format.',
 }: TemplateUploadDialogProps) {
   const acceptFromSettings = useExcelAccept();
   const accept = acceptProp ?? acceptFromSettings;
@@ -145,10 +151,8 @@ export function TemplateUploadDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] flex flex-col">
         <DialogHeader className="shrink-0">
-          <DialogTitle>Upload Excel File</DialogTitle>
-          <DialogDescription>
-            Upload an Excel file to create or update records. The file should match the template format.
-          </DialogDescription>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 min-h-0 flex-1 overflow-y-auto">
           <FileDropzone
@@ -178,6 +182,11 @@ export function TemplateUploadDialog({
                   {testResult.summary.would_create != null && ` • Would create: ${testResult.summary.would_create}`}
                   {testResult.summary.would_update != null && ` • Would update: ${testResult.summary.would_update}`}
                   {testResult.summary.error_count != null && ` • Errors: ${testResult.summary.error_count}`}
+                  {/* Master data the import will create for itself. */}
+                  {testResult.summary.new_categories != null &&
+                    ` • New categories: ${testResult.summary.new_categories}`}
+                  {testResult.summary.new_brands != null && ` • New brands: ${testResult.summary.new_brands}`}
+                  {testResult.summary.new_uoms != null && ` • New UOMs: ${testResult.summary.new_uoms}`}
                 </p>
               )}
               {testResult.valid ? (
@@ -187,40 +196,41 @@ export function TemplateUploadDialog({
                   <AlertDescription>You can upload this file.</AlertDescription>
                 </Alert>
               ) : (
-                <>
-                  {testResult.errors.length > 0 && (
-                    <Alert variant="destructive" className="flex flex-col items-stretch">
-                      <AlertCircle className="h-4 w-4 shrink-0" />
-                      <div className="min-w-0 flex-1 space-y-1">
-                        <AlertTitle>Errors ({testResult.errors.length})</AlertTitle>
-                        <AlertDescription className="p-0">
-                          <ScrollArea className="h-[280px] w-full rounded border border-red-300 bg-red-950/20 p-2 text-sm">
-                            <ul className="list-inside list-disc space-y-0.5 pr-2">
-                              {testResult.errors.map((err, i) => (
-                                <li key={i}>{err}</li>
-                              ))}
-                            </ul>
-                          </ScrollArea>
-                        </AlertDescription>
-                      </div>
-                    </Alert>
-                  )}
-                  {testResult.warnings.length > 0 && (
-                    <Alert className="border-amber-200 bg-amber-50 text-amber-900">
-                      <AlertTriangle className="h-4 w-4 text-amber-600" />
-                      <AlertTitle>Warnings ({testResult.warnings.length})</AlertTitle>
+                testResult.errors.length > 0 && (
+                  <Alert variant="destructive" className="flex flex-col items-stretch">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <AlertTitle>Errors ({testResult.errors.length})</AlertTitle>
                       <AlertDescription className="p-0">
-                        <ScrollArea className="h-[160px] w-full rounded border p-2 text-sm">
+                        <ScrollArea className="h-[280px] w-full rounded border border-red-300 bg-red-950/20 p-2 text-sm">
                           <ul className="list-inside list-disc space-y-0.5 pr-2">
-                            {testResult.warnings.map((w, i) => (
-                              <li key={i}>{w}</li>
+                            {testResult.errors.map((err, i) => (
+                              <li key={i}>{err}</li>
                             ))}
                           </ul>
                         </ScrollArea>
                       </AlertDescription>
-                    </Alert>
-                  )}
-                </>
+                    </div>
+                  </Alert>
+                )
+              )}
+              {/* Warnings render whether or not the file is valid - a clean file can
+                  still carry "N new categories will be created", which the operator
+                  must see BEFORE uploading. */}
+              {testResult.warnings.length > 0 && (
+                <Alert className="border-amber-200 bg-amber-50 text-amber-900">
+                  <AlertTriangle className="h-4 w-4 text-amber-600" />
+                  <AlertTitle>Warnings ({testResult.warnings.length})</AlertTitle>
+                  <AlertDescription className="p-0">
+                    <ScrollArea className="h-[160px] w-full rounded border p-2 text-sm">
+                      <ul className="list-inside list-disc space-y-0.5 pr-2">
+                        {testResult.warnings.map((w, i) => (
+                          <li key={i}>{w}</li>
+                        ))}
+                      </ul>
+                    </ScrollArea>
+                  </AlertDescription>
+                </Alert>
               )}
             </div>
           )}

@@ -34,6 +34,9 @@ import {
 
 export const KIND_LABEL: Record<string, string> = {
   complaint_pdf: 'Complaint PDF',
+  // Named after the document itself - the form is headed PRODUCT INQUIRY FORM -
+  // while the entity key stays stock_inquiry.
+  stock_inquiry_pdf: 'Product Inquiry PDF',
   chat_history_export: 'Chat History CSV',
   promotions_pdf: 'Promotions PDF',
   quotation_pdf: 'Quotation PDF',
@@ -141,7 +144,7 @@ export function DownloadRow({ row }: { row: MyDownload }) {
             </p>
             <p className="text-xs text-muted-foreground">
               {KIND_LABEL[row.kind] ?? row.kind}
-              {row.created_at ? ` · ${formatDateTimeInMalaysia(new Date(row.created_at))}` : ''}
+              {row.created_at ? ` · ${formatDateTimeInMalaysia(row.created_at)}` : ''}
             </p>
             <div className="mt-1 flex min-w-0 items-center gap-3">
               <StatusBadge status={row.status} />

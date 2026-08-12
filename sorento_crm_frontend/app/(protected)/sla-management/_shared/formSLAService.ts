@@ -50,7 +50,8 @@ export type FormSLASourceType =
   | 'purchase_request'
   | 'sponsorship_form'
   | 'complaint'
-  | 'ticket';
+  | 'ticket'
+  | 'workflow_submission';
 
 export async function getFormSLATrackers(
   sourceEntityType: FormSLASourceType,
@@ -128,6 +129,14 @@ export interface FormHandlingTracker {
   viewer_is_admin?: boolean;
   /** Only present on a take-over response. */
   previous_handler_id?: string | null;
+  /* --- Skip capability (UAC-form-sla-skip-stage) ------------------------------ *
+   * Rides along on this query rather than costing a second round-trip. NULL
+   * `skip_event` = this stage declares no skip. `can_skip` is the SERVER's verdict
+   * (stage skippable AND viewer holds the adapter's per-entity permission) - the
+   * permission is never inferable from config alone.                             */
+  skip_event?: string | null;
+  skip_action_label?: string | null;
+  can_skip?: boolean;
 }
 
 /**
@@ -207,6 +216,8 @@ export interface FormSLAConfig {
   is_active: boolean;
   notify_assignee?: boolean;
   notify_on_escalation?: boolean;
+  /** Undo grace window for this stage, in seconds. null = inherit the global default. */
+  grace_seconds?: number | null;
   policy_code?: string | null;
   policy_name?: string | null;
   next_stage_code?: string | null;
@@ -228,6 +239,8 @@ export interface FormSLAConfigInput {
   is_active?: boolean;
   notify_assignee?: boolean;
   notify_on_escalation?: boolean;
+  /** null = inherit the global default rather than pinning this stage to no grace. */
+  grace_seconds?: number | null;
 }
 
 export async function listFormSLAConfigs(filters: {
@@ -335,6 +348,9 @@ export const FORM_SLA_EVENT_OPTIONS: Record<FormSLASourceType, readonly string[]
     'technical_team_response',
     'approved',
     'rejected',
+    // Skip event: resolves the technical stage WITHOUT advancing to customer service.
+    // Deliberately absent from `advance_on_event` - that is what closes the chain.
+    'settled_on_site',
     'resolved',
     'voided',
   ],
@@ -344,6 +360,13 @@ export const FORM_SLA_EVENT_OPTIONS: Record<FormSLASourceType, readonly string[]
     'responded',
     'resolved',
   ],
+  // Mirrors the events the live workflow_submission stage row already declares.
+  workflow_submission: [
+    'submission_created',
+    'submitted',
+    'approved',
+    'rejected',
+  ],
 };
 
 export const FORM_SLA_TYPE_LABELS: Record<FormSLASourceType, string> = {
@@ -352,4 +375,5 @@ export const FORM_SLA_TYPE_LABELS: Record<FormSLASourceType, string> = {
   sponsorship_form: 'Sponsorship Form',
   complaint: 'Complaint',
   ticket: 'Ticket',
+  workflow_submission: 'Workflow Submission',
 };

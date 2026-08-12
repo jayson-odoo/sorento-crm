@@ -272,6 +272,18 @@ _COMPANY_ID_ALLOWLIST = {
     "forms",
     "import_logs",
     "audit_logs",
+    # Conversation / form SLA trackers carry the company that decides WHICH escalation
+    # ladder the tracker climbs, not who may read the row. Scoping it would break the
+    # two readers that have no company: the overdue scan (a scheduler tick with no
+    # principal) and the cross-company admin SLA listing. Isolation is enforced where
+    # it matters instead - the teams the tracker escalates into ARE scoped.
+    "conversation_sla_tracking",
+    # SLA policies are company-owned data, but deliberately filtered by hand
+    # (`sla_service.list_policies` reads the active scope) instead of through the
+    # mixin. The auto-filter reaches every SLAPolicy load anywhere in the app,
+    # including the ~160 tests and background readers that hold a policy id with no
+    # company context at all, and turns each one into an empty result.
+    "sla_policies",
 }
 
 
@@ -318,7 +330,22 @@ def test_every_company_id_table_is_registered():
     #       project_purchase_order_lines. A customer PO is revenue, so it is the last
     #       table that should be readable across a company boundary, and both children
     #       are queried directly by the flag counts and the erosion figure.
-    expected_owned = 51
+    # Foundation slice shipped 34 owned tables (PLAN §4.1); the certificate
+    # register added `certificates` as the 35th. Its two child tables
+    # (`certificate_revisions`, `certificate_products`) are deliberately NOT
+    # scoped: they are only ever reached through their certificate, which is
+    # scoped, so a second filter would be redundant surface (SEC-2a).
+    # Container status tracking added `shipment_tracking_observations` as the
+    # 36th. Unlike the certificate children this one IS scoped: a carrier
+    # observation names a container, and one tenant's containers must not be
+    # readable through a tenant-agnostic evidence table.
+    # Company-aware assignment routing added `teams` and `agent_teams` as the 37th and
+    # 38th. A team belongs to exactly one company, so the Teams page and every team
+    # picker follow the company switcher; `agent_teams` is scoped as the backstop for
+    # the ad-hoc AgentTeam queries in sla_service that the resolvers' required
+    # company_id argument cannot reach. `access_agents` is deliberately NOT here: one
+    # agent is a single router serving both brands through two ladders.
+    expected_owned = 55
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

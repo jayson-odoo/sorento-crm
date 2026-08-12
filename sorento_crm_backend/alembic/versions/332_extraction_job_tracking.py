@@ -34,7 +34,7 @@ from sqlalchemy import text
 
 
 revision = "332_extraction_job_tracking"
-down_revision = "dd96502280be"
+down_revision = "331_project_series_products"
 branch_labels = None
 depends_on = None
 

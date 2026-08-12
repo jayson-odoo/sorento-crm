@@ -16,6 +16,7 @@ from app.schemas.user import (
     RespondContactLookupRequest,
     RespondContactLookupResponse,
     AgentTeamsUpdate,
+    AgentFieldAccessUpdate,
 )
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
@@ -204,6 +205,69 @@ async def set_agent_teams(
             service.set_agent_teams(agent_id, [])
         assignments_with_state = service.list_agent_teams_with_round_robin_state(agent_id)
         return {"assignments": assignments_with_state}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{agent_id}/field-access")
+async def get_agent_field_access(
+    agent_id: str,
+    contact_id: Optional[str] = Query(
+        None,
+        description=(
+            "Scope to one contact. Each field then also carries `override` "
+            "(null = follows the agent) and `effective`."
+        ),
+    ),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Which fields this agent may reveal, and to whom.
+
+    Returns EVERY gated field the agent owns, ticked or not, so the screen is a
+    complete checklist rather than a list of whatever happens to be granted. A
+    field with no row is denied, and shows as an empty tick.
+
+    `overrides` lists the per-contact exceptions, which are the answer to "why does
+    that one dealer see something different".
+    """
+    try:
+        validate_uuid_path(agent_id, resource="Access Agent")
+        return AccessAgentService(db).list_field_access(agent_id, contact_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.put("/{agent_id}/field-access")
+async def set_agent_field_access(
+    agent_id: str,
+    body: AgentFieldAccessUpdate,
+    contact_id: Optional[str] = Query(
+        None, description="Echoed back on the response so the caller re-reads the same scope."
+    ),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Set which fields this agent may reveal.
+
+    Body: `fields=[{resource, field_key, is_allowed, contact_id?}]`. A `contact_id`
+    writes a per-contact override; omitting it writes the agent-wide default. Only
+    the entries sent are touched, so two admins editing different resources cannot
+    silently revoke each other's work.
+    """
+    try:
+        validate_uuid_path(agent_id, resource="Access Agent")
+        service = AccessAgentService(db)
+        service.set_field_access(
+            agent_id,
+            [f.model_dump() for f in (body.fields or [])],
+            actor=(current_user or {}).get("email") or (current_user or {}).get("id"),
+        )
+        return service.list_field_access(agent_id, contact_id)
     except HTTPException:
         raise
     except Exception as e:

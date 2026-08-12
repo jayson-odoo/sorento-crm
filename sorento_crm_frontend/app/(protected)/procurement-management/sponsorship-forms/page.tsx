@@ -35,7 +35,7 @@ export default function SponsorshipFormsPage() {
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Procurement</BreadcrumbPage>
+                  <BreadcrumbPage>Project Sales Admin</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>

@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 
 PORTAL_TOKEN_TTL = timedelta(days=7)
-# Device trust: OTP-verified tokens live 30 days, sliding — each authenticated
+# Device trust: OTP-verified tokens live 30 days, sliding - each authenticated
 # request re-extends to now+30d (throttled to ~once per day via the threshold
 # below). Active contacts never re-verify; dormant ones re-OTP after 30 days.
 PORTAL_VERIFIED_TOKEN_TTL = timedelta(days=30)
@@ -56,20 +56,20 @@ PORTAL_SLIDE_THRESHOLD = timedelta(days=29)
 OTP_TTL = timedelta(minutes=10)
 OTP_REQUEST_COOLDOWN = timedelta(seconds=60)
 OTP_MAX_ATTEMPTS = 5
-# Hard daily cap per contact — the slug URL is bookmarkable/shareable, so an
+# Hard daily cap per contact - the slug URL is bookmarkable/shareable, so an
 # attacker with a leaked slug could otherwise spam the contact with OTP sends.
 OTP_DAILY_CAP = 10
 SUPPORTED_TYPES = ("complaint", "stock_inquiry", "purchase_request", "sponsorship_form")
 PORTAL_ATTACHMENT_TYPE_CODE = "portal_submission"
 
-# Crockford base32 alphabet — excludes I, L, O, U to eliminate look-alike
+# Crockford base32 alphabet - excludes I, L, O, U to eliminate look-alike
 # transcription errors (I↔l↔1, O↔0, U↔V). Tokens are user-visible in URLs and
 # occasionally retyped from screenshots, so we trade ~14% entropy density vs
-# base64url for unambiguous chars. 48 chars × 5 bits = 240 bits — equivalent to
+# base64url for unambiguous chars. 48 chars × 5 bits = 240 bits - equivalent to
 # token_urlsafe(30).
 _CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 _CROCKFORD_TOKEN_LEN = 48
-# Contact slug: 10 chars × 5 bits = 50 bits — unguessable identity hint for the
+# Contact slug: 10 chars × 5 bits = 50 bits - unguessable identity hint for the
 # stable URL /portal/c/{slug}. NOT a credential: knowing it only lets you
 # request an OTP that goes to the contact's own WhatsApp.
 _PORTAL_SLUG_LEN = 10
@@ -199,7 +199,7 @@ class PortalService:
         if contact is None:
             raise handle_not_found("Portal link", slug)
         # space_id: prefer what the latest token used; fall back to the
-        # workspace's Respond space identifier (NOT the workspace PK — the
+        # workspace's Respond space identifier (NOT the workspace PK - the
         # system-wide convention is space_id == respond_workspaces.space_id).
         latest = (
             self.db.query(PortalToken)
@@ -228,7 +228,7 @@ class PortalService:
         if not contact_id or not space_id:
             raise handle_validation_error("contact_id and space_id are required.")
         contact = self._resolve_contact(contact_id)
-        # Every minted link should carry the stable slug URL — mint it now.
+        # Every minted link should carry the stable slug URL - mint it now.
         self.get_or_create_slug(contact)
         token = PortalToken(
             token=_crockford_token(),
@@ -317,7 +317,7 @@ class PortalService:
         text = self._build_send_message_text(contact, portal_url, token.expires_at)
         # Log the attempt to the Respond outbox whether it succeeds or fails.
         # This send previously wrote nothing, so a 401/403 here left no trace in
-        # integration_logs at all — the admin saw an error and the outbox stayed
+        # integration_logs at all - the admin saw an error and the outbox stayed
         # empty. Keep the raise: the caller maps it to a 502 so the admin gets
         # immediate feedback rather than a silent queue.
         from app.services.integration_service import log_respond_send
@@ -375,7 +375,7 @@ class PortalService:
             )
         # Sliding device trust: verified tokens re-extend to now+30d on use.
         # The 29d threshold throttles the write to roughly once per day.
-        # Impersonation tokens are excluded — an admin browsing as a contact
+        # Impersonation tokens are excluded - an admin browsing as a contact
         # must not mint themselves an immortal credential.
         if not getattr(row, "is_impersonation", False):
             now = _utcnow()
@@ -528,7 +528,7 @@ class PortalService:
         self.db.commit()
         self.db.refresh(otp)
 
-        # Dispatch asynchronously via the RQ ``respond_io`` queue — the SAME path
+        # Dispatch asynchronously via the RQ ``respond_io`` queue - the SAME path
         # as complaint / stock-inquiry status replies. The worker does the
         # window-aware send (free-form text inside the 24h window, else the
         # approved ``portal_otp`` template) AND writes an ``integration_logs``
@@ -536,7 +536,7 @@ class PortalService:
         # text when the send can't go out. That lets the code be read back from
         # the Respond outbox in local dev (no Respond.io connectivity) for
         # testing. Decoupling also means a Respond outage no longer 500s the
-        # request — the contact just retries.
+        # request - the contact just retries.
         identifier = (contact.respond_io_id or "").strip() or contact.id
         otp_text = (
             f"Your Sorento portal verification code is {code}. It expires in 10 "
@@ -557,7 +557,7 @@ class PortalService:
                 job_timeout=180,
             )
         except Exception as e:  # noqa: BLE001
-            # Enqueue itself failed (e.g. Redis unreachable) — refund the code so
+            # Enqueue itself failed (e.g. Redis unreachable) - refund the code so
             # it doesn't burn the daily cap, then surface a retryable error.
             logger.warning("Failed to enqueue portal OTP for contact %s: %s", contact.id, e)
             try:
@@ -603,7 +603,7 @@ class PortalService:
         otp.consumed_at = _utcnow()
         # Mark every unrevoked token for this contact as verified so the original
         # admin-issued QR / link / "Send via Respond.io" token grants access
-        # immediately after OTP success — no need to re-issue through the new
+        # immediately after OTP success - no need to re-issue through the new
         # minted token unless the caller wants a fresh expiry window.
         now = _utcnow()
         self.db.query(PortalToken).filter(
@@ -622,7 +622,7 @@ class PortalService:
 
     @staticmethod
     def _mask_phone(phone: Optional[str]) -> Optional[str]:
-        """Mask to '+60••••1234' — country prefix + last 4, recognizable to the
+        """Mask to '+60••••1234' - country prefix + last 4, recognizable to the
         owner but useless to a stranger holding a leaked slug link."""
         if not phone:
             return None
@@ -840,7 +840,7 @@ class PortalService:
             row_status = (getattr(row, "status", None) or "").strip().lower()
             row_status_rejected = row_status == "rejected"
             # A `responded` stock inquiry that the salesperson reopens is submit-only,
-            # mirroring `rejected` — no parking it back in draft.
+            # mirroring `rejected` - no parking it back in draft.
             row_status_responded = row_status == "responded"
             if approval_rejected or row_status_rejected or row_status_responded:
                 # A rejected/responded submission can only progress via Submit;
@@ -919,7 +919,7 @@ class PortalService:
             # (mirrors approved_at, which also resets per approval cycle).
             row.submitted_at = _utcnow()
             if approval_rejected:
-                # Salesperson is re-submitting a rejected approval — clear the rejection
+                # Salesperson is re-submitting a rejected approval - clear the rejection
                 # state so reviewers see a fresh submission.
                 row.approval_status = None
                 row.approval_comments = None
@@ -927,13 +927,13 @@ class PortalService:
                 row.approved_by = None
                 row.approval_signature_ref = None
 
-        # Document number generation (skip complaint — no number column).
+        # Document number generation (skip complaint - no number column).
         self._assign_document_number_if_missing(kind, row)
 
         self.db.commit()
         self.db.refresh(row)
 
-        # Notifications — failures must not block the user-facing submit.
+        # Notifications - failures must not block the user-facing submit.
         try:
             self._post_submit_notify(
                 kind, row, is_resubmission=previous_status in ("rejected", "responded")
@@ -1173,7 +1173,7 @@ class PortalService:
             (getattr(row, "approval_status", None) or "").strip().lower() == "rejected"
         )
         # `responded` (stock_inquiry only) is editable so a salesperson can act on
-        # purchasing's clarifying reply — edit + resubmit without a formal reject.
+        # purchasing's clarifying reply - edit + resubmit without a formal reject.
         responded_editable = kind == "stock_inquiry" and row.status == "responded"
         if not (
             row.portal_draft_at
@@ -1186,8 +1186,13 @@ class PortalService:
 
     def _apply_payload(self, kind: str, row: Any, payload: dict) -> None:
         editable = self._editable_fields(kind)
+        requestor_field = self._requestor_contact_field(kind)
         for field in editable:
             if field in payload:
+                if field == requestor_field:
+                    # Handled separately below - needs eligibility validation +
+                    # live label derivation, not a bare setattr.
+                    continue
                 value = payload.get(field)
                 # Coerce list values for multi-text fields (e.g. complaint.delivery_order_number).
                 if isinstance(value, list):
@@ -1213,6 +1218,8 @@ class PortalService:
                     except (TypeError, ValueError):
                         pass  # legacy free-text values pass through
                 setattr(row, field, value)
+        if requestor_field and requestor_field in payload:
+            self._apply_requestor_contact(kind, row, payload.get(requestor_field))
         # Sponsorship: resolve sponsor_subject through the lookup so an unmatched
         # free-text value lands on 'others' (+ parked detail) instead of tripping
         # the strict lookup write-validator on flush.
@@ -1326,6 +1333,7 @@ class PortalService:
         if kind == "stock_inquiry":
             return (
                 "salesperson",
+                "salesperson_contact_id",  # requestor FK - CS pin lookup key (D6/D9)
                 "product_code",
                 "item_description",
                 "project_customer",
@@ -1337,6 +1345,7 @@ class PortalService:
             )
         return (
             "customer_name",
+            "pic",
             "project_title",
             # AC-F3: the link itself. Ownership and the per-contact requirement are
             # enforced in submit_draft, not here, because a DRAFT is allowed to be
@@ -1353,8 +1362,18 @@ class PortalService:
             "expected_delivery_date",
             "expected_po_date",
             "requested_by",
+            "requested_by_contact_id",  # requestor FK - CS pin lookup key (D6/D9)
             "external_reference",
         )
+
+    @staticmethod
+    def _requestor_contact_field(kind: str) -> Optional[str]:
+        """Column name of the requestor FK for this submission kind, or None."""
+        if kind in ("purchase_request", "sponsorship_form"):
+            return "requested_by_contact_id"
+        if kind == "stock_inquiry":
+            return "salesperson_contact_id"
+        return None
 
     @staticmethod
     def _date_fields(kind: str) -> tuple[str, ...]:
@@ -1395,6 +1414,111 @@ class PortalService:
             return Decimal(str(value))
         except (InvalidOperation, ValueError):
             return None
+
+    # ---------- Requestor ("requested by" / "salesperson") options ----------
+    #
+    # Delegates to app.services.requestor_options_service - the single
+    # definition of "who can be a requestor" shared with the internal (JWT) CRM
+    # picker (D7), rather than a second, divergent query here. Eligible set
+    # (D6): contacts with >=1 active market segment flagged
+    # is_requestor_selectable, UNION whichever extra ids the caller passes in
+    # (the submitting contact and/or the value already saved on the row).
+    # Nobody is ever blocked from submitting, and editing a row whose
+    # requestor lost eligibility can't silently blank the field. Names only
+    # no phone/email/respond_io_id/segment/company ever leaves this surface.
+
+    def list_requestor_options(
+        self, token: PortalToken, q: Optional[str] = None, limit: int = 50
+    ) -> dict:
+        from app.services.requestor_options_service import (
+            list_requestor_options as _list_requestor_options,
+        )
+
+        items, has_more = _list_requestor_options(
+            self.db, q=q, limit=limit, include_ids=[token.contact_id]
+        )
+        return {"items": items, "has_more": has_more}
+
+    def _apply_requestor_contact(self, kind: str, row: Any, contact_id_value: Any) -> None:
+        """Validate + stamp the requestor FK and its label (D6/D9).
+
+        Thin wrapper over the shared writer so the portal (token) save and the
+        internal (JWT) create/update cannot drift: same eligibility rule, same
+        live label derivation.
+        """
+        from app.services.requestor_options_service import (
+            apply_requestor_contact as _apply_requestor_contact,
+        )
+
+        fk_field = self._requestor_contact_field(kind)
+        if not fk_field:
+            return
+        label_field = (
+            "requested_by" if kind in ("purchase_request", "sponsorship_form") else "salesperson"
+        )
+        _apply_requestor_contact(
+            self.db, row, fk_field, label_field, contact_id_value
+        )
+
+    # ---------- Portal record navigation ----------
+
+    def get_neighbours(self, token: PortalToken, kind: str, submission_id: str) -> dict:
+        """Token-scoped prev/next over the contact's OWN submissions of the SAME
+        kind, newest-first - mirrors ``list_submissions`` ordering exactly (D11).
+
+        Ownership is enforced by the token, never by the requested id: the
+        ``get_submission`` call below raises 404/403 for a foreign or missing
+        id before any neighbour is computed, so a token holder can never page
+        into another contact's submissions.
+        """
+        kind = (kind or "").strip().lower()
+        if kind not in SUPPORTED_TYPES:
+            raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
+        self.get_submission(token, kind, submission_id)  # ownership check; raises on miss
+
+        if kind == "complaint":
+            id_query = (
+                self.db.query(Complaint.id)
+                .filter(
+                    Complaint.contact_id == token.contact_id,
+                    Complaint.space_id == token.space_id,
+                )
+                .order_by(Complaint.created_at.desc())
+            )
+        elif kind == "stock_inquiry":
+            id_query = (
+                self.db.query(StockInquiry.id)
+                .filter(
+                    StockInquiry.contact_id == token.contact_id,
+                    StockInquiry.space_id == token.space_id,
+                )
+                .order_by(StockInquiry.created_at.desc())
+            )
+        else:  # purchase_request / sponsorship_form
+            id_query = (
+                self.db.query(PurchaseRequestHeader.id)
+                .filter(
+                    PurchaseRequestHeader.contact_id == token.contact_id,
+                    PurchaseRequestHeader.space_id == token.space_id,
+                    PurchaseRequestHeader.request_type == kind,
+                )
+                .order_by(PurchaseRequestHeader.created_at.desc())
+            )
+        ids = [str(r[0]) for r in id_query.all()]
+        try:
+            idx = ids.index(str(submission_id))
+        except ValueError:
+            # Unreachable in practice - get_submission above already confirmed
+            # ownership - but fail closed rather than raise an unhandled error.
+            raise handle_not_found("Submission", submission_id)
+
+        total = len(ids)
+        return {
+            "prev_id": ids[idx - 1] if idx > 0 else None,
+            "next_id": ids[idx + 1] if idx + 1 < total else None,
+            "position": idx + 1,
+            "total": total,
+        }
 
     # ---------- Notifications ----------
 
@@ -1551,8 +1675,18 @@ class PortalService:
             "item_description": row.item_description,
         }
 
+    def _resolve_contact_name_by_id(self, contact_id: Optional[str]) -> Optional[str]:
+        """Live display name for a requestor FK - a rename fixes every screen
+        with no backfill (D9); the stored text label stays as the point-in-time
+        fallback when the FK is NULL."""
+        if not contact_id:
+            return None
+        contact = self.db.query(RespondContact).filter(RespondContact.id == contact_id).first()
+        return self._contact_display_name(contact) if contact else None
+
     def _serialize_stock_inquiry_detail(self, row: StockInquiry) -> dict:
         base = self._serialize_stock_inquiry_summary(row)
+        salesperson_contact_id = getattr(row, "salesperson_contact_id", None)
         base.update(
             {
                 "salesperson": row.salesperson,
@@ -1565,6 +1699,8 @@ class PortalService:
                 "remark": row.remark,
                 "additional_remark": row.additional_remark,
                 "purchasing_response": row.purchasing_response,
+                "salesperson_contact_id": salesperson_contact_id,
+                "salesperson_contact_name": self._resolve_contact_name_by_id(salesperson_contact_id),
             }
         )
         return base
@@ -1573,7 +1709,7 @@ class PortalService:
         approval_rejected = (
             (getattr(row, "approval_status", None) or "").strip().lower() == "rejected"
         )
-        # Approval rejection is the user-visible state on the portal — fold it into ``status``
+        # Approval rejection is the user-visible state on the portal - fold it into ``status``
         # so the portal badge + editable gate behave like complaint/stock_inquiry rejections.
         effective_status = "rejected" if approval_rejected else row.status
         is_editable = bool(row.portal_draft_at) or row.status == "rejected" or approval_rejected
@@ -1616,14 +1752,20 @@ class PortalService:
 
     def _serialize_request_detail(self, row: PurchaseRequestHeader) -> dict:
         base = self._serialize_request_summary(row)
+        requested_by_contact_id = getattr(row, "requested_by_contact_id", None)
         base.update(
             {
                 "request_type": row.request_type,
                 "request_date": row.request_date.isoformat() if row.request_date else None,
                 "submitted_at": row.submitted_at.isoformat() if row.submitted_at else None,
                 "customer_name": row.customer_name,
+                # Must be echoed back or a saved draft reopens with PIC blank: the
+                # write allowlist and the read serializer are two separate lists and
+                # a field has to be in BOTH.
+                "pic": getattr(row, "pic", None),
                 "project_title": row.project_title,
                 "purpose": row.purpose,
+                "sales_type": row.sales_type,
                 "delivery_address": row.delivery_address,
                 "total_project_value": str(row.total_project_value) if row.total_project_value is not None else None,
                 "total_project_value_text": row.total_project_value_text,
@@ -1632,6 +1774,8 @@ class PortalService:
                 "expected_delivery_date": row.expected_delivery_date.isoformat() if row.expected_delivery_date else None,
                 "expected_po_date": row.expected_po_date.isoformat() if row.expected_po_date else None,
                 "requested_by": row.requested_by,
+                "requested_by_contact_id": requested_by_contact_id,
+                "requested_by_contact_name": self._resolve_contact_name_by_id(requested_by_contact_id),
                 "external_reference": row.external_reference,
                 # AC-F3. The id round-trips the picker; the code and title are what the
                 # portal shows, because a UUID in the UI is never the answer.

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol
@@ -169,6 +170,44 @@ def _attach_images_anthropic(
 # ---------------------------------------------------------------------------
 
 
+# Newer OpenAI models reject parameters the older ones require: `max_tokens` became
+# `max_completion_tokens`, and some refuse a non-default `temperature` outright. The
+# model is chosen in the UI per agent, so a hardcoded list of which model wants which
+# spelling would go stale the first time someone picks a new one. Instead: send the
+# normal shape, read the parameter name out of the 400, adapt, retry. Bounded so a
+# genuinely broken request cannot loop.
+_MAX_PARAM_RETRIES = 4
+
+
+def _create_chat_completion(client, kwargs: dict) -> Any:
+    """`client.chat.completions.create`, adapting to a model's parameter dialect."""
+    attempt = dict(kwargs)
+    for _ in range(_MAX_PARAM_RETRIES):
+        try:
+            return client.chat.completions.create(**attempt)
+        except Exception as exc:  # noqa: BLE001 - inspected, then re-raised if not ours
+            param = getattr(exc, "param", None) or _unsupported_param(str(exc))
+            if not param or param not in attempt:
+                raise
+            if param == "max_tokens":
+                attempt["max_completion_tokens"] = attempt.pop("max_tokens")
+            else:
+                # Nothing to rename it to - the model wants its own default.
+                attempt.pop(param)
+            logger.info("openai: model rejected %r, retrying without it", param)
+    return client.chat.completions.create(**attempt)
+
+
+_UNSUPPORTED_PARAM_RE = re.compile(r"[Uu]nsupported parameter: '([a-z_]+)'|'([a-z_]+)' is not supported")
+
+
+def _unsupported_param(message: str) -> str | None:
+    match = _UNSUPPORTED_PARAM_RE.search(message)
+    if not match:
+        return None
+    return match.group(1) or match.group(2)
+
+
 class OpenAIProvider:
     name = "openai"
 
@@ -224,7 +263,7 @@ class OpenAIProvider:
         elif response_format is not None:
             kwargs["response_format"] = response_format
 
-        completion = client.chat.completions.create(**kwargs)
+        completion = _create_chat_completion(client, kwargs)
 
         # Defensive normalization — tests use simple stub objects.
         choice = completion.choices[0]

@@ -9,6 +9,27 @@ import uuid
 
 # Forward references for relationships
 from typing import TYPE_CHECKING
+
+
+def _contact_display_name(contact) -> "str | None":
+    """Freeform `name`, else first + last. Same precedence as
+    requestor_options_service.contact_display_name (one definition of the
+    requestor's human name across picker, write path and response)."""
+    if contact is None:
+        return None
+    name = (
+        (getattr(contact, "name", None) or "").strip()
+        or " ".join(
+            p
+            for p in [
+                (getattr(contact, "first_name", None) or "").strip(),
+                (getattr(contact, "last_name", None) or "").strip(),
+            ]
+            if p
+        ).strip()
+    )
+    return name or None
+
 if TYPE_CHECKING:
     from app.models.product import Product
     from app.models.inventory import Warehouse, StorageZone
@@ -98,7 +119,52 @@ class InboundShipment(Base, CompanyScopedMixin):
     access_levels = Column(JSONB, nullable=False, server_default='["dealer","end_user"]')
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
-    
+
+    # ---- Container status (clearance and delivery) --------------------------
+    # One `Container Status 2026.xlsx` row IS one packing list, so these live on
+    # this table rather than in a milestone child table (decisions D1, D3). Flat
+    # columns; revision history comes from `__audit_track__` below, not from a
+    # separate revisions table (D5).
+    #
+    # Names match the Phase 1 frontend contract exactly - see `ClearanceFields`
+    # in packing-lists/types/packingList.types.ts. Anything renamed here must be
+    # renamed there in the same change.
+    loc = Column(String(50), nullable=True)
+    liner_code = Column(String(50), nullable=True)
+    china_forwarder = Column(String(100), nullable=True)
+    malaysia_forwarder = Column(String(100), nullable=True)
+    consignee = Column(String(150), nullable=True)
+    free_days_available = Column(Integer, nullable=True)
+    stacked = Column(String(50), nullable=True)
+
+    loading_date = Column(Date, nullable=True)
+    etc_date = Column(Date, nullable=True)
+    etd_date = Column(Date, nullable=True)
+    # First-published ETA. `eta_delay_date` is the revised one and the accurate
+    # one; auto-transitions key off it, never off ATA (B6, D34).
+    eta_delay_date = Column(Date, nullable=True)
+    inspection_date = Column(Date, nullable=True)
+    approval_date = Column(Date, nullable=True)
+    gatepass_date = Column(Date, nullable=True)
+    delivery_warehouse = Column(String(150), nullable=True)
+    warehouse_arrival_date = Column(Date, nullable=True)
+    informed_collection_date = Column(Date, nullable=True)
+    collection_date = Column(Date, nullable=True)
+
+    # ATA / ORI DOC RECEIVED / K1 SUBMISSION / YARD ARRIVALS are deliberately NOT
+    # columns. Filled 6 / 4 / 4 / 4 across 407 containers, read by nothing, and a
+    # column nobody maintains is worse than no column - the retained source file
+    # keeps the history (D34).
+
+    coa_permit_no = Column(String(100), nullable=True)
+    # Which workbook tab the row came from. Traceability only - it must never
+    # derive status (A2).
+    source_sheet = Column(String(100), nullable=True)
+
+    # Every ETA revision writes an `audit_logs` row with old_values/new_values,
+    # which is what replaces a revisions table (D5).
+    __audit_track__ = True
+
     supplier = relationship("Supplier", back_populates="inbound_shipments")
     attachment = relationship("Attachment")
     # Order matters: delete allocations before lines (allocations can reference lines)
@@ -136,6 +202,67 @@ class InboundShipment(Base, CompanyScopedMixin):
         Index("ix_inbound_shipments_shipment_number", "shipment_number"),
         Index("ix_inbound_shipments_shipment_status", "shipment_status"),
         Index("ix_inbound_shipments_access_levels", "access_levels", postgresql_using="gin"),
+        # The importer matches on the container number across EVERY status, so the
+        # existing status-scoped indexes do not help it.
+        Index("ix_inbound_shipments_container_number", "shipping_container_number"),
+        # "Which containers are still open" drives the tracking poll (~77/day).
+        Index("ix_inbound_shipments_eta_delay_date", "eta_delay_date"),
+    )
+
+
+class ShipmentTrackingObservation(Base, CompanyScopedMixin):
+    """What an integration SAW, never what the record says.
+
+    Append-only. Only liner and CIDB adapters write here; there is deliberately
+    no human write path and no update path (E1). Nothing in this table may mutate
+    a column on `inbound_shipments` - a test runs a full ingest and asserts the
+    shipment row comes out byte-identical (E2).
+
+    Paired `*_observed` columns on the shipment were rejected: they overwrite on
+    every poll, which destroys the timing evidence, and the timing evidence is
+    the whole reason the validation period exists (D7). `observed_at` is when the
+    SOURCE says it happened; `fetched_at` is when we asked. The gap between
+    `fetched_at` and the human's later edit is the "we knew N days sooner"
+    number the validation report reads.
+    """
+
+    __tablename__ = "shipment_tracking_observations"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    shipment_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("inbound_shipments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Which shipment column this observation is ABOUT (eta_delay_date,
+    # inspection_date, ...). A plain string, not an FK: the vocabulary is the
+    # column set above, and an enum would need a migration per new field.
+    field_key = Column(String(60), nullable=False)
+    # Kept as text. A carrier that returns something unparseable is still
+    # evidence, and coercing it here would either lose it or invent a date.
+    observed_value = Column(Text, nullable=True)
+    # `liner_cma`, `liner_whl`, `cidb_epermit`, ... or `unsupported` for a
+    # carrier with no adapter, so the coverage gap is visible rather than silent.
+    source = Column(String(60), nullable=False)
+    # The source's own identifier for what it showed us (booking ref, permit no,
+    # page URL) so an observation can be traced back by hand.
+    source_ref = Column(String(255), nullable=True)
+    observed_at = Column(DateTime(timezone=False), nullable=True)
+    fetched_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    shipment = relationship("InboundShipment")
+
+    __table_args__ = (
+        # The validation report reads "every observation for this shipment and
+        # field, newest first".
+        Index(
+            "ix_shipment_tracking_obs_shipment_field",
+            "shipment_id",
+            "field_key",
+            "fetched_at",
+        ),
+        Index("ix_shipment_tracking_obs_source", "source"),
     )
 
 
@@ -214,7 +341,12 @@ class PickingHeader(Base, CompanyScopedMixin):
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     picking_number = Column(String(50), unique=True, nullable=False)
-    spo_number = Column(String(50), nullable=True)
+    # DISPLAY-width, not match-width: a multi-SPO GRN stores every SPO it covers
+    # ("SPO-A, SPO-B") so the list says so instead of showing a dash. Allocation
+    # matching stays scalar (`_spo_match_key` / `_normalize_spo_number` compare ONE
+    # normalized SPO), so a joined value equals no single SPO and never
+    # false-links. Widened by migration 317; see also `_single_spo_or_none`.
+    spo_number = Column(String(255), nullable=True)
     picking_type = Column(String(50), nullable=False)
     source_entity_type = Column(String(50), nullable=True)
     source_entity_id = Column(UUID(as_uuid=False), nullable=True)
@@ -229,6 +361,23 @@ class PickingHeader(Base, CompanyScopedMixin):
     total_items_discrepancy = Column(Integer, nullable=True)
     total_cost = Column(Numeric(15, 2), nullable=True)
     notes = Column(Text, nullable=True)
+    # Provenance. A GRN can arrive three ways - a staff create, an Excel import, or
+    # the external (n8n / AutoCount) API - and the row itself recorded none of
+    # them, so "who created this GRN, and into which company" could only be
+    # guessed by bracketing `created_at` against import_jobs, which fails outright
+    # for the external path (no job, no user). Written ONCE on insert and never
+    # touched by a re-import, so the answer survives an overwrite.
+    #   created_by      staff user id; NULL for external-API writes
+    #   source_system   'ui' | 'import' | 'external_api'
+    #   import_job_id   the job, when an import wrote it -> file + uploader + the
+    #                   company snapshot that was active
+    created_by = Column(UUID(as_uuid=False), nullable=True)
+    source_system = Column(String(30), nullable=True)
+    import_job_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("import_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     
@@ -239,6 +388,10 @@ class PickingHeader(Base, CompanyScopedMixin):
         Index("ix_picking_headers_picking_number", "picking_number"),
         Index("ix_picking_headers_picking_status", "picking_status"),
         Index("ix_picking_headers_spo_number", "spo_number"),
+        # "what did this job create?" is the question that started this, so it is
+        # indexed; created_by is for filtering a listing by uploader.
+        Index("ix_picking_headers_import_job_id", "import_job_id"),
+        Index("ix_picking_headers_created_by", "created_by"),
     )
 
 
@@ -287,7 +440,7 @@ class PickingLine(Base, CompanyScopedMixin):
 
 
 class PurchaseOrder(Base, CompanyScopedMixin):
-    """SCM purchase order (supply / on-order source). Public core record — survives
+    """SCM purchase order (supply / on-order source). Public core record - survives
     module uninstall. Sits with suppliers / PR in the procurement domain."""
     __tablename__ = "purchase_orders"
 
@@ -318,7 +471,7 @@ class PurchaseOrder(Base, CompanyScopedMixin):
 
 
 class PurchaseOrderLine(Base, CompanyScopedMixin):
-    """Open PO line — feeds on-order / net-position views by product×warehouse."""
+    """Open PO line - feeds on-order / net-position views by product×warehouse."""
     __tablename__ = "purchase_order_lines"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -353,12 +506,33 @@ class PurchaseOrderLine(Base, CompanyScopedMixin):
 class StockInquiry(Base):
     """Stock inquiry model. Set __audit_track__ = True for automatic audit logging of changes."""
     __tablename__ = "stock_inquiries"
+    # NOTE: `salesperson_contact_id` (the routing key, below) is the requestor
+    # the salesman the inquiry is FOR. `contact_id` stays the SUBMITTER, who owns
+    # the conversation and receives every update.
     __audit_track__ = True
     __audit_entity_type__ = "stock_inquiry"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     inquiry_number = Column(String(50), nullable=True)
+    # Display label (what was submitted); kept for PDFs, list columns and search.
     salesperson = Column(Text, nullable=True)
+    # Requestor FK - the CS pin lookup key. TEXT to match respond_contacts.id.
+    salesperson_contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True
+    )
+    # lazy="joined": the display name is read on every list row, so resolve it in
+    # the same SELECT instead of one extra query per row.
+    salesperson_contact = relationship(
+        "RespondContact", foreign_keys=[salesperson_contact_id], lazy="joined"
+    )
+
+    @property
+    def salesperson_contact_name(self) -> "str | None":
+        """Requestor display name resolved LIVE from the FK, so a contact rename
+        fixes every screen with no backfill. Read-only; the `salesperson` text
+        column remains the point-in-time record and the fallback once the FK is
+        cleared."""
+        return _contact_display_name(self.salesperson_contact)
     product_code = Column(Text, nullable=True)
     item_description = Column(Text, nullable=True)
     project_customer = Column(Text, nullable=True)
@@ -409,6 +583,10 @@ class PurchaseRequestHeader(Base):
     request_number = Column(String(50), nullable=True)
     request_date = Column(Date, nullable=True)
     customer_name = Column(Text, nullable=True)
+    # Person in charge at the delivery site: free text, "name and contact number".
+    # Optional. Exists so the receiving contact stops being appended to
+    # delivery_address (see migration 313).
+    pic = Column(Text, nullable=True)
     project_title = Column(Text, nullable=True)
     # AC-F3: ONE form, not two. The link is nullable because every existing sponsorship
     # has none, and because an unflagged contact is deliberately still allowed to submit
@@ -427,7 +605,23 @@ class PurchaseRequestHeader(Base):
     expected_delivery_date = Column(Date, nullable=True)
     expected_po_date = Column(Date, nullable=True)
     expected_po_date_text = Column(Text, nullable=True)
+    # Display label (what was submitted); kept for PDFs, list columns and search.
     requested_by = Column(Text, nullable=True)
+    # Requestor FK - the CS pin lookup key, so a form submitted ON BEHALF OF
+    # someone routes to THEIR pinned CS. `contact_id` stays the submitter, who
+    # keeps receiving every update. TEXT to match respond_contacts.id.
+    requested_by_contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True
+    )
+    requested_by_contact = relationship(
+        "RespondContact", foreign_keys=[requested_by_contact_id], lazy="joined"
+    )
+
+    @property
+    def requested_by_contact_name(self) -> "str | None":
+        """Requestor display name resolved LIVE from the FK (see
+        StockInquiry.salesperson_contact_name)."""
+        return _contact_display_name(self.requested_by_contact)
     requested_at = Column(Date, nullable=True)  # DEPRECATED — superseded by submitted_at (top date) + request_date (footer date)
     submitted_at = Column(DateTime(timezone=False), nullable=True)  # auto-stamped on every submit (incl. resubmit); top "Date" on the document
     status = Column(String(50), default="draft", nullable=False)

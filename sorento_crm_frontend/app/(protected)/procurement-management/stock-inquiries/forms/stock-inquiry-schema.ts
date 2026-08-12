@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const StockInquirySchema = z.object({
   salesperson: z.string().max(255).optional().nullable(),
+  salesperson_contact_id: z.string().max(255).optional().nullable(),
   product_code: z.string().max(255).optional().nullable(),
   item_description: z.string().max(2000).optional().nullable(),
   project_customer: z.string().max(255).optional().nullable(),

@@ -1,7 +1,8 @@
 """Stock inquiries API routes."""
 import logging
 
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body, Response
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body, Response, File, UploadFile
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
@@ -74,6 +75,7 @@ async def get_stock_inquiries(
             contact_id=None,
             space_id=None,
             statuses=statuses,
+            viewer_user_id=(current_user or {}).get("id"),
         )
         return result
     except Exception as e:
@@ -234,6 +236,56 @@ async def link_attachment_to_stock_inquiry(
         raise handle_internal_error(str(e))
 
 
+@router.post("/{inquiry_id}/response-attachments", status_code=status.HTTP_201_CREATED)
+async def upload_stock_inquiry_response_attachment(
+    inquiry_id: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Upload a staff response attachment onto the stock inquiry, staged in the
+    "Edit purchasing response" modal alongside the reply text. Uses the
+    response_attachment type (its own quota, independent of the contact's
+    portal_submission cap - UAC C4/D9) and stamps uploader_kind='user'."""
+    try:
+        validate_uuid_path(inquiry_id, resource="Stock Inquiry")
+        service = StockInquiryService(db)
+        inquiry = service.get_inquiry(inquiry_id)
+        contents = await file.read()
+        from app.services.entity_attachment_service import create_response_attachment
+
+        return create_response_attachment(
+            db,
+            entity_type="stock_inquiry",
+            entity_id=str(inquiry.id),
+            contents=contents,
+            filename=file.filename,
+            content_type=file.content_type,
+            uploaded_by=(current_user or {}).get("id"),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/response-attachments/{link_id}", status_code=status.HTTP_200_OK)
+async def delete_stock_inquiry_response_attachment(
+    link_id: str,
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Hard-unlink a staff-uploaded response attachment from a stock inquiry (UAC F4)."""
+    try:
+        service = StockInquiryService(db)
+        service.delete_inquiry_attachment(link_id)
+        return {"message": "Attachment unlinked successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.post(
     "/{inquiry_id}/view-link",
     response_model=ViewLinkResponse,
@@ -255,6 +307,61 @@ async def get_or_create_stock_inquiry_view_link(
         base = ((data.base_url if data else None) or getattr(app_settings, "frontend_base_url", "") or "").rstrip("/")
         view_url = f"{base}/view/stock-inquiry?token={token}" if base else f"/view/stock-inquiry?token={token}"
         return ViewLinkResponse(view_token=token, view_url=view_url)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{inquiry_id}/export/pdf")
+async def export_stock_inquiry_pdf(
+    inquiry_id: str,
+    current_user: dict = Depends(require_permission("procurement.stock_inquiries.view")),
+    db: Session = Depends(get_db),
+):
+    """Queue an async PDF export of the PRODUCT INQUIRY FORM (printable copy).
+
+    The document keeps the form's own heading, which is what the detail page has
+    always rendered, so the file is named ``product-inquiry-<number>.pdf``.
+
+    Creates a UserDownload row and enqueues generation; the result appears in the
+    My Downloads drawer. Decoupled from the request path so a slow/failed render
+    (attachments are downloaded and embedded) never blocks the caller. Mirrors
+    POST /complaints-management/complaints/{id}/export/pdf.
+    """
+    from app.schemas.download import DownloadResponse
+    from app.services.download_service import DownloadService
+    from app.services.queue_service import enqueue_job
+    from app.tasks.export_tasks import generate_stock_inquiry_pdf
+
+    try:
+        validate_uuid_path(inquiry_id, resource="Stock Inquiry")
+        service = StockInquiryService(db)
+        inquiry = service.get_inquiry(inquiry_id)  # 404 if missing
+
+        number = getattr(inquiry, "inquiry_number", None) or inquiry_id
+        download = DownloadService(db).create(
+            user_id=str(current_user["id"]),
+            kind="stock_inquiry_pdf",
+            source_entity_type="stock_inquiry",
+            source_entity_id=str(inquiry_id),
+            filename=f"product-inquiry-{number}.pdf",
+        )
+        try:
+            enqueue_job(
+                generate_stock_inquiry_pdf,
+                str(download.id),
+                str(inquiry_id),
+                str(current_user["id"]),
+                queue_name="imports",
+                job_timeout=600,
+            )
+        except Exception as e:
+            # Enqueue failed (e.g. Redis down): mark the row failed so the drawer shows it.
+            DownloadService(db).mark_failed(str(download.id), f"Could not queue PDF generation: {e}")
+            raise handle_internal_error("Could not queue PDF generation. Please try again.")
+
+        return DownloadResponse.model_validate(DownloadService(db).get(str(download.id)))
     except HTTPException:
         raise
     except Exception as e:
@@ -346,16 +453,30 @@ async def update_stock_inquiry_and_reply(
         validate_uuid_path(inquiry_id, resource="Stock Inquiry")
         assert_can_act_on_form(db, inquiry_id, current_user, source_entity_type="stock_inquiry")
         respond_user_id = _respond_user_id_from_current_user(current_user)
-        service = StockInquiryService(db)
-        inquiry = service.update_inquiry_and_reply(
-            inquiry_id,
-            inquiry_data,
-            respond_user_id=respond_user_id,
-            request_url=str(request.url) if request else "",
-            crm_sender_user_id=current_user.get("id"),
+        from app.services.form_action_dispatch import dispatch_or_defer
+
+        outcome = dispatch_or_defer(
+            db,
+            current_user,
+            request,
+            action_key="si.purchasing_respond",
+            entity_type="stock_inquiry",
+            entity_id=inquiry_id,
+            payload={
+                "inquiry_id": inquiry_id,
+                # Parked in JSONB, so it must go in as a plain dict; the runner
+                # rehydrates it back into StockInquiryUpdate before calling the service.
+                "inquiry_data": inquiry_data.model_dump(mode="json", exclude_unset=True),
+                "respond_user_id": respond_user_id,
+                "request_url": str(request.url) if request else "",
+                "crm_sender_user_id": current_user.get("id"),
+            },
+            event_name="purchasing_respond",
         )
+        if isinstance(outcome, JSONResponse):
+            return outcome
         db.commit()
-        return inquiry
+        return outcome
     except HTTPException:
         raise
     except Exception as e:
@@ -384,6 +505,7 @@ async def submit_stock_inquiry_for_project_sales(
 @router.post("/{inquiry_id}/project-sales-approve", response_model=StockInquiryResponse)
 async def project_sales_approve_stock_inquiry(
     inquiry_id: str,
+    request: Request,
     current_user: dict = Depends(require_permission("procurement.stock_inquiries.project_sales_approve")),
     db: Session = Depends(get_db),
 ):
@@ -391,6 +513,8 @@ async def project_sales_approve_stock_inquiry(
     assert_can_act_on_form(db, inquiry_id, current_user, source_entity_type="stock_inquiry")
     try:
         validate_uuid_path(inquiry_id, resource="Stock Inquiry")
+        from app.services.form_action_dispatch import dispatch_or_defer
+
         service = StockInquiryService(db)
         user_id = (current_user or {}).get("id")
         respond_user_id = (
@@ -398,13 +522,24 @@ async def project_sales_approve_stock_inquiry(
             or (current_user or {}).get("respondUserId")
             or user_id
         )
-        inquiry = service.project_sales_approve_inquiry(
-            inquiry_id,
-            actor_user_id=user_id,
-            crm_sender_user_id=user_id,
-            respond_user_id_fallback=str(respond_user_id or ""),
+        outcome = dispatch_or_defer(
+            db,
+            current_user,
+            request,
+            action_key="si.project_sales_approve",
+            entity_type="stock_inquiry",
+            entity_id=inquiry_id,
+            payload={
+                "inquiry_id": inquiry_id,
+                "actor_user_id": user_id,
+                "crm_sender_user_id": user_id,
+                "respond_user_id_fallback": str(respond_user_id or ""),
+            },
+            event_name="project_sales_approve",
         )
-        return inquiry
+        # Deferred => the 202 JSONResponse; immediate => the service's inquiry, exactly
+        # what this route returned before.
+        return outcome
     except HTTPException:
         raise
     except Exception as e:
@@ -414,6 +549,7 @@ async def project_sales_approve_stock_inquiry(
 @router.post("/{inquiry_id}/project-sales-reject", response_model=StockInquiryResponse)
 async def project_sales_reject_stock_inquiry(
     inquiry_id: str,
+    request: Request,
     body: Optional[StockInquiryRejectReopenRequest] = Body(None),
     current_user: dict = Depends(require_permission("procurement.stock_inquiries.project_sales_reject")),
     db: Session = Depends(get_db),
@@ -422,6 +558,8 @@ async def project_sales_reject_stock_inquiry(
     assert_can_act_on_form(db, inquiry_id, current_user, source_entity_type="stock_inquiry")
     try:
         validate_uuid_path(inquiry_id, resource="Stock Inquiry")
+        from app.services.form_action_dispatch import dispatch_or_defer
+
         service = StockInquiryService(db)
         reason = body.reason if body else None
         user_id = (current_user or {}).get("id")
@@ -430,13 +568,24 @@ async def project_sales_reject_stock_inquiry(
             or (current_user or {}).get("respondUserId")
             or user_id
         )
-        service.project_sales_reject_inquiry(
-            inquiry_id,
-            reason=reason,
-            user_id=user_id,
-            crm_sender_user_id=user_id,
-            respond_user_id_fallback=str(respond_user_id or ""),
+        outcome = dispatch_or_defer(
+            db,
+            current_user,
+            request,
+            action_key="si.project_sales_reject",
+            entity_type="stock_inquiry",
+            entity_id=inquiry_id,
+            payload={
+                "inquiry_id": inquiry_id,
+                "reason": reason,
+                "user_id": user_id,
+                "crm_sender_user_id": user_id,
+                "respond_user_id_fallback": str(respond_user_id or ""),
+            },
+            event_name="project_sales_reject",
         )
+        if isinstance(outcome, JSONResponse):
+            return outcome
         return service.get_inquiry_for_response(inquiry_id)
     except HTTPException:
         raise
@@ -447,6 +596,7 @@ async def project_sales_reject_stock_inquiry(
 @router.post("/{inquiry_id}/purchasing-reject", response_model=StockInquiryResponse)
 async def purchasing_reject_stock_inquiry(
     inquiry_id: str,
+    request: Request,
     body: Optional[StockInquiryRejectReopenRequest] = Body(None),
     current_user: dict = Depends(require_permission("procurement.stock_inquiries.purchasing_reject")),
     db: Session = Depends(get_db),
@@ -455,6 +605,8 @@ async def purchasing_reject_stock_inquiry(
     assert_can_act_on_form(db, inquiry_id, current_user, source_entity_type="stock_inquiry")
     try:
         validate_uuid_path(inquiry_id, resource="Stock Inquiry")
+        from app.services.form_action_dispatch import dispatch_or_defer
+
         service = StockInquiryService(db)
         reason = body.reason if body else None
         user_id = (current_user or {}).get("id")
@@ -463,13 +615,24 @@ async def purchasing_reject_stock_inquiry(
             or (current_user or {}).get("respondUserId")
             or user_id
         )
-        service.purchasing_reject_inquiry(
-            inquiry_id,
-            reason=reason,
-            user_id=user_id,
-            crm_sender_user_id=user_id,
-            respond_user_id_fallback=str(respond_user_id or ""),
+        outcome = dispatch_or_defer(
+            db,
+            current_user,
+            request,
+            action_key="si.purchasing_decide",
+            entity_type="stock_inquiry",
+            entity_id=inquiry_id,
+            payload={
+                "inquiry_id": inquiry_id,
+                "reason": reason,
+                "user_id": user_id,
+                "crm_sender_user_id": user_id,
+                "respond_user_id_fallback": str(respond_user_id or ""),
+            },
+            event_name="purchasing_decide",
         )
+        if isinstance(outcome, JSONResponse):
+            return outcome
         return service.get_inquiry_for_response(inquiry_id)
     except HTTPException:
         raise

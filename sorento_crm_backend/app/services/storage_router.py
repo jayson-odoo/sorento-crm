@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Optional, Protocol
 from urllib.parse import unquote, urlparse
 
@@ -20,6 +21,8 @@ logger = logging.getLogger(__name__)
 PROVIDER_S3 = "s3"
 PROVIDER_R2 = "r2"
 _VALID_PROVIDERS = {PROVIDER_S3, PROVIDER_R2}
+
+_env_loaded = False
 
 
 class StorageBackend(Protocol):
@@ -64,14 +67,45 @@ def normalize_provider(value: Optional[str]) -> str:
     return v if v in _VALID_PROVIDERS else PROVIDER_S3
 
 
+def _ensure_env_loaded() -> None:
+    """Populate os.environ from the backend .env once, mirroring s3_service/r2_service.
+
+    Only ``app.main`` calls ``load_dotenv``, so processes that never import it -
+    above all ``worker.py``, which owns every export/import job - saw an empty
+    ``STORAGE_DEFAULT_PROVIDER`` and silently fell back to S3. On a host without
+    the CloudFront signing key that turned into "CloudFront private key file not
+    found" on a stack configured for R2. Reading the file here makes the provider
+    resolve identically in the API and the worker.
+    """
+    global _env_loaded
+    if _env_loaded:
+        return
+    _env_loaded = True
+    try:
+        from pathlib import Path
+
+        from dotenv import load_dotenv
+
+        env_path = Path(__file__).parent.parent.parent / ".env"
+        if env_path.exists():
+            load_dotenv(env_path)
+        else:
+            load_dotenv()
+    except ImportError:  # python-dotenv absent: rely on a real environment
+        logger.warning("python-dotenv not installed; STORAGE_DEFAULT_PROVIDER must be exported")
+
+
 def default_provider() -> str:
     """Provider used when a caller has no row context (only a raw file_path)."""
+    _ensure_env_loaded()
     return normalize_provider(os.getenv("STORAGE_DEFAULT_PROVIDER", PROVIDER_S3))
 
 
-def get_backend(provider: Optional[str]) -> StorageBackend:
-    """Return the storage service for the given provider."""
-    p = normalize_provider(provider)
+_backends: dict[str, StorageBackend] = {}
+_backend_lock = threading.Lock()
+
+
+def _build_backend(p: str) -> StorageBackend:
     if p == PROVIDER_R2:
         from app.services.r2_service import R2Service
 
@@ -79,6 +113,55 @@ def get_backend(provider: Optional[str]) -> StorageBackend:
     from app.services.s3_service import S3Service
 
     return S3Service()
+
+
+def get_backend(provider: Optional[str]) -> StorageBackend:
+    """Return the storage service for the given provider, built once per process.
+
+    This used to construct a brand-new service on EVERY call, and every call site
+    (presign, preview, download, upload, webhook) pays that. Constructing one is
+    not cheap and none of it is per-request work:
+
+      * ``boto3.client(...)`` — ~350ms on the first build in a process (botocore
+        loads its service model JSON from disk), ~3ms on every build after.
+      * ``S3Service`` additionally builds a ``CloudFrontSigner``, which reads the
+        RSA private key from disk and parses it — ~225ms EVERY time, because the
+        parse is not cached anywhere. Its own docstring says "key loaded once",
+        which was true per instance and defeated by rebuilding the instance per
+        request.
+
+    So a presign was ~99% setup and ~1% signing, and an n8n loop over N
+    attachments paid it N times. Caching makes it once per process.
+
+    Safe to share: boto3 clients are documented as thread-safe (it is *resources*
+    that are not), and the cryptography key object is only used for signing. Both
+    services are stateless after construction.
+    """
+    p = normalize_provider(provider)
+    cached = _backends.get(p)
+    if cached is not None:
+        return cached
+    with _backend_lock:
+        cached = _backends.get(p)  # another thread may have built it while we waited
+        if cached is None:
+            cached = _build_backend(p)
+            _backends[p] = cached
+        return cached
+
+
+def warm_backends() -> None:
+    """Build the default provider's backend at startup.
+
+    Without this the cost above lands on whichever unlucky request arrives first
+    after a worker starts — and a worker that keeps being recycled pays it again
+    every time, so under load the "first request" penalty is not rare.
+    Best-effort: a misconfigured provider must not stop the app booting, it will
+    surface on the first real call exactly as it does today.
+    """
+    try:
+        get_backend(default_provider())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("storage backend warm-up skipped: %s", exc)
 
 
 def cdn_base_url(provider: str, key: str) -> str:

@@ -33,6 +33,7 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { StockInquiry } from '../types/stockInquiry.types';
 import { STOCK_INQUIRY_STATUS_LABELS } from '../types/stockInquiry.types';
 import StockInquiryBulkDeleteDialog from './StockInquiryBulkDeleteDialog';
+import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 
 export default function StockInquiriesList() {
   const router = useRouter();
@@ -231,6 +232,23 @@ export default function StockInquiriesList() {
           </span>
         ),
         meta: { headerTitle: 'Handled By', skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
+        accessorKey: 'print_count',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Print Count" column={column} />
+        ),
+        size: 110,
+        enableSorting: false,
+        cell: ({ row }) => (
+          <EntityDownloadsButton
+            entityType="stock_inquiry"
+            entityId={row.original.id}
+            label={row.original.inquiry_number ?? undefined}
+            count={row.original.print_count ?? 0}
+          />
+        ),
+        meta: { headerTitle: 'Print Count', skeleton: <Skeleton className="h-4 w-12" /> },
       },
       {
         accessorKey: 'actions',

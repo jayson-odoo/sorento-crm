@@ -1769,8 +1769,11 @@ class AIAssistantChatService:
     # no extra permission (e.g. anyone may raise a support ticket).
     _WRITE_TOOL_PERMISSIONS = {
         "crm_complaint_close": "complaint_management.complaints.close",
-        "crm_purchase_request_approve": "procurement.purchase_requests.send_for_approval",
-        "crm_purchase_request_reject": "procurement.purchase_requests.send_for_approval",
+        # Both hit POST /approval-decision, the approver's decision - so they take the
+        # decision permission, NOT the triage one. Leaving these on send_for_approval
+        # after the split would let a triage-only user approve via the assistant.
+        "crm_purchase_request_approve": "procurement.purchase_requests.approve",
+        "crm_purchase_request_reject": "procurement.purchase_requests.approve",
         # crm_order_cancel: no extra permission — `update_order` (the UI cancel
         # path) is gated only by authentication, so requiring more here would make
         # chat stricter than the UI. The Confirm click is the gate.

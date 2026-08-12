@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import LookupBoundField from '@/components/common/LookupBoundField';
+import { RequestorContactSelect } from '@/app/(protected)/master-data-management/shared/components/RequestorContactSelect';
 import {
   Table,
   TableBody,
@@ -182,6 +183,25 @@ export function PurchaseRequestDocumentEditCard({
                   <FormItem>
                     <FormControl>
                       <Input placeholder="Customer name" {...field} value={field.value ?? ''} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </DocField>
+
+            <DocField label="PIC" className="sm:col-span-2">
+              <FormField
+                control={control}
+                name="pic"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormControl>
+                      <Input
+                        placeholder="Name and contact number"
+                        {...field}
+                        value={field.value ?? ''}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -610,11 +630,18 @@ export function PurchaseRequestDocumentEditCard({
                   <div className="mt-1.5">
                     <FormField
                       control={control}
-                      name="requested_by"
+                      name="requested_by_contact_id"
                       render={({ field }) => (
                         <FormItem>
                           <FormControl>
-                            <Input placeholder="Name" {...field} value={field.value ?? ''} />
+                            <RequestorContactSelect
+                              value={field.value}
+                              onChange={field.onChange}
+                              submitterContactId={request.contact_id}
+                              savedContactId={request.requested_by_contact_id}
+                              savedContactName={request.requested_by_contact_name ?? request.requested_by}
+                              placeholder="Select requestor"
+                            />
                           </FormControl>
                           <FormMessage />
                         </FormItem>

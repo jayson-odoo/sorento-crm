@@ -32,6 +32,7 @@ from operator import add
 from sqlalchemy import and_, case, func, or_, text
 from sqlalchemy.orm import Session
 
+from app.models.base import UNSET, get_company_scope
 from app.models.forms import Form
 from app.models.inventory import Warehouse
 from app.models.marketing import Promotion
@@ -42,6 +43,7 @@ from app.models.procurement import (
     SPOAllocation,
     Supplier,
 )
+from app.models.certificate import Certificate, CertificateRevision
 from app.models.product import Product
 from app.models.resources import Attachment, AttachmentType
 
@@ -481,6 +483,22 @@ class ResolvedEntity:
     match_field: str = ""  # which column matched (e.g. "product_code", "product_name")
     match_tier: str = "exact"  # "exact" | "prefix" | "substring" | "embedding"
     similarity: Optional[float] = None  # cosine similarity for embedding-tier matches
+    # Owning company, when the entity type is company-scoped (NULL for a shared row
+    # and absent entirely for a global type like attachment_type). Emitted so a
+    # caller holding a multi-company scope can tell a REAL ambiguity ("two different
+    # products") from a bookkeeping one ("the same code in each company") and only
+    # prompt for the former. See `_attach_company_info`.
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
+    # The exact text this row was matched AGAINST, set by the AND probes so
+    # `token_word_coverage_for_rows` can report which query words actually
+    # landed. It is the probe's blob, NOT everything in `display`: the product
+    # probe matches on `product_code` alone by design, so scoring a word
+    # against `product_name` would report a match the probe never made.
+    # Serialised as the transport key `_match_blob` on AND intersection rows
+    # only; the API layer (`references._attach_and_coverage`) strips it before
+    # the response leaves the process.
+    match_blob: Optional[str] = None
 
 
 @dataclass
@@ -613,6 +631,8 @@ class ResolutionResult:
                             "match_field": m.match_field,
                             "match_tier": m.match_tier,
                             "similarity": m.similarity,
+                            "company_id": m.company_id,
+                            "company_name": m.company_name,
                             "display": m.display,
                         }
                         for m in tr.matches
@@ -625,6 +645,8 @@ class ResolutionResult:
                             "match_field": a.match_field,
                             "match_tier": a.match_tier,
                             "similarity": a.similarity,
+                            "company_id": a.company_id,
+                            "company_name": a.company_name,
                             "display": a.display,
                         }
                         for a in tr.alternatives
@@ -1304,6 +1326,125 @@ def _probe_attachment(db: Session, tokens: list[str]) -> dict[str, list[Resolved
             )
         )
     return result
+
+
+def _prefer_live_certificates(matches: list[Any]) -> list[Any]:
+    """Drop expired certificates WHEN a live one answers the same token.
+
+    The point is what happens downstream: a resolved uuid is handed straight to
+    `crm_certificates_list`, so an expired row resolving first means the agent
+    delivers a lapsed PDF. Where a live certificate exists for the same number
+    (typically the same number approved under two schemes, one lapsed), the
+    expired one is noise and is removed.
+
+    It is deliberately NOT a hard filter. If EVERY match is expired, the expired
+    match is still returned, flagged `is_expired`. Hiding it outright would make
+    the agent answer "I cannot find that certificate" about a certificate that
+    plainly exists - a worse answer than "found, but it expired on <date>", and
+    the exact failure the tool description tells the agent to avoid.
+    """
+    live = [m for m in matches if not (m.display or {}).get("is_expired")]
+    return live if live else matches
+
+
+def _certificate_display(row: Any) -> dict[str, Any]:
+    """Display payload for one certificate hit: identity plus DERIVED validity.
+
+    The agent must be able to say "found but EXPIRED" without doing calendar
+    arithmetic, so the state ships beside the date. Validity comes from the
+    CURRENT revision only - a superseded window never makes a certificate read
+    expired.
+    """
+    from app.services.certificate_service import derive_validity
+
+    state, is_expired, days = derive_validity(row.valid_from, row.valid_until)
+    return {
+        "scheme": row.scheme,
+        "certificate_number": row.certificate_number,
+        "certifying_body": row.certifying_body,
+        "status": row.status,
+        "valid_from": _iso(row.valid_from),
+        "valid_until": _iso(row.valid_until),
+        "validity_state": state,
+        "is_expired": is_expired,
+        "days_until_expiry": days,
+    }
+
+
+def _certificate_columns(db: Session):
+    """Base SELECT for both certificate probes: identity + current revision dates."""
+    return (
+        db.query(
+            Certificate.id,
+            Certificate.scheme,
+            Certificate.certificate_number,
+            Certificate.certifying_body,
+            Certificate.status,
+            CertificateRevision.valid_from,
+            CertificateRevision.valid_until,
+        )
+        .outerjoin(
+            CertificateRevision,
+            CertificateRevision.id == Certificate.current_revision_id,
+        )
+    )
+
+
+def _probe_certificate(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """Exact match on the certificate number, whitespace- and dash-insensitive.
+
+    Matched two ways so the user can type either half of the identity:
+      * the number alone - "04124FC", "WCM PC 000321"
+      * scheme + number  - "PPS 0119", "PPS0119", "pps-0119"
+
+    Both sides are normalized with the same `_strip_all_ws` / `_ws_insensitive_lower`
+    pair that already makes `WC 8038` match `WC8038`, so no normalized column is
+    needed.
+
+    A number can exist under TWO schemes (`04124FC` is approved under both PPS
+    and SPAN, with different expiries). Every match is returned; the caller flags
+    the token ambiguous so the agent asks which scheme rather than answering from
+    whichever row came back first.
+    """
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+    normalized = [_strip_all_ws(t.lower()) for t in tokens]
+    norm_to_token = {n: t for n, t in zip(normalized, tokens) if n}
+    if not norm_to_token:
+        return result
+    keys = list(norm_to_token.keys())
+    number_norm = _ws_insensitive_lower(Certificate.certificate_number)
+    identity_norm = _ws_insensitive_lower(
+        Certificate.scheme + Certificate.certificate_number
+    )
+    rows = (
+        _certificate_columns(db)
+        .filter(or_(number_norm.in_(keys), identity_norm.in_(keys)))
+        .all()
+    )
+    for row in rows:
+        number_key = _strip_all_ws(str(row.certificate_number or "").lower())
+        identity_key = _strip_all_ws(
+            f"{row.scheme or ''}{row.certificate_number or ''}".lower()
+        )
+        token = norm_to_token.get(number_key)
+        match_field = "certificate_number"
+        if not token:
+            token = norm_to_token.get(identity_key)
+            match_field = "scheme_certificate_number"
+        if not token:
+            continue
+        result[token].append(
+            ResolvedEntity(
+                entity_type="certificate",
+                canonical_code=row.certificate_number,
+                uuid=str(row.id) if row.id else None,
+                match_field=match_field,
+                display=_certificate_display(row),
+            )
+        )
+    return {token: _prefer_live_certificates(hits) for token, hits in result.items()}
 
 
 def _probe_attachment_type(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
@@ -2104,6 +2245,59 @@ def _prefix_probe_attachment_type(db: Session, token: str) -> list[ResolvedEntit
     return out[:PREFIX_LIMIT]
 
 
+def _prefix_probe_certificate(db: Session, token: str) -> list[ResolvedEntity]:
+    """Prefix → substring on the certificate number and on scheme + number.
+
+    Catches a partial the user half-remembers ("04124", "WCM PC") and the
+    scheme-qualified form ("PPS 041"). Both sides stay dash / whitespace
+    insensitive, so "pps-041" reaches "PPS 04124FC". Certifying body and title
+    are deliberately NOT probed here - loose prose is tier 3's job, and matching
+    "IKRAM" would return every IKRAM certificate as an ambiguous blob.
+    """
+    norm_token = _strip_all_ws(token)
+    if not norm_token or len(norm_token) < 3:
+        return []
+    prefix = f"{norm_token}%"
+    substr = f"%{norm_token}%"
+    number_norm = _ws_insensitive_lower(Certificate.certificate_number)
+    identity_norm = _ws_insensitive_lower(
+        Certificate.scheme + Certificate.certificate_number
+    )
+    rows = (
+        _certificate_columns(db)
+        .filter(or_(number_norm.ilike(prefix), identity_norm.ilike(prefix)))
+        .limit(PREFIX_LIMIT)
+        .all()
+    )
+    tier = "prefix"
+    if not rows:
+        rows = (
+            _certificate_columns(db)
+            .filter(or_(number_norm.ilike(substr), identity_norm.ilike(substr)))
+            .limit(PREFIX_LIMIT)
+            .all()
+        )
+        tier = "substring"
+    out: list[ResolvedEntity] = []
+    seen: set[str] = set()
+    for row in rows:
+        key = str(row.id)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            ResolvedEntity(
+                entity_type="certificate",
+                canonical_code=row.certificate_number,
+                uuid=key,
+                match_field="certificate_number",
+                match_tier=tier,
+                display=_certificate_display(row),
+            )
+        )
+    return _prefer_live_certificates(out)
+
+
 # Tier-2 probes paired with the entity_type(s) they produce, so callers can opt
 # out of probes that can't return anything they accept.
 _TIER2_PROBES: tuple[tuple[Callable[[Session, str], list[ResolvedEntity]], frozenset[str]], ...] = (
@@ -2121,6 +2315,7 @@ _TIER2_PROBES: tuple[tuple[Callable[[Session, str], list[ResolvedEntity]], froze
     (_prefix_probe_form, frozenset({"form"})),
     (_prefix_probe_attachment, frozenset({"attachment"})),
     (_prefix_probe_attachment_type, frozenset({"attachment_type"})),
+    (_prefix_probe_certificate, frozenset({"certificate"})),
 )
 
 
@@ -2167,6 +2362,11 @@ _EMBEDDING_SOURCE_TYPES: dict[str, str] = {
     "transporter": "transporter",
     "attachment": "attachment",
     "form": "form",
+    # Certificate register rows (number + scheme + body + issuer + title +
+    # covered product codes). Lets prose like "water fitting approval for angle
+    # valves" resolve to a certificate. Dates are NOT embedded - validity is
+    # answered by SQL.
+    "certificate": "certificate",
 }
 EMBEDDING_MIN_SIMILARITY = 0.80
 EMBEDDING_CONFIDENCE_GAP = 0.05
@@ -2301,9 +2501,10 @@ def _trgm_lookup(
             # the input (normalized). Booleans sort true-first under DESC, so
             # curated-looking variants (SRTKT71SS, -BL/-GM) beat digit-neighbours
             # (SRTKT72SS) even when raw similarity ties (§3.2). Self is excluded.
+            scope_sql, scope_params = _company_scope_sql(db)
             rows = db.execute(
                 text(
-                    """
+                    f"""
                     SELECT id, product_code, product_name,
                            similarity(product_code, :p) AS sim,
                            (left(lower(regexp_replace(product_code, '[-\\s]', '', 'g')),
@@ -2313,12 +2514,12 @@ def _trgm_lookup(
                     FROM products
                     WHERE product_code % :p
                       AND lower(regexp_replace(product_code, '[-\\s]', '', 'g'))
-                          <> lower(regexp_replace(:p, '[-\\s]', '', 'g'))
+                          <> lower(regexp_replace(:p, '[-\\s]', '', 'g')){scope_sql}
                     ORDER BY is_variant DESC, sim DESC, product_code
                     LIMIT :n
                     """
                 ),
-                {"p": phrase, "n": TRGM_LIMIT},
+                {"p": phrase, "n": TRGM_LIMIT, **scope_params},
             ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
@@ -2341,9 +2542,19 @@ def _trgm_lookup(
 
     if "customer" in allowed_entity_types:
         try:
+            # The emitted uuid is the JOINED customer row, so both sides are
+            # scoped: the order we matched on AND the customer we hand back.
+            order_scope_sql, scope_params = _company_scope_sql(db, "o.company_id")
+            # An empty scope needs no customer clause: the order clause is already
+            # ` AND FALSE`, which returns nothing to join against.
+            cust_scope_sql = (
+                " AND (c.id IS NULL OR c.company_id::text = ANY(:__company_ids))"
+                if scope_params
+                else ""
+            )
             rows = db.execute(
                 text(
-                    """
+                    f"""
                     SELECT o.debtor_name, o.debtor_code,
                            c.id AS customer_id,
                            GREATEST(
@@ -2354,13 +2565,13 @@ def _trgm_lookup(
                     LEFT JOIN customers c ON lower(btrim(c.customer_name)) = lower(btrim(o.debtor_name))
                     WHERE o.deleted_at IS NULL
                       AND o.debtor_name IS NOT NULL
-                      AND (o.debtor_name % :p OR o.debtor_code % :p)
+                      AND (o.debtor_name % :p OR o.debtor_code % :p){order_scope_sql}{cust_scope_sql}
                     GROUP BY o.debtor_name, o.debtor_code, c.id
                     ORDER BY sim DESC
                     LIMIT :n
                     """
                 ),
-                {"p": phrase, "n": TRGM_LIMIT},
+                {"p": phrase, "n": TRGM_LIMIT, **scope_params},
             ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
@@ -2377,21 +2588,22 @@ def _trgm_lookup(
                         display={"debtor_name": r.debtor_name, "debtor_code": r.debtor_code, "source": "orders"},
                     )
                 )
+            scope_sql, scope_params = _company_scope_sql(db)
             rows = db.execute(
                 text(
-                    """
+                    f"""
                     SELECT id, customer_code, customer_name,
                            GREATEST(
                                similarity(customer_code, :p),
                                similarity(customer_name, :p)
                            ) AS sim
                     FROM customers
-                    WHERE (customer_code % :p OR customer_name % :p)
+                    WHERE (customer_code % :p OR customer_name % :p){scope_sql}
                     ORDER BY sim DESC
                     LIMIT :n
                     """
                 ),
-                {"p": phrase, "n": TRGM_LIMIT},
+                {"p": phrase, "n": TRGM_LIMIT, **scope_params},
             ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
@@ -2413,17 +2625,18 @@ def _trgm_lookup(
 
     if "customer_order" in allowed_entity_types:
         try:
+            scope_sql, scope_params = _company_scope_sql(db)
             rows = db.execute(
                 text(
-                    """
+                    f"""
                     SELECT id, order_number, similarity(order_number, :p) AS sim
                     FROM orders
-                    WHERE deleted_at IS NULL AND order_number % :p
+                    WHERE deleted_at IS NULL AND order_number % :p{scope_sql}
                     ORDER BY sim DESC
                     LIMIT :n
                     """
                 ),
-                {"p": phrase, "n": TRGM_LIMIT},
+                {"p": phrase, "n": TRGM_LIMIT, **scope_params},
             ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
@@ -2445,18 +2658,19 @@ def _trgm_lookup(
 
     if "promotion" in allowed_entity_types:
         try:
+            scope_sql, scope_params = _company_scope_sql(db)
             rows = db.execute(
                 text(
-                    """
+                    f"""
                     SELECT id, description,
                            similarity(COALESCE(description, ''), :p) AS sim
                     FROM promotions
-                    WHERE description % :p
+                    WHERE description % :p{scope_sql}
                     ORDER BY sim DESC
                     LIMIT :n
                     """
                 ),
-                {"p": phrase, "n": TRGM_LIMIT},
+                {"p": phrase, "n": TRGM_LIMIT, **scope_params},
             ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
@@ -2478,9 +2692,10 @@ def _trgm_lookup(
 
     if "transporter" in allowed_entity_types:
         try:
+            scope_sql, scope_params = _company_scope_sql(db)
             rows = db.execute(
                 text(
-                    """
+                    f"""
                     SELECT id, code, name, normalized_name,
                            GREATEST(
                                similarity(COALESCE(code, ''), :p),
@@ -2488,12 +2703,12 @@ def _trgm_lookup(
                                similarity(COALESCE(normalized_name, ''), :p)
                            ) AS sim
                     FROM transporters
-                    WHERE (code % :p OR name % :p OR normalized_name % :p)
+                    WHERE (code % :p OR name % :p OR normalized_name % :p){scope_sql}
                     ORDER BY sim DESC
                     LIMIT :n
                     """
                 ),
-                {"p": phrase, "n": TRGM_LIMIT},
+                {"p": phrase, "n": TRGM_LIMIT, **scope_params},
             ).all()
             for r in rows:
                 sim = float(r.sim or 0.0)
@@ -2605,19 +2820,20 @@ def _find_entity_neighbours_with_data(
     #     and the input's own parent (the base product) when it is itself a variant.
     if input_id:
         try:
+            scope_sql, scope_params = _company_scope_sql(db)
             graph_rows = db.execute(
                 text(
-                    """
+                    f"""
                     SELECT id, product_code, product_name,
                            similarity(product_code, :p) AS sim
                     FROM products
                     WHERE id <> :pid
                       AND (variant_of_id = :pid
                            OR (:parent_id IS NOT NULL AND variant_of_id = :parent_id)
-                           OR (:parent_id IS NOT NULL AND id = :parent_id))
+                           OR (:parent_id IS NOT NULL AND id = :parent_id)){scope_sql}
                     """
                 ),
-                {"p": code, "pid": input_id, "parent_id": parent_id},
+                {"p": code, "pid": input_id, "parent_id": parent_id, **scope_params},
             ).all()
             for r in graph_rows:
                 cid = str(r.id)
@@ -2799,6 +3015,7 @@ def _and_probe_product(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
             uuid=str(pid) if pid else None,
             match_field="product_code",
             match_tier="and",
+            match_blob=code,
             display={"product_name": name, "is_active": bool(is_active)},
         )
         for pid, code, name, is_active in rows
@@ -2819,6 +3036,7 @@ def _and_probe_promotion(db: Session, tokens: list[str]) -> list[ResolvedEntity]
             uuid=str(pid),
             match_field="description",
             match_tier="and",
+            match_blob=description,
             display={"description": description, "is_active": bool(is_active)},
         )
         for pid, description, is_active in rows
@@ -2914,6 +3132,14 @@ def _and_probe_attachment(
             uuid=str(aid) if aid else None,
             match_field="original_filename",
             match_tier="and",
+            # Coverage mode scores the filename ALONE; the default mode scores the
+            # concat blob. Reporting the wrong one would credit a word to text the
+            # probe never looked at.
+            match_blob=(
+                filename
+                if coverage_mode
+                else " ".join(x for x in (filename, description, type_name) if x)
+            ),
             display={
                 "filename": filename,
                 "description": description,
@@ -2926,16 +3152,30 @@ def _and_probe_attachment(
     ]
 
 
+class _ProbeRows(list):
+    """A probe's row list plus a truncation marker the probe sets itself.
+
+    The generic loop check (`len(rows) >= AND_MODE_LIMIT`) is blind to a probe
+    that merges MULTIPLE capped queries and dedups: the merged list can land
+    under the cap while one source query hit its LIMIT, silently under-
+    reporting truncation. A probe that knows better says so here.
+    """
+
+    truncated: bool = False
+
+
 def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     # Two sources: customers master (preferred — has UUID) and orders.debtor_name
     # (legacy fallback). Run both; orders.debtor_name JOINs Customer for UUID.
-    out: list[ResolvedEntity] = []
+    out: _ProbeRows = _ProbeRows()
     blob_c = _concat_ws(Customer.customer_code, Customer.customer_name, Customer.phone_number, Customer.email)
     counts_c = _and_token_match_counts(blob_c, tokens)
     base_c = db.query(Customer.id, Customer.customer_code, Customer.customer_name, Customer.phone_number, Customer.email, Customer.is_active)
     tier_c = _and_max_tier_filter(base_c, counts_c)
     if tier_c is not None:
         rows = base_c.filter(tier_c).limit(AND_MODE_LIMIT).all()
+        if len(rows) >= AND_MODE_LIMIT:
+            out.truncated = True
         for cid, code, name, phone, email, is_active in rows:
             out.append(
                 ResolvedEntity(
@@ -2944,6 +3184,7 @@ def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
                     uuid=str(cid) if cid else None,
                     match_field="customer_code",
                     match_tier="and",
+                    match_blob=" ".join(x for x in (code, name, phone, email) if x),
                     display={"customer_name": name, "phone_number": phone, "email": email, "is_active": bool(is_active) if is_active is not None else True},
                 )
             )
@@ -2959,6 +3200,10 @@ def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     tier_o = _and_max_tier_filter(base_o, counts_o)
     if tier_o is not None:
         rows = base_o.filter(tier_o).distinct().limit(AND_MODE_LIMIT).all()
+        if len(rows) >= AND_MODE_LIMIT:
+            # The dedup below can shrink the merged list under the cap even
+            # though this source hit its LIMIT — mark it at the source.
+            out.truncated = True
         for debtor_name, debtor_code, customer_id in rows:
             if (debtor_name or "").lower() in seen_names:
                 continue
@@ -2969,6 +3214,7 @@ def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
                     uuid=str(customer_id) if customer_id else None,
                     match_field="debtor_name",
                     match_tier="and",
+                    match_blob=" ".join(x for x in (debtor_name, debtor_code) if x),
                     display={"debtor_name": debtor_name, "debtor_code": debtor_code, "source": "orders"},
                 )
             )
@@ -2990,6 +3236,7 @@ def _and_probe_form(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
             uuid=str(fid) if fid else None,
             match_field="form_name",
             match_tier="and",
+            match_blob=" ".join(x for x in (code, name, purpose) if x),
             display={"form_code": code, "form_name": name, "form_type": form_type, "is_active": bool(is_active)},
         )
         for fid, code, name, purpose, is_active, form_type in rows
@@ -2999,7 +3246,10 @@ def _and_probe_form(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
 def _and_probe_transporter(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     blob = _concat_ws(Transporter.code, Transporter.name, Transporter.normalized_name)
     counts = _and_token_match_counts(blob, tokens)
-    base = db.query(Transporter.id, Transporter.code, Transporter.name)
+    # `normalized_name` is selected only so `match_blob` can mirror the scored
+    # blob exactly; it is not displayed. Widening the SELECT does not change
+    # which rows come back.
+    base = db.query(Transporter.id, Transporter.code, Transporter.name, Transporter.normalized_name)
     tier = _and_max_tier_filter(base, counts)
     if tier is None:
         return []
@@ -3011,9 +3261,10 @@ def _and_probe_transporter(db: Session, tokens: list[str]) -> list[ResolvedEntit
             uuid=str(tid) if tid else None,
             match_field="transporter_name",
             match_tier="and",
+            match_blob=" ".join(x for x in (code, name, normalized_name) if x),
             display={"code": code, "name": name},
         )
-        for tid, code, name in rows
+        for tid, code, name, normalized_name in rows
     ]
 
 
@@ -3032,6 +3283,7 @@ def _and_probe_warehouse(db: Session, tokens: list[str]) -> list[ResolvedEntity]
             uuid=str(wid) if wid else None,
             match_field="warehouse_code",
             match_tier="and",
+            match_blob=" ".join(x for x in (code, name, location) if x),
             display={"warehouse_name": name, "location": location, "is_active": bool(is_active) if is_active is not None else True},
         )
         for wid, code, name, location, is_active in rows
@@ -3041,7 +3293,8 @@ def _and_probe_warehouse(db: Session, tokens: list[str]) -> list[ResolvedEntity]
 def _and_probe_supplier(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     blob = _concat_ws(Supplier.supplier_code, Supplier.supplier_name, Supplier.contact_name)
     counts = _and_token_match_counts(blob, tokens)
-    base = db.query(Supplier.id, Supplier.supplier_code, Supplier.supplier_name, Supplier.is_active)
+    # `contact_name` is selected only so `match_blob` mirrors the scored blob.
+    base = db.query(Supplier.id, Supplier.supplier_code, Supplier.supplier_name, Supplier.is_active, Supplier.contact_name)
     tier = _and_max_tier_filter(base, counts)
     if tier is None:
         return []
@@ -3053,9 +3306,10 @@ def _and_probe_supplier(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
             uuid=str(sid) if sid else None,
             match_field="supplier_code",
             match_tier="and",
+            match_blob=" ".join(x for x in (code, name, contact_name) if x),
             display={"supplier_name": name, "is_active": bool(is_active) if is_active is not None else True},
         )
-        for sid, code, name, is_active in rows
+        for sid, code, name, is_active, contact_name in rows
     ]
 
 
@@ -3081,6 +3335,7 @@ def _and_probe_customer_order(db: Session, tokens: list[str]) -> list[ResolvedEn
             uuid=str(row.id) if row.id else None,
             match_field="order_number",
             match_tier="and",
+            match_blob=row.order_number,
             display={
                 "customer_name": row.debtor_name,
                 "actual_delivery_date": _iso(row.actual_delivery_date),
@@ -3104,6 +3359,114 @@ _AND_PROBES: tuple[tuple[Callable[[Session, list[str]], list[ResolvedEntity]], f
 )
 
 
+def token_word_coverage_for_rows(
+    tokens: list[str],
+    rows: list[dict[str, Any]],
+    truncated_types: frozenset[str] | set[str] = frozenset(),
+) -> list[dict[str, Any]]:
+    """Per token, per entity type: which of the token's words appear in the
+    rows being returned.
+
+    AND-mode is max-coverage, not a boolean AND (see `_and_max_tier_filter`),
+    so a word can contribute nothing and the caller cannot tell from the rows.
+    This reports it, without changing which rows come back.
+
+    Called by the API layer over the FINAL row set — after the access-level
+    filter, the promotion expansion and the limit — because coverage computed
+    earlier describes rows a later stage removed (the original version baked
+    it into ``as_dict()`` and asserted "every word matched" on zero-row
+    entitlement-filtered responses).
+
+    Rules that keep the field honest:
+      * The claim is WEAK: "absent from these results", never "absent from the
+        catalogue". No extra query.
+      * Partitioned per entity type. A word matched by a product code must not
+        be credited to a promotion enquiry — pooling across types was the
+        other way the first version lied.
+      * Scored against the row's ``_match_blob`` (the text its probe actually
+        scored), never ``display``: the product probe matches ``product_code``
+        only, so a word appearing in ``product_name`` would be a match the
+        probe never made. Promotion rows whose ``match_field`` is
+        ``description`` fall back to ``display.description`` — for those rows
+        blob and description are the same column, which keeps the rows the
+        promotion expander synthesized from a description match honest. The
+        gate matters: a promotion found by MEMBERSHIP
+        (``match_field="promotion_membership"``, the "check the promo for
+        <SKU>" walk) was never scored on its description, and scoring it
+        anyway invented ``unmatched=[<SKU>]`` on exactly the rows that ARE
+        that SKU's promotions.
+      * A type whose rows carry no scorable text is OMITTED, not reported
+        all-unmatched: nobody scored any text for those rows. A type where
+        SOME rows are unscored keeps its claims but is marked ``truncated`` —
+        the claims cover only the scored subset.
+      * A word matched via a `_word_variants` form counts as matched but is
+        echoed back AS THE CALLER TYPED IT — reporting "taps" unmatched while
+        showing a TAP promotion would be a new false statement.
+      * ``truncated_types`` marks a type whose row set was capped (probe limit
+        or API ``limit``), so a consumer knows an unmatched word may exist in
+        rows that were cut and must not phrase it as a catalogue-wide absence.
+    """
+    blobs_by_type: dict[str, list[str]] = {}
+    # Types with at least one surviving row nobody scored (no blob, no honest
+    # fallback). Their claims cover only the scored subset, so they read as
+    # incomplete — reported via the same `truncated` flag.
+    partially_scored: set[str] = set()
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        etype = str(row.get("entity_type") or "")
+        if not etype:
+            continue
+        blob = row.get("_match_blob")
+        if (
+            not blob
+            and etype == "promotion"
+            and row.get("match_field") == "description"
+        ):
+            # Only description-MATCHED promotion rows may borrow the display
+            # description as their blob; membership-derived rows
+            # (match_field="promotion_membership") were never scored on it.
+            blob = (row.get("display") or {}).get("description")
+        if blob:
+            blobs_by_type.setdefault(etype, []).append(str(blob).lower())
+        else:
+            partially_scored.add(etype)
+
+    out: list[dict[str, Any]] = []
+    for tok in tokens or []:
+        if not tok or not isinstance(tok, str):
+            continue
+        coverage: list[dict[str, Any]] = []
+        for etype in sorted(blobs_by_type):
+            blobs = blobs_by_type[etype]
+            matched: list[str] = []
+            unmatched: list[str] = []
+            for word in [w for w in tok.split() if w]:
+                variants = [v.lower() for v in _word_variants(word)]
+                hit = any(v in blob for blob in blobs for v in variants)
+                (matched if hit else unmatched).append(word)
+            coverage.append(
+                {
+                    "entity_type": etype,
+                    "matched_words": matched,
+                    "unmatched_words": unmatched,
+                    "truncated": etype in truncated_types or etype in partially_scored,
+                }
+            )
+        out.append(
+            {
+                "token": tok,
+                # What `match_mode: "and"` really means. Nested here rather
+                # than top-level: consumer chains spread top-level keys toward
+                # persisted session state, and `by_entity_type`'s keys are
+                # rendered to customers as entity types.
+                "match_semantics": "max_coverage",
+                "coverage": coverage,
+            }
+        )
+    return out
+
+
 @dataclass
 class IntersectionResolutionResult:
     """Cross-token AND result. Returned when match_mode=and."""
@@ -3116,6 +3479,11 @@ class IntersectionResolutionResult:
     # tokens' trigram neighbours, deduped). Same entity-level, non-domain-gated
     # semantics as the OR-mode per-token alternatives.
     alternatives: list[ResolvedEntity] = field(default_factory=list)
+    # Entity types whose AND probe returned AND_MODE_LIMIT rows — the cap may
+    # have cut real matches, so word-coverage claims over these types are
+    # incomplete. (Exactly-at-the-cap without truncation is a harmless false
+    # positive: the flag only softens phrasing downstream.)
+    truncated_entity_types: list[str] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
@@ -3131,9 +3499,11 @@ class IntersectionResolutionResult:
                 "uuid": m.uuid,
                 "match_field": m.match_field,
                 "match_tier": m.match_tier,
+                "company_id": m.company_id,
+                "company_name": m.company_name,
                 "display": m.display,
             })
-        return {
+        result: dict[str, Any] = {
             "match_mode": self.match_mode,
             "tokens": self.tokens,
             "elapsed_ms": round(self.elapsed_ms, 2),
@@ -3144,7 +3514,16 @@ class IntersectionResolutionResult:
                     "uuid": m.uuid,
                     "match_field": m.match_field,
                     "match_tier": m.match_tier,
+                    "company_id": m.company_id,
+                    "company_name": m.company_name,
                     "display": m.display,
+                    # Transport key for `token_word_coverage_for_rows`: the
+                    # text this row's probe actually scored. Coverage cannot
+                    # be computed here — the API layer filters / replaces /
+                    # caps these rows afterwards, and coverage must describe
+                    # the FINAL set. Stripped by `_attach_and_coverage`
+                    # before the response leaves the process.
+                    "_match_blob": m.match_blob,
                 }
                 for m in self.intersection
             ],
@@ -3159,11 +3538,19 @@ class IntersectionResolutionResult:
                     "match_field": a.match_field,
                     "match_tier": a.match_tier,
                     "similarity": a.similarity,
+                    "company_id": a.company_id,
+                    "company_name": a.company_name,
                     "display": a.display,
                 }
                 for a in self.alternatives
             ],
         }
+        if self.truncated_entity_types:
+            # Transport key, same lifecycle as `_match_blob`: tells the API
+            # layer which types' probes hit AND_MODE_LIMIT, so an unmatched
+            # word there is flagged rather than asserted.
+            result["_truncated_entity_types"] = sorted(self.truncated_entity_types)
+        return result
 
 
 def resolve_references_intersection(
@@ -3204,6 +3591,7 @@ def resolve_references_intersection(
     attachment_coverage = (domain_hint or "").strip().lower() in {"resource_attachment", "attachment"}
 
     hits: list[ResolvedEntity] = []
+    truncated_types: set[str] = set()
     for probe, produces in _AND_PROBES:
         if allowed is not None and produces.isdisjoint(allowed):
             continue
@@ -3221,6 +3609,12 @@ def resolve_references_intersection(
         except Exception:
             logger.exception("AND probe %s failed", probe.__name__)
             continue
+        if len(rows) >= AND_MODE_LIMIT or getattr(rows, "truncated", False):
+            # The probe's LIMIT bound: rows beyond the cap were cut, so any
+            # "word X is absent" claim over this type is incomplete. A probe
+            # can also self-report (`_ProbeRows.truncated`) when a merged
+            # source hit its cap but dedup shrank the list back under it.
+            truncated_types.update(r.entity_type for r in rows)
         hits.extend(rows)
 
     # No intersection → offer fuzzy "did you mean" neighbours (union across tokens,
@@ -3244,13 +3638,290 @@ def resolve_references_intersection(
         alternatives.sort(key=lambda e: (bool(e.display.get("is_variant")), e.similarity or 0.0), reverse=True)
         alternatives = alternatives[:_ALTERNATIVES_CAP]
 
+    blocked = _attach_company_info(db, list(hits) + list(alternatives))
+    _attach_brand_info(db, list(hits) + list(alternatives))
+    if blocked:
+        hits = [m for m in hits if (m.entity_type, str(m.uuid)) not in blocked]
+        alternatives = [a for a in alternatives if (a.entity_type, str(a.uuid)) not in blocked]
+
     elapsed = (time.perf_counter() - t0) * 1000.0
     return IntersectionResolutionResult(
         tokens=clean_tokens,
         intersection=hits,
         elapsed_ms=elapsed,
         alternatives=alternatives,
+        truncated_entity_types=sorted(truncated_types),
     )
+
+
+# --------------------------------------------------------------------------- #
+# Company attribution + isolation
+# --------------------------------------------------------------------------- #
+# Resolver entity types whose rows carry a company. `attachment_type` and `form`
+# are global and are deliberately absent; `attachment` is company-SHARED, so its
+# company_id is legitimately NULL for form/entity files. Types not listed here
+# come back with company_id=None and are never scope-gated, which a caller reads
+# as "not company-partitioned".
+def _company_scoped_models() -> dict[str, Any]:
+    """entity_type -> model, for the company-scoped types the resolver can emit.
+
+    Imported lazily (module import order) and rebuilt cheaply; the caller does at
+    most one query per entity type actually present in a result.
+    """
+    from app.models.certificate import Certificate
+    from app.models.inventory import Warehouse
+    from app.models.marketing import Promotion
+    from app.models.order import Customer, Order, Transporter
+    from app.models.procurement import (
+        InboundShipment,
+        PickingHeader,
+        SPOAllocation,
+        Supplier,
+    )
+    from app.models.product import Product
+    from app.models.resources import Attachment
+
+    return {
+        "product": Product,
+        "customer_order": Order,
+        "customer": Customer,
+        "transporter": Transporter,
+        "supplier": Supplier,
+        "inbound_shipment": InboundShipment,
+        "spo_allocation": SPOAllocation,
+        "grn": PickingHeader,
+        "warehouse": Warehouse,
+        "promotion": Promotion,
+        "certificate": Certificate,
+        "attachment": Attachment,
+    }
+
+
+def _company_scope_sql(db: Session, column: str = "company_id") -> tuple[str, dict[str, Any]]:
+    """AND-fragment restricting a RAW-SQL probe to the caller's company scope.
+
+    The isolation filter is a ``do_orm_execute`` event, so it only sees ORM
+    statements. Every ``db.execute(text(...))`` probe in this module is invisible
+    to it: without this clause a trigram probe returns another company's rows
+    while the exact ORM probe beside it correctly hides them - the same request
+    isolating on one tier and leaking on the next.
+
+    Mirrors ``build_company_predicate`` for an OWNED table. Filtering in SQL (not
+    on the result list) also keeps each probe's LIMIT honest: post-filtering lets
+    out-of-scope rows eat the 15 trigram slots and starve the in-scope candidates.
+    """
+    scope = get_company_scope(db)
+    if scope is None:  # no contact identity → all companies (backward-compat)
+        return "", {}
+    if not isinstance(scope, frozenset) or not scope:
+        # UNSET (request-entry resolver never ran) or a contact with no company
+        # membership. Both are fail-closed.
+        return " AND FALSE", {}
+    return (
+        f" AND {column}::text = ANY(:__company_ids)",
+        {"__company_ids": [str(c) for c in scope]},
+    )
+
+
+def _scope_allows(scope: Any, company_id: Optional[str], *, shared: bool) -> bool:
+    """Python mirror of ``build_company_predicate`` for one already-read row."""
+    if scope is None:
+        return True
+    if scope is UNSET or not scope:
+        return shared and company_id is None
+    if company_id is None:
+        return shared
+    return str(company_id) in scope
+
+
+def _attach_company_info(db: Session, matches: list[ResolvedEntity]) -> set[tuple[str, str]]:
+    """Stamp ``company_id`` / ``company_name`` on every company-scoped match, and
+    report the ones this caller's company scope must not see.
+
+    Attribution and isolation are one pass because they need the same fact from
+    opposite sides of the isolation filter:
+
+    * Attribution reads the owner with RAW SQL so it BYPASSES the filter. An ORM
+      read returns no row for another company's match and leaves ``company_id``
+      None - indistinguishable from a legitimately shared row, so the caller
+      reads a cross-company leak as "global product".
+    * Isolation then applies the same predicate in Python, so a row that only
+      reached us through a raw-SQL probe (trigram, embedding, variant graph) is
+      dropped exactly as the ORM tiers already drop it. ``_company_scope_sql``
+      already filters the probes that can carry the clause; this is the backstop
+      that holds for the probes that cannot (embedding hits come from
+      ``embedding_chunks``, which has no company column) and for any raw probe
+      added later.
+
+    Done as a post-pass rather than inside each of the ~20 per-entity resolvers:
+    those select explicit column tuples, so threading a company column through
+    each one would be twenty chances to miss one and silently emit an
+    unattributed - and unfiltered - match.
+
+    Attribution stays best-effort (a failed lookup must never take down a
+    resolution that otherwise succeeded), but isolation is fail-closed: when the
+    owner lookup fails under a real scope, every row in that group is blocked.
+
+    Returns the blocked ``(entity_type, uuid)`` pairs; callers drop them from
+    ``matches`` / ``alternatives`` / ``intersection``.
+    """
+    blocked: set[tuple[str, str]] = set()
+    if not matches:
+        return blocked
+
+    by_type: dict[str, list[ResolvedEntity]] = {}
+    for m in matches:
+        if m.uuid:
+            by_type.setdefault(m.entity_type, []).append(m)
+    if not by_type:
+        return blocked
+
+    scope = get_company_scope(db)
+    models = _company_scoped_models()
+    company_ids: set[str] = set()
+    pending: list[tuple[ResolvedEntity, str]] = []
+
+    for entity_type, group in by_type.items():
+        model = models.get(entity_type)
+        if model is None:
+            continue  # global / unpartitioned type — leave company_id None, never gate
+        shared = bool(getattr(model, "__company_shared__", False))
+        try:
+            rows = db.execute(
+                text(
+                    f"SELECT id::text AS id, company_id::text AS company_id "  # noqa: S608 - table name from the model registry
+                    f"FROM {model.__tablename__} WHERE id::text = ANY(:ids)"
+                ),
+                {"ids": [str(m.uuid) for m in group]},
+            ).all()
+        except Exception:  # noqa: BLE001 — attribution is additive, never fatal
+            logger.exception("company attribution lookup failed for %s", entity_type)
+            if not _scope_allows(scope, None, shared=shared):
+                # Cannot prove these rows are in scope → do not emit them.
+                blocked.update((m.entity_type, str(m.uuid)) for m in group)
+            continue
+        owner = {r.id: r.company_id for r in rows}
+        for m in group:
+            cid = owner.get(str(m.uuid))
+            if cid:
+                m.company_id = cid
+                company_ids.add(cid)
+                pending.append((m, cid))
+            if not _scope_allows(scope, cid, shared=shared):
+                blocked.add((m.entity_type, str(m.uuid)))
+
+    if not company_ids:
+        return blocked
+    try:
+        from app.models.company import Company
+
+        names = {
+            str(cid): name
+            for cid, name in db.query(Company.id, Company.name)
+            .filter(Company.id.in_(company_ids))
+            .all()
+        }
+    except Exception:  # noqa: BLE001 — an id with no name is still actionable
+        logger.exception("company name lookup failed")
+        return blocked
+    for match, cid in pending:
+        match.company_name = names.get(cid)
+    return blocked
+
+
+def fetch_product_brands(db: Session, product_ids: Iterable[str]) -> dict[str, Optional[dict[str, Any]]]:
+    """product uuid -> its brand payload (or None when the product has no brand).
+
+    Read with RAW SQL for the same reason `_attach_company_info` does: the
+    company isolation filter is an ORM event, and these ids have ALREADY passed
+    (or are about to pass) that filter as part of the match they describe.
+    Re-reading them through the ORM would silently drop the brand of a row a
+    raw-SQL probe legitimately surfaced.
+
+    Only ids present in the returned map were actually read; a caller that finds
+    an id missing should leave the match alone rather than assert "no brand".
+    """
+    ids = [str(p) for p in product_ids if p]
+    if not ids:
+        return {}
+    rows = db.execute(
+        text(
+            "SELECT p.id::text AS id, b.id::text AS brand_id, b.brand_code, b.brand_name "
+            "FROM products p LEFT JOIN brands b ON b.id = p.brand_id "
+            "WHERE p.id::text = ANY(:ids)"
+        ),
+        {"ids": ids},
+    ).all()
+    out: dict[str, Optional[dict[str, Any]]] = {}
+    for r in rows:
+        out[r.id] = (
+            {
+                "brand_id": r.brand_id,
+                "brand_code": r.brand_code,
+                "brand_name": r.brand_name,
+            }
+            if r.brand_id
+            else None
+        )
+    return out
+
+
+def _attach_brand_info(db: Session, matches: list[ResolvedEntity]) -> None:
+    """Stamp `display.brand` on every product match, whatever path found it.
+
+    Brand and company are different axes: Cabana is a BRAND under the Sorento
+    COMPANY, so `company_name` cannot tell a Cabana product from any other
+    Sorento one. Downstream routing that keys on brand had nothing to read on
+    the code-lookup path, which is the common one.
+
+    Post-pass rather than per-probe for the same reason company attribution is:
+    the probes each select an explicit column tuple, so threading a brand join
+    through every one of them is a fresh chance to miss one and emit a product
+    that silently claims no brand.
+
+    `brand` is set to None (rather than omitted) when the product genuinely has
+    none, so a consumer can tell "this product has no brand" from "this match
+    path forgot to send one". Best-effort: a failed lookup leaves the matches
+    untouched and never fails a resolution that otherwise succeeded.
+    """
+    products = [m for m in matches if m.entity_type == "product" and m.uuid]
+    if not products:
+        return
+    try:
+        brands = fetch_product_brands(db, [str(m.uuid) for m in products])
+    except Exception:  # noqa: BLE001 — brand is additive, never fatal
+        logger.exception("brand attribution lookup failed")
+        return
+    for m in products:
+        key = str(m.uuid)
+        if key not in brands:
+            continue
+        m.display["brand"] = brands[key]
+
+
+def _apply_company_scope(db: Session, resolutions: list[TokenResolution]) -> None:
+    """Attribute + company-scope every match and alternative, in place.
+
+    A suggestion the contact's company does not own is a leak wearing a helpful
+    hat, so `alternatives` are gated on the same boundary as `matches`. Dropping
+    a candidate can also un-ambiguate a token (two candidates, one in scope), so
+    the stored `ambiguous` flag is recomputed; `resolved` / `unresolved_tokens`
+    are properties and follow automatically.
+    """
+    everything = [m for tr in resolutions for m in tr.matches] + [
+        a for tr in resolutions for a in tr.alternatives
+    ]
+    blocked = _attach_company_info(db, everything)
+    _attach_brand_info(db, everything)
+    if not blocked:
+        return
+    for tr in resolutions:
+        tr.matches = [m for m in tr.matches if (m.entity_type, str(m.uuid)) not in blocked]
+        tr.alternatives = [
+            a for a in tr.alternatives if (a.entity_type, str(a.uuid)) not in blocked
+        ]
+        if len(tr.matches) <= 1:
+            tr.ambiguous = False
 
 
 # --------------------------------------------------------------------------- #
@@ -3440,6 +4111,7 @@ _TIER1_PROBES: tuple[tuple[Callable[[Session, list[str]], dict[str, list[Resolve
     (_probe_project, frozenset({"project"})),
     (_probe_project_party, frozenset({"project_party"})),
     (_probe_user, frozenset({"user"})),
+    (_probe_certificate, frozenset({"certificate"})),
 )
 
 
@@ -3516,6 +4188,15 @@ def resolve_references(
                 continue
             for tok, matches in hits.items():
                 per_token[tok].extend(matches)
+
+        # One certificate number can be approved under TWO schemes (`04124FC`
+        # exists under both PPS and SPAN, with different expiries). Multiple
+        # tier-1 certificate hits are therefore a real disambiguation, not a
+        # data error: flag the token so the agent asks which scheme instead of
+        # answering from whichever row the database returned first.
+        for tok in tokens:
+            if len([m for m in per_token[tok] if m.entity_type == "certificate"]) > 1:
+                ambiguous_tokens.add(tok)
 
     # ----- Tier 2: prefix / substring fallback (only for tokens still empty) -----
     if enable_prefix_fallback:
@@ -3712,6 +4393,8 @@ def resolve_references(
             logger.exception("resolve alternatives trgm lookup failed for token=%s", tr.token)
             hits = []
         tr.alternatives = [h for h in hits if (h.similarity or 0.0) >= SUGGEST_FLOOR][:_ALTERNATIVES_CAP]
+
+    _apply_company_scope(db, resolutions)
 
     final_tokens = list(tokens) + [r.token for r in freeword_resolutions]
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
@@ -4025,6 +4708,11 @@ def resolve_entities_to_filters(
             )
         else:
             aggregated.append(TokenResolution(token=phrase, matches=[top]))
+    # Same isolation boundary as the resolve endpoint: the trigram and embedding
+    # tiers above are raw SQL, so without this a list tool would filter stock /
+    # orders by another company's canonical codes.
+    _apply_company_scope(db, aggregated)
+
     result = ResolutionResult(
         tokens=[tr.token for tr in aggregated],
         resolutions=aggregated,

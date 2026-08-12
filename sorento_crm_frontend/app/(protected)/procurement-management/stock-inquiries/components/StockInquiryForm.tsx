@@ -45,6 +45,7 @@ import {
 import type { StockInquiryFormData } from '../types/stockInquiry.types';
 import StockInquiryAttachmentsSection from './StockInquiryAttachmentsSection';
 import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
+import { RequestorContactSelect } from '@/app/(protected)/master-data-management/shared/components/RequestorContactSelect';
 
 interface StockInquiryFormProps {
   inquiryId?: string;
@@ -72,6 +73,7 @@ export default function StockInquiryForm({
     resolver: zodResolver(StockInquirySchema),
     defaultValues: {
       salesperson: null,
+      salesperson_contact_id: null,
       product_code: null,
       item_description: null,
       project_customer: null,
@@ -94,6 +96,7 @@ export default function StockInquiryForm({
     if (inquiry && isEditMode && !formInitialized) {
       form.reset({
         salesperson: inquiry.salesperson || null,
+        salesperson_contact_id: inquiry.salesperson_contact_id || null,
         product_code: inquiry.product_code || null,
         item_description: inquiry.item_description || null,
         project_customer: inquiry.project_customer || null,
@@ -114,24 +117,19 @@ export default function StockInquiryForm({
     setFormInitialized(false);
   }, [inquiryId]);
 
+  /**
+   * The dialog edits the purchasing wording only. The preamble and the contact's
+   * portal link are composed server-side and appended when the message is sent, so
+   * there is no link to fetch here — see
+   * `StockInquiryService.compose_stock_inquiry_reply_message`.
+   */
   const handleUpdateAndReplyClick = async () => {
     const valid = await form.trigger();
     if (!valid || !inquiryId) return;
     setPreviewPreparing(true);
     try {
-      const purchasingResponse = (form.getValues().purchasing_response ?? '').trim();
-      let viewUrl = '';
-      if (publicViewLinksEnabled) {
-        const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-        const { view_url } = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
-        viewUrl = view_url ?? '';
-      }
-      const linkPart = viewUrl ? ` ${viewUrl}` : '';
-      const fullMessage = `There is a response to your stock inquiry${linkPart}: ${purchasingResponse}`;
-      setReplyMessage(fullMessage);
+      setReplyMessage((form.getValues().purchasing_response ?? '').trim());
       setUpdateAndReplyDialogOpen(true);
-    } catch {
-      toast.error('Failed to prepare message preview. Could not get stock inquiry view link.');
     } finally {
       setPreviewPreparing(false);
     }
@@ -142,6 +140,7 @@ export default function StockInquiryForm({
     const data = form.getValues();
     const formData: StockInquiryFormData = {
       salesperson: data.salesperson || undefined,
+      salesperson_contact_id: data.salesperson_contact_id || null,
       product_code: data.product_code || undefined,
       item_description: data.item_description || undefined,
       project_customer: data.project_customer || undefined,
@@ -168,6 +167,7 @@ export default function StockInquiryForm({
     try {
       const formData: StockInquiryFormData = {
         salesperson: data.salesperson || undefined,
+        salesperson_contact_id: data.salesperson_contact_id || null,
         product_code: data.product_code || undefined,
         item_description: data.item_description || undefined,
         project_customer: data.project_customer || undefined,
@@ -241,15 +241,17 @@ export default function StockInquiryForm({
           <InquiryFormTableRow label="Sales person">
             <FormField
               control={form.control}
-              name="salesperson"
+              name="salesperson_contact_id"
               render={({ field }) => (
                 <FormItem className="space-y-1">
                   <FormControl>
-                    <Input
-                      className="h-9"
-                      placeholder="Name"
-                      {...field}
-                      value={field.value || ''}
+                    <RequestorContactSelect
+                      value={field.value}
+                      onChange={field.onChange}
+                      submitterContactId={inquiry?.contact_id}
+                      savedContactId={inquiry?.salesperson_contact_id}
+                      savedContactName={inquiry?.salesperson_contact_name ?? inquiry?.salesperson}
+                      placeholder="Select sales person"
                     />
                   </FormControl>
                   <FormMessage />

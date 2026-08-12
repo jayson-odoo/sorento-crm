@@ -13,7 +13,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Eye, FileText, Filter, Plus, Search, Trash2, Users, X } from 'lucide-react';
+import { ChevronRight, Eye, FileText, Filter, Plus, RefreshCw, Search, Trash2, Users, X } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -43,6 +43,8 @@ import { formatPromotionBoundaryInMalaysia, formatDateTimeInMalaysia } from '@/l
 import { postListQuerySearch, type ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import PromotionBulkDeleteDialog from './PromotionBulkDeleteDialog';
 import PromotionBulkAccessLevelsDialog from './PromotionBulkAccessLevelsDialog';
+import PromotionBulkResubmitDialog from './PromotionBulkResubmitDialog';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 
 export default function PromotionsList() {
@@ -69,6 +71,10 @@ export default function PromotionsList() {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkAccessLevelsDialogOpen, setBulkAccessLevelsDialogOpen] = useState(false);
+  const [bulkResubmitDialogOpen, setBulkResubmitDialogOpen] = useState(false);
+  // Re-extraction rewrites a promotion's groups and products, so it is gated on the
+  // same permission as editing one by hand.
+  const canResubmit = useHasPermission('marketing.promotions.edit');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterAccessLevel, setFilterAccessLevel] = useState<string>('all');
   const [filterAttachmentState, setFilterAttachmentState] = useState<'all' | 'unlinked' | 'linked_to_trashed' | 'unlinked_or_trashed'>('all');
@@ -315,6 +321,13 @@ export default function PromotionsList() {
     manualFiltering: true,
   });
 
+  // The rows themselves, not just their ids: the resubmit dialog resolves each
+  // promotion's flyer attachment from the row it already has.
+  const selectedPromotions = table
+    .getRowModel()
+    .rows.filter((r) => r.getIsSelected())
+    .map((r) => r.original);
+
   const handleCompilePdf = () => {
     // Selected rows in the order they appear in the grid — the merged PDF
     // preserves this ordering.
@@ -501,6 +514,16 @@ export default function PromotionsList() {
                 icon: Users,
                 onClick: () => setBulkAccessLevelsDialogOpen(true),
               },
+              ...(canResubmit
+                ? [
+                    {
+                      key: 'resubmit',
+                      label: 'Resubmit',
+                      icon: RefreshCw,
+                      onClick: () => setBulkResubmitDialogOpen(true),
+                    },
+                  ]
+                : []),
               {
                 key: 'delete',
                 label: 'Delete',
@@ -528,6 +551,15 @@ export default function PromotionsList() {
           if (!open) setRowSelection({});
         }}
         promotionIds={selectedRowIds(table)}
+        onSuccess={() => setRowSelection({})}
+      />
+      <PromotionBulkResubmitDialog
+        open={bulkResubmitDialogOpen}
+        onOpenChange={(open) => {
+          setBulkResubmitDialogOpen(open);
+          if (!open) setRowSelection({});
+        }}
+        promotions={selectedPromotions}
         onSuccess={() => setRowSelection({})}
       />
       <PromotionBulkDeleteDialog

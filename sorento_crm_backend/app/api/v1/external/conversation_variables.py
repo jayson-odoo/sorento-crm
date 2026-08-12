@@ -21,6 +21,7 @@ from app.schemas.integration import IntegrationLogCreate
 from app.services.conversation_variables_service import (
     get_for_contact,
     get_referenced_result_set,
+    get_referenced_state,
     overwrite_for_contact,
 )
 from app.services.integration_service import IntegrationLogService
@@ -39,19 +40,23 @@ def get_conversation_state(
     respond_io_id: str,
     message_id: str | None = Query(
         None,
-        description="Respond.io message id; when set, the `result` stored on that "
-        "chat-history message is injected into the response as "
-        "`session_vars.referenced_result_set` (response-only, DB untouched).",
+        description="Respond.io message id; when set, two response-only keys are "
+        "injected (DB untouched): `session_vars.referenced_result_set` (the `result` "
+        "stored on that chat-history message) and `session_vars.referenced_state` "
+        "(a 4-key projection of that turn's post-turn conversation state).",
     ),
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
 ):
     """Return the raw `session_vars` JSON for the given respond.io contact id.
 
-    With `?message_id=...`, also resolves that message's stored result set and
-    returns it under `session_vars.referenced_result_set` — always present
-    (null when the message is unknown or carried no result) so n8n can branch
-    deterministically. The persisted `session_vars` is never modified by GET.
+    With `?message_id=...`, also resolves the quoted message's stored result set and
+    the quoted turn's post-turn state, returned under
+    `session_vars.referenced_result_set` and `session_vars.referenced_state` — both
+    always present (null on any miss) so n8n can branch deterministically. The two
+    read different rows: the result set comes off the quoted row itself, the state off
+    the INCOMING row of the same turn. The persisted `session_vars` is never modified
+    by GET.
     """
     _ = current_user
     state = get_for_contact(db, respond_io_id=respond_io_id)
@@ -59,6 +64,9 @@ def get_conversation_state(
         state = {
             **state,
             "referenced_result_set": get_referenced_result_set(
+                db, respond_io_id=respond_io_id, message_id=message_id
+            ),
+            "referenced_state": get_referenced_state(
                 db, respond_io_id=respond_io_id, message_id=message_id
             ),
         }

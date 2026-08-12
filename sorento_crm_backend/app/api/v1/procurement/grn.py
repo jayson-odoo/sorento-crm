@@ -166,8 +166,14 @@ async def import_grn_listing(
     file_data, cleaned_name = maybe_strip(file_data, file.filename or "unknown.xlsx")
 
     if validate_only:
+        from app.models.base import get_company_scope
         from app.tasks.import_tasks import validate_grn_listing_import
-        result = validate_grn_listing_import(file_data)
+
+        # Preview at the SAME company scope the import will run at, so it cannot
+        # report "would succeed" against rows the scoped import never sees.
+        result = validate_grn_listing_import(
+            file_data, company_scope=get_company_scope(db)
+        )
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
@@ -219,8 +225,12 @@ async def import_grn_lines(
     file_data, cleaned_name = maybe_strip(file_data, file.filename or "unknown.xlsx")
 
     if validate_only:
+        from app.models.base import get_company_scope
         from app.tasks.import_tasks import validate_grn_lines_import
-        result = validate_grn_lines_import(file_data)
+
+        result = validate_grn_lines_import(
+            file_data, company_scope=get_company_scope(db)
+        )
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={

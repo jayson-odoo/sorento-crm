@@ -15,8 +15,13 @@ export interface ComplaintAttachment {
   file_size_bytes?: number | null;
   uploaded_at: Date;
   created_at?: Date;
-  /** From complaint_attachments table */
-  link_type?: 'complaint_attachment' | null;
+  /** From complaint_attachments table. 'response_attachment' rows come from the
+   *  technical team response popup and unlink through a dedicated endpoint. */
+  link_type?: 'complaint_attachment' | 'response_attachment' | null;
+  /** Uploader attribution (S1) - names only, never a UUID. */
+  uploader_kind?: 'user' | 'contact' | 'system' | null;
+  uploaded_by_name?: string | null;
+  uploaded_by_role?: 'contact' | 'staff' | null;
 }
 
 export interface Complaint {

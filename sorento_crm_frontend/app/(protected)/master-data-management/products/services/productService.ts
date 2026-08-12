@@ -466,8 +466,10 @@ export async function validateProductsImport(
 
 /**
  * Bulk import products from Excel data (queued).
- * Expected columns: Item Code, Description, Desc 2, Item Group, Item Brand, Price, Is Active (T/F).
- * Item Group must match a category code or name; Item Brand must match a brand code or name.
+ * Expected columns: Item Code, Description, Desc 2, Item Group, Item Brand, Price, Is Active (T/F), UOM (optional).
+ * Item Group / Item Brand / UOM match a category / brand / unit-of-measure code or name;
+ * anything unmatched is created by the import (code = name = the value in the file),
+ * so master data does not have to exist before the upload.
  * Returns job_id for tracking progress in Import Jobs.
  */
 export async function bulkImportProducts(
