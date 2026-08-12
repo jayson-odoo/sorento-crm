@@ -284,6 +284,12 @@ _COMPANY_ID_ALLOWLIST = {
     # including the ~160 tests and background readers that hold a policy id with no
     # company context at all, and turns each one into an empty result.
     "sla_policies",
+    # Numbering rules key their counter by (company_id, doc_type) with NULL meaning the
+    # legacy/global rule (migration 327). Deliberately NOT the mixin: the resolver names
+    # the company explicitly on every claim, and the auto-filter would hide the NULL
+    # fallback row from every scoped session - a fresh company would then mint no numbers
+    # at all instead of inheriting the default rule.
+    "document_numbering_rules",
 }
 
 
@@ -307,45 +313,19 @@ def test_every_company_id_table_is_registered():
     # whenever an owned table appears, because an unpartitioned one leaks across
     # companies silently. Update it deliberately, never to "make the test pass".
     #
-    #   34  foundation slice (PLAN §4.1)
-    #   +6  Project Sales S2: project_types, project_templates, project_template_roles,
-    #       project_parties, projects, project_stakeholders. Each carries
-    #       CompanyScopedMixin; project_sales_profile, project_brands,
-    #       project_collaborators and project_takeover_requests deliberately do NOT --
-    #       they are keyed by project_id and inherit their partition from the project.
-    #   +2  Project Sales S2b: project_template_tasks, project_tasks. Both owned: a
-    #       task is company data in its own right, and "My Tasks" queries them
-    #       directly rather than always through their project, so they cannot rely on
-    #       the project's partition to scope them.
-    #   +1  Project Sales S2c: project_leads. Owned for the same reason as projects --
-    #       the lead list, the conversion metric and the duplicate hint all query it
-    #       directly, and a lead recorded by SRT is not Mocha's to see.
-    #   +5  Project Sales S3: project_series, price_floor_rules, project_quotations,
-    #       project_quotation_versions, project_quotation_lines. Floors and series are
-    #       per-company POLICY (Mocha's discount ceiling is not Sorento's), and the
-    #       quotation tables are queried directly by the alert counts and the forecast.
-    #       project_series_categories is the exception: keyed by (series, category), it
-    #       inherits its partition from the series.
-    #   +3  Project Sales S4: project_samples, project_purchase_orders,
-    #       project_purchase_order_lines. A customer PO is revenue, so it is the last
-    #       table that should be readable across a company boundary, and both children
-    #       are queried directly by the flag counts and the erosion figure.
-    # Foundation slice shipped 34 owned tables (PLAN §4.1); the certificate
-    # register added `certificates` as the 35th. Its two child tables
-    # (`certificate_revisions`, `certificate_products`) are deliberately NOT
-    # scoped: they are only ever reached through their certificate, which is
-    # scoped, so a second filter would be redundant surface (SEC-2a).
-    # Container status tracking added `shipment_tracking_observations` as the
-    # 36th. Unlike the certificate children this one IS scoped: a carrier
-    # observation names a container, and one tenant's containers must not be
-    # readable through a tenant-agnostic evidence table.
-    # Company-aware assignment routing added `teams` and `agent_teams` as the 37th and
-    # 38th. A team belongs to exactly one company, so the Teams page and every team
-    # picker follow the company switcher; `agent_teams` is scoped as the backstop for
-    # the ad-hoc AgentTeam queries in sla_service that the resolvers' required
-    # company_id argument cannot reach. `access_agents` is deliberately NOT here: one
-    # agent is a single router serving both brands through two ladders.
-    expected_owned = 55
+    # 38 was main's count when feat/project-lead-to-so merged (foundation 34 +
+    # certificates + shipment_tracking_observations + teams + agent_teams). The branch
+    # brought 41 more, audited table by table at the merge: the project-sales domain
+    # (projects, leads, parties, tasks, templates, types, stakeholders), the quotation
+    # stack (series, price floors, quotations, versions, lines, documents, issues,
+    # issue scopes, signatures, quotation templates), the PO/SO intake stack (project
+    # POs, PO versions/lines/annotations, project SOs and lines, divergences and
+    # divergence lines, amendments, draft findings, delivery phases, samples), and the
+    # promotions group. Children that inherit their partition through their parent
+    # (project_series_categories, project_brands, project_collaborators,
+    # project_takeover_requests, certificate_revisions, certificate_products) are
+    # deliberately NOT mixins.
+    expected_owned = 79
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
