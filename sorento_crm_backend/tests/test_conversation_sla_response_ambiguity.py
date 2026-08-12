@@ -201,3 +201,58 @@ def test_integration_route_does_not_bypass_the_ambiguity_guard(client, db):
     assert _response_event_logs(db, t1.id) == [], (
         "a skipped (ambiguous) stamp must not leave a 'response' event log behind"
     )
+
+
+# --------------------------------------------------------------------------- #
+# FINDING 5: PUT /{tracking_id} used to skip the ENTIRE update_tracking call  #
+# when ambiguous, dropping is_resolved/assigned_to/current_tier/... from a    #
+# payload that also carried them, yet still answering 200.                   #
+# --------------------------------------------------------------------------- #
+
+
+def test_ambiguous_put_still_applies_the_rest_of_the_payload(client, db):
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed, source_message_id="wamid.msg-1")
+    _create_ticket(db, seed, source_message_id="wamid.msg-2")
+
+    resp = client.put(
+        f"{BASE}/{t1.id}",
+        json={
+            "is_responded": True,
+            "responded_at": "2026-08-12T03:00:00Z",
+            "escalation_reason": "manual note from a non-ambiguous field",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ambiguous_responded_skipped"] is True
+    assert body["updated_in_request"] is True, (
+        "the payload also carried a non-responded field that DID apply - "
+        "must not report 'nothing happened'"
+    )
+
+    db.expire_all()
+    fresh_t1 = db.query(ConversationSLATracking).filter(ConversationSLATracking.id == t1.id).one()
+    assert fresh_t1.is_responded is False, "the ambiguous responded-family fields are dropped"
+    assert fresh_t1.responded_at is None
+    assert fresh_t1.escalation_reason == "manual note from a non-ambiguous field", (
+        "FINDING 5: only the responded-family fields are stripped when ambiguous - "
+        "everything else in the payload must still apply"
+    )
+
+
+def test_ambiguous_put_with_only_responded_fields_reports_nothing_applied(client, db):
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed, source_message_id="wamid.msg-1")
+    _create_ticket(db, seed, source_message_id="wamid.msg-2")
+
+    resp = client.put(
+        f"{BASE}/{t1.id}",
+        json={"is_responded": True, "responded_at": "2026-08-12T03:00:00Z"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ambiguous_responded_skipped"] is True
+    assert body["updated_in_request"] is False, (
+        "the entire payload was the ambiguous responded-family fields - nothing applied"
+    )

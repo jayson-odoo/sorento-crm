@@ -1432,22 +1432,17 @@ async def update_sla_tracking(
 
         # AC-E3: the n8n Respond-app-reply fallback resolves a contact-level
         # "preferred" tracking id (see external/conversation_sla_tracking.py) and
-        # PUTs is_responded=true here. When the assignee it resolved to holds 2+
-        # OPEN tickets for this contact, this call can't tell which enquiry they
-        # actually answered — do nothing instead of guessing wrong (the CRM
-        # ticket-send path, POST .../ticket/send, is authoritative for that case).
-        ambiguous = False
-        if bool(getattr(tracking_data, "is_responded", None)):
-            pre_tracking = service.get_tracking(tracking_id_str, load_event_logs=False)
-            if pre_tracking is not None and service.is_ambiguous_fallback_response(pre_tracking):
-                ambiguous = True
-
-        if ambiguous:
-            tracking = pre_tracking
-            already_resolved = False
-        else:
-            tracking = service.update_tracking(tracking_id_str, tracking_data)
-            already_resolved = bool(getattr(tracking, "_already_resolved", False))
+        # PUTs is_responded=true here. The guard now lives in update_tracking
+        # (the shared path this route and PUT/POST /integration/{tracking_id}
+        # both call — FINDING 1) so it is enforced for every caller, not
+        # duplicated here. When ambiguous, ONLY the responded-family fields
+        # (is_responded/responded_at/responded_by/response_time) are dropped
+        # from the payload — the rest (assignment, tier, resolve, ...) still
+        # applies normally (FINDING 5): a caller sending is_responded alongside
+        # other fields must not have the whole update silently discarded.
+        tracking = service.update_tracking(tracking_id_str, tracking_data)
+        already_resolved = bool(getattr(tracking, "_already_resolved", False))
+        ambiguous = bool(getattr(tracking, "_ambiguous_responded_skipped", False))
         tracking_id_result_str = str(getattr(tracking, "id"))
         external_reference = (
             str(getattr(getattr(tracking, "contact", None), "phone_number"))
@@ -1478,8 +1473,20 @@ async def update_sla_tracking(
         # Attach indicators so they flow through `from_attributes` serialization
         # of ConversationSLATrackingResponse. Header forwarding is unreliable
         # through the Next.js proxy, so the body is the source of truth.
+        # FINDING 5: an ambiguous response stamp no longer blanks the whole
+        # update — `updated_in_request` must say True when the payload also
+        # carried non-responded fields that DID apply, and only False when
+        # the ambiguous responded-family fields were the entire payload.
+        _responded_family_fields = {"is_responded", "responded_at", "responded_by", "response_time"}
+        _non_responded_fields_requested = bool(
+            set(tracking_data.model_fields_set) - _responded_family_fields
+        )
         setattr(fresh, "already_resolved", already_resolved)
-        setattr(fresh, "updated_in_request", not already_resolved and not ambiguous)
+        setattr(
+            fresh,
+            "updated_in_request",
+            not already_resolved and (not ambiguous or _non_responded_fields_requested),
+        )
         setattr(fresh, "ambiguous_responded_skipped", ambiguous)
         return fresh
     except HTTPException:

@@ -4086,6 +4086,7 @@ class ConversationSLATrackingService:
         # tracking's own assignee (the n8n fallback resolves `tracking` via a
         # separate contact-level "preferred" lookup) — see
         # is_ambiguous_fallback_response for why that distinction matters.
+        ambiguous_responded_skipped = False
         if bool(update_data.get("is_responded")) and not bool(
             getattr(tracking, "is_responded", False)
         ):
@@ -4109,8 +4110,15 @@ class ConversationSLATrackingService:
             if self.is_ambiguous_fallback_response(
                 tracking, responded_by=_resolved_responded_by
             ):
-                setattr(tracking, "_ambiguous_responded_skipped", True)
-                return tracking
+                # Strip ONLY the responded-family fields — the rest of the
+                # payload (assignment, tier, resolve, ...) still applies
+                # below, in this SAME call, instead of the whole update being
+                # silently discarded (the caller-visible marker is set on
+                # `tracking` just before the final return, once every other
+                # field this call touched has actually been applied).
+                ambiguous_responded_skipped = True
+                for _field in ("is_responded", "responded_at", "responded_by", "response_time"):
+                    update_data.pop(_field, None)
 
         # Resolve agent_code → agent_id FK if caller passed a code string
         raw_agent_code = update_data.pop("agent_code", None)
@@ -4344,6 +4352,13 @@ class ConversationSLATrackingService:
         ):
             if not self._has_other_open_conversation_siblings(tracking):
                 self._close_respond_conversation_best_effort(tracking)
+
+        # FINDING 5: caller-visible marker, set only once every other field
+        # this call touched (assignment, tier, resolve, ...) has been applied
+        # and committed above — routes read it to report
+        # `ambiguous_responded_skipped` without re-deriving it.
+        if ambiguous_responded_skipped:
+            setattr(tracking, "_ambiguous_responded_skipped", True)
 
         return tracking
 
