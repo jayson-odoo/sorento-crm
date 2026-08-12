@@ -666,6 +666,13 @@ function describeLine(line: POVersionLine): string {
   return parts.join(', ');
 }
 
+/**
+ * Cell-commit editing, deliberately NOT the staged `InlineLineTable` paradigm the
+ * quotation editor uses: these rows are the extractor's reading of the customer's paper,
+ * corrected one misread cell at a time against the scan beside the grid, and each
+ * correction is a fact worth keeping the moment it is typed. The full argument is
+ * ADR-0008; a third editing paradigm needs that ADR revisited first.
+ */
 function CellInput({
   line,
   field,

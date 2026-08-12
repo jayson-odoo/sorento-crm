@@ -80,7 +80,7 @@ ranking) are the genuine unbuilt remainder.
    (`DEFAULT_TENANT_ID`) - a known platform gap, not a module one; page-per-LLM-call
    extraction is worker-side and fits the queue model.
 
-## 3. The PO-reading fix list (ordered)
+## 3. The PO-reading fix list (ordered) - ALL FIVE SHIPPED 2026-08-12
 
 1. Strip `POIntakeMocks` from the production bundle (URL-triggered mock data on a
    financial screen).
@@ -93,6 +93,12 @@ ranking) are the genuine unbuilt remainder.
    or explicitly document why PO lines are different (cell-commit-per-blur against an
    extraction that a person is reconciling IS a defensible reason - but it is currently
    undocumented).
+
+Done: 1 (mocks deleted, isMock off the contract), 2 (the model classifies its own
+handwriting; keywords are the fallback, pinned both ways), 3 (Header/Lines/Handwriting,
+v1/v2 chips, one money renderer in _shared/lib/money with SalesOrderMoney the documented
+arbitrary-precision exception), 4 (three mixins + a facade, name unchanged, 53 intake
+tests green including the golden real-scan run), 5 (ADR-0008, authoring vs reconciling).
 
 ## 4. Delivery lesson worth keeping
 
