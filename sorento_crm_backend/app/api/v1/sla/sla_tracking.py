@@ -1237,15 +1237,22 @@ async def get_intervention_ticket(
     """Drawer header + composer state for one intervention ticket (UAC AC-C1).
 
     Assignee-or-manager scoped, same as resolve/send. Bundles the 24h window
-    state and the out-of-window chat-template preview inline (the same
-    DB-only helpers the standalone `.../conversation/window-state` and
-    `.../conversation/chat-template` routes use) so the drawer opens in one
-    round trip.
+    state and the out-of-window chat-template preview inline — NOT DB-only:
+    the window state is resolved via ``get_window_state_for`` ->
+    ``RespondClient.list_messages``, a real Respond.io HTTP call (15s
+    timeout) — so this ``async def`` route runs it via ``run_in_threadpool``
+    (mirrors the sibling ``POST .../ticket/send`` route) instead of blocking
+    the event loop for the duration of that call.
     """
+    from starlette.concurrency import run_in_threadpool
+
     service = ConversationSLATrackingService(db)
     sender_name = (current_user.get("name") or "").strip() or "Customer Service"
-    return service.get_ticket_detail(
-        tracking_id, viewer_user_id=current_user["id"], sender_name=sender_name
+    return await run_in_threadpool(
+        service.get_ticket_detail,
+        tracking_id,
+        viewer_user_id=current_user["id"],
+        sender_name=sender_name,
     )
 
 

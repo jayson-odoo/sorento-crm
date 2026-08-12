@@ -216,3 +216,27 @@ def test_unknown_tracking_id_is_also_404(client, db):
     resp = client.get(f"{BASE}/{uuid.uuid4()}/ticket")
 
     assert resp.status_code == 404, resp.text
+
+
+def test_ticket_detail_route_offloads_to_a_threadpool(client, db, monkeypatch):
+    """FINDING 7 (code review): this route is `async def` but called the sync
+    Respond HTTP path (get_window_state_for -> RespondClient.list_messages,
+    15s timeout) INLINE, blocking the event loop for the duration of that
+    call. It must run_in_threadpool, mirroring the sibling
+    POST .../ticket/send route."""
+    seed = _seed(db)
+    tracking = _create_ticket(db, seed)
+    _act_as(seed["assignee_id"])
+
+    calls = []
+
+    async def _fake_run_in_threadpool(func, *args, **kwargs):
+        calls.append(func)
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr("starlette.concurrency.run_in_threadpool", _fake_run_in_threadpool)
+
+    resp = client.get(f"{BASE}/{tracking.id}/ticket")
+
+    assert resp.status_code == 200, resp.text
+    assert calls, "GET .../ticket must offload via run_in_threadpool, not call it inline"
