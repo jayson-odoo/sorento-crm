@@ -167,11 +167,16 @@ async def download_job_source_file(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Return a fresh signed URL for the retained original upload of an import job.
+    """Stream the retained original upload of an import job as a file download.
 
     Accepts RQ job_id or DB id. Owner-only (mirrors get_job). 404 when the job has no
     retained source file (older jobs, non-file imports, or a best-effort storage miss).
+    Streamed same-origin (not a redirect to the signed CDN URL) so the browser downloads
+    it via an anchor without navigating away from the SPA.
     """
+    from fastapi import Response
+    from urllib.parse import quote
+
     try:
         job_service = JobService(db)
         job = job_service.get_job(job_id) or job_service.get_job_by_db_id(job_id)
@@ -188,23 +193,27 @@ async def download_job_source_file(
                 detail="No source file was retained for this import job.",
             )
 
-        from app.services.storage_router import resolve_signed_url
+        from app.services.storage_router import get_backend
 
-        url = resolve_signed_url(
-            key,
-            provider=getattr(job, "source_file_provider", None),
-            expires_in=3600,
-        )
-        if not url:
+        try:
+            data = get_backend(getattr(job, "source_file_provider", None)).download_file(key)
+        except Exception:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Could not generate a download link for the source file.",
+                detail="Could not read the source file from storage.",
             )
-        return {
-            "url": url,
-            "filename": getattr(job, "source_filename", None) or job.filename,
-            "size": getattr(job, "source_file_size", None),
-        }
+
+        filename = getattr(job, "source_filename", None) or job.filename or "import-source.xlsx"
+        ascii_name = filename.encode("ascii", "ignore").decode() or "import-source.xlsx"
+        disposition = (
+            f'attachment; filename="{ascii_name}"; '
+            f"filename*=UTF-8''{quote(filename)}"
+        )
+        return Response(
+            content=data,
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": disposition},
+        )
     except HTTPException:
         raise
     except Exception as e:

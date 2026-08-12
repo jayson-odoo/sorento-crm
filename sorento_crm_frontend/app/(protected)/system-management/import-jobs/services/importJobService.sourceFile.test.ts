@@ -5,33 +5,26 @@ vi.mock('@/lib/api', () => ({
 }));
 
 import { apiFetch } from '@/lib/api';
-import { getImportJobSourceUrl } from './importJobService';
+import { downloadImportJobSourceFile } from './importJobService';
 
 const mockedFetch = vi.mocked(apiFetch);
 
-function okResponse(body: unknown): Response {
-  return { ok: true, json: async () => body } as Response;
-}
-
 beforeEach(() => vi.clearAllMocks());
 
-describe('getImportJobSourceUrl — retained source-file download', () => {
-  it('hits the /jobs/{id}/source endpoint and returns the signed url payload', async () => {
-    mockedFetch.mockResolvedValue(
-      okResponse({ url: 'https://signed.test/import-sources/abc/f.xlsx?sig=1', filename: 'f.xlsx', size: 123 }),
-    );
+describe('downloadImportJobSourceFile — retained source-file download', () => {
+  it('hits the /jobs/{id}/source endpoint and returns the file blob', async () => {
+    const blob = new Blob(['excel-bytes'], { type: 'application/octet-stream' });
+    mockedFetch.mockResolvedValue({ ok: true, blob: async () => blob } as unknown as Response);
 
-    const res = await getImportJobSourceUrl('job-123');
+    const res = await downloadImportJobSourceFile('job-123');
 
     expect(mockedFetch).toHaveBeenCalledWith('/api/v1/system/jobs/job-123/source');
-    expect(res.url).toContain('signed.test');
-    expect(res.filename).toBe('f.xlsx');
-    expect(res.size).toBe(123);
+    expect(res).toBe(blob);
   });
 
   it('throws when the endpoint responds not-ok (e.g. 404 no source file)', async () => {
-    mockedFetch.mockResolvedValue({ ok: false, json: async () => ({}) } as Response);
+    mockedFetch.mockResolvedValue({ ok: false } as Response);
 
-    await expect(getImportJobSourceUrl('job-404')).rejects.toThrow('Failed to fetch source file link');
+    await expect(downloadImportJobSourceFile('job-404')).rejects.toThrow('Failed to download source file');
   });
 });

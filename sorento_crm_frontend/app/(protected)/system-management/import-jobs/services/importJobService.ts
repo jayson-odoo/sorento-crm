@@ -42,12 +42,10 @@ export async function getImportJobStatus(jobId: string): Promise<{
   return response.json();
 }
 
-export async function getImportJobSourceUrl(
-  jobId: string,
-): Promise<{ url: string; filename?: string | null; size?: number | null }> {
+export async function downloadImportJobSourceFile(jobId: string): Promise<Blob> {
   const response = await apiFetch(`/api/v1/system/jobs/${jobId}/source`);
-  if (!response.ok) throw new Error('Failed to fetch source file link');
-  return response.json();
+  if (!response.ok) throw new Error('Failed to download source file');
+  return response.blob();
 }
 
 export async function cancelImportJob(jobId: string): Promise<{ message: string }> {

@@ -26,7 +26,7 @@ import {
   getImportJob,
   getImportJobStatus,
   getImportJobs,
-  getImportJobSourceUrl,
+  downloadImportJobSourceFile,
 } from '../services/importJobService';
 import { useCancelImportJob, useImportJobStatus } from '../hooks/useImportJobs';
 import type { ImportJob } from '../types/importJob.types';
@@ -320,10 +320,17 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
                       className="mt-1"
                       onClick={async () => {
                         try {
-                          const { url } = await getImportJobSourceUrl(id);
-                          window.open(url, '_blank', 'noopener,noreferrer');
+                          const blob = await downloadImportJobSourceFile(id);
+                          const objectUrl = window.URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = objectUrl;
+                          a.download = job.source_filename || job.filename || 'import-source.xlsx';
+                          document.body.appendChild(a);
+                          a.click();
+                          window.URL.revokeObjectURL(objectUrl);
+                          document.body.removeChild(a);
                         } catch {
-                          toast.error('Could not open the original uploaded file.');
+                          toast.error('Could not download the original uploaded file.');
                         }
                       }}
                     >

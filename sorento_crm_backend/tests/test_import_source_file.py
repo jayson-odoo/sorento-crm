@@ -130,21 +130,23 @@ def _make_job(db, *, user_id, key=None, provider="r2"):
     return job
 
 
-def test_download_returns_signed_url_for_owner(db, monkeypatch):
-    """AC-3: owner gets a fresh signed URL + original filename."""
-    monkeypatch.setattr(jobs_api.JobService, "sync_job_status", lambda self, _jid: None)
-    monkeypatch.setattr(
-        "app.services.storage_router.resolve_signed_url",
-        lambda key, provider=None, expires_in=3600: f"https://signed.test/{key}?sig=abc",
-    )
+def test_download_streams_file_for_owner(db, monkeypatch):
+    """AC-3: owner gets the original bytes streamed as an attachment download."""
+    class _Backend:
+        def download_file(self, _key):
+            return b"ORIGINAL-EXCEL-BYTES"
+
+    monkeypatch.setattr("app.services.storage_router.get_backend", lambda _p: _Backend())
     job = _make_job(db, user_id="user-1", key="import-sources/abc/Original Upload.xlsx")
 
     res = asyncio.run(
         jobs_api.download_job_source_file(job.job_id, current_user={"id": "user-1"}, db=db)
     )
-    assert res["url"].startswith("https://signed.test/")
-    assert res["filename"] == "Original Upload.xlsx"
-    assert res["size"] == 123
+    assert res.status_code == 200
+    assert res.body == b"ORIGINAL-EXCEL-BYTES"
+    cd = res.headers["content-disposition"]
+    assert "attachment" in cd
+    assert "Original Upload.xlsx" in cd
 
 
 def test_download_404_when_no_source_file(db):
