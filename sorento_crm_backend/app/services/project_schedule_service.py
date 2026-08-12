@@ -467,6 +467,32 @@ class ProjectScheduleService:
         self.db.flush()
         return version
 
+    def enqueue_extraction(self, version: DeliveryScheduleVersion) -> Optional[str]:
+        """Hand the version to the project-documents queue. Call AFTER the commit.
+
+        Same helper as the customer PO path, for the same two reasons: the queue name
+        lives in one place, and the job id is recorded on the row so that a read whose
+        work-horse is later killed can be told apart from one that is merely slow. A
+        killed process does not run its own error handling, so nothing inside it can
+        report the death (S20).
+        """
+        from app.services import project_extraction_recovery_service as recovery
+
+        return recovery.start_job(self.db, version)
+
+    def reconcile_stranded(self, versions) -> int:
+        """Give a verdict to any of these reads whose worker died. See S20."""
+        from app.services import project_extraction_recovery_service as recovery
+
+        return recovery.reconcile(self.db, versions)
+
+    def retry_extraction(self, version: DeliveryScheduleVersion) -> DeliveryScheduleVersion:
+        """Read this schedule again, on the same version. 409 when there is nothing to
+        retry: still in flight, already read, or confirmed."""
+        from app.services import project_extraction_recovery_service as recovery
+
+        return recovery.retry(self.db, version)
+
     def _resolve_schedule(
         self,
         purchase_order: ProjectPurchaseOrder,
@@ -673,9 +699,13 @@ class ProjectScheduleService:
         """
         from app.services.document_extraction import ExtractionUnavailable
 
+        from app.services import project_extraction_recovery_service as recovery
+
         version = self.get_version(schedule_version_id)
         version.extraction_state = STATE_RUNNING
         version.extraction_error = None
+        # Only the reader knows when it actually picked the document up. See S20.
+        recovery.mark_started(self.db, version)
         self.db.commit()
 
         try:
@@ -1635,6 +1665,10 @@ class ProjectScheduleService:
 
     def get_version_detail(self, version_id: str) -> dict:
         version = self.get_version(version_id)
+        # The review screen polls this while a schedule is being read, which makes it the
+        # right place to notice that the reader died: a killed work-horse never runs the
+        # task's own error handling, so nothing inside it could have said so (S20).
+        self.reconcile_stranded([version])
         schedule = self.schedule_for(version)
         payload = version.reconciliation_json or {}
         po = self.db.get(ProjectPurchaseOrder, schedule.purchase_order_id)
@@ -1745,6 +1779,11 @@ class ProjectScheduleService:
             "extraction_error": version.extraction_error,
             "extraction_model": version.extraction_model,
             "extraction_elapsed_ms": version.extraction_elapsed_ms,
+            "extraction_started_at": (
+                version.extraction_started_at.isoformat()
+                if version.extraction_started_at
+                else None
+            ),
             "page_count": extracted.get("page_count"),
             "pages_extracted": len(extracted.get("pages") or []),
             "document_url": self.document_url(version),
@@ -1845,6 +1884,7 @@ class ProjectScheduleService:
             .order_by(DeliveryScheduleVersion.version_no.desc())
             .all()
         )
+        self.reconcile_stranded(versions)
         po = self.db.get(ProjectPurchaseOrder, schedule.purchase_order_id)
         out = []
         for version in versions:

@@ -35,6 +35,15 @@ import ProductSuppliersSection from './ProductSuppliersSection';
 import ProductAttachmentsTab from './ProductAttachmentsTab';
 import RecordNavigation from '@/components/common/RecordNavigation';
 
+/** The tab values `?tab=` may name, so a stray query string cannot land on an empty panel. */
+const PRODUCT_FORM_TABS = [
+  'basic',
+  'pricing',
+  'specifications',
+  'suppliers',
+  'attachments',
+];
+
 interface ProductFormProps {
   productId?: string;
   /** When provided, used as sole source for form reset (avoids cache/timing issues) */
@@ -272,7 +281,13 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
             />
           </div>
         )}
-        <Tabs defaultValue="basic" className="w-full">
+        {/* `?tab=` so another screen can send somebody to the right tab rather than to
+            Basic Information with instructions. The quotation's "No photo chosen" cell links
+            straight to `?tab=attachments`, which is where the product photo is chosen. Unknown
+            values fall back to the first tab rather than rendering nothing. */}
+        <Tabs defaultValue={PRODUCT_FORM_TABS.includes(searchParams.get('tab') ?? '')
+            ? (searchParams.get('tab') as string)
+            : 'basic'} className="w-full">
           <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="basic">Basic Information</TabsTrigger>
             <TabsTrigger value="pricing">Pricing</TabsTrigger>

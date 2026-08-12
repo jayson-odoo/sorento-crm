@@ -10,6 +10,15 @@ terminal state with a readable reason. A task that raised into RQ's failed regis
 would leave a version stuck on "queued" forever, which reads to the user as a hung
 system rather than a document that needs finishing by hand.
 
+**That contract holds only while this process is alive.** The failure is written in an
+``except`` block, and an ``except`` block does not run when the process is KILLED -
+SIGTERM from a deploy, the RQ job timeout, an out-of-memory kill, a native crash inside
+page rendering. Measured on 2026-08-08: a work-horse killed with signal 15 left a PO
+version on ``running`` for ever, with the UI showing a progress bar for work that had
+stopped. Nothing inside a dying process can report its own death, so the reporting lives
+outside it, in ``app.services.project_extraction_recovery_service``, which reconciles a
+non-terminal row against what RQ knows about the job whose id the row records.
+
 Reminder for local dev: RQ tasks are NOT reloaded. Restart the worker after editing
 this file or the services it calls.
 """

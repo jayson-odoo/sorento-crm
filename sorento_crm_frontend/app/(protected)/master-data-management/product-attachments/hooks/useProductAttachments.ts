@@ -56,6 +56,10 @@ export function useUpdateProductAttachment() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['product-attachments'] });
       queryClient.invalidateQueries({ queryKey: ['product-attachment'] });
+      // The per-product list is what the product's Attachments tab reads, and choosing the
+      // product photo (`is_primary`) writes through here. Without this the badge stays on the
+      // old row until a reload.
+      queryClient.invalidateQueries({ queryKey: ['product-attachments-by-product'] });
       toast.success('Product attachment updated successfully');
     },
     onError: (error: Error) => {

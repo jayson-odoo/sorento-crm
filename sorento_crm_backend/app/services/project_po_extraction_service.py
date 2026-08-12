@@ -607,27 +607,33 @@ class ProjectPOExtractionService:
         """Hand the version to the project-documents queue. Call AFTER the commit.
 
         A job that starts before the row is committed reads nothing and marks a
-        perfectly good document as failed. Enqueued through the task module's own
-        helper so the queue name lives in one place: every checkout of this repository
-        shares one Redis, and a worker from another tree would claim a job whose task
-        module it does not have. A failure to enqueue is reported on the row for the
-        same reason every other exit path is -- the alternative is a version that says
-        "queued" for ever.
+        perfectly good document as failed. Enqueued through the recovery service, which
+        owns the queue name in one place AND records which job is reading this version:
+        a work-horse that is killed does not run the task's own error handling, so the
+        only way to tell a dead read from a slow one afterwards is to ask RQ about that
+        job. A failure to enqueue is reported on the row for the same reason every other
+        exit path is -- the alternative is a version that says "queued" for ever.
         """
-        from app.tasks.project_document_tasks import enqueue_po_extraction
+        from app.services import project_extraction_recovery_service as recovery
 
-        try:
-            job = enqueue_po_extraction(str(version.id))
-            return getattr(job, "id", None)
-        except Exception as exc:  # noqa: BLE001 - the document is stored either way
-            logger.exception("could not enqueue PO extraction for version %s", version.id)
-            version.extraction_state = STATE_FAILED
-            version.extraction_error = (
-                "The document is stored but the reader could not be started "
-                f"({str(exc)[:200]}). Retry the upload or fill the lines in by hand."
-            )
-            self.db.commit()
-            return None
+        return recovery.start_job(self.db, version)
+
+    def reconcile_stranded(self, versions) -> int:
+        """Give a verdict to any of these reads whose worker died. See S20.
+
+        Called from the read path, which is where somebody is actually waiting to be
+        told. Silent and cheap when there is nothing wrong.
+        """
+        from app.services import project_extraction_recovery_service as recovery
+
+        return recovery.reconcile(self.db, versions)
+
+    def retry_extraction(self, version: ProjectPOVersion) -> ProjectPOVersion:
+        """Read this document again, on the same version. 409 when there is nothing to
+        retry: still in flight, already read, or confirmed."""
+        from app.services import project_extraction_recovery_service as recovery
+
+        return recovery.retry(self.db, version)
 
     def _assert_supported(self, filename: Optional[str], mime: Optional[str]) -> str:
         """Trust the extension over the browser's content type.
@@ -828,8 +834,15 @@ class ProjectPOExtractionService:
             logger.info("PO version %s is already confirmed; skipping extraction", version.id)
             return {"status": "skipped", "reason": "already confirmed"}
 
+        from app.services import project_extraction_recovery_service as recovery
+
         version.extraction_state = STATE_RUNNING
         version.extraction_error = None
+        # The reader is the only thing that knows when it actually picked the document up,
+        # and that stamp is what lets a wait be reported as a length rather than as an
+        # unbounded spinner - and what the reconciler falls back on for a row carrying no
+        # job id.
+        recovery.mark_started(self.db, version)
         self.db.commit()
 
         from app.services.document_extraction import ExtractionUnavailable, extract_document
@@ -2234,6 +2247,7 @@ class ProjectPOExtractionService:
             "extraction_error": version.extraction_error,
             "extraction_model": version.extraction_model,
             "extraction_elapsed_ms": version.extraction_elapsed_ms,
+            "extraction_started_at": version.extraction_started_at,
             "page_count": version.page_count,
             "pages_extracted": pages_extracted,
             "failed_pages": failed_pages,

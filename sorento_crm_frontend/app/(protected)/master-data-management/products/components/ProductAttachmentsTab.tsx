@@ -3,13 +3,13 @@
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, LoaderCircleIcon, Eye, Download, Folder, ChevronDown, FolderOpen, Settings2 } from 'lucide-react';
+import { Plus, Trash2, LoaderCircleIcon, Eye, Download, Folder, ChevronDown, FolderOpen, Settings2, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useProductAttachmentsByProduct, useDeleteProductAttachment } from '../../product-attachments/hooks/useProductAttachments';
+import { useProductAttachmentsByProduct, useDeleteProductAttachment, useUpdateProductAttachment } from '../../product-attachments/hooks/useProductAttachments';
 import { useDownloadAttachment } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
 import type { ProductAttachment } from '../../product-attachments/types/productAttachment.types';
 import { formatDate } from '@/lib/helpers';
@@ -54,6 +54,7 @@ export default function ProductAttachmentsTab({
   }, [accessTypes]);
   const downloadMutation = useDownloadAttachment();
   const deleteMutation = useDeleteProductAttachment();
+  const updateMutation = useUpdateProductAttachment();
 
   // Build a per-attachment field-key list from the product's `field_attachments`
   // map. The map is keyed by field_key, so we invert it once.
@@ -171,9 +172,24 @@ export default function ProductAttachmentsTab({
     return entries;
   }, [productAttachments]);
 
+  /**
+   * Record that THIS file is the product's photograph.
+   *
+   * One decision for the whole system: `product_attachments.is_primary` is what the brochure,
+   * 3D-model generation and the quotation all read, so choosing here answers it everywhere at
+   * once. The server clears whichever row held it before, so there is exactly one.
+   */
+  const handleChoosePhoto = (id: string) => {
+    updateMutation.mutate({ id, data: { is_primary: true } });
+  };
+
   const renderAttachmentItem = (pa: ProductAttachment) => {
     const attachmentId = pa.attachment?.id;
     const fieldKeys = attachmentId ? (fieldKeysByAttachmentId.get(attachmentId) ?? []) : [];
+    // Only an image can be the product's photograph. `product_attachments` links whatever is
+    // attached, and the live data holds 532 PDFs: a spec sheet rendered as the product photo is
+    // worse than no photo at all.
+    const isImage = Boolean(pa.attachment?.mime_type?.toLowerCase().startsWith('image/'));
     return (
     <div
       key={pa.id}
@@ -181,7 +197,7 @@ export default function ProductAttachmentsTab({
     >
       <div className="flex items-center gap-3 flex-1">
         {pa.is_primary && (
-          <Badge variant="primary">Primary</Badge>
+          <Badge variant="primary">Product photo</Badge>
         )}
         <div className="flex-1">
           <p className="font-medium text-sm">
@@ -205,6 +221,27 @@ export default function ProductAttachmentsTab({
         </div>
       </div>
       <div className="flex gap-2">
+        {isEditMode && isImage && !pa.is_primary && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => handleChoosePhoto(pa.id)}
+                disabled={updateMutation.isPending}
+                data-testid={`choose-product-photo-${pa.id}`}
+              >
+                {updateMutation.isPending ? (
+                  <LoaderCircleIcon className="size-4 animate-spin" />
+                ) : (
+                  <Star className="size-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Use as product photo</TooltipContent>
+          </Tooltip>
+        )}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
