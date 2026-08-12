@@ -1,6 +1,6 @@
 # PLAN — Conversation Intervention Tickets
 
-Status: Approved 2026-08-12 (lavish review) - Phase 1 in progress
+Status: Phase 1 DONE + browser-verified 2026-08-12 (e91b225ce) - Phase 2 in progress
 UAC: conversation-intervention-tickets-acceptance-criteria.md
 
 ## Decision summary
@@ -40,9 +40,13 @@ UAC: conversation-intervention-tickets-acceptance-criteria.md
 
 ## Research items (resolve during Phase 1, before contract freeze)
 
-- R1. Respond.io API v2 message types: confirm attachment subtypes, sticker support, and
-  reply-to/quote support on `POST /contact/{id}/message`. Composer capabilities = whatever
-  the API confirms; unsupported types are omitted from the UI (UAC D1).
+- R1. RESOLVED (Respond OpenAPI spec, verified 2026-08-12): `POST /contact/{identifier}/message`
+  supports message types `text`, `attachment`, `quick_reply`, `whatsapp_template`;
+  attachment subtypes `image | video | audio | file`. NO sticker type. NO reply-to /
+  quoted-context parameter. Composer scope: sticker omitted; reply-to implemented as
+  quote-prefix emulation (visual "> quoted text" prepended to the outgoing text - honest,
+  channel-agnostic). True quoted replies arrive with the future omnichannel swap (WhatsApp
+  Cloud API `context.message_id`).
 - R2. Media delivery: Respond fetches attachments by URL - confirm URL lifetime requirements
   vs presigned S3/R2 expiry; CMYK-to-RGB conversion applies (existing rule).
 - R3. Who sets `is_responded` today (n8n agent-reply event? backend?) - map the full write

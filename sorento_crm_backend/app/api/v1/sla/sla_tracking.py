@@ -1268,6 +1268,16 @@ async def create_sla_tracking_integration(
             "tracking_id": tracking_id_str,
             "is_update": is_update,
             "already_active": already_active,
+            # AC-A2/AC-A4: n8n reads these on EVERY response — insert and retry
+            # alike — to keep the ticket's clocks/assignee and to pick the
+            # in-hours vs out-of-hours auto-reply copy. `in_working_hours` comes
+            # from the service marker; it is not a column.
+            "in_working_hours": getattr(tracking, "_in_working_hours", None),
+            "initiated_at": getattr(tracking, "initiated_at", None),
+            "due_at": getattr(tracking, "due_at", None),
+            "due_at_resolution": getattr(tracking, "due_at_resolution", None),
+            "assigned_to": getattr(tracking, "assigned_to", None),
+            "assigned_to_id": getattr(tracking, "assigned_to_id", None),
         }
     except HTTPException:
         raise

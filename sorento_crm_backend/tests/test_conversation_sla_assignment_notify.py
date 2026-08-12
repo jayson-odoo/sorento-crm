@@ -176,8 +176,10 @@ def test_idempotent_active_does_not_renotify(db):
     first = service.create_tracking(_payload(seed, message_id=111))
     assert len(_assignee_notes(db, seed["assignee_id"])) == 1
 
-    # Repeat inbound on the still-open conversation -> idempotent return, no notify.
-    second = service.create_tracking(_payload(seed, message_id=222))
+    # Repeat of the SAME trigger message on the still-open ticket -> idempotent
+    # return, no notify. A DIFFERENT message_id is a new enquiry (AC-A1), not
+    # this path any more.
+    second = service.create_tracking(_payload(seed, message_id=111))
     assert str(second.id) == str(first.id)
     assert bool(getattr(second, "_already_active", False)) is True
 
@@ -191,11 +193,14 @@ def test_idempotent_active_does_not_renotify(db):
 # --------------------------------------------------------------------------
 
 def test_overwrite_resolved_renotifies_new_occurrence(db):
+    """Overwrite-in-place only happens on the identity-less legacy path now
+    (AC-A1/AC-A2 gave every trigger message its own ticket) - no message_id on
+    either call, so both hit the contact-level singleton fallback."""
     seed = _seed(db)
     service = ConversationSLATrackingService(db)
 
     t0 = datetime(2026, 6, 1, 8, 0, 0)
-    first = service.create_tracking(_payload(seed, message_id=111, started_at=t0))
+    first = service.create_tracking(_payload(seed, started_at=t0))
     assert len(_assignee_notes(db, seed["assignee_id"])) == 1
 
     first.is_resolved = True
@@ -203,7 +208,7 @@ def test_overwrite_resolved_renotifies_new_occurrence(db):
     db.commit()
 
     t1 = datetime(2026, 6, 2, 8, 0, 0)  # different occurrence
-    second = service.create_tracking(_payload(seed, message_id=222, started_at=t1))
+    second = service.create_tracking(_payload(seed, started_at=t1))
     assert str(second.id) == str(first.id)
     assert bool(getattr(second, "_overwrote_resolved", False)) is True
 
@@ -216,15 +221,17 @@ def test_overwrite_resolved_renotifies_new_occurrence(db):
 
 
 def test_same_occurrence_dedups_to_one(db):
-    """Overwrite-resolved with the SAME start time = same occurrence key => one note."""
+    """Overwrite-resolved with the SAME start time = same occurrence key => one
+    note. No message_id on either call - the identity-less legacy singleton
+    path is the only one that still overwrites in place."""
     seed = _seed(db)
     service = ConversationSLATrackingService(db)
 
     t0 = datetime(2026, 6, 1, 8, 0, 0)
-    first = service.create_tracking(_payload(seed, message_id=111, started_at=t0))
+    first = service.create_tracking(_payload(seed, started_at=t0))
     first.is_resolved = True
     db.commit()
-    service.create_tracking(_payload(seed, message_id=222, started_at=t0))
+    service.create_tracking(_payload(seed, started_at=t0))
 
     notes = _assignee_notes(db, seed["assignee_id"])
     assert len(notes) == 1, "same-occurrence start-time must dedup to one note"

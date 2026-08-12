@@ -3552,10 +3552,18 @@ class ConversationSLATrackingService:
         else:
             tracking_dict["initiated_at"] = _to_aware_utc(tracking_dict["initiated_at"])
 
+        # AC-A4/AC-A9: whether THIS request arrived inside the working window.
+        # Computed once here (not tied to whether current_tier_started_at ends up
+        # auto-derived below) and stamped on every return path — including an
+        # idempotent retry — because n8n reads it from every response to pick its
+        # in-hours vs out-of-hours auto-reply, not only on the first insert.
+        _normalized_start = _working_clock_start(self.db, now_utc)
+        in_working_hours = _normalized_start == _to_aware_utc(now_utc)
+
         if not tracking_dict.get("current_tier_started_at"):
             # Automatic start: the clock begins when work can actually begin.
             # initiated_at above keeps the true event instant for audit.
-            tracking_dict["current_tier_started_at"] = _working_clock_start(self.db, now_utc)
+            tracking_dict["current_tier_started_at"] = _normalized_start
         else:
             # Caller-supplied start is authoritative — stored verbatim, not normalized.
             tracking_dict["current_tier_started_at"] = _to_aware_utc(tracking_dict["current_tier_started_at"])
@@ -3599,44 +3607,69 @@ class ConversationSLATrackingService:
             tracking_dict["due_at"] = None
             tracking_dict["due_at_resolution"] = None
 
-        # Singleton check: one open conversation tracking per contact (mirrors the
-        # Respond.io conversation). Scoped to conversation rows — an active form-SLA
-        # stage row for the same contact must not block (or be returned by) this.
-        existing = self.db.query(ConversationSLATracking).filter(
-            ConversationSLATracking.respond_contact_id == tracking_dict["respond_contact_id"],
-            conversation_tracking_scope(),
-        ).order_by(
-            ConversationSLATracking.is_resolved.asc(),  # open first
-            ConversationSLATracking.created_at.desc(),
-        ).first()
+        # Ticket identity (AC-A1/AC-A2): a conversation SLA row is "this enquiry",
+        # keyed on the message that asked for a human. A contact may hold several
+        # open tickets at once; only a retry of the SAME trigger message is
+        # idempotent. Fall back to message_id (legacy n8n payloads carry no
+        # source_message_id yet), and — with neither — to the old one-open-per-
+        # contact singleton so a bare payload doesn't fan out.
+        if not tracking_dict.get("source_message_id") and tracking_dict.get("message_id") is not None:
+            tracking_dict["source_message_id"] = str(tracking_dict["message_id"])
+        identity_key = tracking_dict.get("source_message_id")
 
-        if existing:
-            if not bool(getattr(existing, "is_resolved", False)):
-                # Active conversation already tracked — idempotent hit. The new inbound
-                # message belongs to the same open Respond.io conversation: return the
-                # existing tracking untouched (clocks, assignee, agent, team) except for
-                # message_id, refreshed so inbox deep-links point at the latest message.
-                if tracking_dict.get("message_id") is not None:
-                    setattr(existing, "message_id", tracking_dict["message_id"])
-                    self.db.commit()
-                    self.db.refresh(existing)
+        existing = None
+        if identity_key:
+            existing = self.db.query(ConversationSLATracking).filter(
+                ConversationSLATracking.source_message_id == identity_key,
+                ConversationSLATracking.is_resolved.is_(False),
+                conversation_tracking_scope(),
+            ).first()
+
+            if existing:
+                # AC-A2: retry of the same trigger message — the only case per-
+                # enquiry idempotency covers. Nothing refreshes, not even
+                # message_id: this is a no-op read of the ticket already opened.
                 setattr(existing, "_already_active", True)
+                setattr(existing, "_in_working_hours", in_working_hours)
                 return existing
+            # No open row for THIS message: always a fresh ticket (AC-A1), even
+            # when the contact already holds other open tickets, and even when a
+            # PAST ticket for the same message id is resolved — that row is
+            # history now, never overwritten (per-enquiry identity, not a
+            # contact-level singleton).
+        else:
+            # No trigger-message identity on the payload at all: keep the legacy
+            # one-open-per-contact singleton so a bare call doesn't fan out.
+            existing = self.db.query(ConversationSLATracking).filter(
+                ConversationSLATracking.respond_contact_id == tracking_dict["respond_contact_id"],
+                conversation_tracking_scope(),
+            ).order_by(
+                ConversationSLATracking.is_resolved.asc(),  # open first
+                ConversationSLATracking.created_at.desc(),
+            ).first()
 
-            # Existing tracking is resolved — overwrite it for the new conversation.
-            # History is carried by event logs (kept: FK by tracking id), not by rows.
-            preserve_fields = {"id", "created_at", "respond_contact_id"}
-            for key, value in tracking_dict.items():
-                if key not in preserve_fields:
-                    setattr(existing, key, value)
+            if existing:
+                if not bool(getattr(existing, "is_resolved", False)):
+                    setattr(existing, "_already_active", True)
+                    setattr(existing, "_in_working_hours", in_working_hours)
+                    return existing
 
-            self.db.commit()
-            self.db.refresh(existing)
-            self._write_assign_event_log(existing, covered_for_id=coverage_covered_for_id)
-            self._notify_assignment_on_create(existing)
-            self._fan_out_assignment_coverage(existing)
-            setattr(existing, "_overwrote_resolved", True)
-            return existing
+                # Existing tracking is resolved — overwrite it for the new
+                # conversation. History is carried by event logs (kept: FK by
+                # tracking id), not by rows.
+                preserve_fields = {"id", "created_at", "respond_contact_id"}
+                for key, value in tracking_dict.items():
+                    if key not in preserve_fields:
+                        setattr(existing, key, value)
+
+                self.db.commit()
+                self.db.refresh(existing)
+                self._write_assign_event_log(existing, covered_for_id=coverage_covered_for_id)
+                self._notify_assignment_on_create(existing)
+                self._fan_out_assignment_coverage(existing)
+                setattr(existing, "_overwrote_resolved", True)
+                setattr(existing, "_in_working_hours", in_working_hours)
+                return existing
 
         # Create new tracking record (set due_at_resolution explicitly so it is never omitted)
         tracking = ConversationSLATracking(**tracking_dict)
@@ -3650,6 +3683,7 @@ class ConversationSLATrackingService:
         self._write_assign_event_log(tracking, covered_for_id=coverage_covered_for_id)
         self._notify_assignment_on_create(tracking)
         self._fan_out_assignment_coverage(tracking)
+        setattr(tracking, "_in_working_hours", in_working_hours)
         return tracking
 
     def _write_assign_event_log(

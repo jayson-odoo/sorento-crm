@@ -190,6 +190,10 @@ def test_create_succeeds_when_assign_log_write_fails(db, monkeypatch):
 
 
 def test_create_with_active_row_is_idempotent(db):
+    """Per-enquiry identity (AC-A1/AC-A2): idempotency is now keyed on the
+    trigger message, not the contact - a retry of the SAME message_id is the
+    idempotent case; a DIFFERENT message_id opens its own ticket (covered in
+    test_conversation_intervention_ticket_create.py)."""
     seed = _seed(db)
     service = ConversationSLATrackingService(db)
     first = service.create_tracking(_payload(seed, message_id=111))
@@ -197,7 +201,7 @@ def test_create_with_active_row_is_idempotent(db):
     first_started = first.current_tier_started_at
     first_due = first.due_at
 
-    second = service.create_tracking(_payload(seed, message_id=222))
+    second = service.create_tracking(_payload(seed, message_id=111))
 
     # Same row returned, flagged, nothing about the SLA state changed.
     assert str(second.id) == first_id
@@ -205,8 +209,8 @@ def test_create_with_active_row_is_idempotent(db):
     assert second.current_tier_started_at == first_started
     assert second.due_at == first_due
     assert second.is_resolved is False
-    # message_id refreshed to the latest inbound message.
-    assert second.message_id == 222
+    # Nothing refreshes on a retry, message_id included.
+    assert second.message_id == 111
     # No duplicate rows, no duplicate assign event logs.
     assert db.query(ConversationSLATracking).count() == 1
     assert len(_assign_logs(db, first_id)) == 1
@@ -231,22 +235,26 @@ def test_create_with_active_form_row_does_not_conflict(db):
 
 
 def test_create_with_resolved_row_overwrites_in_place(db):
+    """Overwrite-in-place survives only on the identity-less legacy path: with
+    a source_message_id/message_id, a resolved ticket is history and is never
+    reused (test_a_resolved_ticket_is_never_overwritten_by_a_new_enquiry).
+    No message_id on either call here, so both hit the contact-level fallback."""
     seed = _seed(db)
     service = ConversationSLATrackingService(db)
-    first = service.create_tracking(_payload(seed, message_id=111))
+    first = service.create_tracking(_payload(seed))
     first_id = str(first.id)
     first.is_resolved = True
     first.resolved_at = datetime(2026, 6, 2, 10, 0, 0)
     db.commit()
 
-    second = service.create_tracking(_payload(seed, message_id=333))
+    second = service.create_tracking(_payload(seed))
 
     # Overwrite-in-place: same row id, reset to a fresh open conversation.
     assert str(second.id) == first_id
     assert bool(getattr(second, "_already_active", False)) is False
     assert second.is_resolved is False
     assert second.resolved_at is None
-    assert second.message_id == 333
+    assert second.message_id is None
     assert db.query(ConversationSLATracking).count() == 1
     # History: first conversation's assign log preserved, new one appended.
     assert len(_assign_logs(db, first_id)) == 2

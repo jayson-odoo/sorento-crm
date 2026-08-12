@@ -141,6 +141,10 @@ class ConversationSLATrackingCreate(BaseModel):
     agent_code: str  # resolved → agent_id FK in service
     team_set_code: str  # team set; (agent_code, team_set_code) → SLA policy
     message_id: OptionalMessageId = None
+    # Identity of a conversation intervention ticket: the message that asked for a
+    # human. When absent, the service falls back to message_id, then (with neither)
+    # to the legacy one-open-per-contact singleton — see create_tracking.
+    source_message_id: Optional[str] = None
     contact_phone_number: str  # Required field
 
     @field_validator('agent_code', 'team_set_code')
