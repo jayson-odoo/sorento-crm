@@ -5057,3 +5057,232 @@ class ConversationSLATrackingService:
             assignee_respond_user_id=resolve_assignee_respond_user_id_from_tracking(self.db, tracking),
         )
         return response if isinstance(response, dict) else {}
+
+    def mark_ticket_responded(
+        self,
+        tracking: ConversationSLATracking,
+        *,
+        responded_by_user_id: Optional[str] = None,
+        reason: str = "Responded from the CRM.",
+    ) -> ConversationSLATracking:
+        """Stamp is_responded/responded_at/responded_by/response_time on
+        ``tracking`` ONLY (UAC AC-E1) — a CRM-authoritative ticket-context send,
+        always unambiguous (the caller already picked this exact ticket in the
+        drawer). Unlike the n8n Respond-app-reply fallback (the ambiguity guard
+        in the ``PUT /{tracking_id}`` route, AC-E3), this never checks sibling
+        tickets. No-op when the ticket is already responded — only the FIRST
+        reply stops the response clock; later sends on the same ticket are
+        ordinary conversation, not a new "first response".
+        """
+        from decimal import Decimal, ROUND_HALF_UP
+
+        if bool(getattr(tracking, "is_responded", False)):
+            return tracking
+
+        responded_at = _now_utc()
+        response_time = None
+        initiated_at = getattr(tracking, "initiated_at", None)
+        if isinstance(initiated_at, datetime):
+            initiated_at_utc = _to_aware_utc(initiated_at)
+            if initiated_at_utc is not None:
+                duration = (responded_at - initiated_at_utc).total_seconds() / 3600
+                response_time = Decimal(str(max(0, duration))).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+        responded_by = responded_by_user_id or self._resolve_tracking_assignee_user_id(tracking)
+
+        tracking.is_responded = True
+        tracking.responded_at = responded_at
+        tracking.responded_by = responded_by
+        tracking.response_time = response_time
+        self.db.commit()
+        self.db.refresh(tracking)
+
+        alabel, aid = event_log_assignee_fields(self.db, responded_by)
+        self.create_event_log(
+            ConversationSLAEventLogCreate(
+                sla_tracking_id=str(tracking.id),
+                event_type="response",
+                from_tier=int(getattr(tracking, "current_tier", 0) or 0),
+                to_tier=int(getattr(tracking, "current_tier", 0) or 0),
+                assigned_to=alabel,
+                assigned_to_id=aid,
+                reason=reason,
+            )
+        )
+        return tracking
+
+    def is_ambiguous_fallback_response(self, tracking: ConversationSLATracking) -> bool:
+        """UAC AC-E3: true when the replying user (this tracking's current
+        assignee) holds 2+ OPEN conversation-scope tickets for the same
+        contact — the n8n Respond-app-reply fallback has no way to tell which
+        enquiry they actually answered, so it must change nothing (the CRM
+        ticket-send path, ``mark_ticket_responded``, is authoritative instead).
+        Form-SLA rows are never ambiguous (per-entity, not contact-shared).
+        """
+        from app.services.form_sla_service import FORM_SLA_TYPES
+
+        if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+            return False
+        if bool(getattr(tracking, "is_responded", False)):
+            return False
+        contact_id = getattr(tracking, "respond_contact_id", None)
+        assignee_id = getattr(tracking, "assigned_to_id", None)
+        if not contact_id or not assignee_id:
+            return False
+        sibling_count = (
+            self.db.query(ConversationSLATracking.id)
+            .filter(
+                ConversationSLATracking.respond_contact_id == contact_id,
+                ConversationSLATracking.assigned_to_id == assignee_id,
+                ConversationSLATracking.is_resolved.is_(False),
+                conversation_tracking_scope(),
+            )
+            .count()
+        )
+        return sibling_count > 1
+
+    def send_ticket_message(
+        self,
+        tracking_id: str,
+        *,
+        text: str,
+        files: list,
+        reply_to_message_id: Optional[str],
+        reply_to_excerpt: Optional[str],
+        sender_user_id: Optional[str],
+        sender_name: str,
+    ) -> dict:
+        """CRM-native ticket reply (UAC AC-D1/D2/D3, AC-E1).
+
+        Synchronous — the drawer needs the actually-attempted payload back
+        immediately to render the delivered state. ``files`` is a list of
+        ``(content: bytes, filename: str, mime: str)`` tuples. Text-only sends
+        reuse ``send_chat_message_for`` VERBATIM (AC-D2, the same smart-send
+        machinery the complaint/stock-inquiry/purchase-request chat panels
+        already use — not forked). Attachments upload through CRM storage
+        first, then ``RespondClient.send_attachment`` (no template fallback
+        exists for media, R1 — a closed window is a hard refusal, not a
+        silent drop). ``text`` is expected to already carry the composer's
+        ">"-quote prefix when replying (R1); ``reply_to_*`` are audit-only and
+        are never sent to Respond. On success, stamps THIS ticket's response
+        clock only; sibling tickets for the same contact are untouched.
+        """
+        from app.services.form_sla_service import FORM_SLA_TYPES
+        from app.services.respond_chat_template_service import (
+            send_chat_attachment_for,
+            send_chat_message_for,
+            upload_chat_attachment,
+        )
+        from app.services.respond_messaging_service import get_window_state
+
+        tracking = self.get_tracking(tracking_id, load_event_logs=False)
+        if not tracking:
+            raise handle_not_found("Conversation SLA tracking", tracking_id)
+        if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+            raise handle_validation_error(
+                "This is a form-SLA stage; reply from the form record's chat panel instead."
+            )
+        if bool(getattr(tracking, "is_resolved", False)):
+            raise handle_validation_error("Cannot send a message on a resolved ticket.")
+        identifier = self._respond_io_identifier_for_tracking(tracking)
+        if not identifier:
+            raise handle_validation_error("No Respond.io contact linked; cannot send a message.")
+        respond_contact_id = (
+            str(tracking.respond_contact_id)
+            if getattr(tracking, "respond_contact_id", None)
+            else None
+        )
+
+        clean_text = (text or "").strip()
+        if not clean_text and not files:
+            raise handle_validation_error("Provide message text or at least one attachment.")
+
+        business_table = "conversation_sla_tracking"
+        business_id = str(tracking.id)
+
+        if files:
+            for content, filename, mime in files:
+                uploaded = upload_chat_attachment(
+                    business_table=business_table,
+                    business_id=business_id,
+                    content=content,
+                    filename=filename,
+                    mime=mime,
+                )
+                send_chat_attachment_for(
+                    self.db,
+                    identifier=identifier,
+                    respond_contact_id=respond_contact_id,
+                    attachment_type=uploaded["kind"],
+                    url=uploaded["url"],
+                    business_table=business_table,
+                    business_id=business_id,
+                    created_by=sender_user_id,
+                )
+            sent_as = "attachment"
+            rendered_text = clean_text or f"{len(files)} attachment(s) sent"
+            flattened = False
+            window = get_window_state(self.db, identifier, respond_contact_id=respond_contact_id)
+            window_state = {"open": window.get("open"), "last_incoming_at": window.get("last_incoming_at")}
+            # A caption alongside attachments ships as its own text turn — Respond's
+            # attachment message has no reliably-supported caption param (R1).
+            if clean_text:
+                send_chat_message_for(
+                    self.db,
+                    identifier=identifier,
+                    respond_contact_id=respond_contact_id,
+                    text=clean_text,
+                    chat_use_case="conversation_chat",
+                    business_table=business_table,
+                    business_id=business_id,
+                    sender_name=sender_name,
+                    created_by=sender_user_id,
+                )
+        else:
+            result = send_chat_message_for(
+                self.db,
+                identifier=identifier,
+                respond_contact_id=respond_contact_id,
+                text=clean_text,
+                chat_use_case="conversation_chat",
+                business_table=business_table,
+                business_id=business_id,
+                sender_name=sender_name,
+                created_by=sender_user_id,
+            )
+            sent_as = result["sent_as"]
+            rendered_text = result["rendered_text"]
+            flattened = result["flattened"]
+            window_state = result["window_state"]
+
+        # AC-E1: stamp THIS ticket's response clock only. Best-effort — the
+        # message already reached the contact; a stamping bug must never turn
+        # a delivered send into a 500 for the assignee.
+        try:
+            reason_bits = [f"sent_as={sent_as}"]
+            if reply_to_message_id:
+                reason_bits.append(f"reply_to_message_id={reply_to_message_id}")
+            if reply_to_excerpt:
+                reason_bits.append("quoted_reply=true")
+            self.mark_ticket_responded(
+                tracking,
+                responded_by_user_id=sender_user_id,
+                reason=f"CRM reply ({', '.join(reason_bits)})",
+            )
+        except Exception:  # noqa: BLE001
+            _module_logger.warning(
+                "send_ticket_message: response-clock stamp failed for %s",
+                tracking_id,
+                exc_info=True,
+            )
+
+        return {
+            "sent_as": sent_as,
+            "rendered_text": rendered_text,
+            "flattened": flattened,
+            "window": {
+                "open": bool(window_state.get("open")),
+                "expires_at": None,
+            },
+        }

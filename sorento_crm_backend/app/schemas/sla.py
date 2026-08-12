@@ -481,6 +481,11 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
     # branch its own routing without parsing a 4xx error envelope.
     already_resolved: Optional[bool] = False
     updated_in_request: Optional[bool] = True
+    # AC-E3: true when a PUT is_responded=true from the n8n Respond-app-reply
+    # fallback was skipped because the resolved assignee holds 2+ open tickets
+    # for this contact (ambiguous which enquiry they answered) — see
+    # ConversationSLATrackingService.is_ambiguous_fallback_response.
+    ambiguous_responded_skipped: Optional[bool] = False
     # Idempotent-create indicator: true when create found an open conversation
     # tracking for the contact and returned it (message_id refreshed) instead of
     # creating a new row. n8n branches on this to skip new-conversation steps.

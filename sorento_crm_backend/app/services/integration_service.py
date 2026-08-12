@@ -240,6 +240,42 @@ class RespondClient:
             response.raise_for_status()
             return response.json() if response.content else {}
 
+    def send_attachment(
+        self,
+        identifier: str,
+        attachment_type: str,
+        url: str,
+        caption: Optional[str] = None,
+    ) -> dict:
+        """Send a media attachment to a contact. message type ``attachment``
+        (R1, resolved 2026-08-12): subtypes are ``image`` / ``video`` / ``audio`` /
+        ``file`` only — Respond.io has no sticker send and no reply-to/context
+        parameter on this endpoint. ``url`` must be reachable by Respond's own
+        fetcher: a permanent CDN link where the active storage provider serves
+        one (R2), or a long-lived signed URL otherwise — never a short presign
+        (see ``respond_chat_template_service.upload_chat_attachment``).
+        """
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        if attachment_type not in ("image", "video", "audio", "file"):
+            raise ValueError(f"Unsupported Respond.io attachment type: {attachment_type}")
+        api_id = self._contact_api_identifier(identifier)
+        url_endpoint = f"{self.base_url}/v2/contact/{api_id}/message"
+        attachment_payload: dict = {"type": attachment_type, "url": url}
+        if caption:
+            attachment_payload["caption"] = caption
+        payload = {"message": {"type": "attachment", "attachment": attachment_payload}}
+        # Larger timeout than send_message: Respond fetches the media itself
+        # before it can hand back a response.
+        with httpx.Client(timeout=30) as client:
+            response = client.post(url_endpoint, headers=self._headers(), json=payload)
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                e.response = response
+                raise
+            return response.json() if response.content else {}
+
     def close_conversation(
         self,
         identifier: str,

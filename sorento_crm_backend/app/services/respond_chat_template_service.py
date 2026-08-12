@@ -528,3 +528,143 @@ def send_chat_message_for(
         "flattened": flattened,
         "window_state": _window_state_out(),
     }
+
+
+_ATTACHMENT_KIND_BY_MIME_PREFIX = (
+    ("image/", "image"),
+    ("video/", "video"),
+    ("audio/", "audio"),
+)
+
+
+def respond_attachment_kind(mime: Optional[str]) -> str:
+    """Map a MIME type to the Respond.io attachment subtype (R1: image / video /
+    audio / file only — no sticker). Unrecognised/binary mimes fall back to
+    ``file``, never raise — the composer accepts any file type."""
+    lower = (mime or "").lower()
+    for prefix, kind in _ATTACHMENT_KIND_BY_MIME_PREFIX:
+        if lower.startswith(prefix):
+            return kind
+    return "file"
+
+
+def upload_chat_attachment(
+    *,
+    business_table: str,
+    business_id: str,
+    content: bytes,
+    filename: str,
+    mime: Optional[str],
+) -> Dict[str, str]:
+    """Upload a composer-attached file to CRM storage; return ``{url, kind}``.
+
+    WhatsApp/Meta reject CMYK JPEGs, so the bytes are normalized to RGB first —
+    the same rule the attachments upload API applies. The URL is the
+    PERMANENT, non-expiring CDN link when the active storage provider serves
+    one unsigned (R2); S3/CloudFront has no unsigned route, so a long-lived
+    (7 day) signed URL is used instead of the 1h read-time default — a short
+    presign would go stale by the time anyone re-opens this ticket's thread to
+    see what was actually sent (R2 research item, PLAN-conversation-
+    intervention-tickets.md).
+    """
+    import uuid
+
+    from app.services.image_normalizer import ensure_rgb_image
+    from app.services.storage_router import (
+        PROVIDER_R2,
+        cdn_base_url,
+        default_provider,
+        get_backend,
+        sanitize_storage_filename,
+    )
+
+    normalized_content, normalized_filename, normalized_mime = ensure_rgb_image(
+        content, filename, mime
+    )
+    kind = respond_attachment_kind(normalized_mime)
+    safe_name = sanitize_storage_filename(normalized_filename) or "file"
+    key = f"{business_table}/{business_id}/{uuid.uuid4()}_{safe_name}"
+    provider = default_provider()
+    backend = get_backend(provider)
+    backend.upload_file(
+        file_content=normalized_content, file_path=key, content_type=normalized_mime
+    )
+    url = (
+        cdn_base_url(provider, key)
+        if provider == PROVIDER_R2
+        else backend.get_signed_url(key, expires_in=60 * 60 * 24 * 7)
+    )
+    return {"url": url, "kind": kind}
+
+
+def send_chat_attachment_for(
+    db: Session,
+    *,
+    identifier: str,
+    respond_contact_id: Optional[str],
+    attachment_type: str,
+    url: str,
+    business_table: str,
+    business_id: str,
+    created_by: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Send a single Respond.io attachment message (image/video/audio/file — R1).
+
+    In-window only: Respond.io has no attachment-carrying template (R1), so
+    unlike ``send_chat_message_for`` there is no closed-window fallback — a
+    closed window is a hard, upfront refusal (mirrors the ``no_chat_template``
+    guard's "nothing attempted yet, nothing logged" shape), not a send that
+    silently gets dropped by WhatsApp. Writes an ``integration_log`` outbox row
+    on success AND failure of the actual Respond call; NEVER mutates the
+    entity (mirrors ``send_chat_message_for``).
+    """
+    from app.services.error_handler import AppException
+    from app.services.integration_service import RespondClient, log_respond_send
+    from app.services.respond_messaging_service import get_window_state
+
+    window = get_window_state(db, identifier, respond_contact_id=respond_contact_id)
+    if not window.get("open"):
+        raise AppException(
+            status_code=422,
+            message="Cannot send an attachment outside the 24h messaging window.",
+            detail=(
+                "Respond.io has no attachment-carrying template; only text "
+                "falls back to the reply template."
+            ),
+            code="attachment_window_closed",
+        )
+
+    request_payload = {
+        "message": {"type": "attachment", "attachment": {"type": attachment_type, "url": url}}
+    }
+    try:
+        response = RespondClient.for_identifier(db, identifier).send_attachment(
+            identifier, attachment_type, url
+        )
+    except Exception as e:
+        logger.exception(
+            "Chat attachment send failed for %s %s", business_table, business_id
+        )
+        log_respond_send(
+            db,
+            business_table=business_table,
+            business_id=business_id,
+            identifier=identifier or "",
+            request_payload=request_payload,
+            exc=e,
+        )
+        raise AppException(
+            status_code=502,
+            message="Failed to send the attachment. Please try again.",
+            detail=str(e),
+            code="respond_send_failed",
+        )
+    log_respond_send(
+        db,
+        business_table=business_table,
+        business_id=business_id,
+        identifier=identifier or "",
+        request_payload=request_payload,
+        response=response,
+    )
+    return {"response": response, "attachment_type": attachment_type, "url": url}

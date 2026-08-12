@@ -1,5 +1,5 @@
 """SLA tracking API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Response
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Response, UploadFile
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
@@ -1228,6 +1228,71 @@ async def resolve_sla_tracking(
     return build_conversation_sla_tracking_response(db, updated)
 
 
+@router.post("/{tracking_id}/ticket/send")
+async def send_intervention_ticket_message(
+    tracking_id: str,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """CRM-native reply from an intervention ticket drawer (UAC AC-D1/D2/D3, E1).
+
+    Synchronous — unlike the generic ``.../conversation/send-message`` smart-send
+    route (which queues delivery on the ``respond_io`` worker), the drawer needs
+    the actually-attempted payload back immediately to render the delivered
+    state and stamp its own response clock. Accepts JSON
+    (``{text, reply_to_message_id?, reply_to_excerpt?}``) when there are no
+    files, or ``multipart/form-data``
+    (``text, reply_to_message_id?, reply_to_excerpt?, files[]``) when there
+    are. ``text`` is expected pre-quoted by the composer (the ">" prefix, R1
+    quote-reply emulation) — sent verbatim; ``reply_to_*`` fields are
+    audit-only and are never sent to Respond.io. Assignee-or-manager scoped,
+    same as resolve/escalate.
+    """
+    service = ConversationSLATrackingService(db)
+    tracking = service.get_tracking(tracking_id, load_event_logs=False)
+    if not tracking:
+        raise handle_not_found("Conversation SLA tracking", tracking_id)
+    if not service.can_user_act_on_tracking(current_user["id"], tracking):
+        raise handle_not_found("Conversation SLA tracking", tracking_id)
+
+    content_type = (request.headers.get("content-type") or "").lower()
+    files: list[tuple[bytes, str, str]] = []
+    if content_type.startswith("multipart/form-data"):
+        form = await request.form()
+        text = str(form.get("text") or "")
+        reply_to_message_id = form.get("reply_to_message_id") or None
+        reply_to_excerpt = form.get("reply_to_excerpt") or None
+        for item in form.getlist("files"):
+            if isinstance(item, UploadFile) and item.filename:
+                content = await item.read()
+                files.append((content, item.filename, item.content_type or ""))
+    else:
+        raw: dict = {}
+        try:
+            raw = await request.json()
+        except Exception:
+            raw = {}
+        text = str((raw or {}).get("text") or "")
+        reply_to_message_id = (raw or {}).get("reply_to_message_id")
+        reply_to_excerpt = (raw or {}).get("reply_to_excerpt")
+
+    sender_name = (current_user.get("name") or "").strip() or "Customer Service"
+
+    from starlette.concurrency import run_in_threadpool
+
+    return await run_in_threadpool(
+        service.send_ticket_message,
+        tracking_id,
+        text=text,
+        files=files,
+        reply_to_message_id=reply_to_message_id,
+        reply_to_excerpt=reply_to_excerpt,
+        sender_user_id=current_user.get("id"),
+        sender_name=sender_name,
+    )
+
+
 @router.post("/integration", status_code=status.HTTP_200_OK)
 async def create_sla_tracking_integration(
     tracking_data: ConversationSLATrackingCreate,
@@ -1343,8 +1408,25 @@ async def update_sla_tracking(
             )
     try:
         service = ConversationSLATrackingService(db)
-        tracking = service.update_tracking(tracking_id_str, tracking_data)
-        already_resolved = bool(getattr(tracking, "_already_resolved", False))
+
+        # AC-E3: the n8n Respond-app-reply fallback resolves a contact-level
+        # "preferred" tracking id (see external/conversation_sla_tracking.py) and
+        # PUTs is_responded=true here. When the assignee it resolved to holds 2+
+        # OPEN tickets for this contact, this call can't tell which enquiry they
+        # actually answered — do nothing instead of guessing wrong (the CRM
+        # ticket-send path, POST .../ticket/send, is authoritative for that case).
+        ambiguous = False
+        if bool(getattr(tracking_data, "is_responded", None)):
+            pre_tracking = service.get_tracking(tracking_id_str, load_event_logs=False)
+            if pre_tracking is not None and service.is_ambiguous_fallback_response(pre_tracking):
+                ambiguous = True
+
+        if ambiguous:
+            tracking = pre_tracking
+            already_resolved = False
+        else:
+            tracking = service.update_tracking(tracking_id_str, tracking_data)
+            already_resolved = bool(getattr(tracking, "_already_resolved", False))
         tracking_id_result_str = str(getattr(tracking, "id"))
         external_reference = (
             str(getattr(getattr(tracking, "contact", None), "phone_number"))
@@ -1360,7 +1442,11 @@ async def update_sla_tracking(
                 direction="inbound",
                 endpoint=str(request.url),
                 http_method="PUT",
-                status="success" if not already_resolved else "skipped_already_resolved",
+                status=(
+                    "skipped_ambiguous_response"
+                    if ambiguous
+                    else ("success" if not already_resolved else "skipped_already_resolved")
+                ),
             ),
             request_payload_dict=tracking_data.model_dump(exclude_unset=True),
         )
@@ -1372,7 +1458,8 @@ async def update_sla_tracking(
         # of ConversationSLATrackingResponse. Header forwarding is unreliable
         # through the Next.js proxy, so the body is the source of truth.
         setattr(fresh, "already_resolved", already_resolved)
-        setattr(fresh, "updated_in_request", not already_resolved)
+        setattr(fresh, "updated_in_request", not already_resolved and not ambiguous)
+        setattr(fresh, "ambiguous_responded_skipped", ambiguous)
         return fresh
     except HTTPException:
         raise
