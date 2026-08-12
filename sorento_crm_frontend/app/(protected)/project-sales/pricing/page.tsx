@@ -1,43 +1,12 @@
-import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
-import { Container } from '@/components/common/container';
-import RequireAccess from '@/app/components/common/RequireAccess';
-import { PricingConfigClient } from './components/PricingConfigClient';
+import { redirect } from 'next/navigation';
 
-export const metadata: Metadata = {
-  title: 'Project Pricing Policy',
-  description:
-    'The series a project scope is quoted from, and the floors a quoted price is not allowed to fall below.',
-};
-
-export default function ProjectPricingPage() {
-  return (
-    <RequireAccess permission="projects.types.view">
-      <Container className="space-y-6">
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/">Home</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>Project Sales</BreadcrumbPage>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>Pricing policy</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
-        <PricingConfigClient />
-      </Container>
-    </RequireAccess>
-  );
+/**
+ * The combined "Pricing policy" screen is gone; series and price floors are two pages now.
+ *
+ * A redirect rather than a deletion: this path is in browser histories, in the sidebar of any
+ * tab still open, and quite possibly in somebody's bookmarks. Landing them on Series - the
+ * screen that page mostly WAS - beats a 404 that tells them nothing.
+ */
+export default function Page() {
+  redirect('/project-sales/series');
 }

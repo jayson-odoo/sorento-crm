@@ -413,3 +413,138 @@ def test_the_category_walk_survives_a_cycle_rather_than_spinning():
 
         assert chain[:2] == [first.id, second.id]
         assert len(chain) == 2
+
+
+# ------------------------------------------------------ T5: the series beats the rule
+
+
+def _nominate(db, series, product, price=None, pct=None):
+    from app.models.projects import ProjectSeriesProduct
+
+    row = ProjectSeriesProduct(
+        series_id=series.id,
+        product_id=product.id,
+        selling_price=Decimal(price) if price is not None else None,
+        max_discount_pct=Decimal(pct) if pct is not None else None,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_the_series_price_beats_a_floor_rule_on_the_same_product():
+    """AC-C3. A scope quoted from a series is a deal already struck - the price was agreed
+    and the margin with it - so a generic floor rule must not quietly override the number in
+    the contract. 220 at 6% is 206.80, and the 15%-of-list rule is ignored."""
+    from app.services import project_pricing_service as pricing
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        product = _product(db, _category(db, "WC").id, _uom(db), "253.00")
+        series = _series(db, company_id, "Sanitaryware")
+        _nominate(db, series, product, price="220.00", pct="6")
+        _rule(db, company_id, mode="percent", value="15", product_id=product.id)
+
+        floor = pricing.resolve_floor(
+            db, company_id=company_id, product=product, series_id=series.id
+        )
+
+        assert floor is not None
+        assert floor.value == Decimal("206.80")
+        assert floor.level == pricing.LEVEL_SERIES
+        # The breach message has to be able to say WHICH policy bound the line (AC-C5).
+        assert floor.rule_id == series.id
+
+
+def test_a_series_that_states_no_discount_falls_through_to_the_floor_rule():
+    """AC-C4, and the single most consequential decision in this slice.
+
+    56 of the client's 151 codes carry a price and NO percentage. Reading that blank as
+    "zero discount permitted" would put a hard floor at the selling price under every one of
+    them, and every discount would read as a breach. Silence falls through instead.
+    """
+    from app.services import project_pricing_service as pricing
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        product = _product(db, _category(db, "WC").id, _uom(db), "200.00")
+        series = _series(db, company_id, "Sanitaryware")
+        _nominate(db, series, product, price="180.00", pct=None)
+        _rule(db, company_id, mode="percent", value="50", product_id=product.id)
+
+        floor = pricing.resolve_floor(
+            db, company_id=company_id, product=product, series_id=series.id
+        )
+
+        assert floor is not None
+        # The RULE, not 180.00 and emphatically not "no discount off 180".
+        assert floor.value == Decimal("100.00")
+        assert floor.level == pricing.LEVEL_PRODUCT
+
+
+def test_a_product_the_series_does_not_name_is_unaffected_by_it():
+    """The common case: most of the catalogue is in no series at all, and those lines must
+    behave exactly as they did before this slice existed."""
+    from app.services import project_pricing_service as pricing
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        named = _product(db, _category(db, "WC").id, _uom(db), "253.00")
+        other = _product(db, _category(db, "Taps").id, _uom(db), "100.00")
+        series = _series(db, company_id, "Sanitaryware")
+        _nominate(db, series, named, price="220.00", pct="6")
+        _rule(db, company_id, mode="percent", value="80", product_id=other.id)
+
+        floor = pricing.resolve_floor(
+            db, company_id=company_id, product=other, series_id=series.id
+        )
+
+        assert floor is not None
+        assert floor.value == Decimal("80.00")
+        assert floor.level == pricing.LEVEL_PRODUCT
+
+
+def test_a_scope_quoted_from_no_series_is_untouched():
+    """`series_id=None` is the state of every quotation written before this slice."""
+    from app.services import project_pricing_service as pricing
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        product = _product(db, _category(db, "WC").id, _uom(db), "253.00")
+        series = _series(db, company_id, "Sanitaryware")
+        _nominate(db, series, product, price="220.00", pct="6")
+        _rule(db, company_id, mode="percent", value="15", product_id=product.id)
+
+        floor = pricing.resolve_floor(db, company_id=company_id, product=product)
+
+        assert floor is not None
+        assert floor.value == Decimal("37.95")
+        assert floor.level == pricing.LEVEL_PRODUCT
+
+
+def test_the_whole_version_resolves_from_one_pricing_read():
+    """AC-C7. The map is built once per version and handed in, exactly as the series
+    membership already is - a floor resolved per line would be a round trip each."""
+    from app.services import project_pricing_service as pricing
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        category = _category(db, "WC").id
+        uom = _uom(db)
+        series = _series(db, company_id, "Sanitaryware")
+        products = [_product(db, category, uom, "253.00") for _ in range(5)]
+        for product in products:
+            _nominate(db, series, product, price="220.00", pct="6")
+
+        prepared = pricing.series_pricing_map(db, series.id)
+        assert len(prepared) == 5
+
+        for product in products:
+            floor = pricing.resolve_floor(
+                db,
+                company_id=company_id,
+                product=product,
+                series_id=series.id,
+                series_pricing=prepared,
+            )
+            assert floor is not None and floor.value == Decimal("206.80")

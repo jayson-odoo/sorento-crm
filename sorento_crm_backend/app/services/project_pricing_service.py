@@ -12,9 +12,10 @@ stored, so there is one source of truth for it.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
-from typing import Any, Dict, List, Optional, Sequence, Set
+from decimal import ROUND_HALF_UP, Decimal
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Set
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.product import Product, ProductCategory
@@ -25,9 +26,19 @@ from app.models.projects import (
     PriceFloorRule,
     ProjectSeries,
     ProjectSeriesCategory,
+    ProjectSeriesProduct,
 )
 from app.services.error_handler import AppException
+# The repo's ONE product-code normaliser (lowercased, dash/whitespace stripped), already
+# symmetric with the SQL form used by the resolver and the variant graph. The client's
+# sheet carries `CWB 242`, `SRTPW0035 ` and ` TPE 9203`; a tenth private spelling of this
+# rule is how two surfaces end up disagreeing about whether a code matched.
+from app.services.variant_link_service import normalize_code
 
+#: A floor that came from the SERIES rather than from `price_floor_rules`. Carried on the
+#: resolved floor so a breach can say WHICH policy bound the line - a refusal nobody can
+#: trace is one nobody can act on (AC-C5).
+LEVEL_SERIES = "series"
 LEVEL_PRODUCT = "product"
 LEVEL_CATEGORY = "category"
 LEVEL_CATEGORY_ANCESTOR = "category_ancestor"
@@ -68,6 +79,20 @@ class ResolvedFloor:
     level: str
     rule_id: str
     category_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class SeriesMembership:
+    """A series expanded once: its covered categories AND its named products (S18).
+
+    Carried as one value rather than two loose sets so a caller cannot expand half of it
+    and silently answer the wrong question - which is what a bare ``covered`` set of
+    categories would now do, since it would say "not in the series" for every product
+    nominated by name.
+    """
+
+    categories: Set[str]
+    products: Set[str]
 
 
 # --------------------------------------------------------------- category walk
@@ -142,6 +167,8 @@ def resolve_floor(
     company_id: str,
     product: Optional[Product],
     list_price: Optional[Decimal] = None,
+    series_id: Optional[str] = None,
+    series_pricing: Optional[Mapping[str, tuple]] = None,
 ) -> Optional[ResolvedFloor]:
     """The floor for one line, or None when no policy reaches it.
 
@@ -154,6 +181,29 @@ def resolve_floor(
     """
     if product is None:
         return None
+
+    # The SERIES wins where it has an opinion (AC-C3). A scope quoted from a series is a
+    # commercial deal already struck: the price was agreed and the margin with it, so a
+    # generic `price_floor_rules` entry must not quietly override the number in the
+    # contract. Where the series is silent - product not named, or missing either half of
+    # the answer - it falls through and the rules apply exactly as they always did (AC-C4).
+    if series_id is not None:
+        pricing_for = (
+            series_pricing
+            if series_pricing is not None
+            else series_pricing_map(db, series_id)
+        )
+        stated = pricing_for.get(product.id)
+        if stated is not None:
+            floor = series_floor(stated[0], stated[1])
+            if floor is not None:
+                return ResolvedFloor(
+                    value=floor,
+                    mode=FLOOR_MODE_ABSOLUTE,
+                    level=LEVEL_SERIES,
+                    # The series IS the policy here, so it is what a breach cites.
+                    rule_id=str(series_id),
+                )
 
     effective_list = list_price if list_price is not None else product.list_price
     rules = _active_rules(db, company_id)
@@ -568,29 +618,173 @@ def series_category_ids(db: Session, series_id: Optional[str]) -> Set[str]:
     return category_with_descendants(db, nominated)
 
 
+def series_product_ids(db: Session, series_id: Optional[str]) -> Set[str]:
+    """Every product nominated into the series BY NAME (S18)."""
+    if not series_id:
+        return set()
+    return {
+        row[0]
+        for row in db.query(ProjectSeriesProduct.product_id)
+        .filter(ProjectSeriesProduct.series_id == series_id)
+        .all()
+    }
+
+
+def series_pricing_map(db: Session, series_id: Optional[str]) -> Dict[str, tuple]:
+    """``product_id -> (selling_price, max_discount_pct)`` for a whole series, in one query.
+
+    The pricing twin of ``series_membership``, and passed around for the same reason: a
+    version runs to dozens of lines and resolving the floor per line would be a round trip
+    each (AC-C7).
+    """
+    if not series_id:
+        return {}
+    return {
+        row.product_id: (row.selling_price, row.max_discount_pct)
+        for row in db.query(ProjectSeriesProduct)
+        .filter(ProjectSeriesProduct.series_id == str(series_id))
+        .all()
+    }
+
+
+def series_product_rows(db: Session, series_id: str) -> List[Dict[str, Any]]:
+    """The series' products as the screen reads them: code, name, price, percentage, floor.
+
+    ONE join for the whole set, not a lookup per row - the client's own series runs to 92
+    products and this is drawn on every visit to the page.
+
+    ``derived_floor`` is computed HERE rather than in the browser. It is the number a refusal
+    is argued from, and the same function the pricing engine enforces with, so the figure on
+    the screen and the figure that blocks a save cannot disagree.
+
+    Ordered by product code, because a list somebody checks against a spreadsheet has to be
+    in an order they can follow; insertion order is meaningless to them.
+    """
+    rows = (
+        db.query(ProjectSeriesProduct, Product)
+        .join(Product, Product.id == ProjectSeriesProduct.product_id)
+        .filter(ProjectSeriesProduct.series_id == str(series_id))
+        .order_by(Product.product_code)
+        .all()
+    )
+    return [
+        {
+            "product_id": link.product_id,
+            "product_code": product.product_code,
+            "product_name": product.product_name,
+            "selling_price": link.selling_price,
+            "max_discount_pct": link.max_discount_pct,
+            "derived_floor": series_floor(link.selling_price, link.max_discount_pct),
+        }
+        for link, product in rows
+    ]
+
+
+def set_series_product_pricing(
+    db: Session,
+    *,
+    series: ProjectSeries,
+    product_id: str,
+    selling_price: Any,
+    max_discount_pct: Any,
+) -> Dict[str, Any]:
+    """Set one product's price and percentage from the table on the series page.
+
+    Explicit about erasure in a way the importer deliberately is not: here ``None`` MEANS
+    "clear it", because the person cleared the cell. The importer treats an absent value as
+    silence instead, since a sheet that states no price is not asking for one to be deleted.
+    """
+    link = (
+        db.query(ProjectSeriesProduct)
+        .filter(
+            ProjectSeriesProduct.series_id == series.id,
+            ProjectSeriesProduct.product_id == str(product_id),
+        )
+        .first()
+    )
+    if link is None:
+        raise AppException(
+            status_code=404,
+            message="That product is not in this series.",
+            code="series_product_not_found",
+        )
+    link.selling_price = selling_price
+    link.max_discount_pct = max_discount_pct
+    db.flush()
+
+    product = db.query(Product).filter(Product.id == link.product_id).first()
+    return {
+        "product_id": link.product_id,
+        "product_code": product.product_code if product else None,
+        "product_name": product.product_name if product else None,
+        "selling_price": link.selling_price,
+        "max_discount_pct": link.max_discount_pct,
+        "derived_floor": series_floor(link.selling_price, link.max_discount_pct),
+    }
+
+
+def remove_series_product(db: Session, *, series: ProjectSeries, product_id: str) -> bool:
+    """Take one product off the series. False when it was not on it to begin with."""
+    deleted = (
+        db.query(ProjectSeriesProduct)
+        .filter(
+            ProjectSeriesProduct.series_id == series.id,
+            ProjectSeriesProduct.product_id == str(product_id),
+        )
+        .delete(synchronize_session=False)
+    )
+    db.flush()
+    return bool(deleted)
+
+
+def series_membership(db: Session, series_id: Optional[str]) -> SeriesMembership:
+    """The whole series, expanded ONCE (S18).
+
+    Two reads and one hierarchy walk, whether the caller then asks about one line or
+    fifty-two. Without this a version's guardrail pass costs a walk per line, which is the
+    shape that makes a long quotation slow for no reason at all.
+    """
+    return SeriesMembership(
+        categories=series_category_ids(db, series_id),
+        products=series_product_ids(db, series_id),
+    )
+
+
 def is_in_series(
     db: Session,
     *,
     series_id: Optional[str],
     product: Optional[Product],
-    covered: Optional[Set[str]] = None,
+    membership: Optional[SeriesMembership] = None,
 ) -> bool:
     """Is this line's product inside the nominated series?
 
-    An off-catalog line is never in the series (AC-E5): there is no category to check,
+    Answered from BOTH sides (S18): the product is in the series if it was nominated by
+    name OR sits under a nominated category. The two combine rather than one overriding
+    the other, because they answer different questions - "everything under Basins is fair
+    game" and "these exact 142 codes are the standard range" - and a series may want
+    either, both or neither.
+
+    Direct membership is checked FIRST and needs no category at all, which also makes a
+    product with a null ``category_id`` nominatable. Under category-only membership such a
+    row could never be standard, however explicitly it was listed.
+
+    An off-catalog line is never in the series (AC-E5): there is no product to look up,
     and "we quoted something that isn't in our catalogue" is exactly what the alert is
     for. With NO series nominated everything counts as standard -- a project that never
     picked a series has no allowlist to breach.
 
-    ``covered`` lets a caller expand the series once and reuse it across a whole
-    version's lines rather than re-walking the hierarchy per line.
+    ``membership`` lets a caller expand the series once and reuse it across a whole
+    version's lines rather than re-reading it per line.
     """
     if not series_id:
         return True
     if product is None:
         return False
-    allowed = covered if covered is not None else series_category_ids(db, series_id)
-    return product.category_id in allowed
+    resolved = membership if membership is not None else series_membership(db, series_id)
+    if product.id in resolved.products:
+        return True
+    return product.category_id in resolved.categories
 
 
 def set_series_categories(
@@ -614,3 +808,230 @@ def set_series_categories(
     for category_id in set(existing) - wanted:
         db.delete(existing[category_id])
     db.flush()
+
+
+def set_series_products(
+    db: Session,
+    *,
+    series: ProjectSeries,
+    product_ids: Sequence[str],
+    pricing: Mapping[str, tuple[Any, Any]] | None = None,
+) -> Dict[str, int]:
+    """Replace the products nominated by name. Sent whole, not as a delta.
+
+    Reconciled rather than deleted-and-reinserted, exactly as the category set above is
+    and for the same reason: an unchanged nomination keeps its row, so the audit trail
+    reads as "three added" rather than "a hundred and forty-two rewritten".
+
+    ``pricing`` maps a product id to ``(selling_price, max_discount_pct)`` and is applied to
+    kept rows as well as new ones, so re-importing a sheet with corrected prices updates them
+    rather than reporting "already present" and quietly keeping the old numbers. A product
+    ABSENT from the mapping keeps whatever it already had: an import that states no price for
+    a product is not an instruction to erase the price somebody typed by hand.
+
+    Returns what it did, because the importer above it has to be able to say so.
+    """
+    wanted = {pid for pid in product_ids if pid}
+    existing = {
+        row.product_id: row
+        for row in db.query(ProjectSeriesProduct)
+        .filter(ProjectSeriesProduct.series_id == series.id)
+        .all()
+    }
+
+    added = wanted - set(existing)
+    removed = set(existing) - wanted
+    priced = pricing or {}
+    for product_id in added:
+        price, pct = priced.get(product_id, (None, None))
+        db.add(
+            ProjectSeriesProduct(
+                series_id=series.id,
+                product_id=product_id,
+                selling_price=price,
+                max_discount_pct=pct,
+            )
+        )
+    for product_id in removed:
+        db.delete(existing[product_id])
+    for product_id in wanted & set(existing):
+        if product_id in priced:
+            price, pct = priced[product_id]
+            existing[product_id].selling_price = price
+            existing[product_id].max_discount_pct = pct
+    db.flush()
+    return {"added": len(added), "removed": len(removed), "kept": len(wanted & set(existing))}
+
+
+def series_floor(selling_price: Any, max_discount_pct: Any) -> Optional[Decimal]:
+    """The lowest a line may go when the SERIES has an opinion, or ``None``.
+
+    ``selling_price * (1 - pct/100)``, to two places: 220 at 6% is 206.80.
+
+    **Both numbers are required.** A series that names a price but no percentage returns
+    ``None`` here and the line falls through to ``price_floor_rules`` - see AC-C4. The
+    alternative, reading a missing percentage as zero, makes the floor equal the selling
+    price and puts the 56 of the client's 151 codes that carry a price and no percentage in
+    breach the moment anybody discounts a cent.
+
+    One function, called by the pricing engine AND by the screen that displays the number,
+    because a floor computed two ways is a refusal the user can argue with.
+    """
+    if selling_price is None or max_discount_pct is None:
+        return None
+    price = Decimal(str(selling_price))
+    pct = Decimal(str(max_discount_pct))
+    if price < 0 or pct < 0 or pct > 100:
+        return None
+    floor = price * (Decimal(1) - pct / Decimal(100))
+    return floor.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+SERIES_IMPORT_MODES = ("append", "replace")
+
+
+@dataclass(frozen=True)
+class _SeriesRow:
+    """A bare code, wrapped so the importer has ONE shape to walk.
+
+    Deliberately local and structural rather than importing the sheet reader's
+    ``SeriesSheetRow``: this service does not care that a row came from a spreadsheet, only
+    that it has a code and may carry a price. Anything with a ``.code`` is accepted.
+    """
+
+    code: str
+    selling_price: Any = None
+    max_discount_pct: Any = None
+
+# The SQL twin of ``normalize_code``. Written once here so the WHERE clause and the Python
+# comparison cannot drift: a code that normalises one way in memory and another in the
+# database would report itself unmatched while sitting in the catalogue.
+_NORM_PRODUCT_CODE_SQL = "lower(regexp_replace(product_code, '[-\\s]', '', 'g'))"
+
+
+def resolve_product_codes(
+    db: Session, codes: Sequence[str]
+) -> tuple[Dict[str, List[Product]], List[str]]:
+    """Codes as the catalogue understands them, and the ones it does not carry.
+
+    Returns ``(matched, unmatched)`` where ``matched`` maps the NORMALISED code to every
+    product row carrying it and ``unmatched`` holds the caller's own spelling, in the order
+    it was given, deduplicated.
+
+    One query for the whole list rather than one per code: a 151-cell sheet is a single
+    round trip. Company scope is the ORM's, so a series in one company can never nominate
+    another company's identically-coded row.
+
+    A normalised code matching MORE THAN ONE product is not an error. `CWB-242` and
+    `CWB 242` are the same code to the person who wrote the sheet, so both rows are
+    nominated; refusing would leave the admin unable to express what they plainly meant.
+    """
+    seen: Dict[str, str] = {}
+    for raw in codes:
+        normalised = normalize_code(raw)
+        if not normalised:
+            continue
+        seen.setdefault(normalised, (raw or "").strip())
+
+    if not seen:
+        return {}, []
+
+    rows = (
+        db.query(Product)
+        .filter(text(f"{_NORM_PRODUCT_CODE_SQL} = ANY(:codes)").bindparams(codes=list(seen)))
+        .all()
+    )
+
+    matched: Dict[str, List[Product]] = {}
+    for row in rows:
+        matched.setdefault(normalize_code(row.product_code), []).append(row)
+
+    unmatched = [original for key, original in seen.items() if key not in matched]
+    return matched, unmatched
+
+
+def apply_series_product_codes(
+    db: Session,
+    *,
+    series: ProjectSeries,
+    codes: Sequence[str],
+    mode: str = "append",
+) -> Dict[str, Any]:
+    """Load a list of product CODES onto a series, and report every code that missed (S18).
+
+    This is the whole of the client's definition of "standard": a list of codes off a
+    sheet, not a set of groups. Two modes, because both are real - ``append`` adds this
+    year's range to an existing series, ``replace`` makes the series say exactly what the
+    sheet says and nothing else.
+
+    **The unmatched list is the point, not a footnote.** Their own template quotes base
+    codes the catalogue only stocks as suffixed variants (`CWC1009-RL` against a stocked
+    `CWC1009-SC`), so a third of a real sheet can miss. A loader that dropped those
+    silently would turn "your sheet and our catalogue disagree here, and here" into a
+    smaller number nobody could interrogate.
+
+    An empty list is REFUSED rather than obeyed: in ``replace`` mode it would wipe the
+    series while reporting a cheerful zero.
+
+    ``codes`` accepts plain strings OR ``SeriesSheetRow``s carrying a price and a maximum
+    discount (T2). One parameter rather than two, because a separate ``rows=`` would be a
+    second way to say the same thing and the two could disagree. A row states a price for
+    EVERY product its code resolves to - `CWB-242` and `CWB 242` are one code to whoever
+    wrote the sheet - and where a code appears twice, the last row wins, which is the only
+    reading under which re-importing a corrected sheet does what the admin expects.
+    """
+    if mode not in SERIES_IMPORT_MODES:
+        raise AppException(
+            status_code=422,
+            message=f"Unknown mode '{mode}'. Use append or replace.",
+            code="series_import_mode_invalid",
+        )
+
+    # Strings and priced rows are both accepted; normalise to rows once, here.
+    sheet_rows = [
+        entry if hasattr(entry, "code") else _SeriesRow(code=str(entry)) for entry in codes
+    ]
+    submitted = len(sheet_rows)
+    matched, unmatched = resolve_product_codes(db, [row.code for row in sheet_rows])
+    if not matched and not unmatched:
+        raise AppException(
+            status_code=422,
+            message=(
+                "No product codes were found in what you sent. Paste one code per line, "
+                "or upload a sheet with a PRODUCT CODE column."
+            ),
+            code="series_import_empty",
+        )
+
+    resolved_ids = {product.id for rows in matched.values() for product in rows}
+    before = series_product_ids(db, series.id)
+    wanted = resolved_ids if mode == "replace" else before | resolved_ids
+
+    # What each product should now cost. Only rows that actually state something appear, so a
+    # code-only paste never blanks a price an admin typed on this page.
+    pricing: Dict[str, tuple[Any, Any]] = {}
+    for row in sheet_rows:
+        if row.selling_price is None and row.max_discount_pct is None:
+            continue
+        for product in matched.get(normalize_code(row.code), []):
+            pricing[product.id] = (row.selling_price, row.max_discount_pct)
+
+    outcome = set_series_products(
+        db, series=series, product_ids=wanted, pricing=pricing
+    )
+
+    return {
+        "series_id": series.id,
+        "series_name": series.name,
+        "mode": mode,
+        "submitted": submitted,
+        "unique_codes": len(matched) + len(unmatched),
+        "matched_codes": len(matched),
+        "added": outcome["added"],
+        # Counted against what was ALREADY on the series, so "you have imported this
+        # sheet before" is distinguishable from "it added nothing because nothing matched".
+        "already_present": len(resolved_ids & before),
+        "removed": outcome["removed"],
+        "product_count": len(wanted),
+        "unmatched_codes": unmatched,
+    }
