@@ -1,6 +1,6 @@
 # PLAN - Project intelligence reports (brands and architects)
 
-**Status:** scoped 2026-08-12. Awaiting the client's grill before code.
+**Status:** scoped AND grilled with the client 2026-08-12. Ready to build.
 **Slug:** project-intelligence-reports
 **UAC:** `project-intelligence-reports-acceptance-criteria.md` (governing)
 **Parent:** `AUDIT-project-sales-2026-08-12.md` - these are the audit's two requirement
@@ -29,8 +29,8 @@ confirming a pre-suggested State.
 | # | Slice | Ships |
 |---|---|---|
 | **S1** | State field | `state VARCHAR(32) NULL` on `project_sales_profile` (migration, defensively re-runnable). `malaysian_states.py`: the 16 values + `suggest_state(text)` - state names first, then an unambiguous-city table (Klang, Ipoh, Kepong...). Registration + edit form gain the select with auto-suggest (AC-A2). Backfill script per AC-A3, run on dev; prod run listed in DEPLOY notes. |
-| **S2** | Brands report | `project_intelligence_service.brand_wins(db, company_id)` → rows of `(brand_label, state, band, won_amount, won_line_count)` in one pass: won scopes joined to current-version lines, brand normalised per AC-B2, bands fixed per the decision. Route `GET /project-sales/reports/brands`. |
-| **S3** | Architects report | `architect_rollup(db, company_id)` per AC-C1-C3, reusing `project_forecast_service`'s committed/pipeline definitions and the staleness constants. Route `GET /project-sales/reports/architects`. |
+| **S2** | Brands report | `project_intelligence_service.brand_wins(db, company_id, year=None)` → rows of `(brand_label, state, band, won_amount, won_line_count)` in one pass: won scopes (LIVE current version - grill decision 5) joined to their lines, brand normalised per AC-B2, bands fixed, `year` filtering `decided_at`. Route `GET /project-sales/reports/brands?year=`. |
+| **S3** | Architects report | `architect_rollup(db, company_id, year=None)` per AC-C1-C3: scope-level win rate (grill decision 7), year over won-side only, pipeline always current; reuses `project_forecast_service`'s definitions and the staleness constants. Route `GET /project-sales/reports/architects?year=`. |
 | **S4** | FE tabs | Forecast & Reports page becomes tabbed (Forecast / Brands / Architects). Brands: matrix DataGrid with a State/Band dimension toggle. Architects: ranked DataGrid, name → party page, quiet-flag badge. Standard toolbar, `_shared/lib/money`, no prose. |
 | **S5** | Tests + browser | pytest: seeded-chain tests for both services (brand normalisation incl. unmatched snapshot, Unknown/Unstated buckets, rate-only exclusion, win-rate math, quiet flag). vitest: tab states. Playwright: sidebar → both tabs, 375px overflow check. |
 
@@ -72,5 +72,9 @@ Money is decimal STRINGS end to end, like every other report.
 - **Sparse today.** Dev has 8 quotations and 1 architect party; the report shapes must
   read correctly at that size (no fake density) AND at 100 projects (single-pass
   queries, AC-B5/C5).
+- **The live-valuation instability is accepted, on record.** Grill decision 5: a won
+  number can move after the fact. The UAC pins the behaviour with a test so a future
+  reader finds a decision, not a bug.
 - **Not in scope:** configurable bands, a region rollup, architect detail screens,
-  any change to the registration multi-select's meaning.
+  stakeholder-linked architect firms, any change to the registration multi-select's
+  meaning, `won_version_id` (deferred until the live number's instability bites).

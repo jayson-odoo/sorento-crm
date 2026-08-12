@@ -44,6 +44,22 @@ a project whose text names no state stays honestly Unknown until somebody edits 
 4. **Architects rank by won RM with the activity columns beside it** - no composite
    score. A number nobody can argue with teaches nothing.
 
+## Decisions taken at the grill (client, 2026-08-12)
+
+5. **Won money is LIVE, valued at the scope's current version** - the client's call,
+   against the freeze recommendation. A won scope revised from v5 (RM 1.8m) to v6
+   (RM 2.1m) reports RM 2.1m from that moment, with no outcome re-recorded. The
+   consequence is accepted knowingly: the report follows corrections automatically, and
+   a period's number can change after the period closes. No ``won_version_id`` column;
+   if the instability ever bites, THAT is the fix, and this line is where the decision
+   to defer it lives.
+6. **A year filter over ``decided_at``, defaulting to All time**, shared by both tabs.
+   On Architects it filters won RM and win rate; open pipeline is inherently current
+   and ignores it.
+7. **Win rate counts SCOPES** - won scopes / decided scopes - the same unit the money
+   columns sum over, so a row cannot disagree with itself. The mixed project (guard
+   house won, towers lost) truthfully reads 1/3.
+
 ## Group A - the State field
 
 - **AC-A1.** Project registration and the project edit form carry a State select with
@@ -61,12 +77,15 @@ a project whose text names no state stays honestly Unknown until somebody edits 
 
 ## Group B - the Brands tab
 
-- **AC-B1.** The matrix shows won RM per brand, from the lines of quotation scopes whose
-  outcome is WON, valued at the line totals of the scope's CURRENT version at decision
-  time. Rate-only lines contribute nothing, exactly as the totals already compute.
+- **AC-B1.** The matrix shows won RM per brand, from the lines of quotation scopes
+  whose outcome is WON, valued at the line totals of the scope's CURRENT version - live,
+  per decision 5. Rate-only lines contribute nothing, exactly as the totals already
+  compute. A test pins the live behaviour so it reads as chosen, not accidental.
 - **AC-B2.** The brand of a line is its `brand_snapshot` - what the paper said -
   normalised against the brands table by name; a snapshot matching no brand appears
   verbatim in its own row, never silently dropped into Other.
+- **AC-B2a.** The year filter (decision 6) restricts to scopes with ``decided_at`` in
+  the chosen year; All time is the default and the empty-year case renders honestly.
 - **AC-B3.** The column dimension flips between State and Budget band. A project with no
   state shows under **Unknown**; no estimated value shows under **Unstated**. Both
   columns render whenever non-empty - honesty about the gap is what makes the backfill
@@ -78,10 +97,12 @@ a project whose text names no state stays honestly Unknown until somebody edits 
 
 ## Group C - the Architects tab
 
-- **AC-C1.** One row per architect party linked to at least one project, with: projects
-  linked, won RM, open pipeline RM, win rate (won scopes / decided scopes), and last
-  activity (the newest `last_meaningful_activity_at` across their projects). Sorted by
-  won RM descending.
+- **AC-C1.** One row per architect party that is some project's ``architect_party_id``
+  (stakeholder-linked firms are out of scope, stated), with: projects linked, won RM,
+  open pipeline RM, win rate per decision 7, and last activity (the newest
+  ``last_meaningful_activity_at`` across their projects). Sorted by won RM descending.
+- **AC-C1a.** The year filter applies to won RM and win rate; pipeline ignores it
+  (decision 6) and the screen does not pretend otherwise.
 - **AC-C2.** Won RM and pipeline RM reuse the forecast service's own definitions -
   committed and pipeline respectively - never a second implementation of either number.
 - **AC-C3.** An architect whose newest project activity is older than the staleness
