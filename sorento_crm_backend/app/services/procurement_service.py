@@ -2192,7 +2192,49 @@ class StockInquiryService:
                     )
             except Exception as e:
                 logger.warning("Failed to create in-app notification for user %s: %s", uid, e)
-    
+
+    def _attach_sla_assignees(
+        self,
+        items,
+        source_entity_types: tuple = ("stock_inquiry",),
+    ) -> None:
+        """Set `assigned_to_id` / `assigned_to_name` on each inquiry from the latest
+        unresolved form-SLA tracker, batched per page (mirrors complaint / PR)."""
+        ids = [str(getattr(i, "id", "")) for i in items if getattr(i, "id", None)]
+        if not ids:
+            return
+        from app.models.sla import ConversationSLATracking
+        from app.models.user import User
+
+        rows = (
+            self.db.query(ConversationSLATracking)
+            .filter(
+                ConversationSLATracking.source_entity_type.in_(source_entity_types),
+                ConversationSLATracking.source_entity_id.in_(ids),
+                ConversationSLATracking.is_resolved.is_(False),
+            )
+            .order_by(
+                ConversationSLATracking.source_entity_id,
+                ConversationSLATracking.initiated_at.desc(),
+            )
+            .all()
+        )
+        latest: dict = {}
+        for r in rows:
+            latest.setdefault(r.source_entity_id, r)  # first per id = latest (desc)
+        uids = {r.assigned_to_id for r in latest.values() if r.assigned_to_id}
+        users = (
+            {u.id: u for u in self.db.query(User).filter(User.id.in_(uids)).all()}
+            if uids
+            else {}
+        )
+        for it in items:
+            tracker = latest.get(str(it.id))
+            aid = tracker.assigned_to_id if tracker else None
+            user = users.get(aid) if aid else None
+            setattr(it, "assigned_to_id", aid)
+            setattr(it, "assigned_to_name", (user.name or user.email) if user else None)
+
     def list_inquiries(
         self,
         page: int = 1,
@@ -2262,9 +2304,13 @@ class StockInquiryService:
         total = q.count()
         offset = (page - 1) * limit
         inquiries = q.offset(offset).limit(limit).all()
-        
+
+        # "Assigned To" = latest unresolved form-SLA assignee for this inquiry,
+        # batched per page (same pattern as complaints / purchase requests).
+        self._attach_sla_assignees(inquiries, source_entity_types=("stock_inquiry",))
+
         from app.schemas.common import PaginationResponse
-        
+
         return {
             "data": inquiries,
             "pagination": PaginationResponse(total=total, page=page, limit=limit),
@@ -4938,10 +4984,16 @@ class PurchaseRequestService:
             "empty": total == 0,
         }
 
-    def _attach_sla_assignees(self, items) -> None:
+    def _attach_sla_assignees(
+        self,
+        items,
+        source_entity_types: tuple = ("purchase_request", "sponsorship_form"),
+    ) -> None:
         """Set `assigned_to_id` / `assigned_to_name` on each header from the latest
         unresolved form-SLA tracker (project-sales pre-approval, CS post-approval).
         Mirrors complaint's `_latest_unresolved_sla_assignee_name`, batched per page.
+        `source_entity_types` selects which tracker rows to match (stock inquiries
+        pass ("stock_inquiry",)).
         """
         ids = [str(getattr(i, "id", "")) for i in items if getattr(i, "id", None)]
         if not ids:
@@ -4952,9 +5004,7 @@ class PurchaseRequestService:
         rows = (
             self.db.query(ConversationSLATracking)
             .filter(
-                ConversationSLATracking.source_entity_type.in_(
-                    ("purchase_request", "sponsorship_form")
-                ),
+                ConversationSLATracking.source_entity_type.in_(source_entity_types),
                 ConversationSLATracking.source_entity_id.in_(ids),
                 ConversationSLATracking.is_resolved.is_(False),
             )

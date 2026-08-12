@@ -58,12 +58,16 @@ export type UseCase =
   | 'complaint'
   | 'stock_inquiry'
   | 'purchase_request'
-  | 'sponsorship_form';
+  | 'sponsorship_form'
+  | 'sla_escalation'
+  | 'sla_assignment';
 
 export type ParamVariable =
   | 'contact_name'
+  | 'assignee_name'
   | 'entity_number'
   | 'status'
+  | 'due_date'
   | 'reason'
   | 'portal_url'
   | 'message';
@@ -129,12 +133,26 @@ export const USE_CASES: { key: UseCase; label: string; description: string }[] =
     label: 'Sponsorship Form',
     description: 'Approval updates sent to the sponsorship applicant.',
   },
+  {
+    key: 'sla_escalation',
+    label: 'SLA Escalation',
+    description:
+      'Staff alert when an SLA is escalated to them. Used as the fallback when the staff member’s 24h WhatsApp window is closed.',
+  },
+  {
+    key: 'sla_assignment',
+    label: 'SLA Assignment',
+    description:
+      'Staff alert when an SLA is newly assigned to them. Used as the fallback when the staff member’s 24h WhatsApp window is closed.',
+  },
 ];
 
 export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: string }[] = [
   { key: 'contact_name', label: 'Contact name', description: 'WhatsApp contact display name' },
+  { key: 'assignee_name', label: 'Assignee name', description: 'Staff member the SLA is assigned/escalated to (e.g. "Hi CK,")' },
   { key: 'entity_number', label: 'Entity number', description: 'e.g. CMP-2606-0012 / RMA-PS2605-0017' },
   { key: 'status', label: 'Status', description: 'New status of the record (approved, rejected…)' },
+  { key: 'due_date', label: 'Due date', description: 'SLA response/resolution deadline (e.g. "22 Jun 2026, 12:55 PM")' },
   { key: 'reason', label: 'Reason', description: 'Decision reason when present' },
   { key: 'portal_url', label: 'Portal URL', description: 'Customer portal link for the record' },
   { key: 'message', label: 'Full update message', description: 'The composed update text, flattened to one line' },

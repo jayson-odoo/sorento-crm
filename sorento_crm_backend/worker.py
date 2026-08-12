@@ -65,6 +65,6 @@ def _maybe_start_scheduler():
 
 if __name__ == '__main__':
     _maybe_start_scheduler()
-    worker = ForkSafeWorker(['imports', 'respond_io'], connection=redis_conn)
-    logger.info("Starting RQ worker for 'imports' and 'respond_io' queues...")
+    worker = ForkSafeWorker(['imports', 'respond_io', 'notifications'], connection=redis_conn)
+    logger.info("Starting RQ worker for 'imports', 'respond_io' and 'notifications' queues...")
     worker.work()

@@ -102,7 +102,9 @@ export default function RespondOutboxList() {
         header: ({ column }) => <DataGridColumnHeader title="Message / Template" column={column} />,
         cell: ({ row }) => {
           const r = row.original;
-          const preview = r.sent_as === 'template' ? r.template_name ?? r.message_text : r.message_text;
+          // Show the actual sent content. For templates this is the body rendered
+          // with its params; fall back to the template name if no rendered text.
+          const preview = r.message_text ?? r.template_name;
           return (
             <span className="block max-w-[360px] truncate text-sm" title={preview ?? undefined}>
               {preview ?? '—'}

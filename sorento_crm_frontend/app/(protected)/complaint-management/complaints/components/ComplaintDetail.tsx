@@ -2,7 +2,8 @@
 
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, FileDown } from 'lucide-react';
+import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, FileDown, ArrowUpCircle } from 'lucide-react';
+import { useSlaEscalateAction } from '@/app/(protected)/sla-management/_shared/useSlaEscalateAction';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { complaintStatusPillClass, complaintStatusLabel } from '@/lib/complaint-status';
@@ -96,6 +97,9 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const [rejectReason, setRejectReason] = useState('');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
+  // Escalate the active form-SLA tracker straight from the actions menu (TCK-28),
+  // shared across all SLA-backed forms — no need to open the SLA Tracking tab.
+  const slaEscalate = useSlaEscalateAction('complaint', complaintId);
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
   const [editTechnicalResponseOpen, setEditTechnicalResponseOpen] = useState(false);
   const [editTechnicalResponseValue, setEditTechnicalResponseValue] = useState('');
@@ -355,6 +359,13 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               </DropdownMenuItem>
             )}
             <DropdownMenuItem
+              disabled={slaEscalate.resolving}
+              onClick={slaEscalate.openEscalate}
+            >
+              <ArrowUpCircle className="size-4" />
+              {slaEscalate.resolving ? 'Loading SLA…' : 'Escalate SLA'}
+            </DropdownMenuItem>
+            <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               onClick={() => setDeleteDialogOpen(true)}
             >
@@ -362,6 +373,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               Delete
             </DropdownMenuItem>
           </DetailActionsMenu>
+          {slaEscalate.dialog}
           <ComplaintNavigation complaintId={complaintId} />
         </div>
       </div>

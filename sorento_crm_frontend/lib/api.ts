@@ -411,7 +411,38 @@ export async function apiFetch(
   }
 
   init = _attachImpersonationHeader(url, init);
-  return fetch(url as RequestInfo, init);
+  const response = await fetch(url as RequestInfo, init);
+
+  // Self-heal a transient auth miss. The token cache is empty after every full
+  // page load, so the first backend call must mint a fresh JWT; if that mint
+  // momentarily fails (getToken returns null → /api/auth/token 401), the request
+  // goes out with no Bearer and the backend replies 401 "Authentication required"
+  // (surfaced as a toast). Re-mint once and retry before giving up.
+  const urlStr = typeof url === 'string' ? url : '';
+  const retried = Boolean((init as { __authRetried?: boolean })?.__authRetried);
+  if (
+    response.status === 401 &&
+    typeof window !== 'undefined' &&
+    /\/api\/v1\//.test(urlStr) &&
+    !retried
+  ) {
+    clearCachedAuthToken();
+    const freshToken = await getCachedAuthToken(basePath);
+    if (freshToken) {
+      const retryHeaders = new Headers(
+        (init as RequestInit | undefined)?.headers as HeadersInit | undefined,
+      );
+      retryHeaders.set('Authorization', `Bearer ${freshToken}`);
+      const retryInit: RequestInit & { __authRetried?: boolean } = {
+        ...(init as RequestInit),
+        headers: retryHeaders,
+        credentials: 'include',
+        __authRetried: true,
+      };
+      return fetch(url as RequestInfo, retryInit);
+    }
+  }
+  return response;
 }
 
 export function getClientIP(request: NextRequest): string {

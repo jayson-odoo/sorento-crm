@@ -18,6 +18,8 @@ export interface StockInquiry {
   last_responded_by?: string | null;
   last_responded_by_name?: string | null;
   last_responded_at?: string | null;
+  assigned_to_id?: string | null;
+  assigned_to_name?: string | null;
   rejection_reason?: string | null;
   rejected_at?: string | null;
   rejected_by?: string | null;

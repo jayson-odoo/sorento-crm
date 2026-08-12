@@ -39,6 +39,11 @@ TEMPLATE_DEFAULT_USE_CASES = (
     "stock_inquiry",
     "purchase_request",
     "sponsorship_form",
+    # SLA staff alerts (TCK-29): escalation / assignment WhatsApp notifications
+    # send with these use cases. Configurable here so a fallback template fires
+    # when the recipient's 24h window is closed (the common case for staff).
+    "sla_escalation",
+    "sla_assignment",
 )
 
 

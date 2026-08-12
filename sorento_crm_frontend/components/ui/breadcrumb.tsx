@@ -1,4 +1,5 @@
 import * as React from 'react';
+import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import { ChevronRight, MoreHorizontal } from 'lucide-react';
 import { Slot as SlotPrimitive } from 'radix-ui';
@@ -28,15 +29,28 @@ function BreadcrumbItem({ className, ...props }: React.ComponentProps<'li'>) {
 function BreadcrumbLink({
   asChild,
   className,
+  href,
   ...props
 }: React.ComponentProps<'a'> & {
   asChild?: boolean;
 }) {
-  const Comp = asChild ? SlotPrimitive.Slot : 'a';
+  const classes = cn('transition-colors hover:text-foreground', className);
 
-  return (
-    <Comp data-slot="breadcrumb-link" className={cn('transition-colors hover:text-foreground', className)} {...props} />
-  );
+  // Caller controls the element (e.g. wraps a next/link itself).
+  if (asChild) {
+    return <SlotPrimitive.Slot data-slot="breadcrumb-link" className={classes} {...props} />;
+  }
+
+  // Internal links MUST navigate client-side. A plain <a> triggers a full page
+  // reload, which cold-starts the client-side session + token cache — the window
+  // where useSession momentarily reads `unauthenticated` (random logout) or the
+  // token mint blips (`Authentication required`). next/link keeps the SPA context
+  // alive so neither happens. Fixing it here fixes every breadcrumb app-wide.
+  if (typeof href === 'string' && href.startsWith('/')) {
+    return <Link data-slot="breadcrumb-link" href={href} className={classes} {...props} />;
+  }
+
+  return <a data-slot="breadcrumb-link" href={href} className={classes} {...props} />;
 }
 
 function BreadcrumbPage({ className, ...props }: React.ComponentProps<'span'>) {

@@ -649,6 +649,8 @@ class StockInquiryResponse(StockInquiryBase):
     last_responded_by: Optional[str] = None
     last_responded_by_name: Optional[str] = None
     last_responded_at: Optional[datetime] = None
+    assigned_to_id: Optional[str] = None  # latest unresolved form-SLA assignee (users.id)
+    assigned_to_name: Optional[str] = None  # resolved display name
     rejection_reason: Optional[str] = None
     rejected_at: Optional[datetime] = None
     rejected_by: Optional[str] = None

@@ -2,7 +2,8 @@
 
 import { useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, FileDown, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare } from 'lucide-react';
+import { Edit, Trash2, FileDown, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle } from 'lucide-react';
+import { useSlaEscalateAction } from '@/app/(protected)/sla-management/_shared/useSlaEscalateAction';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -56,6 +57,7 @@ interface StockInquiryDetailProps {
 export default function StockInquiryDetail({
   inquiryId,
 }: StockInquiryDetailProps) {
+  const slaEscalate = useSlaEscalateAction('stock_inquiry', inquiryId);
   const router = useRouter();
   const isValidId = inquiryId && inquiryId !== 'new' && inquiryId !== 'edit';
   const { data: inquiry, isLoading } = useStockInquiry(
@@ -410,6 +412,13 @@ export default function StockInquiryDetail({
               {exporting ? 'Exporting…' : 'Export to Excel'}
             </DropdownMenuItem>
             <DropdownMenuItem
+              disabled={slaEscalate.resolving}
+              onClick={slaEscalate.openEscalate}
+            >
+              <ArrowUpCircle className="size-4" />
+              {slaEscalate.resolving ? 'Loading SLA…' : 'Escalate SLA'}
+            </DropdownMenuItem>
+            <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               onClick={() => setDeleteDialogOpen(true)}
             >
@@ -417,6 +426,7 @@ export default function StockInquiryDetail({
               Delete
             </DropdownMenuItem>
           </DetailActionsMenu>
+          {slaEscalate.dialog}
           <RecordNavigation
             basePath="/procurement-management/stock-inquiries"
             currentId={inquiryId}

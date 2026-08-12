@@ -1,6 +1,7 @@
 'use client';
 
 import { ReactNode } from 'react';
+import type { Session } from 'next-auth';
 import { QueryProvider } from '@/providers/query-provider';
 import { AuthProvider } from '@/providers/auth-provider';
 import { SettingsProvider } from '@/providers/settings-provider';
@@ -15,10 +16,16 @@ import { Toaster } from '@/components/ui/sonner';
  * Loaded via next/dynamic from the root layout to keep the layout chunk smaller
  * and avoid ChunkLoadError timeouts on slow connections.
  */
-export function ClientProviders({ children }: { children: ReactNode }) {
+export function ClientProviders({
+  children,
+  session,
+}: {
+  children: ReactNode;
+  session?: Session | null;
+}) {
   return (
     <QueryProvider>
-      <AuthProvider>
+      <AuthProvider session={session}>
         <SettingsProvider>
           <ThemeProvider>
             <I18nProvider>

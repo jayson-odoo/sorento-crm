@@ -116,8 +116,52 @@ def _send_whatsapp_for_notification(db, notification: Notification, user, delive
     """
     from app.services.respond_link_service import resolve_user_respond_contact
     from app.services.respond_messaging_service import send_text_or_template
+    from app.services.integration_service import IntegrationLogService
+    from app.schemas.integration import IntegrationLogCreate
 
     now = datetime.utcnow()
+    data = notification.data if isinstance(notification.data, dict) else {}
+    # Surface the send (or its failure) in the Respond Outbox, which reads
+    # integration_log (channel=respond_io, direction=outbound). Without this the
+    # escalation/assignment WhatsApp send is invisible there even though it fired.
+    business_table = str(data.get("source_entity_type") or "form_sla_tracking")
+    business_id = str(data.get("source_entity_id") or notification.id)
+    identifier = ""
+
+    # Resolve the message text + use case up front so the Respond Outbox log shows
+    # the attempted message even when the send raises before returning a payload
+    # (e.g. a 401). On success this default is replaced by the actual request payload.
+    event_type = str(getattr(notification, "event_type", "") or "")
+    use_case = data.get("whatsapp_use_case") or (
+        "sla_escalation" if event_type == "escalated" else "sla_assignment"
+    )
+    text = data.get("whatsapp_text") or (
+        f"{notification.title}\n\n{notification.body or ''}".strip()
+    )
+    context_vars = data.get("whatsapp_context_vars") if isinstance(data.get("whatsapp_context_vars"), dict) else None
+    attempted_payload = {"message": {"type": "text", "text": text}, "use_case": use_case}
+
+    def _log_outbound(status, *, request_payload=None, response_payload=None, status_code=None):
+        try:
+            IntegrationLogService(db).create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="respond_io",
+                    business_table=business_table,
+                    business_id=business_id,
+                    external_reference=identifier or "",
+                    direction="outbound",
+                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier or ''}/message",
+                    http_method="POST",
+                    status=status,
+                    status_code=status_code,
+                    response_payload=(str(response_payload)[:50000] if response_payload else None),
+                ),
+                request_payload_dict=request_payload or {},
+            )
+        except Exception as log_err:  # logging must never break the delivery
+            logger.warning("Failed to write respond outbox log for notification %s: %s", notification.id, log_err)
+            db.rollback()
+
     try:
         contact = resolve_user_respond_contact(db, user)
         if not contact or not contact.respond_io_id:
@@ -125,20 +169,10 @@ def _send_whatsapp_for_notification(db, notification: Notification, user, delive
             delivery.error_message = "No resolvable WhatsApp contact"
             db.commit()
             return
-        data = notification.data if isinstance(notification.data, dict) else {}
-        # Callers (e.g. the daily summary) can override the use-case / text /
-        # template params via the notification data; default derives from event_type.
-        event_type = str(getattr(notification, "event_type", "") or "")
-        use_case = data.get("whatsapp_use_case") or (
-            "sla_escalation" if event_type == "escalated" else "sla_assignment"
-        )
-        text = data.get("whatsapp_text") or (
-            f"{notification.title}\n\n{notification.body or ''}".strip()
-        )
-        context_vars = data.get("whatsapp_context_vars") if isinstance(data.get("whatsapp_context_vars"), dict) else None
-        send_text_or_template(
+        identifier = str(contact.respond_io_id)
+        result = send_text_or_template(
             db,
-            identifier=str(contact.respond_io_id),
+            identifier=identifier,
             text=text,
             use_case=use_case,
             context_vars=context_vars,
@@ -147,14 +181,36 @@ def _send_whatsapp_for_notification(db, notification: Notification, user, delive
         delivery.status = "sent"
         delivery.sent_at = now
         db.commit()
+        _log_outbound(
+            "success",
+            request_payload=(result.get("request_payload") if isinstance(result, dict) else None) or attempted_payload,
+            response_payload=result.get("response") if isinstance(result, dict) else None,
+        )
     except Exception as e:  # best-effort: degrade, never raise
         logger.warning("WhatsApp delivery failed for notification %s: %s", notification.id, e)
+        resp = getattr(e, "response", None)
+        resp_code = getattr(resp, "status_code", None) if resp is not None else None
+        resp_body = None
+        if resp is not None:
+            try:
+                resp_body = (resp.text or "")[:50000]
+            except Exception:
+                resp_body = None
         try:
             delivery.status = "failed"
             delivery.error_message = str(e)[:500]
             db.commit()
         except Exception:
             db.rollback()
+        # Prefer the real attempted payload the send layer attached (template name
+        # + params for a closed-window template send); fall back to the text guess.
+        real_payload = getattr(e, "_respond_request_payload", None) or attempted_payload
+        _log_outbound(
+            "failed",
+            request_payload=real_payload,
+            response_payload=resp_body or str(e)[:50000],
+            status_code=resp_code,
+        )
 
 
 def _enqueue_email_for_delivery(db, notification: Notification, user, delivery: NotificationDelivery, event_key: str) -> None:

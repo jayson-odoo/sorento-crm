@@ -717,6 +717,35 @@ class FormSLAOrchestrator:
             title = f"SLA update: {number}"
             body = f"{type_label.capitalize()} {number} status updated.\n\nOpen: {full_link}"
 
+        # Assignee (the WhatsApp recipient is the staff member, so contact_name
+        # and assignee_name are both the assignee). Used to fill template params.
+        assignee_name: Optional[str] = None
+        try:
+            from app.models.user import User
+
+            _assignee = (
+                self.db.query(User).filter(User.id == tracker.assigned_to_id).first()
+            )
+            if _assignee:
+                assignee_name = _assignee.name
+        except Exception:
+            logger.warning("notify_assignee: assignee name lookup failed", exc_info=True)
+
+        # Context vars for the WhatsApp template fallback (closed 24h window).
+        # Same variable set the template-defaults UI maps, so a configured
+        # template like "Hi {{assignee_name}}, SLA {{entity_number}} escalated…"
+        # fills with real values instead of "-".
+        whatsapp_context_vars = {
+            "contact_name": assignee_name,
+            "assignee_name": assignee_name,
+            "entity_number": number,
+            "status": f"Tier {tracker.current_tier}" if tracker.current_tier else None,
+            "due_date": due_str,
+            "reason": reason,
+            "portal_url": full_link,
+            "message": body,
+        }
+
         try:
             # Escalation + new assignment are WhatsApp-eligible (TCK-29); the
             # service gates on the recipient's notify_whatsapp + linked contact.
@@ -731,6 +760,7 @@ class FormSLAOrchestrator:
                     "source_entity_type": tracker.source_entity_type,
                     "source_entity_id": tracker.source_entity_id,
                     "link": link,
+                    "whatsapp_context_vars": whatsapp_context_vars,
                 },
                 source_entity_type="form_sla_tracking",
                 source_entity_id=str(tracker.id),

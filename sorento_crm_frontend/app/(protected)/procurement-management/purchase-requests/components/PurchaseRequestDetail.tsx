@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Copy, Check, ChevronDown, Clock, MessageSquare, FileDown, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
+import { Edit, Trash2, Send, Copy, Check, ChevronDown, Clock, MessageSquare, FileDown, Link2, ScrollText, BadgeCheck, XCircle, ArrowUpCircle } from 'lucide-react';
+import { useSlaEscalateAction } from '@/app/(protected)/sla-management/_shared/useSlaEscalateAction';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -112,6 +113,8 @@ export default function PurchaseRequestDetail({
   const requestTypeForNav = basePath.includes('sponsorship-forms')
     ? 'sponsorship_form'
     : 'purchase_request';
+  // Same SLA source type for both purchase requests and sponsorship forms.
+  const slaEscalate = useSlaEscalateAction(requestTypeForNav, requestId);
   const navParams = useMemo(
     () => ({
       pageIndex: 0,
@@ -563,7 +566,15 @@ export default function PurchaseRequestDetail({
                 </DropdownMenuItem>
               </>
             )}
+            <DropdownMenuItem
+              disabled={slaEscalate.resolving}
+              onClick={slaEscalate.openEscalate}
+            >
+              <ArrowUpCircle className="size-4" />
+              {slaEscalate.resolving ? 'Loading SLA…' : 'Escalate SLA'}
+            </DropdownMenuItem>
           </DetailActionsMenu>
+          {slaEscalate.dialog}
           <RecordNavigation
             basePath={basePath}
             currentId={requestId}

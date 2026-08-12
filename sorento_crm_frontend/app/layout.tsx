@@ -25,11 +25,17 @@ export const metadata: Metadata = {
   },
 };
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: {
   children: ReactNode;
 }) {
+  // Auth is resolved entirely client-side (useSession + the /api/auth/token
+  // mint, both JWT-only — no DB). We deliberately do NOT call getServerSession
+  // here: authOptions uses PrismaAdapter, so seeding the session server-side
+  // would hit the DB on every page render — slow/hangs under `next start` +
+  // output:standalone, and a null result would flag the user as logged out.
+  // The protected layout's debounced redirect tolerates the brief cold-start.
   return (
     <html className="h-full" suppressHydrationWarning>
       <body

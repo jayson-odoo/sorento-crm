@@ -243,22 +243,46 @@ def send_template_for_use_case(
         param_count=template.param_count,
         context_vars=context_vars,
     )
+    # Render the template body with the resolved params so logs/outbox show the
+    # ACTUAL message content (not just the template name) — mirrors the inbound
+    # template backfill in RespondClient._fill_template_message_text.
+    rendered_text = template.body_text or ""
+    for i, p in enumerate(params, start=1):
+        rendered_text = rendered_text.replace(f"{{{{{i}}}}}", str(p))
+    # Attach the attempted template payload to any send error so failure logs
+    # (Respond Outbox) show the real template attempt, not a generic text guess.
+    attempted_payload = {
+        "message": {
+            "type": "whatsapp_template",
+            "text": rendered_text,
+            "template_name": template.name,
+            "template_id": str(template.id),
+            "use_case": use_case,
+            "parameters": params,
+        }
+    }
     # Single-workspace today: RespondClient() resolves the default workspace key.
     # Switch to RespondClient.for_identifier(db, identifier) when multi-workspace
     # routing per contact is needed.
-    response = RespondClient().send_template_message(
-        identifier,
-        channel_id=template.channel.respond_channel_id,
-        template_name=template.name,
-        language_code=template.language_code,
-        body_text=template.body_text,
-        parameters=params,
-    )
+    try:
+        response = RespondClient().send_template_message(
+            identifier,
+            channel_id=template.channel.respond_channel_id,
+            template_name=template.name,
+            language_code=template.language_code,
+            body_text=template.body_text,
+            parameters=params,
+        )
+    except Exception as e:
+        if not hasattr(e, "_respond_request_payload"):
+            e._respond_request_payload = attempted_payload
+        raise
     return {
         "response": response,
         "template_name": template.name,
         "template_id": str(template.id),
         "params": params,
+        "rendered_text": rendered_text,
     }
 
 
@@ -283,12 +307,18 @@ def send_text_or_template(
     window = get_window_state(db, identifier, respond_contact_id=respond_contact_id)
 
     if window["open"]:
-        response = RespondClient().send_message(identifier, text)
+        text_payload = {"message": {"type": "text", "text": text}}
+        try:
+            response = RespondClient().send_message(identifier, text)
+        except Exception as e:
+            if not hasattr(e, "_respond_request_payload"):
+                e._respond_request_payload = text_payload
+            raise
         return {
             "sent_as": "text",
             "response": response,
             "window_state": window,
-            "request_payload": {"message": {"type": "text", "text": text}},
+            "request_payload": text_payload,
         }
 
     vars_resolved = dict(context_vars or {})
@@ -312,6 +342,7 @@ def send_text_or_template(
         "request_payload": {
             "message": {
                 "type": "whatsapp_template",
+                "text": result.get("rendered_text"),
                 "template_name": result["template_name"],
                 "template_id": result["template_id"],
                 "use_case": use_case,

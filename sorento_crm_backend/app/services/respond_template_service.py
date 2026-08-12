@@ -35,8 +35,10 @@ logger = logging.getLogger(__name__)
 # Variables resolvable per use case by respond_messaging_service.
 PARAM_VARIABLES = (
     "contact_name",
+    "assignee_name",
     "entity_number",
     "status",
+    "due_date",
     "reason",
     "portal_url",
     "message",
