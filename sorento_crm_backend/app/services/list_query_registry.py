@@ -4,12 +4,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, Optional
 
+from app.models.certificate import Certificate
 from app.models.marketing import Promotion
 from app.models.order import Order
 from app.models.product import Product
 from app.models.procurement import Supplier
 from app.models.tickets import Ticket
 from app.models.workflow_forms import WorkflowFormDefinition, WorkflowSubmission
+from app.schemas.certificate import CertificateResponse
 from app.schemas.marketing import PromotionResponse
 from app.schemas.order import OrderResponse
 from app.schemas.product import ProductResponse
@@ -51,6 +53,29 @@ def _serialize_workflow_submissions(rows: Iterable[Any]) -> list[Any]:
 
 def _serialize_tickets(rows: Iterable[Any]) -> list[Any]:
     return [TicketResponse.model_validate(x) for x in rows]
+
+
+def _serialize_certificates(rows: Iterable[Any]) -> list[Any]:
+    """Certificates carry DERIVED validity, so a plain ``model_validate`` is wrong.
+
+    ``validity_state`` / ``is_expired`` / ``days_until_expiry`` are computed off
+    the CURRENT revision at read time and are not columns - validating the ORM
+    row straight into the schema would fail on the required ``validity_state``.
+    The session is taken off the rows themselves because the serializer contract
+    has nowhere to pass one.
+    """
+    from sqlalchemy.orm import object_session
+
+    rows = list(rows)
+    if not rows:
+        return []
+    db = object_session(rows[0])
+    if db is None:  # pragma: no cover - detached rows are not a real path
+        return [CertificateResponse.model_validate(x) for x in rows]
+
+    from app.services.certificate_service import CertificateService
+
+    return CertificateService(db).serialize_many(rows)
 
 
 @dataclass(frozen=True)
@@ -126,6 +151,16 @@ ADAPTERS: Dict[str, ListQueryResourceAdapter] = {
         compile_prefix="sub",
         display_name="Workflow Form Submissions",
         description="Workflow form submission list-query metadata",
+    ),
+    "certificates": ListQueryResourceAdapter(
+        resource_key="certificates",
+        view_slug="master_data.certificates.view",
+        export_slug="master_data.certificates.export",
+        serializer=_serialize_certificates,
+        model=Certificate,
+        compile_prefix="certificate",
+        display_name="Certificates",
+        description="Certificate register list filter/export metadata",
     ),
     "tickets": ListQueryResourceAdapter(
         resource_key="tickets",

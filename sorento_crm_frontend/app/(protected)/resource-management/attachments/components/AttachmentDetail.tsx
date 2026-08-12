@@ -37,6 +37,7 @@ const ENTITY_ROUTES = {
   promotion: { label: 'Promotion', path: '/marketing-management/promotions' },
   form: { label: 'Form', path: '/forms-management/forms' },
   packing_list: { label: 'Packing List', path: '/procurement-management/packing-lists' },
+  certificate: { label: 'Certificate', path: '/master-data-management/certificates' },
 } as const;
 
 function LinkedEntityLink({
@@ -112,10 +113,14 @@ function LinkagesTabs({ attachment }: { attachment: Attachment }) {
   const promotions = attachment.linked_promotions ?? [];
   const form = attachment.linked_form ?? null;
   const packingLists = attachment.linked_packing_lists ?? [];
+  // Read-only: a file is linked to a certificate by BEING one of its filed
+  // revisions, so there is nothing here to attach or detach - unlinking would
+  // leave the revision with no document behind it.
+  const certificates = attachment.linked_certificates ?? [];
 
   return (
     <Tabs defaultValue="products" className="w-full">
-      <TabsList className="grid w-full grid-cols-4">
+      <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-5">
         <TabsTrigger value="products">
           Products {products.length > 0 && `(${products.length})`}
         </TabsTrigger>
@@ -127,6 +132,9 @@ function LinkagesTabs({ attachment }: { attachment: Attachment }) {
         </TabsTrigger>
         <TabsTrigger value="packing_lists">
           Packing Lists {packingLists.length > 0 && `(${packingLists.length})`}
+        </TabsTrigger>
+        <TabsTrigger value="certificates">
+          Certificates {certificates.length > 0 && `(${certificates.length})`}
         </TabsTrigger>
       </TabsList>
       <TabsContent value="products" className="mt-4">
@@ -159,6 +167,13 @@ function LinkagesTabs({ attachment }: { attachment: Attachment }) {
           type="packing_list"
           items={packingLists}
           emptyMessage="No packing lists linked to this attachment."
+        />
+      </TabsContent>
+      <TabsContent value="certificates" className="mt-4">
+        <LinkagesTable
+          type="certificate"
+          items={certificates}
+          emptyMessage="This file is not filed as a certificate."
         />
       </TabsContent>
     </Tabs>

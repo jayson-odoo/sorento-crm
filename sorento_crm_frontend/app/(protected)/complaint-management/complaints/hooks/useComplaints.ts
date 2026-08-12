@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { isDeferredFormAction } from '@/app/(protected)/sla-management/_shared/formAction';
 import { buildDataGridParams } from '@/lib/api-client';
 import {
   useRecordNeighbours,
@@ -140,15 +141,36 @@ export function useUpdateComplaintAndReply() {
   });
 }
 
+/** Refetch everything a decision touches, including the countdown banner's reads. */
+function decisionInvalidate(
+  queryClient: ReturnType<typeof useQueryClient>,
+  id: string,
+) {
+  queryClient.invalidateQueries({ queryKey: ['complaints'] });
+  queryClient.invalidateQueries({ queryKey: ['complaint'] });
+  queryClient.invalidateQueries({ queryKey: ['complaint-conversation', id] });
+  // A 202 parks the action instead of moving the complaint; the countdown banner
+  // reads these, so they must refetch or the deferral is invisible until reload.
+  queryClient.invalidateQueries({ queryKey: ['form-action-current'] });
+  queryClient.invalidateQueries({ queryKey: ['form-action-eligibility'] });
+}
+
+/** Deferred => countdown copy; immediate => the action's own success copy. */
+function toastActionResult(result: unknown, immediateMessage: string) {
+  if (isDeferredFormAction(result)) {
+    toast.success('Action is on hold for a few seconds - you can still undo.');
+  } else {
+    toast.success(immediateMessage);
+  }
+}
+
 export function useApproveComplaint() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => approveComplaint(id),
-    onSuccess: (_, id) => {
-      queryClient.invalidateQueries({ queryKey: ['complaints'] });
-      queryClient.invalidateQueries({ queryKey: ['complaint'] });
-      queryClient.invalidateQueries({ queryKey: ['complaint-conversation', id] });
-      toast.success('Complaint approved and customer notified.');
+    onSuccess: (result, id) => {
+      decisionInvalidate(queryClient, id);
+      toastActionResult(result, 'Complaint approved and customer notified.');
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to approve complaint'),
@@ -160,11 +182,9 @@ export function useRejectComplaint() {
   return useMutation({
     mutationFn: ({ id, rejection_reason }: { id: string; rejection_reason: string }) =>
       rejectComplaint(id, rejection_reason),
-    onSuccess: (_, { id }) => {
-      queryClient.invalidateQueries({ queryKey: ['complaints'] });
-      queryClient.invalidateQueries({ queryKey: ['complaint'] });
-      queryClient.invalidateQueries({ queryKey: ['complaint-conversation', id] });
-      toast.success('Complaint rejected and customer notified.');
+    onSuccess: (result, { id }) => {
+      decisionInvalidate(queryClient, id);
+      toastActionResult(result, 'Complaint rejected and customer notified.');
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to reject complaint'),
@@ -176,11 +196,9 @@ export function useProcessComplaintByCs() {
   return useMutation({
     mutationFn: ({ id, note }: { id: string; note?: string }) =>
       processComplaintByCs(id, note),
-    onSuccess: (_, { id }) => {
-      queryClient.invalidateQueries({ queryKey: ['complaints'] });
-      queryClient.invalidateQueries({ queryKey: ['complaint'] });
-      queryClient.invalidateQueries({ queryKey: ['complaint-conversation', id] });
-      toast.success('Complaint marked as processed by CS.');
+    onSuccess: (result, { id }) => {
+      decisionInvalidate(queryClient, id);
+      toastActionResult(result, 'Complaint marked as processed by CS.');
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to mark complaint processed by CS'),
@@ -192,11 +210,9 @@ export function useCloseComplaint() {
   return useMutation({
     mutationFn: ({ id, note }: { id: string; note?: string }) =>
       closeComplaint(id, note),
-    onSuccess: (_, { id }) => {
-      queryClient.invalidateQueries({ queryKey: ['complaints'] });
-      queryClient.invalidateQueries({ queryKey: ['complaint'] });
-      queryClient.invalidateQueries({ queryKey: ['complaint-conversation', id] });
-      toast.success('Complaint marked as closed.');
+    onSuccess: (result, { id }) => {
+      decisionInvalidate(queryClient, id);
+      toastActionResult(result, 'Complaint marked as closed.');
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to close complaint'),

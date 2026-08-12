@@ -33,6 +33,7 @@ export const GeneralSettingsSchema = z.object({
   defaultProductSupplierId: z.string(),
   defaultProductStandardLeadTimeDays: z.coerce.number().int().min(0).max(10950),
   takeoverCooldownSeconds: z.coerce.number().int().min(0).max(3600),
+  formSlaGraceSeconds: z.coerce.number().int().min(0).max(600),
   purchaseRequestDefaultApproverUserId: z.string(),
   sponsorshipFormDefaultApproverUserId: z.string(),
 });

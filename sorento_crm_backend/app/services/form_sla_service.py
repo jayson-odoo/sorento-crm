@@ -498,8 +498,15 @@ class FormSLAOrchestrator:
         # Tier fallback: escalate to target_tier, but if that tier has no team,
         # skip up to the next configured tier (target+1, +2…). Shared with the
         # initial-assignment fallback in _start_for_config.
+        # AC-E3: the ladder is the tracker's own company's, not the ambient request's.
+        # This runs from the overdue scan, which has no request company at all.
+        from app.services.sla_service import _tracking_company_id
+
         resolved = agent_svc.resolve_team_with_tier_fallback(
-            agent_id, target_tier, team_set_code=tracker.team_set_code
+            agent_id,
+            target_tier,
+            team_set_code=tracker.team_set_code,
+            company_id=_tracking_company_id(tracker),
         )
         if not resolved:
             raise FormEscalationBlocked("top_tier", "No higher-tier team configured; cannot escalate further.")
@@ -759,6 +766,15 @@ class FormSLAOrchestrator:
             )
         agent_svc = AccessAgentService(self.db)
 
+        # AC-E4: form SLA takes its company from the spawning entity's CONTACT.
+        # Complaints, purchase requests, sponsorship forms and stock inquiries all
+        # carry one; tickets carry none and so always land on the default. A contact
+        # in more than one company gets the default too - same "never pick
+        # arbitrarily" rule as conversation routing.
+        from app.services.company_routing_service import company_for_contact
+
+        company_id = company_for_contact(self.db, contact_id=contact_id)
+
         # Default-approver override: for the PR/SF APPROVAL stage (resolves on
         # 'approved'), if the form's configured default approver is a member of the
         # approval team set, route the stage straight to them at THEIR tier (e.g. a
@@ -770,7 +786,10 @@ class FormSLAOrchestrator:
             approver_uid = self._form_default_approver_user_id(config.source_entity_type)
             if approver_uid:
                 approver_tier = agent_svc.get_user_tier_in_team_set(
-                    str(agent.id), approver_uid, team_set_code=config.team_set_code
+                    str(agent.id),
+                    approver_uid,
+                    team_set_code=config.team_set_code,
+                    company_id=company_id,
                 )
                 if approver_tier:
                     approver = (
@@ -788,7 +807,10 @@ class FormSLAOrchestrator:
         # Tier fallback: assign at start_tier, but if that tier has no team, skip
         # up to the next configured tier (start+1, +2…). Shared with escalation.
         resolved = agent_svc.resolve_team_with_tier_fallback(
-            str(agent.id), start_tier, team_set_code=config.team_set_code
+            str(agent.id),
+            start_tier,
+            team_set_code=config.team_set_code,
+            company_id=company_id,
         )
         if not resolved:
             raise handle_validation_error(
@@ -873,6 +895,7 @@ class FormSLAOrchestrator:
             is_responded=False,
             is_resolved=False,
             respond_contact_id=contact_id,
+            company_id=company_id,
             source_entity_type=config.source_entity_type,
             source_entity_id=str(source_entity_id),
             agent_id=str(agent.id),

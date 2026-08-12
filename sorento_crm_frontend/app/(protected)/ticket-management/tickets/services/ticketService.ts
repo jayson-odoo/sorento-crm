@@ -2,6 +2,7 @@
 
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import type { DeferredFormAction } from '@/app/(protected)/sla-management/_shared/formAction';
 import type {
   Ticket,
   TicketAssignInput,
@@ -161,17 +162,20 @@ export async function cancelTicketDraft(id: string): Promise<void> {
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to cancel draft'));
 }
 
-/** Save resolution + flip status to ``resolved`` + notify submitter. */
+/** Save resolution + flip status to ``resolved`` + notify submitter.
+
+May answer 202 with a `DeferredFormAction` instead of the ticket when the resolve
+stage carries a grace window (PLAN-form-sla-undo.md). */
 export async function updateTicketResolutionAndReply(
   id: string,
   data: TicketResolutionUpdateInput,
-): Promise<Ticket> {
+): Promise<Ticket | DeferredFormAction> {
   const res = await apiFetch(`${BASE}/${id}/resolution/update-and-reply`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  return jsonOrThrow<Ticket>(res, 'Failed to send resolution');
+  return jsonOrThrow<Ticket | DeferredFormAction>(res, 'Failed to send resolution');
 }
 
 export async function addTicketWatchers(

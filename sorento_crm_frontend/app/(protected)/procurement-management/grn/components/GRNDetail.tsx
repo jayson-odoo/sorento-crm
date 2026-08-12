@@ -3,15 +3,16 @@
 import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Edit, Trash2, Settings, Check, Search, X } from 'lucide-react';
+import { Edit, Trash2, Settings, Check, Search, X, MoveLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -25,7 +26,8 @@ import {
 } from '@/components/ui/table';
 import { useGRN, useUpdateGRN } from '../hooks/useGRN';
 import { formatDate } from '@/lib/helpers';
-import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
+import { formatStatusLabel } from '@/lib/status-badge';
+import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import GRNDeleteDialog from './grn-delete-dialog';
 import GRNNavigation from './GRNNavigation';
 
@@ -38,6 +40,13 @@ const STATUS_OPTIONS = [
   { value: 'approved', label: 'Approved' },
   { value: 'rejected', label: 'Rejected' },
 ] as const;
+
+/** How the GRN reached the system, in words a user recognises. */
+const GRN_SOURCE_LABELS: Record<string, string> = {
+  ui: 'created in the system',
+  import: 'Excel import',
+  external_api: 'AutoCount / n8n integration',
+};
 
 export default function GRNDetail({ grnId }: GRNDetailProps) {
   const router = useRouter();
@@ -95,29 +104,33 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">{grn.picking_number}</h1>
-            <Badge variant={getStatusBadgeVariant(grn.picking_status)}>
+      {/* Header. Stacks on mobile: a long GRN number beside non-wrapping actions
+          overlaps the title and forces page-wide horizontal overflow. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-bold break-words">{grn.picking_number}</h1>
+            <span
+              className={`${STATUS_PILL_BASE} ${statusPillClass(grn.picking_status)}`}
+            >
               {formatStatusLabel(grn.picking_status) || pickingStatusLabel}
-            </Badge>
+            </span>
           </div>
           <p className="text-sm text-muted-foreground">
             Picking Date:{' '}
             {grn.picking_date ? formatDate(new Date(grn.picking_date)) : '-'}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <GRNNavigation grnId={grnId} />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" title="Change status">
+              <Button variant="outline" size="icon" aria-label="GRN options">
                 <Settings className="size-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Change status</DropdownMenuLabel>
               {STATUS_OPTIONS.map((opt) => (
                 <DropdownMenuItem
                   key={opt.value}
@@ -141,6 +154,17 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
                   {opt.label}
                 </DropdownMenuItem>
               ))}
+              <DropdownMenuSeparator />
+              {/* Delete lives in the menu, not as a standing red button beside
+                  Edit: it is the one irreversible action here and does not earn
+                  permanent space in the header. The confirm dialog still gates it. */}
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={() => setDeleteDialogOpen(true)}
+              >
+                <Trash2 className="size-4" />
+                Delete GRN
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           <Button
@@ -152,9 +176,10 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
             <Edit className="size-4" />
             Edit
           </Button>
-          <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-            <Trash2 className="size-4" />
-            Delete
+          <Button asChild variant="outline">
+            <Link href="/procurement-management/grn">
+              <MoveLeft className="size-4" /> Back to GRN
+            </Link>
           </Button>
         </div>
       </div>
@@ -194,11 +219,11 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Picking Status</p>
-              <Badge
-                variant={getStatusBadgeVariant(grn.picking_status)}
+              <span
+                className={`${STATUS_PILL_BASE} ${statusPillClass(grn.picking_status)}`}
               >
                 {pickingStatusLabel}
-              </Badge>
+              </span>
             </div>
           </div>
           {grn.quality_remarks && (
@@ -213,6 +238,28 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
               <p className="font-medium">{grn.notes}</p>
             </div>
           )}
+          {/* Provenance. Always rendered, including the unknown case: the question
+              "who created this GRN, and into which company" had no answer on the
+              page at all, which is what made a mis-companied upload untraceable.
+              An explicit "Unknown" is the honest answer for rows that predate the
+              recording - better than an absent section that reads as "no data". */}
+          <div className="border-t pt-4">
+            <p className="text-sm text-muted-foreground">Created by</p>
+            <p className="font-medium">
+              {grn.created_by_label ?? 'Unknown'}
+              {grn.source_system && (
+                <span className="text-muted-foreground font-normal">
+                  {' '}
+                  ({GRN_SOURCE_LABELS[grn.source_system] ?? grn.source_system})
+                </span>
+              )}
+            </p>
+            {grn.import_filename && (
+              <p className="text-sm text-muted-foreground mt-1">
+                Imported from <span className="font-medium">{grn.import_filename}</span>
+              </p>
+            )}
+          </div>
         </CardContent>
       </Card>
 

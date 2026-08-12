@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import type {
   PackingList,
   PackingListDetail,
@@ -125,6 +126,148 @@ export async function bulkDeletePackingLists(
       .json()
       .catch(() => ({ message: 'Failed to bulk delete packing lists' }));
     throw new Error(error.detail ?? error.message ?? 'Failed to bulk delete packing lists');
+  }
+  return response.json();
+}
+
+// ---------------------------------------------------------------------------
+// Container status import
+//
+// The workbook is parsed SERVER-SIDE. It holds 9 header blocks across 5 tabs,
+// so the client-side first-sheet parse the shared upload dialog does by default
+// would see one block and miss most of the 407 rows. Both calls therefore post
+// the raw file and ignore the dialog's parsed rows.
+//
+//   POST /api/v1/procurement/packing-lists/container-status-import
+//     multipart { file }
+//     202 { message, job_id, queued: true }
+//   POST  ...?validate_only=true
+//     200 { valid, errors[], warnings[],
+//           summary: { total_rows, would_update, would_create, error_count } }
+//
+// Those four summary keys are not free choice: TemplateUploadDialog renders
+// exactly them and silently drops anything else.
+// ---------------------------------------------------------------------------
+
+const CONTAINER_STATUS_IMPORT_PATH =
+  '/api/v1/procurement/packing-lists/container-status-import';
+
+export interface ContainerStatusValidateResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  summary: {
+    total_rows: number;
+    would_update: number;
+    would_create: number;
+    error_count: number;
+  };
+}
+
+export interface ContainerStatusImportQueued {
+  message: string;
+  job_id: string;
+  queued: boolean;
+}
+
+export async function validateContainerStatusImport(
+  file: File,
+): Promise<ContainerStatusValidateResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await apiFetch(`${CONTAINER_STATUS_IMPORT_PATH}?validate_only=true`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Could not validate the Container Status workbook'),
+    );
+  }
+  return response.json();
+}
+
+export async function importContainerStatus(
+  file: File,
+): Promise<ContainerStatusImportQueued> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await apiFetch(CONTAINER_STATUS_IMPORT_PATH, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Could not queue the Container Status import'),
+    );
+  }
+  return response.json();
+}
+
+/**
+ * Clearance checkpoint definitions for the timeline.
+ *
+ * Configuration, not data: which checkpoints exist, their labels, captions,
+ * grouping, order and colour all live in `statuses` under entity_type
+ * `inbound_shipment` and are admin-editable in
+ * System Management -> Status Graphs. `field` is the date column on the packing
+ * list payload the checkpoint reads, and is frozen server-side so renaming a
+ * checkpoint can never break the link to its column.
+ *
+ *   GET /api/v1/procurement/packing-lists/clearance-checkpoints
+ *   200 { checkpoints: [{ field, label, caption, color, sort_order }] }
+ *
+ * One flat ordered list - no grouping. Group names would have to be a hardcoded
+ * map here, which leaves an admin-added checkpoint with nowhere to belong (D35).
+ */
+export interface ClearanceCheckpoint {
+  field: string;
+  label: string;
+  caption: string | null;
+  color: string | null;
+  sort_order: number;
+}
+
+export async function getClearanceCheckpoints(): Promise<ClearanceCheckpoint[]> {
+  const response = await apiFetch(
+    '/api/v1/procurement/packing-lists/clearance-checkpoints',
+  );
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Could not load the clearance checkpoints'),
+    );
+  }
+  const body = await response.json();
+  return body.checkpoints ?? [];
+}
+
+/**
+ * A signed link to the most recently imported Container Status workbook.
+ *
+ * The import retains the original upload against the job row, which is owner-only
+ * and buried in Import Job Details - so a colleague who did not run the import
+ * could not get the sheet. This serves the latest one to anyone who can see
+ * packing lists.
+ */
+export interface LatestContainerStatusDocument {
+  attachment_id: string;
+  url: string;
+  filename: string;
+  size: number | null;
+  uploaded_at: string | null;
+}
+
+export async function getLatestContainerStatusDocument(): Promise<LatestContainerStatusDocument> {
+  const response = await apiFetch(
+    '/api/v1/procurement/packing-lists/container-status/latest',
+  );
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(
+        response,
+        'No Container Status workbook has been imported yet',
+      ),
+    );
   }
   return response.json();
 }

@@ -81,3 +81,38 @@ def test_normalization_reaches_nested_rows_and_skips_other_keys():
     assert row["nested"]["updated_at"] == "2026-06-12T09:28:56"
     assert row["created_at"] == "2026-06-12T01:28:56Z", "only `updated_at` is in scope"
     assert row["product_code"] == "SRTWT107"
+
+
+def test_uploaded_at_is_malaysia_wall_clock():
+    """For an attachment the upload IS the freshness date - `attachments` has no
+    `updated_at` column at all. Left in UTC it was wrong twice: the envelope's
+    `last_updated_at` reported a UTC instant, and the per-file "Uploaded" line is
+    the DAY of it, so anything uploaded after 16:00 MYT renders as yesterday.
+    """
+    out = _normalize_updated_at(
+        {"data": [{"original_filename": "a.pdf", "uploaded_at": "2026-08-08T17:30:00"}]}
+    )
+    # 17:30Z on the 8th is 01:30 on the 9th in Malaysia - the DATE moves, which is
+    # the whole reason this cannot be left to the reader.
+    assert out["data"][0]["uploaded_at"] == "2026-08-09T01:30:00"
+
+
+def test_uploaded_at_carries_no_offset_suffix():
+    """Naive, like `updated_at`: an offset-aware string gets re-converted back to
+    UTC by n8n/luxon for display, undoing the conversion.
+    """
+    out = _normalize_updated_at({"uploaded_at": "2026-08-08T03:54:05.086571"})
+    v = out["uploaded_at"]
+    assert v == "2026-08-08T11:54:05.086571"
+    assert "+" not in v and not v.endswith("Z")
+
+
+def test_other_timestamp_keys_are_left_alone():
+    """Only the keys that mean "how fresh is this" are rewritten. Business dates
+    (an ETA, an order date) are not instants in a timezone and must not shift.
+    """
+    out = _normalize_updated_at(
+        {"created_at": "2026-08-08T17:30:00", "estimated_arrival_date": "2026-08-08"}
+    )
+    assert out["created_at"] == "2026-08-08T17:30:00"
+    assert out["estimated_arrival_date"] == "2026-08-08"

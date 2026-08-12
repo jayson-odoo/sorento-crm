@@ -51,30 +51,30 @@ def test_resolve_team_with_tier_fallback_skips_missing_tiers():
     svc.db = MagicMock()
     # tier 1 has no team; tier 2 + 3 do.
     svc.get_team_id_by_tier = MagicMock(  # type: ignore[attr-defined]
-        side_effect=lambda a, t, team_set_code=None: {2: "teamB", 3: "teamC"}.get(t)
+        side_effect=lambda a, t, team_set_code=None, *, company_id=None: {2: "teamB", 3: "teamC"}.get(t)
     )
     # assign starting at tier 1 -> falls back to tier 2
-    assert svc.resolve_team_with_tier_fallback("a", 1, "set") == ("teamB", 2)
+    assert svc.resolve_team_with_tier_fallback("a", 1, "set", company_id="00000000-0000-0000-0000-000000000001") == ("teamB", 2)
     # escalate to tier 2 -> tier 2 exists
-    assert svc.resolve_team_with_tier_fallback("a", 2, "set") == ("teamB", 2)
+    assert svc.resolve_team_with_tier_fallback("a", 2, "set", company_id="00000000-0000-0000-0000-000000000001") == ("teamB", 2)
     # escalate to tier 3 -> tier 3
-    assert svc.resolve_team_with_tier_fallback("a", 3, "set") == ("teamC", 3)
+    assert svc.resolve_team_with_tier_fallback("a", 3, "set", company_id="00000000-0000-0000-0000-000000000001") == ("teamC", 3)
     # start below 1 is clamped to 1
-    assert svc.resolve_team_with_tier_fallback("a", 0, "set") == ("teamB", 2)
+    assert svc.resolve_team_with_tier_fallback("a", 0, "set", company_id="00000000-0000-0000-0000-000000000001") == ("teamB", 2)
 
 
 def test_resolve_team_with_tier_fallback_none_when_no_team():
     svc = AccessAgentService.__new__(AccessAgentService)
     svc.db = MagicMock()
     svc.get_team_id_by_tier = MagicMock(return_value=None)  # type: ignore[attr-defined]
-    assert svc.resolve_team_with_tier_fallback("a", 1, "set") is None
+    assert svc.resolve_team_with_tier_fallback("a", 1, "set", company_id="00000000-0000-0000-0000-000000000001") is None
 
 
 def test_get_user_tier_in_team_set_finds_member_tier():
     svc = AccessAgentService.__new__(AccessAgentService)
     svc.db = MagicMock()
     # tier 1 -> team A (no member), tier 2 -> team B (member), tier 3 -> team C
-    def team_by_tier(agent_id, tier, team_set_code=None):
+    def team_by_tier(agent_id, tier, team_set_code=None, *, company_id=None):
         return {1: "teamA", 2: "teamB", 3: "teamC"}.get(tier)
     svc.get_team_id_by_tier = MagicMock(side_effect=team_by_tier)  # type: ignore[attr-defined]
 
@@ -105,4 +105,4 @@ def test_get_user_tier_in_team_set_finds_member_tier():
         return q
     svc.db.query.side_effect = query_side_effect
 
-    assert svc.get_user_tier_in_team_set("agent", "ck", team_set_code="project_sales_manager") == 2
+    assert svc.get_user_tier_in_team_set("agent", "ck", team_set_code="project_sales_manager", company_id="00000000-0000-0000-0000-000000000001") == 2

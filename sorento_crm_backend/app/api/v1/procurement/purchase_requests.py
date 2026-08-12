@@ -1,6 +1,7 @@
 """Purchase requests / sponsorship forms API routes."""
 import html
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
@@ -316,20 +317,69 @@ async def update_purchase_request_and_reply(
         raise handle_internal_error(str(e))
 
 
+def _dispatch_form_action(
+    db,
+    current_user: dict,
+    request: Request,
+    *,
+    request_id: str,
+    action_key: str,
+    payload: dict,
+    event_name: str,
+):
+    """Route a PR/SF action through the form-action dispatcher.
+
+    With no grace configured (the shipped default) this runs the wrapped service method
+    exactly as before and returns its result. With a grace window AND a browser session,
+    it parks the action and the caller gets a 202 so the UI can offer an Undo before
+    anything is written or sent. See PLAN-form-sla-undo.md.
+    """
+    from app.services.form_action_dispatch import dispatch_or_defer
+
+    service = PurchaseRequestService(db)
+    header = service.get_request(request_id)
+    entity_type = getattr(header, "request_type", None) or "purchase_request"
+    return dispatch_or_defer(
+        db,
+        current_user,
+        request,
+        action_key=action_key,
+        entity_type=entity_type,
+        entity_id=request_id,
+        payload={"request_id": request_id, **payload},
+        event_name=event_name,
+    )
+
+
 @router.post("/{request_id}/set-pending-approval", response_model=PurchaseRequestHeaderResponse)
 async def set_pending_approval(
     request_id: str,
-    current_user: dict = Depends(get_current_user),
+    request: Request,
+    current_user: dict = Depends(require_permission_with_api_key("procurement.purchase_requests.send_for_approval")),
     db: Session = Depends(get_db),
 ):
-    """Set request to pending approval (e.g. from draft or to resend after approved). Clears previous approval data."""
+    """Set request to pending approval (e.g. from draft or to resend after approved). Clears previous approval data.
+
+    Triage action, so it requires `send_for_approval` - the same permission as
+    Reject-at-submitted. It was previously open to any authenticated user, which meant
+    anyone who could view a request could push it into the approval queue."""
     import logging
     logger = logging.getLogger(__name__)
     assert_can_act_on_form(db, request_id, current_user)
     try:
         validate_uuid_path(request_id, resource="Request")
         service = PurchaseRequestService(db)
-        header = service.set_pending_approval(request_id, requested_by_user_id=current_user.get("id"))
+        header = _dispatch_form_action(
+            db,
+            current_user,
+            request,
+            request_id=request_id,
+            action_key="pr.send_for_approval",
+            payload={"actor_user_id": current_user.get("id")},
+            event_name="send_for_approval",
+        )
+        if isinstance(header, JSONResponse):
+            return header
         if getattr(header, "approver_user_id", None):
             from app.models.user import User
             user = db.query(User).filter(User.id == header.approver_user_id).first()
@@ -351,6 +401,7 @@ async def set_pending_approval(
 async def reject_submitted_purchase_request(
     request_id: str,
     body: RejectSubmittedRequest,
+    request: Request,
     current_user: dict = Depends(require_permission_with_api_key("procurement.purchase_requests.send_for_approval")),
     db: Session = Depends(get_db),
 ):
@@ -359,11 +410,20 @@ async def reject_submitted_purchase_request(
     try:
         validate_uuid_path(request_id, resource="Request")
         service = PurchaseRequestService(db)
-        header = service.reject_submitted(
-            request_id,
-            rejection_reason=body.rejection_reason,
-            actor_user_id=current_user.get("id"),
+        header = _dispatch_form_action(
+            db,
+            current_user,
+            request,
+            request_id=request_id,
+            action_key="pr.reject_submitted",
+            payload={
+                "rejection_reason": body.rejection_reason,
+                "actor_user_id": current_user.get("id"),
+            },
+            event_name="reject_submitted",
         )
+        if isinstance(header, JSONResponse):
+            return header
         if getattr(header, "approver_user_id", None):
             from app.models.user import User
             user = db.query(User).filter(User.id == header.approver_user_id).first()
@@ -390,7 +450,8 @@ class ApprovalDecisionRequest(BaseModel):
 async def decide_purchase_request_approval(
     request_id: str,
     body: ApprovalDecisionRequest,
-    current_user: dict = Depends(require_permission_with_api_key("procurement.purchase_requests.send_for_approval")),
+    request: Request,
+    current_user: dict = Depends(require_permission_with_api_key("procurement.purchase_requests.approve")),
     db: Session = Depends(get_db),
 ):
     """Approve or reject a PR / sponsorship form IN-SYSTEM (the form's Approve/Reject
@@ -409,13 +470,27 @@ async def decide_purchase_request_approval(
             u = db.query(User).filter(User.id == uid).first()
             if u:
                 approver_name = (u.name and u.name.strip()) or u.email or None
-        header = service.decide_approval(
-            request_id,
-            action=body.action,
-            approved_by=approver_name,
-            approval_comments=body.comments,
-            actor_user_id=uid,
+        # Route the decision through the shared dispatcher glue - the same helper the
+        # other four PR/SF endpoints use. This was the one endpoint that hand-inlined
+        # the 202 contract, and it had already drifted from the shared copy.
+        event_name = "approved" if body.action == "approved" else "approval_rejected"
+        outcome = _dispatch_form_action(
+            db,
+            current_user,
+            request,
+            request_id=request_id,
+            action_key="pr.approval_decision",
+            payload={
+                "action": body.action,
+                "approved_by": approver_name,
+                "approval_comments": body.comments,
+                "actor_user_id": uid,
+            },
+            event_name=event_name,
         )
+        if isinstance(outcome, JSONResponse):
+            return outcome
+        header = outcome
         if getattr(header, "approver_user_id", None):
             user = db.query(User).filter(User.id == header.approver_user_id).first()
             if user:
@@ -440,6 +515,7 @@ class CsFinalizeRequest(BaseModel):
 async def process_request_by_cs(
     request_id: str,
     payload: CsFinalizeRequest,
+    request: Request,
     current_user: dict = Depends(require_permission("procurement.purchase_requests.process")),
     db: Session = Depends(get_db),
 ):
@@ -453,11 +529,19 @@ async def process_request_by_cs(
         validate_uuid_path(request_id, resource="Request")
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = PurchaseRequestService(db)
-        header = service.mark_processed_by_cs(
-            request_id,
-            note=payload.note,
-            respond_user_id=respond_user_id,
-            crm_sender_user_id=current_user.get("id"),
+        header = _dispatch_form_action(
+            db,
+            current_user,
+            request,
+            request_id=request_id,
+            action_key="pr.finalize",
+            payload={
+                "new_status": "processed_by_cs",
+                "note": payload.note,
+                "respond_user_id": respond_user_id,
+                "crm_sender_user_id": current_user.get("id"),
+            },
+            event_name="resolved",
         )
         return header
     except HTTPException:
@@ -470,6 +554,7 @@ async def process_request_by_cs(
 async def close_request_by_cs(
     request_id: str,
     payload: CsFinalizeRequest,
+    request: Request,
     current_user: dict = Depends(require_permission("procurement.purchase_requests.close")),
     db: Session = Depends(get_db),
 ):
@@ -483,11 +568,19 @@ async def close_request_by_cs(
         validate_uuid_path(request_id, resource="Request")
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = PurchaseRequestService(db)
-        header = service.close_request(
-            request_id,
-            note=payload.note,
-            respond_user_id=respond_user_id,
-            crm_sender_user_id=current_user.get("id"),
+        header = _dispatch_form_action(
+            db,
+            current_user,
+            request,
+            request_id=request_id,
+            action_key="pr.finalize",
+            payload={
+                "new_status": "closed",
+                "note": payload.note,
+                "respond_user_id": respond_user_id,
+                "crm_sender_user_id": current_user.get("id"),
+            },
+            event_name="resolved",
         )
         return header
     except HTTPException:
@@ -779,3 +872,61 @@ router.include_router(
         context_builder=_build_purchase_request_chat_context,
     )
 )
+
+
+@router.post("/{request_id}/export/pdf")
+def export_purchase_request_pdf(
+    request_id: str,
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Queue an async PDF export of the printable Purchase Request / Sponsorship Form.
+
+    Exists because the only export was Excel, where a long delivery address
+    stretched a cell to an unusable width when printed. Creates a UserDownload row
+    and enqueues generation; the result appears in the My Downloads drawer.
+    Decoupled from the request path so a slow/failed render (attachments are
+    downloaded and embedded) never blocks the caller. Mirrors
+    POST /procurement/stock-inquiries/{id}/export/pdf.
+    """
+    from app.services.download_service import DownloadService
+    from app.services.queue_service import enqueue_job
+    from app.tasks.export_tasks import generate_purchase_request_pdf
+
+    try:
+        validate_uuid_path(request_id, resource="Request")
+        service = PurchaseRequestService(db)
+        header = service.get_request(request_id, contact_id=None, space_id=None)  # 404 if missing
+
+        is_sponsorship = (getattr(header, "request_type", None) or "") == "sponsorship_form"
+        stem = "sponsorship-form" if is_sponsorship else "purchase-request"
+        number = getattr(header, "request_number", None) or request_id
+
+        download = DownloadService(db).create(
+            user_id=str(current_user["id"]),
+            kind="purchase_request_pdf",
+            source_entity_type="purchase_request",
+            source_entity_id=str(request_id),
+            filename=f"{stem}-{number}.pdf",
+        )
+        try:
+            enqueue_job(
+                generate_purchase_request_pdf,
+                str(download.id),
+                str(request_id),
+                str(current_user["id"]),
+                queue_name="imports",
+                job_timeout=600,
+            )
+        except Exception as e:
+            # Enqueue failed (e.g. Redis down): mark the row failed so the drawer shows it.
+            DownloadService(db).mark_failed(
+                str(download.id), f"Could not queue PDF generation: {e}"
+            )
+            raise handle_internal_error(f"Could not queue PDF generation: {e}")
+
+        return {"download_id": str(download.id), "status": "queued"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))

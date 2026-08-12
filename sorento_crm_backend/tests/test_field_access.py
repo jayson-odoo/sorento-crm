@@ -1,0 +1,745 @@
+"""Which fields an agent may be told (slice 4, redesigned).
+
+The risk this gate exists for: `/incoming-stock/list` and `crm_incoming_stock_list`
+already serve dealer- and salesperson-facing agents. Adding ETA delay, CIDB
+inspection/approval and gatepass to that response means that on the day it ships,
+every one of those agents can answer questions it was never meant to answer.
+
+Four properties carry the whole thing:
+
+1. **An unentitled caller's DATA is byte-identical to today's.** Not "nulled" - the
+   keys are ABSENT. Absent means "you may not see this"; null means "not reached
+   yet". An LLM reading the response narrates a null as the latter, which is a lie
+   with the confidence of a fact. (The response gains one additive sibling key,
+   `field_access`, carrying the reason; the rows themselves are untouched.)
+2. **A denial says WHICH thing is wrong** - the contact did not resolve at all,
+   or the agent was never assigned, or it was assigned and this field is not
+   ticked. Each needs a different fix, so a bare `false` sends someone to the
+   wrong screen - and naming the wrong one is worse, because that screen then
+   looks perfectly correct.
+3. **A contact's question is answered with the CONTACT's grants**, never the API
+   key's. n8n calls with a privileged act-as user; if that decided it, every
+   contact would be entitled the moment n8n asked on their behalf.
+4. **Default deny.** A gated field with no row is invisible. Adding a sensitive
+   column must not expose it to the 53 contacts already holding the agent.
+
+Everything fails closed: unresolvable contact, inactive agent, expired grant, a
+lookup that raises.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timedelta
+
+import pytest
+
+from app.models.access import (
+    AccessAgent,
+    AgentFieldAccess,
+    ContactAgentAccess,
+    RespondContact,
+)
+from app.services.field_access import (
+    AGENT_NOT_ASSIGNED,
+    ALLOWED,
+    CONTACT_NOT_FOUND,
+    DEFAULT_ALLOWED,
+    FIELD_NOT_ALLOWED,
+    GATED_FIELDS,
+    NOT_GATED,
+    allowed_fields_for,
+    apply_field_access,
+    check_attributes,
+    contact_agent_codes,
+    decide,
+    resolve_contact_id,
+)
+from tests._pg_fixture import blank_session, unique_code
+
+OWNER = "incoming_stock_enquiries"
+RESOURCE = "incoming_stock"
+
+
+@pytest.fixture
+def db():
+    with blank_session() as s:
+        yield s
+
+
+def _agent(db, *, code=OWNER, active=True) -> AccessAgent:
+    agent = AccessAgent(
+        id=str(uuid.uuid4()), code=code, name="Incoming stock enquiries", is_active=active
+    )
+    db.add(agent)
+    db.flush()
+    return agent
+
+
+def _contact(db, *, respond_io_id=None) -> RespondContact:
+    contact = RespondContact(
+        id=unique_code("CONTACT"),
+        phone_number=f"+60{uuid.uuid4().int % 10**9:09d}",
+        name="ZZT Contact",
+        respond_io_id=respond_io_id,
+    )
+    db.add(contact)
+    db.flush()
+    return contact
+
+
+def _grant(db, contact, agent, *, allowed=True, valid_from=None, valid_to=None):
+    db.add(
+        ContactAgentAccess(
+            id=str(uuid.uuid4()),
+            respond_contact_id=contact.id,
+            respond_contact_phone=contact.phone_number,
+            agent_id=agent.id,
+            is_allowed=allowed,
+            valid_from=valid_from,
+            valid_to=valid_to,
+        )
+    )
+    db.flush()
+
+
+def _field(db, field_key, *, agent_code=OWNER, contact=None, allowed=True):
+    db.add(
+        AgentFieldAccess(
+            id=str(uuid.uuid4()),
+            agent_code=agent_code,
+            resource=RESOURCE,
+            field_key=field_key,
+            contact_id=contact.id if contact else None,
+            is_allowed=allowed,
+        )
+    )
+    db.flush()
+
+
+def _entitled_contact(db, *fields):
+    """A contact holding the agent, with `fields` ticked on it agent-wide."""
+    contact = _contact(db)
+    agent = _agent(db)
+    _grant(db, contact, agent)
+    for field in fields:
+        _field(db, field)
+    return contact, agent
+
+
+def _payload() -> dict:
+    """The response shape as it exists TODAY, plus the new gated keys."""
+    return {
+        "data": [
+            {
+                "shipment_number": "SHP-1",
+                "shipping_container_number": "GXYU5106903",
+                "estimated_arrival_date": "2026-07-18",
+                "eta_delay_date": "2026-07-22",
+                "gatepass_date": None,
+                "liner_code": "CMA",
+                "attachment": {"id": "att-1", "original_filename": "pl.pdf"},
+                "lines": [{"product_code": "P-1", "remaining_incoming_quantity": 5}],
+            }
+        ],
+        "empty": False,
+        "pagination": {"total": 1, "page": 1, "limit": 10},
+    }
+
+
+#: The rows as the endpoint returned them before this slice.
+TODAYS_ROWS = [
+    {
+        "shipment_number": "SHP-1",
+        "shipping_container_number": "GXYU5106903",
+        "estimated_arrival_date": "2026-07-18",
+        "attachment": {"id": "att-1", "original_filename": "pl.pdf"},
+        "lines": [{"product_code": "P-1", "remaining_incoming_quantity": 5}],
+    }
+]
+
+
+# ------------------------------------------------------------------- stripping
+
+
+def test_an_unentitled_callers_rows_are_byte_identical_to_todays(db):
+    """The assertion that says "shipping this breaks nothing"."""
+    gated = apply_field_access(db, _payload(), resource=RESOURCE, current_user={"id": None})
+
+    assert gated["data"] == TODAYS_ROWS
+    assert gated["pagination"] == {"total": 1, "page": 1, "limit": 10}
+    assert gated["empty"] is False
+
+
+def test_gated_keys_are_absent_not_null(db):
+    """Absent means "you may not see this"; null means "not reached yet". An LLM
+    reads a null as the second and says so out loud."""
+    gated = apply_field_access(db, _payload(), resource=RESOURCE, current_user={"id": None})
+    row = gated["data"][0]
+
+    for key in GATED_FIELDS[RESOURCE]:
+        if key in DEFAULT_ALLOWED:
+            continue  # ships allowed; covered by its own test below
+        assert key not in row, f"{key} must be absent, not present-and-null"
+    # ...and specifically the one that was already null before stripping.
+    assert "gatepass_date" not in row
+
+
+def test_the_public_eta_still_flows(db):
+    """ETA is gateable but ships ALLOWED, so the deploy is inert.
+
+    `estimated_arrival_date` is what the 53 contacts holding
+    `incoming_stock_enquiries` ask about every day. Adding it to the registry must
+    let an admin REVOKE it, never silently withhold it - a gate that removes an
+    answer people already have is a regression wearing a security badge.
+    """
+    gated = apply_field_access(db, _payload(), resource=RESOURCE, current_user={"id": None})
+
+    assert gated["data"][0]["estimated_arrival_date"] == "2026-07-18"
+    assert "estimated_arrival_date" in GATED_FIELDS[RESOURCE], "revocable"
+    assert "estimated_arrival_date" in DEFAULT_ALLOWED, "but allowed by default"
+
+
+def test_eta_reaches_a_contact_holding_no_agent_at_all(db):
+    """The strongest form of inert: even a contact with no grants keeps the ETA,
+    because every caller receives it today."""
+    contact = _contact(db)
+
+    (decision,) = decide(
+        db, resource=RESOURCE, fields=["estimated_arrival_date"], contact_id=contact.id
+    )
+    assert decision.outcome == ALLOWED
+
+
+def test_eta_can_still_be_revoked_agent_wide(db):
+    """Default-allowed is a default, not a guarantee - otherwise the tick on the
+    admin screen would be decorative."""
+    contact, _ = _entitled_contact(db)
+    _field(db, "estimated_arrival_date", allowed=False)
+
+    (decision,) = decide(
+        db, resource=RESOURCE, fields=["estimated_arrival_date"], contact_id=contact.id
+    )
+    assert decision.outcome == FIELD_NOT_ALLOWED
+
+
+def test_eta_can_be_revoked_for_one_contact_only(db):
+    contact, agent = _entitled_contact(db)
+    other = _contact(db)
+    _grant(db, other, agent)
+    _field(db, "estimated_arrival_date", contact=contact, allowed=False)
+
+    (denied,) = decide(
+        db, resource=RESOURCE, fields=["estimated_arrival_date"], contact_id=contact.id
+    )
+    (kept,) = decide(
+        db, resource=RESOURCE, fields=["estimated_arrival_date"], contact_id=other.id
+    )
+    assert denied.outcome == FIELD_NOT_ALLOWED
+    assert kept.outcome == ALLOWED
+
+
+def test_stripping_does_not_mutate_the_callers_payload(db):
+    """The same row objects can be shared with another response or a cache."""
+    payload = _payload()
+    apply_field_access(db, payload, resource=RESOURCE, current_user={"id": None})
+
+    assert payload["data"][0]["eta_delay_date"] == "2026-07-22", "original untouched"
+
+
+def test_an_unknown_resource_is_passed_straight_through(db):
+    payload = _payload()
+    assert apply_field_access(db, payload, resource="nothing_registered") == payload
+
+
+# ------------------------------------------------- the denial says WHICH problem
+
+
+def test_not_holding_the_agent_reports_agent_not_assigned(db):
+    contact = _contact(db)
+    _agent(db)  # exists; this contact simply does not hold it
+
+    (decision,) = decide(db, resource=RESOURCE, fields=["eta_delay_date"], contact_id=contact.id)
+
+    assert decision.outcome == AGENT_NOT_ASSIGNED
+    assert decision.agent_code == OWNER, "name the agent so an admin knows what to grant"
+    assert "does not hold" in decision.as_dict()["reason"]
+
+
+def test_holding_the_agent_without_the_field_reports_field_not_allowed(db):
+    """The distinction the whole redesign exists for: same denial, different fix."""
+    contact, _ = _entitled_contact(db)  # agent granted, nothing ticked
+
+    (decision,) = decide(db, resource=RESOURCE, fields=["eta_delay_date"], contact_id=contact.id)
+
+    assert decision.outcome == FIELD_NOT_ALLOWED
+    assert "not allowed on it" in decision.as_dict()["reason"]
+
+
+def test_the_two_denials_are_distinguishable_on_one_call(db):
+    """A contact can hit both reasons at once - one field owned by an agent they
+    hold, another by one they do not."""
+    contact, _ = _entitled_contact(db, "eta_delay_date")
+    other = _agent(db, code="some_other_agent")
+    _field(db, "gatepass_date", agent_code=other.code)
+    GATED_FIELDS[RESOURCE]["gatepass_date"] = other.code
+    try:
+        outcomes = {
+            d.field: d.outcome
+            for d in decide(
+                db,
+                resource=RESOURCE,
+                fields=["eta_delay_date", "gatepass_date"],
+                contact_id=contact.id,
+            )
+        }
+    finally:
+        GATED_FIELDS[RESOURCE]["gatepass_date"] = OWNER
+
+    assert outcomes == {
+        "eta_delay_date": ALLOWED,
+        "gatepass_date": AGENT_NOT_ASSIGNED,
+    }
+
+
+def test_an_ungated_field_is_reported_as_not_gated(db):
+    contact, _ = _entitled_contact(db)
+
+    (decision,) = decide(
+        db, resource=RESOURCE, fields=["shipping_container_number"], contact_id=contact.id
+    )
+
+    assert decision.outcome == NOT_GATED
+    assert decision.allowed is True
+
+
+def test_the_denial_reason_rides_along_with_the_data(db):
+    """So the answer can say "I can't share that" rather than inventing a status."""
+    contact, _ = _entitled_contact(db, "eta_delay_date")
+
+    gated = apply_field_access(db, _payload(), resource=RESOURCE, contact_id=contact.id)
+
+    denied = {d["field"]: d["outcome"] for d in gated["field_access"]["denied"]}
+    assert "eta_delay_date" not in denied, "the ticked field is not in the denied list"
+    assert denied["gatepass_date"] == FIELD_NOT_ALLOWED
+    assert "not yet reached" in gated["field_access"]["note"]
+
+
+def test_a_fully_entitled_caller_gets_no_field_access_block(db):
+    """Nothing denied means nothing to explain - the response stays exactly the
+    shape it has today."""
+    contact, _ = _entitled_contact(db, *GATED_FIELDS[RESOURCE])
+    payload = _payload()
+
+    gated = apply_field_access(db, payload, resource=RESOURCE, contact_id=contact.id)
+
+    assert gated == payload
+    assert "field_access" not in gated
+
+
+# ------------------------------------------------------------ agent resolution
+
+
+def test_a_revoked_grant_holds_nothing(db):
+    contact = _contact(db)
+    _grant(db, contact, _agent(db), allowed=False)
+
+    assert contact_agent_codes(db, contact.id) == set()
+
+
+def test_an_expired_grant_holds_nothing(db):
+    contact = _contact(db)
+    _grant(
+        db,
+        contact,
+        _agent(db),
+        valid_from=datetime.utcnow() - timedelta(days=30),
+        valid_to=datetime.utcnow() - timedelta(days=1),
+    )
+
+    assert contact_agent_codes(db, contact.id) == set()
+
+
+def test_a_grant_that_has_not_started_holds_nothing(db):
+    contact = _contact(db)
+    _grant(db, contact, _agent(db), valid_from=datetime.utcnow() + timedelta(days=1))
+
+    assert contact_agent_codes(db, contact.id) == set()
+
+
+def test_deactivating_the_agent_revokes_everyone_at_once(db):
+    contact = _contact(db)
+    agent = _agent(db, active=False)
+    _grant(db, contact, agent)
+    _field(db, "eta_delay_date")
+
+    (decision,) = decide(db, resource=RESOURCE, fields=["eta_delay_date"], contact_id=contact.id)
+    assert decision.outcome == AGENT_NOT_ASSIGNED
+
+
+def test_an_unknown_contact_says_so_instead_of_blaming_the_grant(db):
+    """Reporting AGENT_NOT_ASSIGNED here sends an admin to check grants that were
+    never consulted - and when the contact DOES hold the agent, that screen looks
+    perfectly correct, so the real cause stays hidden. Cost a real debugging
+    session: a space_id from another workspace read as "assign the agent"."""
+    (decision,) = decide(
+        db, resource=RESOURCE, fields=["eta_delay_date"], contact_id="no-such-contact"
+    )
+    assert decision.outcome == CONTACT_NOT_FOUND
+    assert "space_id" in decision.as_dict()["reason"], "name the usual cause"
+
+
+def test_no_contact_supplied_is_also_not_a_grant_problem(db):
+    (decision,) = decide(db, resource=RESOURCE, fields=["eta_delay_date"], contact_id=None)
+    assert decision.outcome == CONTACT_NOT_FOUND
+
+
+def test_a_respond_io_id_resolves_to_the_internal_contact(db):
+    """n8n thinks in Respond.io ids; grants key on the internal one. Guessing wrong
+    denies a contact who IS entitled, which reads as a broken feature."""
+    contact = _contact(db, respond_io_id="respondio-12345")
+    agent = _agent(db)
+    _grant(db, contact, agent)
+    _field(db, "eta_delay_date")
+
+    assert resolve_contact_id(db, "respondio-12345") == contact.id
+
+    (decision,) = decide(
+        db, resource=RESOURCE, fields=["eta_delay_date"], contact_id="respondio-12345"
+    )
+    assert decision.outcome == ALLOWED
+
+
+# ------------------------------------------------------- default and override
+
+
+def test_a_gated_field_with_no_row_is_denied(db):
+    """Default deny. Adding a sensitive column must not expose it to the contacts
+    already holding the agent."""
+    contact, _ = _entitled_contact(db, "eta_delay_date")
+
+    allowed = allowed_fields_for(
+        db, contact_id=contact.id, resource=RESOURCE, agent_codes=[OWNER]
+    )
+
+    # ETA is in there by default; everything else needs a row.
+    assert "eta_delay_date" in allowed
+    assert "gatepass_date" not in allowed
+
+
+def test_a_per_contact_row_can_grant_what_the_agent_denies(db):
+    contact, _ = _entitled_contact(db)
+    _field(db, "gatepass_date", allowed=False)  # agent-wide: no
+    _field(db, "gatepass_date", contact=contact, allowed=True)  # this contact: yes
+
+    (decision,) = decide(db, resource=RESOURCE, fields=["gatepass_date"], contact_id=contact.id)
+    assert decision.outcome == ALLOWED
+
+
+def test_a_per_contact_row_can_revoke_what_the_agent_grants(db):
+    """The override works in both directions, or "everyone but that one dealer" is
+    impossible without stripping the field from all 53."""
+    contact, _ = _entitled_contact(db, "eta_delay_date")
+    _field(db, "eta_delay_date", contact=contact, allowed=False)
+
+    (decision,) = decide(db, resource=RESOURCE, fields=["eta_delay_date"], contact_id=contact.id)
+    assert decision.outcome == FIELD_NOT_ALLOWED
+
+
+def test_one_contacts_override_does_not_touch_another(db):
+    contact, agent = _entitled_contact(db, "eta_delay_date")
+    other = _contact(db)
+    _grant(db, other, agent)
+    _field(db, "eta_delay_date", contact=other, allowed=False)
+
+    assert "eta_delay_date" in allowed_fields_for(
+        db, contact_id=contact.id, resource=RESOURCE, agent_codes=[OWNER]
+    )
+    assert "eta_delay_date" not in allowed_fields_for(
+        db, contact_id=other.id, resource=RESOURCE, agent_codes=[OWNER]
+    )
+
+
+def test_a_row_on_an_agent_the_contact_does_not_hold_grants_nothing(db):
+    """Ticking a field on an agent is not a grant to everyone - the contact must
+    hold that agent too."""
+    contact = _contact(db)
+    _agent(db)
+    _field(db, "eta_delay_date")
+
+    assert allowed_fields_for(
+        db, contact_id=contact.id, resource=RESOURCE, agent_codes=[]
+    ) == set()
+
+
+def test_a_row_for_another_resource_is_inert(db):
+    contact, _ = _entitled_contact(db)
+    db.add(
+        AgentFieldAccess(
+            id=str(uuid.uuid4()),
+            agent_code=OWNER,
+            resource="something_else",
+            field_key="eta_delay_date",
+            is_allowed=True,
+        )
+    )
+    db.flush()
+
+    (decision,) = decide(db, resource=RESOURCE, fields=["eta_delay_date"], contact_id=contact.id)
+    assert decision.outcome == FIELD_NOT_ALLOWED
+
+
+# ------------------------------------------------------------ caller precedence
+
+
+def test_a_contacts_question_uses_the_contacts_grants_not_the_api_keys(db, monkeypatch):
+    """n8n calls with a privileged act-as user. If that decided it, every contact
+    would be entitled the moment n8n asked on their behalf."""
+    from app.services.user_service import UserPermissionService
+
+    monkeypatch.setattr(
+        UserPermissionService, "check_user_has_permission", lambda self, u, s: True
+    )
+    contact = _contact(db)  # holds nothing
+
+    gated = apply_field_access(
+        db,
+        _payload(),
+        resource=RESOURCE,
+        current_user={"id": "privileged"},
+        contact_id=contact.id,
+        staff_permission="procurement.packing_lists.view_clearance",
+    )
+    assert "eta_delay_date" not in gated["data"][0]
+
+    # ...while the same privileged user asking for THEMSELVES still sees it.
+    seen = apply_field_access(
+        db,
+        _payload(),
+        resource=RESOURCE,
+        current_user={"id": "privileged"},
+        staff_permission="procurement.packing_lists.view_clearance",
+    )
+    assert seen["data"][0]["eta_delay_date"] == "2026-07-22"
+
+
+def test_a_staff_user_without_the_permission_is_denied(db, monkeypatch):
+    from app.services.user_service import UserPermissionService
+
+    monkeypatch.setattr(
+        UserPermissionService, "check_user_has_permission", lambda self, u, s: False
+    )
+    gated = apply_field_access(
+        db,
+        _payload(),
+        resource=RESOURCE,
+        current_user={"id": "someone"},
+        staff_permission="procurement.packing_lists.view_clearance",
+    )
+    assert gated["data"] == TODAYS_ROWS
+
+
+def test_a_permission_lookup_that_raises_fails_closed(db, monkeypatch):
+    """A broken permission service must not become an open door."""
+    from app.services.user_service import UserPermissionService
+
+    def _boom(self, user_id, slug):
+        raise RuntimeError("permission service is down")
+
+    monkeypatch.setattr(UserPermissionService, "check_user_has_permission", _boom)
+
+    gated = apply_field_access(
+        db,
+        _payload(),
+        resource=RESOURCE,
+        current_user={"id": "someone"},
+        staff_permission="procurement.packing_lists.view_clearance",
+    )
+    assert gated["data"] == TODAYS_ROWS
+
+
+def test_a_broken_grant_lookup_holds_nothing_rather_than_everything(db):
+    """A database hiccup must not become an open door."""
+
+    class _Broken:
+        def query(self, *a, **k):
+            raise RuntimeError("connection reset")
+
+    assert contact_agent_codes(_Broken(), "anyone") == set()
+    assert (
+        allowed_fields_for(
+            _Broken(), contact_id="anyone", resource=RESOURCE, agent_codes=[OWNER]
+        )
+        == set()
+    )
+    assert resolve_contact_id(_Broken(), "anyone") is None
+
+
+# ------------------------------------------------------------- the preflight
+
+
+def test_check_attributes_reports_each_field_separately(db):
+    contact, _ = _entitled_contact(db, "eta_delay_date")
+
+    result = check_attributes(
+        db,
+        resource=RESOURCE,
+        attributes=["eta_delay_date", "gatepass_date", "estimated_arrival_date"],
+        contact_id=contact.id,
+    )
+
+    assert result["all_allowed"] is False
+    by_field = {a["field"]: a["outcome"] for a in result["attributes"]}
+    assert by_field == {
+        "eta_delay_date": ALLOWED,
+        "gatepass_date": FIELD_NOT_ALLOWED,
+        # Gated, but default-allowed - not the same as ungated.
+        "estimated_arrival_date": ALLOWED,
+    }
+
+
+def test_check_attributes_is_all_allowed_when_everything_passes(db):
+    contact, _ = _entitled_contact(db, "eta_delay_date")
+
+    result = check_attributes(
+        db, resource=RESOURCE, attributes=["eta_delay_date"], contact_id=contact.id
+    )
+    assert result["all_allowed"] is True
+
+
+# ---------------------------------------------------- the query must select them
+
+
+def test_the_service_selects_every_gated_column():
+    """`incoming_list` returns column tuples, not ORM instances.
+
+    A gated column missing from the SELECT reads as None on the row, and the gate
+    would pass that straight through to an ENTITLED caller as "not reached yet" - a
+    silent wrong answer rather than a crash. This is the bug that shipped for one
+    build.
+    """
+    import inspect
+
+    from app.services import incoming_stock_service
+
+    source = inspect.getsource(incoming_stock_service.IncomingStockService.incoming_list)
+    assert "CLEARANCE_KEYS" in source, "the query must select the gated columns"
+    # Both halves: selected in the query AND spread into the payload.
+    assert source.count("CLEARANCE_KEYS") >= 2
+
+
+def test_the_gate_runs_on_the_route_not_only_in_the_service():
+    """The service returns everything by design, so the route is the single place
+    access is applied. If that call is ever dropped, the fields leak."""
+    import inspect
+
+    from app.api.v1 import incoming_stock
+
+    source = inspect.getsource(incoming_stock.get_incoming_list)
+    assert "apply_field_access" in source
+    assert "contact_id=contact_id" in source
+
+
+def test_every_gated_field_is_a_real_column():
+    """A typo in the registry gates nothing and silently leaks the real column."""
+    from app.models.procurement import InboundShipment
+
+    for field in GATED_FIELDS[RESOURCE]:
+        assert hasattr(InboundShipment, field), f"{field} is not a column"
+
+
+# ------------------------------------------------------ workspace disambiguation
+
+
+def _workspace(db, space_id: str):
+    from app.models.respond_workspace import RespondWorkspace
+
+    ws = RespondWorkspace(
+        id=str(uuid.uuid4()),
+        space_id=space_id,
+        name=f"ZZT {space_id}",
+        api_key_ciphertext="zzt-not-a-real-key",
+    )
+    db.add(ws)
+    db.flush()
+    return ws
+
+
+def test_the_same_respond_io_id_in_two_workspaces_needs_the_space_id(db):
+    """n8n sends contact_id + space_id. Resolving the Respond.io id without the
+    workspace could land on a stranger in another workspace and answer with THEIR
+    grants."""
+    ws_a, ws_b = _workspace(db, "space-A"), _workspace(db, "space-B")
+
+    a = _contact(db, respond_io_id="shared-io-id")
+    a.workspace_id = ws_a.id
+    b = _contact(db, respond_io_id="shared-io-id")
+    b.workspace_id = ws_b.id
+    db.flush()
+
+    assert resolve_contact_id(db, "shared-io-id", "space-A") == a.id
+    assert resolve_contact_id(db, "shared-io-id", "space-B") == b.id
+
+
+def test_an_ambiguous_respond_io_id_resolves_to_nothing_rather_than_a_coin_flip(db):
+    ws_a, ws_b = _workspace(db, "space-A"), _workspace(db, "space-B")
+    a = _contact(db, respond_io_id="shared-io-id")
+    a.workspace_id = ws_a.id
+    b = _contact(db, respond_io_id="shared-io-id")
+    b.workspace_id = ws_b.id
+    db.flush()
+
+    assert resolve_contact_id(db, "shared-io-id") is None
+
+
+def test_an_internal_id_wins_before_any_workspace_lookup(db):
+    """A caller who already resolved the contact must not be second-guessed by a
+    space_id that happens to be wrong or absent."""
+    contact = _contact(db)
+    assert resolve_contact_id(db, contact.id, "space-that-does-not-exist") == contact.id
+
+
+def test_the_wrong_space_id_denies_rather_than_falling_back(db):
+    """Falling back to "any workspace" would make space_id decorative, and the
+    ambiguous case would silently start picking one."""
+    ws = _workspace(db, "space-A")
+    contact = _contact(db, respond_io_id="only-in-a")
+    contact.workspace_id = ws.id
+    db.flush()
+
+    assert resolve_contact_id(db, "only-in-a", "space-B") is None
+
+
+def test_space_id_reaches_the_decision(db):
+    """The route threads it through decide() - without that the disambiguation
+    exists but nothing uses it."""
+    ws = _workspace(db, "space-A")
+    contact = _contact(db, respond_io_id="io-1")
+    contact.workspace_id = ws.id
+    db.flush()
+    agent = _agent(db)
+    _grant(db, contact, agent)
+    _field(db, "estimated_arrival_date")
+
+    (ok,) = decide(
+        db, resource=RESOURCE, fields=["estimated_arrival_date"], contact_id="io-1", space_id="space-A"
+    )
+    assert ok.outcome == ALLOWED
+
+    # The wrong workspace resolves to NOBODY - which is a lookup failure, not a
+    # revoked grant. The contact's grants are untouched and still say "allowed".
+    (denied,) = decide(
+        db, resource=RESOURCE, fields=["estimated_arrival_date"], contact_id="io-1", space_id="space-B"
+    )
+    assert denied.outcome == CONTACT_NOT_FOUND
+
+
+def test_the_route_passes_space_id_to_the_gate():
+    """A param the route accepts but drops is worse than not having it: n8n would
+    believe it was disambiguating."""
+    import inspect
+
+    from app.api.v1 import incoming_stock
+
+    source = inspect.getsource(incoming_stock.get_incoming_list)
+    assert "space_id" in source
+    assert "space_id=space_id" in source

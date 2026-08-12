@@ -239,9 +239,18 @@ class TestUsageTracking:
     def test_successful_resolve_stamps_last_used_on_key_and_integration(self, db, svc):
         integration = _integration(db)
         plaintext = svc.issue_key(integration)
+        key_row = _keys(db, integration).one()
+
         svc.resolve(plaintext)
 
-        assert _keys(db, integration).one().last_used_at is not None
+        # Read the objects the resolver stamped, WITHOUT re-querying. The stamp
+        # is written on its own connection and committed there (see
+        # `_stamp_usage`), so it cannot see rows this test has not committed --
+        # a deliberate trade: the caller's transaction must not carry the write,
+        # because holding that row lock for the length of a request is what took
+        # the integration API down on 2026-08-10. A re-query here would reload
+        # the row from a DB that never saw the fixture's uncommitted insert.
+        assert key_row.last_used_at is not None
         assert integration.last_used_at is not None
 
     def test_old_key_usage_is_visible_before_expiry(self, db, svc):
@@ -250,10 +259,33 @@ class TestUsageTracking:
         integration = _integration(db)
         old = svc.issue_key(integration)
         svc.rotate_key(integration)
+        stale = _superseded(db, integration)
+
         svc.resolve(old)
 
-        stale = _superseded(db, integration)
         assert stale.last_used_at is not None
+
+    def test_resolve_leaves_no_pending_write_in_the_callers_transaction(self, db, svc):
+        """The stamp must never become part of the caller's transaction.
+
+        This is the regression guard for the 2026-08-10 outage. The stamp used
+        to be `integration.last_used_at = now; db.flush()`, which took a
+        row-exclusive lock on a row EVERY api-key request needs and held it
+        until the request finished -- so one slow request serialised every other
+        integration caller behind it, and the queue only cleared when the
+        container was killed.
+
+        Asserting "nothing is dirty" is the cheapest way to pin that: a dirty
+        attribute here means an UPDATE will be emitted inside the caller's
+        transaction, which means the lock is back.
+        """
+        integration = _integration(db)
+        plaintext = svc.issue_key(integration)
+        db.flush()
+
+        svc.resolve(plaintext)
+
+        assert not db.dirty, f"resolve() left pending writes: {db.dirty}"
 
     def test_failed_resolve_does_not_stamp_last_used(self, db, svc):
         integration = _integration(db)

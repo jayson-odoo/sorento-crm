@@ -189,7 +189,44 @@ class InboundShipmentLineResponse(InboundShipmentLineBase):
         from_attributes = True
 
 
-class InboundShipmentBase(BaseModel):
+class ClearanceFields(BaseModel):
+    """Container status fields carried on every shipment payload.
+
+    Mirrors `ClearanceFields` in
+    packing-lists/types/packingList.types.ts one-for-one; a pytest parity check
+    (tests/test_container_status_schema.py) fails if the two drift, because a
+    field missing on one side does not error - it just never reaches the UI.
+
+    Inherited by `InboundShipmentBase`, so the list response, the detail response
+    and the create payload all get them from one place rather than from three
+    hand-maintained field lists.
+    """
+
+    loc: Optional[str] = None
+    liner_code: Optional[str] = None
+    china_forwarder: Optional[str] = None
+    malaysia_forwarder: Optional[str] = None
+    consignee: Optional[str] = None
+    free_days_available: Optional[int] = None
+    stacked: Optional[str] = None
+
+    loading_date: Optional[date] = None
+    etc_date: Optional[date] = None
+    etd_date: Optional[date] = None
+    eta_delay_date: Optional[date] = None
+    inspection_date: Optional[date] = None
+    approval_date: Optional[date] = None
+    gatepass_date: Optional[date] = None
+    delivery_warehouse: Optional[str] = None
+    warehouse_arrival_date: Optional[date] = None
+    informed_collection_date: Optional[date] = None
+    collection_date: Optional[date] = None
+
+    coa_permit_no: Optional[str] = None
+    source_sheet: Optional[str] = None
+
+
+class InboundShipmentBase(ClearanceFields):
     shipment_number: Optional[str] = None
     supplier_id: Optional[str] = None
     shipment_date: date
@@ -209,7 +246,17 @@ class InboundShipmentCreate(InboundShipmentBase):
     shipment_lines: Optional[List[InboundShipmentLineCreate]] = None
 
 
-class InboundShipmentUpdate(BaseModel):
+class InboundShipmentUpdate(ClearanceFields):
+    """Everything editable on a packing list, INCLUDING the clearance fields.
+
+    They are here because the workbook is not the only way these dates arrive:
+    when the import has not run, or a liner publishes a revision between imports,
+    someone has to be able to type the date in. Without them on this schema the
+    PUT accepted the payload and silently dropped it - `update_shipment` setattrs
+    whatever `exclude_unset` yields, so a field absent from the schema never
+    reaches the row and the save looks successful.
+    """
+
     supplier_id: Optional[str] = None
     shipment_date: Optional[date] = None
     estimated_arrival_date: Optional[date] = None
@@ -519,6 +566,13 @@ class PickingHeaderResponse(PickingHeaderBase):
     picking_lines: Optional[List[PickingLineResponse]] = None
     lines_count: Optional[int] = 0
     items_count: Optional[int] = 0
+    # Provenance: how this GRN got here. `source_system` is 'ui' | 'import' |
+    # 'external_api'; the two labels are resolved server-side because the UI must
+    # never print a UUID. All None for rows created before this was recorded,
+    # which reads as "unknown" rather than guessing an author.
+    source_system: Optional[str] = None
+    created_by_label: Optional[str] = None
+    import_filename: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -771,6 +825,8 @@ class PurchaseRequestHeaderBase(BaseModel):
     request_number: Optional[str] = None  # User-assignable form number (e.g. PR-2026-001)
     request_date: Optional[date] = None
     customer_name: Optional[str] = None
+    # Site contact, free text ("name and contact number"). Optional.
+    pic: Optional[str] = None
     project_title: Optional[str] = None
     purpose: Optional[str] = None
     delivery_address: Optional[str] = None  # sponsorship form
@@ -833,6 +889,8 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     request_number: Optional[str] = None
     request_date: Optional[date] = None
     customer_name: Optional[str] = None
+    # Site contact, free text ("name and contact number"). Optional.
+    pic: Optional[str] = None
     project_title: Optional[str] = None
     purpose: Optional[str] = None
     delivery_address: Optional[str] = None
@@ -1003,6 +1061,8 @@ class PublicApprovalSummaryResponse(BaseModel):
     request_number: Optional[str] = None
     request_type: str
     customer_name: Optional[str] = None
+    # Site contact, free text ("name and contact number"). Optional.
+    pic: Optional[str] = None
     project_title: Optional[str] = None
     purpose: Optional[str] = None
     delivery_address: Optional[str] = None  # sponsorship form

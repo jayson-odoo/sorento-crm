@@ -13,7 +13,6 @@ import {
   getPaginationRowModel,
 } from '@tanstack/react-table';
 import { ChevronRight, Plus, Search, Trash2, Upload, X } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -31,7 +30,8 @@ import { useGRNs } from '../hooks/useGRN';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import type { GRN } from '../types/grn.types';
 import { formatDate } from '@/lib/helpers';
-import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
+import { formatStatusLabel } from '@/lib/status-badge';
+import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { GRNImportDialog } from './GRNImportDialog';
 import GRNBulkDeleteDialog from './GRNBulkDeleteDialog';
 import { importGRNListing, importGRNLines, validateGRNListing, validateGRNLines } from '../services/grnService';
@@ -142,9 +142,9 @@ export default function GRNList() {
         cell: ({ row }) => {
           const status = row.original.picking_status;
           return (
-            <Badge variant={getStatusBadgeVariant(status)}>
+            <span className={`${STATUS_PILL_BASE} ${statusPillClass(status)}`}>
               {formatStatusLabel(status) || '-'}
-            </Badge>
+            </span>
           );
         },
         size: 120,

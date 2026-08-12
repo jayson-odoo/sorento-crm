@@ -31,6 +31,20 @@ const STATUS_PILL_CLASS: Record<string, string> = {
   // Skipped is an outcome, not an error: nothing could send, and the reason is stated beside
   // it. Gray for the same reason `voided` is gray.
   skipped: 'bg-gray-200 text-gray-600',
+  // Certificate register (LIF-3): the two lifecycle statuses plus the DERIVED
+  // validity states. Validity is never a status on the row - it just shares the
+  // pill palette so the list reads consistently.
+  active: 'bg-emerald-100 text-emerald-800',
+  archived: 'bg-slate-200 text-slate-700',
+  valid: 'bg-emerald-100 text-emerald-800',
+  expiring_soon: 'bg-amber-100 text-amber-800',
+  expired: 'bg-red-100 text-red-800',
+  not_yet_valid: 'bg-sky-100 text-sky-800',
+  unknown: 'bg-muted text-muted-foreground',
+  // How a covered-product link got there. Human confirmation reads stronger
+  // than a machine reading, so `manual` takes the affirmative colour.
+  manual: 'bg-blue-100 text-blue-800',
+  ai: 'bg-muted text-muted-foreground',
 };
 
 /** Base classes for the pill chip (shape + sizing); pair with statusPillClass(). */

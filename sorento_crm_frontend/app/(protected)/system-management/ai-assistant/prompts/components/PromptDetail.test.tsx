@@ -17,6 +17,10 @@ vi.mock('../../hooks/useAIAssistantPrompts', () => ({
   useSaveVersion: () => useSaveVersion(),
   useSetLabel: () => useSetLabel(),
   useDryRun: () => useDryRun(),
+  // The "Runs on" card lives in the sidebar and reads the key list for this agent's
+  // model. Not the subject of these tests; stubbed so it renders inert.
+  usePromptKeys: () => ({ data: [] }),
+  useSetAgentModel: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => useHasPermission(),

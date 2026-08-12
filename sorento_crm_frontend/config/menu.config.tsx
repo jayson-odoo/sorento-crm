@@ -510,9 +510,19 @@ export const MENU_SIDEBAR: MenuConfig = [
       ],
     },
     {
+      title: 'Certificates',
+      path: '/master-data-management/certificates',
+      permission: 'master_data.certificates.view',
+    },
+    {
       title: 'Product Categories',
       path: '/master-data-management/product-categories',
       permission: 'master_data.product_categories.view',
+    },
+    {
+      title: 'Product Specifications',
+      path: '/master-data-management/product-specifications',
+      permission: 'master_data.products.view',
     },
     {
       title: 'Brands',
@@ -716,6 +726,11 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Import Logs',
         path: '/system-management/import-logs',
+        superadminOnly: true,
+      },
+      {
+        title: 'Tracking Validation',
+        path: '/system-management/tracking-validation',
         superadminOnly: true,
       },
       {
@@ -1365,9 +1380,19 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       ],
     },
     {
+      title: 'Certificates',
+      path: '/master-data-management/certificates',
+      permission: 'master_data.certificates.view',
+    },
+    {
       title: 'Product Categories',
       path: '/master-data-management/product-categories',
       permission: 'master_data.product_categories.view',
+    },
+    {
+      title: 'Product Specifications',
+      path: '/master-data-management/product-specifications',
+      permission: 'master_data.products.view',
     },
     {
       title: 'Brands',
@@ -1571,6 +1596,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Import Logs',
         path: '/system-management/import-logs',
+        superadminOnly: true,
+      },
+      {
+        title: 'Tracking Validation',
+        path: '/system-management/tracking-validation',
         superadminOnly: true,
       },
       {

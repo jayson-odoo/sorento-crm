@@ -65,6 +65,20 @@ let handlingLockState: {
   refresh: handlingLockRefresh,
   isMutating: false,
 };
+
+// Form-action deferral: idle by default - these suites exercise other wiring. The
+// hook's own behaviour is covered by formAction.test.ts + the pytest/e2e layers.
+vi.mock('@/app/(protected)/sla-management/_shared/useFormAction', () => ({
+  useFormAction: () => ({
+    view: { kind: 'idle' },
+    ctasDisabled: false,
+    cancel: vi.fn(),
+    undo: vi.fn(),
+    refresh: vi.fn(),
+    isMutating: false,
+  }),
+}));
+
 vi.mock('@/app/(protected)/sla-management/_shared/useHandlingLock', () => ({
   useHandlingLock: () => handlingLockState,
 }));
@@ -130,6 +144,8 @@ vi.mock('../services/purchaseRequestService', () => ({
   processPurchaseRequestByCs: vi.fn(),
   closePurchaseRequestByCs: vi.fn(),
   submitApprovalDecision: vi.fn(),
+  isDeferredDecision: (r: unknown) =>
+    !!r && typeof r === 'object' && (r as { deferred?: boolean }).deferred === true,
 }));
 
 const usePurchaseRequestMock = vi.fn();
@@ -139,6 +155,7 @@ vi.mock('../hooks/usePurchaseRequests', () => ({
   useDeletePurchaseRequestAttachment: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeletePurchaseRequest: () => ({ mutateAsync: vi.fn(), isPending: false }),
   usePurchaseRequestConversation: () => ({ data: undefined, isLoading: false }),
+  useExportPurchaseRequestPdf: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 import PurchaseRequestDetail from './PurchaseRequestDetail';
@@ -247,5 +264,53 @@ describe('PurchaseRequestDetail - Reassign gear-menu item', () => {
       }),
     );
     expect(handlingLockRefresh).toHaveBeenCalled();
+  });
+});
+
+describe('PurchaseRequestDetail - printed / on-screen layout', () => {
+  it('lets a long unbroken value wrap instead of widening the page', async () => {
+    // A grid item defaults to `min-width: auto`, so an address with no spaces
+    // pushes its track wider than the card and the whole page scrolls
+    // sideways. `min-w-0` lets the item shrink; `break-words` then splits the
+    // token. Both are required - either one alone still overflows.
+    usePurchaseRequestMock.mockReturnValue({
+      data: purchaseRequest({
+        delivery_address:
+          's.dajkfndalkfkjfnkaewejirhofeuiiojpweksldmfjasdasdhfolsadkjdskjajlsajdfslsdslllls',
+      }),
+      isLoading: false,
+    });
+    renderPage();
+
+    const label = await screen.findByText('Customer Name');
+    const grid = label.closest('.grid');
+    expect(grid, 'the detail fields are not in a grid any more').toBeTruthy();
+    expect(grid?.className).toContain('[&>div]:min-w-0');
+    expect(grid?.className).toContain('[&_p]:break-words');
+  });
+
+  it('puts Print / Download PDF directly below Export to Excel', async () => {
+    // Two ways to get the same document out. Separated in the menu they read as
+    // unrelated actions, and a user hunting for "the export" finds only one.
+    renderPage();
+    await openGearMenu();
+
+    const items = await screen.findAllByRole('menuitem');
+    const labels = items.map((el) => el.textContent?.trim() ?? '');
+    const excel = labels.findIndex((t) => t.startsWith('Export to Excel'));
+    const pdf = labels.findIndex((t) => t.startsWith('Print / Download PDF'));
+    expect(excel, 'no Export to Excel item').toBeGreaterThanOrEqual(0);
+    expect(pdf).toBe(excel + 1);
+  });
+
+  it('offers the PDF from the gear menu, matching stock inquiries', async () => {
+    // It used to be a labelled header button. Complaints and stock inquiries
+    // put it in the actions menu with the printer icon and keep only the
+    // downloads chip in the header; PR/SF now agree.
+    renderPage();
+    expect(screen.queryByRole('button', { name: /^Download PDF$/ })).toBeNull();
+
+    await openGearMenu();
+    expect(await screen.findByText('Print / Download PDF')).toBeTruthy();
   });
 });

@@ -1,0 +1,315 @@
+{
+  "_about": "Spec-search eval baseline, modelled on eval_assistant_routing.baseline.json. Phrases a customer might send, with what the ranker should do. The NEGATIVE cases matter as much as the positive ones: a soft ranker is never empty, so without them a regression that drops the relevance floor looks like an improvement in hit rate.",
+  "_scope": "All 12 enabled classes (T2). Kitchen Sink was the T0 tracer; taps, basins, showers and water closets joined when CLASS_SUFFIXES widened.",
+  "_tuning": "weights and the floor live in app/services/product_spec_search.py. Change them here first, measure, then keep.",
+  "cases": [
+    {
+      "phrase": "stainless steel kitchen sink",
+      "specs": [
+        {
+          "key": "class",
+          "value": "Kitchen Sink"
+        },
+        {
+          "key": "material",
+          "value": "stainless_steel"
+        }
+      ],
+      "free_terms": [
+        "kitchen sink"
+      ],
+      "expect": "hit",
+      "must_all_match": {
+        "class": "Kitchen Sink",
+        "material": "stainless_steel"
+      },
+      "note": "the canonical query. Every candidate must genuinely be a steel sink."
+    },
+    {
+      "phrase": "black kitchen sink",
+      "specs": [
+        {
+          "key": "class",
+          "value": "Kitchen Sink"
+        },
+        {
+          "key": "finish",
+          "value": "black"
+        }
+      ],
+      "free_terms": [
+        "sink"
+      ],
+      "expect": "hit",
+      "must_all_match": {
+        "finish": "black"
+      }
+    },
+    {
+      "phrase": "1000mm kitchen sink",
+      "specs": [
+        {
+          "key": "class",
+          "value": "Kitchen Sink"
+        },
+        {
+          "key": "dim_length",
+          "value": 1000
+        }
+      ],
+      "free_terms": [
+        "kitchen sink"
+      ],
+      "expect": "hit",
+      "note": "numeric closeness. 1000 exactly should lead."
+    },
+    {
+      "phrase": "sink",
+      "specs": [],
+      "free_terms": [
+        "sink"
+      ],
+      "expect": "hit",
+      "note": "a bare class synonym. This is the single most common descriptive shape in the corpus, and it scored below the floor until free terms were resolved to a class."
+    },
+    {
+      "phrase": "suggest me a kitchen sink",
+      "specs": [
+        {
+          "key": "class",
+          "value": "Kitchen Sink"
+        }
+      ],
+      "free_terms": [
+        "kitchen sink"
+      ],
+      "expect": "hit"
+    },
+    {
+      "phrase": "ceramic kitchen sink",
+      "specs": [
+        {
+          "key": "class",
+          "value": "Kitchen Sink"
+        },
+        {
+          "key": "material",
+          "value": "ceramic"
+        }
+      ],
+      "free_terms": [
+        "kitchen sink"
+      ],
+      "expect": "hit",
+      "note": "a material with far thinner coverage than steel. Must still clear the floor rather than falling through."
+    },
+    {
+      "phrase": "wall mounted kitchen sink",
+      "specs": [
+        {
+          "key": "class",
+          "value": "Kitchen Sink"
+        },
+        {
+          "key": "mounting",
+          "value": "wall_hung"
+        }
+      ],
+      "free_terms": [
+        "kitchen sink"
+      ],
+      "expect": "hit",
+      "note": "an over-extracted spec: almost no kitchen sink is wall_hung. A WHERE filter would empty the picker; a boost must not."
+    },
+    {
+      "phrase": "flux capacitor",
+      "specs": [],
+      "free_terms": [
+        "flux capacitor"
+      ],
+      "expect": "miss"
+    },
+    {
+      "phrase": "helicopter blade",
+      "specs": [],
+      "free_terms": [
+        "helicopter blade"
+      ],
+      "expect": "miss"
+    },
+    {
+      "phrase": "ferrari exhaust",
+      "specs": [],
+      "free_terms": [
+        "ferrari exhaust"
+      ],
+      "expect": "miss"
+    },
+    {
+      "phrase": "quantum toaster",
+      "specs": [],
+      "free_terms": [
+        "quantum toaster"
+      ],
+      "expect": "miss"
+    },
+    {
+      "phrase": "birthday cake",
+      "specs": [],
+      "free_terms": [
+        "birthday cake"
+      ],
+      "expect": "miss"
+    },
+    {
+      "phrase": "laptop charger",
+      "specs": [],
+      "free_terms": [
+        "laptop charger"
+      ],
+      "expect": "miss"
+    },
+    {
+      "phrase": "car tyre",
+      "specs": [],
+      "free_terms": [
+        "car tyre"
+      ],
+      "expect": "miss"
+    },
+    {
+      "phrase": "office chair",
+      "specs": [],
+      "free_terms": [
+        "office chair"
+      ],
+      "expect": "miss"
+    },
+    {
+      "phrase": "garden hose reel",
+      "specs": [],
+      "free_terms": [
+        "garden hose reel"
+      ],
+      "expect": "miss"
+    },
+    {
+      "phrase": "mobile phone case",
+      "specs": [],
+      "free_terms": [
+        "mobile phone case"
+      ],
+      "expect": "miss"
+    },
+    {
+      "phrase": "wall mounted kitchen tap",
+      "specs": [],
+      "free_terms": [
+        "wall mounted kitchen tap"
+      ],
+      "expect": "hit",
+      "must_all_match": {
+        "mounting": "wall_hung",
+        "product_type": "kitchen_tap"
+      },
+      "note": "reported by the user as unsatisfactory. Returned nothing before taps were enabled."
+    },
+    {
+      "phrase": "pillar mounted kitchen tap",
+      "specs": [],
+      "free_terms": [
+        "pillar mounted kitchen tap"
+      ],
+      "expect": "hit",
+      "must_all_match": {
+        "mounting": "pillar_mounted",
+        "product_type": "kitchen_tap"
+      },
+      "note": "PILLAR used to be a control_type, which put it on the wrong ranking leg."
+    },
+    {
+      "phrase": "flexible kitchen tap",
+      "specs": [],
+      "free_terms": [
+        "flexible kitchen tap"
+      ],
+      "expect": "hit",
+      "must_all_match": {
+        "spout_type": "flexible"
+      },
+      "note": "518 taps say FLEXIBLE. No key held it until spout_type existed."
+    },
+    {
+      "phrase": "single bowl kitchen sink",
+      "specs": [],
+      "free_terms": [
+        "single bowl kitchen sink"
+      ],
+      "expect": "hit",
+      "must_all_match": {
+        "bowl_count": 1,
+        "class": "Kitchen Sink"
+      }
+    },
+    {
+      "phrase": "double bowl kitchen sink",
+      "specs": [],
+      "free_terms": [
+        "double bowl kitchen sink"
+      ],
+      "expect": "hit",
+      "must_all_match": {
+        "bowl_count": 2,
+        "class": "Kitchen Sink"
+      },
+      "note": "only 106 of 1,148 sinks state a bowl count; the rest are correctly NULL."
+    },
+    {
+      "phrase": "angle valve",
+      "specs": [],
+      "free_terms": [
+        "angle valve"
+      ],
+      "expect": "hit",
+      "must_all_match": {
+        "product_type": "angle_valve"
+      },
+      "note": "floor-missed while 338 angle valves existed: registry synonyms were never consulted."
+    },
+    {
+      "phrase": "wall hung water closet",
+      "specs": [],
+      "free_terms": [
+        "wall hung water closet"
+      ],
+      "expect": "hit",
+      "must_all_match": {
+        "mounting": "wall_hung"
+      },
+      "note": "a FLOOR STANDING WC used to top this. A contradiction now demotes, without removing."
+    },
+    {
+      "phrase": "rain shower set",
+      "specs": [],
+      "free_terms": [
+        "rain shower set"
+      ],
+      "expect": "hit",
+      "must_all_match": {
+        "product_type": "rain_shower"
+      }
+    },
+    {
+      "phrase": "counter top wash basin",
+      "specs": [],
+      "free_terms": [
+        "counter top wash basin"
+      ],
+      "expect": "hit",
+      "must_all_match": {
+        "mounting": "counter_top",
+        "class": "Wash Basin"
+      }
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 """SLA management API routes."""
 from fastapi import APIRouter
-from app.api.v1.sla import sla_policies, sla_tracking, form_sla_config, form_sla_tracking, form_skip, sla_kpi
+from app.api.v1.sla import sla_policies, sla_tracking, form_sla_config, form_sla_tracking, form_skip, sla_kpi, form_actions
 
 router = APIRouter()
 
@@ -10,4 +10,5 @@ router.include_router(form_sla_config.router, prefix="/form-sla-config", tags=["
 router.include_router(form_sla_tracking.router, prefix="/form-sla-tracking", tags=["form-sla-tracking"])
 router.include_router(form_skip.router, prefix="/form", tags=["form-skip"])
 router.include_router(sla_kpi.router, prefix="/kpi", tags=["sla-kpi"])
+router.include_router(form_actions.router, prefix="/form-actions", tags=["form-actions"])
 # Event logs are part of sla_tracking router, accessible at /conversation-sla-tracking/event-logs

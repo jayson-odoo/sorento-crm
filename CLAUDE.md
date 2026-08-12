@@ -341,3 +341,25 @@ If unable to reach a browser (server down, sandboxed, etc.), state that explicit
 - **Prompt-registry save-validation returns a TOP-LEVEL body, not the `AppException` envelope.** `POST .../prompts/{name}/versions` on an unknown `{{token}}` returns `422 {error, unknown_tokens, missing_vars}` via raw `JSONResponse` (bypasses `response_model`) — unknown token = hard block, missing declared var = 201 + soft warn. FE reads those fields directly (can't use `extractApiError`, which is string-only). Declared vars are a fixed property of the KEY in `PROMPT_KEYS`, not free-form.
 - **Form handling-lock "escalated" = `escalated_at` stamped, NOT `current_tier > 1`.** Some form-SLA configs START above tier 1: `project_sales` begins at tier 2 (no tier-1 team); PR/SF approval routes to the configured default approver at THEIR tier (2/3) via `_start_for_config`. So a fresh, never-escalated tracker sits at tier 2/3 with `escalated_at IS NULL`. Keying the lock on `current_tier > 1` falsely showed the "Escalated to Tier N — claim it" banner + disabled CTAs on an approver-assigned form. `escalated_at` is set ONLY by `_escalate_tracker` (alongside `escalation_reason` — always in lockstep), never on initial assignment. Gate both sides on it: FE `resolveHandlingLockState` (`!activeTracker.escalated_at`), BE `handling_lock_service._is_escalated()` (used by `assert_can_act_on_form` + `_assert_claimable`). Type-agnostic across all `FORM_SLA_TYPES`. Assignment to a high tier ≠ escalated; only a real SLA breach that escalates locks the form.
 - **The in-form lock banner and SLA-escalation banner are TWO separate queries** — a manual "Escalate" must invalidate BOTH or the lock banner lags a reload. Lock banner ← `useHandlingLock` → `form-sla-tracking` (key `form-handling-tracker`); SLA banner ← `SlaActiveTrackerControls` → `conversation-sla-tracking/by-source` (key `form-sla-trackers`). The gear-menu escalate handlers invalidated only `form-sla-trackers`, so the SLA banner updated live but the lock banner stayed stale. Fix: `useHandlingLock()` exposes `refresh()`; call it after `escalateFormTracking` in every form detail page (stock-inquiry / complaint / PR-SF). Verify via `browser_network_requests` that the `form-sla-tracking` GET refetches right after the escalate POST.
+
+## Agent skills
+
+### Delivery pipeline
+
+Non-trivial feature work runs through **`/feature`** (`.claude/skills/feature/SKILL.md`), which
+executes the mandatory order in `PRINCIPLES.md` and calls the `mattpocock-skills` plugin at each
+slot. Two overrides: UAC + PLAN **files** under `documentation/plans/` are the contract (tickets
+are only the queue), and the frontend mock is built before any backend code (so `/implement` is
+scoped to Phase 2). See the skill map at the bottom of that file.
+
+### Issue tracker
+
+GitHub Issues on `jayson-odoo/sorento-crm`, via the `gh` CLI. See `documentation/agents/issue-tracker.md`.
+
+### Triage labels
+
+Canonical five-label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `documentation/agents/triage-labels.md`.
+
+### Domain docs
+
+Multi-context: `CONTEXT-MAP.md` at the root points at two glossaries; ADRs in `documentation/adr/`. See `documentation/agents/domain.md`.

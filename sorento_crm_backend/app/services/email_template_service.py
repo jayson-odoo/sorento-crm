@@ -23,6 +23,15 @@ TEMPLATE_VARIABLE_CATALOG: list[dict[str, Any]] = [
     {"key": "promotions_count", "label": "Number Of Expiring Promotions", "sample": "5"},
     {"key": "batch_link", "label": "Expiring Promotions Batch Link (View all)", "sample": "https://crm.example.com/marketing-management/promotions?expiry_notify_batch_id=00000000-0000-0000-0000-000000000000"},
     {"key": "expiry_notify_batch_id", "label": "Expiry Notify Batch Id", "sample": "00000000-0000-0000-0000-000000000000"},
+    {"key": "certificate.scheme", "label": "Certificate Scheme", "sample": "PPS"},
+    {"key": "certificate.certificate_number", "label": "Certificate Number", "sample": "04424FC"},
+    {"key": "certificate.certifying_body", "label": "Certifying Body", "sample": "IKRAM"},
+    {"key": "certificate.valid_until", "label": "Certificate Valid Until", "sample": "2026-12-23"},
+    {"key": "certificate.days_until_expiry", "label": "Days Until Certificate Expires", "sample": "30"},
+    {"key": "certificate.covered_product_count", "label": "Covered Products", "sample": "68"},
+    {"key": "certificate.link", "label": "Certificate Link", "sample": "https://crm.example.com/master-data-management/certificates/{id}"},
+    {"key": "certificates", "label": "All Expiring Certificates (loop with {% for c in certificates %})", "sample": "[ { scheme, certificate_number, certifying_body, valid_until, days_until_expiry, covered_product_count, link }, ... ]"},
+    {"key": "certificates_count", "label": "Number Of Expiring Certificates", "sample": "4"},
     {"key": "complaint.complaint_number", "label": "Complaint Number", "sample": "CMP-2026-0001"},
     {"key": "complaint.delivery_order_number", "label": "Complaint DO Number", "sample": "DO-12345"},
     {"key": "complaint.customer_name", "label": "Complaint Customer", "sample": "ACME Sdn Bhd"},
@@ -58,6 +67,19 @@ TEMPLATE_VARIABLE_CATALOG: list[dict[str, Any]] = [
 
 def sample_context() -> dict[str, Any]:
     today = date.today()
+    sample_certificate = {
+        "id": "sample",
+        "scheme": "PPS",
+        "certificate_number": "04424FC",
+        "certifying_body": "IKRAM",
+        "issuer": "IKRAM QA Services Sdn Bhd",
+        "title": "Product certification",
+        "valid_from": today.isoformat(),
+        "valid_until": today.isoformat(),
+        "days_until_expiry": 30,
+        "covered_product_count": 68,
+        "link": "https://crm.example.com/master-data-management/certificates/sample",
+    }
     sample_promo = {
         "code": "PROMO-001",
         "name": "Year-End Sale",
@@ -82,6 +104,19 @@ def sample_context() -> dict[str, Any]:
         "promotions_count": 2,
         "batch_link": "https://crm.example.com/marketing-management/promotions?expiry_notify_batch_id=00000000-0000-0000-0000-000000000000",
         "expiry_notify_batch_id": "00000000-0000-0000-0000-000000000000",
+        "certificate": sample_certificate,
+        "certificates": [
+            sample_certificate,
+            {
+                **sample_certificate,
+                "id": "sample-2",
+                "certificate_number": "WCM PC 000321",
+                "certifying_body": "JBC",
+                "covered_product_count": 12,
+                "link": "https://crm.example.com/master-data-management/certificates/sample-2",
+            },
+        ],
+        "certificates_count": 2,
         "complaint": {
             "id": "sample",
             "complaint_number": "CMP-2026-0001",

@@ -1,3 +1,4 @@
+import { useCompany } from '@/app/providers/CompanyProvider';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -27,9 +28,12 @@ export function useTeamMembers(teamId: string | null) {
 }
 
 export function useUsersSelect() {
+  // Team membership requires a grant for the team's company (AC-G1), so the picker
+  // must not offer users who cannot be added - the only outcome there is an error.
+  const { activeCompany } = useCompany();
   return useQuery({
-    queryKey: ['user-management-users-select'],
-    queryFn: () => getUsersSelect(),
+    queryKey: ['user-management-users-select', activeCompany?.id ?? null],
+    queryFn: () => getUsersSelect({ company_id: activeCompany?.id }),
     staleTime: 60 * 1000,
   });
 }

@@ -119,6 +119,10 @@ class AIPromptService:
                     "activates_in": spec.activates_in,
                     "variables": list(spec.variables),
                     "production_version": labels.get("production"),
+                    # Which LLM this agent runs on in production. None = the global
+                    # assistant model, which is what every agent used before this.
+                    "provider": prod_label.provider if prod_label is not None else None,
+                    "model": prod_label.model if prod_label is not None else None,
                     "staging_version": labels.get("staging"),
                     "latest_version": int(latest.version) if latest is not None else None,
                     "updated_at": updated_at,
@@ -237,6 +241,38 @@ class AIPromptService:
             "labels": [],  # a new version lands unlabelled
             "missing_vars": missing,
         }
+
+    def set_agent_model(
+        self, name: str, *, label: str, provider: Optional[str], model: Optional[str]
+    ) -> dict[str, Optional[str]]:
+        """Point one agent at one LLM. Empty/None means "use the global default".
+
+        Deliberately separate from `set_label`: publishing a prompt version and
+        changing the model are different decisions with different blast radii, and
+        folding them together would make every publish look like a model change in the
+        audit trail.
+        """
+        if label not in LABELS:
+            raise AppException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                message=f"Unknown label '{label}'. Allowed: {', '.join(LABELS)}.",
+                code="INVALID_LABEL",
+            )
+        row = (
+            self.db.query(AIPromptLabel)
+            .filter(AIPromptLabel.name == name, AIPromptLabel.label == label)
+            .first()
+        )
+        if row is None:
+            raise AppException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                message=f"'{name}' has no published {label} version to configure.",
+                code="NOT_FOUND",
+            )
+        row.provider = (provider or "").strip() or None
+        row.model = (model or "").strip() or None
+        self.db.commit()
+        return {"provider": row.provider, "model": row.model}
 
     def set_label(
         self, name: str, *, label: str, version_id: str, user_id: Optional[str]

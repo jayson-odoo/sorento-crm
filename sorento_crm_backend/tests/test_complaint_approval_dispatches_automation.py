@@ -200,7 +200,16 @@ def test_complaint_approval_dispatches_automation_email(db: Session, monkeypatch
         .filter(NotificationDelivery.notification_id == str(n.id))
         .all()
     )
-    assert any(str(d.status) == "pending" and str(d.channel) == "email" for d in deliveries)
+    # The point is that an EMAIL delivery was created for this notification.
+    # Its status depends on whether the in-process notification queue has already
+    # handed it to the outbox (`notification_tasks` flips pending -> queued), which
+    # is timing, not behaviour: pinning "pending" made this test pass or fail on
+    # test collection ORDER. Anything except `failed` means it was accepted.
+    email_deliveries = [d for d in deliveries if str(d.channel) == "email"]
+    assert email_deliveries, f"expected an email delivery; got {[(d.channel, d.status) for d in deliveries]}"
+    assert all(str(d.status) != "failed" for d in email_deliveries), (
+        f"email delivery was rejected: {[(d.channel, d.status) for d in email_deliveries]}"
+    )
 
 
 def test_complaint_rejection_does_not_dispatch_automation(db: Session, monkeypatch) -> None:

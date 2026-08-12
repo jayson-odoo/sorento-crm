@@ -87,7 +87,18 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
       setEnabled(automation.enabled);
       setTriggerType(automation.trigger_type);
       const cfg = automation.trigger_config as { days_before?: number };
-      setDaysBefore(typeof cfg?.days_before === 'number' ? cfg.days_before : 7);
+      // An automation saved before the X was settable has an EMPTY config, so
+      // fall back to its own trigger's default rather than a hardcoded 7 - a
+      // certificate automation showing 7 under "Days before the certificate
+      // expires" is the same type-blind guess that caused the empty config.
+      const savedSpec = triggerSpecs.find((s) => s.type === automation.trigger_type);
+      const savedDefault = (
+        (savedSpec?.config_schema as { properties?: Record<string, unknown> } | undefined)
+          ?.properties?.days_before as { default?: number } | undefined
+      )?.default;
+      setDaysBefore(
+        typeof cfg?.days_before === 'number' ? cfg.days_before : (savedDefault ?? 7),
+      );
       setEmailTemplateId(automation.email_template_id);
       setRecipientConfig({
         user_ids: automation.recipient_config?.user_ids ?? [],
@@ -106,7 +117,12 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
       setDescription('');
       setEnabled(true);
       setTriggerType(triggerSpecs[0]?.type ?? '');
-      setDaysBefore(7);
+      setDaysBefore(
+        ((triggerSpecs[0]?.config_schema as
+          | { properties?: Record<string, unknown> }
+          | undefined)?.properties?.days_before as { default?: number } | undefined)
+          ?.default ?? 7,
+      );
       setEmailTemplateId('');
       setRecipientConfig(emptyRecipients);
       setGroupMatches(true);
@@ -126,12 +142,41 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
   // Degrade gracefully if the triggers API hasn't started returning fact_sources.
   const factSources = triggerSpec?.fact_sources ?? [];
 
+  /**
+   * The trigger's own `days_before` config, read from its JSON schema rather
+   * than from a hardcoded trigger type. Every trigger that needs an X declares
+   * it in `config_schema`, so a new one gets its input for free - the previous
+   * `triggerType === 'days_before_promotion_end'` gate left the certificate
+   * trigger with no input at all, saving `trigger_config: {}` and matching
+   * nothing.
+   */
+  const daysBeforeSchema = useMemo(() => {
+    const props = (triggerSpec?.config_schema as
+      | { properties?: Record<string, unknown> }
+      | undefined)?.properties;
+    const schema = props?.days_before;
+    return schema && typeof schema === 'object'
+      ? (schema as { title?: string; default?: number })
+      : null;
+  }, [triggerSpec]);
+
+  const supportsGrouping = triggerSpec?.supports_grouping ?? false;
+
   // Changing the trigger switches which facts are valid, so any existing
   // condition tree no longer applies — reset it.
   const handleTriggerChange = (t: string) => {
     setTriggerType(t);
     setConditionsJson(null);
     setRuleProblems([]);
+    // Each trigger carries its own sensible X (7 for promotions, 30 for
+    // certificates), so adopt the new trigger's default instead of carrying the
+    // previous trigger's number across.
+    const next = triggerSpecs.find((s) => s.type === t);
+    const nextDefault = (
+      (next?.config_schema as { properties?: Record<string, unknown> } | undefined)
+        ?.properties?.days_before as { default?: number } | undefined
+    )?.default;
+    if (typeof nextDefault === 'number') setDaysBefore(nextDefault);
   };
 
   async function onSubmit() {
@@ -166,11 +211,11 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
       description: description.trim() || null,
       enabled,
       trigger_type: triggerType,
-      trigger_config: triggerType === 'days_before_promotion_end' ? { days_before: daysBefore } : {},
+      trigger_config: daysBeforeSchema ? { days_before: daysBefore } : {},
       action_type: 'send_email',
       email_template_id: emailTemplateId,
       recipient_config: recipientConfig,
-      group_matches: triggerType === 'days_before_promotion_end' ? groupMatches : true,
+      group_matches: supportsGrouping ? groupMatches : true,
       // Only send a condition tree for triggers that expose facts; null = match all.
       conditions_json: factSources.length > 0 ? conditionsJson : null,
       schedule_type: scheduleType,
@@ -238,9 +283,9 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
             )}
           </div>
 
-          {triggerType === 'days_before_promotion_end' && (
+          {daysBeforeSchema && (
             <div className="space-y-1">
-              <Label htmlFor="auto-days">Days before end</Label>
+              <Label htmlFor="auto-days">{daysBeforeSchema.title || 'Days before'}</Label>
               <Input
                 id="auto-days"
                 type="number"
@@ -269,7 +314,7 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
             <RecipientPicker value={recipientConfig} onChange={setRecipientConfig} />
           </div>
 
-          {triggerType === 'days_before_promotion_end' && (
+          {supportsGrouping && (
             <div className="md:col-span-2 rounded-md border p-3">
               <div className="flex items-start gap-3">
                 <Switch
@@ -280,8 +325,8 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
                 <div className="space-y-0.5">
                   <Label htmlFor="auto-group">Combine into one email</Label>
                   <p className="text-xs text-muted-foreground">
-                    When several promotions expire on the same day, send each recipient a
-                    single email listing them all instead of one email per promotion.
+                    When several records match on the same day, send each recipient a single
+                    email listing them all instead of one email per match.
                   </p>
                 </div>
               </div>

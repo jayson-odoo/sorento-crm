@@ -51,6 +51,33 @@ from app.schemas.procurement import SPOAllocationCreate
 
 logger = logging.getLogger(__name__)
 
+# Sentinel for "the caller did not tell us its company scope". Distinct from
+# ``None``, which is a REAL scope meaning all companies.
+_SCOPE_NOT_GIVEN = object()
+
+
+def _apply_preview_scope(db, company_scope: Any) -> None:
+    """Give a validation preview the SAME company scope the real import will run at.
+
+    A preview that reads across all companies answers a different question than the
+    import: it resolves products, warehouses and existing headers the scoped import
+    cannot see, so it reports "would succeed" on rows the import then skips as
+    not-found. Preview and import must disagree about nothing.
+
+    The caller is an HTTP route, so it already holds the resolved scope on its own
+    session (``get_company_scope(db)``) — it passes that through rather than us
+    re-deriving it. ``_SCOPE_NOT_GIVEN`` keeps non-HTTP callers (scripts, tests)
+    working system-scoped, with a warning so a route that forgets is visible.
+    """
+    if company_scope is _SCOPE_NOT_GIVEN:
+        logger.warning(
+            "Import validation preview ran with no company scope; reading all companies"
+        )
+        set_company_scope(db, None)
+        return
+    set_company_scope(db, company_scope)
+
+
 def _apply_import_job_scope(db, db_job_id: Optional[str]) -> None:
     """Re-establish the request's company scope on the worker session (multi-company
     isolation, AC-D2/D3/K4).
@@ -1393,8 +1420,14 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
         db.close()
 
 
-def validate_spo_import(file_data: bytes, filename: str) -> Dict[str, Any]:
-    """Run SPO import validation (same parsing and row validation as process_spo_import). No allocations created."""
+def validate_spo_import(
+    file_data: bytes, filename: str, *, company_scope: Any = _SCOPE_NOT_GIVEN
+) -> Dict[str, Any]:
+    """Run SPO import validation (same parsing and row validation as process_spo_import). No allocations created.
+
+    ``company_scope`` is the caller's resolved scope, so the preview reads exactly
+    what the import will read (see ``_apply_preview_scope``).
+    """
     import openpyxl
 
     spo_number = re.sub(r"\.xlsx?$", "", filename or "", flags=re.IGNORECASE).strip()
@@ -1402,7 +1435,7 @@ def validate_spo_import(file_data: bytes, filename: str) -> Dict[str, Any]:
         return {"valid": False, "errors": ["Filename must provide SPO number (e.g. SPO-2025.10-0050.xlsx)"], "warnings": [], "summary": {}}
 
     db = SessionLocal()
-    set_company_scope(db, None)  # validation preview reads across all companies (no job snapshot)
+    _apply_preview_scope(db, company_scope)
     try:
         workbook = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
     except Exception as exc:
@@ -1525,7 +1558,115 @@ _GRN_SPO_COLUMN_CANDIDATES = (
     "from doc number",
     "from document no",
     "from document number",
+    "our po no",
+    "our po number",
+    "our p o no",
+    "our p o number",
 )
+
+# The GRN DETAIL (line) export carries the SPO on the LINE itself - AutoCount
+# calls it "Our PO No.". That is the stronger linkage: one GRN can be received
+# against several SPOs, and only the line knows which one it belongs to. The
+# header's "Transfer from" is the FALLBACK, used when the line says nothing.
+#
+# Order matters, and so does emptiness: `_first_filled` walks these in order and
+# takes the first candidate that is actually POPULATED on the row, so a sheet
+# carrying both an empty "Our PO No." and a repeated "Transfer From" still
+# resolves to the header value instead of stopping at the blank line column.
+_GRN_LINE_SPO_COLUMN_CANDIDATES = (
+    "our po no",
+    "our po number",
+    # "Our P.O. No." normalizes to separate letters, so it needs its own entry.
+    "our p o no",
+    "our p o number",
+    "our po",
+    "from doc no",
+    "from doc number",
+    "from document no",
+    "from document number",
+    "spo number",
+    "transfer from",
+    "transfer from ",
+)
+
+
+def _resolve_line_spo(row_data: dict) -> Optional[str]:
+    """The SPO a GRN LINE was received against, from the line's own columns.
+
+    None when the line names no single SPO (blank, or a multi-SPO cell) - the
+    caller then falls back to the GRN header's `spo_number`, which is the older
+    "Transfer from" linkage.
+    """
+    return _single_spo_or_none(_first_filled(row_data, *_GRN_LINE_SPO_COLUMN_CANDIDATES))
+
+
+def _first_filled(row: dict, *candidates: str) -> Any:
+    """First candidate column that is PRESENT AND NON-BLANK on this row.
+
+    Distinct from a present-key lookup: an export that ships the line-level SPO
+    column but leaves it empty on a given row must fall through to the next
+    candidate, not resolve to None and lose the header fallback.
+    """
+    for c in candidates:
+        cl = _grn_import_normalize_header(c)
+        if cl not in row:
+            continue
+        value = row.get(cl)
+        if value is None:
+            continue
+        if str(value).strip():
+            return value
+    return None
+
+# AutoCount puts every SPO a GRN was received against into the ONE "Transfer
+# from" cell ("SPO-2026/06-0020, SPO-2026/06-0021, ..."), which overflowed the
+# old varchar(50) and aborted the import. Migration 317 widened
+# `picking_headers.spo_number` to 255 so the header can SAY which SPOs it covers.
+_GRN_SPO_SEPARATORS = re.compile(r"[,;\n\r]+|\s{2,}")
+# Storage width of `picking_headers.spo_number` after migration 317.
+_SPO_NUMBER_MAX_LEN = 255
+
+
+def _split_spo_cell(raw: Any) -> list[str]:
+    """Split a GRN SPO cell into its individual SPO numbers.
+
+    One value in, one value out for the normal case; a multi-SPO GRN yields the
+    full list (see `_header_spo_display` and `_single_spo_or_none`).
+    """
+    if raw is None:
+        return []
+    return [part.strip() for part in _GRN_SPO_SEPARATORS.split(str(raw)) if part.strip()]
+
+
+def _header_spo_display(raw: Any) -> Optional[str]:
+    """What `picking_headers.spo_number` stores: every SPO the GRN covers.
+
+    Normalized to a single ", "-joined form so the same cell always stores the
+    same string regardless of which separator AutoCount exported.
+
+    This column is DISPLAY for the multi-SPO case. Matching is scalar and stays
+    scalar - `_spo_match_key`, `procurement_service._normalize_spo_number` and the
+    packing-list grouping all compare ONE normalized SPO - so a joined value
+    equals no single SPO and can never false-link. The per-line SPO
+    (`_single_spo_or_none`) is what drives allocation matching.
+    """
+    parts = _split_spo_cell(raw)
+    if not parts:
+        return None
+    return ", ".join(parts)
+
+
+def _single_spo_or_none(raw: Any) -> Optional[str]:
+    """The one SPO number in a GRN SPO cell, or None when there is not exactly one.
+
+    Used where the value FEEDS MATCHING (the per-line SPO): a GRN line received
+    against several SPOs names no single allocation, so it stays unlinked rather
+    than carrying a joined string that `_spo_match_key` can never match.
+    """
+    parts = _split_spo_cell(raw)
+    if len(parts) != 1:
+        return None
+    return parts[0]
 
 
 def _run_grn_listing_import_core(
@@ -1534,11 +1675,17 @@ def _run_grn_listing_import_core(
     job_service: Optional[JobService] = None,
     job_id_str: Optional[str] = None,
     outcome: Optional[ImportOutcome] = None,
+    created_by: Optional[str] = None,
+    import_job_db_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Parse GRN listing Excel and run upsert loop. Returns counts and errors. Caller must commit or rollback.
 
     ``outcome`` records per-row attribution. The validation preview passes a
     non-persisting recorder so preview and import speak the same reason codes.
+
+    ``created_by`` / ``import_job_db_id`` are stamped onto headers this run
+    CREATES, so a GRN can say who imported it and from which file. The preview
+    passes neither (it writes nothing).
     """
     import openpyxl
 
@@ -1589,12 +1736,25 @@ def _run_grn_listing_import_core(
     for row_idx, row in enumerate(data_rows, start=2):
         doc_num = _find(row, "doc number", "doc. no.", "doc. number", "doc number ", "grn number")
         grn_number = (doc_num and str(doc_num).strip()) or None
-        transfer_from = _find(row, *_GRN_SPO_COLUMN_CANDIDATES)
-        spo_number = (transfer_from and str(transfer_from).strip()) or None
+        transfer_from = _first_filled(row, *_GRN_SPO_COLUMN_CANDIDATES)
+        # Every SPO the GRN covers, normalized. Display for the multi-SPO case;
+        # allocation matching runs off the per-line SPO.
+        spo_number = _header_spo_display(transfer_from)
         identity = {"grn_number": grn_number, "spo_number": spo_number}
         if not grn_number:
             reason = "Missing doc number / GRN number"
             outcome.skip(row=row_idx, code=oc.MISSING_DOC_NO, message=reason, identity=identity)
+            skipped_rows_detail.append({"row": row_idx, "reason": reason})
+            _progress(row_idx)
+            continue
+        if spo_number and len(spo_number) > _SPO_NUMBER_MAX_LEN:
+            # Past 255 even the widened column cannot hold it: bad source data.
+            # Skip the row with the reason instead of letting Postgres abort the
+            # transaction (which used to take every later row down with it).
+            reason = (
+                f"SPO number longer than {_SPO_NUMBER_MAX_LEN} characters: {spo_number[:60]}"
+            )
+            outcome.skip(row=row_idx, code=oc.UPSERT_ERROR, message=reason, identity=identity)
             skipped_rows_detail.append({"row": row_idx, "reason": reason})
             _progress(row_idx)
             continue
@@ -1605,16 +1765,44 @@ def _run_grn_listing_import_core(
         except Exception:
             picking_date = date.today()
         try:
-            proc.upsert_grn_header_for_import(grn_number, spo_number, picking_date)
+            header, was_created = proc.upsert_grn_header_for_import(
+                grn_number,
+                spo_number,
+                picking_date,
+                created_by=created_by,
+                import_job_id=import_job_db_id,
+            )
+            # Report which of the two actually happened. Reporting every success as
+            # `created` made the last person to re-run a file look like the author
+            # of every GRN in it, which is what made "who created this GRN"
+            # unanswerable from import_job_rows.
             outcome.success(
                 row=row_idx,
-                code=oc.CREATED,
-                message=f"GRN header saved: {grn_number}",
+                code=oc.CREATED if was_created else oc.UPDATED,
+                # `outcome` is the column a query filters on and it defaults to
+                # "created", so it has to be set alongside `code` or the two
+                # disagree and the filter still lies.
+                outcome=oc.OUTCOME_CREATED if was_created else oc.OUTCOME_UPDATED,
+                message=(
+                    f"GRN header created: {grn_number}"
+                    if was_created
+                    else f"GRN header updated: {grn_number}"
+                ),
                 value=grn_number,
                 identity=identity,
                 entity_type="picking_header",
+                entity_id=str(header.id),
             )
         except Exception as e:
+            # `upsert_grn_header_for_import` commits per row, so a failed flush
+            # leaves the session needing a rollback. Without this, every LATER row
+            # dies with "transaction has been rolled back due to a previous
+            # exception" — one bad cell fails the whole file and the job report
+            # blames rows that were fine.
+            try:
+                db.rollback()
+            except Exception:
+                logger.exception("rollback after GRN header upsert failure also failed")
             outcome.fail(
                 row=row_idx,
                 code=oc.UPSERT_ERROR,
@@ -1636,10 +1824,16 @@ def _run_grn_listing_import_core(
     }
 
 
-def validate_grn_listing_import(file_data: bytes) -> Dict[str, Any]:
-    """Run GRN listing validation (same logic as import, then rollback). No DB writes."""
+def validate_grn_listing_import(
+    file_data: bytes, *, company_scope: Any = _SCOPE_NOT_GIVEN
+) -> Dict[str, Any]:
+    """Run GRN listing validation (same logic as import, then rollback). No DB writes.
+
+    Scoped to the caller's company so the preview cannot claim a row would succeed
+    against a header the scoped import will never see (``_apply_preview_scope``).
+    """
     db = SessionLocal()
-    set_company_scope(db, None)  # validation preview reads across all companies (no job snapshot)
+    _apply_preview_scope(db, company_scope)
     try:
         result = _run_grn_listing_import_core(db, file_data)
         db.rollback()
@@ -1661,13 +1855,19 @@ def validate_grn_listing_import(file_data: bytes) -> Dict[str, Any]:
         db.close()
 
 
-def validate_grn_lines_import(file_data: bytes) -> Dict[str, Any]:
-    """Run GRN lines validation: parse file and run grouping-phase checks (same as import). No line creation."""
+def validate_grn_lines_import(
+    file_data: bytes, *, company_scope: Any = _SCOPE_NOT_GIVEN
+) -> Dict[str, Any]:
+    """Run GRN lines validation: parse file and run grouping-phase checks (same as import). No line creation.
+
+    Scoped to the caller's company: product / warehouse / GRN-header lookups here
+    must resolve exactly what the scoped import resolves (``_apply_preview_scope``).
+    """
     import openpyxl
     from app.api.v1.external.utils import normalize_code
 
     db = SessionLocal()
-    set_company_scope(db, None)  # validation preview reads across all companies (no job snapshot)
+    _apply_preview_scope(db, company_scope)
     try:
         workbook = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
     except Exception as exc:
@@ -1703,8 +1903,9 @@ def validate_grn_lines_import(file_data: bytes) -> Dict[str, Any]:
         item_code = (_find(row_data, "item code", "item code ", "product code", "product code ") and str(_find(row_data, "item code", "item code ", "product code", "product code ")).strip()) or None
         location = (_find(row_data, "location", "warehouse", "warehouse code") and str(_find(row_data, "location", "warehouse", "warehouse code")).strip()) or None
         qty_raw = _find(row_data, "qty", "quantity", "qty ")
-        line_spo_raw = _find(row_data, *_GRN_SPO_COLUMN_CANDIDATES)
-        line_spo = (str(line_spo_raw).strip() if line_spo_raw is not None else "") or None
+        # Line-level SPO first ("Our PO No."), header column only as fallback -
+        # the preview must resolve exactly what the import resolves.
+        line_spo = _resolve_line_spo(row_data)
         try:
             qty = int(float(qty_raw)) if qty_raw is not None else 0
         except (TypeError, ValueError):
@@ -1797,7 +1998,15 @@ def process_grn_listing_import(db_job_id: str, file_data: bytes, filename: str, 
     try:
         job_service.start_job(job_id_str)
         result = _run_grn_listing_import_core(
-            db, file_data, job_service=job_service, job_id_str=job_id_str, outcome=outcome
+            db,
+            file_data,
+            job_service=job_service,
+            job_id_str=job_id_str,
+            outcome=outcome,
+            # Provenance for the headers this run creates: the uploader, and the
+            # job (which carries the file name and the company snapshot).
+            created_by=user_id,
+            import_job_db_id=str(getattr(job, "id", "") or "") or None,
         )
         if "error" in result:
             job_service.fail_job(job_id_str, result["error"])
@@ -1850,8 +2059,10 @@ def process_grn_listing_import(db_job_id: str, file_data: bytes, filename: str, 
 def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, user_id: str):
     """Process GRN lines Excel: create/update picking lines. Idempotent.
     Columns: doc no -> GRN picking_number; item code; location -> warehouse; qty.
-    Optional SPO source (same as listing Transfer from): transfer from, spo number, from doc. no., etc.
-    Line-level SPO overrides the header’s spo_number for SPO allocation matching. Groups split by effective SPO so mixed SPOs on one GRN do not merge.
+    SPO source, in order: the LINE's own column ("Our PO No." / "From Doc. No."),
+    then the sheet's repeated header column ("Transfer From"), then the GRN
+    header's stored spo_number. Groups split by effective SPO so mixed SPOs on
+    one GRN do not merge.
     """
     from rq import get_current_job
     import openpyxl
@@ -1911,8 +2122,13 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
             item_code = (_find(row_data, "item code", "item code ", "product code", "product code ") and str(_find(row_data, "item code", "item code ", "product code", "product code ")).strip()) or None
             location = (_find(row_data, "location", "warehouse", "warehouse code") and str(_find(row_data, "location", "warehouse", "warehouse code")).strip()) or None
             qty_raw = _find(row_data, "qty", "quantity", "qty ")
-            line_spo_raw = _find(row_data, *_GRN_SPO_COLUMN_CANDIDATES)
-            line_spo = (str(line_spo_raw).strip() if line_spo_raw is not None else "") or None
+            # "Our PO No." is the LINE's own SPO and wins; the repeated header
+            # column ("Transfer From") is only consulted when the line is blank,
+            # and the DB header's spo_number is the last fallback below.
+            # Same scalar rule as the header: a multi-SPO cell names no single
+            # allocation, so the line stays unlinked rather than carrying a blob
+            # that `_spo_match_key` can never match.
+            line_spo = _resolve_line_spo(row_data)
             try:
                 qty = int(float(qty_raw)) if qty_raw is not None else 0
             except (TypeError, ValueError):
@@ -2005,8 +2221,11 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                     doc_no,
                 )
                 continue
-            _hdr_spo = getattr(header, "spo_number", None)
-            hdr_spo = str(_hdr_spo).strip() if (_hdr_spo is not None and str(_hdr_spo).strip()) else None
+            # The header column may hold EVERY SPO the GRN covers (display form).
+            # Only a single-SPO header can name the allocation for a line, so a
+            # joined header falls back to no SPO rather than to a string that
+            # `_spo_match_key` can never match.
+            hdr_spo = _single_spo_or_none(getattr(header, "spo_number", None))
             effective_spo: Optional[str] = line_spo if line_spo else hdr_spo
             product = products_by_code.get((item_code or "").strip())
             warehouse = warehouses_map.get(normalize_code(location)) if location else None
@@ -2793,6 +3012,167 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
             db,
             entity_type="picking",
             label=f"DO detail import {filename or ''}".strip(),
+            row_count=0,
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="failed",
+        )
+    finally:
+        db.close()
+
+
+def validate_container_status_import(file_data: bytes, filename: str) -> Dict[str, Any]:
+    """Dry run for the container status workbook. Reads only, never writes.
+
+    Returns the shape the shared frontend upload dialog renders:
+    ``{valid, errors[], warnings[], summary{total_rows, would_update, would_create,
+    error_count}}``. Those summary keys are not free choice - the dialog renders
+    exactly those and silently drops anything else.
+    """
+    from app.services.container_status_service import ContainerStatusImportService
+
+    db = SessionLocal()
+    # A preview reads across every company: there is no job snapshot yet, and the
+    # operator needs the true would-update count, not a company-filtered one.
+    set_company_scope(db, None)
+    try:
+        return ContainerStatusImportService(db).validate(file_data)
+    except Exception as exc:  # noqa: BLE001 - a preview must never 500
+        logger.exception("Container status validation failed for %s", filename)
+        return {
+            "valid": False,
+            "errors": [f"Could not validate this workbook: {exc}"],
+            "warnings": [],
+            "summary": {
+                "total_rows": 0,
+                "would_update": 0,
+                "would_create": 0,
+                "error_count": 1,
+            },
+        }
+    finally:
+        db.close()
+
+
+def process_container_status_import(
+    db_job_id: str, file_data: bytes, filename: str, user_id: str
+):
+    """Import the container status workbook onto `inbound_shipments`.
+
+    Update-only: it adds clearance dates to packing lists that ALREADY exist and
+    never creates one, because the sheet carries no lines, supplier or quantities
+    (D32). Rows for containers the system does not have are skipped and counted.
+
+    Matching is on the normalized container number across EVERY shipment status -
+    318 of the 407 rows are archived containers, and their clearance history still
+    belongs on their row. A blank cell never clears, and a row whose values already
+    agree is not touched at all, so a daily re-upload is a genuine no-op rather than
+    407 phantom edits.
+    """
+    from rq import get_current_job
+
+    from app.services.container_status_import import (
+        ContainerStatusParseError,
+        parse_container_status_workbook,
+    )
+    from app.services.container_status_service import ContainerStatusImportService
+
+    db = SessionLocal()
+    _apply_import_job_scope(db, db_job_id)
+    job_service = JobService(db)
+
+    rq_job = get_current_job()
+    rq_job_id = rq_job.id if rq_job else None
+    job = job_service.get_job_by_db_id(db_job_id) if db_job_id else None
+    if not job and rq_job_id:
+        job = job_service.get_job(rq_job_id)
+    if not job:
+        logger.error("Container status import job not found: db_job_id=%s", db_job_id)
+        db.close()
+        return
+
+    job_id_str = str(job.job_id)
+    outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal)
+    try:
+        job_service.start_job(job_id_str)
+
+        try:
+            parsed = parse_container_status_workbook(file_data)
+        except ContainerStatusParseError as exc:
+            # Not a container status sheet at all. Fail the job with the reason
+            # rather than importing zero rows and reporting success.
+            outcome.flush()
+            job_service.fail_job(job_id_str, str(exc))
+            _write_import_audit(
+                db,
+                entity_type="inbound_shipment",
+                label=f"Container status import {filename or ''}".strip(),
+                row_count=0,
+                user_id=user_id,
+                entity_id=job_id_str,
+                status="failed",
+            )
+            return
+
+        service = ContainerStatusImportService(db)
+        counts = service.apply(parsed, user_id=user_id, outcome=outcome)
+        db.commit()
+
+        errors = service._errors_from(parsed)
+        total = len(parsed.rows) + len(parsed.rejected)
+
+        job_service.complete_job(
+            job_id=job_id_str,
+            # The recorder owns the counters, so every counted row is attributed
+            # to a reason (a tally that moves without one is the bug the guard in
+            # tests/test_import_outcome_guard.py exists to prevent). The local
+            # `counts` survive only as the legacy result keys the UI still reads:
+            # "unchanged" and "skipped_no_packing_list" are both skips to the job,
+            # but the operator needs to see WHICH, or a sheet that matched nothing
+            # looks the same as one that changed nothing.
+            result=outcome.finalize(
+                "Container status import completed",
+                total_rows=total,
+                updated=counts["updated"],
+                unchanged=counts["unchanged"],
+                skipped_no_packing_list=counts["skipped"],
+                rejected=counts["rejected"],
+                blocks=len(parsed.blocks),
+                blank_rows=parsed.blank_row_count,
+                errors=errors[:50],
+                warnings=parsed.warnings,
+            ),
+            **outcome.completion_counts(total_rows=total),
+        )
+
+        # Publish the retained workbook as a Container Status attachment so
+        # "send me the container status" has an answer. Best-effort by design:
+        # the import has already succeeded, and failing to catalogue a document
+        # must not report that success as a failure.
+        from app.services.container_status_document import publish_import_source
+
+        publish_import_source(db, job)
+
+        _write_import_audit(
+            db,
+            entity_type="inbound_shipment",
+            label=f"Container status import {filename or ''}".strip(),
+            row_count=len(parsed.rows),
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="partial" if counts["rejected"] else "success",
+        )
+    except Exception as exc:  # noqa: BLE001 - the job must record why it died
+        logger.exception("Container status import job %s failed", job_id_str)
+        db.rollback()
+        # The recorder writes on its own session, so the rows it already
+        # classified survive this rollback.
+        outcome.flush()
+        job_service.fail_job(job_id_str, str(exc))
+        _write_import_audit(
+            db,
+            entity_type="inbound_shipment",
+            label=f"Container status import {filename or ''}".strip(),
             row_count=0,
             user_id=user_id,
             entity_id=job_id_str,

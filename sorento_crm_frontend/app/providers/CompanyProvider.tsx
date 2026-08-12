@@ -9,9 +9,10 @@
  *
  * Source of truth:
  *  - Switchable companies (grants) come from GET /companies/my-context.
- *  - The ACTIVE company is the NextAuth JWT claim `session.user.active_company_id`
- *    (seeded at login, re-minted on switch), falling back to my-context's
- *    resolved active/last-active for the first render after login.
+ *  - The ACTIVE company is my-context's resolved `active_company_id` - what the
+ *    backend actually scopes to - falling back to the NextAuth JWT claim
+ *    `session.user.active_company_id` for the first render after login, before
+ *    my-context resolves.
  *  - setActiveCompany() persists server-side (POST /companies/switch) then
  *    re-mints the token via useSession().update({ active_company_id }) so the
  *    claim — not localStorage — is authoritative across reloads/tabs.
@@ -80,11 +81,17 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   // Optimistic override so a switch reflects instantly before the token re-mints.
   const [pendingId, setPendingId] = useState<string | null>(null);
 
-  // BACKEND FIRST. `my-context.active_company_id` is what the scope resolver itself
-  // resolved, so the header states what the API is actually scoped to. The session claim is
-  // only a fallback for the first render after a switch, before my-context re-reads.
-  const resolvedActiveId =
-    pendingId ?? context?.active_company_id ?? session?.user?.active_company_id ?? null;
+  // The backend's answer wins over the session claim. The browser calls FastAPI
+  // with an OPAQUE session token, so the scope resolver never sees the JWT claim -
+  // it uses persisted `users.last_active_company_id`, which my-context reports as
+  // `active_company_id`. A claim that drifted from it (switch in another tab or
+  // device, an API client) would otherwise label the topbar with a company the
+  // backend is not scoping to, and every read/write silently lands elsewhere.
+  // The claim stays as the fallback for the first render after login, before
+  // my-context resolves.
+  const claimActiveId = context?.active_company_id ?? session?.user?.active_company_id ?? null;
+  // Optimistic switch first, then whatever the backend says.
+  const resolvedActiveId = pendingId ?? claimActiveId;
 
   const activeCompany = useMemo<ActiveCompany | null>(() => {
     if (grants.length === 0) return null;

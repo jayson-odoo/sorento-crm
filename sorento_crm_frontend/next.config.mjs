@@ -4,6 +4,11 @@ const nextConfig = {
   // This file will be overwritten during deployment with the appropriate basePath
   images: {},
   output: 'standalone',
+  // `next dev` and `next start` share `.next/` by default, so starting a dev server in
+  // this directory REPLACES the production build a running `next start` is serving and
+  // takes it down with a client-side exception. Set NEXT_DIST_DIR=.next-dev when running
+  // a dev server alongside a prod one so the two never write to the same directory.
+  ...(process.env.NEXT_DIST_DIR ? { distDir: process.env.NEXT_DIST_DIR } : {}),
   // Don't fail build on ESLint errors (warnings will still be shown)
   // This allows Docker builds to complete even with linting issues
   eslint: {

@@ -5,6 +5,7 @@ from sqlalchemy import or_
 from typing import Any, Optional, List
 
 logger = logging.getLogger(__name__)
+from app.models.base import get_company_scope
 from app.models.resources import Attachment, AttachmentType, AttachmentDirectory
 from app.schemas.resources import (
     AttachmentCreate, AttachmentUpdate, AttachmentTypeCreate, AttachmentTypeUpdate,
@@ -485,7 +486,9 @@ class AttachmentService:
         directory_id: Optional[str] = None,
         is_deleted: Optional[bool] = None,
         attachment_type_id: Optional[str] = None,
+        attachment_type_ids: Optional[list[str]] = None,
         attachment_type_code: Optional[str] = None,
+        attachment_type_codes: Optional[list[str]] = None,
         uploaded_by: Optional[str] = None,
         uploaded_at_from: Optional[Any] = None,
         uploaded_at_to: Optional[Any] = None,
@@ -496,6 +499,7 @@ class AttachmentService:
         entities: Optional[list[str]] = None,
         attachment_ids: Optional[list[str]] = None,
         direct_access_only: Optional[bool] = None,
+        visible_attachment_type_ids: Optional[set[str]] = None,
     ):
         """List attachments. Filter by directory_id when provided. Search by filename when query is provided. is_deleted=True returns trash.
 
@@ -503,6 +507,10 @@ class AttachmentService:
         - ``any`` (default): row's access_levels overlap any selected code.
         - ``all``: row's access_levels contain every selected code (extras allowed).
         - ``exact``: row's access_levels equal the selected set.
+
+        ``attachment_type_id`` / ``attachment_type_code`` are the singular forms;
+        ``attachment_type_ids`` / ``attachment_type_codes`` take a list and union
+        with their singular twin (OR within each pair, AND across the two pairs).
         """
         from app.services.entity_filter_helpers import (
             attach_echo,
@@ -519,7 +527,9 @@ class AttachmentService:
             directory_id=directory_id,
             is_deleted=is_deleted,
             attachment_type_id=attachment_type_id,
+            attachment_type_ids=attachment_type_ids,
             attachment_type_code=attachment_type_code,
+            attachment_type_codes=attachment_type_codes,
             uploaded_by=uploaded_by,
             uploaded_at_from=uploaded_at_from,
             uploaded_at_to=uploaded_at_to,
@@ -530,6 +540,7 @@ class AttachmentService:
             entities=entities,
             attachment_ids=attachment_ids,
             direct_access_only=direct_access_only,
+            visible_attachment_type_ids=visible_attachment_type_ids,
             with_joinedload=True,
         )
         if q is None:
@@ -550,6 +561,40 @@ class AttachmentService:
             entity_buckets,
         )
 
+    def _resolve_attachment_type_code(self, code: str) -> Optional[str]:
+        """Resolve one attachment-type code/name to its AttachmentType id.
+
+        Lookup is permissive so the caller (MCP, n8n) does not need to know
+        whether the type was seeded with `code` set or only `type_name`, what
+        casing it uses, or whether the canonical label is "catalogue" vs
+        "catalog":
+          1. case-insensitive `code` match
+          2. case-insensitive `type_name` match
+          3. spelling variants (catalog / catalogue) tried against both
+        Returns None when nothing matches.
+        """
+        code_norm = (code or "").strip()
+        if not code_norm:
+            return None
+        variants = {code_norm}
+        low = code_norm.lower()
+        if low == "catalog":
+            variants.add("catalogue")
+        elif low == "catalogue":
+            variants.add("catalog")
+        for variant in variants:
+            type_row = (
+                self.db.query(AttachmentType)
+                .filter(AttachmentType.code.ilike(variant))
+                .first()
+                or self.db.query(AttachmentType)
+                .filter(AttachmentType.type_name.ilike(variant))
+                .first()
+            )
+            if type_row is not None:
+                return str(type_row.id)
+        return None
+
     def _build_list_query(
         self,
         query: Optional[str] = None,
@@ -560,7 +605,9 @@ class AttachmentService:
         directory_id: Optional[str] = None,
         is_deleted: Optional[bool] = None,
         attachment_type_id: Optional[str] = None,
+        attachment_type_ids: Optional[list[str]] = None,
         attachment_type_code: Optional[str] = None,
+        attachment_type_codes: Optional[list[str]] = None,
         uploaded_by: Optional[str] = None,
         uploaded_at_from: Optional[Any] = None,
         uploaded_at_to: Optional[Any] = None,
@@ -571,6 +618,7 @@ class AttachmentService:
         entities: Optional[list[str]] = None,
         attachment_ids: Optional[list[str]] = None,
         direct_access_only: Optional[bool] = None,
+        visible_attachment_type_ids: Optional[set[str]] = None,
         with_joinedload: bool = False,
     ):
         """Build the filtered + sorted attachments query shared by ``list_attachments``
@@ -619,50 +667,52 @@ class AttachmentService:
             q = q.filter(Attachment.entity_id == entity_id)
         if directory_id is not None:
             q = q.filter(Attachment.directory_id == directory_id)
-        if attachment_type_id:
-            q = q.filter(Attachment.attachment_type_id == attachment_type_id)
-        if attachment_type_code and attachment_type_code.strip():
-            # Resolve attachment_type_code → AttachmentType.id, then filter by
-            # that type. Lookup is permissive so the caller (MCP, n8n) does not
-            # need to know whether the type was seeded with `code` set or only
-            # `type_name`, what casing it uses, or whether the canonical label
-            # is "catalogue" vs "catalog":
-            #   1. case-insensitive `code` match
-            #   2. case-insensitive `type_name` match
-            #   3. spelling variants (catalog ↔ catalogue) tried against both
-            # No match → impossible-id filter so the tool returns 0 rows
+        # Singular + plural type filters are unioned within each pair (OR), and the
+        # id pair is ANDed with the code pair (passing an id and a mismatching code
+        # still yields 0 rows, as it did when both were single-value filters).
+        wanted_type_ids = {
+            str(t).strip()
+            for t in ([attachment_type_id] + list(attachment_type_ids or []))
+            if t and str(t).strip()
+        }
+        if wanted_type_ids:
+            q = q.filter(Attachment.attachment_type_id.in_(sorted(wanted_type_ids)))
+
+        wanted_codes = [
+            str(c).strip()
+            for c in ([attachment_type_code] + list(attachment_type_codes or []))
+            if c and str(c).strip()
+        ]
+        if wanted_codes:
+            # Resolve each code → AttachmentType.id, then filter by those types.
+            # No code resolves → impossible-id filter so the tool returns 0 rows
             # instead of silently dropping the filter (catalogue domain hint
             # must never leak non-catalogue attachments).
-            code_norm = attachment_type_code.strip()
-            variants = {code_norm}
-            low = code_norm.lower()
-            if low == "catalog":
-                variants.add("catalogue")
-            elif low == "catalogue":
-                variants.add("catalog")
-            type_row = None
-            for variant in variants:
-                type_row = (
-                    self.db.query(AttachmentType)
-                    .filter(AttachmentType.code.ilike(variant))
-                    .first()
-                    or self.db.query(AttachmentType)
-                    .filter(AttachmentType.type_name.ilike(variant))
-                    .first()
-                )
-                if type_row is not None:
-                    break
-            if type_row is None:
+            resolved = {
+                type_id
+                for type_id in (self._resolve_attachment_type_code(c) for c in wanted_codes)
+                if type_id
+            }
+            if not resolved:
                 q = q.filter(Attachment.id == "00000000-0000-0000-0000-000000000000")
             else:
-                q = q.filter(Attachment.attachment_type_id == str(type_row.id))
+                q = q.filter(Attachment.attachment_type_id.in_(sorted(resolved)))
         if direct_access_only:
-            # Restrict to attachment types flagged is_direct_access. A subquery
-            # avoids depending on whether AttachmentType is already joined.
-            direct_type_ids = self.db.query(AttachmentType.id).filter(
-                AttachmentType.is_direct_access.is_(True)
-            )
-            q = q.filter(Attachment.attachment_type_id.in_(direct_type_ids))
+            if visible_attachment_type_ids is not None:
+                # A contact was resolved and holds per-contact grants, so the
+                # visible set is the direct-access baseline WIDENED by those
+                # grants (see contact_attachment_access). Never narrower: the
+                # caller already has the baseline today.
+                q = q.filter(
+                    Attachment.attachment_type_id.in_(list(visible_attachment_type_ids))
+                )
+            else:
+                # Restrict to attachment types flagged is_direct_access. A subquery
+                # avoids depending on whether AttachmentType is already joined.
+                direct_type_ids = self.db.query(AttachmentType.id).filter(
+                    AttachmentType.is_direct_access.is_(True)
+                )
+                q = q.filter(Attachment.attachment_type_id.in_(direct_type_ids))
         if uploaded_by:
             q = q.filter(Attachment.uploaded_by == uploaded_by)
         if uploaded_at_from is not None:
@@ -774,7 +824,9 @@ class AttachmentService:
         directory_id: Optional[str] = None,
         is_deleted: Optional[bool] = None,
         attachment_type_id: Optional[str] = None,
+        attachment_type_ids: Optional[list[str]] = None,
         attachment_type_code: Optional[str] = None,
+        attachment_type_codes: Optional[list[str]] = None,
         uploaded_by: Optional[str] = None,
         uploaded_at_from: Optional[Any] = None,
         uploaded_at_to: Optional[Any] = None,
@@ -785,6 +837,7 @@ class AttachmentService:
         entities: Optional[list[str]] = None,
         attachment_ids: Optional[list[str]] = None,
         direct_access_only: Optional[bool] = None,
+        visible_attachment_type_ids: Optional[set[str]] = None,
     ) -> dict:
         """Resolve prev/next neighbours for ``attachment_id`` within the active list
         query.
@@ -808,7 +861,9 @@ class AttachmentService:
             directory_id=directory_id,
             is_deleted=is_deleted,
             attachment_type_id=attachment_type_id,
+            attachment_type_ids=attachment_type_ids,
             attachment_type_code=attachment_type_code,
+            attachment_type_codes=attachment_type_codes,
             uploaded_by=uploaded_by,
             uploaded_at_from=uploaded_at_from,
             uploaded_at_to=uploaded_at_to,
@@ -819,6 +874,7 @@ class AttachmentService:
             entities=entities,
             attachment_ids=attachment_ids,
             direct_access_only=direct_access_only,
+            visible_attachment_type_ids=visible_attachment_type_ids,
         )
         if filtered_q is not None:
             result = compute_neighbours(_ordered_ids(filtered_q), attachment_id)
@@ -899,6 +955,7 @@ class AttachmentService:
         link_status: Optional[str] = None,
         storage_status: Optional[str] = None,
         direct_access_only: Optional[bool] = None,
+        visible_attachment_type_ids: Optional[set[str]] = None,
     ) -> dict:
         """Unified Drive listing: discriminated folder + file rows in ONE
         server-sorted, server-paginated stream.
@@ -966,6 +1023,7 @@ class AttachmentService:
             link_status=link_status,
             storage_status=storage_status,
             direct_access_only=direct_access_only,
+            visible_attachment_type_ids=visible_attachment_type_ids,
         )
         if recursive:
             if normalized_dir:
@@ -1311,11 +1369,51 @@ class AttachmentService:
                 "link_id": None,
             })
 
+        # Certificates. Unlike the four above, this linkage is not a join table a
+        # user maintains: the file IS a revision of the certificate, so the link
+        # exists because the document was filed. The FE renders it read-only for
+        # that reason - unlinking here would leave a revision with no document.
+        # A list, not a single ref: the same PDF can be filed under two
+        # identities (PPS and SPAN both issue against one document).
+        from app.models.certificate import Certificate, CertificateRevision
+
+        linked_certificates = []
+        q = (
+            self.db.query(
+                Certificate.id,
+                Certificate.scheme,
+                Certificate.certificate_number,
+                Certificate.certifying_body,
+                Certificate.title,
+                CertificateRevision.id.label("link_id"),
+                CertificateRevision.revision_no,
+                CertificateRevision.is_current,
+            )
+            .join(CertificateRevision, CertificateRevision.certificate_id == Certificate.id)
+            .filter(CertificateRevision.attachment_id == attachment_id)
+            .order_by(CertificateRevision.revision_no.desc())
+        )
+        for row in q.all():
+            name = " ".join(p for p in (row.scheme, row.certificate_number) if p).strip()
+            # Say WHICH issue this file is, so a superseded document is not
+            # mistaken for the live certificate when read from the attachment.
+            issue = f"Revision {row.revision_no}"
+            if not row.is_current:
+                issue += " (superseded)"
+            subject = (row.title or "").strip() or (row.certifying_body or "").strip()
+            linked_certificates.append({
+                "id": str(row.id),
+                "name": name or str(row.id),
+                "description": " - ".join(p for p in (subject, issue) if p) or None,
+                "link_id": str(row.link_id),
+            })
+
         return {
             "linked_products": linked_products,
             "linked_promotions": linked_promotions,
             "linked_form": linked_form,
             "linked_packing_lists": linked_packing_lists,
+            "linked_certificates": linked_certificates,
         }
 
     def list_attachment_ids_in_directory_subtree(self, root_directory_id: str) -> List[str]:
@@ -1638,7 +1736,31 @@ class AttachmentService:
             attachment_dict["full_directory_path"] = dir_service.get_full_directory_path(directory_id)
         else:
             attachment_dict["full_directory_path"] = None
-        
+
+        # Multi-company: stamp the ACTIVE company on a positively-owned attachment.
+        # Attachments are ``__company_shared__``, so the before_insert auto-stamp
+        # deliberately skips them entirely — every upload, in every company, landed
+        # with company_id NULL. For attachments NULL means SHARED (the predicate is
+        # ``company_id IS NULL OR company_id IN (scope)``), so a file uploaded while
+        # switched into Mocha was visible from Sorento too, and — because
+        # ``scope_to_attachment_company`` pins the n8n binding scope off this column
+        # — the packing list n8n created from it stamped the incumbent company
+        # instead of Mocha.
+        #
+        # "Positively owned" mirrors migration 302's own backfill predicate
+        # (directory_id present, or a product/promotion attachment) translated to
+        # what is knowable at upload time. Form/entity attachments (complaint, PR,
+        # stock inquiry) keep NULL so they stay shared across companies (AC-G3).
+        if attachment_dict.get("company_id") is None:
+            entity_type = (attachment_dict.get("entity_type") or "").strip().lower()
+            positively_owned = bool(directory_id) or entity_type in {"promotion", "product"}
+            if positively_owned:
+                scope = get_company_scope(self.db)
+                # Only an unambiguous single active company may be stamped; UNSET /
+                # all-companies / multi-company stay NULL rather than guess.
+                if isinstance(scope, frozenset) and len(scope) == 1:
+                    attachment_dict["company_id"] = next(iter(scope))
+
         attachment = Attachment(**attachment_dict)
         self.db.add(attachment)
         self.db.commit()

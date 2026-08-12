@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAction } from '@/lib/useAction';
 import { apiFetch } from '@/lib/api';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
+import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Printer, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -29,7 +29,8 @@ import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { usePurchaseRequest } from '../hooks/usePurchaseRequests';
+import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
+import { usePurchaseRequest, useExportPurchaseRequestPdf } from '../hooks/usePurchaseRequests';
 import { formatDate, formatCurrency } from '@/lib/helpers';
 import { useCurrencyFormat } from '@/hooks/useCurrencyFormat';
 import PurchaseRequestDeleteDialog from './purchase-request-delete-dialog';
@@ -39,12 +40,15 @@ import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
-import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrCreateViewLink, rejectSubmittedPurchaseRequest, processPurchaseRequestByCs, closePurchaseRequestByCs, submitApprovalDecision } from '../services/purchaseRequestService';
+import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrCreateViewLink, rejectSubmittedPurchaseRequest, processPurchaseRequestByCs, closePurchaseRequestByCs, submitApprovalDecision, isDeferredDecision } from '../services/purchaseRequestService';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
 import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHandlingLock';
 import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
+import { useFormAction } from '@/app/(protected)/sla-management/_shared/useFormAction';
+import { FormActionBanner } from '@/app/(protected)/sla-management/_shared/FormActionBanner';
+import { UndoActionDialog } from '@/app/(protected)/sla-management/_shared/UndoActionDialog';
 import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
 import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tracking/components/ReassignDialog';
 import { useReassignSLATracking } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
@@ -53,7 +57,7 @@ import { VoidBanner } from '@/components/common/VoidBanner';
 import { VoidDialog } from '@/components/common/VoidDialog';
 import { useFormVoid } from '@/hooks/useFormVoid';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
-import { ArrowUpCircle, ThumbsUp, ThumbsDown, Ban, UserRoundCog } from 'lucide-react';
+import { ArrowUpCircle, ThumbsUp, ThumbsDown, Ban, UserRoundCog, Undo2 } from 'lucide-react';
 import { useHasPermission } from '@/hooks/usePermissions';
 import {
   AlertDialog,
@@ -67,6 +71,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { exportPurchaseRequestOrSponsorshipToExcel } from '../lib/purchase-request-excel-export';
+import { useLookupOptionsByBinding } from '@/hooks/useLookupOptionsByBinding';
 import { toast } from 'sonner';
 import LookupBoundLabel from '@/components/common/LookupBoundLabel';
 import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSection';
@@ -97,9 +102,13 @@ export default function PurchaseRequestDetail({
   const router = useRouter();
   const isValidId = requestId && requestId !== 'new' && requestId !== 'edit';
   const queryClient = useQueryClient();
+  // Triage a SUBMITTED request: change to pending approval, or reject it.
   const canSendForApproval = useHasPermission(
     'procurement.purchase_requests.send_for_approval',
   );
+  // The approver's decision once a request is PENDING APPROVAL. Deliberately a
+  // separate permission: a sales admin triages without becoming an approver.
+  const canApprove = useHasPermission('procurement.purchase_requests.approve');
   const canProcess = useHasPermission('procurement.purchase_requests.process');
   const canClose = useHasPermission('procurement.purchase_requests.close');
   const canVoid = useHasPermission('procurement.purchase_requests.void');
@@ -152,12 +161,22 @@ export default function PurchaseRequestDetail({
   // it into businessCtasEnabled kills all the handling-gated CTAs at once; the
   // few ungated actions (Edit / Delete) are guarded on !isVoided individually.
   const isVoided = (request?.status ?? '').trim().toLowerCase() === 'voided';
-  const businessCtasEnabled = handlingLock.businessCtasEnabled && !isVoided;
+  // Form-action deferral (PLAN-form-sla-undo.md). While an action is pending its grace
+  // window, EVERY business CTA is suppressed - the form must commit against the state the
+  // action was requested on (AC-D-10), and a second action cannot be queued (AC-D-7).
+  const formAction = useFormAction({
+    sourceEntityType: requestTypeForNav,
+    sourceEntityId: isValidId ? requestId : null,
+    entityKey: request?.updated_at,
+  });
+  const businessCtasEnabled =
+    handlingLock.businessCtasEnabled && !isVoided && !formAction.ctasDisabled;
   const voidMutation = useFormVoid('procurement/purchase-requests', requestId, {
     queryKeysToInvalidate: [['purchase-request', requestId]],
   });
   const currencyFormat = useCurrencyFormat();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [undoDialogOpen, setUndoDialogOpen] = useState(false);
   const [approvalDialogOpen, setApprovalDialogOpen] = useState(false);
   const [approverUserId, setApproverUserId] = useState<string>('');
   const [approverEmail, setApproverEmail] = useState('');
@@ -172,14 +191,23 @@ export default function PurchaseRequestDetail({
   const changeToPending = useAction(async () => {
     if (!requestId) return;
     try {
-      await setPendingApproval(requestId);
+      const result = await setPendingApproval(requestId);
       await queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
-      toast.success('Status set to Pending approval');
+      if (isDeferredDecision(result)) {
+        formAction.refresh();
+        toast.success('Sending for approval - you can still undo.');
+      } else {
+        toast.success('Status set to Pending approval');
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to set pending approval');
     }
   });
   const [exportingExcel, setExportingExcel] = useState(false);
+  const exportPdfMutation = useExportPurchaseRequestPdf();
+  // Same source LookupBoundLabel reads, so the sheet says "Cash Sales" where
+  // the screen does, never the raw `cash_sales` code.
+  const salesTypeOptions = useLookupOptionsByBinding('purchase_requests', 'sales_type');
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const [approvalLinkCopying, setApprovalLinkCopying] = useState(false);
   const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
@@ -337,6 +365,7 @@ export default function PurchaseRequestDetail({
   // been recorded yet. Once rejected, only the salesperson re-submits via the
   // portal - reviewer cannot bypass that loop by moving straight to pending.
   const showPrimaryChangeToPending =
+    canSendForApproval &&
     isSubmittedLifecycle &&
     !isApprovedStatus &&
     !isPendingApproval &&
@@ -381,7 +410,7 @@ export default function PurchaseRequestDetail({
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           {/* Business CTAs HIDE (not disable) while the handling lock is held by
-              someone else / unclaimed — keeps the header uncluttered. When the lock
+              someone else / unclaimed - keeps the header uncluttered. When the lock
               does not bite (tier 1, flag off, or I hold it) businessCtasEnabled is
               true and they render on their normal status+permission gates. */}
           {businessCtasEnabled && showPrimaryChangeToPending && (
@@ -412,9 +441,9 @@ export default function PurchaseRequestDetail({
               fires the SLA assignment, which notifies the approver, who then uses
               the in-system Approve/Reject below. The emailed link survives as an
               optional external fallback under the gear ("Copy approval link"). */}
-          {/* In-system approver decision — same effect as the emailed approval link,
+          {/* In-system approver decision - same effect as the emailed approval link,
               so the approver can decide without leaving the system. */}
-          {businessCtasEnabled && isPendingApproval && canSendForApproval && (
+          {businessCtasEnabled && isPendingApproval && canApprove && (
             <>
               <Button
                 data-guide-target="procurement.purchase-requests.approve-button"
@@ -423,10 +452,18 @@ export default function PurchaseRequestDetail({
                 onClick={async () => {
                   setApproving(true);
                   try {
-                    await submitApprovalDecision(requestId, 'approved');
+                    const result = await submitApprovalDecision(requestId, 'approved');
                     queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
                     queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', requestTypeForNav, requestId] });
-                    toast.success('Request approved');
+                    // A deferred decision has written nothing and sent nothing, so
+                    // saying "approved" would be a lie. Refresh the form-action read
+                    // instead so the countdown + Undo appear.
+                    if (isDeferredDecision(result)) {
+                      formAction.refresh();
+                      toast.success('Approving - you can still undo.');
+                    } else {
+                      toast.success('Request approved');
+                    }
                   } catch (e) {
                     toast.error(e instanceof Error ? e.message : 'Failed to approve');
                   } finally {
@@ -466,6 +503,21 @@ export default function PurchaseRequestDetail({
             </Button>
           )}
           <DetailActionsMenu ariaLabel="Request actions">
+            {/* Post-grace Undo. Rendered only when the server says the last committed
+                action is reversible - eligibility is a server read, never a client
+                guess, and it is re-checked at execute time (AC-PG-6/7). */}
+            {formAction.view.kind === 'undoable' && (
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setUndoDialogOpen(true);
+                }}
+                data-testid="undo-action-menu-item"
+              >
+                <Undo2 className="size-4" />
+                Undo last action
+              </DropdownMenuItem>
+            )}
             {activeTracker && (
               <DropdownMenuItem
                 onSelect={(e) => {
@@ -580,7 +632,13 @@ export default function PurchaseRequestDetail({
                 if (!request) return;
                 setExportingExcel(true);
                 try {
-                  await exportPurchaseRequestOrSponsorshipToExcel(request);
+                  const code = (request.sales_type ?? '').trim().toLowerCase();
+                  const salesTypeLabel = code
+                    ? (salesTypeOptions.data?.options.find(
+                        (o) => o.value.toLowerCase() === code,
+                      )?.label ?? request.sales_type)
+                    : null;
+                  await exportPurchaseRequestOrSponsorshipToExcel(request, salesTypeLabel);
                   toast.success(
                     request.request_type === 'sponsorship_form'
                       ? 'Sponsorship form exported to Excel'
@@ -595,6 +653,17 @@ export default function PurchaseRequestDetail({
             >
               <FileDown className="size-4" />
               {exportingExcel ? 'Exporting…' : 'Export to Excel'}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              data-guide-target="procurement.purchase-requests.download-pdf"
+              disabled={exportPdfMutation.isPending}
+              onSelect={(e) => {
+                e.preventDefault();
+                exportPdfMutation.mutate(requestId);
+              }}
+            >
+              <Printer className="size-4" />
+              {exportPdfMutation.isPending ? 'Preparing…' : 'Print / Download PDF'}
             </DropdownMenuItem>
             {request.respond_inbox_url && (
               <>
@@ -631,12 +700,22 @@ export default function PurchaseRequestDetail({
               </DropdownMenuItem>
             )}
           </DetailActionsMenu>
+          <EntityDownloadsButton
+            entityType="purchase_request"
+            entityId={requestId}
+            label={request.request_number ?? undefined}
+            className="h-8 border border-border"
+          />
           <PurchaseRequestNavigation
             basePath={basePath}
             requestId={requestId}
             ariaLabel={requestTypeLabelLower(request.request_type)}
           />
-          {!isVoided && (
+          {/* Edit and Delete are NOT handling-lock gated (deliberate - see businessCtasEnabled),
+              but a pending form action DOES block them: the action must commit against the
+              state it was requested on, so nothing may mutate the row mid-window (AC-D-10).
+              The backend enforces the same rule; this only keeps the UI honest. */}
+          {!isVoided && !formAction.ctasDisabled && (
             <Button
               variant="outline"
               onClick={() => router.push(`${basePath}/${requestId}/edit`)}
@@ -645,7 +724,7 @@ export default function PurchaseRequestDetail({
               Edit
             </Button>
           )}
-          {!isVoided && (
+          {!isVoided && !formAction.ctasDisabled && (
             <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
               <Trash2 className="size-4" />
               Delete
@@ -660,6 +739,28 @@ export default function PurchaseRequestDetail({
         onClaim={handlingLock.claim}
         onTakeOver={handlingLock.takeOver}
       />
+
+      <FormActionBanner
+        view={formAction.view}
+        onCancel={formAction.cancel}
+        onExpire={formAction.refresh}
+        onDismissOutcome={formAction.refresh}
+        isCancelling={formAction.isMutating}
+      />
+
+      {formAction.view.kind === 'undoable' && (
+        <UndoActionDialog
+          open={undoDialogOpen}
+          onOpenChange={setUndoDialogOpen}
+          eligibility={formAction.view.eligibility}
+          entityLabel={request.request_number || typeLabel}
+          onConfirm={(reason) => {
+            formAction.undo(reason);
+            setUndoDialogOpen(false);
+          }}
+          isSubmitting={formAction.isMutating}
+        />
+      )}
 
       <Dialog open={approvalDialogOpen} onOpenChange={setApprovalDialogOpen}>
         <DialogContent className="sm:max-w-md">
@@ -875,7 +976,7 @@ export default function PurchaseRequestDetail({
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {isPurchaseRequest ? (
-          <div className="lg:col-span-2 max-w-5xl mx-auto w-full">
+          <div className="lg:col-span-2 w-full">
             <Card className="border-2 shadow-sm">
               <CardContent className="pt-6 pb-8 px-5 sm:px-10">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -905,30 +1006,34 @@ export default function PurchaseRequestDetail({
                 <h2 className="text-center text-xl font-semibold tracking-tight border-b border-border pb-4 mb-6">
                   Purchase Request
                 </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5 [&>div]:min-w-0 [&_p]:break-words">
                   <div>
                     <p className="text-sm text-muted-foreground">Purchase request number</p>
-                    <p className="font-medium tabular-nums">{request.request_number || '—'}</p>
+                    <p className="font-medium tabular-nums">{request.request_number || ' - '}</p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Submitted date</p>
                     <p className="font-medium">
                       {request.submitted_at
                         ? formatDate(new Date(request.submitted_at))
-                        : '—'}
+                        : ' - '}
                     </p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Customer Name</p>
-                    <p className="font-medium">{request.customer_name || '—'}</p>
+                    <p className="font-medium">{request.customer_name || ' - '}</p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">PIC</p>
+                    <p className="font-medium whitespace-pre-wrap">{request.pic || ' - '}</p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Project Title</p>
-                    <p className="font-medium">{request.project_title || '—'}</p>
+                    <p className="font-medium">{request.project_title || ' - '}</p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Purpose</p>
-                    <p className="font-medium">{request.purpose || '—'}</p>
+                    <p className="font-medium">{request.purpose || ' - '}</p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Sales Type</p>
@@ -940,7 +1045,7 @@ export default function PurchaseRequestDetail({
                           value={request.sales_type}
                         />
                       ) : (
-                        '—'
+                        ' - '
                       )}
                     </p>
                   </div>
@@ -949,12 +1054,12 @@ export default function PurchaseRequestDetail({
                     <p className="font-medium">
                       {request.expected_delivery_date
                         ? formatDate(new Date(request.expected_delivery_date))
-                        : '—'}
+                        : ' - '}
                     </p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Expected date to receive PO</p>
-                    <p className="font-medium">{expectedPoDisplay || '—'}</p>
+                    <p className="font-medium">{expectedPoDisplay || ' - '}</p>
                   </div>
                   {(request.approver_email || request.approver_user_id) && !request.approved_at && (
                     <div className="sm:col-span-2">
@@ -1009,9 +1114,9 @@ export default function PurchaseRequestDetail({
                         {request.lines.map((line, idx) => (
                           <TableRow key={line.id}>
                             <TableCell>{idx + 1}</TableCell>
-                            <TableCell>{line.item_code ?? '—'}</TableCell>
-                            <TableCell>{line.quantity ?? '—'}</TableCell>
-                            <TableCell>{line.remark ?? '—'}</TableCell>
+                            <TableCell>{line.item_code ?? ' - '}</TableCell>
+                            <TableCell>{line.quantity ?? ' - '}</TableCell>
+                            <TableCell>{line.remark ?? ' - '}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -1026,7 +1131,7 @@ export default function PurchaseRequestDetail({
             </Card>
           </div>
         ) : (
-          <div className="lg:col-span-2 max-w-5xl mx-auto w-full">
+          <div className="lg:col-span-2 w-full">
             <Card className="border-2 shadow-sm">
               <CardContent className="pt-6 pb-8 px-5 sm:px-10">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -1056,34 +1161,38 @@ export default function PurchaseRequestDetail({
                 <h2 className="text-center text-xl font-semibold tracking-tight border-b border-border pb-4 mb-6">
                   Project Sales Sponsorship Form
                 </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5 [&>div]:min-w-0 [&_p]:break-words">
                   <div>
                     <p className="text-sm text-muted-foreground">Sponsorship form number</p>
-                    <p className="font-medium tabular-nums">{request.request_number || '—'}</p>
+                    <p className="font-medium tabular-nums">{request.request_number || ' - '}</p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Submitted date</p>
                     <p className="font-medium">
                       {request.submitted_at
                         ? formatDate(new Date(request.submitted_at))
-                        : '—'}
+                        : ' - '}
                     </p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Customer Name</p>
-                    <p className="font-medium">{request.customer_name || '—'}</p>
+                    <p className="font-medium">{request.customer_name || ' - '}</p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">PIC</p>
+                    <p className="font-medium whitespace-pre-wrap">{request.pic || ' - '}</p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Delivery Address</p>
-                    <p className="font-medium whitespace-pre-wrap">{request.delivery_address || '—'}</p>
+                    <p className="font-medium whitespace-pre-wrap">{request.delivery_address || ' - '}</p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Project Title</p>
-                    <p className="font-medium">{request.project_title || '—'}</p>
+                    <p className="font-medium">{request.project_title || ' - '}</p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Total Project Value</p>
-                    <p className="font-medium">{sponsorshipTotalDisplay || '—'}</p>
+                    <p className="font-medium">{sponsorshipTotalDisplay || ' - '}</p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Sponsor Subject</p>
@@ -1093,10 +1202,10 @@ export default function PurchaseRequestDetail({
                           table="purchase_requests"
                           column="sponsor_subject"
                           value={request.sponsor_subject}
-                          fallback="—"
+                          fallback=" - "
                         />
                       ) : (
-                        '—'
+                        ' - '
                       )}
                       {request.sponsor_subject === 'others' && request.sponsor_subject_other
                         ? `: ${request.sponsor_subject_other}`
@@ -1108,7 +1217,7 @@ export default function PurchaseRequestDetail({
                     <p className="font-medium">
                       {request.expected_delivery_date
                         ? formatDate(new Date(request.expected_delivery_date))
-                        : '—'}
+                        : ' - '}
                     </p>
                   </div>
                   {(request.approver_email || request.approver_user_id) && !request.approved_at && (
@@ -1167,15 +1276,15 @@ export default function PurchaseRequestDetail({
                           {request.lines.map((line, idx) => (
                             <TableRow key={line.id}>
                               <TableCell>{idx + 1}</TableCell>
-                              <TableCell>{line.item_code ?? '—'}</TableCell>
-                              <TableCell>{line.quantity ?? '—'}</TableCell>
+                              <TableCell>{line.item_code ?? ' - '}</TableCell>
+                              <TableCell>{line.quantity ?? ' - '}</TableCell>
                               <TableCell className="text-right">
-                                {line.unit_price != null ? formatCurrency(line.unit_price, currencyFormat) : '—'}
+                                {line.unit_price != null ? formatCurrency(line.unit_price, currencyFormat) : ' - '}
                               </TableCell>
                               <TableCell className="text-right">
-                                {line.total != null ? formatCurrency(line.total, currencyFormat) : '—'}
+                                {line.total != null ? formatCurrency(line.total, currencyFormat) : ' - '}
                               </TableCell>
-                              <TableCell>{line.remark ?? '—'}</TableCell>
+                              <TableCell>{line.remark ?? ' - '}</TableCell>
                             </TableRow>
                           ))}
                         </TableBody>
@@ -1243,7 +1352,11 @@ export default function PurchaseRequestDetail({
           </Sheet>
         )}
 
-        <AuditTrail entityType="purchase_request" entityId={requestId} title="Audit Trail" />
+        {/* Direct child of the 2-col grid - without the span it renders half-width while
+            every sibling block above it is full-width. */}
+        <div className="lg:col-span-2 w-full">
+          <AuditTrail entityType="purchase_request" entityId={requestId} title="Audit Trail" />
+        </div>
 
         <AlertDialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
           <AlertDialogContent>
@@ -1279,11 +1392,20 @@ export default function PurchaseRequestDetail({
                   }
                   setRejecting(true);
                   try {
-                    await rejectSubmittedPurchaseRequest(requestId, rejectReason.trim());
+                    const rejectResult = await rejectSubmittedPurchaseRequest(
+                      requestId,
+                      rejectReason.trim(),
+                    );
                     queryClient.invalidateQueries({
                       queryKey: ['purchase-request', requestId],
                     });
-                    toast.success('Submission rejected; contact has been notified.');
+                    if (isDeferredDecision(rejectResult)) {
+                      // Nothing sent yet, so claiming the contact was notified is false.
+                      formAction.refresh();
+                      toast.success('Rejecting - you can still undo.');
+                    } else {
+                      toast.success('Submission rejected; contact has been notified.');
+                    }
                     setRejectDialogOpen(false);
                   } catch (err) {
                     toast.error(
@@ -1300,14 +1422,14 @@ export default function PurchaseRequestDetail({
           </AlertDialogContent>
         </AlertDialog>
 
-        {/* In-system approver rejection (pending approval) — same as the email link. */}
+        {/* In-system approver rejection (pending approval) - same as the email link. */}
         <AlertDialog open={decisionRejectOpen} onOpenChange={setDecisionRejectOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Reject this request</AlertDialogTitle>
               <AlertDialogDescription>
                 Provide a reason. This records the rejection and notifies the
-                requester and contact — the same as rejecting via the approval link.
+                requester and contact - the same as rejecting via the approval link.
                 This action cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
@@ -1334,10 +1456,20 @@ export default function PurchaseRequestDetail({
                   }
                   setDecisionRejecting(true);
                   try {
-                    await submitApprovalDecision(requestId, 'rejected', decisionRejectReason.trim());
+                    const result = await submitApprovalDecision(
+                      requestId,
+                      'rejected',
+                      decisionRejectReason.trim(),
+                    );
                     queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
                     queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', requestTypeForNav, requestId] });
-                    toast.success('Request rejected; requester and contact notified.');
+                    if (isDeferredDecision(result)) {
+                      // Nobody has been notified yet - saying they have would be wrong.
+                      formAction.refresh();
+                      toast.success('Rejecting - you can still undo.');
+                    } else {
+                      toast.success('Request rejected; requester and contact notified.');
+                    }
                     setDecisionRejectOpen(false);
                   } catch (err) {
                     toast.error(err instanceof Error ? err.message : 'Failed to reject');
@@ -1462,9 +1594,14 @@ export default function PurchaseRequestDetail({
                   e.preventDefault();
                   setFinalizing(true);
                   try {
-                    await processPurchaseRequestByCs(requestId, finalizeNote);
+                    const processResult = await processPurchaseRequestByCs(requestId, finalizeNote);
                     queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
-                    toast.success('Marked as processed by CS.');
+                    if (isDeferredDecision(processResult)) {
+                      formAction.refresh();
+                      toast.success('Processing - you can still undo.');
+                    } else {
+                      toast.success('Marked as processed by CS.');
+                    }
                     setProcessDialogOpen(false);
                   } catch (err) {
                     toast.error(err instanceof Error ? err.message : 'Failed to mark processed by CS');
@@ -1507,9 +1644,14 @@ export default function PurchaseRequestDetail({
                   e.preventDefault();
                   setFinalizing(true);
                   try {
-                    await closePurchaseRequestByCs(requestId, finalizeNote);
+                    const closeResult = await closePurchaseRequestByCs(requestId, finalizeNote);
                     queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
-                    toast.success('Marked as closed.');
+                    if (isDeferredDecision(closeResult)) {
+                      formAction.refresh();
+                      toast.success('Closing - you can still undo.');
+                    } else {
+                      toast.success('Marked as closed.');
+                    }
                     setCloseCsDialogOpen(false);
                   } catch (err) {
                     toast.error(err instanceof Error ? err.message : 'Failed to close request');

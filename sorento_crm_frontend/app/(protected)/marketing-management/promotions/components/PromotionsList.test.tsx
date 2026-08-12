@@ -47,6 +47,14 @@ vi.mock(
   '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes',
   () => ({ useContactAccessTypes: () => ({ data: [] }) }),
 );
+// The Resubmit bulk action is permission-gated; the real hook needs a NextAuth
+// SessionProvider that these tests deliberately don't mount. The slug is captured
+// rather than ignored - a mock that blindly returns true hides a misspelt slug,
+// which silently removes the action for everyone.
+const hasPermission = vi.fn(() => true);
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: (slug: string) => hasPermission(slug),
+}));
 
 import PromotionsList from './PromotionsList';
 
@@ -126,5 +134,16 @@ describe('PromotionsList — expiry batch deep link', () => {
     expect(getPromotions).toHaveBeenCalledWith(
       expect.objectContaining({ expiry_notify_batch_id: undefined }),
     );
+  });
+});
+
+describe('PromotionsList — Resubmit gate', () => {
+  it('gates on a slug the backend registry actually issues', async () => {
+    // `marketing.promotions.update` does not exist - `_crud` emits view/add/edit/
+    // delete. Asking for a slug nobody holds silently drops the action from the
+    // toolbar, which looks like the feature was never built.
+    renderList();
+    await waitFor(() => expect(hasPermission).toHaveBeenCalled());
+    expect(hasPermission).toHaveBeenCalledWith('marketing.promotions.edit');
   });
 });

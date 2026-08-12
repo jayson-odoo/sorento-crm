@@ -38,6 +38,20 @@ def _utc_now_from_remote() -> Optional[datetime]:
     return None
 
 
+def _tracking_company_id(tracking) -> str:
+    """The company a tracker escalates within (AC-E2, AC-E3).
+
+    Read off the tracker, never re-derived from the request: escalation can be
+    triggered from a scheduler tick with no company at all, or from inside another
+    company's request, and either would resolve the wrong ladder. The column is NOT
+    NULL, so the fallback only covers a detached / partially built object.
+    """
+    from app.services.company_routing_service import DEFAULT_COMPANY_ID
+
+    value = getattr(tracking, "company_id", None) if tracking is not None else None
+    return str(value) if value else DEFAULT_COMPANY_ID
+
+
 def _respond_contact_phone_lookup_candidates(raw: str) -> list[str]:
     """
     Build possible respond_contacts.phone_number values for integration lookups.
@@ -119,9 +133,25 @@ class SLAPolicyService:
         sort_field: str = "created_at",
         sort_dir: str = "asc"
     ):
-        """List SLA policies."""
+        """List THIS COMPANY's SLA policies.
+
+        Filtered explicitly rather than by making SLAPolicy a scoped model: the
+        picker on an agent's team sets must only offer policies that can actually be
+        bound (the agent_teams composite FK rejects the rest), but escalation,
+        extension and the daily summary all read policies from contexts with no
+        active company, so a blanket auto-filter would break them.
+
+        A scope that is not a single company (a system / all-companies caller) is
+        left unfiltered, matching how those callers already read every other table.
+        """
         q = self.db.query(SLAPolicy)
-        
+
+        from app.models.base import get_company_scope
+
+        scope = get_company_scope(self.db)
+        if isinstance(scope, frozenset) and len(scope) == 1:
+            q = q.filter(SLAPolicy.company_id == next(iter(scope)))
+
         filters = []
         if status and status != "all":
             filters.append(SLAPolicy.is_active == (status == "active"))
@@ -186,14 +216,45 @@ class SLAPolicyService:
             raise handle_not_found("SLA Policy", policy_id)
         return policy
     
+    def _write_company_id(self) -> str:
+        """The company a policy written now belongs to.
+
+        `SLAPolicy` is deliberately NOT a `CompanyScopedMixin` (the auto-filter would
+        reach every policy load in the app, including readers that hold a policy id
+        and no company context), so nothing stamps `company_id` on insert for us and
+        this has to be explicit. An X-API-Key caller has scope None (all companies)
+        and no company to infer, so it keeps writing to the incumbent, which is where
+        migration 320 put every pre-multi-company policy.
+        """
+        from app.models.base import get_company_scope
+        from app.services.company_routing_service import DEFAULT_COMPANY_ID
+
+        scope = get_company_scope(self.db)
+        if isinstance(scope, frozenset) and len(scope) == 1:
+            return next(iter(scope))
+        if scope is None:
+            return DEFAULT_COMPANY_ID
+        raise handle_validation_error(
+            "Cannot tell which company this SLA policy belongs to. "
+            "Switch to a company and try again."
+        )
+
     def create_policy(self, policy_data: SLAPolicyCreate):
         """Create a new SLA policy with tiers."""
-        existing = self.db.query(SLAPolicy).filter(SLAPolicy.code == policy_data.code).first()
+        company_id = self._write_company_id()
+        # The code is unique PER COMPANY, so this check must be too: a global one
+        # blocked Mocha from having its own policy with the same code as Sorento's,
+        # while still claiming the code "already exists in this company".
+        existing = (
+            self.db.query(SLAPolicy)
+            .filter(SLAPolicy.code == policy_data.code, SLAPolicy.company_id == company_id)
+            .first()
+        )
         if existing:
-            raise handle_conflict("SLA policy code already exists.")
-        
+            raise handle_conflict("SLA policy code already exists in this company.")
+
         policy_dict = policy_data.model_dump(exclude={"tiers"})
-        policy = SLAPolicy(**policy_dict)
+        policy = SLAPolicy(**policy_dict, company_id=company_id)
         self.db.add(policy)
         self.db.flush()
         
@@ -2120,6 +2181,8 @@ class ConversationSLATrackingService:
         agent_code_override: Optional[str] = None,
         agent_id_override: Optional[str] = None,
         contact_segments: Optional[set] = None,
+        *,
+        company_id: str,
     ) -> dict:
         """
         Resolve the next assignee for escalation to the given tier using agent tier-team and round-robin.
@@ -2161,6 +2224,7 @@ class ConversationSLATrackingService:
             agent_id,
             target_tier,
             team_set_code=team_set_code,
+            company_id=company_id,
         )
         if not team_id:
             suffix = (
@@ -2649,7 +2713,10 @@ class ConversationSLATrackingService:
             notified: set[str] = set()
             for tier in range(target_tier, 4):
                 res = agent_svc.get_tier_team_and_notify(
-                    agent_id, tier, team_set_code=team_set_code
+                    agent_id,
+                    tier,
+                    team_set_code=team_set_code,
+                    company_id=_tracking_company_id(tracking),
                 )
                 if not res:
                     continue  # no team configured at this tier
@@ -3315,6 +3382,17 @@ class ConversationSLATrackingService:
             )
         tracking_dict["respond_contact_id"] = contact.id
 
+        # AC-E2: stamp the company ONCE, here, from the contact. Every later read of
+        # this tracker - escalation, extension notify, the handling lock - takes the
+        # company from the row rather than re-deriving it, so a tier-2 escalation of a
+        # Mocha conversation cannot land on Sorento even when it fires from a
+        # scheduler tick with no request company at all.
+        from app.services.company_routing_service import company_for_contact
+
+        tracking_dict["company_id"] = company_for_contact(
+            self.db, contact_id=str(contact.id), phone=normalized_phone
+        )
+
         # Resolve agent_code → agent_id (FK). When no assignee is passed, pick via round-robin
         # for current_tier (same as escalation). When assigned_to / assigned_to_id is passed
         # (e.g. after external next-assignee), use it and do not advance the tier cursor again.
@@ -3352,7 +3430,9 @@ class ConversationSLATrackingService:
             team_set_code = tracking_dict.get("team_set_code")
             # resolve_policy_id_for raises 409 when the team set has inconsistent policies.
             resolved_policy_id = _AccessAgentService(self.db).resolve_policy_id_for(
-                str(_agent.id), str(team_set_code or "")
+                str(_agent.id),
+                str(team_set_code or ""),
+                company_id=tracking_dict["company_id"],
             )
             if resolved_policy_id:
                 tracking_dict["policy_id"] = resolved_policy_id
@@ -3408,6 +3488,7 @@ class ConversationSLATrackingService:
                     target_tier=tracking_dict["current_tier"],
                     team_set_code=tracking_dict.get("team_set_code") or None,
                     agent_id_override=str(_agent.id),
+                    company_id=tracking_dict["company_id"],
                 )
                 tracking_dict["assigned_to_id"] = assignee["id"]
                 tracking_dict["assigned_to"] = (

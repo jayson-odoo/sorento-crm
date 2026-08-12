@@ -1,19 +1,22 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import {
   ColumnDef,
   PaginationState,
   RowSelectionState,
   SortingState,
+  VisibilityState,
   useReactTable,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Plus, Search, Trash2, X } from 'lucide-react';
+import { ChevronRight, Download, Eye, Plus, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react';
+import { toast } from 'sonner';
+import { getLatestContainerStatusDocument } from '../services/packingListService';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -32,9 +35,22 @@ import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { formatStatusLabel, getStatusBadgeVariant } from '@/lib/status-badge';
 import PackingListDeleteDialog from './packing-list-delete-dialog';
 import PackingListBulkDeleteDialog from './PackingListBulkDeleteDialog';
+import ContainerStatusImportDialog from './ContainerStatusImportDialog';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
 
 export default function PackingListsList() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+
+  // The "no container status imported yet" empty state on a packing list detail page
+  // links back here with ?import=container-status so the CTA lands on the upload
+  // itself rather than dead-ending on the list.
+  useEffect(() => {
+    if (searchParams.get('import') === 'container-status') setImportDialogOpen(true);
+  }, [searchParams]);
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
@@ -43,12 +59,38 @@ export default function PackingListsList() {
     { id: 'created_at', desc: true },
   ]);
   const [searchQuery, setSearchQuery] = useState('');
+  /**
+   * Clearance columns are OFF by default. There are 17 of them; showing them all
+   * would bury the eight columns everyone already uses. Each user turns on the ones
+   * they care about via the toolbar's column picker and the choice persists through
+   * the existing `listing_key` column-config personalization.
+   */
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
+    liner_code: false,
+    china_forwarder: false,
+    malaysia_forwarder: false,
+    consignee: false,
+    loc: false,
+    free_days_available: false,
+    loading_date: false,
+    etc_date: false,
+    etd_date: false,
+    eta_delay_date: false,
+    inspection_date: false,
+    approval_date: false,
+    gatepass_date: false,
+    warehouse_arrival_date: false,
+    informed_collection_date: false,
+    collection_date: false,
+  });
   const [packingListToDelete, setPackingListToDelete] =
     useState<PackingList | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewItem, setPreviewItem] = useState<AttachmentPreviewItem | null>(null);
 
-  const { data, isLoading, refetch, isFetching } = usePackingLists({
+  const { data, isLoading, refetch } = usePackingLists({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -69,8 +111,85 @@ export default function PackingListsList() {
     router.push(`/procurement-management/packing-lists/${packingListId}${qs}`);
   };
 
-  const columns = useMemo<ColumnDef<PackingList>[]>(
-    () => [
+  /** Open the latest imported workbook, either inline or as a download.
+   *
+   * The link is signed and short-lived, so it is fetched on click rather than
+   * rendered as an href - a stale URL in the DOM would 403 by the time anyone
+   * used it. A toast carries the "nothing imported yet" case, which is a normal
+   * state before the first import, not an error worth a dialog.
+   *
+   * Preview reuses the shared AttachmentPreviewModal, which renders xlsx as a
+   * sheet in place. Answering "what does the sheet say" should not cost a
+   * download, an Excel launch and a file left in ~/Downloads. */
+  const openContainerStatus = async (mode: 'preview' | 'download') => {
+    try {
+      const doc = await getLatestContainerStatusDocument();
+      if (mode === 'download') {
+        window.open(doc.url, '_blank', 'noopener,noreferrer');
+        return;
+      }
+      setPreviewItem({
+        id: doc.attachment_id,
+        name: doc.filename,
+        // The signed URL is the cacheable source for the inline render; bytes for
+        // the modal's own Download button come through the authenticated route.
+        url: doc.url,
+        downloadUrl: `/api/v1/resource-management/attachments/${doc.attachment_id}/download`,
+        sizeBytes: doc.size,
+      });
+      setPreviewOpen(true);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Could not fetch the Container Status workbook',
+      );
+    }
+  };
+
+  const columns = useMemo<ColumnDef<PackingList>[]>(() => {
+    /** Clearance date column: same shape 11 times, so build it once. */
+    const dateColumn = (
+      key: keyof PackingList,
+      title: string,
+      size = 130,
+    ): ColumnDef<PackingList> => ({
+      accessorKey: key as string,
+      header: ({ column }) => (
+        <DataGridColumnHeader title={title} column={column} />
+      ),
+      cell: ({ row }) => {
+        const value = row.original[key] as string | null | undefined;
+        return value ? formatDate(new Date(value)) : '-';
+      },
+      size,
+      meta: { headerTitle: title, skeleton: <Skeleton className="h-4 w-20" /> },
+    });
+
+    /** Clearance text column - truncated with a title, per ARCHITECTURE-RULES. */
+    const textColumn = (
+      key: keyof PackingList,
+      title: string,
+      size = 140,
+    ): ColumnDef<PackingList> => ({
+      accessorKey: key as string,
+      header: ({ column }) => (
+        <DataGridColumnHeader title={title} column={column} />
+      ),
+      cell: ({ row }) => {
+        const value = row.original[key] as string | number | null | undefined;
+        if (value === null || value === undefined || value === '') return '-';
+        return (
+          <span className="block truncate" title={String(value)}>
+            {String(value)}
+          </span>
+        );
+      },
+      size,
+      meta: { headerTitle: title, skeleton: <Skeleton className="h-4 w-24" /> },
+    });
+
+    return [
       buildSelectColumn<PackingList>(),
       {
         accessorKey: 'shipment_number',
@@ -161,6 +280,23 @@ export default function PackingListsList() {
         size: 120,
         meta: { headerTitle: 'Created At', skeleton: <Skeleton className="h-4 w-20" /> },
       },
+      // --- Container status / clearance chain. All hidden by default. ---
+      textColumn('liner_code', 'Liner', 110),
+      textColumn('china_forwarder', 'China Forwarder'),
+      textColumn('malaysia_forwarder', 'MY Forwarder'),
+      textColumn('consignee', 'Consignee', 170),
+      textColumn('loc', 'Loc', 90),
+      textColumn('free_days_available', 'Free Days', 110),
+      dateColumn('loading_date', 'Loading'),
+      dateColumn('etc_date', 'ETC', 110),
+      dateColumn('etd_date', 'ETD', 110),
+      dateColumn('eta_delay_date', 'ETA Delay'),
+      dateColumn('inspection_date', 'Inspection'),
+      dateColumn('approval_date', 'Approval'),
+      dateColumn('gatepass_date', 'Gatepass'),
+      dateColumn('warehouse_arrival_date', 'W/H Arrival'),
+      dateColumn('informed_collection_date', 'Informed Collection', 170),
+      dateColumn('collection_date', 'Collection'),
       {
         accessorKey: 'actions',
         header: '',
@@ -185,20 +321,21 @@ export default function PackingListsList() {
         size: 80,
         enableHiding: false,
       },
-    ],
-    [],
-  );
+    ];
+  }, []);
 
   const table = useReactTable({
     columns,
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting, rowSelection },
+    state: { pagination, sorting, columnVisibility, rowSelection },
     enableRowSelection: true,
     onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
+    onColumnVisibilityChange: setColumnVisibility,
+    columnResizeMode: 'onChange',
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
@@ -214,7 +351,7 @@ export default function PackingListsList() {
       isLoading={isLoading}
       onRowClick={handleRowClick}
       standardToolbar={false}
-      tableLayout={{ columnsVisibility: true }}
+      tableLayout={{ width: 'fixed', columnsVisibility: true, columnsResizable: true }}
     >
       <Card>
         <CardHeader className="block">
@@ -242,8 +379,6 @@ export default function PackingListsList() {
               </div>
             }
             exportConfig={{ filename: 'packing_lists_export.xlsx' }}
-            onRefresh={() => void refetch()}
-            isRefreshing={isFetching && !isLoading}
             primaryAction={
               <Button
                 onClick={() =>
@@ -254,6 +389,36 @@ export default function PackingListsList() {
                 Create Packing List
               </Button>
             }
+            secondaryActions={[
+              // Two or more secondary actions collapse into the toolbar's "Actions"
+              // dropdown, which is where the delivery order import lives. Refresh
+              // moves in with the import rather than sitting as its own icon button,
+              // so this toolbar matches that page.
+              {
+                key: 'refresh',
+                label: 'Refresh',
+                icon: RefreshCw,
+                onClick: () => void refetch(),
+              },
+              {
+                key: 'preview-container-status',
+                label: 'Preview Container Status (latest)',
+                icon: Eye,
+                onClick: () => void openContainerStatus('preview'),
+              },
+              {
+                key: 'download-container-status',
+                label: 'Download Container Status (latest)',
+                icon: Download,
+                onClick: () => void openContainerStatus('download'),
+              },
+              {
+                key: 'import-container-status',
+                label: 'Import Container Status',
+                icon: Upload,
+                onClick: () => setImportDialogOpen(true),
+              },
+            ]}
             bulkActions={[
               {
                 key: 'delete',
@@ -283,6 +448,15 @@ export default function PackingListsList() {
           onSuccess={() => refetch()}
         />
       )}
+      <ContainerStatusImportDialog
+        open={importDialogOpen}
+        onOpenChange={setImportDialogOpen}
+      />
+      <AttachmentPreviewModal
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        items={previewItem ? [previewItem] : []}
+      />
       <PackingListBulkDeleteDialog
         open={bulkDeleteDialogOpen}
         onOpenChange={(open) => {

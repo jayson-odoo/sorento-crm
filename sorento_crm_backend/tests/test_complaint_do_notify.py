@@ -167,7 +167,7 @@ def test_N3_N6_team_in_app_and_email(db: Session, monkeypatch) -> None:
     svc = ComplaintService(db)
     # Pin the team fan-out to our seeded user (no Access-Agent / Team seed needed).
     monkeypatch.setattr(
-        svc, "_get_complaint_team_user_ids_tiers", lambda tiers=(1, 2): [str(user.id)]
+        svc, "_get_complaint_team_user_ids_tiers", lambda tiers=(1, 2), *, company_id=None: [str(user.id)]
     )
     c = _mk_complaint(db, f"{C_PREFIX}TEAM")
     svc.notify_team_do_delivered(
@@ -233,7 +233,7 @@ def test_N3b_each_member_gets_own_email(db: Session, monkeypatch) -> None:
     ids = [str(u.id) for u in members]
 
     svc = ComplaintService(db)
-    monkeypatch.setattr(svc, "_get_complaint_team_user_ids_tiers", lambda tiers=(1, 2): ids)
+    monkeypatch.setattr(svc, "_get_complaint_team_user_ids_tiers", lambda tiers=(1, 2), *, company_id=None: ids)
     c = _mk_complaint(db, f"{C_PREFIX}MULTI")
     svc.notify_team_do_delivered(
         c.id, complaint_number=f"{C_PREFIX}MULTI", order_number="REPPS-7777", items=_ITEMS
@@ -267,7 +267,7 @@ def test_N3_team_no_members_noop(db: Session, monkeypatch) -> None:
     """No Complaint team members -> graceful no-op (no crash, no notification)."""
     svc = ComplaintService(db)
     monkeypatch.setattr(
-        svc, "_get_complaint_team_user_ids_tiers", lambda tiers=(1, 2): []
+        svc, "_get_complaint_team_user_ids_tiers", lambda tiers=(1, 2), *, company_id=None: []
     )
     c = _mk_complaint(db, f"{C_PREFIX}NOTEAM")
     svc.notify_team_do_delivered(

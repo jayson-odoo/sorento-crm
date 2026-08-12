@@ -75,6 +75,8 @@ export type UseCase =
   | 'sla_handling_claimed'
   | 'sla_handling_taken_over'
   | 'sla_handling_released'
+  | 'form_action_voided'
+  | 'form_action_reopened'
   | 'product_discontinued';
 
 export type ParamVariable =
@@ -267,6 +269,18 @@ export const USE_CASES: {
     label: 'SLA Takeover — Pending',
     description:
       'Sent to a task’s current assignee when a teammate starts a takeover (cooldown window). Map params to "Contact name" (the assignee) and "Full update message" at minimum; add "Entity number" when the template carries it.',
+  },
+  {
+    key: 'form_action_voided',
+    label: 'Form Action Undo - Task Voided',
+    description:
+      'Sent to the staff member whose task was voided because a form action was undone. Map a parameter to "Full update message" at minimum (it carries who undid what and the reason); add "Sender name" / the link when the template carries them.',
+  },
+  {
+    key: 'form_action_reopened',
+    label: 'Form Action Undo - Task Returned',
+    description:
+      'Sent to the staff member a form returned to after an undo (their SLA clock restarts). Map a parameter to "Full update message" at minimum; add "Sender name" / the link when the template carries them.',
   },
   {
     key: 'sla_task_moved',

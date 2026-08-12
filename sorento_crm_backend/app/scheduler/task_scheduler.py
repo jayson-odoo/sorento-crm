@@ -1,8 +1,10 @@
 """General background task scheduler (imports, integrations, notifications, summaries)."""
 import logging
+from contextlib import contextmanager
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from app.database import SessionLocal
+from app.models.base import set_company_scope
 from app.services.integration_service import IntegrationLogService
 from app.services.queue_service import get_queue, run_sync_rq_jobs
 from app.services.scheduled_task_service import (
@@ -20,6 +22,28 @@ from app.config import settings
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def scheduler_session():
+    """A DB session for background ticks, explicitly scoped to ALL companies.
+
+    Sessions default to ``UNSET``, which the company-scope filter treats as zero
+    rows (fail closed). That is right for an unauthenticated request and wrong for
+    a scheduler tick: it has no principal, yet must see every company's work. Left
+    at the default, an overdue-SLA scan reads zero rows from every company-scoped
+    table, escalates nothing, and raises nothing - the failure is completely silent.
+
+    Background work opts out of the filter, exactly as ``import_tasks`` and
+    ``export_tasks`` already do. Per-row company still governs what each tick then
+    does with what it read (an SLA tracker escalates up its own company's ladder).
+    """
+    db = SessionLocal()
+    set_company_scope(db, None)
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 def _handler_integration_log_retry(db, task):
@@ -173,6 +197,17 @@ def _handler_takeover_request_commit(db, task):
     from app.services.sla_takeover_service import SlaTakeoverService
 
     return SlaTakeoverService(db).commit_due()
+
+
+def _handler_form_action_commit(db, task):
+    """Execute form-SLA actions whose grace window has closed.
+
+    The lazy commit on read (GET /form-actions/current) covers anyone looking at the
+    form; this sweep covers the ones nobody is looking at. See PLAN-form-sla-undo."""
+    from app.services.form_action_service import FormActionService
+    import app.services.form_actions  # noqa: F401  (registers the actions)
+
+    return FormActionService(db).commit_due()
 
 
 def _handler_chat_message_resolver(db, task):
@@ -362,11 +397,8 @@ def _ai_trace_sweep_tick():
     try:
         from app.services.ai_trace import sweep_expired_traces
 
-        db = SessionLocal()
-        try:
+        with scheduler_session() as db:
             sweep_expired_traces(db)
-        finally:
-            db.close()
     except Exception as e:
         logger.error("AI trace sweep tick failed: %s", e, exc_info=True)
 
@@ -381,31 +413,27 @@ def process_pending_integration_logs():
     Process pending integration logs that are ready for retry.
     This function is called periodically by the scheduler.
     """
-    db = SessionLocal()
     try:
-        service = IntegrationLogService(db)
-        result = service.process_pending_logs()
+        with scheduler_session() as db:
+            service = IntegrationLogService(db)
+            result = service.process_pending_logs()
 
-        if result["processed"] > 0:
-            logger.info(
-                f"Processed {result['processed']} integration logs: "
-                f"{result['succeeded']} succeeded, {result['failed']} failed"
-            )
+            if result["processed"] > 0:
+                logger.info(
+                    f"Processed {result['processed']} integration logs: "
+                    f"{result['succeeded']} succeeded, {result['failed']} failed"
+                )
     except Exception as e:
         logger.error(f"Error processing pending integration logs: {str(e)}", exc_info=True)
-    finally:
-        db.close()
 
 
 def _scheduled_tasks_heartbeat():
     """Heartbeat: run due DB-configured scheduled tasks and persist run logs."""
-    db = SessionLocal()
     try:
-        run_due_tasks(db)
+        with scheduler_session() as db:
+            run_due_tasks(db)
     except Exception as e:
         logger.error("Scheduled tasks heartbeat failed: %s", str(e), exc_info=True)
-    finally:
-        db.close()
 
 
 def register_task_handlers():
@@ -425,6 +453,7 @@ def register_task_handlers():
     register_handler("product_discontinued_check", _handler_product_discontinued_check)
     register_handler("coverage_subscription_expiry", _handler_coverage_subscription_expiry)
     register_handler("takeover_request_commit", _handler_takeover_request_commit)
+    register_handler("form_action_commit", _handler_form_action_commit)
     register_handler("n8n_liveness_ping", lambda db, task: run_n8n_liveness_ping(db))
     register_handler("system_health_watchdog", lambda db, task: run_health_watchdog(db))
     register_handler("system_health_daily_digest", lambda db, task: run_health_daily_digest(db, task))
@@ -460,15 +489,12 @@ def start_scheduler():
     # bursts get throttled by the per-recipient cap inside drain_email_outbox.
     drain_seconds = 5
     try:
-        db = SessionLocal()
-        try:
+        with scheduler_session() as db:
             from app.models.user import SystemSetting
 
             settings_row = db.query(SystemSetting).first()
             if settings_row and getattr(settings_row, "email_outbox_drain_interval_seconds", None):
                 drain_seconds = int(settings_row.email_outbox_drain_interval_seconds)
-        finally:
-            db.close()
     except Exception as e:
         logger.warning("Email outbox drainer interval lookup failed (%s); using 5s default.", e)
     scheduler.add_job(
