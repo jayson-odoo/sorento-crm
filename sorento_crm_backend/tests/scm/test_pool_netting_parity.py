@@ -136,8 +136,13 @@ def _seed_scenario(db):
     db.flush()
 
     def _demand(product, wh, qty, when):
+        # S13b: `scm.committed_v` only nets a project-class order when the Order Inquiry
+        # created or named it (see app.services.scm.demand.COMMITTED_V_SQL). Without
+        # demand_origin these rows silently stop counting as committed demand and the
+        # parity scenario nets nothing, which is not what this file is testing.
         so = SalesOrder(id=_u(), so_number=f"{_MK}-{uuid.uuid4().hex[:8]}", status="open",
-                        customer_id=cust.id, demand_class="project")
+                        customer_id=cust.id, demand_class="project",
+                        demand_origin="scm_order_inquiry")
         db.add(so)
         db.flush()
         db.add(SalesOrderLine(
@@ -178,6 +183,10 @@ def _plan(db, warehouse_ids: list[str]) -> list[dict]:
     """
     rows = [r for r in rrs._planning_rows(db, warehouse_ids)
             if str(r["product_code"]).startswith(_MK)]
+    # A from-zero database has no global `scm.reorder_policy` row at all (bootstrap seeds
+    # `scm.priority_policy`, a different table), so the UPDATE below would be a silent
+    # no-op against zero rows. Seed it first.
+    eng.ensure_reorder_policy_defaults(db)
     # Pooled netting is OPT-IN now: a sibling covering another bin assumes a transfer that
     # this phase does not propose, so the engine no longer assumes one by default. These
     # tests are ABOUT pooled behaviour, so they turn it on explicitly - which is also the

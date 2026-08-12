@@ -225,6 +225,10 @@ def test_a_line_with_no_purchase_order_location_lands_somewhere_sellable():
     # available would make the arrival invisible to exactly those people.
     with pg_session() as db:
         w = World(db)
+        # `_default_warehouse` picks ANY sellable warehouse in scope, company-scoped - a
+        # from-zero database has none at all (a real one always happens to hold one), so
+        # this world seeds its own rather than borrowing whatever the environment has.
+        w.warehouse("SELLABLE")
         w.po("1", [("A", 10, 0, None)], issue_date=date(2026, 1, 1))
         shipment = w.shipment([("A", 10)])
 

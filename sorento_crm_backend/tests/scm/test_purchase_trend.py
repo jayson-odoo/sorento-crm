@@ -49,7 +49,8 @@ def _world(db, company_id=None):
 
     supplier_id = _u()
     db.execute(text(
-        "INSERT INTO suppliers (id, supplier_code, supplier_name) VALUES (:id, :c, :n)"),
+        "INSERT INTO suppliers (id, supplier_code, supplier_name, is_active) "
+        "VALUES (:id, :c, :n, true)"),
         {"id": supplier_id, "c": unique_code("S"), "n": f"{MARKER} supplier"})
 
     def add_po(number, day, qty, cost, status="closed", company=None):
@@ -79,14 +80,16 @@ def _world(db, company_id=None):
 
     run_id = _u()
     db.execute(text(
-        "INSERT INTO scm.reorder_run (id, status" + (", company_id" if company_id else "")
-        + ", created_at) VALUES (:id, 'completed'" + (", :co" if company_id else "")
+        "INSERT INTO scm.reorder_run (id, status, include_market"
+        + (", company_id" if company_id else "")
+        + ", created_at) VALUES (:id, 'completed', false"
+        + (", :co" if company_id else "")
         + ", now())"), {"id": run_id, **({"co": company_id} if company_id else {})})
     db.execute(text(
         "INSERT INTO scm.reorder_recommendation "
-        "(id, run_id, product_id, rec_type, rounded_qty"
-        + (", company_id) VALUES (:id, :r, :p, 'buy', 10, :co)" if company_id
-           else ") VALUES (:id, :r, :p, 'buy', 10)")),
+        "(id, run_id, product_id, rec_type, rounded_qty, status"
+        + (", company_id) VALUES (:id, :r, :p, 'buy', 10, 'proposed', :co)" if company_id
+           else ") VALUES (:id, :r, :p, 'buy', 10, 'proposed')")),
         {"id": _u(), "r": run_id, "p": pid,
          **({"co": company_id} if company_id else {})})
     db.flush()
@@ -140,7 +143,8 @@ def test_the_line_list_is_capped():
         w = _world(db)
         supplier_id = str(uuid.uuid4())
         db.execute(text(
-            "INSERT INTO suppliers (id, supplier_code, supplier_name) VALUES (:id, :c, :n)"),
+            "INSERT INTO suppliers (id, supplier_code, supplier_name, is_active) "
+        "VALUES (:id, :c, :n, true)"),
             {"id": supplier_id, "c": unique_code("S2"), "n": f"{MARKER} extra"})
         # 10 more real lines, pushing the total for this product well past the cap of 8.
         for i in range(10):
@@ -182,12 +186,12 @@ def test_a_product_with_no_purchases_reports_an_honest_empty_answer():
 
         run_id = _u()
         db.execute(text(
-            "INSERT INTO scm.reorder_run (id, status, created_at) "
-            "VALUES (:id, 'completed', now())"), {"id": run_id})
+            "INSERT INTO scm.reorder_run (id, status, include_market, created_at) "
+            "VALUES (:id, 'completed', false, now())"), {"id": run_id})
         db.execute(text(
             "INSERT INTO scm.reorder_recommendation "
-            "(id, run_id, product_id, rec_type, rounded_qty) "
-            "VALUES (:id, :r, :p, 'buy', 10)"),
+            "(id, run_id, product_id, rec_type, rounded_qty, status) "
+            "VALUES (:id, :r, :p, 'buy', 10, 'proposed')"),
             {"id": _u(), "r": run_id, "p": product.id})
         db.flush()
 
@@ -223,7 +227,8 @@ def test_a_purchase_order_under_a_different_company_is_never_counted():
         # shape only if the catalogue is shared; the predicate must hold regardless).
         supplier_id = _u()
         db.execute(text(
-            "INSERT INTO suppliers (id, supplier_code, supplier_name) VALUES (:id, :c, :n)"),
+            "INSERT INTO suppliers (id, supplier_code, supplier_name, is_active) "
+        "VALUES (:id, :c, :n, true)"),
             {"id": supplier_id, "c": f"{MARKER}-SB-{uuid.uuid4().hex[:6]}",
              "n": f"{MARKER} company B supplier"})
         poid = _u()

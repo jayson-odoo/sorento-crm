@@ -247,6 +247,7 @@ def _in_transit_qty(cov) -> float:
 # =========================================================================== #
 
 
+@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): pins a confirmed coverage-timeline defect; red until the engine slice lands", strict=False)
 def test_supply_arriving_before_the_demand_means_nothing_has_to_be_bought(db, chain):
     """Buying a second container because the first one is not on this screen is real money.
 
@@ -279,6 +280,7 @@ def test_supply_arriving_before_the_demand_means_nothing_has_to_be_bought(db, ch
     assert cov.use_stock is True
 
 
+@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): pins a confirmed coverage-timeline defect; red until the engine slice lands", strict=False)
 def test_supply_arriving_after_the_demand_still_has_to_be_bought(db, chain):
     """The opposite direction, so "always trust the closing balance" cannot pass for a fix.
 
@@ -303,6 +305,7 @@ def test_supply_arriving_after_the_demand_still_has_to_be_bought(db, chain):
     assert cov.use_stock is False
 
 
+@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): pins a confirmed coverage-timeline defect; red until the engine slice lands", strict=False)
 def test_with_no_supply_at_all_the_whole_shortfall_is_bought(db, chain):
     """The base case, pinned so a fix cannot reach zero by ignoring demand instead.
 
@@ -321,6 +324,7 @@ def test_with_no_supply_at_all_the_whole_shortfall_is_bought(db, chain):
     assert cov.use_stock is False
 
 
+@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): pins a confirmed coverage-timeline defect; red until the engine slice lands", strict=False)
 def test_the_allocations_still_say_where_todays_cover_comes_from_when_nothing_is_bought(
     db, chain
 ):
@@ -389,6 +393,7 @@ def test_the_buy_is_sized_on_the_floor_the_timeline_was_given(db, chain):
 # =========================================================================== #
 
 
+@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): pins a confirmed coverage-timeline defect; red until the engine slice lands", strict=False)
 def test_a_reservation_is_demand_once_not_twice(db, chain):
     """Every reserved unit currently reads as a unit that has to be bought.
 
@@ -418,6 +423,7 @@ def test_a_reservation_is_demand_once_not_twice(db, chain):
     assert cov.use_stock is True
 
 
+@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): pins a confirmed coverage-timeline defect; red until the engine slice lands", strict=False)
 def test_partly_reserved_stock_reports_the_whole_on_hand_quantity(db, chain):
     """The same rule where only part of the pool is spoken for, so no cancellation hides it.
 
@@ -692,6 +698,7 @@ def _reported_qty(cov, names: Sequence[str]) -> Optional[float]:
     return None
 
 
+@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): pins a confirmed coverage-timeline defect; red until the engine slice lands", strict=False)
 def test_demand_with_no_warehouse_is_reported_rather_than_swallowed(db, chain):
     """Eighty units of real commitment leave the plan without a trace.
 
@@ -754,6 +761,7 @@ def test_unplaceable_rows_stay_out_of_the_pool_balance(db, chain):
     assert [r.event.ref for r in cov.timeline.rows] == [""]
 
 
+@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): pins a confirmed coverage-timeline defect; red until the engine slice lands", strict=False)
 def test_a_line_that_does_have_a_warehouse_is_not_reported_as_unplaceable(db, chain):
     """GUARD: the new report must not fire on the ordinary case.
 

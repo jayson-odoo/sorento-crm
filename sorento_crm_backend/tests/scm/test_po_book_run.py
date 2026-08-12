@@ -43,9 +43,10 @@ def _world(db, company_id=None):
 
     wid = _u()
     db.execute(text(
-        "INSERT INTO warehouses (id, warehouse_code, warehouse_name, counts_as_available"
-        + (", company_id) VALUES (:id, :c, :c, true, :co)" if company_id
-           else ") VALUES (:id, :c, :c, true)")),
+        "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
+        "counts_as_available"
+        + (", company_id) VALUES (:id, :c, :c, true, true, :co)" if company_id
+           else ") VALUES (:id, :c, :c, true, true)")),
         {"id": wid, "c": unique_code("W")[:20], **({"co": company_id} if company_id else {})})
 
     def add_po(number, status, qty, received, line_status="open", expected=None):
@@ -71,14 +72,16 @@ def _world(db, company_id=None):
 
     run_id = _u()
     db.execute(text(
-        "INSERT INTO scm.reorder_run (id, status" + (", company_id" if company_id else "")
-        + ", created_at) VALUES (:id, 'completed'" + (", :co" if company_id else "")
+        "INSERT INTO scm.reorder_run (id, status, include_market"
+        + (", company_id" if company_id else "")
+        + ", created_at) VALUES (:id, 'completed', false"
+        + (", :co" if company_id else "")
         + ", now())"), {"id": run_id, **({"co": company_id} if company_id else {})})
     db.execute(text(
         "INSERT INTO scm.reorder_recommendation "
-        "(id, run_id, product_id, warehouse_id, rec_type, rounded_qty"
-        + (", company_id) VALUES (:id, :r, :p, :w, 'buy', 10, :co)" if company_id
-           else ") VALUES (:id, :r, :p, :w, 'buy', 10)")),
+        "(id, run_id, product_id, warehouse_id, rec_type, rounded_qty, status"
+        + (", company_id) VALUES (:id, :r, :p, :w, 'buy', 10, 'proposed', :co)" if company_id
+           else ") VALUES (:id, :r, :p, :w, 'buy', 10, 'proposed')")),
         {"id": _u(), "r": run_id, "p": pid, "w": wid,
          **({"co": company_id} if company_id else {})})
     db.flush()

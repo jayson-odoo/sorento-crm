@@ -47,14 +47,19 @@ def _world(db, *, sold_lines=((10, 100.0), (30, 80.0)), list_price=250.0,
 
     wid = _u()
     db.execute(text(
-        "INSERT INTO warehouses (id, warehouse_code, warehouse_name, counts_as_available) "
-        "VALUES (:id, :c, :c, true)"), {"id": wid, "c": unique_code("W")[:20]})
+        "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
+        "counts_as_available) VALUES (:id, :c, :c, true, true)"),
+        {"id": wid, "c": unique_code("W")[:20]})
 
     for i, (qty, unit_price) in enumerate(sold_lines):
         oid = _u()
+        # kpi_warning/subtotal_amount/discount_amount/tax_amount/total_amount/
+        # synced_to_excel are NOT NULL with only a Python-side ORM default.
         db.execute(text(
-            "INSERT INTO orders (id, order_number, order_date, is_cancelled, created_at, "
-            "updated_at) VALUES (:id, :n, :d, false, now(), now())"),
+            "INSERT INTO orders (id, order_number, order_date, is_cancelled, kpi_warning, "
+            "subtotal_amount, discount_amount, tax_amount, total_amount, synced_to_excel, "
+            "created_at, updated_at) "
+            "VALUES (:id, :n, :d, false, false, 0, 0, 0, 0, false, now(), now())"),
             {"id": oid, "n": f"{MARKER}-{oid[:8]}", "d": date(2026, 3 + i, 10)})
         db.execute(text(
             "INSERT INTO order_lines (id, line_sequence, order_id, product_id, "
@@ -65,17 +70,18 @@ def _world(db, *, sold_lines=((10, 100.0), (30, 80.0)), list_price=250.0,
 
     if on_hand:
         db.execute(text(
-            "INSERT INTO stock (id, product_id, warehouse_id, quantity_on_hand) "
-            "VALUES (:id, :p, :w, :q)"), {"id": _u(), "p": pid, "w": wid, "q": on_hand})
+            "INSERT INTO stock (id, product_id, warehouse_id, quantity_on_hand, "
+            "synced_to_excel) VALUES (:id, :p, :w, :q, false)"),
+            {"id": _u(), "p": pid, "w": wid, "q": on_hand})
 
     run_id = _u()
     db.execute(text(
-        "INSERT INTO scm.reorder_run (id, status, created_at) "
-        "VALUES (:id, 'completed', now())"), {"id": run_id})
+        "INSERT INTO scm.reorder_run (id, status, include_market, created_at) "
+        "VALUES (:id, 'completed', false, now())"), {"id": run_id})
     db.execute(text(
         "INSERT INTO scm.reorder_recommendation "
-        "(id, run_id, product_id, warehouse_id, rec_type, rounded_qty) "
-        "VALUES (:id, :r, :p, :w, 'buy', 10)"),
+        "(id, run_id, product_id, warehouse_id, rec_type, rounded_qty, status) "
+        "VALUES (:id, :r, :p, :w, 'buy', 10, 'proposed')"),
         {"id": _u(), "r": run_id, "p": pid, "w": wid})
     db.flush()
     return {"run_id": run_id, "product_id": pid, "warehouse_id": wid}

@@ -257,7 +257,10 @@ def get_product(
 @router.get("/{product_id}/purchase-history")
 def get_product_purchase_history(
     product_id: str,
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(
+        50, ge=1, le=200,
+        description="Max number of purchase-history rows to return (not a DataGrid page size).",
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):

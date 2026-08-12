@@ -164,12 +164,14 @@ def db_world():
 
         wid = _u()
         db.execute(text(
-            "INSERT INTO warehouses (id, warehouse_code, warehouse_name, counts_as_available, "
-            "segment) VALUES (:id, :c, :c, true, 'project')"), {"id": wid, "c": unique_code("W")[:20]})
+            "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
+            "counts_as_available, segment) VALUES (:id, :c, :c, true, true, 'project')"),
+            {"id": wid, "c": unique_code("W")[:20]})
 
         cust_id = _u()
         db.execute(text(
-            "INSERT INTO customers (id, customer_code, customer_name) VALUES (:id, :c, :n)"),
+            "INSERT INTO customers (id, customer_code, customer_name, is_active) "
+            "VALUES (:id, :c, :n, true)"),
             {"id": cust_id, "c": unique_code("C")[:20], "n": f"{MARKER} Vivo Homes"})
 
         def order(day: date, qty: float):
@@ -189,12 +191,12 @@ def db_world():
 
         run_id = _u()
         db.execute(text(
-            "INSERT INTO scm.reorder_run (id, status, created_at) "
-            "VALUES (:id, 'completed', now())"), {"id": run_id})
+            "INSERT INTO scm.reorder_run (id, status, include_market, created_at) "
+            "VALUES (:id, 'completed', false, now())"), {"id": run_id})
         db.execute(text(
             "INSERT INTO scm.reorder_recommendation "
-            "(id, run_id, product_id, warehouse_id, rec_type, rounded_qty) "
-            "VALUES (:id, :r, :p, :w, 'buy', 10)"),
+            "(id, run_id, product_id, warehouse_id, rec_type, rounded_qty, status) "
+            "VALUES (:id, :r, :p, :w, 'buy', 10, 'proposed')"),
             {"id": _u(), "r": run_id, "p": product.id, "w": wid})
         db.flush()
 

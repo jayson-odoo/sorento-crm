@@ -301,8 +301,9 @@ def db_price_world():
 
         wid = _u()
         db.execute(_t(
-            "INSERT INTO warehouses (id, warehouse_code, warehouse_name, counts_as_available) "
-            "VALUES (:id, :c, :c, true)"), {"id": wid, "c": unique_code("W")[:20]})
+            "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
+            "counts_as_available) VALUES (:id, :c, :c, true, true)"),
+            {"id": wid, "c": unique_code("W")[:20]})
 
         def add_po(supplier_id, number, day, cost, status="closed"):
             pid = _u()
@@ -327,13 +328,14 @@ def db_price_world():
 
         run_id = _u()
         db.execute(_t(
-            "INSERT INTO scm.reorder_run (id, status, created_at) "
-            "VALUES (:id, 'completed', now())"), {"id": run_id})
+            "INSERT INTO scm.reorder_run (id, status, include_market, created_at) "
+            "VALUES (:id, 'completed', false, now())"), {"id": run_id})
         for supplier in (known, fresh):
             db.execute(_t(
                 "INSERT INTO scm.reorder_recommendation "
-                "(id, run_id, product_id, warehouse_id, supplier_id, rec_type, rounded_qty) "
-                "VALUES (:id, :r, :p, :w, :s, 'buy', 10)"),
+                "(id, run_id, product_id, warehouse_id, supplier_id, rec_type, rounded_qty, "
+                "status) "
+                "VALUES (:id, :r, :p, :w, :s, 'buy', 10, 'proposed')"),
                 {"id": _u(), "r": run_id, "p": product.id, "w": wid, "s": supplier.id})
         db.flush()
 
@@ -403,8 +405,9 @@ def test_the_run_reads_its_thresholds_off_the_global_policy_row():
 
         wid = _u()
         db.execute(_t(
-            "INSERT INTO warehouses (id, warehouse_code, warehouse_name, counts_as_available) "
-            "VALUES (:id, :c, :c, true)"), {"id": wid, "c": unique_code("W")[:20]})
+            "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
+            "counts_as_available) VALUES (:id, :c, :c, true, true)"),
+            {"id": wid, "c": unique_code("W")[:20]})
 
         # 60 days old, 20% up on the one before: recent+moved under the defaults,
         # stale (and NOT moved) under the configured 30/50.
@@ -423,12 +426,13 @@ def test_the_run_reads_its_thresholds_off_the_global_policy_row():
 
         run_id = _u()
         db.execute(_t(
-            "INSERT INTO scm.reorder_run (id, status, created_at) "
-            "VALUES (:id, 'completed', now())"), {"id": run_id})
+            "INSERT INTO scm.reorder_run (id, status, include_market, created_at) "
+            "VALUES (:id, 'completed', false, now())"), {"id": run_id})
         db.execute(_t(
             "INSERT INTO scm.reorder_recommendation "
-            "(id, run_id, product_id, warehouse_id, supplier_id, rec_type, rounded_qty) "
-            "VALUES (:id, :r, :p, :w, :s, 'buy', 10)"),
+            "(id, run_id, product_id, warehouse_id, supplier_id, rec_type, rounded_qty, "
+            "status) "
+            "VALUES (:id, :r, :p, :w, :s, 'buy', 10, 'proposed')"),
             {"id": _u(), "r": run_id, "p": product.id, "w": wid, "s": supplier.id})
         db.flush()
 

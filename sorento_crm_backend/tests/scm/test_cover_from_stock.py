@@ -189,8 +189,8 @@ def db_free_world():
 
         run_id = _u()
         db.execute(_t(
-            "INSERT INTO scm.reorder_run (id, status, created_at) "
-            "VALUES (:id, 'complete', now())"), {"id": run_id})
+            "INSERT INTO scm.reorder_run (id, status, include_market, created_at) "
+            "VALUES (:id, 'complete', false, now())"), {"id": run_id})
 
         wh_ids = {}
         for code, on_hand, demand in (
@@ -201,17 +201,19 @@ def db_free_world():
             wh_ids[code] = wid
             db.execute(_t(
                 "INSERT INTO warehouses (id, warehouse_code, warehouse_name, "
-                "counts_as_available, segment) VALUES (:id, :c, :c, true, 'project')"),
+                "is_active, counts_as_available, segment) "
+                "VALUES (:id, :c, :c, true, true, 'project')"),
                 {"id": wid, "c": code})
             db.execute(_t(
-                "INSERT INTO stock (id, product_id, warehouse_id, quantity_on_hand) "
-                "VALUES (:id, :p, :w, :q)"),
+                "INSERT INTO stock (id, product_id, warehouse_id, quantity_on_hand, "
+                "synced_to_excel) VALUES (:id, :p, :w, :q, false)"),
                 {"id": _u(), "p": product.id, "w": wid, "q": on_hand})
             if demand:
                 db.execute(_t(
                     "INSERT INTO scm.reorder_recommendation "
-                    "(id, run_id, product_id, warehouse_id, rec_type, rounded_qty, inputs) "
-                    "VALUES (:id, :run, :p, :w, 'buy', 0, CAST(:inputs AS jsonb))"),
+                    "(id, run_id, product_id, warehouse_id, rec_type, rounded_qty, status, "
+                    "inputs) "
+                    "VALUES (:id, :run, :p, :w, 'buy', 0, 'proposed', CAST(:inputs AS jsonb))"),
                     {"id": _u(), "run": run_id, "p": product.id, "w": wid,
                      "inputs": f'{{"committed": {demand}, "on_hand": {on_hand}}}'})
         db.flush()

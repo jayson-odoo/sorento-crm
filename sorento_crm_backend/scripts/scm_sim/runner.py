@@ -141,25 +141,15 @@ def _ensure_database_exists(url: str, db_name: str) -> None:
 
 
 def _fix_committed_v() -> None:
-    """``bootstrap_env.create_views()`` replays only migrations 274/311/327/337 and leaves
-    ``scm.committed_v`` stale (missing the 340/346 rules). Bring it current, then verify."""
-    from sqlalchemy import text
+    """Bring ``scm.committed_v`` current past migration 337.
 
-    from app.database import engine
-    from app.services.scm.demand import COMMITTED_V_SQL
+    Delegates to ``scripts.bootstrap_env._fix_committed_v`` - CI's from-zero bootstrap
+    hit the exact same staleness (it also only replays 274/311/327/337), so the fix is
+    owned there and the sim reuses it rather than keeping a second copy that can drift.
+    """
+    from scripts.bootstrap_env import _fix_committed_v as _bootstrap_fix_committed_v
 
-    with engine.begin() as conn:
-        conn.execute(text(COMMITTED_V_SQL))
-    with engine.connect() as conn:
-        definition = conn.execute(text(
-            "SELECT definition FROM pg_views WHERE schemaname = 'scm' "
-            "AND viewname = 'committed_v'"
-        )).scalar()
-    if not definition or "demand_origin" not in definition:
-        raise SystemExit(
-            "[scm_sim] scm.committed_v fix did not take effect (no demand_origin rule "
-            "in the view definition)."
-        )
+    _bootstrap_fix_committed_v()
     print("[scm_sim] scm.committed_v is current (demand_origin rule present)")
 
 
@@ -267,51 +257,23 @@ def _apply_migration_only_ddl() -> None:
     """``create_all`` builds tables from the MODELS. Columns/tables that exist only in a
     migration (no model mapping) are silently absent, and the affected endpoints 500 at
     read time. Known cases, found by running the real UI against a fresh sim database:
-    351 (``scm.reorder_policy.margin_floor_pct`` etc.) and 352
-    (``scm.product_lifecycle_decision``). Each is applied through ``Operations.context``,
-    idempotently (skipped when its marker column/table already exists)."""
-    import importlib.util
+    351 (``scm.reorder_policy.margin_floor_pct`` etc.), 352
+    (``scm.product_lifecycle_decision``), and the ``product_suppliers.min_order_quantity``
+    / ``.is_primary`` legacy columns. All three are owned by
+    ``scripts.bootstrap_env.apply_migration_only_ddl`` - CI's from-zero bootstrap needs the
+    exact same schema, so the DDL lives there and the sim reuses it rather than keeping a
+    second copy that can drift.
+    """
+    from scripts.bootstrap_env import apply_migration_only_ddl as _bootstrap_apply_ddl
 
-    from sqlalchemy import text
+    _bootstrap_apply_ddl()
 
-    import alembic.op as op_module
-    from alembic.migration import MigrationContext
-    from alembic.operations import Operations
-
-    from app.database import engine
-
-    markers = {
-        "351_scm_product_health_thresholds": (
-            "SELECT 1 FROM information_schema.columns "
-            "WHERE table_schema = 'scm' AND table_name = 'reorder_policy' "
-            "AND column_name = 'margin_floor_pct'"
-        ),
-        "352_scm_product_lifecycle_decision": (
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE table_schema = 'scm' AND table_name = 'product_lifecycle_decision'"
-        ),
-    }
-    # Legacy columns with no model mapping: they exist on every real DB and raw SQL
-    # (e.g. reorder_level_service.supplier_constraints: min_order_quantity, is_primary)
-    # reads them, so a create_all-built database 500s without them. Sync the FULL column
-    # set for the affected tables from the real dev database's schema, not one name at a
-    # time - the next legacy column would otherwise fail the same way.
+    # Legacy columns with no model mapping AND no migration either: the two named above
+    # are hardcoded in bootstrap because CI has no real database to read from. The sim
+    # DOES have one, so also sync the FULL column set for the affected tables from the
+    # real dev database's schema - not just the two known names - in case a future
+    # legacy column is added there and read by raw SQL before anyone models it.
     _sync_legacy_columns(("product_suppliers",))
-
-    versions_dir = _HERE.parent.parent / "alembic" / "versions"
-    for name, marker_sql in markers.items():
-        with engine.connect() as conn:
-            present = conn.execute(text(marker_sql)).scalar()
-        if present:
-            print(f"[scm_sim] {name}: already applied, skipping")
-            continue
-        spec = importlib.util.spec_from_file_location(name, versions_dir / f"{name}.py")
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        with engine.begin() as conn:
-            op_module._proxy = Operations(MigrationContext.configure(conn))
-            mod.upgrade()
-        print(f"[scm_sim] {name}: applied")
 
 
 def _copy_menu_gating_tables() -> None:

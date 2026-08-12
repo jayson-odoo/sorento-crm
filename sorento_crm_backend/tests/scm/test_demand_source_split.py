@@ -160,8 +160,9 @@ def world():
 
         wid = _u()
         db.execute(text(
-            "INSERT INTO warehouses (id, warehouse_code, warehouse_name, counts_as_available) "
-            "VALUES (:id, :c, :c, true)"), {"id": wid, "c": unique_code("W")[:20]})
+            "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
+            "counts_as_available) VALUES (:id, :c, :c, true, true)"),
+            {"id": wid, "c": unique_code("W")[:20]})
 
         def order(stub: str, *, demand_class, demand_origin, qty: float) -> str:
             oid = _u()

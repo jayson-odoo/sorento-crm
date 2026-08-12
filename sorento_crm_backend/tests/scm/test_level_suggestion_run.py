@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from app.services.scm import level_suggestion_service as svc
+from app.services.scm import reorder_engine as eng
 from tests.scm.conftest import requires_pg, seed_user
 from tests.scm.test_outstanding_import_routes import as_company_user
 
@@ -38,6 +39,13 @@ def _world(db, *, rising: bool):
     from app.models.product import Product, ProductCategory, UnitOfMeasure
     from tests._pg_fixture import unique_code
 
+    # A from-zero database has no global `scm.reorder_policy` row at all (bootstrap seeds
+    # `scm.priority_policy`, a different table). Tests further down UPDATE this row's
+    # `level_cover_months` - a no-op against an empty table - and silently fall back to
+    # the code default instead of the value they think they set. Seed it here, same as
+    # `test_reorder_level_run.py`'s `eng.ensure_reorder_policy_defaults(db)`.
+    eng.ensure_reorder_policy_defaults(db)
+
     cat = ProductCategory(id=_u(), category_code=unique_code(MARKER),
                           category_name=f"{MARKER} cat")
     uom = UnitOfMeasure(id=_u(), uom_code=unique_code("U")[:20], uom_name=f"{MARKER} u")
@@ -55,17 +63,23 @@ def _world(db, *, rising: bool):
 
     wid = _u()
     db.execute(text(
-        "INSERT INTO warehouses (id, warehouse_code, warehouse_name, counts_as_available, "
-        "segment) VALUES (:id, :c, :c, true, 'project')"),
+        "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
+        "counts_as_available, segment) VALUES (:id, :c, :c, true, true, 'project')"),
         {"id": wid, "c": unique_code("W")[:20]})
 
     # Consumption: one 12-unit order per month across the 3-month study window
     # (June, July 2026 + May) -> avg 12/month.
     for day in (date(2026, 5, 10), date(2026, 6, 10), date(2026, 7, 10)):
         oid = _u()
+        # kpi_warning/subtotal_amount/discount_amount/tax_amount/total_amount/
+        # synced_to_excel are NOT NULL with only a Python-side ORM default (no
+        # server_default) - a raw INSERT that omits them violates the constraint on a
+        # from-zero database.
         db.execute(text(
-            "INSERT INTO orders (id, order_number, order_date, is_cancelled, created_at, "
-            "updated_at) VALUES (:id, :n, :d, false, now(), now())"),
+            "INSERT INTO orders (id, order_number, order_date, is_cancelled, kpi_warning, "
+            "subtotal_amount, discount_amount, tax_amount, total_amount, synced_to_excel, "
+            "created_at, updated_at) "
+            "VALUES (:id, :n, :d, false, false, 0, 0, 0, 0, false, now(), now())"),
             {"id": oid, "n": f"{MARKER}-{oid[:8]}", "d": day})
         db.execute(text(
             "INSERT INTO order_lines (id, line_sequence, order_id, product_id, warehouse_id, "
@@ -78,7 +92,8 @@ def _world(db, *, rising: bool):
                else [date(2024, 10, 5), date(2024, 9, 5)])
     cust = _u()
     db.execute(text(
-        "INSERT INTO customers (id, customer_code, customer_name) VALUES (:id, :c, :n)"),
+        "INSERT INTO customers (id, customer_code, customer_name, is_active) "
+        "VALUES (:id, :c, :n, true)"),
         {"id": cust, "c": unique_code("C")[:20], "n": f"{MARKER} cust"})
     for day in so_days:
         soid = _u()
@@ -100,12 +115,12 @@ def _world(db, *, rising: bool):
 
     run_id = _u()
     db.execute(text(
-        "INSERT INTO scm.reorder_run (id, status, created_at) "
-        "VALUES (:id, 'completed', now())"), {"id": run_id})
+        "INSERT INTO scm.reorder_run (id, status, include_market, created_at) "
+        "VALUES (:id, 'completed', false, now())"), {"id": run_id})
     db.execute(text(
         "INSERT INTO scm.reorder_recommendation "
-        "(id, run_id, product_id, warehouse_id, rec_type, rounded_qty) "
-        "VALUES (:id, :r, :p, :w, 'buy', 10)"),
+        "(id, run_id, product_id, warehouse_id, rec_type, rounded_qty, status) "
+        "VALUES (:id, :r, :p, :w, 'buy', 10, 'proposed')"),
         {"id": _u(), "r": run_id, "p": pid, "w": wid})
     db.flush()
     return {"run_id": run_id, "product_id": pid, "warehouse_id": wid}
@@ -237,15 +252,21 @@ def _world_for_route(db, company_id: str) -> dict:
         "VALUES (:id, :c, :c, :cat, :uom, 0, true, false, :co)"),
         {"id": pid, "c": unique_code("P"), "cat": cat_id, "uom": uom_id, "co": company_id})
     db.execute(text(
-        "INSERT INTO warehouses (id, warehouse_code, warehouse_name, counts_as_available, "
-        "segment, company_id) VALUES (:id, :c, :c, true, 'project', :co)"),
+        "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
+        "counts_as_available, segment, company_id) "
+        "VALUES (:id, :c, :c, true, true, 'project', :co)"),
         {"id": wid, "c": unique_code("W")[:20], "co": company_id})
 
     for day in (date(2026, 5, 10), date(2026, 6, 10), date(2026, 7, 10)):
         oid = _u()
+        # See _u()-marked orders INSERT above: kpi_warning/subtotal_amount/
+        # discount_amount/tax_amount/total_amount/synced_to_excel are NOT NULL with
+        # only a Python-side ORM default.
         db.execute(text(
-            "INSERT INTO orders (id, order_number, order_date, is_cancelled, company_id, "
-            "created_at, updated_at) VALUES (:id, :n, :d, false, :co, now(), now())"),
+            "INSERT INTO orders (id, order_number, order_date, is_cancelled, kpi_warning, "
+            "subtotal_amount, discount_amount, tax_amount, total_amount, synced_to_excel, "
+            "company_id, created_at, updated_at) "
+            "VALUES (:id, :n, :d, false, false, 0, 0, 0, 0, false, :co, now(), now())"),
             {"id": oid, "n": f"{MARKER}-{oid[:8]}", "d": day, "co": company_id})
         db.execute(text(
             "INSERT INTO order_lines (id, line_sequence, order_id, product_id, warehouse_id, "
@@ -259,12 +280,12 @@ def _world_for_route(db, company_id: str) -> dict:
 
     run_id = _u()
     db.execute(text(
-        "INSERT INTO scm.reorder_run (id, status, company_id, created_at) "
-        "VALUES (:id, 'completed', :co, now())"), {"id": run_id, "co": company_id})
+        "INSERT INTO scm.reorder_run (id, status, include_market, company_id, created_at) "
+        "VALUES (:id, 'completed', false, :co, now())"), {"id": run_id, "co": company_id})
     db.execute(text(
         "INSERT INTO scm.reorder_recommendation "
-        "(id, run_id, product_id, warehouse_id, rec_type, rounded_qty, company_id) "
-        "VALUES (:id, :r, :p, :w, 'buy', 10, :co)"),
+        "(id, run_id, product_id, warehouse_id, rec_type, rounded_qty, status, company_id) "
+        "VALUES (:id, :r, :p, :w, 'buy', 10, 'proposed', :co)"),
         {"id": _u(), "r": run_id, "p": pid, "w": wid, "co": company_id})
     db.flush()
     return {"run_id": run_id, "product_id": pid, "warehouse_id": wid}

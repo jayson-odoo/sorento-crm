@@ -70,8 +70,13 @@ def world(db):
 
 
 def _line(db, world, **over) -> SalesOrderLine:
+    # S13b: `demand_class="project"` alone is not committed demand in
+    # `scm.committed_v` - it also needs `demand_origin="scm_order_inquiry"` (see
+    # app.services.scm.demand.COMMITTED_V_SQL). This suite is about the
+    # qty_required/purchasing_status rule, not the project/retail split, so it is
+    # stamped here purely so the seeded lines count at all.
     so = SalesOrder(id=_u(), so_number=unique_code("SO"), status="open",
-                    demand_class="project")
+                    demand_class="project", demand_origin="scm_order_inquiry")
     db.add(so)
     db.flush()
     fields = dict(

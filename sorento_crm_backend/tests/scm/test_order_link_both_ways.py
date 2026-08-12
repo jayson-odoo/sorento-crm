@@ -36,6 +36,13 @@ SO_NUMBER = "SO414033"
 LINKED = ("CWB242", "202605-S0042")
 SPLIT_ITEM = "C-FHSS14"
 LOCATION = "BRW-IB"
+#: Every item code the fixture workbook names. `test_every_resolvable_row_now_lands_...`
+#: asserts every row resolves to a line, which is only true when the catalogue holds all
+#: of them - on a from-zero database that means seeding them here, not borrowing whatever
+#: a prod-copy restore happens to already have.
+FIXTURE_ITEM_CODES = (
+    "CWCX1009-RL", "CWCY1009", "CWC1009-SC", "CWB242", "CB65SS", "C-FHSS14",
+)
 #: The delivery date the fixture states for the first instalment of both items above.
 #: An instalment is keyed by (SO number, item, date), so a seeded line dated anything else
 #: is a different instalment and the sheet correctly declines to match it. Seeding it as
@@ -67,7 +74,7 @@ def world(db):
     db.flush()
 
     products = {}
-    for code in (LINKED[0], SPLIT_ITEM):
+    for code in FIXTURE_ITEM_CODES:
         p = db.query(Product).filter(Product.product_code == code).first()
         if p is None:
             p = Product(

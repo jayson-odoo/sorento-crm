@@ -213,8 +213,9 @@ def world():
         wid = _u()
         wh_code = unique_code("W")[:20]
         db.execute(text(
-            "INSERT INTO warehouses (id, warehouse_code, warehouse_name, counts_as_available) "
-            "VALUES (:id, :c, :c, true)"), {"id": wid, "c": wh_code})
+            "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
+            "counts_as_available) VALUES (:id, :c, :c, true, true)"),
+            {"id": wid, "c": wh_code})
         db.flush()
 
         def level_row():

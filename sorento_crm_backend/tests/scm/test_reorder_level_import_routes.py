@@ -59,8 +59,8 @@ def _seed(db, scope) -> tuple[str, str]:
         "VALUES (:id, :c, :c, :cat, :uom, 0, true, false, :co)"),
         {"id": pid, "c": code, "cat": cat_id, "uom": uom_id, "co": company_id})
     db.execute(text(
-        "INSERT INTO warehouses (id, warehouse_code, warehouse_name, counts_as_available, "
-        "company_id) VALUES (:id, :c, :c, true, :co)"),
+        "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
+        "counts_as_available, company_id) VALUES (:id, :c, :c, true, true, :co)"),
         {"id": wid, "c": wh, "co": company_id})
     db.flush()
     return code, wh

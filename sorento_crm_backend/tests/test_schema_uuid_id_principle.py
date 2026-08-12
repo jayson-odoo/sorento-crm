@@ -69,6 +69,7 @@ EXEMPTIONS: dict[str, str] = {
     # --- LEGACY: natural-key config lookups (candidates for the market_segments treatment) ---
     "contact_access_types": "LEGACY — code PK, small controlled vocabulary",
     "email_event_configs": "LEGACY — event_key PK, small controlled vocabulary",
+    "currency_rate": "LEGACY — currency code PK, singleton row per currency (scm.CurrencyRate)",
 }
 
 

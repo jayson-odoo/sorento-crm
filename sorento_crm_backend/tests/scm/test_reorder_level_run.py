@@ -178,8 +178,8 @@ def _po_line(db, pid: str, wid: str | None, cost: float, days_ago: int = 3) -> N
     ), {"id": poid, "n": f"ZZTPO-{poid[:8]}", "ago": days_ago})
     db.execute(text(
         "INSERT INTO purchase_order_lines (id, purchase_order_id, product_id, warehouse_id, "
-        "qty_ordered, unit_cost, line_status, created_at, updated_at) "
-        "VALUES (:id, :po, :p, :w, 1, :c, 'closed', now(), now())"
+        "qty_ordered, qty_received, unit_cost, line_status, created_at, updated_at) "
+        "VALUES (:id, :po, :p, :w, 1, 0, :c, 'closed', now(), now())"
     ), {"id": str(uuid.uuid4()), "po": poid, "p": pid, "w": wid, "c": cost})
     db.flush()
 

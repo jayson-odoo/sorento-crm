@@ -24,10 +24,16 @@ pytestmark = requires_pg
 
 def _so(db, pid, wid, qty, *, order_type="project", number=None):
     soid = str(uuid.uuid4())
+    # S13b: a project-class order is committed demand only when the Order Inquiry
+    # created or named it (`is_plan_demand_order()` / `scm.committed_v`). This test is
+    # about which orders a buy is built from, not the project/retail split, so stamp
+    # the origin whenever the demand_class is "project" or the row never counts.
     db.execute(text(
         "INSERT INTO sales_orders (id, so_number, status, order_type, demand_class, "
-        "created_at, updated_at) VALUES (:i, :n, 'open', :t, :t, now(), now())"
-    ), {"i": soid, "n": number or f"ZZTSO-{soid[:8]}", "t": order_type})
+        "demand_origin, created_at, updated_at) "
+        "VALUES (:i, :n, 'open', :t, :t, :o, now(), now())"
+    ), {"i": soid, "n": number or f"ZZTSO-{soid[:8]}", "t": order_type,
+        "o": "scm_order_inquiry" if order_type == "project" else None})
     db.execute(text(
         "INSERT INTO sales_order_lines (id, sales_order_id, product_id, warehouse_id, "
         "qty_ordered, qty_required, qty_delivered, line_status, purchasing_status, "

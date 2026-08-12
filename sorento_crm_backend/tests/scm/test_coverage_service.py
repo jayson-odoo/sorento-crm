@@ -101,9 +101,14 @@ def _so_line(db, product, wh, qty, when, *, demand_class="project", customer_nam
         cust = Customer(id=_u(), customer_code=unique_code("C"), customer_name=customer_name)
         db.add(cust)
         db.flush()
+    # S13b: a project-class order only counts as demand (`is_plan_demand_order()`,
+    # mirrored in `scm.committed_v`) when the Order Inquiry created or named it. This
+    # suite is not about the project/retail split, so every call is stamped with the
+    # origin that makes the default `demand_class="project"` actually count.
     so = SalesOrder(
         id=_u(), so_number=unique_code("SO"), status="open",
         customer_id=cust.id if cust else None, demand_class=demand_class,
+        demand_origin="scm_order_inquiry" if demand_class == "project" else None,
     )
     db.add(so)
     db.flush()
