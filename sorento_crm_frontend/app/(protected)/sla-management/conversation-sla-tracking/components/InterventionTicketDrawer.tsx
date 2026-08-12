@@ -225,9 +225,6 @@ export default function InterventionTicketDrawer({
                   closed: !ticket.window.open,
                   template: ticket.chat_template,
                 }}
-                // PHASE 1: the template dialog talks to live endpoints; the drawer
-                // runs on mock ids. Re-enable in Phase 2 (S2.7).
-                showTemplateButton={false}
                 sendAdapter={(payload) =>
                   sendMutation.mutateAsync({
                     text: payload.text,

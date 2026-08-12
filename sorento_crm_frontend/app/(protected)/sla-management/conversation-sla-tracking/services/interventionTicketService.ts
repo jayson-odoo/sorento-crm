@@ -5,15 +5,17 @@
  * Plan:     documentation/plans/sla/PLAN-conversation-intervention-tickets.md
  *
  * ============================================================================
- * PHASE 1 (this file today): every function below is served by the in-memory
- * fixtures in `./__mocks__/interventionTickets`. NO backend endpoint is called.
- * This is DEBT until Phase 2 swaps each body for the documented request. The
- * swap is one line per function; the types and the shapes below ARE the
- * contract the backend must satisfy.
+ * PHASE 2 (this file today): every function below calls the real backend
+ * (S2.7). The worklist itself is NOT fetched here — a ticket is just a row on
+ * the existing `/my-pending` response (`getMyPendingSLA` in
+ * `conversationSLATrackingService.ts`) flagged `is_intervention_ticket: true`;
+ * this file only covers what's specific to a ticket once it's opened (detail,
+ * thread, send, resolve). The Phase 1 in-memory fixtures under `./__mocks__/`
+ * have been deleted along with the merge logic in `MyPendingSLAWidget`.
  * ============================================================================
  *
  * ---------------------------------------------------------------------------
- * EXPECTED API CONTRACT (Phase 2 targets)
+ * API CONTRACT (as implemented)
  * ---------------------------------------------------------------------------
  * All paths are under `/api/v1/sla-management/conversation-sla-tracking`.
  * Datetimes are naive UTC strings (backend convention) rendered through
@@ -110,17 +112,14 @@
  * ---------------------------------------------------------------------------
  */
 
+import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import type { RespondMessageRenderable } from '@/lib/respondIoChatRender';
 import type { ChatTemplatePreview } from '@/services/whatsappTemplateService';
 import type { MyPendingSLAItem } from './conversationSLATrackingService';
-import {
-  mockGetMyInterventionTickets,
-  mockGetInterventionTicket,
-  mockGetInterventionTicketThread,
-  mockResolveInterventionTicket,
-  mockSendInterventionTicketMessage,
-  phase1TicketMocksEnabled,
-} from './__mocks__/interventionTickets';
+import { resolveConversationSLATracking } from './conversationSLATrackingService';
+
+const BASE = '/api/v1/sla-management/conversation-sla-tracking';
 
 /** Send types the composer may offer. Bounded by R1: no sticker, no native reply-to. */
 export type TicketSendCapability = 'text' | 'attachment';
@@ -211,27 +210,28 @@ export interface SendTicketMessageResult {
   window: TicketWindowState;
 }
 
-/**
- * PHASE 1 ONLY. True while the dashboard widget merges mock ticket rows into the
- * live pending list. Delete this, the merge and `./__mocks__/` in Phase 2 (S2.7).
- */
-export const PHASE1_TICKET_MOCKS = phase1TicketMocksEnabled;
-
-/** B. The viewer's open intervention tickets (one row per enquiry, never per contact). */
-export async function getMyInterventionTickets(): Promise<InterventionTicketListItem[]> {
-  return mockGetMyInterventionTickets();
-}
-
 /** C. Drawer header + composer state for one ticket. */
 export async function getInterventionTicket(id: string): Promise<InterventionTicketDetail> {
-  return mockGetInterventionTicket(id);
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}/ticket`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load this ticket'));
+  }
+  return response.json();
 }
 
 /** D. The shared contact thread this ticket was raised in. */
 export async function getInterventionTicketThread(
   id: string,
 ): Promise<InterventionTicketThread> {
-  return mockGetInterventionTicketThread(id);
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}/conversation?limit=50`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load the conversation'));
+  }
+  const body = await response.json();
+  return {
+    items: Array.isArray(body?.items) ? (body.items as RespondMessageRenderable[]) : [],
+    error: body?.error ?? null,
+  };
 }
 
 /** E. Ticket-stamped send: stops THIS ticket's first-response clock only. */
@@ -239,10 +239,41 @@ export async function sendInterventionTicketMessage(
   id: string,
   input: SendTicketMessageInput,
 ): Promise<SendTicketMessageResult> {
-  return mockSendInterventionTicketMessage(id, input);
+  const files = input.attachments ?? [];
+  const url = `${BASE}/${encodeURIComponent(id)}/ticket/send`;
+  const response = await (files.length > 0
+    ? apiFetch(url, { method: 'POST', body: buildSendFormData(input, files) })
+    : apiFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: input.text,
+          reply_to_message_id: input.reply_to_message_id ?? undefined,
+          reply_to_excerpt: input.reply_to_excerpt ?? undefined,
+        }),
+      }));
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to send message'));
+  }
+  return response.json();
 }
 
-/** F. Resolve THIS ticket. Siblings stay open; Respond conversation untouched. */
+function buildSendFormData(input: SendTicketMessageInput, files: File[]): FormData {
+  const formData = new FormData();
+  formData.append('text', input.text);
+  if (input.reply_to_message_id != null) {
+    formData.append('reply_to_message_id', String(input.reply_to_message_id));
+  }
+  if (input.reply_to_excerpt) formData.append('reply_to_excerpt', input.reply_to_excerpt);
+  for (const file of files) formData.append('files', file);
+  return formData;
+}
+
+/**
+ * F. Resolve THIS ticket. Siblings stay open; Respond conversation untouched.
+ * Delegates to the existing dedicated resolve route — a ticket is resolved
+ * exactly like any other conversation SLA row (UAC AC-C3).
+ */
 export async function resolveInterventionTicket(id: string): Promise<void> {
-  return mockResolveInterventionTicket(id);
+  return resolveConversationSLATracking(id);
 }

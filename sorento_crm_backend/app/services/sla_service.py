@@ -1077,9 +1077,12 @@ class ConversationSLATrackingService:
         reference_by_row = self._resolve_my_pending_references(rows)
         action_by_row = self._form_next_actions(rows)
 
-        # Conversation rows (no source entity) need the contact's respond_io_id so
-        # the widget can build a Respond inbox deep link. Batched once.
+        # Conversation rows (no source entity) need the contact's respond_io_id,
+        # name and phone: the inbox deep link (legacy rows) plus the ticket header
+        # (contact_name / contact_phone). Batched once.
         respond_io_by_contact: dict[str, Optional[str]] = {}
+        contact_name_by_contact: dict[str, Optional[str]] = {}
+        contact_phone_by_contact: dict[str, Optional[str]] = {}
         contact_ids = {
             str(r.respond_contact_id)
             for r in rows
@@ -1087,29 +1090,50 @@ class ConversationSLATrackingService:
         }
         if contact_ids:
             try:
-                for cid, rio in (
-                    self.db.query(RespondContact.id, RespondContact.respond_io_id)
+                for cid, rio, name, phone in (
+                    self.db.query(
+                        RespondContact.id,
+                        RespondContact.respond_io_id,
+                        RespondContact.name,
+                        RespondContact.phone_number,
+                    )
                     .filter(RespondContact.id.in_(contact_ids))
                     .all()
                 ):
                     respond_io_by_contact[str(cid)] = str(rio) if rio else None
+                    contact_name_by_contact[str(cid)] = name
+                    contact_phone_by_contact[str(cid)] = phone
             except Exception:  # noqa: BLE001
                 self.db.rollback()
 
-        return [
-            {
+        team_label_by_row = self._ticket_team_labels(rows)
+
+        result = []
+        for r in rows:
+            is_form_sla = r.source_entity_type in FORM_SLA_TYPES
+            contact_key = (
+                str(r.respond_contact_id)
+                if getattr(r, "respond_contact_id", None)
+                else None
+            )
+            # UAC B: a conversation row is an intervention TICKET only once it
+            # carries the enquiry identity this feature introduced
+            # (source_message_id, migration 321/S2a) - a pre-migration row with
+            # no trigger message keeps its old widget behaviour (Respond inbox
+            # deep link, inline Escalate/Resolve) rather than opening a drawer
+            # with no enquiry to show.
+            is_ticket = (not is_form_sla) and bool(getattr(r, "source_message_id", None))
+            row = {
                 "id": str(r.id),
                 "source_entity_type": r.source_entity_type,
                 "source_entity_id": r.source_entity_id,
                 # Authoritative form-vs-conversation flag (single source of truth so
                 # the widget never re-derives it and drifts — e.g. 'ticket' is a form
                 # type the FE route map doesn't know). Conversation rows = false.
-                "is_form_sla": r.source_entity_type in FORM_SLA_TYPES,
+                "is_form_sla": is_form_sla,
                 "reference": reference_by_row.get(str(r.id)),
                 "respond_io_id": (
-                    respond_io_by_contact.get(str(r.respond_contact_id))
-                    if getattr(r, "respond_contact_id", None)
-                    else None
+                    respond_io_by_contact.get(contact_key) if contact_key else None
                 ),
                 "due_at": r.due_at.isoformat() if r.due_at else None,
                 # Resolution deadline — the Extend action targets this. Emitted so the
@@ -1132,8 +1156,67 @@ class ConversationSLATrackingService:
                 # approval", "Approve", "Mark resolved"); None for conversation rows.
                 "next_action": action_by_row.get(str(r.id)),
             }
+            if is_ticket:
+                # UAC AC-B1: never re-derived by the widget - explicit backend flag.
+                row["is_intervention_ticket"] = True
+                row["contact_name"] = (
+                    contact_name_by_contact.get(contact_key) if contact_key else None
+                )
+                row["contact_phone"] = (
+                    contact_phone_by_contact.get(contact_key) if contact_key else None
+                )
+                snippet = (getattr(r, "source_message_text", None) or "").strip()
+                row["enquiry_snippet"] = (snippet[:140] or None) if snippet else None
+                row["source_message_id"] = r.source_message_id
+                row["team_label"] = team_label_by_row.get(str(r.id))
+                row["initiated_at"] = (
+                    r.initiated_at.isoformat() if r.initiated_at else None
+                )
+                row["escalated_at"] = (
+                    r.escalated_at.isoformat() if r.escalated_at else None
+                )
+            result.append(row)
+        return result
+
+    def _ticket_team_labels(
+        self, rows: list[ConversationSLATracking]
+    ) -> dict[str, Optional[str]]:
+        """Tracker id -> the display name of the team bound to its
+        (agent_id, team_set_code, current_tier) - the enquiry header's "team" line.
+
+        Batched: one query for every distinct triple across the whole row set,
+        never per row. Rows with no ``agent_id`` (legacy, pre-agent-routing) map
+        to None; the FE renders "Unassigned team".
+        """
+        from app.models.access import AgentTeam, Team
+
+        triples = {
+            (str(r.agent_id), r.team_set_code or "", int(r.current_tier or 1))
             for r in rows
-        ]
+            if getattr(r, "agent_id", None)
+        }
+        if not triples:
+            return {}
+        agent_ids = {t[0] for t in triples}
+        try:
+            lookup: dict[tuple, str] = {}
+            for agent_id, code, tier, name in (
+                self.db.query(AgentTeam.agent_id, AgentTeam.code, AgentTeam.tier, Team.name)
+                .join(Team, Team.id == AgentTeam.team_id)
+                .filter(AgentTeam.agent_id.in_(agent_ids))
+                .all()
+            ):
+                lookup[(str(agent_id), code or "", int(tier or 1))] = name
+        except Exception:  # noqa: BLE001
+            self.db.rollback()
+            return {}
+        out: dict[str, Optional[str]] = {}
+        for r in rows:
+            if not getattr(r, "agent_id", None):
+                continue
+            key = (str(r.agent_id), r.team_set_code or "", int(r.current_tier or 1))
+            out[str(r.id)] = lookup.get(key)
+        return out
 
     # ---- Team Tasks: visibility, listing, takeover, reassign ----------------
 
@@ -3853,11 +3936,12 @@ class ConversationSLATrackingService:
             from app.services.form_sla_service import build_sla_whatsapp_data
 
             base_url = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
-            detail = (
-                f"{base_url}/sla-management/conversation-sla-tracking/{tracking.id}"
-                if base_url
-                else ""
-            )
+            # UAC AC-G1: deep-link to the dashboard with the ticket targeted, not the
+            # standalone SLA detail page - the assignee answers from the "My Pending"
+            # drawer now, never Respond.io. The `(protected)` layout captures
+            # pathname+search on an unauthenticated hit and replays it after login
+            # (?callbackUrl=...), so the deep link survives sign-in.
+            detail = f"{base_url}/?ticket={tracking.id}" if base_url else ""
             ref = (self._resolve_my_pending_references([tracking]) or {}).get(
                 str(tracking.id)
             ) or "an SLA task"
@@ -5141,6 +5225,112 @@ class ConversationSLATrackingService:
             .count()
         )
         return sibling_count > 1
+
+    def get_ticket_detail(
+        self,
+        tracking_id: str,
+        *,
+        viewer_user_id: str,
+        sender_name: str,
+    ) -> dict:
+        """Drawer header + composer state for one intervention ticket (UAC AC-C1).
+
+        Assembles the window + out-of-window chat-template preview INLINE (the
+        same DB-only helpers the shared composer's standalone endpoints use) so
+        the drawer opens in one round trip instead of three. Raises
+        ``handle_not_found`` both for a missing tracking and for a viewer
+        outside its visibility scope (never leaks existence via a 403).
+        """
+        from app.services.form_sla_service import FORM_SLA_TYPES
+        from app.services.respond_chat_template_service import (
+            get_chat_template_preview,
+            get_window_state_for,
+        )
+
+        tracking = self.get_tracking(tracking_id, load_event_logs=False)
+        if not tracking or getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+            raise handle_not_found("Conversation SLA tracking", tracking_id)
+        if not self.can_user_act_on_tracking(viewer_user_id, tracking):
+            raise handle_not_found("Conversation SLA tracking", tracking_id)
+
+        contact = getattr(tracking, "contact", None)
+        respond_contact_id = (
+            str(tracking.respond_contact_id)
+            if getattr(tracking, "respond_contact_id", None)
+            else None
+        )
+        identifier = self._respond_io_identifier_for_tracking(tracking)
+        is_resolved = bool(getattr(tracking, "is_resolved", False))
+        assigned_user = getattr(tracking, "assigned_user", None)
+        team_label = (self._ticket_team_labels([tracking]) or {}).get(str(tracking.id))
+
+        if identifier:
+            window = get_window_state_for(
+                self.db, identifier=identifier, respond_contact_id=respond_contact_id
+            )
+            window_out = {"open": bool(window.get("open")), "expires_at": None}
+            chat_template = get_chat_template_preview(
+                self.db,
+                identifier=identifier,
+                respond_contact_id=respond_contact_id,
+                chat_use_case="conversation_chat",
+                sender_name=sender_name,
+                entity_id=str(tracking.id),
+                context_builder=None,
+            )
+        else:
+            window_out = {"open": False, "expires_at": None}
+            chat_template = {"configured": False, "reason": "no_contact"}
+
+        can_send = bool(identifier) and not is_resolved
+        can_resolve = not is_resolved
+
+        return {
+            "id": str(tracking.id),
+            "contact_name": getattr(contact, "name", None),
+            "contact_phone": getattr(contact, "phone_number", None),
+            "respond_io_id": getattr(contact, "respond_io_id", None),
+            "source_message_id": getattr(tracking, "source_message_id", None),
+            "source_message_text": getattr(tracking, "source_message_text", None),
+            # No separate trigger-message timestamp is stored; initiated_at IS the
+            # moment the create request (fired by that message) reached the CRM.
+            "source_message_at": (
+                tracking.initiated_at.isoformat() if tracking.initiated_at else None
+            ),
+            "team_label": team_label,
+            "assignee_name": (
+                (assigned_user.name or assigned_user.email) if assigned_user else None
+            ),
+            "policy_name": tracking.policy.name if tracking.policy else None,
+            "initiated_at": (
+                tracking.initiated_at.isoformat() if tracking.initiated_at else None
+            ),
+            "current_tier": tracking.current_tier,
+            "escalated_at": (
+                tracking.escalated_at.isoformat() if tracking.escalated_at else None
+            ),
+            "escalation_reason": getattr(tracking, "escalation_reason", None),
+            "due_at": tracking.due_at.isoformat() if tracking.due_at else None,
+            "due_at_resolution": (
+                tracking.due_at_resolution.isoformat()
+                if tracking.due_at_resolution
+                else None
+            ),
+            "is_responded": bool(tracking.is_responded),
+            "responded_at": (
+                tracking.responded_at.isoformat() if tracking.responded_at else None
+            ),
+            "is_resolved": is_resolved,
+            "resolved_at": (
+                tracking.resolved_at.isoformat() if tracking.resolved_at else None
+            ),
+            "can_send": can_send,
+            "can_resolve": can_resolve,
+            # Bounded by R1 (Respond.io OpenAPI): no sticker, no reply-to param.
+            "send_capabilities": ["text", "attachment"],
+            "window": window_out,
+            "chat_template": chat_template,
+        }
 
     def send_ticket_message(
         self,

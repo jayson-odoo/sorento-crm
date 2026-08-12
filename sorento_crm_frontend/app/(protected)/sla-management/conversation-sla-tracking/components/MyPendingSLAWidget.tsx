@@ -61,11 +61,7 @@ import {
   useRejectTakeover,
   useTakeoverSLATracking,
 } from '../hooks/useTeamPendingSLA';
-import {
-  getMyInterventionTickets,
-  PHASE1_TICKET_MOCKS,
-  type InterventionTicketListItem,
-} from '../services/interventionTicketService';
+import type { InterventionTicketListItem } from '../services/interventionTicketService';
 import ReassignDialog from './ReassignDialog';
 import { TakeoverCountdown } from './TakeoverCountdown';
 import ExtendDueButton from './ExtendDueButton';
@@ -188,7 +184,8 @@ export default function MyPendingSLAWidget() {
   const [reassignTarget, setReassignTarget] = useState<{ id: string; label: string } | null>(null);
   const [takeoverTarget, setTakeoverTarget] = useState<TeamPendingItem | null>(null);
   // Intervention tickets: own enquiry per row, answered in an in-place drawer.
-  const [tickets, setTickets] = useState<InterventionTicketListItem[]>([]);
+  // Ticket rows arrive already merged into `/my-pending` (flagged
+  // `is_intervention_ticket`), so there is no separate ticket list to load here.
   const [openTicketId, setOpenTicketId] = useState<string | null>(null);
 
   const takeoverMutation = useTakeoverSLATracking();
@@ -202,6 +199,9 @@ export default function MyPendingSLAWidget() {
   // Coverage deep link ?team_task=<tracking_id>: open My Team + highlight the row so the
   // coverer can take it over (the colleague's task surfaces in My Team).
   const teamTaskParam = searchParams.get('team_task');
+  // Ticket assignment-notify deep link ?ticket=<tracking_id> (UAC AC-G1): open the
+  // drawer directly, no navigation, no page to land on first.
+  const ticketParam = searchParams.get('ticket');
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [banner, setBanner] = useState<TakeoverStateRow | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
@@ -209,16 +209,6 @@ export default function MyPendingSLAWidget() {
   const load = useCallback(() => {
     return getMyPendingSLA()
       .then((data) => setItems(data))
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load'));
-  }, []);
-
-  // PHASE 1 (mock): intervention tickets are served by in-memory fixtures and
-  // merged into My Pending. In Phase 2 they arrive on `/my-pending` itself and
-  // this loader plus the merge below are deleted (S2.7).
-  const loadTickets = useCallback(() => {
-    if (!PHASE1_TICKET_MOCKS) return Promise.resolve();
-    return getMyInterventionTickets()
-      .then((data) => setTickets(data))
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load'));
   }, []);
 
@@ -232,17 +222,6 @@ export default function MyPendingSLAWidget() {
     let active = true;
     getMyPendingSLA()
       .then((data) => active && setItems(data))
-      .catch((e) => active && setError(e instanceof Error ? e.message : 'Failed to load'));
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!PHASE1_TICKET_MOCKS) return;
-    let active = true;
-    getMyInterventionTickets()
-      .then((data) => active && setTickets(data))
       .catch((e) => active && setError(e instanceof Error ? e.message : 'Failed to load'));
     return () => {
       active = false;
@@ -294,12 +273,20 @@ export default function MyPendingSLAWidget() {
     return () => clearTimeout(t);
   }, [teamTaskParam]);
 
-  // One "My Pending" set: intervention tickets first (an unanswered enquiry is the
-  // most time-critical thing the assignee owns), then everything else.
-  const mineItems = useMemo<MyPendingSLAItem[] | null>(
-    () => (items === null ? null : [...tickets, ...items]),
-    [items, tickets],
-  );
+  // Ticket assignment-notify deep link ?ticket=<tracking_id> (UAC AC-G1): open the
+  // drawer directly (no navigation, no row lookup needed — the drawer fetches its
+  // own detail by id) and strip the param once consumed so a later refresh doesn't
+  // reopen it.
+  useEffect(() => {
+    if (!ticketParam) return;
+    setMode('mine');
+    setOpenTicketId(ticketParam);
+    router.replace('/', { scroll: false });
+  }, [ticketParam, router]);
+
+  // Ticket rows arrive already flagged on `/my-pending` — no separate ticket fetch
+  // or merge (Phase 1's mock-only merge was removed in S2.7).
+  const mineItems = items;
 
   // Light polling while any pending takeover is on screen (bar / banner transitions).
   const hasPending = useMemo(() => {
@@ -1033,9 +1020,9 @@ export default function MyPendingSLAWidget() {
           setOpenTicketId(null);
           // A reply in the drawer stops this ticket's response clock: re-read the
           // row so the chips agree with what just happened.
-          void loadTickets();
+          void load();
         }}
-        onResolved={() => void loadTickets()}
+        onResolved={() => void load()}
       />
     </div>
   );

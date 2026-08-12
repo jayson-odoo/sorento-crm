@@ -1228,6 +1228,27 @@ async def resolve_sla_tracking(
     return build_conversation_sla_tracking_response(db, updated)
 
 
+@router.get("/{tracking_id}/ticket")
+async def get_intervention_ticket(
+    tracking_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Drawer header + composer state for one intervention ticket (UAC AC-C1).
+
+    Assignee-or-manager scoped, same as resolve/send. Bundles the 24h window
+    state and the out-of-window chat-template preview inline (the same
+    DB-only helpers the standalone `.../conversation/window-state` and
+    `.../conversation/chat-template` routes use) so the drawer opens in one
+    round trip.
+    """
+    service = ConversationSLATrackingService(db)
+    sender_name = (current_user.get("name") or "").strip() or "Customer Service"
+    return service.get_ticket_detail(
+        tracking_id, viewer_user_id=current_user["id"], sender_name=sender_name
+    )
+
+
 @router.post("/{tracking_id}/ticket/send")
 async def send_intervention_ticket_message(
     tracking_id: str,

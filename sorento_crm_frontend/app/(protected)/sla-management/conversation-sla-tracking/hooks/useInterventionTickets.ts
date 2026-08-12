@@ -4,21 +4,17 @@ import { toast } from 'sonner';
 import {
   getInterventionTicket,
   getInterventionTicketThread,
-  getMyInterventionTickets,
   resolveInterventionTicket,
   sendInterventionTicketMessage,
   type SendTicketMessageInput,
 } from '../services/interventionTicketService';
 
-/** The viewer's open intervention tickets (worklist rows). */
-export function useMyInterventionTickets(enabled = true) {
-  return useQuery({
-    queryKey: ['intervention-tickets', 'mine'],
-    queryFn: getMyInterventionTickets,
-    enabled,
-    staleTime: 30 * 1000,
-  });
-}
+/**
+ * The viewer's open intervention tickets are worklist rows already covered by
+ * `getMyPendingSLA` (`/my-pending`, flagged `is_intervention_ticket: true`) —
+ * there is no separate ticket-listing endpoint. This module covers only what's
+ * specific to a ticket once it's opened: detail, thread, send, resolve.
+ */
 
 /** Drawer header + composer state for one ticket. */
 export function useInterventionTicket(id: string | null) {

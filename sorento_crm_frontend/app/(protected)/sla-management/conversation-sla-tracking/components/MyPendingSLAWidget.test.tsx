@@ -68,6 +68,13 @@ vi.mock('@/app/(protected)/account/notifications/components', () => ({
   ),
 }));
 
+// The ticket drawer is exercised on its own (InterventionTicketDrawer.test.tsx);
+// here we only care that the widget opens/closes it with the right ticketId.
+vi.mock('./InterventionTicketDrawer', () => ({
+  default: ({ ticketId, open }: { ticketId: string | null; open: boolean }) =>
+    open ? <div data-testid="ticket-drawer" data-ticket-id={ticketId ?? ''} /> : null,
+}));
+
 function renderWidget() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -142,6 +149,41 @@ const ticketItem: MyPendingSLAItem = {
   is_responded: false,
   current_tier: 1,
   policy_name: 'Default',
+};
+
+// Two intervention tickets for the SAME contact (UAC AC-B1: no de-dup by contact).
+const ticketOne: MyPendingSLAItem & Record<string, unknown> = {
+  id: 'ticket-1',
+  source_entity_type: null,
+  source_entity_id: null,
+  is_form_sla: false,
+  reference: 'Aisyah Rahman',
+  respond_io_id: '10025531',
+  next_action: null,
+  due_at: new Date(Date.now() + 46 * 60_000).toISOString(),
+  due_at_resolution: new Date(Date.now() + 350 * 60_000).toISOString(),
+  active_due_at: new Date(Date.now() + 46 * 60_000).toISOString(),
+  due_kind: 'respond',
+  is_responded: false,
+  current_tier: 1,
+  policy_name: 'Conversation SLA - Standard',
+  is_intervention_ticket: true,
+  contact_name: 'Aisyah Rahman',
+  contact_phone: '+60 12-334 5566',
+  enquiry_snippet: 'Yes, please connect me to a person.',
+  source_message_id: '1001',
+  team_label: 'Customer Service - Tier 1',
+  initiated_at: new Date(Date.now() - 170 * 60_000).toISOString(),
+  escalated_at: null,
+};
+
+const ticketTwo: MyPendingSLAItem & Record<string, unknown> = {
+  ...ticketOne,
+  id: 'ticket-2',
+  due_at: new Date(Date.now() + 4 * 60_000).toISOString(),
+  enquiry_snippet: 'Also, can someone quote installation for 3 bathrooms?',
+  source_message_id: '1002',
+  team_label: 'Sales - Tier 1',
 };
 
 const teamItem: TeamPendingItem = {
@@ -562,5 +604,53 @@ describe('MyPendingSLAWidget clickable rows', () => {
     const otherButton = rows[1].querySelector('[role="button"]') as HTMLElement;
     expect(targetButton.className).toMatch(/ring-2 ring-primary/);
     expect(otherButton.className).not.toMatch(/ring-2 ring-primary/);
+  });
+
+  // ---- intervention tickets (UAC AC-B1/B2) -------------------------------
+
+  it('AC-B1: two tickets for one contact both render, each with its own chips — no de-dup', async () => {
+    getMyPendingSLA.mockResolvedValue([ticketOne, ticketTwo]);
+    renderWidget();
+
+    // Both enquiry snippets show — two distinct rows for the same contact.
+    expect(await screen.findByText('Yes, please connect me to a person.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Also, can someone quote installation for 3 bathrooms?'),
+    ).toBeInTheDocument();
+
+    // Ticket rows carry NO inline Escalate/Resolve (those live in the drawer).
+    expect(hasActionButton(/Escalate/i)).toBe(false);
+    expect(hasActionButton(/Resolve/i)).toBe(false);
+  });
+
+  it('AC-B2: clicking a ticket row opens the drawer in place — no navigation, no Respond', async () => {
+    getMyPendingSLA.mockResolvedValue([ticketOne]);
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    renderWidget();
+
+    await waitFor(() =>
+      expect(screen.getByText('Yes, please connect me to a person.')).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText('Yes, please connect me to a person.'));
+
+    expect(await screen.findByTestId('ticket-drawer')).toHaveAttribute(
+      'data-ticket-id',
+      'ticket-1',
+    );
+    expect(push).not.toHaveBeenCalled();
+    expect(openSpy).not.toHaveBeenCalled();
+    openSpy.mockRestore();
+  });
+
+  it('deep link ?ticket= opens the drawer directly and strips the query param', async () => {
+    extraParams = { ticket: 'ticket-2' };
+    getMyPendingSLA.mockResolvedValue([ticketOne, ticketTwo]);
+    renderWidget();
+
+    expect(await screen.findByTestId('ticket-drawer')).toHaveAttribute(
+      'data-ticket-id',
+      'ticket-2',
+    );
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/', { scroll: false }));
   });
 });

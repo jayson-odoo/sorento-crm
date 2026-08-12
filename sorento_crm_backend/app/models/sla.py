@@ -134,6 +134,11 @@ class ConversationSLATracking(Base):
     # the chat surface swaps off Respond.io. Backfilled from message_id by migration
     # 321. NULL on form-SLA rows and on legacy rows that carried no trigger message.
     source_message_id = Column(Text, nullable=True)
+    # The trigger message's own text (the enquiry) - the drawer's quoted header and
+    # the widget's row snippet both read this verbatim, never re-fetched from
+    # Respond.io. NULL on form-SLA rows and legacy tickets created before this
+    # field existed (backfill is not attempted - the original text is gone).
+    source_message_text = Column(Text, nullable=True)
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     resolution_duration = Column(Numeric(10, 2), nullable=True)

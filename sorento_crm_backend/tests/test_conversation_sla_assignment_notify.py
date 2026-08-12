@@ -157,9 +157,11 @@ def test_new_row_notifies_primary_assignee(db, monkeypatch):
     assert note.type == "conversation_sla"
     assert note.source_entity_id == str(tracking.id)
     assert note.event_type == f"assigned:{int(t0.timestamp())}"
-    # Worded "to you" (assignee), deep-links to the detail page (not the takeover widget).
+    # Worded "to you" (assignee), deep-links to the dashboard with the ticket
+    # targeted (UAC AC-G1) — the assignee answers from the "My Pending" drawer,
+    # not the standalone SLA detail page or Respond.io.
     assert "assigned to you" in (note.body or "")
-    assert f"/sla-management/conversation-sla-tracking/{tracking.id}" in (note.body or "")
+    assert f"/?ticket={tracking.id}" in (note.body or "")
     channels = {d.channel for d in _deliveries(db, note.id)}
     assert "in_app" in channels
     assert "email" in channels

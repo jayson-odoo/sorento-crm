@@ -145,6 +145,9 @@ class ConversationSLATrackingCreate(BaseModel):
     # human. When absent, the service falls back to message_id, then (with neither)
     # to the legacy one-open-per-contact singleton — see create_tracking.
     source_message_id: Optional[str] = None
+    # The trigger message's own text (the enquiry) - stored verbatim so the
+    # worklist snippet and the drawer's quoted header never re-fetch it.
+    source_message_text: Optional[str] = None
     contact_phone_number: str  # Required field
 
     @field_validator('agent_code', 'team_set_code')
