@@ -778,7 +778,14 @@ class StockService:
             elif sort_key == 'status':
                 sort_col = Stock.quantity_available
             if sort_col is not None:
-                q = q.order_by(sort_col.desc() if dir == 'desc' else sort_col.asc())
+                q = q.order_by(sort_col.desc() if dir == 'desc' else sort_col.asc(), Stock.id.asc())
+        if sort_col is None:
+            # No/unknown sort: deterministic default so results (and offset
+            # pagination) are stable — product code, then warehouse name.
+            if not need_product_join:
+                q = q.join(Stock.product)
+            q = q.join(Stock.warehouse)
+            q = q.order_by(Product.product_code.asc(), Warehouse.warehouse_name.asc(), Stock.id.asc())
 
         total = q.count()
         offset = (page - 1) * limit
