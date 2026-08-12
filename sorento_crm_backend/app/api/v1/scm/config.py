@@ -9,23 +9,29 @@ setting is visible alongside the numbers it explains); write requires
 """
 from __future__ import annotations
 
-import uuid
 from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
-from app.schemas.scm_dashboard import DeadStockDays, DeadStockDaysUpdate
+from app.schemas.scm_dashboard import (
+    DeadStockDays,
+    DeadStockDaysUpdate,
+    PlanningMode,
+    PlanningModeUpdate,
+)
 from app.services.error_handler import AppException
 from app.services.scm import cash_budget_service, currency_rate_service
 from app.services.scm.reorder_policy import (
     DEFAULT_DEAD_STOCK_DAYS,
     global_policy_row,
+    mode_to_policy_type,
+    resolve_global_planning_mode,
+    upsert_global_policy,
 )
 
 router = APIRouter()
@@ -65,29 +71,38 @@ def set_dead_stock_days(
             status_code=422,
             message="Dead-stock threshold must be between 1 and 3650 days.",
         )
-    row = _global_policy_row(db)
-    if row:
-        db.execute(
-            text(
-                "UPDATE scm.reorder_policy SET dead_stock_days = :d, is_active = true, "
-                "updated_at = now() WHERE id = :id"
-            ),
-            {"d": days, "id": row[0]},
-        )
-    else:
-        # No seeded global policy — create one (idempotent for legacy installs).
-        db.execute(
-            text(
-                "INSERT INTO scm.reorder_policy "
-                "(id, scope_type, scope_ref, policy_type, dead_stock_days, is_active, "
-                " source_system, source_ref, created_at, updated_at) "
-                "VALUES (:id, 'global', NULL, 'reorder_point', :d, true, "
-                " 'manual', 'ui', now(), now())"
-            ),
-            {"id": str(uuid.uuid4()), "d": days},
-        )
+    upsert_global_policy(db, dead_stock_days=days)
     db.commit()
     return {"dead_stock_days": days}
+
+
+# --------------------------------------------------------------------------- #
+# planning mode - the ONE universal auto/manual switch (UAC A)
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/config/planning-mode", response_model=PlanningMode)
+def get_planning_mode(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    return {"mode": resolve_global_planning_mode(db)}
+
+
+@router.put("/config/planning-mode", response_model=PlanningMode)
+def set_planning_mode(
+    payload: PlanningModeUpdate,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """Flip the GLOBAL policy's basis. Touches ONLY ``policy_type`` (AC-A1) - every
+    other column (dead_stock_days, safety_days, ...) is left exactly as it was, and
+    per-scope override rows (sku/class/abc_xyz_cell) are untouched (AC-A3). Takes
+    effect on the NEXT run only; a run already recorded keeps the basis it ran with,
+    frozen in its own `inputs.policy_type` (AC-A2)."""
+    upsert_global_policy(db, policy_type=mode_to_policy_type(payload.mode))
+    db.commit()
+    return {"mode": payload.mode}
 
 
 # --------------------------------------------------------------------------- #

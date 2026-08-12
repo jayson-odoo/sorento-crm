@@ -4,6 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ContainerSizesPanel } from './ContainerSizesPanel';
 import { CurrencyRatesPanel } from './CurrencyRatesPanel';
 import { ClassificationThresholdsPanel } from './ClassificationThresholdsPanel';
+import { PlanningModePanel } from './PlanningModePanel';
 import { ReorderPolicyGrid } from './ReorderPolicyGrid';
 import { ResolutionPreviewCard } from './ResolutionPreviewCard';
 import { SupplierScoringPanel } from './SupplierScoringPanel';
@@ -15,8 +16,9 @@ import { SupplierScoringPanel } from './SupplierScoringPanel';
  */
 export function PolicyConfigView() {
   return (
-    <Tabs defaultValue="reorder" className="w-full">
+    <Tabs defaultValue="planning-mode" className="w-full">
       <TabsList variant="line" className="mb-5 w-full justify-start overflow-x-auto">
+        <TabsTrigger value="planning-mode">Planning mode</TabsTrigger>
         <TabsTrigger value="reorder">Reorder policies</TabsTrigger>
         <TabsTrigger value="classification">Classification thresholds</TabsTrigger>
         <TabsTrigger value="supplier">Supplier scoring</TabsTrigger>
@@ -24,6 +26,10 @@ export function PolicyConfigView() {
         <TabsTrigger value="currency">Exchange rates</TabsTrigger>
         <TabsTrigger value="preview">Resolution preview</TabsTrigger>
       </TabsList>
+
+      <TabsContent value="planning-mode" className="mt-0 max-w-3xl focus-visible:outline-none">
+        <PlanningModePanel />
+      </TabsContent>
 
       <TabsContent value="reorder" className="mt-0 focus-visible:outline-none">
         <ReorderPolicyGrid />

@@ -37,6 +37,12 @@
  *    reorder run uses - never a reimplementation (AC-PREV-2). `chain` teaches the
  *    precedence: which scopes matched, which won, and why.
  *
+ *  GET    /api/v1/scm/config/planning-mode  → PlanningMode ({ mode: 'auto'|'manual' })
+ *  PUT    /api/v1/scm/config/planning-mode   body PlanningModeWrite → PlanningMode
+ *    Live (not phase-1 mocked) - the ONE universal switch on the global
+ *    reorder_policy row's policy_type (S1, UAC A). Read gated scm.dashboard.view,
+ *    write gated scm.config.manage - same route family as dead-stock-days.
+ *
  * Server-authoritative validation (mirrored client-side for UX) - AC-VAL-*,
  * AC-CFG-2, AC-SUP-2 - returns 422 via the global AppException handler.
  * ============================================================================
@@ -47,6 +53,8 @@ import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
   AbcXyzPolicy,
   AbcXyzWrite,
+  PlanningMode,
+  PlanningModeWrite,
   ReorderPolicyRow,
   ReorderPolicyWrite,
   ResolutionResult,
@@ -177,6 +185,26 @@ export async function saveSupplierScoring(
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save supplier scoring'));
   return (await res.json()) as SupplierScoringPolicy;
+}
+
+// ── Planning mode (single global switch, S1) ────────────────────────────────
+
+const CONFIG_BASE = '/api/v1/scm/config';
+
+export async function getPlanningMode(): Promise<PlanningMode> {
+  const res = await apiFetch(`${CONFIG_BASE}/planning-mode`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load planning mode'));
+  return (await res.json()) as PlanningMode;
+}
+
+export async function savePlanningMode(body: PlanningModeWrite): Promise<PlanningMode> {
+  const res = await apiFetch(`${CONFIG_BASE}/planning-mode`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save planning mode'));
+  return (await res.json()) as PlanningMode;
 }
 
 // ── Resolution preview ──────────────────────────────────────────────────────

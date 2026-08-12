@@ -102,6 +102,15 @@ export interface SupplierScoringPolicy {
 
 export type SupplierScoringWrite = Omit<SupplierScoringPolicy, 'exists'>;
 
+/** The ONE universal planning-mode switch (S1). Reads/writes the GLOBAL
+ *  reorder_policy row's `policy_type`: 'auto' -> reorder_point, 'manual' ->
+ *  reorder_level. Per-product override rows still win over this default. */
+export interface PlanningMode {
+  mode: 'auto' | 'manual';
+}
+
+export type PlanningModeWrite = PlanningMode;
+
 /** Why a scope link did (or did not) win, for the preview teaching surface. */
 export type ResolutionReason =
   | 'most-specific-active'
