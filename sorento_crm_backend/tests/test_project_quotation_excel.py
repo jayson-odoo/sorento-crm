@@ -149,18 +149,60 @@ def _numbering_rule(db, company_id: str) -> DocumentNumberingRule:
     return rule
 
 
-def _attachment(db, company_id: str) -> Attachment:
+def _attachment(db, company_id: str, name: str = "wc.png") -> Attachment:
     row = Attachment(
         id=_uid(),
         company_id=company_id,
-        original_filename=f"{MARKER}-wc.png",
-        stored_filename=f"{MARKER}-wc-renamed.png",
-        file_path=f"https://cdn.zzt.test/products/{MARKER}/wc.png",
+        original_filename=f"{MARKER}-{name}",
+        stored_filename=f"{MARKER}-{name.replace('.', '-renamed.')}",
+        file_path=f"https://cdn.zzt.test/products/{MARKER}/{name}",
         mime_type="image/png",
     )
     db.add(row)
     db.flush()
     return row
+
+
+def _photo_bytes(width: int = 1200, height: int = 900, seed: int = 0) -> bytes:
+    """A real photograph-shaped JPEG, so the downscale is genuinely exercised.
+
+    Noise rather than a flat colour: a flat image compresses to almost nothing, which would make
+    every size assertion in this file pass for the wrong reason. ``seed`` makes two photographs
+    genuinely different, so a size measured over 52 of them is not measuring one of them.
+    """
+    from PIL import Image
+
+    image = Image.frombytes(
+        "RGB",
+        (width, height),
+        bytes(
+            (x * 7 + y * 13 + c * 61 + seed * 97) % 256
+            for y in range(height)
+            for x in range(width)
+            for c in range(3)
+        ),
+    )
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", quality=95)
+    return buffer.getvalue()
+
+
+class _FakeBackend:
+    """Stands in for S3/R2 so the picture path is exercised without network or credentials."""
+
+    def __init__(self, payload: bytes):
+        self.payload = payload
+        self.keys: list = []
+
+    def download_file(self, key):
+        self.keys.append(key)
+        return self.payload
+
+
+def _save(workbook) -> bytes:
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
 
 
 def _issue(db, document, owner):
@@ -764,12 +806,237 @@ def test_the_product_image_column_is_judged_per_sheet_not_per_workbook():
             ):
                 assert header in _headers(sheet), f"{header} missing from {sheet.title}"
 
-        # The cell names the image the line carries. Deviation from the PDF, which embeds the
-        # picture: see the module docstring on why the workbook carries the reference instead.
+
+# ----------------------------------------------------------------------- XLS-1/2
+
+
+def test_the_image_column_carries_the_picture_itself_anchored_over_an_empty_cell(monkeypatch):
+    """S21, reversing this module's earlier "filename, not picture" decision.
+
+    The reason for that decision was real and still is: an openpyxl drawing is not a cell value,
+    so it does not travel when the QS sorts or filters the sheet. It is outweighed by the client
+    opening their own issued quotation - `Cabana Elmina- nadi cergas R2.xlsx`, 24 photographs,
+    every one anchored in column B beside its line - and asking for that. The PRODUCT CODE column
+    still identifies a row after a sort, so a drifting picture is untidy rather than ambiguous.
+
+    The cell VALUE stays empty, exactly as in their workbook: a filename underneath would show
+    through around the picture."""
+    from openpyxl import load_workbook
+    from openpyxl.utils import get_column_letter
+
+    from app.services import product_image_service as images
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_excel_service as qxlsx
+    from app.services import project_quotation_service as quotes
+
+    with blank_session() as db:
+        env = _setup(db)
+        owner = env["owner"]
+        product = _product(
+            db, env["category"].id, env["uom"], description=f"{MARKER} close-coupled WC, white"
+        )
+        image = _attachment(db, env["company_id"])
+        monkeypatch.setattr(
+            images, "get_backend", lambda provider: _FakeBackend(_photo_bytes(1200, 900))
+        )
+
+        document = qdocs.create_document(db, project=env["project"], actor_user_id=owner)
+        scope = qdocs.add_scope(
+            db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=owner
+        )
+        quotes.upsert_line(
+            db,
+            version=quotes.current_version(db, scope.id),
+            actor_user_id=owner,
+            payload={
+                "product_id": product.id,
+                "unit_price": PRICED_RATE,
+                "quantity": PRICED_QTY,
+                "image_attachment_id": image.id,
+            },
+        )
+
+        workbook = qxlsx.build_issue_workbook(db, _issue(db, document, owner))
         sheet = workbook.worksheets[0]
         row = _data_rows(sheet)[0]
-        cell = sheet.cell(row=row, column=_column_index(sheet, "PRODUCT IMAGE"))
-        assert f"{MARKER}-wc.png" in str(cell.value)
+        column = _column_index(sheet, "PRODUCT IMAGE")
+
+        assert len(sheet._images) == 1
+        # Anchored to the LINE's own cell in the picture column, which is what makes the
+        # photograph read as belonging to that item rather than floating over the sheet.
+        assert sheet._images[0].anchor == f"{get_column_letter(column)}{row}"
+        assert sheet.cell(row=row, column=column).value is None
+        # XLS-4: tall enough that the picture is not lying over the line below it.
+        assert (sheet.row_dimensions[row].height or 0) >= sheet._images[0].height * 0.75
+
+        # And it survives the save, at the same cell. openpyxl only turns a string anchor into a
+        # real drawing anchor when the workbook is written, so the in-memory object proves nothing
+        # about the file the customer opens.
+        reopened = load_workbook(BytesIO(_save(workbook)))
+        placed = reopened.worksheets[0]._images[0].anchor._from
+        assert (placed.row + 1, placed.col + 1) == (row, column)
+
+
+def test_a_line_with_no_picture_leaves_its_cell_empty_rather_than_explaining_itself(monkeypatch):
+    """The workbook goes to the customer next to the PDF. Our internal "nobody has chosen this
+    product's photo yet" belongs on the screen where somebody can act on it, not in a cell they
+    read. The column is here because a NEIGHBOURING line has a picture."""
+    from app.services import product_image_service as images
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_excel_service as qxlsx
+    from app.services import project_quotation_service as quotes
+
+    with blank_session() as db:
+        env = _setup(db)
+        owner = env["owner"]
+        monkeypatch.setattr(
+            images, "get_backend", lambda provider: _FakeBackend(_photo_bytes(600, 600))
+        )
+        document = qdocs.create_document(db, project=env["project"], actor_user_id=owner)
+        scope = qdocs.add_scope(
+            db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=owner
+        )
+        version = quotes.current_version(db, scope.id)
+        quotes.upsert_line(
+            db,
+            version=version,
+            actor_user_id=owner,
+            payload={
+                "product_id": _product(
+                    db, env["category"].id, env["uom"], description=f"{MARKER} WC"
+                ).id,
+                "unit_price": PRICED_RATE,
+                "quantity": PRICED_QTY,
+                "image_attachment_id": _attachment(db, env["company_id"]).id,
+            },
+        )
+        quotes.upsert_line(
+            db,
+            version=version,
+            actor_user_id=owner,
+            payload={
+                "product_id": _product(
+                    db, env["category"].id, env["uom"], description=f"{MARKER} bottle trap"
+                ).id,
+                "unit_price": "6.50",
+                "quantity": 2,
+            },
+        )
+
+        workbook = qxlsx.build_issue_workbook(db, _issue(db, document, owner))
+        sheet = workbook.worksheets[0]
+        column = _column_index(sheet, "PRODUCT IMAGE")
+        rows = _data_rows(sheet)
+
+        assert len(sheet._images) == 1
+        assert sheet.cell(row=rows[1], column=column).value is None
+        assert not any(
+            "photo" in str(value).lower() for value in _values(sheet) if value is not None
+        )
+
+
+def test_a_picture_that_cannot_be_fetched_leaves_the_cell_empty_rather_than_failing_the_export(
+    monkeypatch,
+):
+    """XLS-6. The reader is waiting for a price, not a photograph."""
+    from app.services import product_image_service as images
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_excel_service as qxlsx
+    from app.services import project_quotation_service as quotes
+
+    with blank_session() as db:
+        env = _setup(db)
+        owner = env["owner"]
+
+        def _boom(provider):
+            raise RuntimeError(f"{MARKER} storage down")
+
+        monkeypatch.setattr(images, "get_backend", _boom)
+        document = qdocs.create_document(db, project=env["project"], actor_user_id=owner)
+        scope = qdocs.add_scope(
+            db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=owner
+        )
+        quotes.upsert_line(
+            db,
+            version=quotes.current_version(db, scope.id),
+            actor_user_id=owner,
+            payload={
+                "product_id": _product(
+                    db, env["category"].id, env["uom"], description=f"{MARKER} WC"
+                ).id,
+                "unit_price": PRICED_RATE,
+                "quantity": PRICED_QTY,
+                "image_attachment_id": _attachment(db, env["company_id"]).id,
+            },
+        )
+
+        workbook = qxlsx.build_issue_workbook(db, _issue(db, document, owner))
+        sheet = workbook.worksheets[0]
+        # The column still stands (the data says the line has a picture) and the money is intact.
+        assert "PRODUCT IMAGE" in _headers(sheet)
+        assert not sheet._images
+        assert PRICED_TOTAL in _values(sheet)
+
+
+def test_a_fifty_two_line_workbook_of_photographs_stays_a_file_somebody_can_open(monkeypatch):
+    """XLS-5, measured rather than asserted in the abstract. The client's real quotation runs to
+    52+ lines and the live catalogue's chosen photographs average 1.1 MB."""
+    from openpyxl import load_workbook
+
+    from app.services import product_image_service as images
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_excel_service as qxlsx
+    from app.services import project_quotation_service as quotes
+
+    with blank_session() as db:
+        env = _setup(db)
+        owner = env["owner"]
+        # A different photograph per line, and different BYTES: 52 copies of one picture is one
+        # picture once the zip container has deduplicated it, which would measure nothing.
+        original = _photo_bytes(1600, 1600)
+        photos: dict = {}
+
+        class _PerKey:
+            def download_file(self, key):
+                if key not in photos:
+                    photos[key] = _photo_bytes(1600, 1600, seed=len(photos) + 1)
+                return photos[key]
+
+        monkeypatch.setattr(images, "get_backend", lambda provider: _PerKey())
+
+        document = qdocs.create_document(db, project=env["project"], actor_user_id=owner)
+        scope = qdocs.add_scope(
+            db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=owner
+        )
+        version = quotes.current_version(db, scope.id)
+        for index in range(52):
+            quotes.upsert_line(
+                db,
+                version=version,
+                actor_user_id=owner,
+                payload={
+                    "product_id": _product(
+                        db, env["category"].id, env["uom"], description=f"{MARKER} item {index}"
+                    ).id,
+                    "unit_price": PRICED_RATE,
+                    "quantity": PRICED_QTY,
+                    "image_attachment_id": _attachment(
+                        db, env["company_id"], f"item-{index}.jpg"
+                    ).id,
+                },
+            )
+
+        xlsx_bytes, _ = qxlsx.render_issue_xlsx(db, _issue(db, document, owner))
+        naive = 52 * len(original)
+        print(
+            f"\n52-line workbook: {len(xlsx_bytes) / 1024:.0f} KB "
+            f"(52 originals would be {naive / 1024 / 1024:.1f} MB)"
+        )
+        assert len(xlsx_bytes) < 4 * 1024 * 1024, f"{len(xlsx_bytes)} bytes"
+        assert len(xlsx_bytes) < naive / 10
+
+        reopened = load_workbook(BytesIO(xlsx_bytes))
+        assert len(reopened.worksheets[0]._images) == 52
 
 
 # --------------------------------------------------------------- the actual bytes

@@ -1,12 +1,13 @@
 'use client';
 
 import * as React from 'react';
-import { AlertTriangle, FileWarning, Loader2, Upload } from 'lucide-react';
+import { AlertTriangle, FileWarning, Loader2, RefreshCw, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { POVersion } from '../../_shared/types/poIntake.types';
+import { describeWaitingFor } from '../../_shared/lib/readingTime';
 
 /** The skeleton matches the screen it becomes: viewer left, header and lines right. */
 export function POIntakeSkeleton() {
@@ -34,6 +35,7 @@ export function POIntakeSkeleton() {
  */
 export function POIntakeExtractionProgress({ version }: { version: POVersion }) {
   const running = version.extraction_state === 'running';
+  const waitingFor = describeWaitingFor(version.extraction_started_at);
   return (
     <Card>
       <CardHeader className="block">
@@ -46,6 +48,9 @@ export function POIntakeExtractionProgress({ version }: { version: POVersion }) 
             <span className="text-xs text-muted-foreground">
               {`${version.page_count} page${version.page_count === 1 ? '' : 's'}`}
             </span>
+          ) : null}
+          {waitingFor ? (
+            <span className="text-xs text-muted-foreground">{waitingFor}</span>
           ) : null}
         </div>
       </CardHeader>
@@ -64,12 +69,25 @@ export function POIntakeExtractionProgress({ version }: { version: POVersion }) 
   );
 }
 
+/**
+ * Two ways out, and which one leads is deliberate.
+ *
+ * A read can end for two quite different reasons, and the answer is different each time.
+ * If the reader was stopped part-way, the document was never the problem and reading it
+ * again on the same version is the whole fix: same version number, same stored file, same
+ * history. If the document really could not be read, a better scan is the fix. Retry
+ * therefore leads and re-upload stays as the secondary action.
+ */
 export function POIntakeExtractionFailed({
   version,
   onReupload,
+  onRetry,
+  isRetrying = false,
 }: {
   version: POVersion;
   onReupload?: () => void;
+  onRetry?: () => void;
+  isRetrying?: boolean;
 }) {
   return (
     <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-10 text-center">
@@ -81,12 +99,27 @@ export function POIntakeExtractionFailed({
         {version.extraction_error ||
           'Nothing was extracted. A sharper scan, or the pages as separate images, usually reads.'}
       </p>
-      {onReupload && (
-        <Button type="button" className="mt-4" onClick={onReupload}>
-          <Upload className="size-4" aria-hidden />
-          Upload it again
-        </Button>
-      )}
+      <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+        {onRetry && (
+          <Button type="button" disabled={isRetrying} onClick={onRetry}>
+            <RefreshCw
+              className={`size-4 ${isRetrying ? 'animate-spin' : ''}`}
+              aria-hidden
+            />
+            {isRetrying ? 'Starting…' : 'Read it again'}
+          </Button>
+        )}
+        {onReupload && (
+          <Button
+            type="button"
+            variant={onRetry ? 'outline' : 'primary'}
+            onClick={onReupload}
+          >
+            <Upload className="size-4" aria-hidden />
+            Upload it again
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

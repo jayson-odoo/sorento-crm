@@ -25,3 +25,27 @@ export function describeReadingTime(ms: number | null | undefined): string | nul
   const formatted = formatReadingTime(ms);
   return formatted === null ? null : `Read in ${formatted}`;
 }
+
+/**
+ * How long a read that has NOT finished has been going, from the moment the worker picked
+ * it up. Null when we do not know, which is every document uploaded before the backend
+ * started recording it.
+ *
+ * A spinner with no number behind it is exactly what let a killed job sit on screen for
+ * an afternoon looking busy. A length is something a person can judge: ten pages measured
+ * at just under three minutes, so twenty minutes is visibly wrong and four is not.
+ *
+ * `startedAt` is the backend's naive UTC, stored and sent without a zone, so the Z is put
+ * back before parsing. Parsing it as local time would read as eight hours in the future
+ * here and produce no caption at all.
+ */
+export function describeWaitingFor(startedAt: string | null | undefined): string | null {
+  if (!startedAt) return null;
+  const started = Date.parse(startedAt.endsWith('Z') ? startedAt : `${startedAt}Z`);
+  if (Number.isNaN(started)) return null;
+  const seconds = Math.floor((Date.now() - started) / 1000);
+  if (seconds < 0) return null;
+  if (seconds < 60) return `${seconds} second${seconds === 1 ? '' : 's'} so far`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes} minute${minutes === 1 ? '' : 's'} so far`;
+}

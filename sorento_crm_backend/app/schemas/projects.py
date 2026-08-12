@@ -869,7 +869,151 @@ class ProjectSeriesResponse(ProjectSeriesBase):
             "actually compares against."
         ),
     )
+    product_count: int = Field(
+        0, description="Products nominated BY NAME, independently of any category (S18)."
+    )
+    product_codes: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Those products' CODES. Codes rather than ids so the screen can name them "
+            "without a second lookup, and so no UUID reaches the UI."
+        ),
+    )
     quotation_count: int = 0
+
+
+class ProjectSeriesProductImport(BaseModel):
+    """A list of product CODES to load onto a series (S18)."""
+
+    codes: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Product codes as the admin has them. Matched on the repo's shared normaliser "
+            "(case, dashes and whitespace ignored), so 'CWB 242' finds 'CWB-242'."
+        ),
+    )
+    mode: str = Field(
+        "append",
+        description=(
+            "append = add these to what the series already lists. replace = make the "
+            "series say exactly this and nothing else."
+        ),
+    )
+
+
+class ProjectSeriesProductImportResponse(BaseModel):
+    """What the import DID, including what it could not do.
+
+    ``unmatched_codes`` is the field that matters: a code the catalogue does not carry is
+    the admin's data telling them something, and reporting a smaller success number
+    instead would hide it.
+    """
+
+    series_id: str
+    series_name: str
+    mode: str
+    submitted: int
+    unique_codes: int
+    matched_codes: int
+    added: int
+    already_present: int
+    removed: int
+    product_count: int
+    unmatched_codes: List[str] = Field(default_factory=list)
+
+
+class QuotationLineVerdictResponse(BaseModel):
+    """The two guardrail answers for ONE draft line, judged now.
+
+    Exists so the editor can flag a line the moment the product is picked or the price
+    typed, instead of after the save - and judged by the SAME service functions the save
+    uses (`is_in_series`, `resolve_floor`), so the live answer and the persisted one
+    cannot disagree. The browser holds no second implementation.
+
+    `floor_value` and `floor_level` ride along so a breach can be argued with ("below the
+    Basins floor of RM 850"), the same fields the saved line carries.
+    """
+
+    is_non_standard: bool
+    is_below_floor: bool
+    floor_value: Optional[Decimal] = None
+    floor_level: Optional[str] = None
+
+
+class SeriesProductImportJobResponse(BaseModel):
+    """A queued sheet load: the id to watch, and nothing pretending to be a result.
+
+    Deliberately does NOT carry counts. The upload route returns before a single code has
+    been read, and a zero here would be indistinguishable from a sheet that genuinely
+    matched nothing. The finished report arrives in ``import_jobs.result`` and is served by
+    ``GET /system/jobs/{job_id}/status``, in the same shape as
+    ``ProjectSeriesProductImportResponse`` so one renderer draws both paths.
+    """
+
+    job_id: str
+    series_id: str
+    mode: str
+
+
+class SeriesProductRowResponse(BaseModel):
+    """One product on a series, as the table on the series page reads it (T2).
+
+    ``derived_floor`` is computed on the server by `project_pricing_service.series_floor`,
+    the same function the pricing engine enforces with, and is NULL unless the row carries
+    both a price and a percentage. A floor computed a second time in the browser is a
+    refusal the user can argue with.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    product_id: str
+    product_code: Optional[str] = None
+    product_name: Optional[str] = None
+    #: NULL means the series has not said, and is never read as zero.
+    selling_price: Optional[Decimal] = None
+    #: A PERCENT: 6 means 6%.
+    max_discount_pct: Optional[Decimal] = None
+    derived_floor: Optional[Decimal] = None
+
+
+class SeriesProductPricingUpdate(BaseModel):
+    """Set (or clear) one product's price and percentage from the series page.
+
+    Both fields are explicit: sending null CLEARS, because the person emptied the cell. The
+    sheet importer treats an absent value as silence instead - a spreadsheet that states no
+    price is not asking for one to be deleted.
+    """
+
+    selling_price: Optional[Decimal] = Field(None, ge=0)
+    max_discount_pct: Optional[Decimal] = Field(None, ge=0, le=100)
+
+
+class QuotationRecomputeResponse(BaseModel):
+    """What re-asking the guardrails changed on one version (S19)."""
+
+    version_id: str
+    version_no: int
+    quotation_id: str
+    scope_label: Optional[str] = None
+    line_count: int
+    changed_count: int
+    now_non_standard: int
+    no_longer_non_standard: int
+    now_below_floor: int
+    no_longer_below_floor: int
+    floor_changed: int
+    unresolved_products: int = Field(
+        0,
+        description=(
+            "Lines naming a product this company's catalogue does not carry. They read as "
+            "off-catalog and stay non-standard, so without this the pass would report "
+            "'nothing changed' and leave nobody any the wiser."
+        ),
+    )
+    changed_lines: List[str] = Field(
+        default_factory=list,
+        description="The lines that moved, named as a person names them: product code, or the description of an off-catalog line.",
+    )
 
 
 class PriceFloorRuleBase(BaseModel):
@@ -1122,6 +1266,33 @@ class ProjectQuotationLineBulkWrite(BaseModel):
     )
 
 
+class QuotationLineImageResponse(BaseModel):
+    """The picture cell for one line (S21).
+
+    Declared, and not merely built by the serializer, because `response_model` DROPS any key
+    no field declares. `serialize_lines` had been returning `product_image` since S21 and
+    FastAPI had been deleting it from every line route on the way out, so the column rendered
+    "-" for every product - including ones whose photograph had been chosen correctly. The
+    symptom points at the photo (or at `is_primary`), and the cause is here.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    #: chosen | not_chosen | no_photos | off_catalog
+    state: str
+    #: A signed THUMBNAIL, and only ever on `chosen`.
+    url: Optional[str] = None
+    #: The signed ORIGINAL, for the viewer that opens on click. The thumbnail is ~320 px and
+    #: turns to mush the moment somebody zooms.
+    preview_url: Optional[str] = None
+    #: Lets the viewer download through the authenticated attachments route.
+    attachment_id: Optional[str] = None
+    filename: Optional[str] = None
+    #: Photographs somebody could choose between. Zero on `no_photos` and `off_catalog`, and
+    #: zero on a frozen line, which has nothing left to choose.
+    candidate_count: int = 0
+
+
 class ProjectQuotationLineResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -1132,6 +1303,7 @@ class ProjectQuotationLineResponse(BaseModel):
     description: Optional[str] = None
     list_price: Optional[Decimal] = None
     image_attachment_id: Optional[str] = None
+    product_image: Optional[QuotationLineImageResponse] = None
 
     unit_price: Decimal = Decimal("0")
     quantity: Decimal = Decimal("1")

@@ -90,6 +90,17 @@ class ProjectPOVersion(Base, CompanyScopedMixin):
     # terminal state and a sentence a person can act on.
     extraction_state = Column(String(16), nullable=False, server_default="queued")
     extraction_error = Column(Text, nullable=True)
+    # Which RQ job is reading this, and when it picked the document up.
+    #
+    # Both exist for one reason: a work-horse that is KILLED does not run the task's own
+    # error handling, so nothing inside the dying process can report the death. Something
+    # outside has to, and the only honest way to tell a dead read from a slow one is to ask
+    # RQ about the job itself. `extraction_started_at` is the fallback for rows that carry
+    # no job id (uploaded before this was recorded), and it is what lets the screen say
+    # "4 minutes so far" instead of showing an unbounded spinner. See
+    # ``app.services.project_extraction_recovery_service``.
+    extraction_job_id = Column(String(64), nullable=True)
+    extraction_started_at = Column(DateTime(timezone=False), nullable=True)
     extracted_json = Column(JSONB, nullable=True)
     extraction_model = Column(String(80), nullable=True)
     extraction_tokens_in = Column(Integer, nullable=True)
@@ -240,6 +251,10 @@ class DeliveryScheduleVersion(Base, CompanyScopedMixin):
 
     extraction_state = Column(String(16), nullable=False, server_default="queued")
     extraction_error = Column(Text, nullable=True)
+    # Same pair, same reason, as ProjectPOVersion above: the schedule task has the identical
+    # shape and the identical hole, so it gets the identical fix.
+    extraction_job_id = Column(String(64), nullable=True)
+    extraction_started_at = Column(DateTime(timezone=False), nullable=True)
     extracted_json = Column(JSONB, nullable=True)
     extraction_model = Column(String(80), nullable=True)
     extraction_elapsed_ms = Column(Integer, nullable=True)

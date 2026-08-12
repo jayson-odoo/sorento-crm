@@ -8,6 +8,7 @@ import {
   listDeliverySchedules,
   listDeliveryScheduleVersions,
   resolveDeliveryScheduleProduct,
+  retryDeliveryScheduleExtraction,
   saveDeliveryScheduleCells,
   uploadDeliverySchedule,
 } from '../services/deliveryScheduleService';
@@ -136,6 +137,21 @@ export function useDeliveryScheduleVersionMutations(
     onError: (error: Error) => toast.error(error.message),
   });
 
+  /**
+   * Read the same version again.
+   *
+   * `adopt` puts the version back on `queued`, which is what turns the poll back on, so
+   * the screen goes from the failure card straight to the progress card.
+   */
+  const retryExtraction = useMutation({
+    mutationFn: () => retryDeliveryScheduleExtraction(versionId),
+    onSuccess: (version) => {
+      adopt(version);
+      toast.success('Reading this schedule again');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const confirm = useMutation({
     mutationFn: (body: DeliveryScheduleConfirmBody) =>
       confirmDeliveryScheduleVersion(versionId, body),
@@ -148,5 +164,5 @@ export function useDeliveryScheduleVersionMutations(
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { saveCells, resolveProduct, confirm };
+  return { saveCells, resolveProduct, confirm, retryExtraction };
 }

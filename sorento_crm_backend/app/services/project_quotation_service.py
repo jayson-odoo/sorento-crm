@@ -435,8 +435,12 @@ def _snapshot_product(db: Session, line: ProjectQuotationLine, product: Product)
     line.list_price_snapshot = product.list_price
     if line.uom is None:
         line.uom = _uom_code(db, product.base_uom_id)
-    if line.image_attachment_id is None:
-        line.image_attachment_id = resolve_product_image(db, product.id)
+    # The PICTURE is deliberately not snapshotted here (S21). Only 30 of the 535 products with
+    # candidate photos carry a chosen one, so almost every line is priced before anybody has
+    # answered for its product, and a stamp taken now would freeze that "nobody has chosen"
+    # forever - nobody is going to re-save 52 lines to collect a decision made ten minutes
+    # later. A draft resolves live; ISSUING is what writes the picture down.
+    # See project_quotation_image_service.freeze_version_images.
 
 
 def _uom_code(db: Session, uom_id: Optional[str]) -> Optional[str]:
@@ -449,33 +453,21 @@ def _uom_code(db: Session, uom_id: Optional[str]) -> Optional[str]:
 
 
 def resolve_product_image(db: Session, product_id: str) -> Optional[str]:
-    """The product's image attachment, lowest sort order (AC-E8).
+    """The photograph somebody CHOSE for this product, or nothing (S21, superseding AC-E8).
 
-    Driven by ``attachment_types.is_image_class`` rather than by a filename check or a
-    hardcoded type name, so an admin adding a second image-ish type gets it for free.
-    Returns None when the flag or the tables are not present, because a missing image is
-    a cosmetic gap and must never fail a save.
+    It used to be "the image-class attachment with the lowest sort order", which is the
+    whichever-row-came-first fallback that ``product_attachments.is_primary`` exists to
+    remove: for ``SRTWC286-SH`` the first-linked row is one of 31 files including a blank
+    page and two other products' photographs.
+
+    There is exactly ONE image decision in this system and the quotation is its third
+    consumer, after the brochure and 3D-model generation. This function is now a thin alias
+    so existing callers keep working; the decision itself lives in
+    ``app.services.product_image_service``.
     """
-    try:
-        from app.models.product import ProductAttachment
-        from app.models.resources import AttachmentType
+    from app.services import product_image_service
 
-        row = (
-            db.query(ProductAttachment.attachment_id)
-            .join(
-                AttachmentType,
-                AttachmentType.id == ProductAttachment.attachment_type_id,
-            )
-            .filter(
-                ProductAttachment.product_id == product_id,
-                AttachmentType.is_image_class.is_(True),
-            )
-            .order_by(ProductAttachment.sort_order.asc().nullslast())
-            .first()
-        )
-        return row[0] if row else None
-    except Exception:  # noqa: BLE001 -- cosmetic, never fatal to a quotation save
-        return None
+    return product_image_service.chosen_attachment_id(db, product_id)
 
 
 def _apply_guardrails(
@@ -484,13 +476,19 @@ def _apply_guardrails(
     line: ProjectQuotationLine,
     quotation: ProjectQuotation,
     product: Optional[Product],
-    covered_categories: Optional[Set[str]] = None,
+    membership: Optional["pricing.SeriesMembership"] = None,
+    series_pricing: Optional[Dict[str, tuple]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Recompute both alerts for one line. Returns a breach event, or None.
 
     An event is returned ONLY on the transition into breach (AC-E6a): the previous state
     is read before the new one is written, and a line that was already breaching stays
-    silent no matter how many times it is saved.
+    silent no matter how many times it is saved. ``recompute_version`` leans on exactly
+    that: re-confirming forty lines raises nothing.
+
+    ``membership`` is the series expanded once (S18). Passed in by a caller writing a whole
+    version so the category walk and the product read happen once rather than per line.
+    ``series_pricing`` is its twin for the money (T5) and is passed for the same reason.
     """
     was_below = bool(line.is_below_floor)
 
@@ -501,7 +499,7 @@ def _apply_guardrails(
         db,
         series_id=quotation.series_id,
         product=product,
-        covered=covered_categories,
+        membership=membership,
     )
 
     floor = pricing.resolve_floor(
@@ -509,6 +507,8 @@ def _apply_guardrails(
         company_id=quotation.company_id,
         product=product,
         list_price=line.list_price_snapshot,
+        series_id=quotation.series_id,
+        series_pricing=series_pricing,
     )
     if floor is None:
         line.floor_value_applied = None
@@ -741,6 +741,134 @@ def delete_line(
     db.delete(line)
     db.flush()
     _recalculate_total(db, version)
+
+
+# ----------------------------------------------------------------- recompute
+
+
+def recompute_version(
+    db: Session, *, version: ProjectQuotationVersion
+) -> Dict[str, Any]:
+    """Re-ask both guardrails for every line on one version, against TODAY's policy (S19).
+
+    **Why a button and not a migration.** Both alerts are computed on line WRITE and stored
+    ON the line (AC-E7). That is right for a quotation the customer holds - a floor moved
+    next year must not retro-flag what was already sent - and wrong for one still being
+    priced, where the flags go stale the moment a series or a floor changes and nothing
+    re-asks. The client said so themselves and refused a bulk write: "I need to have a
+    recompute button rather than you go and bulk write the data ... in case someone change
+    at the master data (product or any configuration)". Master data keeps moving, so the
+    correction has to be an action somebody can repeat, not a one-off script.
+
+    **Scope: this version, and only if it is still editable.** ``assert_editable`` refuses a
+    frozen or issued one with the same 422 every other write raises, because those flags are
+    what was true when the paper went out and rewriting them would rewrite quoted history.
+    That also answers "every editable version on the document?" - no. Recomputing a scope
+    somebody else has open is a surprise, and the caller already knows which version the
+    reader is looking at.
+
+    **Cost.** One pass, synchronous, inside the caller's transaction. The series is expanded
+    ONCE, and the products of the whole version are read in one query, so the per-line work
+    is the floor resolution alone. A version is tens of lines (the client's own sample is
+    52), which is why this is not queued. If a document ever carries hundreds, the thing to
+    move is the floor lookup - ``resolve_floor`` re-reads the company's rules per line - and
+    then the whole pass belongs on the ``project_docs`` queue with the same report delivered
+    through My Downloads rather than a response body.
+
+    Returns what MOVED, never a bare success. "6 lines are no longer non-standard, 1 is now
+    below floor" is the answer to the question the button asks; a silent toast is not.
+    """
+    assert_editable(db, version)
+    quotation = _quotation_of(db, version)
+    lines = list_lines(db, version.id)
+
+    products: Dict[str, Product] = {}
+    product_ids = {line.product_id for line in lines if line.product_id}
+    if product_ids:
+        products = {
+            row.id: row
+            for row in db.query(Product).filter(Product.id.in_(product_ids)).all()
+        }
+
+    # Expanded once for the whole version rather than per line (S18, and T5 for the money).
+    membership = pricing.series_membership(db, quotation.series_id)
+    series_pricing = pricing.series_pricing_map(db, quotation.series_id)
+
+    report = {
+        "version_id": version.id,
+        "version_no": version.version_no,
+        "quotation_id": quotation.id,
+        "scope_label": quotation.scope_label,
+        "line_count": len(lines),
+        "now_non_standard": 0,
+        "no_longer_non_standard": 0,
+        "now_below_floor": 0,
+        "no_longer_below_floor": 0,
+        "floor_changed": 0,
+        # Lines that NAME a product the catalogue will not give us. Counted and reported
+        # because otherwise this pass is indistinguishable from "everything is fine": the
+        # line reads as off-catalog, stays non-standard, and the recompute says nothing
+        # changed - which is true and completely unhelpful. On the live database 46 lines
+        # of one quotation are in exactly this state (they point at another company's
+        # identically-coded product row), and the report is how anybody finds out.
+        "unresolved_products": 0,
+        "changed_lines": [],
+        "breach_events": [],
+    }
+
+    for line in lines:
+        if line.product_id and line.product_id not in products:
+            report["unresolved_products"] += 1
+        before = (
+            bool(line.is_non_standard),
+            bool(line.is_below_floor),
+            line.floor_value_applied,
+            line.floor_level_applied,
+        )
+        event = _apply_guardrails(
+            db,
+            line=line,
+            quotation=quotation,
+            product=products.get(line.product_id or ""),
+            membership=membership,
+            series_pricing=series_pricing,
+        )
+        if event:
+            report["breach_events"].append(event)
+
+        after = (
+            bool(line.is_non_standard),
+            bool(line.is_below_floor),
+            line.floor_value_applied,
+            line.floor_level_applied,
+        )
+        if before == after:
+            continue
+
+        if after[0] and not before[0]:
+            report["now_non_standard"] += 1
+        elif before[0] and not after[0]:
+            report["no_longer_non_standard"] += 1
+        if after[1] and not before[1]:
+            report["now_below_floor"] += 1
+        elif before[1] and not after[1]:
+            report["no_longer_below_floor"] += 1
+        # The floor moved under a line without either side of it crossing: still worth
+        # saying, because the number printed beside a breach is now a different number.
+        if before[0] == after[0] and before[1] == after[1]:
+            report["floor_changed"] += 1
+
+        # Named by what a person calls the line. No id reaches the reader.
+        report["changed_lines"].append(
+            line.product_code_snapshot or line.description_snapshot or "Off-catalog line"
+        )
+
+    db.flush()
+    # The version TOTAL is deliberately not recomputed. This re-asks the guardrails and
+    # nothing else; a recompute that moved money would be a re-price, which is not what the
+    # button says it does.
+    report["changed_count"] = len(report["changed_lines"])
+    return report
 
 
 # ------------------------------------------------------------------- outcomes
@@ -1028,6 +1156,11 @@ def serialize_versions(
 def serialize_lines(
     db: Session, lines: Sequence[ProjectQuotationLine]
 ) -> List[Dict[str, Any]]:
+    # S21. The product's chosen photograph, resolved for the WHOLE table in one pass: a scope
+    # runs to 52 lines and a query per row would be 52 round trips to draw one column.
+    from app.services import project_quotation_image_service
+
+    pictures = project_quotation_image_service.line_images(db, lines)
     return [
         {
             "id": line.id,
@@ -1037,6 +1170,7 @@ def serialize_lines(
             "description": line.description_snapshot,
             "list_price": line.list_price_snapshot,
             "image_attachment_id": line.image_attachment_id,
+            "product_image": pictures.get(str(line.id)),
             "unit_price": line.unit_price,
             "quantity": line.quantity,
             "uom": line.uom,

@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import acting_company_id, permission_slugs
@@ -38,10 +38,18 @@ from app.schemas.projects import (
     ProjectQuotationUpdate,
     ProjectQuotationVersionResponse,
     ProjectSeriesCreate,
+    ProjectSeriesProductImport,
+    ProjectSeriesProductImportResponse,
+    SeriesProductImportJobResponse,
     ProjectSeriesResponse,
     ProjectSeriesUpdate,
+    QuotationLineVerdictResponse,
+    QuotationRecomputeResponse,
+    SeriesProductPricingUpdate,
+    SeriesProductRowResponse,
 )
 from app.services import project_pricing_service as pricing
+from app.services.error_handler import AppException
 from app.services import project_quotation_service as svc
 from app.services import project_service as projects
 from app.services.error_handler import handle_internal_error
@@ -258,6 +266,83 @@ def _quotation_for_edit(db: Session, quotation_id: str, current_user: dict):
     return quotation
 
 
+@router.get(
+    "/quotations/{quotation_id}/line-verdict",
+    response_model=QuotationLineVerdictResponse,
+)
+async def judge_draft_line(
+    quotation_id: str,
+    product_id: Optional[str] = Query(None),
+    unit_price: Optional[str] = Query(None),
+    _user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Judge one DRAFT line, before anything is saved.
+
+    The client's requirement, verbatim: "the computation of whether it is non standard or
+    off catalog needs to be on the spot, cannot wait until I save". The verdicts cannot be
+    computed in the browser - series membership counts nominated CATEGORIES the browser
+    never fetched, and the floor means walking the category ancestry - so the browser asks,
+    per keystroke-settled draft, and this answers with the same `is_in_series` and
+    `resolve_floor` the save path runs. One implementation, two moments.
+
+    Nothing is written. `unit_price` arrives as the decimal STRING the drafts hold; a
+    half-typed price that does not parse is judged as "no price yet", not an error - the
+    person is mid-keystroke, and a 422 would toast at them for typing.
+
+    An off-catalog draft (no product) is non-standard whenever a series is nominated, and
+    has no floor - the same rule the save applies (AC-E5).
+    """
+    from decimal import Decimal, InvalidOperation
+
+    try:
+        validate_uuid_path(quotation_id, resource="Quotation")
+        from app.models.product import Product
+        from app.models.projects import ProjectQuotation
+
+        quotation = (
+            db.query(ProjectQuotation).filter(ProjectQuotation.id == quotation_id).first()
+        )
+        if not quotation:
+            raise AppException(
+                status_code=404, message="Quotation not found.", code="quotation_not_found"
+            )
+
+        product = (
+            db.query(Product).filter(Product.id == product_id).first()
+            if product_id
+            else None
+        )
+        # A product id the company scope cannot see judges exactly like no product at all:
+        # off-catalog. This is the Mocha-copy case - the row exists, but not for us.
+        in_series = pricing.is_in_series(
+            db, series_id=quotation.series_id, product=product
+        )
+
+        price: Optional[Decimal] = None
+        if unit_price:
+            try:
+                price = Decimal(unit_price)
+            except InvalidOperation:
+                price = None
+
+        floor = pricing.resolve_floor(
+            db,
+            company_id=acting_company_id(db),
+            product=product,
+            series_id=quotation.series_id,
+        )
+        below = bool(floor and price is not None and price < floor.value)
+        return {
+            "is_non_standard": not in_series,
+            "is_below_floor": below,
+            "floor_value": floor.value if floor else None,
+            "floor_level": floor.level if floor else None,
+        }
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 # ----------------------------------------------------------------- versions
 
 
@@ -449,6 +534,80 @@ async def delete_line(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+@router.post(
+    "/quotation-versions/{version_id}/recompute",
+    response_model=QuotationRecomputeResponse,
+)
+async def recompute_version(
+    version_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Re-ask both guardrails for this version against today's master data (S19).
+
+    The client's own words: "I need to have a recompute button rather than you go and bulk
+    write the data, like, a refresh button that recompute this, in case someone change at
+    the master data (product or any configuration), then the quotation can refresh to
+    repull this". This is that button, and it is also how the stale flags get corrected -
+    by somebody pressing it, not by a migration that can only be right once.
+
+    ONE version, named in the URL, and only while it is still editable. A frozen or issued
+    version refuses with the same 422 every other write raises: those flags are what was
+    true when the customer was sent the paper.
+
+    Synchronous, because a version is tens of lines. Returns what MOVED rather than a bare
+    success - the answer to "what did that do" is the whole point of the control.
+    """
+    try:
+        validate_uuid_path(version_id, resource="Quotation version")
+        version, _quotation = _version_for_edit(db, version_id, current_user)
+        report = svc.recompute_version(db, version=version)
+        # A line that has JUST fallen below a floor is news to management, exactly as it is
+        # on a save. Transition-only, so re-confirming forty lines notifies nobody.
+        _notify_recompute_breaches(db, report, current_user["id"])
+        db.commit()
+        return {key: value for key, value in report.items() if key != "breach_events"}
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+def _notify_recompute_breaches(db: Session, report: dict, actor_user_id: str) -> None:
+    """The same fan-out ``_notify_breaches`` performs, off a report instead of a line.
+
+    Best-effort by design, like every other post-commit-shaped side effect here: the flags
+    are already recomputed by the time this runs, and a notification backend that is down
+    must not 500 an operation that succeeded.
+    """
+    events = report.get("breach_events") or []
+    if not events:
+        return
+    from app.models.projects import Project, ProjectQuotation
+    from app.services import project_notify_service as notify
+
+    project = (
+        db.query(Project)
+        .join(ProjectQuotation, ProjectQuotation.project_id == Project.id)
+        .filter(ProjectQuotation.id == str(report["quotation_id"]))
+        .first()
+    )
+    if project is None:
+        return
+    for event in events:
+        logger.warning(
+            "project quotation recompute: line=%s now below floor %s (%s)",
+            event["line_id"],
+            event["floor_value"],
+            event["floor_level"],
+        )
+        try:
+            notify.notify_floor_breach(
+                db, project=project, event=event, actor_user_id=actor_user_id
+            )
+        except Exception:  # noqa: BLE001 -- never fail a recompute over a notification
+            logger.exception("project quotation recompute: breach notification failed")
+
+
 def _version_for_edit(db: Session, version_id: str, current_user: dict):
     from app.models.projects import ProjectQuotationVersion
 
@@ -624,6 +783,244 @@ async def delete_series(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+def _series_or_404(db: Session, series_id: str):
+    from app.models.projects import ProjectSeries
+
+    from app.services.error_handler import AppException
+
+    series = db.query(ProjectSeries).filter(ProjectSeries.id == series_id).first()
+    if not series:
+        raise AppException(
+            status_code=404, message="Series not found.", code="series_not_found"
+        )
+    return series
+
+
+@router.get(
+    "/config/series/{series_id}/products/rows",
+    response_model=ListResponse[SeriesProductRowResponse],
+)
+async def list_series_product_rows(
+    series_id: str,
+    _user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The series' products with their price, percentage and derived floor (T2).
+
+    `/rows` rather than replacing the POST on `/products`: that path already means "load a
+    list of codes onto this series" and quietly giving the same path a second meaning by
+    method is how a route ends up doing two jobs nobody can name.
+    """
+    try:
+        validate_uuid_path(series_id, resource="Series")
+        _series_or_404(db, series_id)
+        return _envelope(pricing.series_product_rows(db, series_id))
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.patch(
+    "/config/series/{series_id}/products/{product_id}",
+    response_model=SeriesProductRowResponse,
+)
+async def update_series_product_pricing(
+    series_id: str,
+    product_id: str,
+    payload: SeriesProductPricingUpdate,
+    _user: dict = Depends(require_permission(CONFIG_EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Set or clear one product's price and percentage, from the table on the series page."""
+    try:
+        validate_uuid_path(series_id, resource="Series")
+        validate_uuid_path(product_id, resource="Product")
+        series = _series_or_404(db, series_id)
+        row = pricing.set_series_product_pricing(
+            db,
+            series=series,
+            product_id=product_id,
+            selling_price=payload.selling_price,
+            max_discount_pct=payload.max_discount_pct,
+        )
+        db.commit()
+        return row
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.delete(
+    "/config/series/{series_id}/products/{product_id}",
+    status_code=204,
+)
+async def remove_series_product(
+    series_id: str,
+    product_id: str,
+    _user: dict = Depends(require_permission(CONFIG_EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Take one product off the series. Hard delete, confirmed on the screen."""
+    try:
+        validate_uuid_path(series_id, resource="Series")
+        validate_uuid_path(product_id, resource="Product")
+        series = _series_or_404(db, series_id)
+        if not pricing.remove_series_product(db, series=series, product_id=product_id):
+            raise AppException(
+                status_code=404,
+                message="That product is not in this series.",
+                code="series_product_not_found",
+            )
+        db.commit()
+        return Response(status_code=204)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/config/series/{series_id}/products",
+    response_model=ProjectSeriesProductImportResponse,
+)
+async def import_series_products(
+    series_id: str,
+    payload: ProjectSeriesProductImport,
+    _user: dict = Depends(require_permission(CONFIG_EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Load a list of product CODES onto a series (S18).
+
+    The client's definition of "standard" is a list of codes, not a set of categories:
+    "any product that is not in the sheet that I provided you are flagged as non standard".
+    Their 151-cell sheet reaches 167 catalogue rows across 31 categories holding 15,048
+    products, so nominating categories could not express it.
+
+    Every code that did NOT match comes back in the response. That is deliberate and it is
+    the more useful half of the answer: their sheet quotes base codes the catalogue only
+    stocks as suffixed variants, so a third of a real list can miss, and a loader that
+    dropped them silently would turn a disagreement between two systems into a number
+    nobody could interrogate.
+    """
+    try:
+        validate_uuid_path(series_id, resource="Series")
+        series = _series_or_404(db, series_id)
+        report = pricing.apply_series_product_codes(
+            db,
+            series=series,
+            codes=payload.codes,
+            mode=payload.mode,
+        )
+        db.commit()
+        return report
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/config/series/{series_id}/products/upload",
+    response_model=SeriesProductImportJobResponse,
+    status_code=202,
+)
+async def upload_series_products(
+    series_id: str,
+    file: UploadFile = File(..., description="An .xlsx or .csv carrying a PRODUCT CODE column"),
+    mode: str = Form("append"),
+    user: dict = Depends(require_permission(CONFIG_EDIT)),
+    db: Session = Depends(get_db),
+):
+    """The same import, off the file the admin already has. Queued, not run here.
+
+    **202, not 200.** The client's workbook is 9.2 MB and takes seconds to open. This route
+    is `async def`, so parsing it inline ran on the event loop and stalled every other
+    request in the process for the duration - the upload was not merely slow for the person
+    who started it, it was slow for everybody. The read now happens on the imports worker
+    and this returns a job id the browser polls at `GET /system/jobs/{job_id}/status`, which
+    already reports progress, the finished report, and the error if it died.
+
+    The file is validated for emptiness and size HERE, synchronously, because both are
+    instant and a queued job that fails a second later on "that file is empty" is a worse
+    way to say the same thing.
+
+    The codes are read by HEADING across every sheet, never by column position: the client's
+    own workbook puts a title on row 1, the headings on row 2 and the codes in column F, and
+    a positional reader would turn the day a column moves into a hundred wrong products
+    called standard.
+
+    Three columns are read: the code, the DEVELOPERS price the series sells at, and the
+    DISTRIBUTORS percentage a distributor may take off it. The PRODUCT IMAGE column is still
+    ignored - that decision belongs to `product_attachments.is_primary` and reading it here
+    would be a second source of truth - and so are the empty CENTRAL / NORTHEN / SOUTHERN
+    columns, which would be a per-region price model rather than this one.
+    """
+    try:
+        validate_uuid_path(series_id, resource="Series")
+        from app.services.error_handler import AppException
+        from app.services.job_service import JobService
+        from app.services.queue_service import enqueue_job
+        from app.tasks.project_document_tasks import PROJECT_DOCS_QUEUE
+        from app.tasks.project_series_tasks import JOB_TYPE, process_series_product_import
+
+        if mode not in pricing.SERIES_IMPORT_MODES:
+            raise AppException(
+                status_code=422,
+                message=f"Unknown mode '{mode}'. Use append or replace.",
+                code="series_import_mode_invalid",
+            )
+
+        series = _series_or_404(db, series_id)
+        content = await file.read()
+        if not content:
+            raise AppException(
+                status_code=422, message="That file is empty.", code="series_import_empty_file"
+            )
+        if len(content) > _SERIES_UPLOAD_MAX_BYTES:
+            raise AppException(
+                status_code=422,
+                message="That file is larger than 10 MB. Paste the codes instead.",
+                code="series_import_file_too_large",
+            )
+
+        filename = file.filename or "products.xlsx"
+        job_service = JobService(db)
+        job = job_service.create_job(
+            job_type=JOB_TYPE,
+            user_id=user["id"],
+            filename=filename,
+            metadata={"series_id": str(series.id), "mode": mode},
+        )
+        db.commit()
+        rq_job = enqueue_job(
+            process_series_product_import,
+            str(job.id),
+            content,
+            filename,
+            str(series.id),
+            mode,
+            user["id"],
+            # `project_docs`, NOT `imports`. Every checkout shares one Redis, and the
+            # workers running out of the other worktrees listen on `imports` without
+            # having this task module - one of them would claim the job and fail it on
+            # import, which reads as a bug in the code that enqueued it. `project_docs`
+            # is this checkout's own queue.
+            queue_name=PROJECT_DOCS_QUEUE,
+            job_timeout=1800,
+            # Pre-assign the RQ id to the DB job_id: the worker can finish before this
+            # request commits, and rewriting the id afterwards makes its completion land
+            # on a row nobody is polling.
+            job_id=str(job.job_id),
+        )
+        job_service.update_job_with_rq_id(job, rq_job.id)
+        return {"job_id": rq_job.id, "series_id": str(series.id), "mode": mode}
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+# A list of codes, not a document. Ten megabytes is already far past any real sheet and
+# still small enough that reading it into memory is not a decision worth agonising over.
+_SERIES_UPLOAD_MAX_BYTES = 10 * 1024 * 1024
+
+
 def _serialize_series(
     db: Session,
     *,
@@ -631,11 +1028,12 @@ def _serialize_series(
     series_id: Optional[str] = None,
     include_inactive: bool = True,
 ) -> List[dict]:
-    from app.models.product import ProductCategory
+    from app.models.product import Product, ProductCategory
     from app.models.projects import (
         ProjectQuotation,
         ProjectSeries,
         ProjectSeriesCategory,
+        ProjectSeriesProduct,
     )
 
     query = db.query(ProjectSeries).filter(ProjectSeries.company_id == company_id)
@@ -668,6 +1066,19 @@ def _serialize_series(
         else {}
     )
 
+    # Products nominated BY NAME (S18), resolved straight to their codes: the screen names
+    # them, and no UUID reaches the UI. One query for every series on the page.
+    nominated_products: dict = {}
+    product_links = (
+        db.query(ProjectSeriesProduct.series_id, Product.product_code)
+        .join(Product, Product.id == ProjectSeriesProduct.product_id)
+        .filter(ProjectSeriesProduct.series_id.in_(ids))
+        .order_by(Product.product_code.asc())
+        .all()
+    )
+    for link_series_id, product_code in product_links:
+        nominated_products.setdefault(link_series_id, []).append(product_code)
+
     brand_ids = {row.brand_id for row in rows if row.brand_id}
     brand_names = {}
     if brand_ids:
@@ -690,6 +1101,7 @@ def _serialize_series(
     out = []
     for row in rows:
         mine = nominated.get(row.id, [])
+        codes = nominated_products.get(row.id, [])
         out.append(
             {
                 "id": row.id,
@@ -703,6 +1115,8 @@ def _serialize_series(
                 "covered_category_count": len(
                     pricing.category_with_descendants(db, mine)
                 ),
+                "product_count": len(codes),
+                "product_codes": codes,
                 "quotation_count": counts.get(row.id, 0),
             }
         )

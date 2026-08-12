@@ -787,6 +787,53 @@ class ProjectSeriesCategory(Base):
     )
 
 
+class ProjectSeriesProduct(Base):
+    """One product nominated into the series BY NAME (S18).
+
+    Categories alone could not express what the client actually means by "standard". Their
+    own template is a list of 151 product-code cells, and the 167 catalogue rows those cells
+    reach span 31 categories holding 15,048 products - so nominating the categories would
+    call fifteen thousand products standard in order to capture a hundred and sixty-seven,
+    and would never flag the sibling SKU that is the exact thing the alert exists to catch.
+
+    This does NOT replace ``ProjectSeriesCategory``. The two combine: a product is in the
+    series if it is nominated here OR sits under a nominated category. Categories remain the
+    right tool for "everything under Basins is fair game", and a series may use either, both
+    or neither.
+
+    Keyed by (series, product) so nominating twice is a no-op rather than a duplicate row -
+    the same shape, and the same reason, as the category link above it.
+    """
+
+    __tablename__ = "project_series_products"
+
+    series_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_series.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    product_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("products.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    #: What THIS series sells the product for (the sheet's DEVELOPERS column). Not the
+    #: product's list price and not a replacement for it: the same product can sit in two
+    #: series at two prices, which is exactly why it lives on the link row.
+    selling_price = Column(Numeric(12, 2), nullable=True)
+    #: How much further a distributor may come down from ``selling_price``, as a PERCENT -
+    #: ``6`` means 6%. The sheet's DISTRIBUTORS column, which writes it as ``6 % MAX`` in one
+    #: tab and ``0.06`` in another; both normalise to ``6`` on the way in.
+    max_discount_pct = Column(Numeric(5, 2), nullable=True)
+
+    #: **NULL is silence, never zero.** Of the client's 151 codes, 95 carry a price and 56 a
+    #: discount, and the whole `shower` tab carries neither. A line whose series gives no
+    #: discount therefore falls through to ``price_floor_rules`` rather than acquiring a hard
+    #: floor at the selling price, which would put 56 products in breach the moment anybody
+    #: discounted a cent. See PLAN-series-catalogue-and-pricing-pages.md.
+
+
 class PriceFloorRule(Base, CompanyScopedMixin):
     """The lowest price a line may carry, per level (AC-E6).
 

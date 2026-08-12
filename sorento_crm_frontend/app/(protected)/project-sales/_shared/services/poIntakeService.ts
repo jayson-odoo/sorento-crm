@@ -117,6 +117,29 @@ export async function updatePOVersionHeader(
   return asVersionOrNull(await readJson(response));
 }
 
+/**
+ * Read this document again, on the same version.
+ *
+ * `POST /purchase-order-versions/{id}/retry-extraction` -> the whole version body, back on
+ * `queued`. 409 when there is nothing to retry: the read is genuinely still in flight, the
+ * document has already been read, or the version is confirmed. The 409 message says which,
+ * and is shown where the button is.
+ *
+ * This exists because a read can end without anything being written onto the row: the
+ * background work-horse can be killed, and a process that is killed does not run its own
+ * error handling. Re-uploading was the only way out of that, which loses the version
+ * number and the history for a document that was never the problem.
+ */
+export async function retryPOExtraction(versionId: string): Promise<POVersion | null> {
+  const response = await apiFetch(
+    `${BASE}/purchase-order-versions/${versionId}/retry-extraction`,
+    { method: 'POST' },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Could not start another read'));
+  return asVersionOrNull(await readJson(response));
+}
+
 /** 409 while any annotation is still proposed. The message is shown where the button is. */
 export async function confirmPOVersion(versionId: string): Promise<POVersion | null> {
   const response = await apiFetch(

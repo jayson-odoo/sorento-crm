@@ -195,6 +195,14 @@ class POVersionDetailResponse(BaseModel):
             "is legible. Null on documents read before this was recorded."
         ),
     )
+    extraction_started_at: Optional[datetime] = Field(
+        None,
+        description=(
+            "When the reader actually picked this document up. Present so a wait can be "
+            "reported as a length ('4 minutes so far') rather than as an unbounded "
+            "spinner. Null on documents uploaded before this was recorded."
+        ),
+    )
     page_count: Optional[int] = None
     pages_extracted: int = Field(
         0,

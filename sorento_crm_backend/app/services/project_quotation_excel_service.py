@@ -23,13 +23,21 @@ A rate-only line writes the words ``rate only`` and no number at all (AC-C2 / AC
 matters more than on paper: 0.00 in that cell tells a QS the item is free AND invites its rate into
 any column they sum.
 
-**Deviation from the PDF, deliberate.** The ``PRODUCT IMAGE`` column carries the image's FILENAME,
-not the picture. The column still collapses per sheet when no line on that sheet has an image
-(AC-F4), which is the rule that matters for readability. Embedding would mean pulling bytes from
-object storage and anchoring floating pictures over cells (an openpyxl drawing is not a cell value,
-so it does not survive the sort/filter a QS immediately applies), and it would add a Pillow
-dependency this backend does not declare. The workbook is a pricing artifact; the PDF remains the
-one with the photographs.
+**The ``PRODUCT IMAGE`` column carries the PICTURE, anchored over its line's cell in that column,
+exactly as the client's own issued workbook does** (`Cabana Elmina- nadi cergas R2.xlsx`: 24
+photographs, every one in column B, at most one per line). The cell's VALUE stays empty, again as
+in their file, so nothing shows through around the picture.
+
+This reverses an earlier decision here to carry the filename instead. That decision's reason was
+real and still is - an openpyxl drawing is not a cell value, so it does not travel when the QS
+sorts or filters the sheet - and it is outweighed by the client opening their own quotation and
+asking for the pictures. A drifting picture is untidy; the PRODUCT CODE column still identifies
+every row after a sort, so it is not ambiguous. The column still collapses per sheet when no line
+on that sheet has one (AC-F4), which is the rule that matters for readability.
+
+Bytes come through ``product_image_service``, downscaled into a bounded box first: the live
+catalogue's chosen photographs average 1.1 MB and the largest is 4.3 MB, so 52 originals would be
+a workbook nobody opens twice.
 
 Also deliberately absent: the cover letter and the terms. They are prose belonging to the document
 of record, and pasting them into a spreadsheet the reader is about to re-sort adds nothing they can
@@ -56,7 +64,7 @@ from app.models.projects import (
     ProjectQuotationIssue,
     ProjectQuotationLine,
 )
-from app.models.resources import Attachment
+from app.services import product_image_service as product_images
 from app.services import project_quotation_pdf_service as pdf
 
 logger = logging.getLogger(__name__)
@@ -70,6 +78,11 @@ QTY_FORMAT = "#,##0.##"
 
 SCOPE_TOTAL_LABEL = "TOTAL"
 GRAND_TOTAL_LABEL = "TOTAL AMOUNT"
+
+# Longest edge of an anchored picture, in pixels. The PRODUCT IMAGE column is 26 characters wide
+# (~185 px), and the client's own workbook runs 44-268 px across at row heights of 84-171 pt, so
+# this sits inside their range without ever spilling into the description beside it.
+PICTURE_BOX = 110
 
 # Excel refuses to open a workbook whose sheet title is over 31 characters or contains any of
 # these, and openpyxl raises on the characters before a byte is written. Scope labels are free text
@@ -193,24 +206,49 @@ def _sheet_title(label: Any, position: int, used: Set[str]) -> str:
 # --------------------------------------------------------------------- images
 
 
-def _image_names(db: Session, lines: Sequence[ProjectQuotationLine]) -> Dict[str, str]:
-    """Filename per attachment id, fetched in one query for the whole scope.
+def _picture_bytes(
+    db: Session, lines: Sequence[ProjectQuotationLine]
+) -> Dict[str, bytes]:
+    """Downscaled picture bytes per attachment id, fetched once for the whole sheet.
 
-    Best-effort by design: a missing attachment row leaves the cell empty rather than failing the
-    export. The reader is waiting for a price, not a filename.
+    Once per ATTACHMENT, not once per line: a product commonly repeats down a scope (a WC beside
+    its valve and its hose), and fetching per line would re-download and re-encode the same
+    photograph each time. openpyxl needs a distinct ``Image`` object per anchor, so the bytes are
+    what is cached and a fresh object is built from them at each row (see ``_anchor``).
+
+    Best-effort by design: a picture that cannot be fetched or decoded is simply absent, and its
+    cell is left empty rather than the export failing. The reader is waiting for a price, not a
+    photograph.
     """
     ids = {str(line.image_attachment_id) for line in lines if line.image_attachment_id}
-    if not ids:
-        return {}
-    rows = db.query(Attachment).filter(Attachment.id.in_(ids)).all()
-    names: Dict[str, str] = {}
-    for row in rows:
-        name = _text(getattr(row, "original_filename", None)) or _text(
-            getattr(row, "stored_filename", None)
-        )
-        if name:
-            names[str(row.id)] = name
-    return names
+    pictures: Dict[str, bytes] = {}
+    for attachment_id in sorted(ids):
+        rendered = product_images.render(db, attachment_id)
+        if rendered is not None:
+            pictures[attachment_id] = rendered.data
+    return pictures
+
+
+def _anchor(sheet: Worksheet, row: int, column: int, data: bytes) -> Optional[int]:
+    """Put the picture over that cell, and return the height it needs in pixels.
+
+    Sized into a box rather than placed at its natural size: a 240 px photograph in a column 26
+    characters wide would lie across the description beside it and over the two lines below.
+    """
+    # Imported here rather than at module scope: it is the one openpyxl entry point that needs
+    # Pillow, and the rest of this module has to keep working on a host without it.
+    from openpyxl.drawing.image import Image as XLImage
+
+    try:
+        picture = XLImage(io.BytesIO(data))
+        scale = min(PICTURE_BOX / max(picture.width, 1), PICTURE_BOX / max(picture.height, 1), 1)
+        picture.width = int(picture.width * scale)
+        picture.height = int(picture.height * scale)
+        sheet.add_image(picture, f"{get_column_letter(column)}{row}")
+        return picture.height
+    except Exception:  # noqa: BLE001 - cosmetic, never fatal to the export
+        logger.warning("quotation workbook: cannot anchor product image", exc_info=True)
+        return None
 
 
 # -------------------------------------------------------------------- writing
@@ -329,7 +367,7 @@ def _write_scope(
     show_image = any(line.image_attachment_id for line in lines)
     columns = [c for c in pdf._COLUMNS if c != pdf._IMAGE_COLUMN or show_image]
     money_column = len(columns)
-    images = _image_names(db, lines) if show_image else {}
+    pictures = _picture_bytes(db, lines) if show_image else {}
     positions = {name: index for index, name in enumerate(columns, start=1)}
 
     # The label verbatim, not upper-cased: it is the customer's own wording and it is also the tab
@@ -378,13 +416,17 @@ def _write_scope(
             alignment=_CENTER,
         )
         if show_image:
-            _put(
-                sheet,
-                row,
-                positions[pdf._IMAGE_COLUMN],
-                images.get(str(line.image_attachment_id or "")),
-                alignment=_WRAP_LEFT,
-            )
+            # The cell VALUE stays empty, as in the client's own workbook: text under the picture
+            # shows through around its edges, and re-appears the moment the sheet is sorted.
+            data = pictures.get(str(line.image_attachment_id or ""))
+            if data is not None:
+                height = _anchor(sheet, row, positions[pdf._IMAGE_COLUMN], data)
+                if height:
+                    # The row has to make room for what is sitting on it, or the picture lies over
+                    # the two lines below and the sheet becomes unreadable. Points, not pixels.
+                    needed = height * 0.75 + 4
+                    current = sheet.row_dimensions[row].height or 0
+                    sheet.row_dimensions[row].height = max(current, needed)
         _put(
             sheet,
             row,

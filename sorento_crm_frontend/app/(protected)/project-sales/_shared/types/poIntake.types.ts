@@ -119,6 +119,14 @@ export interface POVersion {
   pages_extracted?: number | null;
   /** Additive: how long the model took. Null on documents read before it was recorded. */
   extraction_elapsed_ms?: number | null;
+  /**
+   * Additive: when the reader actually picked this document up.
+   *
+   * Present so a wait can be reported as a length rather than as a spinner. "Reading for
+   * 4 minutes" is a fact somebody can judge; an indefinite spinner is the thing that had
+   * people staring at a job that had already died.
+   */
+  extraction_started_at?: string | null;
   /** Additive: pages extraction could not read. */
   failed_pages?: number[] | null;
   /** Additive: the PO row's approval stamps, nested. */
@@ -196,6 +204,16 @@ export interface POIntakeController {
   isConfirming: boolean;
   isStamping: boolean;
   isSavingHeader: boolean;
+  /** True while a re-read has been asked for and the version has not come back queued. */
+  isRetrying: boolean;
+  /**
+   * Read this document again, on the same version.
+   *
+   * Distinct from uploading it again: a re-read keeps the version number, the stored file
+   * and the history, and is the only sensible answer when the previous read did not fail
+   * on the document at all but was killed off mid-way.
+   */
+  retryExtraction: () => Promise<void>;
   updateHeader: (body: Partial<POVersionHeader>) => Promise<void>;
   updateLine: (lineId: string, body: POLineUpdateBody) => Promise<void>;
   confirm: () => Promise<void>;

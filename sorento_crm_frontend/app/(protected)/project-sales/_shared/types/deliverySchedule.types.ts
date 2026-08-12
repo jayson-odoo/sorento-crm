@@ -112,6 +112,11 @@ export interface DeliveryScheduleVersion {
   pages_extracted?: number | null;
   /** Additive: how long the model took. Null on documents read before it was recorded. */
   extraction_elapsed_ms?: number | null;
+  /**
+   * Additive: when the reader picked this document up, so a wait can be reported as a
+   * length rather than as a spinner with nothing behind it.
+   */
+  extraction_started_at?: string | null;
 
   /** GUESS: the header must name the PO and the person without rendering a UUID. */
   purchase_order_id?: string | null;

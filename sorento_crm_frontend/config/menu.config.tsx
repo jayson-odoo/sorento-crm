@@ -665,8 +665,13 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'projects.types.view',
       },
       {
-        title: 'Pricing Policy',
-        path: '/project-sales/pricing',
+        title: 'Series',
+        path: '/project-sales/series',
+        permission: 'projects.types.view',
+      },
+      {
+        title: 'Price Floors',
+        path: '/project-sales/price-floors',
         permission: 'projects.types.view',
       },
     ],
@@ -1589,8 +1594,13 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         permission: 'projects.types.view',
       },
       {
-        title: 'Pricing Policy',
-        path: '/project-sales/pricing',
+        title: 'Series',
+        path: '/project-sales/series',
+        permission: 'projects.types.view',
+      },
+      {
+        title: 'Price Floors',
+        path: '/project-sales/price-floors',
         permission: 'projects.types.view',
       },
     ],

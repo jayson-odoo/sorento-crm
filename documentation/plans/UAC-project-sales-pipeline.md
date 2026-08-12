@@ -168,9 +168,12 @@ disagree, the deviation is called out inline with a **[DEVIATION]** tag and a re
   in-place editing must not generate an alert storm.
 - **AC-E7** The floor value in force at the time is stored on the line. Changing floor policy
   later never retro-flags an existing quotation.
-- **AC-E8** Line image resolves from the product's attachments whose attachment type is an
+- **AC-E8** ~~Line image resolves from the product's attachments whose attachment type is an
   image class (`attachment_types.is_image_class`, seeded true for Product Photos), lowest
-  `sort_order`; an off-catalog line may upload its own.
+  `sort_order`; an off-catalog line may upload its own.~~ **WITHDRAWN, superseded by S21** -
+  see `quotation-product-images-acceptance-criteria.md` (SUP-1, SUP-2). "Lowest `sort_order`" is
+  the whichever-row-came-first fallback that `product_attachments.is_primary` exists to remove,
+  and an off-catalog line has no product for a flag to point at, so it never carries an image.
 - **AC-E9** Outcome lives on the quotation: open | won | lost, with a `loss_reason` lookup
   mandatory on lost. The lookup set is **configurable** (lookup set + binding, client-editable
   without a deploy), seeded with: price · spec locked to competitor · project cancelled or

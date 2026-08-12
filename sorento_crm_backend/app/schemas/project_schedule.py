@@ -119,6 +119,14 @@ class DeliveryScheduleVersionResponse(BaseModel):
             "is legible. Null on documents read before this was recorded."
         ),
     )
+    extraction_started_at: Optional[str] = Field(
+        None,
+        description=(
+            "When the reader actually picked this document up, so a wait can be reported "
+            "as a length rather than as an unbounded spinner. Null on documents uploaded "
+            "before this was recorded."
+        ),
+    )
     page_count: Optional[int] = Field(None, description="Pages in the document.")
     pages_extracted: int = Field(
         0, description="Pages that answered. Below page_count means the read was partial."

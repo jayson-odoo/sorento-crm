@@ -1364,3 +1364,54 @@ describe('QuotationDocumentClient standing badge', () => {
     expect(await screen.findByText('Draft')).toBeInTheDocument();
   });
 });
+
+/**
+ * The series a scope is quoted from has to be REACHABLE, and visible.
+ *
+ * This is the defect these tests exist for. The picker was only ever on the per-scope page,
+ * and once this document screen replaced that page as the way in, nothing linked to it: the
+ * one control deciding whether a line counts as standard could not be reached by clicking.
+ * The result was measurable - `series_id` was NULL on every quotation in the database, so
+ * nothing was checked and every Non-standard flag on screen was a stale leftover.
+ *
+ * A dead link cannot be caught by a test of the dialog, only by a test that starts where the
+ * user starts.
+ */
+describe('QuotationDocumentClient scope series', () => {
+  it('offers Edit scope on the open scope, so the series can be set at all', async () => {
+    seedOneScope();
+    renderScreen();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit scope' }));
+
+    // The dialog that carries the series picker, not a second copy of the form. Scoped to
+    // the dialog because the scope header names the series too, and a page-wide match would
+    // pass on that alone - i.e. it would pass even with the dialog never opening.
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Series', { selector: 'label' })).toBeInTheDocument();
+    expect(dialog.querySelector('#quotation-series')).not.toBeNull();
+  });
+
+  it('says which series the scope is quoted from', async () => {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({ grand_total: '9000.00', scopes: [scope()] }),
+    );
+    listQuotations.mockResolvedValue([
+      quotation({ series_id: 's1', series_name: 'Sanitaryware template' }),
+    ]);
+    listQuotationVersions.mockResolvedValue([version()]);
+    listQuotationLines.mockResolvedValue([line()]);
+    renderScreen();
+
+    expect(await screen.findByText('Sanitaryware template')).toBeInTheDocument();
+  });
+
+  it('says NO series when none is bound, rather than looking identically clean', async () => {
+    // The state the whole database was in. A scope checking nothing and a scope whose lines
+    // are all standard render the same lines; only this tells them apart.
+    seedOneScope();
+    renderScreen();
+
+    expect(await screen.findByText('No series')).toBeInTheDocument();
+  });
+});

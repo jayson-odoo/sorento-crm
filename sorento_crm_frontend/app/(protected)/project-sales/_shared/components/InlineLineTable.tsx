@@ -90,8 +90,24 @@ export interface InlineLineColumn<TRow> {
    * `index` is the row's position in the table, so a column can BE the position: an item
    * number is the row it sits on, not a string somebody types and has to renumber by hand
    * after every insert.
+   *
+   * `row` is the STORED row, or null for one staged in this edit session. A column that draws a
+   * fact the server decided - a product's chosen photograph, say - reads it from here and
+   * renders nothing while it is null, the same way `annotate` already does. Deriving such a fact
+   * from the draft would mean a second implementation in the browser that eventually disagrees.
    */
-  derive?: (draft: InlineDraft, index: number) => React.ReactNode;
+  derive?: (draft: InlineDraft, index: number, row: TRow | null) => React.ReactNode;
+  /**
+   * A unit printed INSIDE the cell, before the value - `RM` on a price.
+   *
+   * On the input rather than in the header because a column of bare numbers beside another
+   * column of bare numbers (a price beside a percentage) gives the reader nothing to tell
+   * them apart mid-scroll, and a header scrolls out of sight on a table of ninety rows.
+   *
+   * It is decoration only: the draft still holds the plain decimal string the API wants, so
+   * no call site has to strip a currency symbol back off before saving.
+   */
+  prefix?: string;
   /** Caps what can be typed, so a column with a server length limit cannot 422. */
   maxLength?: number;
   /** Per-cell shape check. A message marks the cell; it does not raise a toast. */
@@ -216,6 +232,19 @@ export interface InlineLineTableProps<TRow> {
    * is what made the header disagree with the footer directly under it.
    */
   onDraftsChange?: (drafts: InlineDraft[]) => void;
+  /**
+   * A filter over the LIVE drafts. Rows that fail it are HIDDEN, not removed.
+   *
+   * The distinction is the whole design: filtering the `rows` prop instead would tear the
+   * non-matching rows out of the table's state - their unsaved drafts with them - so
+   * searching mid-edit would silently discard what somebody had typed on line 34. A hidden
+   * row keeps its state, keeps its place in the drafts array (totals still sum the WHOLE
+   * table), and keeps its item number, because "item 12" printed on the customer's paper
+   * must not become "item 3" just because a search is narrowing the view.
+   */
+  rowFilter?: (row: TRow | null, draft: InlineDraft) => boolean;
+  /** Shown in place of rows when the filter hides all of them. */
+  filterEmptyHint?: string;
 }
 
 interface RowState {
@@ -291,6 +320,8 @@ export function InlineLineTable<TRow>({
   emptyHint,
   deleteDescription,
   onDraftsChange,
+  rowFilter,
+  filterEmptyHint,
 }: InlineLineTableProps<TRow>) {
   const [states, setStates] = React.useState<Record<string, RowState>>({});
   const [newRowKeys, setNewRowKeys] = React.useState<string[]>([]);
@@ -816,10 +847,33 @@ export function InlineLineTable<TRow>({
               </tr>
             )}
 
+            {/* The filter hides rows AT RENDER; the map below still runs over every key so
+                `rowIndex` stays each row's true position - item numbers must not renumber
+                because a search is narrowing the view. State, drafts and totals are
+                untouched: a hidden row is still part of the table. */}
+            {rowKeys.length > 0 &&
+              rowFilter &&
+              rowKeys.every((key) => {
+                const held = states[key];
+                return held
+                  ? !rowFilter(rowByKey.get(key) ?? null, held.draft)
+                  : true;
+              }) && (
+                <tr>
+                  <td
+                    colSpan={columns.length + (readOnly ? 0 : 1)}
+                    className="px-3 py-6 text-center text-sm text-muted-foreground"
+                  >
+                    {filterEmptyHint ?? 'No line matches.'}
+                  </td>
+                </tr>
+              )}
+
             {rowKeys.map((rowKey, rowIndex) => {
               const row = rowByKey.get(rowKey) ?? null;
               const held = states[rowKey];
               if (!held) return null;
+              if (rowFilter && !rowFilter(row, held.draft)) return null;
               // Once a row has been challenged, its marks track what is typed, so fixing
               // the cell clears the mark instead of leaving it red until the next save.
               //
@@ -1125,7 +1179,7 @@ function InlineCell<TRow>({
   if (column.kind === 'derived') {
     return (
       <span className={`block text-sm font-medium ${alignment}`}>
-        {column.derive?.(draft, rowIndex) ?? ''}
+        {column.derive?.(draft, rowIndex, row) ?? ''}
       </span>
     );
   }
@@ -1187,7 +1241,7 @@ function InlineCell<TRow>({
     );
   }
 
-  return (
+  const input = (
     <Input
       value={value}
       aria-label={label}
@@ -1199,11 +1253,24 @@ function InlineCell<TRow>({
       // Money and quantity stay text: a number input hands back a re-serialised float,
       // and the contract on both endpoints is a decimal STRING.
       inputMode={column.kind === 'number' ? 'decimal' : undefined}
-      className={`h-8 ${alignment} ${
+      className={`h-8 ${alignment} ${column.prefix ? 'ps-9' : ''} ${
         invalid ? 'border-destructive focus-visible:ring-destructive/30' : ''
       }`}
       onChange={(event) => onChange(event.target.value)}
     />
+  );
+
+  if (!column.prefix) return input;
+
+  // `pointer-events-none` so clicking the unit still lands in the field: a symbol that
+  // swallows the click makes the left third of a money cell feel broken.
+  return (
+    <div className="relative">
+      <span className="pointer-events-none absolute inset-y-0 start-0 flex items-center ps-2.5 text-xs text-muted-foreground">
+        {column.prefix}
+      </span>
+      {input}
+    </div>
   );
 }
 

@@ -2270,10 +2270,20 @@ class ProductAttachmentService:
         ).first()
         if existing:
             update_dict = product_attachment_data.model_dump(exclude_unset=True)
+            chosen = update_dict.pop("is_primary", None)
             for key, value in update_dict.items():
                 if key in ("product_id", "attachment_id"):
                     continue
                 setattr(existing, key, value)
+            # Same single decision as the update path: setting this flag without clearing the
+            # previous holder trips the partial unique index, so the n8n re-post of a replaced
+            # photograph would 500 rather than move the choice.
+            if chosen:
+                from app.services import product_image_service
+
+                product_image_service.choose(self.db, existing)
+            elif chosen is not None:
+                existing.is_primary = False
             from datetime import datetime as _dt
             existing.updated_at = _dt.utcnow()
             self.db.commit()
@@ -2289,9 +2299,16 @@ class ProductAttachmentService:
         attachment_dict = product_attachment_data.model_dump()
         if created_by:
             attachment_dict["created_by"] = created_by
+        # Held back until the row exists, so `choose` can clear the previous holder first.
+        chosen = bool(attachment_dict.pop("is_primary", False))
 
         product_attachment = ProductAttachment(**attachment_dict)
         self.db.add(product_attachment)
+        if chosen:
+            from app.services import product_image_service
+
+            self.db.flush()
+            product_image_service.choose(self.db, product_attachment)
         self.db.commit()
         self.db.refresh(product_attachment)
 
@@ -2301,16 +2318,33 @@ class ProductAttachmentService:
         ).filter(ProductAttachment.id == product_attachment.id).first()
     
     def update_product_attachment(self, product_attachment_id: str, product_attachment_data: ProductAttachmentUpdate):
-        """Update a product attachment relationship."""
+        """Update a product attachment relationship.
+
+        ``is_primary`` is the ONE decision about which photograph is the product, read by the
+        brochure, by 3D-model generation and by the quotation. The invariant is exactly one per
+        product, and `product_attachments` holds a partial unique index on
+        `(company_id, product_id) WHERE is_primary IS TRUE` to enforce it - so setting a second
+        one here without clearing the first does not quietly produce two, it 500s the save.
+        Routed through `product_image_service.choose` so this endpoint and every other writer
+        record the choice the same way.
+        """
         product_attachment = self.get_product_attachment(product_attachment_id)
-        
+
         update_data = product_attachment_data.model_dump(exclude_unset=True)
+        chosen = update_data.pop("is_primary", None)
         for key, value in update_data.items():
             setattr(product_attachment, key, value)
-        
+        if chosen is not None:
+            from app.services import product_image_service
+
+            if chosen:
+                product_image_service.choose(self.db, product_attachment)
+            else:
+                product_attachment.is_primary = False
+
         from datetime import datetime
         product_attachment.updated_at = datetime.now()
-        
+
         self.db.commit()
         self.db.refresh(product_attachment)
         

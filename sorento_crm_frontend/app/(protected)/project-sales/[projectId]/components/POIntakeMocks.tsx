@@ -35,6 +35,7 @@ export type POMockScenario =
   | 'mismatch'
   | 'partial'
   | 'failed'
+  | 'stranded'
   | 'empty'
   | 'reviewed'
   | 'confirmed'
@@ -47,6 +48,7 @@ const SCENARIOS: POMockScenario[] = [
   'mismatch',
   'partial',
   'failed',
+  'stranded',
   'empty',
   'reviewed',
   'confirmed',
@@ -292,16 +294,41 @@ function baseVersion(lines: POVersionLine[]): POVersion {
   };
 }
 
+/**
+ * The two failures read differently on purpose.
+ *
+ * `failed` is the document: a blank page at 300 dpi, and a better scan is the answer.
+ * `stranded` is us: the reader was killed part-way, the document was never in question,
+ * and reading it again on the same version is the answer. If those two produced the same
+ * sentence the screen would be telling somebody to re-scan a document that scans fine.
+ */
+const STRANDED_REASON =
+  'The reader stopped before it finished. The background worker was terminated ' +
+  '(signal 15) after 4 minutes, so nothing was recorded from this document. It is ' +
+  'still stored: read it again.';
+
 export function mockVersion(scenario: POMockScenario): POVersion {
-  if (scenario === 'queued' || scenario === 'running' || scenario === 'failed') {
+  if (
+    scenario === 'queued' ||
+    scenario === 'running' ||
+    scenario === 'failed' ||
+    scenario === 'stranded'
+  ) {
     const shell = baseVersion([]);
+    const failed = scenario === 'failed' || scenario === 'stranded';
     return {
       ...shell,
-      extraction_state: scenario === 'failed' ? 'failed' : scenario,
+      extraction_state: failed ? 'failed' : scenario,
+      extraction_started_at:
+        scenario === 'queued'
+          ? null
+          : new Date(Date.now() - 4 * 60 * 1000).toISOString().slice(0, 19),
       extraction_error:
-        scenario === 'failed'
-          ? 'The document could not be read. Page 1 came back blank at 300 dpi.'
-          : null,
+        scenario === 'stranded'
+          ? STRANDED_REASON
+          : scenario === 'failed'
+            ? 'The document could not be read. Page 1 came back blank at 300 dpi.'
+            : null,
       pages_extracted: null,
       totals: {
         extracted_total: null,
@@ -571,6 +598,20 @@ export function usePOIntakeMockController(
     isConfirming: false,
     isStamping: false,
     isSavingHeader: false,
+    isRetrying: false,
+    retryExtraction: async () => {
+      setVersion((current) =>
+        current
+          ? {
+              ...current,
+              extraction_state: 'queued',
+              extraction_error: null,
+              extraction_started_at: null,
+            }
+          : current,
+      );
+      toast.success('Reading again in this sample. Nothing was sent to the server.');
+    },
     updateHeader: async (body) => {
       setVersion((current) =>
         current ? { ...current, header: { ...current.header, ...body } } : current,

@@ -43,6 +43,7 @@ from app.models.projects import (
     QuotationSignature,
 )
 from app.services import project_quotation_approval_service as approvals
+from app.services import project_quotation_image_service as quotation_images
 from app.services import project_quotation_service as scope_service
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
@@ -374,6 +375,12 @@ def issue(
     grand = ZERO
     for scope in scopes:
         version = scope_service.current_version(db, scope.id)
+        # S21. The photograph each line goes out with, written down at the moment it goes out.
+        # A draft resolves its picture live off `product_attachments.is_primary`, because almost
+        # every product is priced before anybody has chosen one; issuing is what turns today's
+        # answer into the record of what was sent. A FILL only, so a scope carried unchanged into
+        # R2 keeps exactly the pictures R1 showed.
+        quotation_images.freeze_version_images(db, version.id)
         total = version_total(db, version)
         grand += total
         db.add(

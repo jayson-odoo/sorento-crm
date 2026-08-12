@@ -621,6 +621,41 @@ export interface QuotationVersion {
   created_at?: string | null;
 }
 
+/**
+ * Which photograph of the line's product the customer will see (S21).
+ *
+ * Resolved by the server from `product_attachments.is_primary` - the SAME flag the brochure
+ * reads - so the quotation, the brochure and 3D-model generation cannot show three different
+ * pictures of one product. The four states are deliberately distinct because the ACTION differs:
+ *
+ * - `chosen`      the picture, and nothing to do.
+ * - `not_chosen`  photographs exist but nobody has said which one is the product. One click.
+ * - `no_photos`   there is nothing to choose between. The fix is an upload, not a click.
+ * - `off_catalog` no product at all, so there is nothing a flag could point at, ever.
+ */
+export type QuotationLineImageState =
+  | 'chosen'
+  | 'not_chosen'
+  | 'no_photos'
+  | 'off_catalog';
+
+export interface QuotationLineImage {
+  state: QuotationLineImageState;
+  /** A signed THUMBNAIL. Only ever present on `chosen`. */
+  url?: string | null;
+  /**
+   * The signed ORIGINAL, for the viewer that opens on click. The thumbnail is ~320px and turns
+   * to mush as soon as somebody zooms. Both URLs are reused server-side for a window so the
+   * browser can actually cache the bytes.
+   */
+  preview_url?: string | null;
+  /** Lets the viewer download through the authenticated attachments route. */
+  attachment_id?: string | null;
+  filename?: string | null;
+  /** Photographs somebody could choose between. Zero on `no_photos` and `off_catalog`. */
+  candidate_count: number;
+}
+
 export interface QuotationLine {
   id: string;
   version_id: string;
@@ -629,6 +664,8 @@ export interface QuotationLine {
   description?: string | null;
   list_price?: string | null;
   image_attachment_id?: string | null;
+  /** The picture cell. Absent on a payload from before S21. */
+  product_image?: QuotationLineImage | null;
 
   unit_price: string;
   quantity: string;
@@ -724,7 +761,138 @@ export interface ProjectSeries {
   category_names: string[];
   /** Nominated plus every descendant: what the non-standard check compares against. */
   covered_category_count: number;
+  /** Products nominated BY NAME, independently of any category (S18). */
+  product_count: number;
+  /** Those products' codes. Codes, not ids: no UUID reaches the screen. */
+  product_codes: string[];
   quotation_count: number;
+}
+
+/**
+ * One product on a series, with what this series sells it for (T2).
+ *
+ * Both money fields are optional and a `null` means the series has NOT said - never zero.
+ * Of the client's 151 codes, 95 carry a price and 56 a percentage, so an empty cell is the
+ * common case and has to read as "not stated".
+ */
+export interface SeriesProductRow {
+  product_id: string;
+  product_code?: string | null;
+  product_name?: string | null;
+  /** What this series sells it for. The sheet's DEVELOPERS column. */
+  selling_price?: string | null;
+  /** A PERCENT: `6` means 6%. The sheet's DISTRIBUTORS column. */
+  max_discount_pct?: string | null;
+  /**
+   * `selling_price` less `max_discount_pct`, computed on the SERVER and null unless both are
+   * set. Never recalculated here: the pricing engine enforces with the same function, and a
+   * second implementation in the browser could disagree with the one that blocks a save.
+   */
+  derived_floor?: string | null;
+}
+
+/** A list of product codes to load onto a series (S18). */
+export interface SeriesProductImportBody {
+  codes: string[];
+  /** append = add to what the series lists. replace = make it say exactly this. */
+  mode: 'append' | 'replace';
+}
+
+/**
+ * What the import did, and - the half that matters - what it could not do.
+ *
+ * `unmatched_codes` is never empty by accident: the client's own sheet quotes base codes
+ * the catalogue only stocks as suffixed variants, so a real list can miss a third of its
+ * rows. Reporting a smaller success number instead would hide that.
+ */
+export interface SeriesProductImportResult {
+  series_id: string;
+  series_name: string;
+  mode: 'append' | 'replace';
+  submitted: number;
+  unique_codes: number;
+  matched_codes: number;
+  added: number;
+  already_present: number;
+  removed: number;
+  product_count: number;
+  unmatched_codes: string[];
+}
+
+/**
+ * A queued sheet load. No counts on purpose: the upload answers before a single code has
+ * been read, and a zero would be indistinguishable from a sheet that matched nothing.
+ */
+export interface SeriesProductImportJob {
+  job_id: string;
+  series_id: string;
+  mode: 'append' | 'replace';
+}
+
+/** One poll of a background import. `result` is the finished report, or null until then. */
+export interface ImportJobStatus {
+  job_id: string;
+  status: string;
+  progress: {
+    total: number;
+    processed: number;
+    successful: number;
+    failed: number;
+    skipped: number;
+    percentage: number;
+  } | null;
+  result: SeriesProductImportResult | null;
+  error: string | null;
+}
+
+/**
+ * Job states that mean the work is over, one way or the other.
+ *
+ * `str(JobStatus.FAILED)` on the server is `'JobStatus.FAILED'`, not `'failed'` - RQ's
+ * status is a `(str, Enum)` whose `__str__` is the Enum's - so both spellings are accepted
+ * rather than trusting a serialiser we do not own. A poll loop that never recognises the
+ * terminal state polls until the tab closes.
+ */
+export const IMPORT_JOB_DONE = ['completed', 'finished'];
+export const IMPORT_JOB_DEAD = ['failed', 'cancelled', 'canceled', 'stopped'];
+
+export function importJobPhase(status: string): 'running' | 'done' | 'dead' {
+  const value = (status || '').split('.').pop()!.toLowerCase();
+  if (IMPORT_JOB_DONE.includes(value)) return 'done';
+  if (IMPORT_JOB_DEAD.includes(value)) return 'dead';
+  return 'running';
+}
+
+/**
+ * The two guardrail answers for one DRAFT line, judged now (not at save).
+ *
+ * `floor_value` rides along so a breach can be argued with, the same fields the saved
+ * line carries in `floor_value_applied` / `floor_level_applied`.
+ */
+export interface QuotationLineVerdict {
+  is_non_standard: boolean;
+  is_below_floor: boolean;
+  floor_value: string | null;
+  floor_level: string | null;
+}
+
+/** What re-asking the guardrails changed on one version (S19). */
+export interface QuotationRecomputeResult {
+  version_id: string;
+  version_no: number;
+  quotation_id: string;
+  scope_label?: string | null;
+  line_count: number;
+  changed_count: number;
+  now_non_standard: number;
+  no_longer_non_standard: number;
+  now_below_floor: number;
+  no_longer_below_floor: number;
+  floor_changed: number;
+  /** Lines naming a product this company's catalogue does not carry. */
+  unresolved_products: number;
+  /** The lines that moved, named the way a person names them. */
+  changed_lines: string[];
 }
 
 export interface ProjectSeriesBody {

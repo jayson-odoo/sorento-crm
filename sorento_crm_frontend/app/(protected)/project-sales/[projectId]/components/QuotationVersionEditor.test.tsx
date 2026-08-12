@@ -46,6 +46,8 @@ const createQuotationLine = vi.fn();
 const updateQuotationLine = vi.fn();
 const deleteQuotationLine = vi.fn();
 const replaceQuotationLines = vi.fn();
+const recomputeQuotationVersion = vi.fn();
+const judgeQuotationLine = vi.fn();
 
 vi.mock('../../_shared/services/projectService', async (importOriginal) => {
   const actual = await importOriginal<
@@ -60,6 +62,8 @@ vi.mock('../../_shared/services/projectService', async (importOriginal) => {
     updateQuotationLine: (...args: unknown[]) => updateQuotationLine(...args),
     deleteQuotationLine: (...args: unknown[]) => deleteQuotationLine(...args),
     replaceQuotationLines: (...args: unknown[]) => replaceQuotationLines(...args),
+    recomputeQuotationVersion: (...args: unknown[]) => recomputeQuotationVersion(...args),
+    judgeQuotationLine: (...args: unknown[]) => judgeQuotationLine(...args),
   };
 });
 
@@ -101,6 +105,7 @@ vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-uom-select-qu
 
 import {
   QuotationVersionEditor,
+  describeRecompute,
   stagedLinesToBody,
   stagedScopeTotal,
 } from './QuotationVersionEditor';
@@ -269,6 +274,13 @@ beforeEach(() => {
   reviseQuotation.mockResolvedValue(version({ id: 'v3', version_no: 3, is_current: true }));
   createQuotationLine.mockResolvedValue(line({ id: 'l2' }));
   updateQuotationLine.mockResolvedValue(line());
+  // The default live verdict: clean. Tests that need a flag override it.
+  judgeQuotationLine.mockResolvedValue({
+    is_non_standard: false,
+    is_below_floor: false,
+    floor_value: null,
+    floor_level: null,
+  });
 });
 
 describe('QuotationVersionEditor', () => {
@@ -383,6 +395,145 @@ describe('QuotationVersionEditor', () => {
     expect(screen.getByText('Non-standard')).toBeInTheDocument();
   });
 
+  /**
+   * The badges have to describe the row on screen, not the row as it was saved.
+   *
+   * This is the complaint the client raised on a real quotation: they picked BT009 from the
+   * dropdown and the line kept insisting it was off-catalog, and non-standard, until the
+   * save and the refetch. Both badges were being read off the stored line.
+   */
+  it('clears Off-catalog the moment a product is picked, before any save', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ product_code: null, product_id: null, description: 'BT009', is_non_standard: true }),
+    ]);
+    await renderEditing();
+
+    expect(screen.getByText('Off-catalog')).toBeInTheDocument();
+
+    // Pick a product on the line. `Off-catalog` means "no product is linked" and nothing
+    // else, so it is a fact about the draft and can be answered here.
+    fireEvent.click(screen.getByRole('combobox', { name: /^Product on / }));
+    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+
+    await waitFor(() => expect(screen.queryByText('Off-catalog')).not.toBeInTheDocument());
+  });
+
+  it('asks the server for a fresh verdict the moment the product changes - on the spot, not at save', async () => {
+    // The client's requirement verbatim: "cannot wait until I save then only compute". The
+    // verdicts still come from the SERVER (series membership counts nominated categories the
+    // browser never fetched), but they are asked for per settled draft, debounced, with the
+    // same functions the save runs. Here the picked product is outside the series, so the
+    // flag must appear BEFORE any save - the BM107 case.
+    listQuotationLines.mockResolvedValue([
+      line({
+        product_id: 'p-old',
+        product_code: 'SRTWC8608-SC',
+        is_non_standard: false,
+        is_below_floor: false,
+      }),
+    ]);
+    judgeQuotationLine.mockResolvedValue({
+      is_non_standard: true,
+      is_below_floor: false,
+      floor_value: null,
+      floor_level: null,
+    });
+    await renderEditing();
+
+    expect(screen.queryByText('Non-standard')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('combobox', { name: /^Product on / }));
+    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+
+    // Debounced 400ms, then judged. NOTHING was saved on the way to the badge.
+    expect(await screen.findByText('Non-standard', {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(judgeQuotationLine).toHaveBeenCalledWith(
+      QUOTATION.id,
+      expect.objectContaining({ product_id: 'p9' }),
+    );
+    expect(replaceQuotationLines).not.toHaveBeenCalled();
+    expect(updateQuotationLine).not.toHaveBeenCalled();
+  });
+
+  it('flags a price below the floor as it is typed, with the floor named', async () => {
+    listQuotationLines.mockResolvedValue([line({ unit_price: '900.00' })]);
+    judgeQuotationLine.mockResolvedValue({
+      is_non_standard: false,
+      is_below_floor: true,
+      floor_value: '94.00',
+      floor_level: 'series',
+    });
+    await renderEditing();
+
+    expect(screen.queryByText('Below floor')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Unit price on SRT-WC-01' }), {
+      target: { value: '90.00' },
+    });
+
+    expect(await screen.findByText('Below floor', {}, { timeout: 5000 })).toBeInTheDocument();
+    // The floor is NAMED, so the refusal can be argued with rather than merely obeyed.
+    expect(screen.getByText(/Floor is RM ?94\.00/)).toBeInTheDocument();
+    expect(judgeQuotationLine).toHaveBeenCalledWith(
+      QUOTATION.id,
+      expect.objectContaining({ unit_price: '90.00' }),
+    );
+  });
+
+
+  /**
+   * Search over the lines - a 59-line version cannot be found in by eye, and Ctrl-F only
+   * finds what is scrolled into the DOM.
+   *
+   * The design claim under test: a hidden row is HIDDEN, not removed. Item numbers hold and
+   * the footer total does not move, because "item 12" on the customer's paper must not
+   * become "item 3", and a total that shrank with the view would read as lines lost.
+   */
+  it('filters the lines by search without renumbering items or changing the total', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'SRT-WC-01', description: 'Wall-hung WC', sort_order: 0 }),
+      line({
+        id: 'l2',
+        product_code: 'BM107',
+        description: 'Basin tap body',
+        unit_price: '100.00',
+        quantity: '2.00',
+        line_total: '200.00',
+        sort_order: 1,
+      }),
+    ]);
+    renderEditor();
+
+    await screen.findByText('Wall-hung WC');
+    const total = screen.getByRole('table').querySelector('tfoot')?.textContent ?? '';
+
+    fireEvent.change(screen.getByLabelText(/search lines/i), {
+      target: { value: 'bm107' },
+    });
+
+    await waitFor(() => expect(screen.queryByText('Wall-hung WC')).not.toBeInTheDocument());
+    expect(screen.getByText('Basin tap body')).toBeInTheDocument();
+    // The surviving row keeps its own item number: it is still line 2.
+    expect(itemNumbers()).toEqual(['2']);
+    // And the money did not move - the hidden line is hidden, not gone.
+    expect(screen.getByRole('table').querySelector('tfoot')?.textContent).toBe(total);
+  });
+
+  it('says the search found nothing rather than looking like an empty version', async () => {
+    listQuotationLines.mockResolvedValue([line()]);
+    renderEditor();
+
+    await screen.findByText('Wall-hung WC');
+    fireEvent.change(screen.getByLabelText(/search lines/i), {
+      target: { value: 'zzt-no-such-line' },
+    });
+
+    expect(
+      await screen.findByText(/no line matches "zzt-no-such-line"/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/frozen without any lines|nothing quoted yet/i)).not.toBeInTheDocument();
+  });
+
   it('lays every field of a line out as a column, in the printed order', async () => {
     await renderEditing();
 
@@ -390,6 +541,8 @@ describe('QuotationVersionEditor', () => {
     // reads the printed quotation back.
     const printed = [
       'Item',
+      // Column B of the client's own issued quotation, immediately after ITEM (S21).
+      'Photo',
       'Product',
       'Description',
       'Tech spec',
@@ -839,5 +992,166 @@ describe('QuotationVersionEditor', () => {
     expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
     expect(screen.queryByRole('textbox', { name: 'Qty on SRT-WC-01' })).toBeNull();
     expect(screen.queryByRole('button', { name: /Add a line/i })).toBeNull();
+  });
+
+  /**
+   * S19 - the recompute control.
+   *
+   * The point is not that a request goes out; it is that the ANSWER is on screen. The
+   * client's own words were "a refresh button that recompute this", and a silent success
+   * toast over 46 corrected flags tells them nothing about what moved.
+   */
+  it('re-checks the open version against today\'s master data and says what moved', async () => {
+    recomputeQuotationVersion.mockResolvedValue({
+      version_id: 'v2',
+      version_no: 2,
+      quotation_id: 'q1',
+      scope_label: 'House Units',
+      line_count: 52,
+      changed_count: 7,
+      now_non_standard: 0,
+      no_longer_non_standard: 6,
+      now_below_floor: 1,
+      no_longer_below_floor: 0,
+      floor_changed: 0,
+      unresolved_products: 0,
+      changed_lines: ['SRT-WC-01', 'CWB-242'],
+    });
+
+    renderEditor();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Recheck alerts/i }));
+
+    await waitFor(() => expect(recomputeQuotationVersion).toHaveBeenCalledWith('v2'));
+    expect(
+      await screen.findByText(
+        '6 lines are no longer non-standard, 1 line is now below floor.',
+      ),
+    ).toBeInTheDocument();
+    // And WHICH lines, because "6 lines" is not something anybody can go and check.
+    expect(screen.getByText('SRT-WC-01, CWB-242')).toBeInTheDocument();
+  });
+
+  it('says nothing changed rather than reporting a bare success', async () => {
+    recomputeQuotationVersion.mockResolvedValue({
+      version_id: 'v2',
+      version_no: 2,
+      quotation_id: 'q1',
+      scope_label: 'House Units',
+      line_count: 3,
+      changed_count: 0,
+      now_non_standard: 0,
+      no_longer_non_standard: 0,
+      now_below_floor: 0,
+      no_longer_below_floor: 0,
+      floor_changed: 0,
+      unresolved_products: 0,
+      changed_lines: [],
+    });
+
+    renderEditor();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Recheck alerts/i }));
+
+    expect(await screen.findByText(/Nothing changed\. All 3 lines already match/i)).toBeInTheDocument();
+  });
+
+  it('withholds the recheck from a frozen version, whose flags are what the customer was sent', async () => {
+    listQuotationVersions.mockResolvedValue([
+      version({ id: 'v2', version_no: 2, is_current: true, is_issued: true, is_editable: false }),
+    ]);
+
+    renderEditor();
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Recheck alerts/i })).toBeNull();
+  });
+
+  it('withholds the recheck from a reader', async () => {
+    renderEditor({ can_edit: false });
+
+    expect(await screen.findByRole('button', { name: 'v2' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Recheck alerts/i })).toBeNull();
+  });
+
+  it('disables the recheck while an edit session is open, so staged rows cannot go stale', async () => {
+    await renderEditing();
+
+    expect(screen.getByRole('button', { name: /Recheck alerts/i })).toBeDisabled();
+  });
+
+  it('explains the lines that stayed flagged because their product is unreadable here', async () => {
+    // The live shape: 46 lines of one quotation name a product row belonging to another
+    // company, so this company's catalogue cannot see it and the line reads as off-catalog.
+    // Nothing changes, which is correct and completely unhelpful on its own.
+    recomputeQuotationVersion.mockResolvedValue({
+      version_id: 'v2',
+      version_no: 2,
+      quotation_id: 'q1',
+      scope_label: 'House Units',
+      line_count: 59,
+      changed_count: 0,
+      now_non_standard: 0,
+      no_longer_non_standard: 0,
+      now_below_floor: 0,
+      no_longer_below_floor: 0,
+      floor_changed: 0,
+      unresolved_products: 46,
+      changed_lines: [],
+    });
+
+    renderEditor();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Recheck alerts/i }));
+
+    expect(
+      await screen.findByText(
+        /46 lines name products this company's catalogue does not carry/i,
+      ),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('describeRecompute', () => {
+  const base = {
+    version_id: 'v2',
+    version_no: 2,
+    quotation_id: 'q1',
+    line_count: 10,
+    changed_count: 0,
+    now_non_standard: 0,
+    no_longer_non_standard: 0,
+    now_below_floor: 0,
+    no_longer_below_floor: 0,
+    floor_changed: 0,
+    unresolved_products: 0,
+    changed_lines: [] as string[],
+  };
+
+  it('counts one line in the singular', () => {
+    expect(describeRecompute({ ...base, no_longer_non_standard: 1, changed_count: 1 })).toBe(
+      '1 line is no longer non-standard.',
+    );
+  });
+
+  it('reports both directions of both alerts in one sentence', () => {
+    expect(
+      describeRecompute({
+        ...base,
+        changed_count: 4,
+        no_longer_non_standard: 6,
+        now_non_standard: 2,
+        no_longer_below_floor: 3,
+        now_below_floor: 1,
+      }),
+    ).toBe(
+      '6 lines are no longer non-standard, 2 lines are now non-standard, 3 lines are no longer below floor, 1 line is now below floor.',
+    );
+  });
+
+  it('names the floor moving under a line that did not cross it', () => {
+    expect(describeRecompute({ ...base, changed_count: 2, floor_changed: 2 })).toBe(
+      '2 lines picked up a different floor.',
+    );
   });
 });

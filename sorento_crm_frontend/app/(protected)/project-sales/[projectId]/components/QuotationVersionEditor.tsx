@@ -1,8 +1,9 @@
 'use client';
 
 import * as React from 'react';
-import { AlertTriangle, Lock, TriangleAlert } from 'lucide-react';
+import { AlertTriangle, Lock, RefreshCw, Search, TriangleAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -11,12 +12,20 @@ import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/sh
 // The shared products `/select` mapper, keeping the fields a picked product decides.
 import { getProductsForLineSelect } from '@/app/(protected)/master-data-management/products/services/productService';
 import type { ProductLineRef } from '@/app/(protected)/master-data-management/products/types/product.types';
-import { useQuotationLines, useQuotationVersions } from '../../_shared/hooks/useProjects';
+import {
+  useLineVerdict,
+  useQuotationLines,
+  useQuotationRecomputeMutation,
+  useQuotationVersions,
+  useSeriesProductRows,
+} from '../../_shared/hooks/useProjects';
 import type {
   Project,
   ProjectQuotation,
   QuotationLine,
+  QuotationLineVerdict,
   QuotationLineBulkItem,
+  QuotationRecomputeResult,
   StagedQuotationLine,
   UnitType,
 } from '../../_shared/types/project.types';
@@ -28,6 +37,10 @@ import {
   type InlineLineColumn,
   type InlineStaging,
 } from '../../_shared/components/InlineLineTable';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
+import { QuotationLinePhoto } from './QuotationLinePhoto';
 import { ReviseQuotationDialog } from './ReviseQuotationDialog';
 import { formatMyr } from './QuotationsPanel';
 import { formatMyrExact, isDecimalString, multiplyMoney, sumMoney } from './POIntakeMoney';
@@ -179,6 +192,9 @@ export function QuotationVersionEditor({
   const versions = useQuotationVersions(quotation.id);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [revising, setRevising] = React.useState(false);
+  const recompute = useQuotationRecomputeMutation(project.id);
+  const [recomputed, setRecomputed] = React.useState<QuotationRecomputeResult | null>(null);
+  const [lineSearch, setLineSearch] = React.useState('');
 
   const rows = React.useMemo(
     () => [...(versions.data ?? [])].sort((a, b) => b.version_no - a.version_no),
@@ -253,6 +269,21 @@ export function QuotationVersionEditor({
    *   fill a re-pick would throw away a negotiated figure. The list price is shown beside it
    *   so the discount is visible; the number that gets charged stays a decision.
    */
+  /**
+   * What THIS scope's series sells each product for (T5, AC-C1).
+   *
+   * Only fetched when the scope is actually quoted from a series; most are not, and an
+   * unconditional request would be a round trip for an answer of "nothing".
+   */
+  const seriesRows = useSeriesProductRows(quotation.series_id ?? undefined);
+  const seriesPriceByProduct = React.useMemo(() => {
+    const map = new Map<string, string>();
+    (seriesRows.data ?? []).forEach((row) => {
+      if (row.selling_price) map.set(row.product_id, row.selling_price);
+    });
+    return map;
+  }, [seriesRows.data]);
+
   const fillFromProduct = React.useCallback(
     (option: { value: string } | null): InlineDraft => {
       if (!option) return {};
@@ -260,16 +291,39 @@ export function QuotationVersionEditor({
       if (!product) return {};
       const brand = (brands.data ?? []).find((row) => row.id === product.brand_id);
       const unit = (uoms.data ?? []).find((row) => row.id === product.base_uom_id);
-      return {
+      const filled: InlineDraft = {
         // The rule the backend snapshots by, so what shows now is what gets stored.
         description: product.description || product.product_name || '',
         brand_snapshot: brand?.brand_name ?? '',
         uom: unit?.uom_code ?? '',
         list_price: product.list_price ?? '',
       };
+      // The SERIES price, where this scope is quoted from one that names the product
+      // (AC-C1). That is the price actually agreed for this scope, so it is the one the
+      // line should open at - the salesperson can still type over it, and the below-floor
+      // check then judges whatever they typed. Where the series says nothing, `unit_price`
+      // is left untouched and the line behaves exactly as it did before (AC-C2).
+      const agreed = seriesPriceByProduct.get(option.value);
+      if (agreed) filled.unit_price = agreed;
+      return filled;
     },
-    [brands.data, uoms.data],
+    [brands.data, seriesPriceByProduct, uoms.data],
   );
+
+  /**
+   * The photo viewer, opened from the Photo cell and scrolled with the arrows in its own header.
+   *
+   * The list it scrolls through is assembled further down this component, but `columns` (which
+   * needs the opener) is built here, above it. Hence the ref: the opener reads it on a CLICK,
+   * never during render, so its identity stays stable and the column memo does not churn on
+   * every keystroke. The alternative was reordering a 900-line component to satisfy a lookup.
+   */
+  const photoLinesRef = React.useRef<QuotationLine[]>([]);
+  const [previewIndex, setPreviewIndex] = React.useState<number | null>(null);
+  const openPreview = React.useCallback((lineId: string) => {
+    const index = photoLinesRef.current.findIndex((line) => line.id === lineId);
+    if (index >= 0) setPreviewIndex(index);
+  }, []);
 
   // The order the printed quotation uses, so a line is entered reading left to right the way
   // the customer will read it back: item number, what it is, how much, then what it comes to.
@@ -291,6 +345,29 @@ export function QuotationVersionEditor({
          */
         kind: 'derived',
         derive: (_draft, index) => index + 1,
+      },
+      {
+        /**
+         * The product's photograph, in the printed document's own position: the client's issued
+         * quotation has PRODUCT IMAGE in column B, immediately after ITEM.
+         *
+         * Read-only and server-decided. There is exactly ONE image decision in the system -
+         * `product_attachments.is_primary`, which the brochure and 3D-model generation already
+         * read - and it is recorded on the PRODUCT, not pinned to a quotation line. Letting this
+         * cell set a picture would be a second answer to the same question, which is the defect
+         * that flag exists to remove. So the empty state LINKS to where the decision is made
+         * rather than offering to make it here.
+         */
+        key: 'product_image',
+        header: 'Photo',
+        width: 96,
+        kind: 'derived',
+        derive: (_draft, _index, row) => (
+          <QuotationLinePhoto
+            line={row?.line ?? null}
+            onPreview={row?.line ? () => openPreview(row.line!.id) : undefined}
+          />
+        ),
       },
       {
         key: 'product_id',
@@ -333,7 +410,9 @@ export function QuotationVersionEditor({
               stored?.product_id === productId ? (stored.description ?? undefined) : undefined,
           };
         },
-        annotate: (row) => (row?.line ? <LineFlags line={row.line} /> : null),
+        annotate: (row, draft) => (
+          <LineFlags quotationId={quotation.id} line={row?.line ?? null} draft={draft} />
+        ),
       },
       {
         key: 'description',
@@ -467,7 +546,7 @@ export function QuotationVersionEditor({
         },
       },
     ],
-    [fetchProducts, fillFromProduct, uomOptions],
+    [fetchProducts, fillFromProduct, openPreview, uomOptions],
   );
 
   /**
@@ -510,6 +589,46 @@ export function QuotationVersionEditor({
         ? staged.map((line) => ({ id: line.key, line: line.line }))
         : sortedLines.map((line) => ({ id: line.id, line })),
     [isEditing, sortedLines, staged],
+  );
+
+  /**
+   * Every line that actually HAS a photograph, in table order - what the viewer's next/previous
+   * scroll through. Lines without one are left out rather than shown as blanks: paging through
+   * forty empty frames to reach the second picture is not a gallery.
+   */
+  const photoLines = React.useMemo(
+    () =>
+      lineRows
+        .map((row) => row.line)
+        .filter((line): line is QuotationLine =>
+          Boolean(
+            line &&
+              line.product_image?.state === 'chosen' &&
+              (line.product_image.preview_url || line.product_image.url),
+          ),
+        ),
+    [lineRows],
+  );
+  photoLinesRef.current = photoLines;
+
+  const photoItems = React.useMemo<AttachmentPreviewItem[]>(
+    () =>
+      photoLines.map((line) => {
+        const image = line.product_image!;
+        return {
+          id: image.attachment_id ?? line.id,
+          name: image.filename ?? `${line.product_code ?? 'Product'} photo`,
+          // The ORIGINAL, falling back to the thumbnail only if the original could not be
+          // signed - a blurry preview beats an empty one.
+          url: image.preview_url || image.url || '',
+          // The same authenticated route Resource Management downloads through, so the button
+          // in the viewer's header behaves identically to the one on the Files page.
+          downloadUrl: image.attachment_id
+            ? `/api/v1/resource-management/attachments/${image.attachment_id}/download`
+            : undefined,
+        };
+      }),
+    [photoLines],
   );
 
   const stagedByKey = React.useMemo(() => {
@@ -577,17 +696,54 @@ export function QuotationVersionEditor({
           ))}
         </div>
 
-        {project.can_edit && current && (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => setRevising(true)}
-          >
-            {`Revise to v${current.version_no + 1}`}
-          </Button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Re-ask both alerts against today's master data (S19). On the version that is
+              being looked at, and only while it is still open: the flags on a frozen
+              version are what was true when the customer was sent the paper.
+
+              Withheld while an edit session is open on this scope. Recompute writes to the
+              server, and the staged rows on screen would silently be answering for a state
+              the database no longer holds. */}
+          {project.can_edit && editable && selected && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={recompute.isPending || isEditing}
+              title={
+                isEditing
+                  ? 'Save or cancel your changes first'
+                  : 'Re-check every line against the series and price floors as they stand today'
+              }
+              onClick={async () => {
+                try {
+                  setRecomputed(await recompute.mutateAsync(selected.id));
+                } catch {
+                  // The mutation already toasted the reason.
+                }
+              }}
+            >
+              <RefreshCw className="size-4" aria-hidden />
+              {recompute.isPending ? 'Rechecking...' : 'Recheck alerts'}
+            </Button>
+          )}
+
+          {project.can_edit && current && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setRevising(true)}
+            >
+              {`Revise to v${current.version_no + 1}`}
+            </Button>
+          )}
+        </div>
       </div>
+
+      {recomputed && (
+        <RecomputeSummary result={recomputed} onDismiss={() => setRecomputed(null)} />
+      )}
 
       {selected && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
@@ -624,6 +780,26 @@ export function QuotationVersionEditor({
         <p className="text-xs text-muted-foreground">
           {`Frozen. Make changes on ${current ? `v${current.version_no}` : 'the current version'}.`}
         </p>
+      )}
+
+      {/* Search over the lines. Hides rows rather than removing them, so item numbers hold,
+          totals still sum the whole version, and an unsaved draft on a hidden line survives
+          the search that hid it. Ctrl-F cannot do this job: it only finds what is scrolled
+          into the DOM, so on a 59-line version it answers 0/0 for lines that plainly exist. */}
+      {lineRows.length > 0 && (
+        <div className="relative w-full sm:max-w-xs">
+          <Search
+            className="pointer-events-none absolute inset-y-0 start-0 my-auto size-4 translate-x-2.5 text-muted-foreground"
+            aria-hidden
+          />
+          <Input
+            value={lineSearch}
+            onChange={(event) => setLineSearch(event.target.value)}
+            placeholder="Search lines"
+            aria-label="Search lines by product or description"
+            className="ps-9"
+          />
+        </div>
       )}
 
       <InlineLineTable<LineRow>
@@ -672,6 +848,22 @@ export function QuotationVersionEditor({
           maxLength: 150,
         }}
         validateRow={lineErrors}
+        // Matched on the LIVE draft, so a description typed seconds ago is already
+        // findable, plus the saved code/brand the draft does not carry as text.
+        rowFilter={
+          lineSearch.trim()
+            ? (row, draft) => {
+                const needle = lineSearch.trim().toLowerCase();
+                return [
+                  row?.line?.product_code,
+                  draft.description,
+                  draft.brand_snapshot,
+                  draft.band_label,
+                ].some((value) => (value ?? '').toLowerCase().includes(needle));
+              }
+            : undefined
+        }
+        filterEmptyHint={`No line matches "${lineSearch.trim()}".`}
       />
 
       {revising && current && (
@@ -688,36 +880,186 @@ export function QuotationVersionEditor({
         />
       )}
 
+      {/* The same viewer Resource Management uses, so a product photograph zooms, scrolls and
+          downloads exactly the way every other file in the system does. Mounted only while
+          open: it holds a carousel, and there is no reason for it to exist behind the table. */}
+      {previewIndex !== null && photoItems.length > 0 && (
+        <AttachmentPreviewModal
+          open
+          onOpenChange={(next) => {
+            if (!next) setPreviewIndex(null);
+          }}
+          items={photoItems}
+          startIndex={previewIndex}
+        />
+      )}
     </div>
   );
 }
 
 /**
- * What the server decided about the line, on the line.
+ * What a recompute changed, in the words a reader would use (S19).
  *
- * The floor is deliberately NOT evaluated in the browser: resolving it means walking the
- * category ancestry, and a second implementation here would eventually disagree with the
- * server's. The price is sent, and the answer that comes back is what is shown.
+ * Composed here rather than on the server: the counts are facts, the sentence is copy, and
+ * copy belongs on the screen that shows it. "Nothing changed" is a REAL answer and gets its
+ * own sentence - a reader has to be able to tell "I checked and it was already right" from
+ * "I pressed a button and nothing happened".
  */
-function LineFlags({ line }: { line: QuotationLine }) {
-  const anything = !line.product_id || line.is_below_floor || line.is_non_standard;
+export function describeRecompute(result: QuotationRecomputeResult): string {
+  const parts: string[] = [];
+  if (result.no_longer_non_standard > 0) {
+    parts.push(
+      `${result.no_longer_non_standard} ${result.no_longer_non_standard === 1 ? 'line is' : 'lines are'} no longer non-standard`,
+    );
+  }
+  if (result.now_non_standard > 0) {
+    parts.push(
+      `${result.now_non_standard} ${result.now_non_standard === 1 ? 'line is' : 'lines are'} now non-standard`,
+    );
+  }
+  if (result.no_longer_below_floor > 0) {
+    parts.push(
+      `${result.no_longer_below_floor} ${result.no_longer_below_floor === 1 ? 'line is' : 'lines are'} no longer below floor`,
+    );
+  }
+  if (result.now_below_floor > 0) {
+    parts.push(
+      `${result.now_below_floor} ${result.now_below_floor === 1 ? 'line is' : 'lines are'} now below floor`,
+    );
+  }
+  if (result.floor_changed > 0) {
+    parts.push(
+      `${result.floor_changed} ${result.floor_changed === 1 ? 'line' : 'lines'} picked up a different floor`,
+    );
+  }
+  if (parts.length === 0) {
+    return `Nothing changed. All ${result.line_count} ${
+      result.line_count === 1 ? 'line' : 'lines'
+    } already match the series and price floors as they stand today.`;
+  }
+  return `${parts.join(', ')}.`;
+}
+
+/** The report, on the page rather than in a toast that takes it away after four seconds. */
+function RecomputeSummary({
+  result,
+  onDismiss,
+}: {
+  result: QuotationRecomputeResult;
+  onDismiss: () => void;
+}) {
+  return (
+    <div
+      role="status"
+      className="flex flex-col gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs sm:flex-row sm:items-start sm:justify-between"
+    >
+      <div className="min-w-0">
+        <p className="font-medium">{describeRecompute(result)}</p>
+        {result.changed_lines.length > 0 && (
+          <p className="mt-0.5 break-words text-muted-foreground">
+            {result.changed_lines.join(', ')}
+          </p>
+        )}
+        {/* Why some lines could not move. Without this the reader gets "nothing changed"
+            over a set of lines naming products this company does not stock, which is true
+            and tells them nothing about what to do next. */}
+        {result.unresolved_products > 0 && (
+          <p className="mt-0.5 text-muted-foreground">
+            {`${result.unresolved_products} ${
+              result.unresolved_products === 1 ? 'line names a product' : 'lines name products'
+            } this company's catalogue does not carry, so ${
+              result.unresolved_products === 1 ? 'it stays' : 'they stay'
+            } flagged as off-catalog. Re-pick the product to clear it.`}
+          </p>
+        )}
+      </div>
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        className="shrink-0 self-start"
+        onClick={onDismiss}
+      >
+        Dismiss
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * What is true about the line, ON THE SPOT.
+ *
+ * The client's requirement, verbatim: "the computation of whether it is non standard or off
+ * catalog needs to be on the spot, cannot wait until I save". BM107 must read Non-standard
+ * the moment it is picked; C-FH14 must read standard the same way.
+ *
+ * Three facts, three sources, one moment:
+ *
+ * **Off-catalog** is a fact about the row on screen - "no product is linked" - so it is read
+ * off the LIVE draft, no request needed.
+ *
+ * **Non-standard and below-floor** cannot be computed here (series membership counts
+ * nominated CATEGORIES the browser never fetched; the floor walks the category ancestry),
+ * so while the draft matches the saved row the SAVED verdicts show, and the moment it
+ * diverges the server is ASKED - debounced, via `useLineVerdict` - with the same functions
+ * the save runs. One implementation, asked at two moments, so the badge before the save and
+ * the flag after it cannot disagree.
+ *
+ * While an answer about the exact current draft is still in flight, the previous verdict
+ * holds (placeholderData) rather than blinking off: a badge that flickers per keystroke
+ * reads as the system changing its mind.
+ */
+function LineFlags({
+  quotationId,
+  line,
+  draft,
+}: {
+  quotationId: string;
+  line: QuotationLine | null;
+  draft: InlineDraft;
+}) {
+  const productId = (draft.product_id ?? '').trim();
+  const price = (draft.unit_price ?? '').trim();
+  // The saved verdict still answers for an untouched row - no request needed for the 59
+  // lines of a version nobody is editing.
+  const pristine =
+    line != null &&
+    (line.product_id ?? '') === productId &&
+    (price || '') === (line.unit_price ?? '');
+  const verdict = useLineVerdict(
+    quotationId,
+    { product_id: productId || undefined, unit_price: price || undefined },
+    !pristine,
+  );
+
+  const belowFloor = pristine ? line.is_below_floor : Boolean(verdict.data?.is_below_floor);
+  const nonStandard = pristine
+    ? line.is_non_standard
+    : Boolean(verdict.data?.is_non_standard);
+  const floorText = pristine
+    ? line
+      ? describeFloor(line)
+      : ''
+    : describeVerdictFloor(verdict.data ?? null);
+
+  const anything = !productId || belowFloor || nonStandard;
   if (!anything) return null;
 
   return (
     <div className="mt-1 space-y-0.5">
       <div className="flex flex-wrap items-center gap-1">
-        {!line.product_id && (
+        {!productId && (
           <Badge variant="outline" className="text-[11px]">
             Off-catalog
           </Badge>
         )}
-        {line.is_below_floor && (
-          <Badge variant="destructive" className="gap-1 text-[11px]" title={describeFloor(line)}>
+        {belowFloor && (
+          <Badge variant="destructive" className="gap-1 text-[11px]" title={floorText}>
             <AlertTriangle className="size-3" aria-hidden />
             Below floor
           </Badge>
         )}
-        {line.is_non_standard && (
+        {nonStandard && (
           <Badge
             variant="secondary"
             className="gap-1 text-[11px]"
@@ -728,11 +1070,18 @@ function LineFlags({ line }: { line: QuotationLine }) {
           </Badge>
         )}
       </div>
-      {line.is_below_floor && (
-        <p className="text-xs text-destructive">{describeFloor(line)}</p>
-      )}
+      {belowFloor && floorText && <p className="text-xs text-destructive">{floorText}</p>}
     </div>
   );
+}
+
+/** The live twin of `describeFloor`, off a verdict instead of a saved line. */
+function describeVerdictFloor(verdict: QuotationLineVerdict | null): string {
+  if (!verdict?.floor_value) return 'Below the floor for this item.';
+  const level = verdict.floor_level
+    ? (FLOOR_LEVEL_LABELS[verdict.floor_level] ?? verdict.floor_level)
+    : 'this item';
+  return `Floor is ${formatMyr(verdict.floor_value)}, set on ${level}.`;
 }
 
 /**

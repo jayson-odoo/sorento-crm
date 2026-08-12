@@ -187,16 +187,10 @@ async def upload_delivery_schedule(
         db.commit()
 
         # After the commit: the worker resolves the version by id, and a job enqueued
-        # inside the transaction can be claimed before the row exists.
-        from app.tasks.project_document_tasks import enqueue_schedule_extraction
-
-        try:
-            enqueue_schedule_extraction(body["schedule_version_id"])
-        except Exception:  # noqa: BLE001 - the document is stored either way
-            logger.exception(
-                "could not queue extraction for schedule version %s; it stays queued",
-                body["schedule_version_id"],
-            )
+        # inside the transaction can be claimed before the row exists. The service records
+        # which job is reading this version and reports its own enqueue failures on the
+        # row, so a version can never sit on "queued" with nothing behind it (S20).
+        service.enqueue_extraction(version)
         return body
     except Exception as exc:
         db.rollback()
@@ -229,6 +223,31 @@ async def get_delivery_schedule_version(
         validate_uuid_path(version_id, resource="Delivery schedule version")
         return _service(db).get_version_detail(version_id)
     except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/delivery-schedule-versions/{version_id}/retry-extraction",
+    response_model=DeliveryScheduleVersionResponse,
+)
+async def retry_delivery_schedule_extraction(
+    version_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Read this schedule again, on the same version (S20).
+
+    Same endpoint, same reasoning as the customer PO: the commonest way a read ends with
+    nothing on the row is a background work-horse killed part-way, which says nothing about
+    the document. 409 when there is nothing to retry, with the reason in the message.
+    """
+    try:
+        service = _service(db)
+        version = _version_for_edit(db, version_id, current_user)
+        service.retry_extraction(version)
+        return service.get_version_detail(version_id)
+    except Exception as exc:
+        db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 

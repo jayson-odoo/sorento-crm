@@ -26,8 +26,10 @@ import {
   useQuotationApprovalGraph,
   useQuotationDocument,
   useQuotationDocumentMutations,
+  useQuotationDocuments,
   useQuotationIssues,
 } from '../../../../_shared/hooks/useQuotationDocuments';
+import RecordNavigation from '@/components/common/RecordNavigation';
 import type { QuotationDocument } from '../../../../_shared/services/quotationDocumentService';
 import {
   useProject,
@@ -104,6 +106,8 @@ export function QuotationDocumentClient({
    * use, so react-query answers them from cache on the usual path.
    */
   const quotations = useQuotations(projectId);
+  // The project's OTHER quotation documents, for prev/next in the header.
+  const siblingDocuments = useQuotationDocuments(projectId);
   const scopeVersions = useProjectQuotationVersions(quotations.data);
   const quotationMutations = useQuotationMutations(projectId);
   const bulkLines = useQuotationBulkLineMutation(projectId);
@@ -463,6 +467,21 @@ export function QuotationDocumentClient({
             and Cancel, with signing and issuing out of the way until the changes have landed. */}
         <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
           <div className="flex flex-wrap items-center gap-2">
+            {/* Step between this project's quotation documents without going back to the
+                list, the users-detail pattern. List mode off the cached documents query -
+                the list screen the user came from already fetched it, so the neighbours
+                cost nothing. Hidden while editing: stepping away mid-session would look
+                like it discarded the staged lines (it would not - they live in the shell -
+                but a control that LOOKS destructive is one nobody should have to trust).
+                Rendered from two documents up, since with one there is nowhere to go. */}
+            {!edit.isEditing && (siblingDocuments.data ?? []).length > 1 && (
+              <RecordNavigation
+                basePath={`/project-sales/${projectId}/quotation-documents`}
+                currentId={documentId}
+                items={siblingDocuments.data ?? []}
+                ariaLabel="quotation"
+              />
+            )}
             {canEdit && edit.isEditing && (
               <>
                 <Button

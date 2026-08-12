@@ -27,7 +27,6 @@ must degrade to a clear message, never take the API down.
 """
 from __future__ import annotations
 
-import base64
 import logging
 import re
 from datetime import date, datetime
@@ -46,12 +45,11 @@ from app.models.projects import (
     ProjectQuotationLine,
     QuotationSignature,
 )
-from app.models.resources import Attachment
 from app.models.user import SystemSetting
 from app.services import geo_places
+from app.services import product_image_service as product_images
 from app.services.complaint_pdf_service import PDFRenderingUnavailable
 from app.services.error_handler import AppException
-from app.services.storage_router import extract_key, get_backend, normalize_provider
 
 logger = logging.getLogger(__name__)
 
@@ -184,11 +182,15 @@ def _attachment_data_uri(
     attachment_id: Optional[str],
     cache: Optional[Dict[str, Optional[str]]] = None,
 ) -> Optional[str]:
-    """Fetch the product image and inline it as a data URI.
+    """The product photograph, inline, downscaled.
 
     Inlined rather than linked: WeasyPrint would otherwise have to fetch a signed CDN URL at
     render time, and a document that looks different depending on whether the network was up is
     not a record of what was sent.
+
+    Downscaled by ``product_image_service`` before it gets here (S21). The column is 60 CSS px
+    wide and the live catalogue's chosen photographs average 1.1 MB, so inlining the originals
+    for a 52-line quotation is a document nobody can email.
 
     Best-effort. Storage being down degrades to a missing picture, never to a quotation that
     cannot be produced - the customer is waiting for a price, not a photograph.
@@ -196,36 +198,7 @@ def _attachment_data_uri(
     ``cache`` is per render: one product image commonly repeats down a scope (a WC beside its
     valve and its hose), and without it the same object is downloaded once per line.
     """
-    if not attachment_id:
-        return None
-    key_id = str(attachment_id)
-    if cache is not None and key_id in cache:
-        return cache[key_id]
-    uri = _fetch_data_uri(db, key_id)
-    if cache is not None:
-        cache[key_id] = uri
-    return uri
-
-
-def _fetch_data_uri(db: Session, attachment_id: str) -> Optional[str]:
-    try:
-        row = db.query(Attachment).filter(Attachment.id == str(attachment_id)).first()
-        if row is None:
-            return None
-        key = extract_key(getattr(row, "file_path", None))
-        if not key:
-            return None
-        provider = normalize_provider(getattr(row, "storage_provider", None))
-        raw = get_backend(provider).download_file(key)
-        mime = (getattr(row, "mime_type", None) or "").lower()
-        if not mime.startswith("image/"):
-            mime = "image/jpeg"
-        return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
-    except Exception:  # noqa: BLE001 - cosmetic, never fatal to the document
-        logger.warning(
-            "quotation PDF: failed to embed product image %s", attachment_id, exc_info=True
-        )
-        return None
+    return product_images.data_uri(db, attachment_id, cache)
 
 
 # --------------------------------------------------------------------- loading

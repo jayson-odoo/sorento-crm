@@ -12,6 +12,7 @@ import {
   getPOVersion,
   listPOVersions,
   rejectPOAnnotation,
+  retryPOExtraction,
   updatePOVersionHeader,
   updatePOVersionLine,
   uploadPurchaseOrderDocument,
@@ -150,6 +151,22 @@ export function usePOIntakeController(
     onError: (error: Error) => toast.error(error.message),
   });
 
+  /**
+   * Re-read the same version.
+   *
+   * `settle` puts the version back on `queued`, which is what turns polling back on, so the
+   * screen goes straight from the failure card to the progress card without a refetch.
+   */
+  const retryMutation = useMutation({
+    mutationFn: () => retryPOExtraction(versionId as string),
+    onSuccess: (next) => {
+      settle(next);
+      if (poId) queryClient.invalidateQueries({ queryKey: poVersionsKey(poId) });
+      toast.success('Reading this document again');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const approveMutation = useMutation({
     mutationFn: () => approvePurchaseOrder(poId as string),
     onSuccess: () => {
@@ -248,6 +265,11 @@ export function usePOIntakeController(
     isConfirming: confirmMutation.isPending,
     isStamping: approveMutation.isPending || countersignMutation.isPending,
     isSavingHeader: headerMutation.isPending,
+    isRetrying: retryMutation.isPending,
+    retryExtraction: async () => {
+      if (!versionId) return;
+      await retryMutation.mutateAsync().catch(() => undefined);
+    },
     updateHeader: async (body) => {
       if (!versionId) return;
       await headerMutation.mutateAsync(body).catch(() => undefined);

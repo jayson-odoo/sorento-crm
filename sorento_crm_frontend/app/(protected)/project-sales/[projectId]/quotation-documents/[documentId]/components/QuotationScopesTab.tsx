@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useQuotationDocumentMutations } from '../../../../_shared/hooks/useQuotationDocuments';
 import { useQuotations } from '../../../../_shared/hooks/useProjects';
 import { OutcomePill } from '../../../../_shared/components/OutcomePill';
+import { QuotationDialog } from '../../../components/QuotationDialog';
 import { QuotationOutcomeDialog } from '../../../components/QuotationOutcomeDialog';
 import {
   QuotationVersionEditor,
@@ -46,6 +47,7 @@ export function QuotationScopesTab() {
   const mutations = useQuotationDocumentMutations(projectId, documentId);
 
   const [decidingScopeId, setDecidingScopeId] = React.useState<string | null>(null);
+  const [editingScopeId, setEditingScopeId] = React.useState<string | null>(null);
   const [addingScope, setAddingScope] = React.useState(false);
 
   const scopes = record.scopes ?? [];
@@ -143,6 +145,13 @@ export function QuotationScopesTab() {
                 {activeQuotation.scope_label}
               </CardTitle>
               <OutcomePill outcome={activeQuotation.outcome} />
+              {/* Which series this scope is quoted from, stated rather than assumed.
+                  Without it there is no way to tell a scope that IS being checked from one
+                  that names no series and is therefore checking nothing - and every line in
+                  both cases looks identically clean. A fact, not an explanation. */}
+              <span className="text-xs text-muted-foreground">
+                {activeQuotation.series_name || 'No series'}
+              </span>
               {activeQuotation.loss_reason_label && (
                 <span className="text-xs text-muted-foreground">
                   {activeQuotation.loss_reason_label}
@@ -150,14 +159,32 @@ export function QuotationScopesTab() {
               )}
             </div>
             {canEdit && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setDecidingScopeId(activeQuotation.id)}
-              >
-                Record outcome
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                {/* The SERIES this scope is quoted from, reachable from where the work
+                    happens.
+
+                    It was only ever editable on the per-scope page, and nothing in the app
+                    links to that page any more - this document screen replaced it as the way
+                    in. So the one control that decides whether a line counts as standard was
+                    unreachable by clicking, which is why not one quotation in the database
+                    has a series bound and every Non-standard flag on screen was stale. */}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setEditingScopeId(activeQuotation.id)}
+                >
+                  Edit scope
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setDecidingScopeId(activeQuotation.id)}
+                >
+                  Record outcome
+                </Button>
+              </div>
             )}
           </CardHeader>
           {/* min-w-0 is load-bearing. CardContent is a flex item, and a flex item defaults to
@@ -195,6 +222,17 @@ export function QuotationScopesTab() {
           project={project}
           quotation={activeQuotation}
           onDone={() => setDecidingScopeId(null)}
+        />
+      )}
+
+      {/* The same dialog the orphaned per-scope page used, not a second copy of the form:
+          the series picker is the thing that decides what counts as standard, and two
+          implementations of it would eventually offer different lists. */}
+      {editingScopeId && activeQuotation && (
+        <QuotationDialog
+          project={project}
+          quotation={activeQuotation}
+          onDone={() => setEditingScopeId(null)}
         />
       )}
 

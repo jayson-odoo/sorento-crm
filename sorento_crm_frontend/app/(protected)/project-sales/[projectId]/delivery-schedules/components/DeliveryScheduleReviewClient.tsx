@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ExternalLink,
   Loader2,
+  RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -21,7 +22,7 @@ import {
   useDeliveryScheduleVersionMutations,
 } from '../../../_shared/hooks/useDeliverySchedules';
 import { resolveExtractionPhase } from '../../../_shared/types/deliverySchedule.types';
-import { describeReadingTime } from '../../../_shared/lib/readingTime';
+import { describeReadingTime, describeWaitingFor } from '../../../_shared/lib/readingTime';
 import type { DeliveryScheduleConfirmBody } from '../../../_shared/types/deliverySchedule.types';
 import { ReconciliationBadge } from '../../components/DeliverySchedulesPanel';
 import {
@@ -70,10 +71,8 @@ export function DeliveryScheduleReviewClient({
       ? describeReadingTime(version.extraction_elapsed_ms)
       : null;
 
-  const { saveCells, resolveProduct, confirm } = useDeliveryScheduleVersionMutations(
-    projectId,
-    versionId,
-  );
+  const { saveCells, resolveProduct, confirm, retryExtraction } =
+    useDeliveryScheduleVersionMutations(projectId, versionId);
 
   const [drafts, setDrafts] = React.useState<Map<string, string>>(new Map());
   const [learnedColumns, setLearnedColumns] = React.useState<number[]>([]);
@@ -371,14 +370,33 @@ export function DeliveryScheduleReviewClient({
           <h2 className="text-sm font-semibold text-destructive">
             This document could not be read
           </h2>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground break-words">
             {version.extraction_error ?? 'Nothing was extracted from the file.'}
           </p>
-          <Button asChild variant="outline" className="mt-4">
-            <Link href={`/project-sales/${projectId}?tab=schedules`}>
-              Upload it again
-            </Link>
-          </Button>
+          {/* Reading it again leads, because the commonest failure is not the document:
+              a reader that was killed part-way says nothing about the scan, and asking
+              for a better one is advice that cannot help. Re-uploading stays available
+              for the case where the document really is the problem. */}
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+            {!demo && (
+              <Button
+                type="button"
+                disabled={retryExtraction.isPending}
+                onClick={() => void retryExtraction.mutateAsync().catch(() => undefined)}
+              >
+                <RefreshCw
+                  className={`size-4 ${retryExtraction.isPending ? 'animate-spin' : ''}`}
+                  aria-hidden
+                />
+                {retryExtraction.isPending ? 'Starting…' : 'Read it again'}
+              </Button>
+            )}
+            <Button asChild variant="outline">
+              <Link href={`/project-sales/${projectId}?tab=schedules`}>
+                Upload it again
+              </Link>
+            </Button>
+          </div>
         </div>
       )}
 
@@ -496,10 +514,16 @@ export function DeliveryScheduleReviewClient({
 function ExtractionProgress({
   version,
 }: {
-  version: { extraction_state: string; page_count?: number | null; pages_extracted?: number | null };
+  version: {
+    extraction_state: string;
+    page_count?: number | null;
+    pages_extracted?: number | null;
+    extraction_started_at?: string | null;
+  };
 }) {
   const read = version.pages_extracted;
   const total = version.page_count;
+  const waitingFor = describeWaitingFor(version.extraction_started_at);
   const detail =
     version.extraction_state === 'queued'
       ? typeof total === 'number'
@@ -520,6 +544,9 @@ function ExtractionProgress({
           <Badge variant="secondary" size="sm">
             {detail}
           </Badge>
+          {waitingFor ? (
+            <span className="text-xs text-muted-foreground">{waitingFor}</span>
+          ) : null}
         </div>
         <MatrixSkeleton />
       </CardContent>

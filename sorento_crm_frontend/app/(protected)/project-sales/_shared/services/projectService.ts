@@ -44,7 +44,14 @@ import type {
   QuotationLineBody,
   QuotationLineBulkItem,
   QuotationOutcomeBody,
+  QuotationRecomputeResult,
   QuotationVersion,
+  ImportJobStatus,
+  QuotationLineVerdict,
+  SeriesProductImportBody,
+  SeriesProductImportJob,
+  SeriesProductImportResult,
+  SeriesProductRow,
   ProjectTemplateTask,
   ProjectTemplateTaskBody,
   ProjectUpdateBody,
@@ -876,6 +883,108 @@ export async function deleteSeries(seriesId: string): Promise<void> {
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to delete the series'));
 }
 
+/**
+ * Load a list of product CODES onto a series (S18).
+ *
+ * Contract: `POST /config/series/{id}/products` with `{ codes, mode }` answers a
+ * `SeriesProductImportResult`. The response ALWAYS carries `unmatched_codes` - a code the
+ * catalogue does not stock is the admin's data telling them something, and the screen has
+ * to show it rather than a smaller success number.
+ */
+export async function importSeriesProducts(
+  seriesId: string,
+  body: SeriesProductImportBody,
+): Promise<SeriesProductImportResult> {
+  const response = await apiFetch(`${BASE}/config/series/${seriesId}/products`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the product list'));
+  return response.json();
+}
+
+/**
+ * The same import off a spreadsheet, QUEUED. The server reads the PRODUCT CODE column by
+ * heading across every sheet, so nothing here has to know where the client keeps it.
+ *
+ * Answers 202 with a job id, not a report: the client's workbook is 9.2 MB and opening it
+ * inside the request stalled the whole API process. Poll `getImportJobStatus` for the
+ * report, which arrives in the SAME shape the paste path returns.
+ */
+export async function uploadSeriesProducts(
+  seriesId: string,
+  file: File,
+  mode: SeriesProductImportBody['mode'],
+): Promise<SeriesProductImportJob> {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('mode', mode);
+  const response = await apiFetch(`${BASE}/config/series/${seriesId}/products/upload`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to read that file'));
+  return response.json();
+}
+
+/**
+ * One poll of a queued import.
+ *
+ * Shared job infrastructure, not a series-specific route: `import_jobs` already reports
+ * status, progress, the finished `result` and the error, and adding a second status
+ * endpoint would be a second thing to keep in step with the first.
+ */
+export async function getImportJobStatus(jobId: string): Promise<ImportJobStatus> {
+  const response = await apiFetch(`/api/system/jobs/${jobId}/status`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Could not check the import'));
+  return response.json();
+}
+
+/**
+ * Judge one DRAFT line now, before any save.
+ *
+ * The verdicts cannot be computed here: series membership counts nominated CATEGORIES the
+ * browser never fetched, and the floor walks the category ancestry. The server answers
+ * with the same functions the save runs, so the live badge and the saved one cannot
+ * disagree. Nothing is written.
+ */
+export async function judgeQuotationLine(
+  quotationId: string,
+  params: { product_id?: string; unit_price?: string },
+): Promise<QuotationLineVerdict> {
+  const search = new URLSearchParams();
+  if (params.product_id) search.set('product_id', params.product_id);
+  if (params.unit_price) search.set('unit_price', params.unit_price);
+  const qs = search.toString();
+  const response = await apiFetch(
+    `${BASE}/quotations/${quotationId}/line-verdict${qs ? `?${qs}` : ''}`,
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Could not check the line'));
+  return response.json();
+}
+
+/**
+ * Re-ask both guardrails for one version against today's master data (S19).
+ *
+ * Contract: `POST /quotation-versions/{id}/recompute` answers a `QuotationRecomputeResult`.
+ * A frozen or issued version is refused with 422 - its flags are what was true when the
+ * customer was sent the paper.
+ */
+export async function recomputeQuotationVersion(
+  versionId: string,
+): Promise<QuotationRecomputeResult> {
+  const response = await apiFetch(`${BASE}/quotation-versions/${versionId}/recompute`, {
+    method: 'POST',
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to recompute this version'));
+  return response.json();
+}
+
 export async function listPriceFloors(): Promise<PriceFloorRule[]> {
   const response = await apiFetch(`${BASE}/config/price-floors`);
   if (!response.ok)
@@ -1071,4 +1180,56 @@ export async function getProjectDashboard(): Promise<ProjectDashboard> {
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the dashboard'));
   return response.json();
+}
+
+/**
+ * The products on a series with what they sell for (T2).
+ *
+ * `/products/rows` rather than a GET on `/products`: that path already means "load a list of
+ * codes onto this series", and giving one path two meanings by method is how a route ends up
+ * doing a job nobody can name.
+ *
+ * `derived_floor` arrives computed. It is NOT recalculated in the browser - it is the number
+ * a refusal is argued from, and the pricing engine enforces with the same server-side
+ * function, so a second implementation here could disagree with the one that blocks a save.
+ */
+export async function getSeriesProductRows(
+  seriesId: string,
+): Promise<SeriesProductRow[]> {
+  const response = await apiFetch(`${BASE}/config/series/${seriesId}/products/rows`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the series products'));
+  const body = await response.json();
+  return body.data ?? [];
+}
+
+/**
+ * Set or clear one product's price and percentage.
+ *
+ * `null` CLEARS, because the person emptied the cell. That is the opposite of the sheet
+ * importer, where an absent value means the sheet did not say and the stored number stands.
+ */
+export async function updateSeriesProductPricing(
+  seriesId: string,
+  productId: string,
+  body: { selling_price: string | null; max_discount_pct: string | null },
+): Promise<SeriesProductRow> {
+  const response = await apiFetch(
+    `${BASE}/config/series/${seriesId}/products/${productId}`,
+    { method: 'PATCH', body: JSON.stringify(body) },
+  );
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the price'));
+  return response.json();
+}
+
+export async function removeSeriesProduct(
+  seriesId: string,
+  productId: string,
+): Promise<void> {
+  const response = await apiFetch(
+    `${BASE}/config/series/${seriesId}/products/${productId}`,
+    { method: 'DELETE' },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to remove the product'));
 }

@@ -185,6 +185,10 @@ async def list_purchase_order_versions(
             .order_by(ProjectPOVersion.version_no.desc())
             .all()
         )
+        # A read whose worker was killed cannot report its own death: an `except` block
+        # does not run in a process that is killed. So the row is reconciled against what
+        # RQ knows here, on the path where somebody is actually looking at it (S20).
+        service.reconcile_stranded(rows)
         return {
             "data": [
                 {
@@ -220,6 +224,10 @@ async def get_purchase_order_version(
         version = service.get_version(po_version_id)
         po = service.get_po(version.purchase_order_id)
         projects.get_project_or_404(db, po.project_id)
+        # The screen polls this while a document is being read, which makes it the right
+        # place to notice that the reader died: a killed work-horse never runs the task's
+        # own error handling, so nothing inside it could have said so (S20).
+        service.reconcile_stranded([version])
         body = service.serialize_version(version)
         # The read recomputes the totals off the current lines, so a stale counter on
         # the row is corrected rather than served. Cheap, and it means a read can never
@@ -279,6 +287,37 @@ async def update_purchase_order_version_line(
         service.update_line(
             version=version, line=line, payload=payload.model_dump(exclude_unset=True)
         )
+        body = service.serialize_version(version)
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/purchase-order-versions/{po_version_id}/retry-extraction",
+    response_model=POVersionDetailResponse,
+)
+async def retry_purchase_order_extraction(
+    po_version_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Read this document again, on the same version (S20).
+
+    Deliberately not "upload it again". The commonest way a read ends with nothing on the
+    row is that the background work-horse was killed part-way, which says nothing at all
+    about the document: it is still stored, still readable, and a new version would only
+    add a second row for a document that was never the problem.
+
+    409 when there is nothing to retry, and the message says which: the read is genuinely
+    still in flight, the document has already been read (re-reading would discard lines
+    somebody has since corrected by hand), or the version is confirmed.
+    """
+    try:
+        service, version = _version_for_edit(db, po_version_id, current_user)
+        service.retry_extraction(version)
         body = service.serialize_version(version)
         db.commit()
         return body

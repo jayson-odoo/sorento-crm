@@ -1,5 +1,7 @@
 'use client';
 
+import * as React from 'react';
+
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -25,18 +27,26 @@ import {
   deleteQuotationLine,
   deleteSeries,
   getEffectivePriceFloor,
+  getSeriesProductRows,
+  getImportJobStatus,
+  judgeQuotationLine,
+  importSeriesProducts,
+  removeSeriesProduct,
+  updateSeriesProductPricing,
   listPriceFloors,
   listQuotationLines,
   listQuotationLossReasons,
   listQuotationVersions,
   listQuotations,
   listSeries,
+  recomputeQuotationVersion,
   reviseQuotation,
   setQuotationOutcome,
   updateQuotation,
   replaceQuotationLines,
   updateQuotationLine,
   updateSeries,
+  uploadSeriesProducts,
   upsertPriceFloor,
   listSamples,
   createSample,
@@ -109,6 +119,7 @@ import type {
   QuotationLineBody,
   QuotationLineBulkItem,
   QuotationOutcomeBody,
+  SeriesProductImportBody,
   LeadQualifyBody,
   ProjectLeadBody,
   ProjectTemplateBody,
@@ -118,6 +129,7 @@ import type {
   TaskPhase,
   TaskStatusChangeBody,
 } from '../types/project.types';
+import { importJobPhase } from '../types/project.types';
 // Keys only, and the document hooks import nothing from here, so the two files do not circle.
 import { quotationDocumentsKey } from './useQuotationDocuments';
 
@@ -1061,7 +1073,14 @@ export function useSeriesMutations() {
 
   const remove = useMutation({
     mutationFn: (id: string) => deleteSeries(id),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
+      // DROP this series' product rows rather than invalidating them.
+      //
+      // The rows query is keyed `[...SERIES_KEY, 'rows', id]`, so the blanket invalidate
+      // below matches it by prefix and REFETCHES a series that no longer exists - a 404 in
+      // the console on an operation that succeeded perfectly. Removing the entry first
+      // leaves nothing to refetch.
+      queryClient.removeQueries({ queryKey: [...SERIES_KEY, 'rows', id] });
       invalidate();
       toast.success('Series deleted');
     },
@@ -1069,6 +1088,197 @@ export function useSeriesMutations() {
   });
 
   return { create, update, remove };
+}
+
+/**
+ * Loading a list of product codes onto a series (S18), pasted or off a file.
+ *
+ * NO success toast. The whole answer is the report - how many matched, how many were
+ * already there, and above all which codes the catalogue does not carry - and the screen
+ * renders it. A toast saying "imported" over a result that names 49 misses would be the
+ * one sentence the reader trusts and the wrong one.
+ */
+/**
+ * The products on one series, with what the series sells them for (T2).
+ *
+ * Keyed UNDER `SERIES_KEY` so that every series write - including a sheet import, which
+ * changes both the membership and the prices - refetches this table without each mutation
+ * having to remember it exists.
+ */
+export function useSeriesProductRows(seriesId?: string) {
+  return useQuery({
+    queryKey: [...SERIES_KEY, 'rows', seriesId],
+    queryFn: () => getSeriesProductRows(seriesId as string),
+    enabled: Boolean(seriesId),
+  });
+}
+
+export function useSeriesProductRowMutations(seriesId?: string) {
+  const queryClient = useQueryClient();
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: SERIES_KEY });
+
+  const setPricing = useMutation({
+    mutationFn: ({
+      productId,
+      body,
+    }: {
+      productId: string;
+      body: { selling_price: string | null; max_discount_pct: string | null };
+    }) => updateSeriesProductPricing(seriesId as string, productId, body),
+    onSuccess: invalidate,
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const remove = useMutation({
+    mutationFn: (productId: string) => removeSeriesProduct(seriesId as string, productId),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Product removed from the series');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { setPricing, remove };
+}
+
+export function useSeriesProductMutations() {
+  const queryClient = useQueryClient();
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: SERIES_KEY });
+
+  const importCodes = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: SeriesProductImportBody }) =>
+      importSeriesProducts(id, body),
+    onSuccess: invalidate,
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  // Answers a JOB, not a report. The invalidate here is deliberately absent: nothing has
+  // been written yet when this resolves, and refreshing the products table at that moment
+  // would redraw the same rows and look like the import did nothing.
+  const importFile = useMutation({
+    mutationFn: ({
+      id,
+      file,
+      mode,
+    }: {
+      id: string;
+      file: File;
+      mode: SeriesProductImportBody['mode'];
+    }) => uploadSeriesProducts(id, file, mode),
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { importCodes, importFile, invalidateSeries: invalidate };
+}
+
+/**
+ * Watch a queued sheet load until it stops.
+ *
+ * Polling rather than a socket because the whole conversation is three or four messages
+ * long and the repo has no socket for anything else - a first one for this would be
+ * infrastructure nobody else uses.
+ *
+ * Two seconds: fast enough that a small paste-sized file feels immediate, slow enough that
+ * a 9 MB workbook taking half a minute is not thirty requests. `refetchInterval` returns
+ * `false` once the job reaches a terminal state, so a finished import stops polling without
+ * the caller having to remember to unmount anything.
+ */
+export function useImportJobStatus(jobId: string | null) {
+  return useQuery({
+    queryKey: ['import-job-status', jobId],
+    enabled: Boolean(jobId),
+    queryFn: () => getImportJobStatus(jobId as string),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      if (!status) return 2000;
+      return importJobPhase(status) === 'running' ? 2000 : false;
+    },
+    // The answer is a fact about a job, never stale in the react-query sense: the interval
+    // above is the only thing that should decide when to ask again.
+    staleTime: 0,
+    gcTime: 0,
+  });
+}
+
+/**
+ * Re-ask the guardrails on one version against today's master data (S19).
+ *
+ * Invalidates the same set a line write does: the flags live ON the lines, and the
+ * quotation list and the document letterhead both carry the alert counts, so a recompute
+ * that refreshed only the line table would leave two surfaces disagreeing about how many
+ * lines are non-standard.
+ *
+ * No toast here either - the caller renders the report, and "6 lines are no longer
+ * non-standard" is not something a disappearing notification should be the only record of.
+ */
+/**
+ * The verdict for one DRAFT line, kept current as it is typed.
+ *
+ * Debounced at 400ms: judging fires a request, and a keystroke-per-request would hammer
+ * the API for answers about prices nobody has finished typing. The debounce lives HERE,
+ * on the queried value, so every caller gets the same behaviour for free.
+ *
+ * `placeholderData` keeps the previous verdict on screen while the next loads - a badge
+ * that blinks off and on with every keystroke reads as the system changing its mind.
+ *
+ * Verdicts are judged by the server (the same `is_in_series` / `resolve_floor` the save
+ * runs); this hook only decides WHEN to ask.
+ */
+export function useLineVerdict(
+  quotationId: string,
+  draft: { product_id?: string; unit_price?: string },
+  enabled: boolean,
+) {
+  const [settled, setSettled] = React.useState(draft);
+  React.useEffect(() => {
+    const handle = setTimeout(() => setSettled(draft), 400);
+    return () => clearTimeout(handle);
+    // Keyed on the VALUES, not the object: the caller builds a fresh literal per render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.product_id, draft.unit_price]);
+
+  // Ask only once the debounce has CAUGHT UP with what is on screen. Without this, the
+  // instant a draft diverges (`enabled` flips true) the query would fire against the
+  // still-settling PREVIOUS values - judging the old product and briefly showing its
+  // verdict against the new one, which is the exact confident-wrong-answer this hook
+  // exists to prevent.
+  const caughtUp =
+    (settled.product_id ?? '') === (draft.product_id ?? '') &&
+    (settled.unit_price ?? '') === (draft.unit_price ?? '');
+
+  return useQuery({
+    queryKey: [
+      'quotation-line-verdict',
+      quotationId,
+      settled.product_id ?? '',
+      settled.unit_price ?? '',
+    ],
+    queryFn: () =>
+      judgeQuotationLine(quotationId, {
+        product_id: settled.product_id,
+        unit_price: settled.unit_price,
+      }),
+    enabled: enabled && caughtUp,
+    placeholderData: (previous) => previous,
+    // The same draft judged twice in 30s gets the cached answer - typing a price, deleting
+    // it, and retyping it should not be three requests.
+    staleTime: 30_000,
+  });
+}
+
+export function useQuotationRecomputeMutation(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (versionId: string) => recomputeQuotationVersion(versionId),
+    onSuccess: (_result, versionId) => {
+      queryClient.invalidateQueries({ queryKey: linesKey(versionId) });
+      queryClient.invalidateQueries({ queryKey: quotationsKey(projectId) });
+      queryClient.invalidateQueries({ queryKey: [QUOTATIONS_KEY, 'versions'] });
+      queryClient.invalidateQueries({ queryKey: quotationDocumentsKey(projectId) });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 }
 
 export function usePriceFloorMutations() {

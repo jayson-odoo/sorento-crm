@@ -255,6 +255,8 @@ export function POIntakeConfirmClient({
         <POIntakeExtractionFailed
           version={version}
           onReupload={canEdit ? () => setUploading(true) : undefined}
+          onRetry={canEdit ? () => void intake.retryExtraction() : undefined}
+          isRetrying={intake.isRetrying}
         />
       ) : intake.isPolling ? (
         <POIntakeExtractionProgress version={version} />

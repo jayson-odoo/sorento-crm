@@ -131,6 +131,29 @@ export async function resolveDeliveryScheduleProduct(
 }
 
 /**
+ * Read this schedule again, on the same version.
+ *
+ * `POST /delivery-schedule-versions/{id}/retry-extraction` -> the whole version body, back
+ * on `queued`. 409 when there is nothing to retry: the read is genuinely still in flight,
+ * the document has already been read, or the version is confirmed.
+ *
+ * The PO path carries the identical endpoint for the identical reason: a background
+ * work-horse that is killed does not run its own error handling, so a read can end without
+ * anything being written onto the row.
+ */
+export async function retryDeliveryScheduleExtraction(
+  versionId: string,
+): Promise<DeliveryScheduleVersion> {
+  const response = await apiFetch(
+    `${BASE}/delivery-schedule-versions/${versionId}/retry-extraction`,
+    { method: 'POST' },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Could not start another read'));
+  return response.json();
+}
+
+/**
  * Promotes the phases onto the project. 409 while any column is unreconciled unless the
  * caller sends `acknowledge_unreconciled` with a reason.
  */

@@ -24,6 +24,7 @@ import base64
 import re
 import uuid
 from decimal import Decimal
+from io import BytesIO
 
 import pytest
 from sqlalchemy import text
@@ -157,13 +158,13 @@ def _numbering_rule(db, company_id: str) -> DocumentNumberingRule:
     return rule
 
 
-def _attachment(db, company_id: str) -> Attachment:
+def _attachment(db, company_id: str, name: str = "wc.png") -> Attachment:
     row = Attachment(
         id=_uid(),
         company_id=company_id,
-        original_filename=f"{MARKER}-wc.png",
-        stored_filename=f"{MARKER}-wc.png",
-        file_path=f"https://cdn.zzt.test/products/{MARKER}/wc.png",
+        original_filename=f"{MARKER}-{name}",
+        stored_filename=f"{MARKER}-{name}",
+        file_path=f"https://cdn.zzt.test/products/{MARKER}/{name}",
         mime_type="image/png",
     )
     db.add(row)
@@ -171,12 +172,32 @@ def _attachment(db, company_id: str) -> Attachment:
     return row
 
 
-class _FakeBackend:
-    """Stands in for S3/R2 so the image path is exercised without network or credentials.
+def _photo_bytes(width: int = 1600, height: int = 1600, seed: int = 0) -> bytes:
+    """A real photograph-shaped JPEG, so the downscale is genuinely exercised.
 
-    The bytes are never decoded by WeasyPrint in the HTML tests, so any payload does; what is
-    under test is that the row is fetched, base64'd and embedded as a data URI.
+    Noise rather than a flat colour: a flat image compresses to almost nothing, which would make
+    every size assertion in this file pass for the wrong reason. ``seed`` makes two photographs
+    genuinely different, so a size measured over 52 of them is not measuring one of them.
     """
+    from PIL import Image
+
+    image = Image.frombytes(
+        "RGB",
+        (width, height),
+        bytes(
+            (x * 7 + y * 13 + c * 61 + seed * 97) % 256
+            for y in range(height)
+            for x in range(width)
+            for c in range(3)
+        ),
+    )
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", quality=95)
+    return buffer.getvalue()
+
+
+class _FakeBackend:
+    """Stands in for S3/R2 so the image path is exercised without network or credentials."""
 
     def __init__(self, payload: bytes = b"zzt-png-bytes"):
         self.payload = payload
@@ -535,7 +556,12 @@ def test_the_product_image_column_is_omitted_when_no_line_carries_an_image():
 def test_the_product_image_column_appears_and_embeds_the_image_when_a_line_has_one(monkeypatch):
     """Embedded as a data URI rather than a URL: WeasyPrint would have to fetch a signed CDN link
     at render time, and a PDF that renders differently depending on whether the network is up is
-    not a record of what was sent."""
+    not a record of what was sent.
+
+    Re-encoded on the way in (S21). The mean chosen photograph in live data is 1.1 MB and the
+    largest 4.3 MB, against a column 60 CSS px wide; inlining 52 originals is a PDF nobody can
+    email."""
+    from app.services import product_image_service as images
     from app.services import project_quotation_document_service as qdocs
     from app.services import project_quotation_pdf_service as qpdf
     from app.services import project_quotation_service as quotes
@@ -548,8 +574,9 @@ def test_the_product_image_column_appears_and_embeds_the_image_when_a_line_has_o
         )
         image = _attachment(db, env["company_id"])
 
-        backend = _FakeBackend()
-        monkeypatch.setattr(qpdf, "get_backend", lambda provider: backend)
+        original = _photo_bytes(1600, 1600)
+        backend = _FakeBackend(original)
+        monkeypatch.setattr(images, "get_backend", lambda provider: backend)
 
         document = qdocs.create_document(db, project=env["project"], actor_user_id=owner)
         scope = qdocs.add_scope(
@@ -571,14 +598,74 @@ def test_the_product_image_column_appears_and_embeds_the_image_when_a_line_has_o
         html = qpdf.build_issue_html(db, issued)
 
         assert "PRODUCT IMAGE" in html
-        expected = base64.b64encode(backend.payload).decode("ascii")
-        assert f"data:image/png;base64,{expected}" in html
+        embedded = re.search(r'<td class="img"><img src="data:image/jpeg;base64,([^"]+)"', html)
+        assert embedded is not None, html[:2000]
+        assert len(base64.b64decode(embedded.group(1))) < len(original) / 10
         assert backend.keys == [f"products/{MARKER}/wc.png"]
+
+
+def test_a_line_with_no_chosen_photo_prints_an_empty_cell_not_a_placeholder(monkeypatch):
+    """PDF-3. The document is what the customer reads. "No photo chosen" is our internal to-do
+    list, and on their page it reads as a system that could not do its job. The column is there
+    because a NEIGHBOURING line has a picture; this line simply has none."""
+    from app.services import product_image_service as images
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_pdf_service as qpdf
+    from app.services import project_quotation_service as quotes
+
+    with blank_session() as db:
+        env = _setup(db)
+        owner = env["owner"]
+        with_photo = _product(
+            db, env["category"].id, env["uom"], description=f"{MARKER} close-coupled WC, white"
+        )
+        without = _product(
+            db, env["category"].id, env["uom"], description=f"{MARKER} bottle trap"
+        )
+        image = _attachment(db, env["company_id"])
+        monkeypatch.setattr(
+            images, "get_backend", lambda provider: _FakeBackend(_photo_bytes(320, 320))
+        )
+
+        document = qdocs.create_document(db, project=env["project"], actor_user_id=owner)
+        scope = qdocs.add_scope(
+            db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=owner
+        )
+        version = quotes.current_version(db, scope.id)
+        quotes.upsert_line(
+            db,
+            version=version,
+            actor_user_id=owner,
+            payload={
+                "product_id": with_photo.id,
+                "unit_price": PRICED_RATE,
+                "quantity": PRICED_QTY,
+                "image_attachment_id": image.id,
+            },
+        )
+        quotes.upsert_line(
+            db,
+            version=version,
+            actor_user_id=owner,
+            payload={
+                "product_id": without.id,
+                "unit_price": "6.50",
+                "quantity": 2,
+            },
+        )
+
+        html = qpdf.build_issue_html(db, _issue(db, document, owner))
+
+        assert "PRODUCT IMAGE" in html
+        assert '<td class="img"></td>' in html
+        for word in ("No photo", "not chosen", "no image"):
+            assert word.lower() not in html.lower()
 
 
 def test_an_unreachable_image_leaves_the_document_renderable(monkeypatch):
     """Storage being down must degrade to a missing picture, never to a quotation that cannot be
     produced: the customer is waiting for a price, not a photograph."""
+    from app.services import product_image_service as images
     from app.services import project_quotation_document_service as qdocs
     from app.services import project_quotation_pdf_service as qpdf
     from app.services import project_quotation_service as quotes
@@ -594,7 +681,7 @@ def test_an_unreachable_image_leaves_the_document_renderable(monkeypatch):
         def _boom(provider):
             raise RuntimeError("zzt storage down")
 
-        monkeypatch.setattr(qpdf, "get_backend", _boom)
+        monkeypatch.setattr(images, "get_backend", _boom)
 
         document = qdocs.create_document(db, project=env["project"], actor_user_id=owner)
         scope = qdocs.add_scope(
@@ -619,6 +706,72 @@ def test_an_unreachable_image_leaves_the_document_renderable(monkeypatch):
         # empty. Asserting the cell rather than "no data URI anywhere" keeps the signature image,
         # which is stored inline and does not go through storage at all, out of the assertion.
         assert '<td class="img"></td>' in html
+
+
+def test_a_fifty_two_line_quotation_of_photographs_stays_a_pdf_somebody_can_email(monkeypatch):
+    """PDF-4, measured rather than asserted in the abstract. The client's real quotation runs to
+    52+ lines and the live catalogue's chosen photographs average 1.1 MB, so the honest question
+    is not "is it downscaled" but "what does the artifact weigh"."""
+    from app.services import product_image_service as images
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_pdf_service as qpdf
+    from app.services import project_quotation_service as quotes
+
+    pytest.importorskip("weasyprint")
+
+    with blank_session() as db:
+        env = _setup(db)
+        owner = env["owner"]
+        # A DIFFERENT photograph per line, and different BYTES. Reusing one image would let both
+        # the per-document URI cache and WeasyPrint's own identical-image de-duplication flatter
+        # the measurement into meaninglessness: 52 copies of one picture is one picture.
+        original = _photo_bytes(1600, 1600)
+        photos = {}
+
+        class _PerKey:
+            def download_file(self, key):
+                if key not in photos:
+                    photos[key] = _photo_bytes(1600, 1600, seed=len(photos) + 1)
+                return photos[key]
+
+        monkeypatch.setattr(images, "get_backend", lambda provider: _PerKey())
+
+        document = qdocs.create_document(db, project=env["project"], actor_user_id=owner)
+        scope = qdocs.add_scope(
+            db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=owner
+        )
+        version = quotes.current_version(db, scope.id)
+        for index in range(52):
+            product = _product(
+                db, env["category"].id, env["uom"], description=f"{MARKER} item {index}"
+            )
+            quotes.upsert_line(
+                db,
+                version=version,
+                actor_user_id=owner,
+                payload={
+                    "product_id": product.id,
+                    "unit_price": PRICED_RATE,
+                    "quantity": PRICED_QTY,
+                    "image_attachment_id": _attachment(
+                        db, env["company_id"], f"item-{index}.jpg"
+                    ).id,
+                },
+            )
+
+        issued = _issue(db, document, owner)
+        try:
+            pdf_bytes, _ = qpdf.render_issue_pdf(db, issued)
+        except Exception as exc:  # WeasyPrint's native libs are optional on a dev host
+            pytest.skip(f"WeasyPrint cannot render here: {exc}")
+
+        naive = 52 * len(original)
+        print(
+            f"\n52-line PDF: {len(pdf_bytes) / 1024:.0f} KB "
+            f"(52 originals would be {naive / 1024 / 1024:.1f} MB)"
+        )
+        assert len(pdf_bytes) < 4 * 1024 * 1024, f"{len(pdf_bytes)} bytes"
+        assert len(pdf_bytes) < naive / 10
 
 
 # ------------------------------------------------------------- customer data is escaped
