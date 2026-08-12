@@ -3,7 +3,6 @@ import { toast } from 'sonner';
 
 import {
   getInterventionTicket,
-  getInterventionTicketThread,
   resolveInterventionTicket,
   sendInterventionTicketMessage,
   type SendTicketMessageInput,
@@ -26,17 +25,12 @@ export function useInterventionTicket(id: string | null) {
 }
 
 /**
- * The shared contact thread. Keyed by ticket id, but two tickets for the same
- * contact intentionally render the SAME messages (UAC AC-C2).
+ * The shared contact thread has NO hook here: it is the same
+ * GET /{id}/conversation the SLA detail page reads, so the drawer uses
+ * `useSlaTrackingConversation` (./useConversationSLATracking) and both surfaces
+ * share the ONE key `['sla-tracking-conversation', id, ...]`. Two tickets for
+ * the same contact still render the SAME messages (UAC AC-C2).
  */
-export function useInterventionTicketThread(id: string | null) {
-  return useQuery({
-    queryKey: ['intervention-ticket-thread', id],
-    queryFn: () => getInterventionTicketThread(id as string),
-    enabled: !!id,
-    staleTime: 15 * 1000,
-  });
-}
 
 /** Ticket-stamped send. Refreshes this ticket + the thread; siblings are untouched. */
 export function useSendInterventionTicketMessage(id: string) {
@@ -44,7 +38,9 @@ export function useSendInterventionTicketMessage(id: string) {
   return useMutation({
     mutationFn: (input: SendTicketMessageInput) => sendInterventionTicketMessage(id, input),
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['intervention-ticket-thread', id] });
+      // Same key the SLA detail page's conversation panel uses, so a send from
+      // the drawer refreshes BOTH surfaces (prefix match covers limit/cursor).
+      queryClient.invalidateQueries({ queryKey: ['sla-tracking-conversation', id] });
       queryClient.invalidateQueries({ queryKey: ['intervention-ticket', id] });
       queryClient.invalidateQueries({ queryKey: ['intervention-tickets', 'mine'] });
       toast.success(

@@ -10,7 +10,6 @@ vi.mock('./conversationSLATrackingService', () => ({
 import { apiFetch } from '@/lib/api';
 import {
   getInterventionTicket,
-  getInterventionTicketThread,
   resolveInterventionTicket,
   sendInterventionTicketMessage,
 } from './interventionTicketService';
@@ -48,24 +47,15 @@ describe('getInterventionTicket', () => {
   });
 });
 
-describe('getInterventionTicketThread', () => {
-  it('normalizes items + error from the conversation endpoint', async () => {
-    mockApiFetch.mockResolvedValue(
-      jsonResponse({ items: [{ messageId: 1, traffic: 'incoming' }], error: null }),
-    );
-    const thread = await getInterventionTicketThread('t1');
-    expect(mockApiFetch).toHaveBeenCalledWith(
-      '/api/v1/sla-management/conversation-sla-tracking/t1/conversation?limit=50',
-    );
-    expect(thread.items).toHaveLength(1);
-    expect(thread.error).toBeNull();
-  });
-
-  it('defaults to an empty item list when the payload has none', async () => {
-    mockApiFetch.mockResolvedValue(jsonResponse({ error: 'No Respond.io contact linked' }));
-    const thread = await getInterventionTicketThread('t1');
-    expect(thread.items).toEqual([]);
-    expect(thread.error).toBe('No Respond.io contact linked');
+// FINDING 9: there is deliberately NO thread fetcher here. The drawer reads the
+// shared getSlaTrackingConversation / useSlaTrackingConversation (same route,
+// same query key as the SLA detail page's conversation panel), so a send from
+// the drawer refreshes both surfaces and cursor pagination is not lost to a
+// second copy.
+describe('thread fetching', () => {
+  it('exports no thread fetcher of its own', async () => {
+    const mod = await import('./interventionTicketService');
+    expect('getInterventionTicketThread' in mod).toBe(false);
   });
 });
 

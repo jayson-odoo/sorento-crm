@@ -74,9 +74,17 @@
  *
  * D. THREAD (shared contact conversation) — UAC AC-C2
  *    GET /{tracking_id}/conversation?limit=&cursor=   (EXISTING route)
- *      -> { items: RespondMessageRenderable[], pagination?: {...}, error?: string }
+ *      -> { items: RespondMessageItem[], pagination?: {...}, error?: string }
  *    Siblings for the same contact return the SAME thread; only the header and
  *    clocks differ.
+ *    NOT implemented here: this is the same route the SLA detail page's
+ *    conversation panel reads, so the drawer uses the SAME service + hook
+ *    (`getSlaTrackingConversation` / `useSlaTrackingConversation` in
+ *    `conversationSLATrackingService` / `useConversationSLATracking`) under the
+ *    ONE query key `['sla-tracking-conversation', id, limit, cursor]`. A second
+ *    copy under its own key meant a send from the drawer never refreshed the
+ *    detail page's panel, and dropped the cursor pagination the shared service
+ *    already supports.
  *
  * E. SEND (ticket-stamped) — UAC AC-D1/D2/D3, AC-E1
  *    POST /{tracking_id}/ticket/send
@@ -124,7 +132,6 @@
 
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
-import type { RespondMessageRenderable } from '@/lib/respondIoChatRender';
 import type { ChatTemplatePreview } from '@/services/whatsappTemplateService';
 import type { MyPendingSLAItem } from './conversationSLATrackingService';
 import { resolveConversationSLATracking } from './conversationSLATrackingService';
@@ -196,12 +203,6 @@ export interface InterventionTicketDetail {
   chat_template: ChatTemplatePreview | null;
 }
 
-export interface InterventionTicketThread {
-  items: RespondMessageRenderable[];
-  /** Non-fatal loader message (e.g. Respond unreachable); items may still be empty. */
-  error?: string | null;
-}
-
 export interface SendTicketMessageInput {
   text: string;
   attachments?: File[];
@@ -229,20 +230,8 @@ export async function getInterventionTicket(id: string): Promise<InterventionTic
   return response.json();
 }
 
-/** D. The shared contact thread this ticket was raised in. */
-export async function getInterventionTicketThread(
-  id: string,
-): Promise<InterventionTicketThread> {
-  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}/conversation?limit=50`);
-  if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to load the conversation'));
-  }
-  const body = await response.json();
-  return {
-    items: Array.isArray(body?.items) ? (body.items as RespondMessageRenderable[]) : [],
-    error: body?.error ?? null,
-  };
-}
+// D. The shared contact thread this ticket was raised in: see the contract note
+// above - `getSlaTrackingConversation` in conversationSLATrackingService owns it.
 
 /** E. Ticket-stamped send: stops THIS ticket's first-response clock only. */
 export async function sendInterventionTicketMessage(

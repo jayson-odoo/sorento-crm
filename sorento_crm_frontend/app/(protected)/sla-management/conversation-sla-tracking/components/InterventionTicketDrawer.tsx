@@ -28,9 +28,9 @@ import SharedConversationComposer from '@/components/common/conversation/SharedC
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { RespondMessageRenderable } from '@/lib/respondIoChatRender';
 
+import { useSlaTrackingConversation } from '../hooks/useConversationSLATracking';
 import {
   useInterventionTicket,
-  useInterventionTicketThread,
   useResolveInterventionTicket,
   useSendInterventionTicketMessage,
 } from '../hooks/useInterventionTickets';
@@ -70,7 +70,9 @@ export default function InterventionTicketDrawer({
   const [confirmResolve, setConfirmResolve] = useState(false);
 
   const ticketQuery = useInterventionTicket(open ? ticketId : null);
-  const threadQuery = useInterventionTicketThread(open ? ticketId : null);
+  // The SAME query the SLA detail page's conversation panel uses (one key, one
+  // cache entry): a send from here refreshes that panel too, and vice versa.
+  const threadQuery = useSlaTrackingConversation(open ? ticketId : null, { limit: 50 });
   const sendMutation = useSendInterventionTicketMessage(ticketId ?? '');
   const resolveMutation = useResolveInterventionTicket();
 

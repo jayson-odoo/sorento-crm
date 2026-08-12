@@ -2,18 +2,23 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
 import InterventionTicketDrawer from './InterventionTicketDrawer';
-import type { InterventionTicketDetail, InterventionTicketThread } from '../services/interventionTicketService';
+import type { InterventionTicketDetail } from '../services/interventionTicketService';
 
 const useInterventionTicket = vi.fn();
-const useInterventionTicketThread = vi.fn();
+const useSlaTrackingConversation = vi.fn();
 const useResolveInterventionTicket = vi.fn();
 const useSendInterventionTicketMessage = vi.fn();
 
 vi.mock('../hooks/useInterventionTickets', () => ({
   useInterventionTicket: (...a: unknown[]) => useInterventionTicket(...a),
-  useInterventionTicketThread: (...a: unknown[]) => useInterventionTicketThread(...a),
   useResolveInterventionTicket: (...a: unknown[]) => useResolveInterventionTicket(...a),
   useSendInterventionTicketMessage: (...a: unknown[]) => useSendInterventionTicketMessage(...a),
+}));
+
+// FINDING 9: the thread is the SHARED conversation query (one key with the SLA
+// detail page's panel), not a private copy.
+vi.mock('../hooks/useConversationSLATracking', () => ({
+  useSlaTrackingConversation: (...a: unknown[]) => useSlaTrackingConversation(...a),
 }));
 
 // jsdom does not implement scrollIntoView; guarded in the real component with
@@ -95,8 +100,9 @@ function mockQuery<T>(data: T | undefined, opts: Partial<{ isLoading: boolean; i
   };
 }
 
-const thread: InterventionTicketThread = {
-  items: [{ messageId: 1, traffic: 'incoming', message: { type: 'text', text: 'hi' } } as never],
+const thread = {
+  items: [{ messageId: 1, traffic: 'incoming', message: { type: 'text', text: 'hi' } }],
+  error: null,
 };
 
 let resolveMutate: ReturnType<typeof vi.fn>;
@@ -104,7 +110,7 @@ let sendMutateAsync: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   useInterventionTicket.mockReset();
-  useInterventionTicketThread.mockReset();
+  useSlaTrackingConversation.mockReset();
   useResolveInterventionTicket.mockReset();
   useSendInterventionTicketMessage.mockReset();
 
@@ -114,7 +120,7 @@ beforeEach(() => {
   sendMutateAsync = vi.fn().mockResolvedValue({ sent_as: 'text' });
   useSendInterventionTicketMessage.mockReturnValue({ mutateAsync: sendMutateAsync });
 
-  useInterventionTicketThread.mockReturnValue(mockQuery(thread));
+  useSlaTrackingConversation.mockReturnValue(mockQuery(thread));
 });
 
 function renderDrawer(props: Partial<React.ComponentProps<typeof InterventionTicketDrawer>> = {}) {
@@ -164,6 +170,13 @@ describe('InterventionTicketDrawer', () => {
     expect(screen.getByText('Customer Service - Tier 1')).toBeInTheDocument();
     expect(screen.getByText(/Respond in/i)).toBeInTheDocument();
     expect(screen.getByTestId('chat-list')).toHaveTextContent('1 message(s)');
+  });
+
+  it('FINDING 9: the thread comes from the SHARED conversation query, limit 50', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+    await waitFor(() => expect(screen.getByTestId('chat-list')).toBeInTheDocument());
+    expect(useSlaTrackingConversation).toHaveBeenCalledWith('t1', { limit: 50 });
   });
 
   it('AC-E7: a blank enquiry text falls back to a neutral header label', async () => {
