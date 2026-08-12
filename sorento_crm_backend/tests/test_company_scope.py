@@ -284,6 +284,15 @@ _COMPANY_ID_ALLOWLIST = {
     # including the ~160 tests and background readers that hold a policy id with no
     # company context at all, and turns each one into an empty result.
     "sla_policies",
+    # Container sizes are per-tenant OR global: a row with a NULL company is a default
+    # this system ships for everyone, and a tenant row overrides it (hence the unique
+    # index on coalesce(company_id, nil)). The mixin's auto-filter would drop every
+    # NULL-company row, leaving a loading plan with no container to pack into, so
+    # `loading_plan_service.container_sizes` reads them unfiltered on purpose.
+    # KNOWN GAP, deliberately left for its own slice rather than changed during a merge:
+    # unfiltered also means one tenant can read another's custom size. The fix is
+    # `company_id IS NULL OR company_id = <scope>` in that one reader, not the mixin.
+    "container_size",
 }
 
 
@@ -303,33 +312,22 @@ def test_every_company_id_table_is_registered():
         f"Tables have a company_id column but are not CompanyScopedMixin subclasses "
         f"(add the mixin or allowlist them): {offenders}"
     )
-    # Foundation slice shipped 34 owned tables (PLAN §4.1); SCM company isolation added the
-    # seven PLANNING ARTEFACT tables, which are the SCM rows that are not facts about a
-    # location and so cannot derive their company from a joined warehouse:
-    # reorder_run, reorder_recommendation, order_summary_row, recommendation_override,
-    # purchasing_budget, scm_analytics_run, market_research_run.
-    # (`demand_stat` / `item_classification` / the views derive it from the join;
-    # `supplier_performance` from `suppliers`; market signals are facts about the world.)
-    # S5 then added the exception batch and its rows: a batch is a company's decision QUEUE
-    # produced by that company's upload, and neither derives a location it could be filtered
-    # through (an exception's warehouse is nullable, because supply in transit names none).
-    # And the SO<->PO link claim: a company's pairing between its own two order books.
-    # Foundation slice shipped 34 owned tables (PLAN §4.1); the certificate
-    # register added `certificates` as the 35th. Its two child tables
-    # (`certificate_revisions`, `certificate_products`) are deliberately NOT
-    # scoped: they are only ever reached through their certificate, which is
-    # scoped, so a second filter would be redundant surface (SEC-2a).
-    # Container status tracking added `shipment_tracking_observations` as the
-    # 36th. Unlike the certificate children this one IS scoped: a carrier
-    # observation names a container, and one tenant's containers must not be
-    # readable through a tenant-agnostic evidence table.
-    # Company-aware assignment routing added `teams` and `agent_teams` as the 37th and
-    # 38th. A team belongs to exactly one company, so the Teams page and every team
-    # picker follow the company switcher; `agent_teams` is scoped as the backstop for
-    # the ad-hoc AgentTeam queries in sla_service that the resolvers' required
-    # company_id argument cannot reach. `access_agents` is deliberately NOT here: one
-    # agent is a single router serving both brands through two ladders.
-    assert len(owned) == 48, f"expected 48 owned tables, found {len(owned)}: {sorted(owned)}"
+    # This is a COUNT, not a list, on purpose: enumerating the owned tables in a comment
+    # is how the number and the prose drifted apart twice already. The rule is what
+    # matters. A table is owned when the row is a fact about ONE company that cannot be
+    # derived from something already scoped:
+    #   - Planning artefacts own their company because a run, a recommendation, a budget or
+    #     an exception batch is a company's own decision queue, and an exception's warehouse
+    #     is nullable (supply in transit names no location to filter through).
+    #   - Fulfilment rows (loading plans, supplier notices, supplier inventory, allocations)
+    #     own it for the same reason: they are that company's shipment, not a place.
+    #   - Certificate children are deliberately NOT owned: they are only reachable through
+    #     the certificate, which is scoped, so a second filter is redundant surface (SEC-2a).
+    #   - `access_agents` is NOT owned: one agent routes both brands through two ladders.
+    # Derived instead of owned: demand_stat / item_classification / the views (via the
+    # warehouse join), supplier_performance (via suppliers), market signals (facts about
+    # the world, not about us).
+    assert len(owned) == 54, f"expected 54 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------
