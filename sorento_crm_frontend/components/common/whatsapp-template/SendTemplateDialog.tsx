@@ -32,6 +32,11 @@ interface SendTemplateDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Called after a successful send so the parent can refetch the chat list. */
   onSent?: () => void;
+  /**
+   * Intervention ticket this template answers. Passed to the backend so the
+   * send stops THAT ticket's response clock; absent on every other surface.
+   */
+  trackingId?: string | null;
 }
 
 /**
@@ -45,6 +50,7 @@ export default function SendTemplateDialog({
   open,
   onOpenChange,
   onSent,
+  trackingId = null,
 }: SendTemplateDialogProps) {
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -112,6 +118,7 @@ export default function SendTemplateDialog({
         contact_id: contactId,
         template_id: selected.id,
         params,
+        tracking_id: trackingId,
       });
       toast.success(`Template "${selected.name}" sent`);
       resetAndClose(false);

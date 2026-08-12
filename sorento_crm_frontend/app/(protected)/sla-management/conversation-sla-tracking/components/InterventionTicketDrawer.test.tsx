@@ -32,16 +32,19 @@ vi.mock('@/components/common/conversation/SharedConversationComposer', () => ({
     attachmentsEnabled,
     notAvailableMessage,
     sendAdapter,
+    templateSendTrackingId,
   }: {
     canReply: boolean;
     attachmentsEnabled?: boolean;
     notAvailableMessage?: string;
     sendAdapter: (payload: { text: string; files: File[] }) => Promise<unknown>;
+    templateSendTrackingId?: string | null;
   }) =>
     canReply ? (
       <button
         data-testid="composer-send"
         data-attachments-enabled={String(!!attachmentsEnabled)}
+        data-template-tracking-id={templateSendTrackingId ?? ''}
         onClick={() => void sendAdapter({ text: 'hello', files: [] })}
       >
         Send
@@ -181,6 +184,16 @@ describe('InterventionTicketDrawer', () => {
     await waitFor(() => expect(sendMutateAsync).toHaveBeenCalledWith(
       expect.objectContaining({ text: 'hello' }),
     ));
+  });
+
+  it('FINDING 4: the template send is stamped with this ticket id', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+    await waitFor(() => expect(screen.getByTestId('composer-send')).toBeInTheDocument());
+    expect(screen.getByTestId('composer-send')).toHaveAttribute(
+      'data-template-tracking-id',
+      't1',
+    );
   });
 
   it('composer: disabled with a reason once the ticket is resolved', async () => {

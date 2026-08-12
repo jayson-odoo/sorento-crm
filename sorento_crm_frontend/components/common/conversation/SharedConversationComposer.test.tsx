@@ -16,6 +16,7 @@ vi.mock('@/services/whatsappTemplateService', async () => {
     sendConversationMessage: vi.fn(),
     getChatTemplatePreview: vi.fn(),
     listApprovedTemplates: vi.fn().mockResolvedValue([]),
+    sendTemplateMessage: vi.fn(),
   };
 });
 
@@ -27,6 +28,8 @@ import {
   getWindowState,
   sendConversationMessage,
   getChatTemplatePreview,
+  listApprovedTemplates,
+  sendTemplateMessage,
   NoChatTemplateError,
 } from '@/services/whatsappTemplateService';
 import { toast } from 'sonner';
@@ -237,6 +240,72 @@ describe('SharedConversationComposer', () => {
     });
     expect(await screen.findByRole('button', { name: /attach view link/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /use response/i })).toBeInTheDocument();
+  });
+
+  // ------------------------------------------------- template send attribution
+
+  it('FINDING 4: a manual template send carries the ticket id so the clock stops', async () => {
+    (listApprovedTemplates as any).mockResolvedValue([
+      {
+        id: 'tpl-1',
+        name: 'conversation_follow_up',
+        language: 'en',
+        param_count: 0,
+        body_text: 'Hello from Sorento.',
+        status: 'approved',
+      },
+    ]);
+    (sendTemplateMessage as any).mockResolvedValue({ ok: true });
+
+    renderComposer({
+      entityType: 'conversation_sla',
+      entityId: 'tracking-1',
+      mode: 'conversation',
+      templateSendTrackingId: 'tracking-1',
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: /send template/i }));
+    fireEvent.click(await screen.findByTestId('template-option-conversation_follow_up'));
+    // Dialog footer submit (the toolbar button shares the label).
+    const submits = screen.getAllByRole('button', { name: /send template/i });
+    fireEvent.click(submits[submits.length - 1]);
+
+    await waitFor(() =>
+      expect(sendTemplateMessage).toHaveBeenCalledWith(
+        'conversation_sla',
+        'tracking-1',
+        expect.objectContaining({ template_id: 'tpl-1', tracking_id: 'tracking-1' }),
+      ),
+    );
+  });
+
+  it('other chat surfaces send no tracking id (unchanged behaviour)', async () => {
+    (listApprovedTemplates as any).mockResolvedValue([
+      {
+        id: 'tpl-1',
+        name: 'conversation_follow_up',
+        language: 'en',
+        param_count: 0,
+        body_text: 'Hello from Sorento.',
+        status: 'approved',
+      },
+    ]);
+    (sendTemplateMessage as any).mockResolvedValue({ ok: true });
+
+    renderComposer();
+
+    fireEvent.click(await screen.findByRole('button', { name: /send template/i }));
+    fireEvent.click(await screen.findByTestId('template-option-conversation_follow_up'));
+    const submits = screen.getAllByRole('button', { name: /send template/i });
+    fireEvent.click(submits[submits.length - 1]);
+
+    await waitFor(() =>
+      expect(sendTemplateMessage).toHaveBeenCalledWith(
+        'complaint',
+        'c1',
+        expect.objectContaining({ tracking_id: null }),
+      ),
+    );
   });
 
   it('when !canReply, renders the not-available message and no composer', () => {

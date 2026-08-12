@@ -736,3 +736,206 @@ def test_all_attachments_succeed_stamps_the_response_clock_and_reports_none_fail
 
     db.refresh(t1)
     assert t1.is_responded is True
+
+
+# --------------------------------------------------------------------------- #
+# FINDING 4 (code review): "Send template" from the ticket drawer posts to the #
+# generic /{id}/conversation/template-message route, which never stamped the   #
+# ticket - so an out-of-window template reply left the response clock running  #
+# and the ticket breached while visibly answered. The route/body now carries   #
+# an optional tracking_id and the worker stamps THAT ticket on success.        #
+# --------------------------------------------------------------------------- #
+
+
+class _NoCloseSession:
+    """Delegates to the test session but ignores close(): the RQ task closes
+    the session it believes it opened, while the fixture owns ours."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def close(self):  # noqa: D401 - deliberate no-op
+        return None
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def _patch_session_local(monkeypatch, db):
+    import app.database as database_module
+
+    monkeypatch.setattr(database_module, "SessionLocal", lambda: _NoCloseSession(db))
+
+
+def test_manual_template_send_stamps_only_the_named_ticket(db, monkeypatch):
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed, source_message_id="wamid.msg-1")
+    t2 = _create_ticket(db, seed, source_message_id="wamid.msg-2")
+    _patch_session_local(monkeypatch, db)
+    monkeypatch.setattr(
+        "app.services.respond_chat_template_service.send_manual_template_for",
+        lambda *a, **k: {"ok": True, "template_name": "conversation_follow_up"},
+    )
+
+    from app.tasks.respond_io_tasks import deliver_manual_template
+
+    deliver_manual_template(
+        "10025531",
+        "tpl-1",
+        {"1": "Agent One"},
+        "conversation_sla_tracking",
+        str(t1.id),
+        seed["assignee_id"],
+        str(t1.id),
+    )
+
+    db.refresh(t1)
+    db.refresh(t2)
+    assert t1.is_responded is True
+    assert str(t1.responded_by) == seed["assignee_id"]
+    assert t2.is_responded is False, "sibling ticket must be untouched (AC-E1)"
+
+
+def test_manual_template_send_without_a_tracking_id_stamps_nothing(db, monkeypatch):
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed, source_message_id="wamid.msg-1")
+    _patch_session_local(monkeypatch, db)
+    monkeypatch.setattr(
+        "app.services.respond_chat_template_service.send_manual_template_for",
+        lambda *a, **k: {"ok": True},
+    )
+
+    from app.tasks.respond_io_tasks import deliver_manual_template
+
+    deliver_manual_template(
+        "10025531", "tpl-1", {}, "complaints", str(uuid.uuid4()), seed["assignee_id"]
+    )
+
+    db.refresh(t1)
+    assert t1.is_responded is False
+
+
+def test_manual_template_send_that_fails_does_not_stamp(db, monkeypatch):
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed, source_message_id="wamid.msg-1")
+    _patch_session_local(monkeypatch, db)
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("Respond 401 unauthorized")
+
+    monkeypatch.setattr(
+        "app.services.respond_chat_template_service.send_manual_template_for", _boom
+    )
+
+    from app.tasks.respond_io_tasks import deliver_manual_template
+
+    with pytest.raises(RuntimeError):
+        deliver_manual_template(
+            "10025531",
+            "tpl-1",
+            {},
+            "conversation_sla_tracking",
+            str(t1.id),
+            seed["assignee_id"],
+            str(t1.id),
+        )
+
+    db.refresh(t1)
+    assert t1.is_responded is False
+
+
+def test_manual_template_stamp_is_idempotent_and_skips_form_sla_rows(db, monkeypatch):
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed, source_message_id="wamid.msg-1")
+    service = ConversationSLATrackingService(db)
+
+    # Already answered: the stamp is a no-op, the first response time stands.
+    service.mark_ticket_responded(t1, responded_by_user_id=seed["assignee_id"])
+    db.refresh(t1)
+    first_responded_at = t1.responded_at
+    service.mark_ticket_responded_by_id(
+        str(t1.id), responded_by_user_id=seed["other_assignee_id"]
+    )
+    db.refresh(t1)
+    assert t1.responded_at == first_responded_at
+    assert str(t1.responded_by) == seed["assignee_id"]
+
+    # A form-SLA stage row is a different family - never stamped from here.
+    form_row = _create_ticket(db, seed, source_message_id="wamid.msg-form")
+    form_row.source_entity_type = "complaint"
+    db.commit()
+    assert service.mark_ticket_responded_by_id(str(form_row.id)) is None
+    db.refresh(form_row)
+    assert form_row.is_responded is False
+
+    # An unknown id is not an error: nothing to stamp.
+    assert service.mark_ticket_responded_by_id(str(uuid.uuid4())) is None
+
+
+def test_manual_template_stamp_refuses_a_ticket_belonging_to_another_contact(db, monkeypatch):
+    """The worker only stamps a ticket whose contact actually received the
+    template - the tracking id comes from the client, the identifier does not."""
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed, source_message_id="wamid.msg-1")
+    _patch_session_local(monkeypatch, db)
+    monkeypatch.setattr(
+        "app.services.respond_chat_template_service.send_manual_template_for",
+        lambda *a, **k: {"ok": True},
+    )
+
+    from app.tasks.respond_io_tasks import deliver_manual_template
+
+    deliver_manual_template(
+        "99999999",  # a different contact than the ticket's
+        "tpl-1",
+        {},
+        "conversation_sla_tracking",
+        str(t1.id),
+        seed["assignee_id"],
+        str(t1.id),
+    )
+
+    db.refresh(t1)
+    assert t1.is_responded is False
+
+
+def test_template_message_route_passes_tracking_id_to_the_worker(monkeypatch):
+    """The route wiring: tracking_id on the body reaches deliver_manual_template."""
+    from app.api.v1 import _respond_chat_template_routes as routes_module
+
+    captured: dict = {}
+
+    def _fake_enqueue(func, *args, **kwargs):
+        captured["func"] = func
+        captured["args"] = args
+        return MagicMock(id="job-1")
+
+    monkeypatch.setattr(
+        "app.services.queue_service.enqueue_job", _fake_enqueue
+    )
+    monkeypatch.setattr(
+        "app.services.respond_chat_template_service.precheck_manual_template",
+        lambda *a, **k: {"template_name": "t", "rendered_body": "b"},
+    )
+
+    router = routes_module.build_chat_template_router(
+        business_table="conversation_sla_tracking",
+        resolver=lambda _db, _eid: ("10025531", "contact-1"),
+    )
+    endpoint = next(
+        r.endpoint
+        for r in router.routes
+        if getattr(r, "path", "") == "/{entity_id}/conversation/template-message"
+    )
+
+    tracking_id = str(uuid.uuid4())
+    endpoint(
+        "entity-1",
+        routes_module.TemplateMessageSendRequest(
+            template_id="tpl-1", params={}, tracking_id=tracking_id
+        ),
+        db=MagicMock(),
+        current_user={"id": "user-1", "name": "Agent One"},
+    )
+
+    assert captured["args"][-1] == tracking_id

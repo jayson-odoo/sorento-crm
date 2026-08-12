@@ -104,6 +104,16 @@
  *        `splitQuotedPrefix`. `reply_to_message_id` is carried for the event log
  *        / audit trail only, never sent to Respond.
  *
+ * E2. MANUAL TEMPLATE SEND (the composer's "Send template" dialog) — AC-E1
+ *    POST /{tracking_id}/conversation/template-message
+ *      { template_id, params, tracking_id? }
+ *    The shared chat route (every chat surface mounts it), queued on the
+ *    respond_io worker. `tracking_id` is the ticket the template answers: the
+ *    worker stamps THAT ticket's response clock once the send succeeds, so an
+ *    out-of-window template reply stops the clock exactly like a text reply.
+ *    Omitted by every other surface. The worker only honours it when the
+ *    ticket's contact is the one that received the template.
+ *
  * F. RESOLVE — UAC AC-C3
  *    POST /{tracking_id}/resolve   (EXISTING route)
  *    For an intervention ticket it resolves THAT row only: sibling tickets stay

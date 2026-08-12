@@ -32,6 +32,11 @@ ChatContactResolver = Callable[[Session, str], Tuple[Optional[str], Optional[str
 class TemplateMessageSendRequest(BaseModel):
     template_id: str = Field(..., min_length=1)
     params: dict[str, str] = Field(default_factory=dict)
+    # Optional intervention-ticket id: a template sent from the ticket drawer is
+    # a real reply and must stop THAT ticket's response clock (finding 4). Every
+    # other chat surface omits it and behaves exactly as before. The worker only
+    # honours it when the ticket's contact is the one that received the template.
+    tracking_id: Optional[str] = None
 
 
 class ChatMessageSendRequest(BaseModel):
@@ -103,6 +108,7 @@ def build_chat_template_router(
             business_table,
             str(entity_id),
             str(current_user.get("id") or "") or None,
+            (str(body.tracking_id) if body.tracking_id else None),
             queue_name="respond_io",
             job_timeout=180,
         )

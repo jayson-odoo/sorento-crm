@@ -5320,6 +5320,57 @@ class ConversationSLATrackingService:
         )
         return tracking
 
+    def mark_ticket_responded_by_id(
+        self,
+        tracking_id: str,
+        *,
+        responded_by_user_id: Optional[str] = None,
+        reason: str = "Responded from the CRM.",
+        expect_respond_io_id: Optional[str] = None,
+    ) -> Optional[ConversationSLATracking]:
+        """``mark_ticket_responded`` for a caller that holds only the ticket id.
+
+        Used by the manual-template worker send: the drawer's "Send template"
+        goes through the shared ``/conversation/template-message`` route, which
+        queues delivery, so the stamp happens in the worker AFTER the send
+        succeeded (an out-of-window template reply must stop the response clock
+        exactly like an in-window text reply - otherwise the ticket breaches
+        while visibly answered).
+
+        Returns the stamped tracking, or None when there is nothing to stamp.
+        Never raises for "not applicable":
+
+        - unknown id -> None (a stale queued job is not an error)
+        - form-SLA stage row -> None (different family; form SLA owns its own
+          clocks, see conversation_tracking_scope)
+        - ``expect_respond_io_id`` set and the ticket's contact is somebody else
+          -> None. The tracking id arrives from the client while the identifier
+          is resolved server-side from the entity, so this pins the stamp to the
+          contact who ACTUALLY received the template.
+        - already responded -> ``mark_ticket_responded`` no-ops (only the FIRST
+          reply stops the clock).
+        """
+        from app.services.form_sla_service import FORM_SLA_TYPES
+
+        # Direct query, not get_tracking(): a stale queued job naming a deleted
+        # row must be a no-op, not a 404 that fails the RQ job.
+        tracking = (
+            self.db.query(ConversationSLATracking)
+            .filter(ConversationSLATracking.id == str(tracking_id))
+            .first()
+        )
+        if not tracking:
+            return None
+        if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+            return None
+        if expect_respond_io_id:
+            actual = self._respond_io_identifier_for_tracking(tracking)
+            if str(actual or "") != str(expect_respond_io_id):
+                return None
+        return self.mark_ticket_responded(
+            tracking, responded_by_user_id=responded_by_user_id, reason=reason
+        )
+
     def apply_agent_reply(
         self,
         *,

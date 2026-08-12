@@ -66,6 +66,12 @@ interface SharedConversationComposerProps {
   windowStateOverride?: { closed: boolean; template?: ChatTemplatePreview | null } | null;
   /** Hide the "Send template" button (surfaces that resolve templates elsewhere). */
   showTemplateButton?: boolean;
+  /**
+   * Intervention ticket the manual "Send template" dialog answers. Without it a
+   * template send is a reply the ticket never hears about, so the response clock
+   * keeps running and the ticket breaches while visibly answered.
+   */
+  templateSendTrackingId?: string | null;
 }
 
 /**
@@ -96,6 +102,7 @@ export default function SharedConversationComposer({
   sendAdapter,
   windowStateOverride = null,
   showTemplateButton = true,
+  templateSendTrackingId = null,
 }: SharedConversationComposerProps) {
   const [replyText, setReplyText] = useState('');
   const [files, setFiles] = useState<File[]>([]);
@@ -445,6 +452,7 @@ export default function SharedConversationComposer({
         entityType={entityType}
         entityId={entityId}
         contactId={entityId}
+        trackingId={templateSendTrackingId}
         open={templateDialogOpen}
         onOpenChange={setTemplateDialogOpen}
         onSent={() => {

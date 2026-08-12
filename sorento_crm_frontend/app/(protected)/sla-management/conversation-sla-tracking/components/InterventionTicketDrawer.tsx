@@ -219,6 +219,13 @@ export default function InterventionTicketDrawer({
                 canReply={ticket.can_send && !ticket.is_resolved}
                 mode="conversation"
                 attachmentsEnabled={ticket.send_capabilities.includes('attachment')}
+                // A manual template send is a reply too: stamp THIS ticket, or
+                // the response clock runs on while the contact has an answer.
+                templateSendTrackingId={ticket.id}
+                onSent={() => {
+                  void ticketQuery.refetch();
+                  void threadQuery.refetch();
+                }}
                 replyTo={replyTo}
                 onClearReplyTo={() => setReplyTo(null)}
                 windowStateOverride={{
