@@ -61,9 +61,16 @@ import {
   useRejectTakeover,
   useTakeoverSLATracking,
 } from '../hooks/useTeamPendingSLA';
+import {
+  getMyInterventionTickets,
+  PHASE1_TICKET_MOCKS,
+  type InterventionTicketListItem,
+} from '../services/interventionTicketService';
 import ReassignDialog from './ReassignDialog';
 import { TakeoverCountdown } from './TakeoverCountdown';
 import ExtendDueButton from './ExtendDueButton';
+import InterventionTicketDrawer from './InterventionTicketDrawer';
+import TicketSlaChips from './TicketSlaChips';
 import { CoverageManager } from '@/app/(protected)/account/notifications/components';
 
 // Same inbox base used by the SLA detail page; conversation rows deep-link here
@@ -84,6 +91,15 @@ type AnyTask = MyPendingSLAItem | TeamPendingItem;
  * silently fall through to the conversation branch. */
 function isFormTask(item: AnyTask): boolean {
   return item.is_form_sla;
+}
+
+/** Intervention-ticket rows are flagged by the backend (`is_intervention_ticket`),
+ * never re-derived — a pre-migration conversation row keeps its old behaviour of
+ * opening the Respond inbox. */
+function asTicket(item: AnyTask): InterventionTicketListItem | null {
+  return (item as InterventionTicketListItem).is_intervention_ticket
+    ? (item as InterventionTicketListItem)
+    : null;
 }
 
 /** The pending takeover on a row, if any (null otherwise). */
@@ -128,12 +144,15 @@ function dueLabel(due: string | null): { text: string; overdue: boolean } {
 function matchesQuery(item: AnyTask, typeLabel: string, q: string): boolean {
   if (!q) return true;
   const t = item as TeamPendingItem;
+  const ticket = asTicket(item);
   const hay = [
     typeLabel,
     item.reference ?? '',
     t.assignee_name ?? '',
     t.team_label ?? '',
     item.source_entity_type ?? '',
+    ticket?.contact_name ?? '',
+    ticket?.enquiry_snippet ?? '',
   ]
     .join(' ')
     .toLowerCase();
@@ -168,6 +187,9 @@ export default function MyPendingSLAWidget() {
   const [escalating, setEscalating] = useState(false);
   const [reassignTarget, setReassignTarget] = useState<{ id: string; label: string } | null>(null);
   const [takeoverTarget, setTakeoverTarget] = useState<TeamPendingItem | null>(null);
+  // Intervention tickets: own enquiry per row, answered in an in-place drawer.
+  const [tickets, setTickets] = useState<InterventionTicketListItem[]>([]);
+  const [openTicketId, setOpenTicketId] = useState<string | null>(null);
 
   const takeoverMutation = useTakeoverSLATracking();
   const reassignMutation = useReassignSLATracking();
@@ -190,6 +212,16 @@ export default function MyPendingSLAWidget() {
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load'));
   }, []);
 
+  // PHASE 1 (mock): intervention tickets are served by in-memory fixtures and
+  // merged into My Pending. In Phase 2 they arrive on `/my-pending` itself and
+  // this loader plus the merge below are deleted (S2.7).
+  const loadTickets = useCallback(() => {
+    if (!PHASE1_TICKET_MOCKS) return Promise.resolve();
+    return getMyInterventionTickets()
+      .then((data) => setTickets(data))
+      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load'));
+  }, []);
+
   const loadTeam = useCallback(() => {
     return getTeamPendingSLA({ limit: 50 })
       .then((res) => setTeamItems(res.data))
@@ -200,6 +232,17 @@ export default function MyPendingSLAWidget() {
     let active = true;
     getMyPendingSLA()
       .then((data) => active && setItems(data))
+      .catch((e) => active && setError(e instanceof Error ? e.message : 'Failed to load'));
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!PHASE1_TICKET_MOCKS) return;
+    let active = true;
+    getMyInterventionTickets()
+      .then((data) => active && setTickets(data))
       .catch((e) => active && setError(e instanceof Error ? e.message : 'Failed to load'));
     return () => {
       active = false;
@@ -250,6 +293,13 @@ export default function MyPendingSLAWidget() {
     const t = setTimeout(() => setHighlightId(null), 6000);
     return () => clearTimeout(t);
   }, [teamTaskParam]);
+
+  // One "My Pending" set: intervention tickets first (an unanswered enquiry is the
+  // most time-critical thing the assignee owns), then everything else.
+  const mineItems = useMemo<MyPendingSLAItem[] | null>(
+    () => (items === null ? null : [...tickets, ...items]),
+    [items, tickets],
+  );
 
   // Light polling while any pending takeover is on screen (bar / banner transitions).
   const hasPending = useMemo(() => {
@@ -324,6 +374,12 @@ export default function MyPendingSLAWidget() {
   // inbox (or the SLA detail when the contact has no resolvable Respond id).
   const openTask = useCallback(
     (item: AnyTask) => {
+      // An intervention ticket is answered in place - no navigation, no Respond.
+      const ticket = asTicket(item);
+      if (ticket) {
+        setOpenTicketId(ticket.id);
+        return;
+      }
       const record = entityHref(item);
       if (record) {
         router.push(record);
@@ -375,8 +431,8 @@ export default function MyPendingSLAWidget() {
   const q = search.trim().toLowerCase();
 
   const filteredMine = useMemo(
-    () => (items ?? []).filter((it) => matchesQuery(it, humanizeType(it), q)),
-    [items, q],
+    () => (mineItems ?? []).filter((it) => matchesQuery(it, humanizeType(it), q)),
+    [mineItems, q],
   );
   const filteredTeam = useMemo(
     () => (teamItems ?? []).filter((it) => matchesQuery(it, humanizeType(it), q)),
@@ -433,9 +489,12 @@ export default function MyPendingSLAWidget() {
     const teamItem = item as TeamPendingItem;
     const mineItem = item as MyPendingSLAItem;
     const tk = pendingTakeover(item);
+    const ticket = isTeam ? null : asTicket(item);
     const subline = isTeam
       ? `${teamItem.assignee_name ?? '—'} · ${teamItem.team_label ?? '—'} · Tier ${item.current_tier}`
-      : `Tier ${item.current_tier} · ${form ? mineItem.next_action ?? 'Action required' : 'Reply'}`;
+      : ticket
+        ? ticket.enquiry_snippet ?? 'Enquiry from this contact'
+        : `Tier ${item.current_tier} · ${form ? mineItem.next_action ?? 'Action required' : 'Reply'}`;
     const atMaxTier = item.current_tier >= MAX_TIER;
     const highlighted = !!highlightId && item.id === highlightId;
 
@@ -474,15 +533,32 @@ export default function MyPendingSLAWidget() {
               <p className="truncate text-xs text-muted-foreground" title={subline}>
                 {subline}
               </p>
+              {/* A ticket races two clocks at once, so both are shown inline
+                  rather than only the active one. */}
+              {ticket && (
+                <TicketSlaChips
+                  className="mt-1.5"
+                  dueAt={ticket.due_at}
+                  dueAtResolution={ticket.due_at_resolution ?? null}
+                  isResponded={ticket.is_responded}
+                  respondedAt={ticket.responded_at}
+                  currentTier={ticket.current_tier}
+                  escalatedAt={ticket.escalated_at}
+                />
+              )}
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
-              <span
-                className={`text-xs ${due.overdue ? 'font-medium text-destructive' : 'text-muted-foreground'}`}
-                title={due.text}
-              >
-                {primaryLabel}: {due.text}
-              </span>
-              {!entityHref(item) && respondId(item) ? (
+              {!ticket && (
+                <span
+                  className={`text-xs ${due.overdue ? 'font-medium text-destructive' : 'text-muted-foreground'}`}
+                  title={due.text}
+                >
+                  {primaryLabel}: {due.text}
+                </span>
+              )}
+              {ticket ? (
+                <ChevronRight className="size-4 text-muted-foreground" />
+              ) : !entityHref(item) && respondId(item) ? (
                 <ExternalLink className="size-3.5 text-muted-foreground" />
               ) : (
                 <ChevronRight className="size-4 text-muted-foreground" />
@@ -541,8 +617,11 @@ export default function MyPendingSLAWidget() {
               </div>
             )}
 
+            {/* Intervention tickets carry no inline actions: the row opens the
+                ticket drawer, where replying and resolving live (journey steps
+                5-7). Everything else keeps its inline action set. */}
             <div className="flex flex-wrap items-center gap-2">
-              {isTeam ? (
+              {ticket ? null : isTeam ? (
                 !tk && canTakeover && (
                   <Button
                     size="sm"
@@ -602,7 +681,7 @@ export default function MyPendingSLAWidget() {
                   viewer owns them → assignee gate satisfied). /my-pending now emits
                   due_at_resolution, so gate strictly: hidden when there is no
                   resolution deadline. The dialog shows it as "Current due". */}
-              {!isTeam && canExtend && (
+              {!isTeam && !ticket && canExtend && (
                 <ExtendDueButton
                   trackingId={item.id}
                   isResolved={false}
@@ -615,7 +694,7 @@ export default function MyPendingSLAWidget() {
                 />
               )}
               {/* Reassign is locked while a takeover is pending (soft lock). */}
-              {!tk && canReassign && (
+              {!tk && !ticket && canReassign && (
                 <Button
                   size="sm"
                   variant="ghost"
@@ -684,9 +763,9 @@ export default function MyPendingSLAWidget() {
         <h2 className="text-sm font-semibold">
           {mode === 'mine' ? 'My pending tasks' : mode === 'team' ? 'My team tasks' : 'Coverage'}
         </h2>
-        {mode === 'mine' && items !== null && (
+        {mode === 'mine' && mineItems !== null && (
           <Badge variant="secondary" className="ml-1">
-            {items.length}
+            {mineItems.length}
           </Badge>
         )}
         {mode === 'team' && teamItems !== null && (
@@ -827,9 +906,9 @@ export default function MyPendingSLAWidget() {
         <p className="flex items-center gap-2 text-sm text-destructive">
           <AlertCircle className="size-4" /> {error}
         </p>
-      ) : items === null ? (
+      ) : mineItems === null ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
-      ) : items.length === 0 ? (
+      ) : mineItems.length === 0 ? (
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <CheckCircle2 className="size-4 text-emerald-600" />
           Nothing pending — you&apos;re all caught up.
@@ -943,6 +1022,20 @@ export default function MyPendingSLAWidget() {
         taskLabel={reassignTarget?.label}
         submitting={reassignMutation.isPending}
         onConfirm={handleReassignConfirm}
+      />
+
+      {/* The enquiry is answered here, in place - no navigation, no Respond inbox. */}
+      <InterventionTicketDrawer
+        ticketId={openTicketId}
+        open={!!openTicketId}
+        onOpenChange={(o) => {
+          if (o) return;
+          setOpenTicketId(null);
+          // A reply in the drawer stops this ticket's response clock: re-read the
+          // row so the chips agree with what just happened.
+          void loadTickets();
+        }}
+        onResolved={() => void loadTickets()}
       />
     </div>
   );

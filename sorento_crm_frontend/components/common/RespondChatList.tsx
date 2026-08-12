@@ -1,13 +1,29 @@
 'use client';
 
 import { useEffect, useMemo, useRef } from 'react';
-import { Check, CheckCheck, AlertCircle, Clock } from 'lucide-react';
+import {
+  Check,
+  CheckCheck,
+  AlertCircle,
+  Clock,
+  CornerUpLeft,
+  FileText,
+  Headphones,
+  Image as ImageIcon,
+  MapPin,
+  Paperclip,
+  Smile,
+  Video,
+} from 'lucide-react';
 import {
   dateKeyFromMs,
+  describeMessageAttachments,
   extractSelectionOptions,
   formatBubbleTime,
   formatDatePillLabel,
   getReceiptTier,
+  splitQuotedPrefix,
+  type MessageAttachmentDescriptor,
   type RespondMessageRenderable,
 } from '@/lib/respondIoChatRender';
 import { getRespondMessageDisplayTimeMs, getRespondMessageSortTimeMs } from '@/lib/respondIoMessage';
@@ -33,6 +49,45 @@ interface RespondChatListProps {
   highlightMessageId?: string | number | null;
   /** Label shown above the highlighted bubble. */
   highlightLabel?: string;
+  /**
+   * When set, each bubble gets a "Reply" affordance that hands the message back
+   * to the parent (the composer then quotes it). Omitted surfaces render exactly
+   * as before.
+   */
+  onReply?: (item: RespondMessageRenderable) => void;
+}
+
+function AttachmentIcon({ kind }: { kind: MessageAttachmentDescriptor['kind'] }) {
+  if (kind === 'image') return <ImageIcon className="size-3.5 shrink-0" />;
+  if (kind === 'video') return <Video className="size-3.5 shrink-0" />;
+  if (kind === 'audio') return <Headphones className="size-3.5 shrink-0" />;
+  if (kind === 'file') return <FileText className="size-3.5 shrink-0" />;
+  if (kind === 'sticker') return <Smile className="size-3.5 shrink-0" />;
+  if (kind === 'location') return <MapPin className="size-3.5 shrink-0" />;
+  return <Paperclip className="size-3.5 shrink-0" />;
+}
+
+/** Typed placeholder for a non-text payload. Images preview inline; everything
+ *  else (including types we do not know) shows an icon + label, never a blank. */
+function AttachmentBlock({ item }: { item: MessageAttachmentDescriptor }) {
+  const caption = item.fileName ? `${item.label} · ${item.fileName}` : item.label;
+  return (
+    <div className="mt-1 rounded-md border border-black/5 bg-black/5 p-1.5 dark:border-white/10 dark:bg-white/5">
+      {item.kind === 'image' && item.url ? (
+        // Remote Respond.io media: a plain <img> (next/image needs configured hosts).
+        <img
+          src={item.url}
+          alt={caption}
+          className="max-h-48 w-full rounded object-cover"
+          loading="lazy"
+        />
+      ) : null}
+      <div className="flex items-center gap-1.5 px-0.5 pt-1 text-xs opacity-80" title={caption}>
+        <AttachmentIcon kind={item.kind} />
+        <span className="truncate">{caption}</span>
+      </div>
+    </div>
+  );
 }
 
 function ReceiptTicks({ tier }: { tier: ReturnType<typeof getReceiptTier> }) {
@@ -53,6 +108,7 @@ export default function RespondChatList({
   maxHeightClass = 'max-h-[60vh]',
   highlightMessageId = null,
   highlightLabel = 'Ticket based on this message',
+  onReply,
 }: RespondChatListProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
@@ -109,7 +165,8 @@ export default function RespondChatList({
         )}
         {sortedItems.map((item, idx) => {
           const isOutgoing = item.traffic === 'outgoing';
-          const text = item.message?.text ?? '';
+          const { quoted, body: text } = splitQuotedPrefix(item.message?.text ?? '');
+          const attachments = describeMessageAttachments(item);
           const displayMs = getRespondMessageDisplayTimeMs(item);
           const key = item.messageId != null ? String(item.messageId) : `msg-${idx}`;
 
@@ -152,9 +209,30 @@ export default function RespondChatList({
                     isHighlighted ? ' ring-2 ring-amber-400 dark:ring-amber-500' : ''
                   }`}
                 >
-                  <div className="mb-0.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
-                    {senderLabel}
+                  <div className="mb-0.5 flex items-center gap-2">
+                    <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                      {senderLabel}
+                    </span>
+                    {onReply && (
+                      <button
+                        type="button"
+                        className="ms-auto inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] text-zinc-500 hover:bg-black/5 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:text-zinc-100"
+                        onClick={() => onReply(item)}
+                        aria-label="Reply to this message"
+                      >
+                        <CornerUpLeft className="size-3" />
+                        Reply
+                      </button>
+                    )}
                   </div>
+                  {quoted && (
+                    <div className="mb-1 rounded border-s-2 border-emerald-500 bg-black/5 px-2 py-1 text-xs italic opacity-80 dark:bg-white/5">
+                      <span className="line-clamp-3 whitespace-pre-wrap break-words">{quoted}</span>
+                    </div>
+                  )}
+                  {attachments.map((att, i) => (
+                    <AttachmentBlock key={`${key}-att-${i}`} item={att} />
+                  ))}
                   {text && (
                     <div className="whitespace-pre-wrap break-words leading-snug">{text}</div>
                   )}
@@ -170,7 +248,7 @@ export default function RespondChatList({
                       ))}
                     </div>
                   )}
-                  {!text && options.length === 0 && (
+                  {!text && options.length === 0 && attachments.length === 0 && !quoted && (
                     <div className="italic opacity-70">(no text)</div>
                   )}
                   <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-zinc-500 dark:text-zinc-300/80">

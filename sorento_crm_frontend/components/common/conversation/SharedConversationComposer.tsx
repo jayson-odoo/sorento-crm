@@ -4,16 +4,18 @@ import { useState, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { Send, Link2, LayoutTemplate, FileText, Info } from 'lucide-react';
+import { Send, Link2, LayoutTemplate, FileText, Info, Paperclip, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import SendTemplateDialog from '@/components/common/whatsapp-template/SendTemplateDialog';
+import { buildQuotedReplyText } from '@/lib/respondIoChatRender';
 import { useConversationWindowState } from './useConversationWindowState';
 import {
   sendConversationMessage,
   getChatTemplatePreview,
   NoChatTemplateError,
+  type ChatTemplatePreview,
 } from '@/services/whatsappTemplateService';
 
 interface SharedConversationComposerProps {
@@ -34,6 +36,36 @@ interface SharedConversationComposerProps {
   onSent?: () => void;
   /** Shown when !canReply. Entity-specific copy; defaults to a generic message. */
   notAvailableMessage?: string;
+  /**
+   * Offer file attachments (image / video / audio / document). Off by default so
+   * existing surfaces are unchanged; the intervention-ticket drawer turns it on.
+   * Respond.io has no sticker type, so there is deliberately no sticker option.
+   */
+  attachmentsEnabled?: boolean;
+  /**
+   * Message being replied to. Respond.io has no reply-to parameter, so the
+   * excerpt is carried as a ">" quote prefix on the outgoing text.
+   */
+  replyTo?: { messageId: string | number | null; excerpt: string } | null;
+  onClearReplyTo?: () => void;
+  /**
+   * Overrides the default send. Used where the send must be stamped with more
+   * than (entityType, entityId) - e.g. an intervention ticket carrying files and
+   * a quoted message.
+   */
+  sendAdapter?: (payload: {
+    text: string;
+    files: File[];
+    replyToMessageId?: string | number | null;
+    replyToExcerpt?: string | null;
+  }) => Promise<{ sent_as: 'text' | 'template' | 'attachment' }>;
+  /**
+   * Supplies the 24h window + out-of-window template instead of the composer
+   * fetching them, for callers that already loaded them with the record.
+   */
+  windowStateOverride?: { closed: boolean; template?: ChatTemplatePreview | null } | null;
+  /** Hide the "Send template" button (surfaces that resolve templates elsewhere). */
+  showTemplateButton?: boolean;
 }
 
 /**
@@ -58,26 +90,42 @@ export default function SharedConversationComposer({
   replyComposePrefill,
   onSent,
   notAvailableMessage = 'Reply is only available when a Respond.io conversation is linked to this record.',
+  attachmentsEnabled = false,
+  replyTo = null,
+  onClearReplyTo,
+  sendAdapter,
+  windowStateOverride = null,
+  showTemplateButton = true,
 }: SharedConversationComposerProps) {
   const [replyText, setReplyText] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
   const [viewLinkLoading, setViewLinkLoading] = useState(false);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [sendError, setSendError] = useState<{ message: string; settingsUrl: string } | null>(null);
   const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const appliedPrefillKeyRef = useRef(0);
 
-  const { windowClosed } = useConversationWindowState(entityType, entityId, canReply);
+  const { windowClosed: fetchedWindowClosed } = useConversationWindowState(
+    entityType,
+    entityId,
+    canReply && !windowStateOverride,
+  );
+  const windowClosed = windowStateOverride ? windowStateOverride.closed : fetchedWindowClosed;
   const isEntity = mode === 'entity';
 
   // Out-of-window: fetch the form's chat template so we can render it inline with
   // a fill-in field. DB-only on the backend — no Respond call.
-  const { data: preview, isLoading: previewLoading } = useQuery({
+  const { data: fetchedPreview, isLoading: previewLoading } = useQuery({
     queryKey: ['chat-template-preview', entityType, entityId],
     queryFn: () => getChatTemplatePreview(entityType, entityId),
-    enabled: canReply && windowClosed,
+    enabled: canReply && windowClosed && !windowStateOverride,
     staleTime: 60_000,
   });
+  const preview = windowStateOverride
+    ? (windowStateOverride.template ?? { configured: false })
+    : fetchedPreview;
 
   const templateMode = windowClosed && !!preview?.configured;
   const noTemplateConfigured = windowClosed && preview !== undefined && !preview.configured;
@@ -95,15 +143,35 @@ export default function SharedConversationComposer({
     if (sendError) setSendError(null);
   };
 
+  const canSubmit = !!replyText.trim() || (attachmentsEnabled && files.length > 0);
+
   const handleSend = async () => {
-    const text = replyText.trim();
-    if (!text || sending || !canReply) return;
+    const typed = replyText.trim();
+    if (!canSubmit || sending || !canReply) return;
+    // Respond.io carries no reply-to reference, so a quoted reply ships as a
+    // ">" prefixed excerpt above the body (rendered as a quote by WhatsApp and
+    // by our own chat list).
+    const text = replyTo?.excerpt ? buildQuotedReplyText(replyTo.excerpt, typed) : typed;
     setSending(true);
     setSendError(null);
     try {
-      const result = await sendConversationMessage(entityType, entityId, text);
+      const result = sendAdapter
+        ? await sendAdapter({
+            text,
+            files,
+            replyToMessageId: replyTo?.messageId ?? null,
+            replyToExcerpt: replyTo?.excerpt ?? null,
+          })
+        : await sendConversationMessage(entityType, entityId, text);
       setReplyText('');
-      toast.success(result.sent_as === 'template' ? 'Delivered as a template message' : 'Message sent');
+      setFiles([]);
+      onClearReplyTo?.();
+      if (!sendAdapter) {
+        // The adapter owns its own success feedback (it knows what it sent).
+        toast.success(
+          result.sent_as === 'template' ? 'Delivered as a template message' : 'Message sent',
+        );
+      }
       // Pulse a few more refetches so the outgoing message's delivery status
       // (clock → sent/delivered/read ticks) catches up as Respond posts receipts.
       onSent?.();
@@ -143,13 +211,90 @@ export default function SharedConversationComposer({
     <Button
       size="icon"
       className="shrink-0"
-      disabled={!replyText.trim() || sending}
+      disabled={!canSubmit || sending}
       onClick={handleSend}
       aria-label="Send"
     >
       <Send className="size-4" />
     </Button>
   );
+
+  const addFiles = (picked: FileList | null) => {
+    if (!picked?.length) return;
+    setFiles((prev) => [...prev, ...Array.from(picked)]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // Quoted message being replied to (Respond has no reply-to field; see handleSend).
+  const replyToChip = replyTo ? (
+    <div
+      className="flex items-start gap-2 rounded-md border-s-2 border-primary bg-muted/40 px-2.5 py-1.5 text-xs"
+      data-testid="composer-reply-to"
+    >
+      <span className="line-clamp-2 flex-1 italic text-muted-foreground">{replyTo.excerpt}</span>
+      {onClearReplyTo && (
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className="size-5 shrink-0"
+          aria-label="Cancel reply"
+          onClick={onClearReplyTo}
+        >
+          <X className="size-3.5" />
+        </Button>
+      )}
+    </div>
+  ) : null;
+
+  const attachmentChips =
+    attachmentsEnabled && files.length > 0 ? (
+      <div className="flex flex-wrap gap-1.5" data-testid="composer-attachments">
+        {files.map((file, idx) => (
+          <span
+            key={`${file.name}-${idx}`}
+            className="inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-xs"
+            title={file.name}
+          >
+            <Paperclip className="size-3 shrink-0" />
+            <span className="truncate">{file.name}</span>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="size-4 shrink-0"
+              aria-label={`Remove ${file.name}`}
+              onClick={() => setFiles((prev) => prev.filter((_, i) => i !== idx))}
+            >
+              <X className="size-3" />
+            </Button>
+          </span>
+        ))}
+      </div>
+    ) : null;
+
+  const attachButton = attachmentsEnabled ? (
+    <>
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        data-testid="composer-file-input"
+        onChange={(e) => addFiles(e.target.files)}
+      />
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={sending}
+        onClick={() => fileInputRef.current?.click()}
+      >
+        <Paperclip className="size-4 mr-1" />
+        Attach
+      </Button>
+    </>
+  ) : null;
 
   // Split the template body into text + slot tokens so we can render the message
   // slot as an editable field and the rest as resolved, read-only text.
@@ -186,6 +331,9 @@ export default function SharedConversationComposer({
 
   return (
     <div className="space-y-2">
+      {replyToChip}
+      {attachmentChips}
+
       {/* ---- Out-of-window, template configured: inline template-fill ---- */}
       {templateMode ? (
         <div className="space-y-2" data-testid="composer-template-mode">
@@ -243,15 +391,19 @@ export default function SharedConversationComposer({
       {sendError && noTemplateNotice(sendError.settingsUrl, sendError.message)}
 
       <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          variant={windowClosed ? 'primary' : 'outline'}
-          size="sm"
-          onClick={() => setTemplateDialogOpen(true)}
-        >
-          <LayoutTemplate className="size-4 mr-1" />
-          Send template
-        </Button>
+        {attachButton}
+
+        {showTemplateButton && (
+          <Button
+            type="button"
+            variant={windowClosed ? 'primary' : 'outline'}
+            size="sm"
+            onClick={() => setTemplateDialogOpen(true)}
+          >
+            <LayoutTemplate className="size-4 mr-1" />
+            Send template
+          </Button>
+        )}
 
         {isEntity && useResponseText != null && useResponseText !== '' && (
           <Button
