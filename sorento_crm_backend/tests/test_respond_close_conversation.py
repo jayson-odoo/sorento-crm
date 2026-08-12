@@ -3,6 +3,11 @@
 Resolve = Respond close: resolving a conversation SLA best-effort closes the
 contact's Respond.io conversation. These pin the wire contract (URL, id: prefix,
 Bearer auth, closing-note body) and the best-effort swallow behavior.
+
+Endpoint is POST .../conversation/status with body {"status": "close", ...} —
+NOT a /conversation/close path (that 404s on Respond.io; see
+RespondClient.close_conversation's own docstring). These tests originally
+pinned the wrong (never-worked) path; updated to match the implementation.
 """
 from unittest.mock import MagicMock, patch
 
@@ -47,9 +52,9 @@ def test_close_conversation_builds_correct_request():
         )
 
     assert out == {"ok": True}
-    assert captured["url"] == "https://api.respond.io/v2/contact/id:12345/conversation/close"
+    assert captured["url"] == "https://api.respond.io/v2/contact/id:12345/conversation/status"
     assert captured["headers"]["Authorization"] == "Bearer test-key"
-    assert captured["json"] == {"category": "Resolved", "summary": "done"}
+    assert captured["json"] == {"status": "close", "category": "Resolved", "summary": "done"}
 
 
 def test_close_conversation_omits_empty_note_fields():
@@ -78,8 +83,9 @@ def test_close_conversation_omits_empty_note_fields():
     with patch("app.services.integration_service.httpx.Client", return_value=_HttpClient()):
         _client().close_conversation("phone:+60123")
 
-    # No category/summary -> empty body (don't send keys the workspace may reject).
-    assert captured["json"] == {}
+    # No category/summary -> only the required status key (don't send keys the
+    # workspace may reject).
+    assert captured["json"] == {"status": "close"}
 
 
 def test_close_conversation_keeps_existing_identifier_prefix():
@@ -109,7 +115,7 @@ def test_close_conversation_keeps_existing_identifier_prefix():
         _client().close_conversation("phone:+60123")
 
     # phone:/id: already present -> not double-prefixed.
-    assert captured["url"].endswith("/v2/contact/phone:+60123/conversation/close")
+    assert captured["url"].endswith("/v2/contact/phone:+60123/conversation/status")
 
 
 def test_close_conversation_requires_api_key():

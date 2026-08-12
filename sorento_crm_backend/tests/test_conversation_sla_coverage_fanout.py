@@ -28,7 +28,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from app.models.access import RespondContact
+from app.models.access import AccessAgent, RespondContact
 from app.models.notification import (
     Notification,
     NotificationDelivery,
@@ -75,6 +75,12 @@ def _seed(db) -> dict:
             resolution_hours=24,
         )
     )
+    # agent_code/team_set_code are required on ConversationSLATrackingCreate
+    # (743edf35b). No AgentTeam binding is seeded — create_tracking falls back
+    # to the payload's own policy_id (with a warning) when the agent/team-set
+    # pair has no bound policy, which is all this fan-out test needs.
+    agent_id = str(uuid.uuid4())
+    db.add(AccessAgent(id=agent_id, code="COVFAN-AGENT", name="Coverage Fanout Agent"))
     contact_id = str(uuid.uuid4())
     db.add(
         RespondContact(
@@ -107,6 +113,8 @@ def _seed(db) -> dict:
         "contact_id": contact_id,
         "assignee_id": assignee_id,
         "coverer_id": coverer_id,
+        "agent_code": "COVFAN-AGENT",
+        "team_set_code": "general",
     }
 
 
@@ -125,6 +133,8 @@ def _notify_only_coverage(db, coverer_id, assignee_id):
 
 def _payload(seed, *, message_id=None, started_at=None) -> ConversationSLATrackingCreate:
     return ConversationSLATrackingCreate(
+        agent_code=seed["agent_code"],
+        team_set_code=seed["team_set_code"],
         policy_id=seed["policy_id"],
         current_tier=1,
         assigned_to_id=seed["assignee_id"],
@@ -188,8 +198,10 @@ def test_idempotent_active_does_not_fan_out(db):
     notes_after_first = _coverage_notes(db, seed["coverer_id"])
     assert len(notes_after_first) == 1
 
-    # Second create hits the active conversation -> idempotent return, NO fan-out.
-    second = service.create_tracking(_payload(seed, message_id=222))
+    # Second create is a retry of the SAME trigger message (post-S2a, ticket
+    # identity is per-enquiry keyed on source_message_id/message_id — a
+    # DIFFERENT message_id would open a second ticket, not hit idempotency).
+    second = service.create_tracking(_payload(seed, message_id=111))
     assert str(second.id) == str(first.id)
     assert bool(getattr(second, "_already_active", False)) is True
 
@@ -202,8 +214,12 @@ def test_overwrite_resolved_fans_out_again(db):
     _notify_only_coverage(db, seed["coverer_id"], seed["assignee_id"])
     service = ConversationSLATrackingService(db)
 
+    # No message_id/source_message_id on either payload: post-S2a, a per-enquiry
+    # identity keeps a resolved ticket as history and never overwrites it — only
+    # the legacy no-identity contact-singleton branch overwrites a resolved row
+    # in place, which is the behaviour this test pins.
     t0 = datetime(2026, 6, 1, 8, 0, 0)
-    first = service.create_tracking(_payload(seed, message_id=111, started_at=t0))
+    first = service.create_tracking(_payload(seed, started_at=t0))
     assert len(_coverage_notes(db, seed["coverer_id"])) == 1
 
     # Resolve, then a new inbound conversation with a DIFFERENT start time overwrites
@@ -213,7 +229,7 @@ def test_overwrite_resolved_fans_out_again(db):
     db.commit()
 
     t1 = datetime(2026, 6, 2, 8, 0, 0)
-    second = service.create_tracking(_payload(seed, message_id=222, started_at=t1))
+    second = service.create_tracking(_payload(seed, started_at=t1))
     assert str(second.id) == str(first.id)
     assert bool(getattr(second, "_overwrote_resolved", False)) is True
 
@@ -289,17 +305,25 @@ def test_two_occurrences_produce_two_distinct_coverage_notes(db):
 
 def test_same_occurrence_dedups_to_one(db):
     """Re-running the SAME occurrence (same start-time) must dedup to ONE coverage
-    note via create_with_channel_preferences' (user, source, event_type) idempotency."""
+    note via create_with_channel_preferences' (user, source, event_type) idempotency.
+
+    The dedup key is (user, source_type, source_id, event_type) and source_id is
+    the tracking id, so this only exercises the dedup path when both calls REUSE
+    the same row — no message_id on either payload, so both resolve via the
+    legacy no-identity contact-singleton branch (same as
+    test_overwrite_resolved_fans_out_again).
+    """
     seed = _seed(db)
     _notify_only_coverage(db, seed["coverer_id"], seed["assignee_id"])
     service = ConversationSLATrackingService(db)
 
     t0 = datetime(2026, 6, 1, 8, 0, 0)
-    first = service.create_tracking(_payload(seed, message_id=111, started_at=t0))
+    first = service.create_tracking(_payload(seed, started_at=t0))
     # Resolve then re-create with the SAME start time = same occurrence key.
     first.is_resolved = True
     db.commit()
-    service.create_tracking(_payload(seed, message_id=222, started_at=t0))
+    second = service.create_tracking(_payload(seed, started_at=t0))
+    assert str(second.id) == str(first.id)
 
     notes = _coverage_notes(db, seed["coverer_id"])
     assert len(notes) == 1, "same-occurrence start-time must dedup to one note"

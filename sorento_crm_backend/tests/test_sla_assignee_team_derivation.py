@@ -661,6 +661,11 @@ def test_escalate_signal_only_increments_tier(mock_service_cls, _mock_log, clien
     before = _escalate_tracking_mock(current_tier=1)
     after = _escalate_tracking_mock(current_tier=2)
     svc.resolve_internal_respond_contact_id.return_value = "contact-1"
+    # get_open_tracking_by_contact is the route's PRIMARY resolver (S2b); an
+    # unconfigured auto-mock is truthy (and its auto-mocked .is_resolved is
+    # truthy too), so it must return None to fall through to the
+    # get_tracking_by_contact_and_policy mock this test actually configures.
+    svc.get_open_tracking_by_contact.return_value = None
     svc.get_tracking_by_contact_and_policy.return_value = before
     svc.get_escalation_assignee_for_tier.return_value = ASSIGNEE
     svc.escalate_tracking.return_value = after
@@ -693,6 +698,7 @@ def test_escalate_signal_only_increments_tier(mock_service_cls, _mock_log, clien
 def test_escalate_signal_only_at_max_tier_returns_flag(mock_service_cls, _mock_log, client):
     svc = mock_service_cls.return_value
     svc.resolve_internal_respond_contact_id.return_value = "contact-1"
+    svc.get_open_tracking_by_contact.return_value = None
     svc.get_tracking_by_contact_and_policy.return_value = _escalate_tracking_mock(current_tier=3)
 
     r = client.post(
@@ -742,6 +748,7 @@ def test_escalate_explicit_multi_step_jump_still_works(mock_service_cls, _mock_l
     before = _escalate_tracking_mock(current_tier=1)
     after = _escalate_tracking_mock(current_tier=3)
     svc.resolve_internal_respond_contact_id.return_value = "contact-1"
+    svc.get_open_tracking_by_contact.return_value = None
     svc.get_tracking_by_contact_and_policy.return_value = before
     svc.get_escalation_assignee_for_tier.return_value = ASSIGNEE
     svc.escalate_tracking.return_value = after
