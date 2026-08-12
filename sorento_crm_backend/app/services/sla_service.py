@@ -5266,6 +5266,7 @@ class ConversationSLATrackingService:
         *,
         responded_by_user_id: Optional[str] = None,
         reason: str = "Responded from the CRM.",
+        responded_at: Optional[datetime] = None,
     ) -> ConversationSLATracking:
         """Stamp is_responded/responded_at/responded_by/response_time on
         ``tracking`` ONLY (UAC AC-E1) - a CRM-authoritative ticket-context send,
@@ -5275,13 +5276,18 @@ class ConversationSLATrackingService:
         tickets. No-op when the ticket is already responded - only the FIRST
         reply stops the response clock; later sends on the same ticket are
         ordinary conversation, not a new "first response".
+
+        ``responded_at`` lets a caller that knows WHEN the reply happened supply
+        it (the Respond-app-reply endpoint forwards n8n's `replied_at`), so the
+        response time reflects the reply rather than the moment the webhook was
+        processed. Defaults to now.
         """
         from decimal import Decimal, ROUND_HALF_UP
 
         if bool(getattr(tracking, "is_responded", False)):
             return tracking
 
-        responded_at = _now_utc()
+        responded_at = _to_aware_utc(responded_at) or _now_utc()
         response_time = None
         initiated_at = getattr(tracking, "initiated_at", None)
         if isinstance(initiated_at, datetime):
@@ -5313,6 +5319,120 @@ class ConversationSLATrackingService:
             )
         )
         return tracking
+
+    def apply_agent_reply(
+        self,
+        *,
+        contact_identifier: str,
+        replied_by: Optional[str] = None,
+        replied_at: Optional[datetime] = None,
+    ) -> dict:
+        """A staff member replied in the Respond app: stop the right ticket's
+        response clock, or say honestly why nothing was stamped (AC-I4).
+
+        This owns the REVISED AC-E3 rule (2026-08-13) in ONE place, keyed on the
+        CONTACT first and the replier second:
+
+          1. the contact has exactly ONE open unanswered ticket -> stamp it,
+             whoever replied. The response clock measures "did the contact get a
+             human response", not "did the assigned person type it": a ticket
+             raised on an already-assigned Respond conversation is owned by the
+             CRM round-robin pick (AC-E6) while the Respond conversation stays
+             with somebody else, so a replier-keyed rule found nothing and let
+             the ticket breach while a human was actively answering it.
+          2. 2+ open unanswered -> narrow by the replier. Stamp only when they
+             own exactly one; otherwise there is no basis to guess which enquiry
+             they answered, so change nothing ("ambiguous").
+          3. zero open unanswered -> "no_open_ticket". Also the idempotent
+             replay: a second delivery of the same reply finds the ticket
+             already answered and lands here rather than re-stamping.
+
+        Replaces the n8n `respond-send-user` raw SQL, which selected by
+        (arbitrary first policy, is_responded=false, assigned_to=replier) with NO
+        CONTACT PREDICATE and PUT once per row - so one reply to one contact
+        stamped every unanswered ticket that agent owned across ALL contacts.
+
+        Returns the caller-facing dict {matched, tracking_id, skipped_reason,
+        open_ticket_count}; never raises for "nothing to do".
+        """
+        result = {
+            "matched": False,
+            "tracking_id": None,
+            "skipped_reason": "no_open_ticket",
+            "open_ticket_count": 0,
+        }
+
+        internal_contact_id = self.resolve_internal_respond_contact_id(contact_identifier)
+        if not internal_contact_id:
+            # An unknown contact and a contact with nothing open are the same
+            # answer to the caller's question, and neither is an error.
+            return result
+
+        candidates = (
+            self.db.query(ConversationSLATracking)
+            .filter(
+                ConversationSLATracking.respond_contact_id == internal_contact_id,
+                ConversationSLATracking.is_resolved.is_(False),
+                ConversationSLATracking.is_responded.is_(False),
+                conversation_tracking_scope(),
+            )
+            .order_by(ConversationSLATracking.created_at.asc())
+            .all()
+        )
+        result["open_ticket_count"] = len(candidates)
+        if not candidates:
+            return result
+
+        replier_user_id = self._resolve_replier_user_id(replied_by)
+
+        if len(candidates) == 1:
+            target = candidates[0]
+        else:
+            owned = [
+                t
+                for t in candidates
+                if replier_user_id
+                and str(getattr(t, "assigned_to_id", "") or "") == str(replier_user_id)
+            ]
+            if len(owned) != 1:
+                result["skipped_reason"] = "ambiguous"
+                return result
+            target = owned[0]
+
+        self.mark_ticket_responded(
+            target,
+            responded_by_user_id=replier_user_id,
+            reason="Replied from the Respond app.",
+            responded_at=replied_at,
+        )
+        result["matched"] = True
+        result["tracking_id"] = str(target.id)
+        result["skipped_reason"] = None
+        return result
+
+    def _resolve_replier_user_id(self, replied_by: Optional[str]) -> Optional[str]:
+        """Map a Respond user id / CRM users.id / email to the internal user id.
+
+        Returns None when it maps to nobody - a Respond user with no CRM account
+        is a real, recurring state and must NOT abort the reply signal (the
+        single-open-ticket branch stamps regardless of who replied, falling back
+        to the ticket's own assignee for attribution).
+        """
+        from app.models.user import User
+
+        value = str(replied_by or "").strip()
+        if not value:
+            return None
+        user = (
+            self.db.query(User)
+            .filter(
+                (User.respond_user_id == value)
+                | (User.id == value)
+                | (User.email == value)
+            )
+            .first()
+        )
+        return str(user.id) if user else None
 
     def is_ambiguous_fallback_response(
         self, tracking: ConversationSLATracking, responded_by: Optional[str] = None

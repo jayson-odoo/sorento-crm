@@ -295,6 +295,41 @@ class ConversationSLAEscalateRequest(BaseModel):
         return str(v).strip()
 
 
+class ConversationSLAAgentRepliedRequest(BaseModel):
+    """AC-I4: a staff member replied to a contact from the Respond app.
+
+    `contact_id` accepts the same identifiers as the sibling reads: CRM
+    `respond_contacts.id`, the Respond.io contact id, or the contact's phone.
+    `replied_by` is the person who actually typed the reply - a Respond user id,
+    a CRM `users.id`, or an email. An id that maps to nobody is NOT an error
+    (see the endpoint): a Respond user with no CRM account is a real state.
+    """
+    contact_id: str
+    replied_by: str
+    replied_at: Optional[datetime] = None
+
+    @field_validator("contact_id", "replied_by")
+    @classmethod
+    def validate_required(cls, v):
+        if v is None or not str(v).strip():
+            raise ValueError("must not be blank")
+        return str(v).strip()
+
+
+class ConversationSLAAgentRepliedResponse(BaseModel):
+    """AC-I4 outcome. Always returned with 200, including every skip.
+
+    `skipped_reason` is null when a ticket was stamped, otherwise "ambiguous"
+    (2+ open unanswered and the replier does not own exactly one) or
+    "no_open_ticket" (nothing unanswered for this contact, including the
+    idempotent replay of a reply already recorded).
+    """
+    matched: bool = False
+    tracking_id: Optional[str] = None
+    skipped_reason: Optional[str] = None
+    open_ticket_count: int = 0
+
+
 class ConversationSLAOpenCountResponse(BaseModel):
     """AC-I2: how many OPEN conversation-scope tickets a contact holds.
 

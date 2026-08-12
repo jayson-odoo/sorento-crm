@@ -5,16 +5,33 @@ Auth: X-API-Key header (get_external_api_user).
 """
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.api.v1.sla.sla_tracking import build_conversation_sla_tracking_response
-from app.schemas.sla import ConversationSLAOpenCountResponse, ConversationSLATrackingResponse
+from app.schemas.integration import IntegrationLogCreate
+from app.schemas.sla import (
+    ConversationSLAAgentRepliedRequest,
+    ConversationSLAAgentRepliedResponse,
+    ConversationSLAOpenCountResponse,
+    ConversationSLATrackingResponse,
+)
+from app.services.integration_service import IntegrationLogService
 from app.services.sla_service import ConversationSLATrackingService
 
 router = APIRouter()
+
+# integration_log.business_id is a NOT NULL uuid column, but a skipped outcome has
+# no tracking to point at. Same placeholder the sibling SLA routes use.
+_NO_TRACKING_BUSINESS_ID = "00000000-0000-0000-0000-000000000000"
+
+_AGENT_REPLIED_LOG_STATUS = {
+    None: "success",
+    "ambiguous": "skipped_ambiguous",
+    "no_open_ticket": "skipped_no_open_ticket",
+}
 
 
 @router.get(
@@ -81,6 +98,80 @@ async def get_conversation_sla_open_count(
         contact_id=str(contact.id),
         open_count=service.count_open_tickets_for_contact(contact),
     )
+
+
+@router.post(
+    "/agent-replied",
+    response_model=ConversationSLAAgentRepliedResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Record that a staff member replied to a contact in the Respond app",
+)
+async def record_agent_reply(
+    body: ConversationSLAAgentRepliedRequest,
+    request: Request,
+    _current_user: dict = Depends(get_external_api_user),
+    db: Session = Depends(get_db),
+):
+    """Stop the right ticket's response clock after a Respond-app reply (AC-I4).
+
+    **Auth:** `X-API-Key` header.
+
+    **Body:** `{contact_id, replied_by, replied_at?}`. `contact_id` accepts a CRM
+    `respond_contacts.id`, a Respond.io contact id, or a phone number.
+    `replied_by` is a Respond user id, a CRM `users.id`, or an email.
+
+    **Always 200** with `{matched, tracking_id, skipped_reason, open_ticket_count}`.
+    `skipped_reason` is null on a stamp, else `"ambiguous"` or `"no_open_ticket"`.
+    An unknown contact and an unknown replier are both ordinary outcomes, not 4xx:
+    n8n has nowhere useful to route an error here, and a lost reply signal means a
+    ticket breaches while a human is actively answering it.
+
+    The rule (revised AC-E3, keyed on the contact first) lives in
+    `ConversationSLATrackingService.apply_agent_reply`, deliberately server-side:
+    this endpoint retires the n8n `respond-send-user` workflow, which resolved rows
+    in raw SQL by (arbitrary first policy, is_responded=false, assigned_to=replier)
+    with NO CONTACT PREDICATE and PUT once per row - so one reply to one contact
+    stamped every unanswered ticket that agent owned across ALL contacts.
+
+    Every outcome writes an `integration_log` row, INCLUDING the skips. The path
+    being replaced surfaced its failures as 400s; that signal has to survive the
+    move to an always-200 contract, or the endpoint goes quiet exactly when it is
+    doing nothing.
+    """
+    service = ConversationSLATrackingService(db)
+    result = service.apply_agent_reply(
+        contact_identifier=body.contact_id,
+        replied_by=body.replied_by,
+        replied_at=body.replied_at,
+    )
+
+    try:
+        IntegrationLogService(db).create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="sla_agent_replied",
+                business_table="conversation_sla_tracking",
+                business_id=result["tracking_id"] or _NO_TRACKING_BUSINESS_ID,
+                external_reference=body.contact_id,
+                direction="inbound",
+                endpoint=str(request.url),
+                http_method="POST",
+                status=_AGENT_REPLIED_LOG_STATUS.get(
+                    result["skipped_reason"], "skipped"
+                ),
+            ),
+            request_payload_dict={
+                "contact_id": body.contact_id,
+                "replied_by": body.replied_by,
+                "replied_at": body.replied_at.isoformat() if body.replied_at else None,
+                "open_ticket_count": result["open_ticket_count"],
+            },
+        )
+    except Exception:  # noqa: BLE001 - the stamp already committed
+        # Post-commit side effect: logging must never turn a successful stamp
+        # into a 500 the caller then retries into the idempotent path.
+        pass
+
+    return ConversationSLAAgentRepliedResponse(**result)
 
 
 @router.get(
