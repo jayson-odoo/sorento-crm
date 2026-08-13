@@ -1,8 +1,8 @@
 /**
  * ============================================================================
- * SCM Policy Configuration — DETERMINISTIC MOCK BACKING STORE  (Phase 1 only)
+ * SCM Policy Configuration - DETERMINISTIC MOCK BACKING STORE  (Phase 1 only)
  * ============================================================================
- * PROTOTYPE DATA. No network, no `Math.random`, no `Date` — every value is a
+ * PROTOTYPE DATA. No network, no `Math.random`, no `Date` - every value is a
  * hand-authored constant so the UI renders identically on every load and the
  * resolution preview is fully reproducible.
  *
@@ -15,7 +15,7 @@
  *
  * The resolve() mock mirrors the ENGINE precedence (sku > abc_xyz_cell >
  * product_class > global, active-only, priority tiebreak) but is NOT the real
- * resolver — Phase 2's `/scm/policies/resolve` calls
+ * resolver - Phase 2's `/scm/policies/resolve` calls
  * `reorder_engine.resolve_policy_for_sku` verbatim (AC-PREV-2, Risk #1).
  * ============================================================================
  */
@@ -72,13 +72,17 @@ let reorderPolicies: ReorderPolicyRow[] = [
     id: 'pol-global',
     scope_type: 'global',
     scope_ref: null,
-    scope_label: '—',
+    scope_label: '-',
     policy_type: 'reorder_point',
     service_level: null,
     safety_stock_method: 'fixed_days',
     safety_days: 7,
     review_period_days: null,
     forecast_window_days: 90,
+    trajectory_window_retail_months: null,
+    trajectory_window_project_months: null,
+    price_stale_after_days: null,
+    price_movement_threshold_pct: null,
     baseline_source: 'trailing_90d',
     spike_handling: 'clip',
     buy_scope: 'network',
@@ -102,6 +106,10 @@ let reorderPolicies: ReorderPolicyRow[] = [
     safety_days: null,
     review_period_days: null,
     forecast_window_days: 90,
+    trajectory_window_retail_months: null,
+    trajectory_window_project_months: null,
+    price_stale_after_days: null,
+    price_movement_threshold_pct: null,
     baseline_source: 'trailing_90d',
     spike_handling: 'clip',
     buy_scope: 'network',
@@ -125,6 +133,10 @@ let reorderPolicies: ReorderPolicyRow[] = [
     safety_days: 10,
     review_period_days: 7,
     forecast_window_days: 60,
+    trajectory_window_retail_months: null,
+    trajectory_window_project_months: null,
+    price_stale_after_days: null,
+    price_movement_threshold_pct: null,
     baseline_source: 'trailing_60d',
     spike_handling: 'clip',
     buy_scope: 'network',
@@ -148,6 +160,10 @@ let reorderPolicies: ReorderPolicyRow[] = [
     safety_days: null,
     review_period_days: null,
     forecast_window_days: 90,
+    trajectory_window_retail_months: null,
+    trajectory_window_project_months: null,
+    price_stale_after_days: null,
+    price_movement_threshold_pct: null,
     baseline_source: 'trailing_90d',
     spike_handling: 'clip',
     buy_scope: 'warehouse',
@@ -171,6 +187,10 @@ let reorderPolicies: ReorderPolicyRow[] = [
     safety_days: 5,
     review_period_days: null,
     forecast_window_days: 90,
+    trajectory_window_retail_months: null,
+    trajectory_window_project_months: null,
+    price_stale_after_days: null,
+    price_movement_threshold_pct: null,
     baseline_source: 'trailing_90d',
     spike_handling: 'clip',
     buy_scope: 'network',
@@ -209,7 +229,7 @@ const nextId = () => `pol-new-${(idCounter += 1)}`;
 
 /** Human label for a scope + ref, resolved from the mock catalogs. */
 export function mockScopeLabel(scopeType: ScopeType, scopeRef: string | null): string {
-  if (scopeType === 'global' || !scopeRef) return '—';
+  if (scopeType === 'global' || !scopeRef) return '-';
   if (scopeType === 'sku') {
     const p = MOCK_PRODUCTS.find((x) => x.id === scopeRef);
     return p ? `${p.product_code} · ${p.product_name}` : scopeRef;
@@ -400,6 +420,6 @@ export function mockResolve(productId: string, warehouseCode: string | null): Re
     product_class: productClass,
     winner,
     chain,
-    // affected_sku_count intentionally omitted — AC-PREV-5 DEFERRED in Phase 1.
+    // affected_sku_count intentionally omitted - AC-PREV-5 DEFERRED in Phase 1.
   };
 }

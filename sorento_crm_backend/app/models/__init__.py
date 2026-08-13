@@ -9,6 +9,7 @@ from app.models.product_spec import ProductSpecRegistry, ProductSpecifications, 
 from app.models.order import Order, OrderStatus, Customer, CustomerContact, OrderLine, SalesOrder, SalesOrderLine
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine, PurchaseOrder, PurchaseOrderLine
+from app.models.supplier_notice import SupplierNotice, SupplierNoticeLine
 from app.models.marketing import Promotion, PromotionGroup, PromotionProduct, CampaignType, MarketingCampaign
 from app.models.forms import Form, FormSection, FormField, FormVersion, FormSubmission
 from app.models.workflow_forms import (
@@ -51,6 +52,7 @@ from app.models.entity_conversation import EntityConversationMessage
 from app.models.integration import Integration, IntegrationApiKey, IntegrationLog
 from app.models.integration_reference import IntegrationReference
 from app.models.import_log import ImportLog
+from app.models.import_alias import ImportFieldAlias
 from app.models.calendar import PublicHoliday, WorkCalendarConfig
 from app.models.job import ImportJob, ImportJobRow
 from app.models.download import UserDownload, DownloadStatus
@@ -75,7 +77,12 @@ from app.models.ai_prompt import AIPromptVersion, AIPromptLabel
 from app.models.chat_history import ChatHistory
 from app.models.conversation_frame import ConversationFrame
 from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
-from app.models.portal import PortalToken, PortalOtpCode
+from app.models.portal import (
+    PortalToken,
+    PortalOtpCode,
+    PortalFormRevision,
+    PortalRevisionConfig,
+)
 from app.models.user_session import UserSession
 from app.models.activities import ActivityEvent, InternalNote, ActivityMention
 from app.models.tickets import Ticket, TicketWatcher, TicketRespondContactLink
@@ -102,6 +109,7 @@ from app.models.scm import (
     MarketSignal,
     ScmAnalyticsRun,
     MarketResearchRun,
+    PriorityPolicy,
 )
 from app.models.project_so import (  # noqa: F401
     ProjectPOVersion,
@@ -122,6 +130,8 @@ from app.models.project_so import (  # noqa: F401
 )
 
 __all__ = [
+    "ImportFieldAlias",
+    "PriorityPolicy",
     "Company",
     "UserCompany",
     "RespondContactCompany",
@@ -151,6 +161,8 @@ __all__ = [
     "StockBatch",
     "StockLedger",
     "Supplier",
+    "SupplierNotice",
+    "SupplierNoticeLine",
     "ProductSupplier",
     "InboundShipment",
     "InboundShipmentLine",
@@ -259,6 +271,8 @@ __all__ = [
     "LookupBinding",
     "PortalToken",
     "PortalOtpCode",
+    "PortalFormRevision",
+    "PortalRevisionConfig",
     "UserSession",
     "ActivityEvent",
     "InternalNote",

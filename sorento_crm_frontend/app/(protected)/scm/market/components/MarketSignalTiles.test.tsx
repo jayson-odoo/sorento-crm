@@ -1,5 +1,5 @@
 /**
- * MarketSignalTiles — the three roll-up tiles: active topics, signals captured,
+ * MarketSignalTiles - the three roll-up tiles: active topics, signals captured,
  * last-captured time. Counts render with thousands separators; a null
  * last-captured degrades to an em dash (never a fabricated date).
  */
@@ -25,7 +25,7 @@ describe('MarketSignalTiles', () => {
   it('renders an em dash for last-captured when nothing has been captured', () => {
     render(<MarketSignalTiles activeTopicCount={3} signalCount={0} lastCapturedAt={null} />);
     // signals captured is 0, last captured is the em dash
-    expect(screen.getByText('—')).toBeInTheDocument();
+    expect(screen.getByText('-')).toBeInTheDocument();
   });
 
   it('renders a formatted last-captured timestamp when present', () => {
@@ -37,7 +37,7 @@ describe('MarketSignalTiles', () => {
       />,
     );
     // formatDateTimeInMalaysia renders a non-empty, non-em-dash string
-    expect(screen.queryByText('—')).not.toBeInTheDocument();
+    expect(screen.queryByText('-')).not.toBeInTheDocument();
     expect(screen.getByText('9')).toBeInTheDocument();
   });
 });

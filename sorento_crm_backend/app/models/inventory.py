@@ -1,6 +1,6 @@
 """Inventory management models."""
 import enum
-from sqlalchemy import Boolean, Column, Computed, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Column, Computed, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -32,6 +32,28 @@ class Warehouse(Base, CompanyScopedMixin):
     location = Column(String(255), nullable=True)
     manager_id = Column(UUID(as_uuid=False), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+    # Does this location's stock count as available to plan against. CONFIG, defaulting to
+    # true for every location: deriving it from the code naming convention would bake one
+    # client's convention into the engine and would silently exclude stock. An admin turns
+    # one off.
+    counts_as_available = Column(
+        Boolean, default=True, server_default=text("true"), nullable=False
+    )
+    # Which shared pool this location may draw on. The STRUCTURAL half, and what lets a
+    # shortage in BRW-BB be covered from BRW instead of triggering a purchase. Seeded from
+    # the SITE-SUFFIX convention but STORED, never parsed at runtime, so a client whose
+    # codes look nothing like Sorento's repoints rows instead of needing code.
+    # Distinct from counts_as_available on purpose: BRW-BB stock IS sellable yet can only
+    # serve customer BB, so one flag cannot express both (ADR-0011 amendment).
+    pool_warehouse_id = Column(
+        UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
+    )
+    # Who this location sells to: `dealer` or `project`. The bare site code (BRW) is the
+    # dealer bin and its suffixed bins (BRW-BB, BRW-IB) are project stock, which is why
+    # "last purchase cost" is two different numbers depending on who is asking. SEEDED from
+    # that convention and then never parsed again, same reasoning as pool_warehouse_id: a
+    # client whose codes look nothing like Sorento's repoints rows instead of needing code.
+    segment = Column(String(20), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
     
@@ -76,11 +98,17 @@ class Stock(Base, CompanyScopedMixin):
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
     warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="CASCADE"), nullable=False)
     zone_id = Column(UUID(as_uuid=False), nullable=True)
-    quantity_on_hand = Column(Integer, default=0, nullable=False)
-    quantity_reserved = Column(Integer, default=0, nullable=False)
+    # `default=0` is applied by SQLAlchemy and so covers ORM inserts only. The migrated
+    # database also carries a DB-level DEFAULT 0, which is what lets a raw
+    # `INSERT INTO stock (...)` omit these columns. Without `server_default` here,
+    # `create_all` built a schema with no default, so those raw inserts succeeded against
+    # a migrated database and failed against a freshly created one. Declaring it keeps the
+    # two paths behaving identically.
+    quantity_on_hand = Column(Integer, default=0, server_default=text("0"), nullable=False)
+    quantity_reserved = Column(Integer, default=0, server_default=text("0"), nullable=False)
     # DB-generated column: GENERATED ALWAYS AS (quantity_on_hand - quantity_reserved) STORED
     quantity_available = Column(Integer, Computed("(quantity_on_hand - quantity_reserved)"), nullable=False)
-    quantity_damaged = Column(Integer, default=0, nullable=False)
+    quantity_damaged = Column(Integer, default=0, server_default=text("0"), nullable=False)
     reorder_point = Column(Integer, nullable=True)
     last_count_date = Column(Date, nullable=True)
     synced_to_excel = Column(Boolean, default=False, nullable=False)

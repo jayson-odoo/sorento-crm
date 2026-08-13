@@ -60,12 +60,35 @@ def _writeback_notification_delivery(db: Session, row: EmailOutbox, status: str,
         delivery.sent_at = datetime.utcnow()
 
 
+def _attachments_for(row: EmailOutbox) -> Optional[list]:
+    """Fetch the row's attachment, if it declared one.
+
+    A failure to read the object is raised, not swallowed: an email that was supposed to carry
+    a document and silently arrives without one is worse than one that retries. The outbox's
+    existing backoff then applies, which is the behaviour every other send failure already gets.
+    """
+    key = getattr(row, "attachment_storage_key", None)
+    if not key:
+        return None
+
+    from app.services.storage_router import get_backend
+
+    name = getattr(row, "attachment_filename", None) or key.rsplit("/", 1)[-1]
+    data = get_backend(getattr(row, "attachment_storage_provider", None)).download_file(key)
+    mime = "application/pdf" if name.lower().endswith(".pdf") else "application/octet-stream"
+    return [(name, mime, data)]
+
+
 def _attempt_send(row: EmailOutbox, smtp_config: Optional[dict]) -> Optional[str]:
     """Send one outbox row via SMTP. Returns None on success, error string on failure."""
     recipients_json = row.recipients_json or {}
     to_list = [row.recipient_email]
     cc_list = recipients_json.get("cc") if isinstance(recipients_json, dict) else None
     bcc_list = recipients_json.get("bcc") if isinstance(recipients_json, dict) else None
+    try:
+        attachments = _attachments_for(row)
+    except Exception as exc:  # noqa: BLE001 - reported as a send failure, so backoff applies
+        return f"attachment unavailable: {exc}"
     return send_mime_email(
         to_list=to_list,
         cc_list=cc_list,
@@ -75,6 +98,7 @@ def _attempt_send(row: EmailOutbox, smtp_config: Optional[dict]) -> Optional[str
         body_html=row.body_html,
         smtp_config=smtp_config,
         from_name=row.from_name,
+        attachments=attachments,
     )
 
 

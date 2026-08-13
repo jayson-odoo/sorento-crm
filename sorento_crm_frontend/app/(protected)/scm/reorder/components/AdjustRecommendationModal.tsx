@@ -22,7 +22,7 @@ import type { AdjustPayload } from '../types/decisions.types';
 import type { ReorderRecommendation, SupplierChoice } from '../types/reorder.types';
 
 /**
- * M4-D7 — Adjust a recommendation before it drafts a PO: override the buy qty
+ * M4-D7 - Adjust a recommendation before it drafts a PO: override the buy qty
  * and/or switch supplier (from the run's ranked alternatives). Switching
  * supplier recomputes a live preview of the resulting lead time + cash impact
  * off the chosen supplier's cost. A reason is REQUIRED (captured raw here;
@@ -117,7 +117,7 @@ export function AdjustRecommendationModal({
         <DialogHeader>
           <DialogTitle>Adjust {rec.sku}</DialogTitle>
           <DialogDescription>
-            Override the buy quantity or switch supplier. This stages the change — no PO is
+            Override the buy quantity or switch supplier. This stages the change - no PO is
             drafted until you Confirm decisions.
           </DialogDescription>
         </DialogHeader>
@@ -188,7 +188,7 @@ export function AdjustRecommendationModal({
               </div>
               {chosenSupplier.unit_cost == null ? (
                 <p className="mt-2 text-2xs text-scm-overstock">
-                  This supplier has no cost on file — the buy can&apos;t be cash-ranked until a cost is added.
+                  This supplier has no cost on file - the buy can&apos;t be cash-ranked until a cost is added.
                 </p>
               ) : null}
             </div>

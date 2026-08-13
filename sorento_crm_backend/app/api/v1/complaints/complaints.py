@@ -31,6 +31,7 @@ from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, FormVoidRequest
 from app.schemas.procurement import ViewLinkRequest, ViewLinkResponse
 from app.services.error_handler import handle_internal_error
 from app.services.handling_lock_service import assert_can_act_on_form
+from app.services.revision_fence import require_current_revision
 from app.config import settings as app_settings
 from app.modules.runtime.guards import require_public_view_links_enabled
 
@@ -379,7 +380,11 @@ async def delete_complaint_attachment(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{complaint_id}/attachments", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{complaint_id}/attachments",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
+)
 async def link_attachment_to_complaint(
     complaint_id: str,
     body: ComplaintAttachmentLinkRequest,
@@ -403,7 +408,11 @@ async def link_attachment_to_complaint(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{complaint_id}/response-attachments", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{complaint_id}/response-attachments",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
+)
 async def upload_complaint_response_attachment(
     complaint_id: str,
     file: UploadFile = File(...),
@@ -1240,7 +1249,11 @@ async def sync_complaint_assignee(
         raise handle_internal_error(str(e))
 
 
-@router.put("/{complaint_id}", response_model=ComplaintResponse)
+@router.put(
+    "/{complaint_id}",
+    response_model=ComplaintResponse,
+    dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
+)
 async def update_complaint(
     complaint_id: str,
     complaint_data: ComplaintUpdate,
@@ -1261,7 +1274,11 @@ async def update_complaint(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{complaint_id}/approve", response_model=ComplaintResponse)
+@router.post(
+    "/{complaint_id}/approve",
+    response_model=ComplaintResponse,
+    dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
+)
 async def approve_complaint(
     complaint_id: str,
     request: Request,
@@ -1302,7 +1319,11 @@ async def approve_complaint(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{complaint_id}/reject", response_model=ComplaintResponse)
+@router.post(
+    "/{complaint_id}/reject",
+    response_model=ComplaintResponse,
+    dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
+)
 async def reject_complaint(
     complaint_id: str,
     payload: ComplaintRejectRequest,
@@ -1345,7 +1366,11 @@ async def reject_complaint(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{complaint_id}/process", response_model=ComplaintResponse)
+@router.post(
+    "/{complaint_id}/process",
+    response_model=ComplaintResponse,
+    dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
+)
 async def process_complaint_by_cs(
     complaint_id: str,
     payload: ComplaintFinalizeRequest,
@@ -1391,7 +1416,11 @@ async def process_complaint_by_cs(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{complaint_id}/close", response_model=ComplaintResponse)
+@router.post(
+    "/{complaint_id}/close",
+    response_model=ComplaintResponse,
+    dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
+)
 async def close_complaint(
     complaint_id: str,
     payload: ComplaintFinalizeRequest,
@@ -1437,7 +1466,11 @@ async def close_complaint(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{complaint_id}/void", response_model=ComplaintResponse)
+@router.post(
+    "/{complaint_id}/void",
+    response_model=ComplaintResponse,
+    dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
+)
 async def void_complaint(
     complaint_id: str,
     payload: FormVoidRequest,
@@ -1518,7 +1551,11 @@ async def export_complaint_pdf(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{complaint_id}/notify-root-cause", response_model=ComplaintResponse)
+@router.post(
+    "/{complaint_id}/notify-root-cause",
+    response_model=ComplaintResponse,
+    dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
+)
 async def notify_complaint_root_cause(
     complaint_id: str,
     request: Request,
@@ -1543,7 +1580,11 @@ async def notify_complaint_root_cause(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{complaint_id}/notify-resolution", response_model=ComplaintResponse)
+@router.post(
+    "/{complaint_id}/notify-resolution",
+    response_model=ComplaintResponse,
+    dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
+)
 async def notify_complaint_resolution(
     complaint_id: str,
     request: Request,
@@ -1568,7 +1609,11 @@ async def notify_complaint_resolution(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{complaint_id}/update-and-reply", response_model=ComplaintResponse)
+@router.post(
+    "/{complaint_id}/update-and-reply",
+    response_model=ComplaintResponse,
+    dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
+)
 async def update_complaint_and_reply(
     complaint_id: str,
     complaint_data: ComplaintUpdate,
@@ -1576,7 +1621,14 @@ async def update_complaint_and_reply(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Update complaint, send technical team response to customer via Respond.io, and mark SLA as responded."""
+    """Send the technical team response to the customer via Respond.io and record it.
+
+    This is the RESPONSE path and is gated on status (UAC O1): allowed while the
+    complaint is still waiting for a response, 422 once it is approved, rejected,
+    processed by CS or closed. Plain messaging is a separate endpoint
+    (``/{complaint_id}/conversation/send-message``) that never touches the
+    complaint and keeps working at any status (UAC O2).
+    """
     try:
         validate_uuid_path(complaint_id, resource="Complaint")
         assert_can_act_on_form(db, complaint_id, current_user, source_entity_type="complaint")
@@ -1597,7 +1649,11 @@ async def update_complaint_and_reply(
         raise handle_internal_error(str(e))
 
 
-@router.delete("/{complaint_id}", status_code=status.HTTP_200_OK)
+@router.delete(
+    "/{complaint_id}",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
+)
 async def delete_complaint(
     complaint_id: str,
     current_user: dict = Depends(get_current_user),

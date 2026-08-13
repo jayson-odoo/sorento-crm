@@ -17,9 +17,9 @@ import type { RejectPayload } from '../types/decisions.types';
 import type { ReorderRecommendation } from '../types/reorder.types';
 
 /**
- * M4-D8 — Reject a recommendation. Destructive confirm (AlertDialog) with a
+ * M4-D8 - Reject a recommendation. Destructive confirm (AlertDialog) with a
  * REQUIRED reason. The reason is captured raw and enters the feedback pipeline;
- * classification into a `reason_code` lands in Slice C — nothing is inferred here.
+ * classification into a `reason_code` lands in Slice C - nothing is inferred here.
  */
 export function RejectRecommendationDialog({
   rec,
@@ -58,7 +58,7 @@ export function RejectRecommendationDialog({
           <AlertDialogDescription>
             {rec ? (
               <>
-                {rec.sku} — {rec.product_name} will be dismissed and won&apos;t draft a purchase
+                {rec.sku} - {rec.product_name} will be dismissed and won&apos;t draft a purchase
                 order. This can&apos;t be undone.
               </>
             ) : null}

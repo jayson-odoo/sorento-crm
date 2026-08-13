@@ -135,7 +135,7 @@ function RunRow({
 }
 
 /**
- * Run history — a collapsible-free panel listing recent planning runs newest-first.
+ * Run history - a collapsible-free panel listing recent planning runs newest-first.
  * Clicking a run asks the parent to LOAD it (summary + recommendations) into the
  * main view without re-running. Renders explicit loading / empty / error states.
  */

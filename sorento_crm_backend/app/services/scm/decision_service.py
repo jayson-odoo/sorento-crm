@@ -557,3 +557,42 @@ def _po_for_rec(db: Session, rec_id: str) -> Optional[PurchaseOrder]:
 
 def _f(v) -> Optional[float]:
     return float(v) if v is not None else None
+
+
+# ===========================================================================
+# covered-by-stock decisions
+# ===========================================================================
+
+def decide_covered(db: Session, rec_id: str, choice: str,
+                   actor: Optional[str] = None) -> dict:
+    """Record the planner's answer on a covered-by-stock row, reversibly.
+
+    > "after i click buy anyway, the line just disappeared ... it should stay on covered by
+    >  stock table, not jumped anywhere, so I still can regret my decision"
+
+    So the row NEVER changes ``rec_type`` and never leaves the list. The decision is a
+    ``status`` on it, and either choice can be taken again or swapped: a decision the
+    planner cannot see and cannot revisit is worse than no decision, because they cannot
+    tell whether the click landed.
+
+    ``pending`` clears it back to undecided.
+    """
+    rec = (
+        db.query(ReorderRecommendation)
+        .filter(ReorderRecommendation.id == rec_id)
+        .first()
+    )
+    if not rec:
+        raise AppException(status_code=404, message="Recommendation not found.")
+    if rec.rec_type != "covered":
+        raise AppException(
+            status_code=422,
+            message="Only a covered-by-stock row can be decided this way.",
+        )
+    if choice not in ("use_stock", "buy", "pending"):
+        raise AppException(
+            status_code=422, message="Choice must be use_stock, buy or pending.")
+
+    rec.status = "proposed" if choice == "pending" else choice
+    db.flush()
+    return {"choice": choice, "rec_type": rec.rec_type, "status": rec.status}

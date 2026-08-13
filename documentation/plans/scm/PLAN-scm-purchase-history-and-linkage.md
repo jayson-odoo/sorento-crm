@@ -1,6 +1,7 @@
 # PLAN - Purchase history, stock location, and the SO<->PO linkage
 
-**Status:** L0-L4 DONE (5 Aug 2026). L5 (ageing signal) and the upload UI remain.
+**Status:** L0-L4 DONE, and both feeds are reachable from the reorder page (5 Aug 2026).
+L5 (ageing signal) remains.
 
 > "I do find something missing here is the location & linkage to SO, so we sort of need to
 > curate the data first cause I am not going to ask the user to provide me anytime soon."
@@ -105,12 +106,20 @@ SO exists has nowhere to live and would be dropped on the floor.
 
 So a historical PO contributes three things, and each is a DIFFERENT existing consumer:
 
-1. **Supplier lead time and last cost** - `scm.supplier_performance` and the cost columns the
-   Summary Order Report already reads. This is the straightforward one.
+1. **Last cost - yes. Supplier lead time - no, and it cannot.** The cost flows already: the
+   Summary Order Report reads `last_po_cost` / `last_po_date` straight off the purchase-order
+   lines by issue date, and it deliberately keeps a supplier who is no longer linked, so the
+   2020 creditors show up as the historical sources they are. Lead time does NOT, and this is
+   a property of the file rather than a gap in the work: lead time is measured from the order's
+   issue date to the **completing goods receipt** (`_completing_receipts`, over
+   `picking_headers`), and the Purchase Order Listing has no received column, no receipt date
+   and no receipt document anywhere in it. Deriving a lead time from it would mean inventing
+   the receipt date, and an invented lead time is worse than a missing one because the planner
+   would size safety stock on it. Lead time stays with the outstanding/GRN path.
 2. **An ageing signal.** Stock still on hand against a purchase years old is the definition of
    a slow mover, and it is stronger evidence than demand variance alone because it is a fact
-   about THIS stock rather than a statistic. Feeds the existing dead-stock and ABC/XYZ
-   signals rather than inventing a fourth vocabulary.
+   about THIS stock rather than a statistic. Feeds the existing dead-stock disposition rather
+   than inventing a fourth vocabulary - as a second BASIS for the same call, not a new one.
 3. **The PO list.** They appear as purchase orders, because a buyer looking for what was
    bought from a supplier in 2020 should find it.
 
@@ -133,9 +142,34 @@ by construction rather than by a special case.
   PO yet" and is a claim with no PO side, not a parse failure.
 - **L4. Link resolver**: runs after every one of the three uploads, resolves claims both ways,
   and reports what is still unresolved on the upload result.
-- **L5. Ageing signal**: the last-purchase date against stock still held, feeding the existing
-  dead-stock and classification signals, visible on the plan exception reading (which already
-  shows `last_po` and its source field). NOT built yet.
+- **L4b. Reachable.** Two routes (`/purchase-history/*`, `/order-inquiry/*`) plus the open-link
+  report, and one `Upload data` menu on the reorder page carrying all four channels grouped by
+  what they do to the plan. Separate routes and a separate dialog from the outstanding
+  importer, because the files are different SHAPES and different MEANINGS: one `kind`
+  parameter would produce a route whose branches share nothing. The preview/confirm flow
+  itself IS shared (`useTwoStepUpload`), so the sequence guard and the server-owned accept
+  list cannot drift between the two dialogs.
+- **L5. Ageing signal.** DONE. `disposition()` gains a second way to be dead and says WHICH
+  fired (`basis`: `movement` | `ageing`), because they are different evidence and a buyer acts
+  differently on each. The reason quotes the age - *"bought 1,876 days ago and has never
+  moved"* - rather than asserting one.
+
+  The rule is deliberately narrow: the ageing branch speaks ONLY where the movement rule
+  abstained. That abstention ("no consumption history is not the same as a stale movement")
+  was right while there was no evidence either way; the purchase history is exactly that
+  missing evidence, so it is now right only while the purchase date is ALSO unknown. A SKU
+  that moved recently is not dead however old its last purchase is - slow-but-selling is what
+  the overstock check is for.
+
+  `_last_purchase_map` is keyed by PRODUCT, not by (product, warehouse): the export names no
+  location, so a per-warehouse lookup would read "never bought" for precisely the stock the
+  signal exists to judge.
+- **L5b. The PO list tells the truth about a historical order.** "It should appear in PO list
+  also" - and it did, reading `Total qty 0` and `Lines 0`, because both counted OPEN lines
+  only. Correct for supply, wrong for a column labelled "Total qty". The two questions now
+  have two figures (`total_qty`/`line_count` = what the order says, `open_qty`/
+  `open_line_count` = what is still coming), and the detail page shows the second only when it
+  differs. `source` reports `import` rather than `manual`, because nobody keyed 1,586 orders.
 
 ## What the files turned out to say, once read (5 Aug 2026)
 
@@ -168,6 +202,36 @@ re-uploading the sheet after the SO book lands applies them. Making location a c
 small extension of the same table (`po_number` would have to become nullable, with the
 uniqueness index coalescing it) and is worth doing if the customer's upload order makes it
 bite.
+
+**A test that asserts "this upload CREATED something" cannot own real document numbers.** The
+committed fixture is a real slice, so once the same file has been uploaded through the screen
+against the dev database, its orders exist before the test runs and `orders_created > 0` reads
+0. Fixed by having the test delete exactly the documents it is about, inside its rolled-back
+session (`blank_book`), so it is deterministic on a polluted local database AND on CI's empty
+one. It is the CI seed-data trap in the mirror: do not assume a row is absent either. The
+route-level twin of the same test survives only because `as_company_user` creates its own
+company, which hides Sorento's rows - worth knowing rather than relying on.
+
+## What the customer's own files did, uploaded through the screen (5 Aug 2026)
+
+Run against the real files, via the sidebar and the dialog, not a script:
+
+| file | result |
+| ---- | ------ |
+| `Purchase Order Listing With Detail2020.xls` (13.5 MB, legacy BIFF) | 1,586 orders, 12,924 lines written, 534 charge lines carried, 02/01/2020 to 31/12/2020, 43 sales-order claims |
+| `JAN - DEC 2026 ORDERabc.xlsx` | 15,797 rows over 35 sheets, 3,147 purchase-order claims, 10 sales-order lines matched |
+
+**`scm.on_order_v` did not move**: 5 rows before and after, all of them genuine open orders.
+Twelve thousand history lines contributed nothing to supply, which is the invariant this feed
+had to satisfy and the one that would have been most expensive to get wrong.
+
+Two things the screen got wrong on the real files and now does not:
+
+- The named lists are capped at 200 by the backend, and the heading counted the CHIPS. So
+  15,787 sales orders we have not received read as "(200)" - a small, closed-looking problem.
+  The heading now carries the real total and the chips are a stated sample.
+- The 2026 book carries `SUPPLIER` / `PO NO` and no `STOCK LOCATION`, so "0 locations written"
+  is correct rather than a failure, and it is now legible as such next to 3,147 links claimed.
 
 ## What "done" looks like
 

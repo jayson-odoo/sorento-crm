@@ -21,6 +21,12 @@ class SalesOrderLine(BaseModel):
     qty_ordered: float
     qty_delivered: float
     uom: str
+    #: Where this line ships from. Per line: one order can land in two locations.
+    warehouse_code: str = ""
+    #: `open` or `closed`. A closed line is not a commitment however much it still shows.
+    line_status: str = "open"
+    #: When this line's quantity is due. Per line, for the same reason as the location.
+    required_date: Optional[str] = None
 
 
 class SalesOrder(BaseModel):
@@ -37,8 +43,31 @@ class SalesOrder(BaseModel):
     requested_delivery_date: Optional[str] = None
     total_qty: float
     committed_qty: float
+    #: What the order says, and how much of it is still open. Both, because a total that
+    #: silently means "outstanding" reads as an empty order once everything has shipped.
+    line_count: int = 0
+    open_line_count: int = 0
     lines: List[SalesOrderLine]
+    #: Where the order came from: `inquiry` (the Order Inquiry sheet created it), `upload`
+    #: (CS's outstanding extract), or `manual`. It decides who may edit the figures.
+    source: str = "manual"
+    #: The project the sheet named when no customer of that name existed.
+    internal_note: Optional[str] = None
+    #: Every distinct location its lines ship from. Plural: one order can land in two.
+    stock_locations: List[str] = Field(default_factory=list)
+    #: The purchase orders its lines wait on, each with whether the pairing is resolved.
+    #: Present on the LIST (attached in one query per page); absent on a single read.
+    linked_purchase_orders: List[LinkedPurchaseOrder] = Field(default_factory=list)
+    awaiting_purchase_orders: int = 0
     created_at: str
+
+
+class LinkedPurchaseOrder(BaseModel):
+    """A pairing this sales order's lines claim, and whether both sides are present."""
+
+    po_number: str
+    item_code: Optional[str] = None
+    resolved: bool = False
 
 
 class SalesOrderLineInput(BaseModel):
@@ -102,11 +131,15 @@ class PurchaseOrder(BaseModel):
     expected_date: Optional[str] = None
     total_qty: float
     line_count: int
+    #: What the PO still contributes as incoming supply, as distinct from what the order
+    #: says. Zero on a fully-received or historical order, which is the point.
+    open_qty: float = 0.0
+    open_line_count: int = 0
     lines: List[PurchaseOrderLine]
     created_at: str
     # M4 Slice B — draft→confirm→GR flow
     is_on_order: bool = False
-    source: str = "manual"           # recommendation | manual
+    source: str = "manual"           # recommendation | import | manual
     gr_reference: Optional[str] = None
 
 
@@ -115,7 +148,25 @@ class PurchaseOrderPagination(BaseModel):
     page: int
 
 
+class ProductLastCost(BaseModel):
+    """What we last paid for a SKU, and where to check it.
+
+    `unit_cost` of 0 is a price OF zero; the ABSENCE of this whole block is what "we have
+    never bought it" looks like. Keeping those apart is the point of the block existing.
+    """
+
+    unit_cost: float
+    currency: Optional[str] = None
+    po_number: str
+    issue_date: Optional[str] = None
+    supplier_name: Optional[str] = None
+
+
 class PurchaseOrderListResponse(BaseModel):
     data: List[PurchaseOrder]
     empty: bool
     pagination: PurchaseOrderPagination
+    # Present only when the caller narrowed the list to one product. A field missing from
+    # this model is DROPPED from the response however carefully the service builds it -
+    # which is exactly how this one went out silently the first time.
+    product_cost: Optional[ProductLastCost] = None

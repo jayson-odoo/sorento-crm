@@ -75,6 +75,16 @@ export interface Complaint {
   resolution_notified_at?: string | null;
   required_on_site_support?: boolean | null;
   print_count?: number | null;
+  /**
+   * Whether the backend will accept a `technical_team_response` write at this
+   * record's current status (UAC O1). Server-owned: the allowed statuses live in
+   * `app/services/response_gate.py` and are deliberately NOT mirrored on this
+   * side, so the affordance can never disagree with the endpoint that 422s.
+   *
+   * Absent means not gated, matching the backend's own fail-open for a type it
+   * has no rule for.
+   */
+  response_write_allowed?: boolean | null;
   product_lines?: ComplaintProductLine[];
   attachments: ComplaintAttachment[];
 }

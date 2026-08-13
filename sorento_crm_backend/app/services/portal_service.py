@@ -36,6 +36,7 @@ from app.models.procurement import (
     StockInquiry,
 )
 from app.models.resources import AttachmentType
+from app.services.document_number import display_document_number
 from app.services.error_handler import (
     AppException,
     handle_not_found,
@@ -870,6 +871,16 @@ class PortalService:
 
         # Status transition + notification.
         previous_status = row.status
+        # Captured BEFORE the branches below clear them: a resubmit-after-rejection
+        # writes a history row carrying the rejection it answers (UAC C4).
+        previous_approval_status = (
+            (getattr(row, "approval_status", None) or "").strip().lower()
+        )
+        previous_rejection_reason = (
+            getattr(row, "approval_comments", None)
+            if previous_approval_status == "rejected"
+            else getattr(row, "rejection_reason", None)
+        )
         row.portal_draft_at = None
         if kind == "complaint":
             if previous_status not in ("draft", "rejected"):
@@ -929,6 +940,19 @@ class PortalService:
 
         # Document number generation (skip complaint - no number column).
         self._assign_document_number_if_missing(kind, row)
+
+        # Revision history: every submitted version gets a row, including this one
+        # (UAC C4/G1). Runs before the commit so history and submit are atomic.
+        self._record_submission_history(
+            kind,
+            row,
+            token,
+            is_resubmission=(
+                previous_status in ("rejected", "responded")
+                or previous_approval_status == "rejected"
+            ),
+            reason=previous_rejection_reason,
+        )
 
         self.db.commit()
         self.db.refresh(row)
@@ -993,6 +1017,44 @@ class PortalService:
             )
 
         return self.get_submission(token, kind, str(row.id))
+
+    def _record_submission_history(
+        self,
+        kind: str,
+        row: Any,
+        token: PortalToken,
+        *,
+        is_resubmission: bool,
+        reason: Optional[str],
+    ) -> None:
+        """Write this version's ``portal_form_revisions`` row (UAC C4/G1).
+
+        First submit writes the ``original``; a resubmit after an office rejection
+        writes a ``resubmission`` - ``version_no`` advances, ``revision_no`` does not,
+        so an office reject never burns one of the contact's revisions (UAC C1).
+
+        Inside a SAVEPOINT: history is worth having, but it must never be able to roll
+        back the submit it describes. The submit's own changes are flushed FIRST so the
+        savepoint contains nothing but the history insert - otherwise a rollback to the
+        savepoint would take the status transition with it. Types with no revision
+        adapter (complaint) are a no-op.
+        """
+        try:
+            from app.services.portal_revision_service import PortalRevisionService
+
+            self.db.flush()
+            with self.db.begin_nested():
+                PortalRevisionService(self.db).record_submission(
+                    kind,
+                    row,
+                    token.contact_id,
+                    is_resubmission=is_resubmission,
+                    reason=reason,
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Portal revision history write failed for %s %s: %s", kind, row.id, e
+            )
 
     def _assign_document_number_if_missing(self, kind: str, row: Any) -> None:
         """Assign a stable document number on submit using ``DocumentNumberingRule``.
@@ -1660,8 +1722,10 @@ class PortalService:
             "id": str(row.id),
             "kind": "stock_inquiry",
             "title": (row.product_code or "Stock Inquiry"),
-            "reference": row.inquiry_number,
-            "document_number": row.inquiry_number,
+            # Display only, and the contact must see which version they are looking
+            # at, so both carry the revision (UAC N1). The stored column stays bare.
+            "reference": display_document_number(row) or row.inquiry_number,
+            "document_number": display_document_number(row) or row.inquiry_number,
             "status": row.status,
             "rejection_reason": row.rejection_reason,
             "is_editable": bool(row.portal_draft_at)
@@ -1718,8 +1782,8 @@ class PortalService:
             "id": str(row.id),
             "kind": row.request_type,
             "title": row.project_title or row.sponsor_subject or "Request",
-            "reference": row.request_number,
-            "document_number": row.request_number,
+            "reference": display_document_number(row) or row.request_number,
+            "document_number": display_document_number(row) or row.request_number,
             "status": effective_status,
             "approval_status": row.approval_status,
             "rejection_reason": rejection_reason,

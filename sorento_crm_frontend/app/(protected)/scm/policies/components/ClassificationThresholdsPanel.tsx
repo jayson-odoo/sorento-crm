@@ -44,7 +44,7 @@ export function ClassificationThresholdsPanel() {
       return;
     }
     if (a + b >= 100) {
-      setFormError('Class A + B must be below 100% — the remainder is class C.');
+      setFormError('Class A + B must be below 100% - the remainder is class C.');
       return;
     }
     if (!(x > 0) || !(y > 0)) {
@@ -73,15 +73,15 @@ export function ClassificationThresholdsPanel() {
       </CardHeader>
       <CardContent className="space-y-5">
         <p className="text-sm text-muted-foreground">
-          <strong>ABC</strong> ranks items by <em>value</em> (cumulative share of stock value) — A is
+          <strong>ABC</strong> ranks items by <em>value</em> (cumulative share of stock value) - A is
           your most valuable items, then B, then C. <strong>XYZ</strong> ranks items by{' '}
-          <em>demand variability</em> — X is steady and predictable, Y is variable, Z is erratic.
+          <em>demand variability</em> - X is steady and predictable, Y is variable, Z is erratic.
         </p>
 
         {!data?.exists && !isLoading ? (
           <Alert>
             <AlertDescription>
-              No thresholds saved yet — the seeded defaults below are shown. Save to store them.
+              No thresholds saved yet - the seeded defaults below are shown. Save to store them.
             </AlertDescription>
           </Alert>
         ) : null}

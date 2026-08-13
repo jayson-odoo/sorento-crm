@@ -290,6 +290,15 @@ _COMPANY_ID_ALLOWLIST = {
     # fallback row from every scoped session - a fresh company would then mint no numbers
     # at all instead of inheriting the default rule.
     "document_numbering_rules",
+    # Container sizes are per-tenant OR global: a row with a NULL company is a default
+    # this system ships for everyone, and a tenant row overrides it (hence the unique
+    # index on coalesce(company_id, nil)). The mixin's auto-filter would drop every
+    # NULL-company row, leaving a loading plan with no container to pack into, so
+    # `loading_plan_service.container_sizes` reads them unfiltered on purpose.
+    # KNOWN GAP, deliberately left for its own slice rather than changed during a merge:
+    # unfiltered also means one tenant can read another's custom size. The fix is
+    # `company_id IS NULL OR company_id = <scope>` in that one reader, not the mixin.
+    "container_size",
 }
 
 
@@ -313,19 +322,30 @@ def test_every_company_id_table_is_registered():
     # whenever an owned table appears, because an unpartitioned one leaks across
     # companies silently. Update it deliberately, never to "make the test pass".
     #
-    # 38 was main's count when feat/project-lead-to-so merged (foundation 34 +
-    # certificates + shipment_tracking_observations + teams + agent_teams). The branch
-    # brought 41 more, audited table by table at the merge: the project-sales domain
-    # (projects, leads, parties, tasks, templates, types, stakeholders), the quotation
-    # stack (series, price floors, quotations, versions, lines, documents, issues,
-    # issue scopes, signatures, quotation templates), the PO/SO intake stack (project
-    # POs, PO versions/lines/annotations, project SOs and lines, divergences and
-    # divergence lines, amendments, draft findings, delivery phases, samples), and the
-    # promotions group. Children that inherit their partition through their parent
-    # (project_series_categories, project_brands, project_collaborators,
-    # project_takeover_requests, certificate_revisions, certificate_products) are
-    # deliberately NOT mixins.
-    expected_owned = 79
+    # It stays a COUNT, not a list: enumerating the owned tables in a comment is how the
+    # number and the prose drifted apart twice already. The rule is what matters. A table
+    # is owned when the row is a fact about ONE company that cannot be derived from
+    # something already scoped:
+    #   - Planning artefacts own their company because a run, a recommendation, a budget or
+    #     an exception batch is a company's own decision queue, and an exception's warehouse
+    #     is nullable (supply in transit names no location to filter through).
+    #   - Fulfilment rows (loading plans, supplier notices, supplier inventory, allocations)
+    #     own it for the same reason: they are that company's shipment, not a place.
+    #   - The project-sales domain owns its company the same way: a project, a lead, a
+    #     quotation, an intake PO/SO and their versions are that company's pipeline.
+    #   - Certificate children are deliberately NOT owned: they are only reachable through
+    #     the certificate, which is scoped, so a second filter is redundant surface (SEC-2a).
+    #     Same reasoning for the project children that inherit their partition through their
+    #     parent (project_series_categories, project_brands, project_collaborators,
+    #     project_takeover_requests).
+    #   - `access_agents` is NOT owned: one agent routes both brands through two ladders.
+    # Derived instead of owned: demand_stat / item_classification / the views (via the
+    # warehouse join), supplier_performance (via suppliers), market signals (facts about
+    # the world, not about us).
+    #
+    # The number is the union of both lineages at this merge: main's 54 plus the 41 the
+    # project-sales branch brought (which were audited table by table at its own merge).
+    expected_owned = 95
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

@@ -18,7 +18,7 @@ export function MarketSignalsView() {
 
   const signalRows = useMemo(() => signals.data ?? [], [signals.data]);
   const activeTopicCount = (topics.data ?? []).filter((t) => t.is_active).length;
-  // Signals arrive newest-first — the head is the last captured.
+  // Signals arrive newest-first - the head is the last captured.
   const lastCapturedAt = signalRows.length ? signalRows[0].captured_at : null;
 
   return (
@@ -29,7 +29,7 @@ export function MarketSignalsView() {
           <div>
             <h2 className="text-base font-semibold">Market signals</h2>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              Latest market and economic reads for your active topics. Advisory only — figures never
+              Latest market and economic reads for your active topics. Advisory only - figures never
               change a recommendation on their own.
             </p>
           </div>

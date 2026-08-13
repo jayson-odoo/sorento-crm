@@ -53,7 +53,7 @@ export interface ProductDrillTarget {
 
 /**
  * Unified read-only drill-down popup. One component backs every "what's behind
- * this number?" surface on the dashboard — roll-up stat tiles, warehouse tile
+ * this number?" surface on the dashboard - roll-up stat tiles, warehouse tile
  * counts, and the warehouse "view products" affordance. Callers pass the base
  * `filters` + a `target` scope; the popup owns its own server-side search / sort
  * / pagination (these sets can be thousands of rows). No mutations, no UUIDs.
@@ -62,7 +62,7 @@ export interface ProductListDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
-  /** Current dashboard filters — scope the drill-down set. */
+  /** Current dashboard filters - scope the drill-down set. */
   filters: ScmFilters;
   /** The scope this popup drills into (health state / warehouse). Null = closed. */
   target: ProductDrillTarget | null;
@@ -126,7 +126,7 @@ function columnsForTarget(isLowDrill: boolean): DrillColumn[] {
   ];
 }
 
-/** The demand-explain popover body — mounted ONLY while the popover is open (Radix
+/** The demand-explain popover body - mounted ONLY while the popover is open (Radix
  *  unmounts closed content), so `useDemandExplain` fetches lazily on open and the
  *  hook never runs for a closed cell / a row without ids. Lists the delivery orders
  *  that drove the outflow (navigable to each order) + rate + variability (M8-B9). */
@@ -201,7 +201,7 @@ function DemandExplainBody({
 /** Avg-daily-demand cell: the number + a click-to-explain (i) opening the delivery
  *  orders that drove the outflow (M8-B9), reusing the Slice A2
  *  `/analytics/explain/demand` endpoint. The (i) needs the row's product/warehouse
- *  UUIDs (carried for this fetch only, never displayed) — absent for a legacy row,
+ *  UUIDs (carried for this fetch only, never displayed) - absent for a legacy row,
  *  the (i) is simply hidden and the plain number renders. */
 function AvgDemandCell({ row }: { row: ProductSummary }) {
   if (!row.product_id) {
@@ -260,7 +260,7 @@ function RopInputRow({
 }
 
 /** Reorder-point cell for the Low-stock drill (M8-F5 / M8-F10): the value + a
- *  click-to-explain (i) showing the ROP formula and the actual inputs that feed it —
+ *  click-to-explain (i) showing the ROP formula and the actual inputs that feed it -
  *  reorder point, demand rate (avg / day), and safety stock + lead time (each with a
  *  one-line plain definition). Safety stock / lead time come from the same latest-run
  *  rec as reorder_point (rec inputs); a null one renders a dash + the "set on the
@@ -479,7 +479,7 @@ export function ProductListDialog({
               </thead>
               <tbody className={cn(isFetching && 'opacity-60')}>
                 {rows.map((p, i) => {
-                  // ∞ cover = stock on hand but no forward demand; deficit → "—".
+                  // ∞ cover = stock on hand but no forward demand; deficit → "-".
                   const docInfinite =
                     (p.avg_daily_demand === null || p.avg_daily_demand === 0) &&
                     p.net_position > 0;

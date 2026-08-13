@@ -10,11 +10,11 @@ import {
 import type { AbcClass, HealthState, XyzClass } from '../types/scm.types';
 
 /**
- * Health-state presentation registry. Colour is NEVER the sole signal — every
+ * Health-state presentation registry. Colour is NEVER the sole signal - every
  * state pairs its diverging-ramp token (defined in css/config.reui.css as
  * `--scm-*`, theme-aware light+dark) with an icon + a human label.
  *
- * `deferred: true` states are rendered disabled/muted — they light up when the
+ * `deferred: true` states are rendered disabled/muted - they light up when the
  * backing data exists. `overstock` is ACTIVE (days-of-cover over the ceiling,
  * computed + filtered server-side). `low` (below reorder point) is ACTIVE as of
  * M8-B: the demand-aware engine reorder point (latest completed run) is real, so
@@ -82,7 +82,7 @@ export const HEALTH_STATES: Record<HealthState, HealthStateMeta> = {
     softClass: 'bg-scm-overstock-soft',
     textClass: 'text-scm-overstock',
     barClass: 'bg-scm-overstock',
-    // Active — demand-derived (days-of-cover over the ceiling), computed +
+    // Active - demand-derived (days-of-cover over the ceiling), computed +
     // filtered server-side.
     deferred: false,
     intent: 'Days-of-cover over ceiling',
@@ -129,7 +129,7 @@ export function healthMeta(state: HealthState): HealthStateMeta {
  * Plain-language DISPLAY labels for the ABC / XYZ analytics classes.
  *
  * The underlying values (`abc_class` = 'A'|'B'|'C', `xyz_class` = 'X'|'Y'|'Z')
- * and the Phase-2 backend contract stay industry-standard ABC/XYZ — this is a
+ * and the Phase-2 backend contract stay industry-standard ABC/XYZ - this is a
  * UI relabel ONLY so the jargon never reaches the screen:
  *   ABC → "Value"  : A → High, B → Med, C → Low, null → Unknown.
  *   XYZ → "Demand" : X → Steady, Y → Variable, Z → Erratic, null → Unknown.

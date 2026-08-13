@@ -1,6 +1,15 @@
 import { NextRequest } from 'next/server';
 
 import { impersonationStore } from '@/lib/impersonation-store';
+import {
+  REVISION_HEADER,
+  clearRememberedRevisions,
+  fencedWriteEntityId,
+  handleRevisionConflict,
+  harvestRevisions,
+  isFencedReadPath,
+  rememberedRevision,
+} from '@/lib/revision-fence';
 
 /**
  * Add the X-Impersonate-User-Id header to outgoing /api/v1/* requests when an
@@ -29,6 +38,64 @@ function _attachImpersonationHeader(url: unknown, init: RequestInit | undefined)
   }
   void isFormData;
   return next;
+}
+
+/**
+ * Set one header on a RequestInit, whichever of the three shapes it is using.
+ * The FormData branch below builds a `Headers`; everything else builds a plain
+ * object; callers may hand us an array of pairs.
+ */
+function _withHeader(init: RequestInit | undefined, name: string, value: string): RequestInit {
+  const next: RequestInit = init ? { ...init } : {};
+  if (next.headers instanceof Headers) {
+    const cloned = new Headers(next.headers);
+    cloned.set(name, value);
+    next.headers = cloned;
+  } else if (Array.isArray(next.headers)) {
+    next.headers = [
+      ...next.headers.filter(([k]) => k.toLowerCase() !== name.toLowerCase()),
+      [name, value],
+    ];
+  } else {
+    next.headers = { ...(next.headers as Record<string, string> | undefined), [name]: value };
+  }
+  return next;
+}
+
+/**
+ * The fence is a BROWSER concern. Its registry is module-level state, and on the
+ * server that module is shared by every concurrent request in the process - so a
+ * revision harvested for one user's render could be stamped onto another's
+ * write. "What the user was viewing" only means anything in a browser tab
+ * anyway, so keep it there.
+ */
+function _revisionFenceActive(): boolean {
+  return typeof window !== 'undefined';
+}
+
+/**
+ * Stamp the revision the user was viewing onto an office write of a revisable
+ * form (UAC C-bis). See `lib/revision-fence.ts` for why this is one interceptor
+ * rather than an argument threaded through 34 service functions.
+ *
+ * Returns the entity id when the header was actually sent, so a later 409 can be
+ * attributed to the fence rather than to any other conflict the route may raise.
+ */
+function _attachRevisionHeader(
+  url: unknown,
+  init: RequestInit | undefined,
+): { init: RequestInit | undefined; fencedEntityId: string | null } {
+  if (!_revisionFenceActive()) return { init, fencedEntityId: null };
+  const entityId = fencedWriteEntityId(url, init?.method);
+  if (!entityId) return { init, fencedEntityId: null };
+  const revision = rememberedRevision(entityId);
+  // Never read = never rendered. An absent header is "unfenced", which is the
+  // truthful answer here and matches every non-UI principal.
+  if (revision === null) return { init, fencedEntityId: null };
+  return {
+    init: _withHeader(init, REVISION_HEADER, String(revision)),
+    fencedEntityId: entityId,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +164,9 @@ export function clearCachedAuthToken(): void {
   _cachedToken = null;
   _cachedTokenExp = 0;
   _tokenInFlight = null;
+  // Revisions remembered for the outgoing session must not follow the next one
+  // into a fence decision.
+  clearRememberedRevisions();
 }
 
 /**
@@ -465,6 +535,8 @@ export async function apiFetch(
   }
 
   init = _attachImpersonationHeader(url, init);
+  const fenced = _attachRevisionHeader(url, init);
+  init = fenced.init;
   const response = await fetch(url as RequestInfo, init);
   // Browser-side: a 401 with a session-dead reason code means our session was
   // revoked/expired server-side → sign out and bounce to /signin.
@@ -475,6 +547,19 @@ export async function apiFetch(
     url.includes('/api/v1/')
   ) {
     void _maybeForceSignOut(response.clone());
+  }
+  // The revision fence, both directions (UAC C-bis). A read of a revisable list
+  // or record records what the screen is about to show; a refusal against a
+  // superseded version refreshes the record and normalizes the sentence.
+  if (fenced.fencedEntityId && response.status === 409) {
+    return handleRevisionConflict(fenced.fencedEntityId, response);
+  }
+  if (response.ok && _revisionFenceActive() && isFencedReadPath(url, init?.method)) {
+    try {
+      harvestRevisions(await response.clone().json());
+    } catch {
+      /* a body we cannot read is simply a revision we do not know */
+    }
   }
   return response;
 }

@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * SCM M3 — Reorder-run feature service  (Phase-2: live backend)
+ * SCM M3 - Reorder-run feature service  (Phase-2: live backend)
  * ============================================================================
  * Layering: hooks (useReorderRun) → THIS service → lib/api-client → backend.
  *
@@ -10,9 +10,13 @@
  *    POST /api/v1/scm/reorder-runs
  *    body: {
  *      warehouse_codes: string[],          // which warehouses to plan for
- *      budget_id?: string | null           // M4 — always null/omitted in M3
+ *      product_codes?: string[],           // AC-B8a: omitted/empty = ALL products.
+ *                                          //   Human codes. Phase 2 adds the field to
+ *                                          //   the backend schema; sent only when the
+ *                                          //   user narrowed the run.
+ *      budget_id?: string | null           // M4 - always null/omitted in M3
  *    }
- *    Planning scope is fixed server-side (M8-D5) — no `buy_scope` in the request.
+ *    Planning scope is fixed server-side (M8-D5) - no `buy_scope` in the request.
  *    → 202 { run_id, status: "running", buy_scope, stage: <ReorderRunStage> }
  *    Enqueues the RQ `run_reorder(run_id)` task. Auth: `scm.reorder.run`.
  *
@@ -37,7 +41,7 @@
  *        pagination: { page, limit, total, total_pages }
  *      }
  *    Each row carries its FROZEN inputs (net, ROP, SS, lead_time, supplier,
- *    policy_ref, allocation, triggered_reason, confidence) per AC-M3.11 —
+ *    policy_ref, allocation, triggered_reason, confidence) per AC-M3.11 -
  *    read-only in M3 (Accept/Adjust/Dismiss + cash ranking land in M4).
  *
  * 4) Run history  (newest-first, paginated)
@@ -53,6 +57,13 @@
  */
 import type { SortingState } from '@tanstack/react-table';
 import { apiFetch } from '@/lib/api';
+import type { CoverSource } from '../lib/coverPlan';
+import type { LevelSuggestionsPayload } from '../lib/levelSuggestion';
+import type { EconomicsPayload } from '../lib/productHealth';
+import type { PoReceipt } from '../lib/poCover';
+import type { PriceHistoryPayload } from '../lib/priceAdvice';
+import type { PurchaseTrendPayload } from '../lib/purchaseTrend';
+import type { TrajectoryPayload } from '../lib/trajectory';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
   BuyScope,
@@ -73,7 +84,7 @@ import {
 /**
  * ── M4 CASH CO-PILOT · PHASE-1 FLAG ─────────────────────────────────────────
  * `USE_M4_MOCKS = true` runs the WHOLE reorder page off the deterministic cash
- * mock (`lib/reorderCashMock.ts`) — no backend needed — so the budget → funded /
+ * mock (`lib/reorderCashMock.ts`) - no backend needed - so the budget → funded /
  * deferred interaction can be prototyped and verified in isolation. Phase 2
  * flips this to false; the run + read paths return to the live M3 endpoints and
  * the M4 cash fields arrive from the two NEW endpoints documented below.
@@ -90,7 +101,7 @@ import {
  *           pagination: { page, limit, total, total_pages }
  *         }
  *     `budget` re-runs the greedy skip-overflow allocation (`computeFunding`)
- *     server-side over the FROZEN rank_score — no engine re-run. Uncosted buys
+ *     server-side over the FROZEN rank_score - no engine re-run. Uncosted buys
  *     (cash_impact null) are NOT cash-ranked (M4-D16): they return
  *     funding_status = `needs_cost` and never fund/defer or touch the budget.
  *     Omitting budget returns funding_status = null (unallocated). Cash
@@ -137,9 +148,9 @@ export interface RecommendationQuery {
   pageIndex: number;
   pageSize: number;
   /** Filter to a single type; null = all. Server-side. */
-  type?: 'buy' | 'disposition' | 'exception' | null;
+  type?: 'buy' | 'covered' | 'disposition' | 'exception' | 'needs_level' | null;
   searchQuery?: string;
-  /** Column sort — forwarded to the backend as `sort`/`dir`. */
+  /** Column sort - forwarded to the backend as `sort`/`dir`. */
   sorting?: SortingState;
 }
 
@@ -149,14 +160,14 @@ export interface RecommendationPage {
 }
 
 /** One row in the run-history list (newest-first). Runs are identified by time +
- *  warehouses — never the run_id (no UUIDs surface). */
+ *  warehouses - never the run_id (no UUIDs surface). */
 export interface ReorderRunHistoryItem {
   run_id: string;
   status: ReorderRunStatus;
   buy_scope: BuyScope;
   warehouse_codes: string[];
   warehouse_count: number;
-  /** Naive-UTC ISO strings — format with `formatDateTimeInMalaysia` (raw string). */
+  /** Naive-UTC ISO strings - format with `formatDateTimeInMalaysia` (raw string). */
   started_at: string | null;
   finished_at: string | null;
   /** Populated once the run completed; null while running / failed. */
@@ -173,15 +184,61 @@ export interface ReorderRunHistoryPage {
  *  header reads "Today's plan" vs that run's date+time. Same row shape as history. */
 export interface TodayRun extends ReorderRunHistoryItem {
   is_today: boolean;
+  /** A plan started today that has not finished. Independent of the run returned, which is
+   *  always a completed one while any completed one exists - so the page keeps the last
+   *  usable snapshot on screen and says a newer plan is being built. */
+  in_progress: boolean;
 }
 
-/** Load the default run for the page — `null` when no run exists yet (fresh
+/** Load the default run for the page - `null` when no run exists yet (fresh
  *  install → empty page + Manual plan). Never throws on an empty body. */
 export async function getTodayRun(): Promise<TodayRun | null> {
   const res = await apiFetch('/api/v1/scm/reorder-runs/today');
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load today’s plan'));
   const body = (await res.json()) as TodayRun | null;
   return body ?? null;
+}
+
+/** Open demand the plan cannot net, because the sales-order line names no warehouse.
+ *
+ *  Planning nets per product AND location, so an unlocated line produces no
+ *  recommendation. Reported so the page can say why a product with real committed demand
+ *  is absent from the plan. */
+export interface UnlocatedDemand {
+  lines: number;
+  products: number;
+  quantity: number;
+  sample: { product_code: string; quantity: number }[];
+}
+
+/** GET /api/v1/scm/reorder-runs/unlocated-demand */
+export async function getUnlocatedDemand(): Promise<UnlocatedDemand> {
+  const res = await apiFetch('/api/v1/scm/reorder-runs/unlocated-demand');
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, 'Failed to load unlocated demand'));
+  }
+  return res.json();
+}
+
+export interface SetAsideDemand {
+  orders: number;
+  lines: number;
+  quantity: number;
+  sample: { so_number: string; who: string | null; quantity: number }[];
+}
+
+/**
+ * GET /api/v1/scm/reorder-runs/set-aside-demand
+ *
+ * Project demand the plan did NOT count, because no Order Inquiry named it (S13b). The
+ * report that keeps the demand split from reading as demand silently going missing.
+ */
+export async function getSetAsideDemand(): Promise<SetAsideDemand> {
+  const res = await apiFetch('/api/v1/scm/reorder-runs/set-aside-demand');
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, 'Failed to load set-aside demand'));
+  }
+  return res.json();
 }
 
 /** Raw shape returned by POST /reorder-runs (202). */
@@ -206,7 +263,7 @@ const DEFAULT_STAGE: ReorderRunStage = 'resolving_policies';
 
 /** Launch a run. Returns a running run record the hook then polls. */
 export async function createReorderRun(req: CreateReorderRunRequest): Promise<ReorderRun> {
-  if (USE_M4_MOCKS) return mockRun(); // completes instantly — mock has no worker
+  if (USE_M4_MOCKS) return mockRun(); // completes instantly - mock has no worker
   const res = await apiFetch('/api/v1/scm/reorder-runs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -214,6 +271,11 @@ export async function createReorderRun(req: CreateReorderRunRequest): Promise<Re
       warehouse_codes: req.warehouse_codes,
       budget_id: req.budget_id ?? null,
       include_market: req.include_market ?? false,
+      // Product scope (AC-B8a) is sent ONLY when the user narrowed the run. Empty
+      // means every product, and omitting the key keeps the request byte-identical
+      // to what the backend accepts today, so adding the picker cannot change an
+      // unnarrowed run.
+      ...(req.product_codes?.length ? { product_codes: req.product_codes } : {}),
     }),
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to start planning run'));
@@ -244,7 +306,7 @@ export async function getReorderRun(runId: string): Promise<ReorderRun> {
   };
 }
 
-/** DEMO / ADMIN reset — roll a run's decisions back to as-generated (clears every
+/** DEMO / ADMIN reset - roll a run's decisions back to as-generated (clears every
  *  accept/reject/adjust + the draft POs they staged) so the flow can be re-demoed.
  *  Confirmed (active) POs are untouched. Returns what was cleared. */
 export async function resetRunDecisions(
@@ -298,7 +360,7 @@ export async function getRecommendations(
  * The FULL disposition (Stock allocation) recommendation set for a run, unpaginated.
  * The Stock allocation view (M8-F18) splits these into actionable (Discontinue /
  * Promote) vs FYI "hold" client-side, and the tile counts ONLY the actionable subset
- * — so an accurate count needs every row, not a page. A run can carry >1000 hold rows
+ * - so an accurate count needs every row, not a page. A run can carry >1000 hold rows
  * (past the endpoint's page cap) with the few actionable rows scattered alphabetically,
  * so we page through at the 1000-row cap until the whole set is fetched. Cached per run.
  */
@@ -370,7 +432,7 @@ export interface ApplyBudgetResult {
 }
 
 /**
- * The FULL buy recommendation set for cash ranking/funding — not paginated,
+ * The FULL buy recommendation set for cash ranking/funding - not paginated,
  * because greedy allocation runs across the whole ranked list. `budget` seeds
  * the server-side funding; the slider then recomputes live client-side via
  * `computeFunding` for instant what-if (Phase 2 endpoint A, above).
@@ -395,6 +457,78 @@ export async function getBuyRecommendationsForCash(
     out.push(...next.data);
   }
   return out;
+}
+
+/** Every `covered` row for a run: demand the location's own stock already covers.
+ *
+ *  Fetched whole and separately from the buy set. It is deliberately NOT folded into the
+ *  cash co-pilot: a covered row is not a purchase, and letting it into the funding split
+ *  would spend budget on something nobody has agreed to buy. */
+export async function getCoveredRecommendations(
+  runId: string,
+): Promise<ReorderRecommendation[]> {
+  const PAGE = 1000;
+  const first = await getRecommendations(runId, { pageIndex: 0, pageSize: PAGE, type: 'covered' });
+  const out = [...first.data];
+  for (let page = 1; page < first.pagination.total_pages; page += 1) {
+    const next = await getRecommendations(runId, { pageIndex: page, pageSize: PAGE, type: 'covered' });
+    out.push(...next.data);
+  }
+  return out;
+}
+
+/** Resolve a covered-by-stock row: keep the stock, or turn it into a purchase.
+ *
+ *  POST /api/v1/scm/recommendations/{id}/covered-decision  body { choice } */
+export async function decideCoveredRow(
+  recId: string,
+  choice: 'use_stock' | 'buy' | 'pending',
+): Promise<{ choice: string; rec_type: string; status: string }> {
+  const res = await apiFetch(
+    `/api/v1/scm/recommendations/${encodeURIComponent(recId)}/covered-decision`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ choice }),
+    },
+  );
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to record the decision'));
+  return res.json();
+}
+
+/** One order line behind a planned quantity. */
+export interface PlanDemandLine {
+  so_number: string;
+  /** The location the ORDER named, or null when it named none. */
+  warehouse_code: string | null;
+  is_unlocated: boolean;
+  order_type: string | null;
+  demand_class: string | null;
+  order_date: string | null;
+  required_date: string | null;
+  qty: number;
+}
+
+export interface PlanDemand {
+  lines: PlanDemandLine[];
+  total: number;
+  shown: number;
+  committed_total: number;
+  unlocated_total: number;
+  /** Distinct locations the demand actually sits at - the answer to "why this warehouse". */
+  locations: string[];
+}
+
+/** GET /api/v1/scm/reorder-runs/{run}/recommendations/{rec}/demand */
+export async function getRecommendationDemand(
+  runId: string,
+  recId: string,
+): Promise<PlanDemand> {
+  const res = await apiFetch(
+    `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/recommendations/${encodeURIComponent(recId)}/demand`,
+  );
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the demand behind this row'));
+  return res.json();
 }
 
 /** Persist the chosen budget + funding split to the run ("Apply budget"). */
@@ -424,4 +558,176 @@ export async function applyBudget(runId: string, budget: number): Promise<ApplyB
   );
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to apply budget'));
   return (await res.json()) as ApplyBudgetResult;
+}
+
+/** Every `needs_level` row for a run: items the plan could not size because nobody has set
+ *  a reorder level for them.
+ *
+ *  Fetched whole and separately, the same way covered rows are, and for the same reason:
+ *  they are not purchases. Omitting them entirely would report "nothing to do" for stock
+ *  that has simply never been set up, which is the failure this kind exists to prevent. */
+export async function getNeedsLevelRecommendations(
+  runId: string,
+): Promise<ReorderRecommendation[]> {
+  const PAGE = 1000;
+  const first = await getRecommendations(runId, {
+    pageIndex: 0,
+    pageSize: PAGE,
+    type: 'needs_level',
+  });
+  const out = [...first.data];
+  for (let page = 1; page < first.pagination.total_pages; page += 1) {
+    const next = await getRecommendations(runId, {
+      pageIndex: page,
+      pageSize: PAGE,
+      type: 'needs_level',
+    });
+    out.push(...next.data);
+  }
+  return out;
+}
+
+/** Take our suggested level as the buyer's own, for one (product, location).
+ *
+ *  POST /api/v1/scm/reorder-levels/accept-suggestion */
+export async function acceptSuggestedLevel(
+  productId: string,
+  warehouseId: string | null,
+): Promise<{ level: number | null; source: string | null }> {
+  const res = await apiFetch('/api/v1/scm/reorder-levels/accept-suggestion', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ product_id: productId, warehouse_id: warehouseId }),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to accept the suggestion'));
+  return res.json();
+}
+
+/** Set a reorder level by hand. `null` clears it, which puts the item back in "needs a
+ *  level" rather than planning it as zero. */
+export async function setReorderLevel(
+  productId: string,
+  warehouseId: string | null,
+  level: number | null,
+): Promise<{ level: number | null; source: string | null }> {
+  const res = await apiFetch('/api/v1/scm/reorder-levels', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ product_id: productId, warehouse_id: warehouseId, level }),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the reorder level'));
+  return res.json();
+}
+
+/**
+ * Stock held elsewhere that could cover a shortage instead of buying it.
+ *
+ * Keyed by product, because the pool is SHARED: two lines for the same product draw on the
+ * same units. Fetched once and spent down client-side as decisions are made (see
+ * `lib/coverPlan`), which is the only place that knows what has been decided so far.
+ */
+export async function getCoverSources(
+  runId: string,
+): Promise<Record<string, CoverSource[]>> {
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/cover-sources`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load cover sources'));
+  const body = (await res.json()) as { sources?: Record<string, CoverSource[]> };
+  return body.sources ?? {};
+}
+
+/**
+ * What we last paid each supplier for each item in the plan, and how old that is.
+ *
+ * Keyed `"{product_id}:{supplier_code}"`. Everything in it comes out of our own purchase
+ * ledger - the endpoint makes no claim about what anything is worth today.
+ */
+/**
+ * Is each product's demand sustaining or dying off, per side (S13d).
+ *
+ * Keyed `"{product_id}:{segment}"`. Verdicts compare the configured window against the
+ * one before it AND the same window last year - both, side by side, per the user's call.
+ */
+export async function getTrajectory(runId: string): Promise<TrajectoryPayload> {
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/trajectory`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load order trends'));
+  return res.json();
+}
+
+export async function getLevelSuggestions(runId: string): Promise<LevelSuggestionsPayload> {
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/level-suggestions`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load level suggestions'));
+  const body = (await res.json()) as Partial<LevelSuggestionsPayload>;
+  return { suggestions: body.suggestions ?? {}, count: body.count ?? 0 };
+}
+
+export async function getProductEconomics(runId: string): Promise<EconomicsPayload> {
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/product-economics`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load product economics'));
+  const body = (await res.json()) as Partial<EconomicsPayload>;
+  return {
+    products: body.products ?? {},
+    count: body.count ?? 0,
+    thresholds: body.thresholds ?? { margin_floor_pct: 15, dead_turnover_months: 6 },
+    sell_window_months: body.sell_window_months ?? 12,
+  };
+}
+
+export async function recordLifecycleDecision(input: {
+  product_id: string;
+  /** null withdraws the decision, back to undecided. */
+  decision: 'keep' | 'discontinue' | null;
+}): Promise<{ product_id: string; decision: string | null }> {
+  const res = await apiFetch('/api/v1/scm/product-lifecycle-decision', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to record the decision'));
+  return res.json();
+}
+
+export async function getPoBook(
+  runId: string,
+): Promise<{ po_book: Record<string, PoReceipt[]> }> {
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/po-book`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the PO book'));
+  const body = (await res.json()) as { po_book?: Record<string, PoReceipt[]> };
+  return { po_book: body.po_book ?? {} };
+}
+
+export async function amendLevelSuggestion(input: {
+  product_id: string;
+  warehouse_id: string | null;
+  /** null withdraws the amendment, back to the engine's figure. */
+  amended_level: number | null;
+}): Promise<{ suggested_level: number; amended_level: number | null }> {
+  const res = await apiFetch('/api/v1/scm/reorder-levels/amend-suggestion', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to amend the level suggestion'));
+  return res.json();
+}
+
+/**
+ * The mirror of the order trend, on the buy side: who we bought from, and when (per
+ * product, across every supplier - `price-history` narrows to one supplier pair instead).
+ */
+export async function getPurchaseTrend(runId: string): Promise<PurchaseTrendPayload> {
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/purchase-trend`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the purchase trend'));
+  const body = (await res.json()) as Partial<PurchaseTrendPayload>;
+  return { window_months: body.window_months ?? 3, products: body.products ?? {} };
+}
+
+export async function getPriceHistory(runId: string): Promise<PriceHistoryPayload> {
+  const res = await apiFetch(`/api/v1/scm/reorder-runs/${runId}/price-history`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load price history'));
+  const body = (await res.json()) as Partial<PriceHistoryPayload>;
+  return {
+    stale_after_days: body.stale_after_days ?? 180,
+    movement_threshold_pct: body.movement_threshold_pct ?? 5,
+    prices: body.prices ?? {},
+  };
 }

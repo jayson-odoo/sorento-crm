@@ -27,7 +27,7 @@ from sqlalchemy import text
 from datetime import date, timedelta
 
 from app.services.scm.dashboard_service import _compute_status, _is_below_rop
-from tests.scm.conftest import as_user, requires_pg, seed_user
+from tests.scm.conftest import SORENTO_COMPANY_ID, as_user, requires_pg, seed_user
 
 pytestmark = requires_pg
 
@@ -64,20 +64,29 @@ def _mk_stock(db, pid, wid, qty):
 
 
 def _mk_completed_run(db):
+    """A completed run belonging to Sorento.
+
+    ``company_id`` is explicit because these are raw INSERTs: the ORM auto-stamp never
+    fires, `scm.reorder_run` has no DB default (unlike `products` / `warehouses` /
+    `stock`, which default to Sorento), and the dashboard's latest-run picker is
+    company-scoped - so a company-less run is simply never found.
+    """
     rid = str(uuid.uuid4())
     db.execute(text(
-        "INSERT INTO scm.reorder_run (id, status, buy_scope, started_at, finished_at, created_at) "
-        "VALUES (:id, 'completed', 'warehouse', now(), now(), now())"
-    ), {"id": rid})
+        "INSERT INTO scm.reorder_run (id, status, buy_scope, started_at, finished_at, "
+        "company_id, created_at) "
+        "VALUES (:id, 'completed', 'warehouse', now(), now(), :co, now())"
+    ), {"id": rid, "co": SORENTO_COMPANY_ID})
     return rid
 
 
 def _mk_rec(db, run_id, pid, wid, rop, rec_type="buy"):
     db.execute(text(
         "INSERT INTO scm.reorder_recommendation (id, run_id, rec_type, product_id, warehouse_id, "
-        "reorder_point, status, created_at) "
-        "VALUES (:id, :run, :t, :p, :w, :rop, 'proposed', now())"
-    ), {"id": str(uuid.uuid4()), "run": run_id, "t": rec_type, "p": pid, "w": wid, "rop": rop})
+        "reorder_point, status, company_id, created_at) "
+        "VALUES (:id, :run, :t, :p, :w, :rop, 'proposed', :co, now())"
+    ), {"id": str(uuid.uuid4()), "run": run_id, "t": rec_type, "p": pid, "w": wid, "rop": rop,
+        "co": SORENTO_COMPANY_ID})
 
 
 def _mk_rec_with_inputs(db, run_id, pid, wid, rop, safety_stock, lead_time_days,
@@ -86,9 +95,10 @@ def _mk_rec_with_inputs(db, run_id, pid, wid, rop, safety_stock, lead_time_days,
     shape ``reorder_run_service`` freezes: ``safety_stock`` + ``lead_time_days``."""
     db.execute(text(
         "INSERT INTO scm.reorder_recommendation (id, run_id, rec_type, product_id, warehouse_id, "
-        "reorder_point, inputs, status, created_at) "
-        "VALUES (:id, :run, :t, :p, :w, :rop, CAST(:inp AS jsonb), 'proposed', now())"
+        "reorder_point, inputs, status, company_id, created_at) "
+        "VALUES (:id, :run, :t, :p, :w, :rop, CAST(:inp AS jsonb), 'proposed', :co, now())"
     ), {"id": str(uuid.uuid4()), "run": run_id, "t": rec_type, "p": pid, "w": wid, "rop": rop,
+        "co": SORENTO_COMPANY_ID,
         "inp": json.dumps({"safety_stock": safety_stock, "lead_time_days": lead_time_days})})
 
 

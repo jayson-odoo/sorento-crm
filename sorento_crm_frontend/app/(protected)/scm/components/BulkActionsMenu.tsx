@@ -11,11 +11,11 @@ import {
 import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 
 /**
- * The single "Actions" dropdown for a DataGrid bulk strip — the same pattern the
+ * The single "Actions" dropdown for a DataGrid bulk strip - the same pattern the
  * Unified Drive uses (`AttachmentsInFolderPanel` + `buildDriveBulkActions`).
  * Fed as `DataGridListToolbar`'s `bulkActionsSlot`. Renders NOTHING when no
  * action applies to the current selection (so the button disappears entirely,
- * per the "hide when none apply" rule) — the caller's pure builder returns `[]`
+ * per the "hide when none apply" rule) - the caller's pure builder returns `[]`
  * in that case.
  */
 export function BulkActionsMenu({ actions }: { actions: ToolbarAction[] }) {

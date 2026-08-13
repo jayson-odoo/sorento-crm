@@ -203,6 +203,27 @@ together. One card listing every column the entity has is banned.
 ### Detail Page Structure
 - **Always render all sections** relevant to the entity, regardless of whether data exists.
 - Do NOT hide entire sections when empty (e.g. "Team Assignments" must always appear on Access Agent detail).
+- **Detail pages carry prev/next record navigation** using `components/common/RecordNavigation`.
+  Reviewing a list of records one at a time is the normal case, and forcing a return to the list
+  between each is what makes a screen feel half-built. See `user-management/users/[id]` and
+  `order-management/customers` for the established usage.
+
+### View and Edit must share one layout
+The read view and the edit view of the same record MUST present the same structure: the same tabs
+in the same order, and the same fields in the same order within each tab. Editing swaps a
+read-only value for an input **in place**; nothing moves, appears, or disappears.
+
+The read view is what teaches a user where things are. If Edit rearranges them, every edit begins
+with the user re-finding the field they came to change, and a value they could see a moment ago
+but now cannot reads as data loss.
+
+- Group a record's distinct concerns (identity vs configuration, say) into **tabs once**, and use
+  that same tab set on both views rather than a long scroll on one and tabs on the other.
+- **Read-only metadata** (Created, Last Updated, ids) belongs in the page header or a meta strip,
+  **never inside a tab body** - it has no edit counterpart, so putting it in a tab guarantees the
+  two views differ.
+- Keep field help to a short hint at most. Multi-sentence explanation belongs in the user guide,
+  per the existing "no feature explanations inside the UI" rule.
 
 ### Empty States
 - Each section with optional data MUST have an explicit empty state.

@@ -82,7 +82,10 @@ def test_ensure_reorder_policy_defaults_idempotent(scm_app):
     assert float(r["safety_days"]) == 7
     assert float(r["service_level"]) == pytest.approx(0.95)
     assert int(r["review_period_days"]) == 30
-    assert r["factor_toggles"]["supplier_selection"] == "primary"
+    # Cost leads: the same item is bought from more than one supplier on 5,995 products,
+    # and the rule is to take the cheapest. `is_primary` stays in the sort key as the
+    # tiebreak, so a nominated supplier still wins a tie - it no longer wins on nomination.
+    assert r["factor_toggles"]["supplier_selection"] == "lowest_cost"
     assert int(r["factor_toggles"]["lead_time_default_days"]) == 30
     # second call inserts nothing
     eng.ensure_reorder_policy_defaults(db)
@@ -128,7 +131,7 @@ def test_resolve_policy_for_sku_falls_back_to_global(scm_app):
     assert policy is not None and policy["scope_type"] == "global"
     # engine toggles read through factor_toggles with locked defaults
     toggles = eng.policy_toggles(policy)
-    assert toggles["supplier_selection"] == "primary"
+    assert toggles["supplier_selection"] == "lowest_cost"
     assert int(toggles["lead_time_default_days"]) == 30
 
 

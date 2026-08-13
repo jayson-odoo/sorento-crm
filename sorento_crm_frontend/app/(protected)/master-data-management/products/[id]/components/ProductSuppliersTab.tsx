@@ -10,6 +10,23 @@ interface ProductSuppliersTabProps {
   productId: string;
 }
 
+/** A dash is "not on file", which is a different fact from zero and must not read as it. */
+function fmtTerm(value: number | string | null | undefined): string {
+  if (value === null || value === undefined || value === '') return '-';
+  return String(value);
+}
+
+function Term({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="truncate text-sm tabular-nums" title={value}>
+        {value}
+      </dd>
+    </div>
+  );
+}
+
 export default function ProductSuppliersTab({ productId }: ProductSuppliersTabProps) {
   const { data: productSuppliers, isLoading } = useQuery({
     queryKey: ['product-suppliers', productId],
@@ -39,37 +56,40 @@ export default function ProductSuppliersTab({ productId }: ProductSuppliersTabPr
     <Card>
       <CardHeader>
         <CardTitle>Suppliers</CardTitle>
-        <p className="text-sm text-muted-foreground">
-          Suppliers linked to this product with configured lead times.
-        </p>
       </CardHeader>
       <CardContent>
         {suppliers.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             <p>No suppliers configured for this product.</p>
-            <p className="text-sm mt-2">Edit the product to add suppliers and lead times.</p>
+            <p className="text-sm mt-2">Edit the product to add suppliers and their terms.</p>
           </div>
         ) : (
           <div className="space-y-3">
             {suppliers.map((ps) => (
-              <div
-                key={ps.id}
-                className="flex items-center justify-between rounded-lg border p-4"
-              >
-                <div className="flex items-center gap-3">
-                  <Badge variant="secondary">
-                    {ps.supplier?.supplier_code || 'N/A'}
-                  </Badge>
+              <div key={ps.id} className="rounded-lg border p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="secondary">{ps.supplier?.supplier_code || 'N/A'}</Badge>
                   <span className="font-medium">
                     {ps.supplier?.supplier_name || 'Unknown Supplier'}
                   </span>
-                  {(ps.standard_lead_time_days !== undefined ||
-                    ps.lead_time_days !== undefined) && (
-                    <Badge variant="outline" className="text-xs">
-                      Lead Time: {ps.standard_lead_time_days ?? ps.lead_time_days} days
+                  {ps.is_primary_supplier ? (
+                    <Badge variant="primary" appearance="light" size="sm">
+                      primary
                     </Badge>
-                  )}
+                  ) : null}
                 </div>
+                {/* The same five terms the edit view holds, in the same order, so a value
+                    the buyer set is where they expect to read it back. A dash means the
+                    term is not on file, which for the price is why the reorder plan cannot
+                    cost this supplier. */}
+                <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                  <Term label="Lead time (days)"
+                        value={fmtTerm(ps.standard_lead_time_days ?? ps.lead_time_days)} />
+                  <Term label="Unit cost" value={fmtTerm(ps.unit_cost)} />
+                  <Term label="Currency" value={fmtTerm(ps.currency)} />
+                  <Term label="Minimum order" value={fmtTerm(ps.moq)} />
+                  <Term label="Order multiple" value={fmtTerm(ps.order_multiple)} />
+                </dl>
               </div>
             ))}
           </div>

@@ -1,5 +1,5 @@
 /**
- * SCM M4 Slice B — PurchaseOrdersList (AC-M4.6).
+ * SCM M4 Slice B - PurchaseOrdersList (AC-M4.6).
  *   - draft + active rows render (draft = "Not on order", active = "On order")
  *   - PO number is a hyperlink to the detail page (human number, no UUID)
  *   - select-all selects ALL rows (drafts + active); the Actions dropdown shows
@@ -13,7 +13,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { act, render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 
 class ResizeObserverStub {
   observe() {}
@@ -69,7 +69,24 @@ vi.mock('../../hooks/usePurchaseOrderActions', () => ({
   usePurchaseOrderActions: () => ({ confirm: confirmMut, createGr: createGrMut }),
 }));
 
+// The upload dialog is exercised by its own suite; here we only care that this screen
+// mounts it for the PURCHASE-ORDER book and refreshes itself when it applies.
+type UploadDialogProps = {
+  open: boolean;
+  kind: string;
+  onApplied?: (result: OutstandingApplyResult) => void;
+};
+let uploadProps: UploadDialogProps | null = null;
+vi.mock('../../reorder/components/OutstandingUploadDialog', () => ({
+  OutstandingUploadDialog: (props: UploadDialogProps) => {
+    uploadProps = props;
+    return props.open ? <div>{`outstanding-upload:${props.kind}`}</div> : null;
+  },
+}));
+
+import { toast } from 'sonner';
 import PurchaseOrdersList from './PurchaseOrdersList';
+import type { OutstandingApplyResult } from '../../reorder/services/outstandingImportService';
 import type { PurchaseOrder } from '../../types/scm.types';
 
 function po(over: Partial<PurchaseOrder>): PurchaseOrder {
@@ -91,12 +108,15 @@ function po(over: Partial<PurchaseOrder>): PurchaseOrder {
   } as PurchaseOrder;
 }
 
+/** Stable across a render so the upload's refresh is assertable. */
+const refetch = vi.fn();
+
 function mockList(rows: PurchaseOrder[], over: Record<string, unknown> = {}) {
   usePurchaseOrders.mockReturnValue({
     data: { data: rows, pagination: { page: 1, total: rows.length } },
     isLoading: false,
     isFetching: false,
-    refetch: vi.fn(),
+    refetch,
     ...over,
   });
 }
@@ -104,9 +124,10 @@ function mockList(rows: PurchaseOrder[], over: Record<string, unknown> = {}) {
 beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
+  uploadProps = null;
 });
 
-describe('PurchaseOrdersList — states (AC-M4.6)', () => {
+describe('PurchaseOrdersList - states (AC-M4.6)', () => {
   it('renders the empty state when there are no POs', () => {
     mockList([], { data: { data: [], pagination: { page: 1, total: 0 } } });
     render(<PurchaseOrdersList />);
@@ -120,7 +141,7 @@ describe('PurchaseOrdersList — states (AC-M4.6)', () => {
   });
 });
 
-describe('PurchaseOrdersList — draft + active rows (AC-M4.6)', () => {
+describe('PurchaseOrdersList - draft + active rows (AC-M4.6)', () => {
   it('renders a draft ("Not on order") and an active ("On order") row', () => {
     mockList([
       po({ id: 'po-draft', po_number: 'PO-DRAFT-0001', status: 'draft_recommendation' }),
@@ -137,7 +158,11 @@ describe('PurchaseOrdersList — draft + active rows (AC-M4.6)', () => {
     mockList([po({ id: 'po-abc', po_number: 'PO-DRAFT-0002' })]);
     render(<PurchaseOrdersList />);
     const link = screen.getByRole('link', { name: /PO-DRAFT-0002/ });
-    expect(link).toHaveAttribute('href', '/scm/purchase-orders/po-abc');
+    // The link carries the active list query so the detail page's prev/next pager walks the
+    // SAME filtered, sorted page the user was reading.
+    const href = link.getAttribute('href') ?? '';
+    expect(href.startsWith('/scm/purchase-orders/po-abc')).toBe(true);
+    expect(href).toContain('page=1');
   });
 
   it('shows Create GR only on active POs (not on drafts)', () => {
@@ -146,12 +171,12 @@ describe('PurchaseOrdersList — draft + active rows (AC-M4.6)', () => {
       po({ id: 'po-active', po_number: 'PO-2026/07-0009', status: 'active', is_on_order: true }),
     ]);
     render(<PurchaseOrdersList />);
-    // Exactly one Create GR button — for the single active PO.
+    // Exactly one Create GR button - for the single active PO.
     expect(screen.getAllByRole('button', { name: /Create GR/i })).toHaveLength(1);
   });
 });
 
-describe('PurchaseOrdersList — select-all + bulk Confirm gating (AC-M4.6)', () => {
+describe('PurchaseOrdersList - select-all + bulk Confirm gating (AC-M4.6)', () => {
   it('select-all selects ALL rows and Confirm is scoped to the draft subset', () => {
     mockList([
       po({ id: 'po-draft-1', status: 'draft_recommendation' }),
@@ -183,5 +208,157 @@ describe('PurchaseOrdersList — select-all + bulk Confirm gating (AC-M4.6)', ()
     expect(screen.getByText(/Confirm purchase orders\?/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^Confirm POs$/ }));
     expect(confirmMut.mutateAsync).toHaveBeenCalledWith(['po-draft-1']);
+  });
+});
+
+// ── the outstanding PURCHASE-ORDER book (AC-A6) ─────────────────────────────
+// The extract spec defines two books, outstanding SO and outstanding PO. The PO book
+// says what is already on order, and it belongs to the actor working THIS screen, not
+// to the planner on the reorder screen. Nothing loads it unless this toolbar opens it.
+
+describe('PurchaseOrdersList - upload the order book', () => {
+  it('opens the outstanding PURCHASE-ORDER upload from the toolbar', () => {
+    mockList([po({ id: 'po-draft-1' })]);
+    render(<PurchaseOrdersList />);
+    expect(screen.queryByText(/^outstanding-upload:/)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /Upload order book/i }));
+    // The kind is the whole point: this screen must not open the sales-order book.
+    expect(screen.getByText('outstanding-upload:purchase-orders')).toBeInTheDocument();
+  });
+
+  it('offers the same upload from the empty state', () => {
+    // A fresh install has no POs at all - the upload has to be reachable from the
+    // state the user actually lands in, not only from a populated list.
+    mockList([], { data: { data: [], pagination: { page: 1, total: 0 } } });
+    render(<PurchaseOrdersList />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Upload order book/i }));
+    expect(screen.getByText('outstanding-upload:purchase-orders')).toBeInTheDocument();
+  });
+
+  it('refreshes the list and says what changed once the upload is applied', () => {
+    mockList([po({ id: 'po-draft-1' })]);
+    render(<PurchaseOrdersList />);
+    fireEvent.click(screen.getByRole('button', { name: /Upload order book/i }));
+    refetch.mockClear();
+
+    const onApplied = uploadProps?.onApplied;
+    if (!onApplied) throw new Error('the screen mounted the upload dialog without an onApplied');
+    act(() => {
+      onApplied({
+        ok: true,
+        counts: {},
+        applied: { added: 2, updated: 3, closed: 1, unchanged: 9 },
+        scope_documents: ['PO-2026/07-0009'],
+        resolution_issues: [],
+        row_problems: [],
+      });
+    });
+
+    // Without the refresh the applied rows are invisible until a manual reload.
+    expect(refetch).toHaveBeenCalled();
+    // 2 + 3 + 1 changed; `unchanged` is not a change.
+    expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/6 lines changed/i));
+  });
+});
+
+describe('PurchaseOrdersList - find a SKU and what we last paid for it', () => {
+  // > "in PO can I search this product also ... I want to see its PO and its last purchase
+  // >  price (unit cost), so at least I know if it doesn't appear in planning, I can check
+  // >  from here"
+
+  const openFilters = async () => {
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Filters/ }), { button: 0 });
+    await screen.findByLabelText('Product code');
+  };
+
+  it('sends the product code to the list query', async () => {
+    mockList([po()]);
+    render(<PurchaseOrdersList />);
+    await openFilters();
+
+    fireEvent.change(screen.getByLabelText('Product code'), {
+      target: { value: ' mwc7624-rl-s10 ' },
+    });
+    fireEvent.blur(screen.getByLabelText('Product code'));
+
+    await waitFor(() => {
+      const last = usePurchaseOrders.mock.calls[usePurchaseOrders.mock.calls.length - 1][0];
+      expect(last).toMatchObject({ productCode: 'mwc7624-rl-s10' });
+    });
+  });
+
+  it('reports what we last paid, from whom and on which order', async () => {
+    mockList([po()], {
+      data: {
+        data: [po()],
+        pagination: { page: 1, total: 1 },
+        product_cost: {
+          unit_cost: 42,
+          currency: 'MYR',
+          po_number: '202606-S0024',
+          issue_date: '2026-06-01',
+          supplier_name: 'Kaiping Kaixin',
+        },
+      },
+    });
+    render(<PurchaseOrdersList />);
+    await openFilters();
+    fireEvent.change(screen.getByLabelText('Product code'), { target: { value: 'SKU-1' } });
+    fireEvent.blur(screen.getByLabelText('Product code'));
+
+    const banner = await screen.findByRole('status', { name: 'Last purchase price' });
+    expect(banner).toHaveTextContent('Last paid');
+    expect(banner).toHaveTextContent('RM 42');
+    expect(banner).toHaveTextContent('Kaiping Kaixin');
+    expect(banner).toHaveTextContent('202606-S0024');
+  });
+
+  it('says nobody has ever priced it, which is why the plan has no cost', async () => {
+    // The whole point of the screen for this user: never-bought and bought-for-nothing are
+    // different answers, and a plan line with no cost is explained by the first.
+    mockList([], {
+      data: { data: [], pagination: { page: 1, total: 0 }, product_cost: null },
+    });
+    render(<PurchaseOrdersList />);
+    await openFilters();
+    fireEvent.change(screen.getByLabelText('Product code'), { target: { value: 'SKU-NEW' } });
+    fireEvent.blur(screen.getByLabelText('Product code'));
+
+    const banner = await screen.findByRole('status', { name: 'Last purchase price' });
+    expect(banner).toHaveTextContent(/No purchase order records a price for/i);
+    expect(banner).toHaveTextContent('SKU-NEW');
+  });
+
+  it('reads a recorded zero as free, not as missing', async () => {
+    mockList([po()], {
+      data: {
+        data: [po()],
+        pagination: { page: 1, total: 1 },
+        product_cost: {
+          unit_cost: 0,
+          currency: 'MYR',
+          po_number: '202606-S0024',
+          issue_date: '2026-06-01',
+          supplier_name: 'Kaiping Kaixin',
+        },
+      },
+    });
+    render(<PurchaseOrdersList />);
+    await openFilters();
+    fireEvent.change(screen.getByLabelText('Product code'), { target: { value: 'SKU-FREE' } });
+    fireEvent.blur(screen.getByLabelText('Product code'));
+
+    const banner = await screen.findByRole('status', { name: 'Last purchase price' });
+    expect(banner).toHaveTextContent('RM 0');
+    expect(banner).not.toHaveTextContent(/No purchase order records a price/i);
+  });
+
+  it('shows nothing about cost until a product is asked for', () => {
+    mockList([po()]);
+    render(<PurchaseOrdersList />);
+
+    expect(screen.queryByRole('status', { name: 'Last purchase price' })).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
 /**
- * ResolutionPreviewCard — empty / winner+chain / global-wins note / error.
+ * ResolutionPreviewCard - empty / winner+chain / global-wins note / error.
  *   AC-PREV-1 (winner + resolution chain render),
  *   AC-PREV-3 (no cell/class match → global wins with an explanatory note, not an error),
  *   AC-STD-4 (empty state before the first run).
@@ -48,7 +48,7 @@ function policy(over: Partial<ReorderPolicyRow>): ReorderPolicyRow {
     id: 'pol-1',
     scope_type: 'global',
     scope_ref: null,
-    scope_label: '—',
+    scope_label: '-',
     policy_type: 'reorder_point',
     service_level: null,
     safety_stock_method: 'fixed_days',
@@ -91,7 +91,7 @@ const GLOBAL_WINS: ResolutionResult = {
   warehouse: null,
   abc_xyz_cell: null,
   product_class: 'ELE',
-  winner: policy({ id: 'pol-global', scope_type: 'global', scope_label: '—' }),
+  winner: policy({ id: 'pol-global', scope_type: 'global', scope_label: '-' }),
   chain: [
     { scope_type: 'sku', scope_ref: 'prd-5', scope_label: 'SPK-010 · Spark Plug 010', matched: false, is_winner: false, reason: 'no-match' },
     { scope_type: 'abc_xyz_cell', scope_ref: null, scope_label: 'No ABC-XYZ class', matched: false, is_winner: false, reason: 'no-match' },

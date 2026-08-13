@@ -36,6 +36,7 @@ import { getUsersForApproverSelect } from '../services/purchaseRequestService';
 import type { PurchaseRequest } from '../types/purchaseRequest.types';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
+import { revisionBadgeLabel, withRevisionSuffix } from '@/lib/document-number';
 import PurchaseRequestBulkDeleteDialog from './PurchaseRequestBulkDeleteDialog';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { purchaseRequestNumberFieldLabel } from '../lib/purchase-request-field-labels';
@@ -238,13 +239,38 @@ export default function PurchaseRequestsList({
         header: ({ column }) => (
           <DataGridColumnHeader title={requestNumberColumnTitle} column={column} />
         ),
-        cell: ({ row }) => (
-          <span className="font-medium tabular-nums">
-            {row.original.request_number ?? '—'}
-          </span>
-        ),
-        size: 140,
+        cell: ({ row }) => {
+          // The `-R{n}` suffix is derived from the denormalized counter, never
+          // stored (UAC N2/N3).
+          const number = withRevisionSuffix(
+            row.original.request_number,
+            row.original.revision_no,
+          );
+          return (
+            <span className="truncate font-medium tabular-nums" title={number ?? undefined}>
+              {number ?? '—'}
+            </span>
+          );
+        },
+        size: 150,
         meta: { headerTitle: requestNumberColumnTitle, skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
+        accessorKey: 'revision_no',
+        header: ({ column }) => <DataGridColumnHeader title="Rev" column={column} />,
+        size: 80,
+        enableSorting: false,
+        // Denormalized on the row - no per-row query (UAC H4).
+        cell: ({ row }) => {
+          const label = revisionBadgeLabel(row.original.revision_no);
+          if (!label) return <span className="text-muted-foreground">—</span>;
+          return (
+            <Badge variant="secondary" title={label}>
+              {label}
+            </Badge>
+          );
+        },
+        meta: { headerTitle: 'Rev', skeleton: <Skeleton className="h-4 w-10" /> },
       },
       {
         accessorKey: 'submitted_at',

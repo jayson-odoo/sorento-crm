@@ -1,5 +1,5 @@
 /**
- * SCM M4 Slice B — buildResultsBulkActions gating (AC-M4.9).
+ * SCM M4 Slice B - buildResultsBulkActions gating (AC-M4.9).
  * The unified Actions dropdown lists the CHANGEABLE actions for the selection: a
  * decision is reversible, so Accept shows unless every selected row is already
  * accepted, Reject shows unless every selected row is already rejected, and the

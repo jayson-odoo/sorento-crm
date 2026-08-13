@@ -23,6 +23,7 @@ import { toast } from 'sonner';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
+import { canPreviewLocally, portalFetchBytes, toPreviewItem } from '../lib/portal-preview';
 
 function isTextFile(name?: string | null, type?: string | null): boolean {
   if (type?.startsWith('text/')) return true;
@@ -76,18 +77,38 @@ export function AttachmentDropzone({
   const [unlinkTarget, setUnlinkTarget] = useState<PortalAttachment | null>(null);
   const [unlinking, setUnlinking] = useState(false);
 
-  // In-place preview only - nothing in the portal opens a new tab. Scoped to
-  // the full attachment list here; the banner's staff-only carousel builds its
-  // own item list from the same shape.
+  // Local blob: urls for the files buffered before a draft exists, so a pending
+  // row previews in place too instead of opening a tab. Created once per
+  // pendingFiles change and revoked on the way out.
+  const [pendingUrls, setPendingUrls] = useState<(string | null)[]>([]);
+  useEffect(() => {
+    const urls = (pendingFiles ?? []).map((f) =>
+      canPreviewLocally(f) ? URL.createObjectURL(f) : null,
+    );
+    setPendingUrls(urls);
+    return () => {
+      urls.forEach((u) => {
+        if (u) URL.revokeObjectURL(u);
+      });
+    };
+  }, [pendingFiles]);
+
+  // In-place preview only - nothing in the portal opens a new tab. One carousel
+  // over everything on the form: uploaded rows first, then the pending ones.
+  // Uploaded items carry the portal bytes route (token auth) so Download and
+  // the inline Excel reader work with no NextAuth session; pending items are
+  // local blobs with nothing to download yet.
   const previewItems = useMemo<AttachmentPreviewItem[]>(
-    () =>
-      attachments.map((a) => ({
-        id: a.link_id,
-        name: a.filename || 'Attachment',
-        url: a.url ?? '',
-        sizeBytes: a.size,
+    () => [
+      ...attachments.map(toPreviewItem),
+      ...(pendingFiles ?? []).map((file, idx) => ({
+        id: `pending-${idx}-${file.name}`,
+        name: file.name,
+        url: pendingUrls[idx] ?? '',
+        sizeBytes: file.size,
       })),
-    [attachments],
+    ],
+    [attachments, pendingFiles, pendingUrls],
   );
 
   const openPreview = useCallback(
@@ -97,6 +118,14 @@ export function AttachmentDropzone({
       setPreviewOpen(true);
     },
     [attachments],
+  );
+
+  const openPendingPreview = useCallback(
+    (index: number) => {
+      setPreviewIndex(attachments.length + index);
+      setPreviewOpen(true);
+    },
+    [attachments.length],
   );
 
   const addFiles = useCallback(
@@ -335,7 +364,9 @@ export function AttachmentDropzone({
             <PendingRow
               key={`pending-${idx}-${file.name}`}
               file={file}
+              previewUrl={pendingUrls[idx] ?? null}
               disabled={disabled}
+              onView={() => openPendingPreview(idx)}
               onRemove={() =>
                 onPendingFilesChange?.(
                   (pendingFiles ?? []).filter((_, i) => i !== idx),
@@ -351,6 +382,7 @@ export function AttachmentDropzone({
         onOpenChange={setPreviewOpen}
         items={previewItems}
         startIndex={previewIndex}
+        fetchBytes={portalFetchBytes}
       />
 
       <AlertDialog
@@ -473,41 +505,32 @@ function UploadedRow({
 
 function PendingRow({
   file,
+  previewUrl,
   disabled,
+  onView,
   onRemove,
 }: {
   file: File;
+  /** blob: url owned by the parent (created + revoked there), or null for a
+   *  type the modal cannot render inline. */
+  previewUrl: string | null;
   disabled?: boolean;
+  onView: () => void;
   onRemove: () => void;
 }) {
-  // Not-yet-uploaded files only: these are local blob: URLs (no server round
-  // trip), so opening one in a new tab is a local preview, not the "portal
-  // opens a new tab against the server" case this slice targets - the shared
-  // AttachmentPreviewModal only renders http(s) CDN urls, and a blob: url
-  // would just show its "no previewable URL" fallback instead of the image.
-  const previewUrl = useMemo(() => {
-    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) return null;
-    return URL.createObjectURL(file);
-  }, [file]);
-  useEffect(() => {
-    return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-    };
-  }, [previewUrl]);
-
   return (
     <li className="flex items-center gap-3 rounded-md border border-dashed border-border px-3 py-2 bg-muted/30">
       <div className="shrink-0">
         {previewUrl && file.type.startsWith('image/') ? (
-          <a href={previewUrl} target="_blank" rel="noopener noreferrer">
+          <button type="button" onClick={onView} aria-label={`Preview ${file.name}`}>
             <img
               src={previewUrl}
               alt={file.name}
               className="h-12 w-12 rounded object-cover border border-border"
             />
-          </a>
+          </button>
         ) : previewUrl && file.type.startsWith('video/') ? (
-          <a href={previewUrl} target="_blank" rel="noopener noreferrer">
+          <button type="button" onClick={onView} aria-label={`Preview ${file.name}`}>
             <video
               src={previewUrl}
               muted
@@ -515,7 +538,11 @@ function PendingRow({
               preload="metadata"
               className="h-12 w-12 rounded object-cover border border-border"
             />
-          </a>
+          </button>
+        ) : previewUrl ? (
+          <button type="button" onClick={onView} aria-label={`Preview ${file.name}`}>
+            <FileThumb interactive />
+          </button>
         ) : isTextFile(file.name, file.type) ? (
           <TextPreview name={file.name} loadText={() => file.text()}>
             <FileThumb interactive />

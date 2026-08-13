@@ -82,6 +82,12 @@ export interface PurchaseRequest {
   voided_by_name?: string | null;
   voided_at?: string | null;
   void_reason?: string | null;
+  /** Contact-initiated portal revisions, denormalized so the list needs no
+   *  per-row query (UAC H4). 0 = the original submission. The `-R{n}` document
+   *  number suffix is DERIVED from this, never stored (UAC N2). */
+  revision_no?: number | null;
+  /** When the latest revision landed (naive UTC). */
+  last_revised_at?: string | null;
   lines?: PurchaseRequestLine[];
   attachments?: PurchaseRequestAttachment[];
   grand_total?: number | null;

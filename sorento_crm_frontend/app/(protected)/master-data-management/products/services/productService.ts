@@ -390,6 +390,60 @@ export async function getPriceHistory(id: string): Promise<PriceHistory[]> {
   return response.json();
 }
 
+/** One purchase-order line that bought this product. */
+export interface ProductPurchaseLine {
+  purchase_order_id: string;
+  po_number: string;
+  /** Date-only ISO string, or null on an order with no issue date. */
+  issue_date: string | null;
+  status: string;
+  supplier_code: string | null;
+  supplier_name: string | null;
+  qty_ordered: number | null;
+  qty_received: number | null;
+  unit_cost: number | null;
+  currency: string | null;
+}
+
+/** What we last paid, and the evidence for it.
+ *
+ *  `status` separates three facts a bare dash cannot: a known price (`ok`), an item nobody
+ *  has ever bought (`never_purchased`), and orders that exist but carry no unit cost
+ *  (`no_price_recorded`). A recorded 0 is a price OF zero and comes back as `ok`. */
+export interface ProductCostSummary {
+  status: 'ok' | 'never_purchased' | 'no_price_recorded';
+  unit_cost: number | null;
+  currency: string | null;
+  po_number: string | null;
+  purchase_order_id: string | null;
+  supplier_code: string | null;
+  supplier_name: string | null;
+  issue_date: string | null;
+}
+
+export interface ProductPurchaseHistory {
+  product_id: string;
+  lines: ProductPurchaseLine[];
+  /** Every line that exists, whether or not it was returned - the cap is never silent. */
+  total: number;
+  shown: number;
+  cost: ProductCostSummary;
+}
+
+/** GET /api/v1/master-data/products/{id}/purchase-history?limit=n */
+export async function getProductPurchaseHistory(
+  id: string,
+  limit = 50,
+): Promise<ProductPurchaseHistory> {
+  const response = await apiFetch(
+    `/api/v1/master-data/products/${id}/purchase-history?limit=${limit}`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load purchase history'));
+  }
+  return response.json();
+}
+
 /**
  * Bulk update products (e.g., status change)
  */

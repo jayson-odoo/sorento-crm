@@ -259,6 +259,12 @@ class ComplaintResponse(ComplaintBase):
     resolution_name: Optional[str] = None
     root_cause_notified_at: Optional[datetime] = None
     resolution_notified_at: Optional[datetime] = None
+    # Whether `technical_team_response` may be written at this status (UAC O1).
+    # Computed from `response_gate`, the same module the write path raises from, so
+    # the client gating an affordance and the server enforcing the rule read ONE
+    # source instead of two status lists that drift. Declared here because a
+    # response_model silently drops any field it does not name.
+    response_write_allowed: Optional[bool] = None
     attachments: Optional[list[ComplaintAttachmentResponse]] = []
     product_lines: Optional[list[ComplaintProductLineResponse]] = []
 

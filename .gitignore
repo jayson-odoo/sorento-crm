@@ -43,7 +43,7 @@ docker-compose.yml
 *.pem
 private_key.pem
 
-# Lavish review artifacts (local review surfaces, not deliverables)
+# lavish artifact output (local only)
 .lavish/
 
 # Pre-trial snapshot written by scripts/container_status_trial.py - holds live

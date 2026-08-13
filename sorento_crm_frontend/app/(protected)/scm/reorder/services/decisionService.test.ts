@@ -1,5 +1,5 @@
 /**
- * SCM M4 Slice B — decisionService (Accept / Adjust / Reject / bulk + list).
+ * SCM M4 Slice B - decisionService (Accept / Adjust / Reject / bulk + list).
  * Pins the FE→BE contract documented at the top of `decisionService.ts`:
  * every call hits the right method + path + body, and a non-ok response is
  * surfaced via `extractApiError`.
@@ -56,7 +56,7 @@ const rec = (over: Partial<ReorderRecommendation> = {}) =>
 
 beforeEach(() => apiFetch.mockReset());
 
-describe('decisionService — accept (AC-M4.5)', () => {
+describe('decisionService - accept (AC-M4.5)', () => {
   it('POSTs to /recommendations/{id}/accept and returns the draft PO ref', async () => {
     apiFetch.mockResolvedValue(
       ok({ draft_po_number: 'PO-DRAFT-0007', draft_po_id: 'po-7', supplier_name: 'Acme' }),
@@ -73,7 +73,7 @@ describe('decisionService — accept (AC-M4.5)', () => {
   });
 });
 
-describe('decisionService — adjust (AC-M4.7)', () => {
+describe('decisionService - adjust (AC-M4.7)', () => {
   it('POSTs qty + supplier switch + reason, mapping supplier_code → override_supplier_id', async () => {
     apiFetch.mockResolvedValue(
       ok({ draft_po_number: 'PO-DRAFT-0008', draft_po_id: 'po-8', supplier_name: 'Beta' }),
@@ -112,7 +112,7 @@ describe('decisionService — adjust (AC-M4.7)', () => {
   });
 });
 
-describe('decisionService — reject (AC-M4.8)', () => {
+describe('decisionService - reject (AC-M4.8)', () => {
   it('POSTs the required reason to /reject', async () => {
     apiFetch.mockResolvedValue(ok({}));
     await rejectRecommendation(rec({ id: 'rec-5' }), { reason_text: 'discontinued' });
@@ -127,7 +127,7 @@ describe('decisionService — reject (AC-M4.8)', () => {
   });
 });
 
-describe('decisionService — bulk accept / reject (AC-M4.9)', () => {
+describe('decisionService - bulk accept / reject (AC-M4.9)', () => {
   it('bulk-accept POSTs the run id + selected ids', async () => {
     apiFetch.mockResolvedValue(ok({ accepted_count: 3, po_count: 2 }));
     const res = await bulkAcceptFunded('run-1', [rec({ id: 'a' }), rec({ id: 'b' }), rec({ id: 'c' })]);
@@ -154,7 +154,7 @@ describe('decisionService — bulk accept / reject (AC-M4.9)', () => {
   });
 });
 
-describe('decisionService — list decisions (AC-M4.14)', () => {
+describe('decisionService - list decisions (AC-M4.14)', () => {
   it('GETs /reorder-runs/{run_id}/decisions and unwraps the data envelope', async () => {
     apiFetch.mockResolvedValue(
       ok({
