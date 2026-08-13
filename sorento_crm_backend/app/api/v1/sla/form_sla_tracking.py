@@ -27,6 +27,7 @@ from app.services.handling_lock_service import (
     _is_eligible,
     _actor_is_admin,
 )
+from app.services.sla_scope import open_tracker_scope
 from app.services.banner_person_service import wa_phone_for_user_id
 
 router = APIRouter()
@@ -155,7 +156,7 @@ async def get_form_tracking(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Active (unresolved) form-SLA stage rows for an entity, newest first."""
+    """Active (unresolved, not voided) form-SLA stage rows for an entity, newest first."""
     if source_entity_type not in FORM_SLA_TYPES:
         raise HTTPException(status_code=422, detail="Not a form SLA entity type.")
     rows = (
@@ -163,7 +164,9 @@ async def get_form_tracking(
         .filter(
             ConversationSLATracking.source_entity_type == source_entity_type,
             ConversationSLATracking.source_entity_id == str(source_entity_id),
-            ConversationSLATracking.is_resolved.is_(False),
+            # A stage voided by a contact revision is not active: the banner must show
+            # the stage the revision restarted, never the one it stopped.
+            *open_tracker_scope(),
         )
         .order_by(ConversationSLATracking.initiated_at.desc())
         .all()

@@ -203,6 +203,7 @@ describe('HistoryUploadDialog - Test', () => {
   it('shows the green verdict when there is nothing to fix', async () => {
     renderDialog('purchase-history');
     await choose();
+    await waitFor(() => expect(testButton()).toBeEnabled());
     fireEvent.click(testButton());
 
     expect(await screen.findByText('No errors')).toBeInTheDocument();
@@ -218,6 +219,7 @@ describe('HistoryUploadDialog - Test', () => {
     );
     renderDialog('purchase-history');
     await choose();
+    await waitFor(() => expect(testButton()).toBeEnabled());
     fireEvent.click(testButton());
 
     expect(await screen.findByText('Errors (1)')).toBeInTheDocument();
@@ -232,6 +234,7 @@ describe('HistoryUploadDialog - Test', () => {
     );
     renderDialog('purchase-history');
     await choose();
+    await waitFor(() => expect(testButton()).toBeEnabled());
     fireEvent.click(testButton());
 
     expect(await screen.findByText('No errors')).toBeInTheDocument();
@@ -253,6 +256,7 @@ describe('HistoryUploadDialog - Test', () => {
     // uploads a bad file believing it was tested.
     renderDialog('purchase-history');
     await choose('first.xls');
+    await waitFor(() => expect(testButton()).toBeEnabled());
     fireEvent.click(testButton());
     expect(await screen.findByText('No errors')).toBeInTheDocument();
 

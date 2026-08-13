@@ -143,6 +143,16 @@ class ConversationSLATracking(Base):
     # on every re-escalation. Never set for conversation-SLA (n8n) rows.
     handled_by_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     handled_at = Column(DateTime(timezone=False), nullable=True)
+    # Void (PLAN-portal-submission-revisions). A stage whose work was cancelled before it
+    # could finish - today only by a contact revising the submission underneath it
+    # (`void_reason = "revised_by_contact"`). Deliberately NOT is_resolved: a voided
+    # stage was never resolved, and overloading the resolve flag would count it as a
+    # completed stage in every duration and KPI aggregate. Dashboards exclude
+    # `voided_at IS NOT NULL` from open-tracker and breach counts, and the reason code is
+    # what makes that exclusion explainable rather than invisible (UAC F4a). The row stays
+    # readable as history.
+    voided_at = Column(DateTime(timezone=False), nullable=True)
+    void_reason = Column(String(50), nullable=True)  # revised_by_contact
 
     policy = relationship("SLAPolicy", back_populates="tracking")
     event_logs = relationship(

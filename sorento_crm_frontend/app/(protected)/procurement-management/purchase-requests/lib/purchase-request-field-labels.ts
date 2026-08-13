@@ -1,3 +1,5 @@
+import { withRevisionSuffix } from '@/lib/document-number';
+
 /** Title-case entity label for a request_type — the single source of truth so
  *  sponsorship forms never surface "Purchase Request" to the user, and vice
  *  versa. Replaces the per-component REQUEST_TYPE_LABELS copies. */
@@ -23,12 +25,16 @@ export function purchaseRequestNumberFieldLabel(
   return 'Request number';
 }
 
-/** Phrase for chat / reply templates (lowercase phrase + number). */
+/** Phrase for chat / reply templates (lowercase phrase + number).
+ *  `revisionNo` appends the derived `-R{n}` so the message quotes the number the
+ *  way every screen shows it (UAC N4/N5). The phrase is message text only, so a
+ *  suffixed value never travels back into `request_number`. */
 export function purchaseRequestNumberReplyPhrase(
   requestType: string | null | undefined,
   requestNumber: string | null | undefined,
+  revisionNo?: number | null,
 ): string {
-  const n = (requestNumber ?? '').trim();
+  const n = withRevisionSuffix(requestNumber, revisionNo) ?? '';
   if (requestType === 'sponsorship_form') {
     return n ? `sponsorship form number ${n}` : 'sponsorship form number';
   }

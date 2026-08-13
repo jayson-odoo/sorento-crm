@@ -11,7 +11,9 @@ from app.schemas.sla import (
     SLAPolicyCreate, SLAPolicyUpdate, SLAPolicyTierCreate, SLAPolicyTierUpdate,
     ConversationSLATrackingCreate, ConversationSLATrackingUpdate, ConversationSLAEventLogCreate
 )
+from app.services.document_number import suffix_revision
 from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
+from app.services.sla_scope import open_tracker_scope
 
 _module_logger = logging.getLogger(__name__)
 
@@ -1068,7 +1070,8 @@ class ConversationSLATrackingService:
             .options(joinedload(ConversationSLATracking.policy))
             .filter(
                 ConversationSLATracking.assigned_to_id == user_id,
-                ConversationSLATracking.is_resolved.is_(False),
+                # A stage voided by a contact revision is off this user's plate.
+                *open_tracker_scope(),
             )
             .order_by(ConversationSLATracking.due_at.asc())
             .limit(limit)
@@ -1321,7 +1324,7 @@ class ConversationSLATrackingService:
                 joinedload(ConversationSLATracking.assigned_user),
             )
             .filter(
-                ConversationSLATracking.is_resolved.is_(False),
+                *open_tracker_scope(),
                 ConversationSLATracking.assigned_to_id.in_(list(member_ids)),
                 ConversationSLATracking.assigned_to_id != str(user_id),
             )
@@ -1916,26 +1919,43 @@ class ConversationSLATrackingService:
             elif r.respond_contact_id:
                 contact_ids.add(str(r.respond_contact_id))
 
-        def _num_map(id_col, num_col, ids: set[str]) -> dict[str, str]:
+        def _num_map(id_col, num_col, ids: set[str], revision_col=None) -> dict[str, str]:
             """Batched id->number lookup. Fail-safe: any DB error (e.g. table not
             present in a minimal test schema) yields no references rather than
-            breaking the widget."""
+            breaking the widget.
+
+            ``revision_col`` is passed for the portal-revisable types so the
+            reference reads at its revision (``SI-26-0184-R2``, UAC N1) - the
+            stored column stays bare."""
             if not ids:
                 return {}
             try:
                 out: dict[str, str] = {}
-                for rec_id, num in self.db.query(id_col, num_col).filter(id_col.in_(ids)).all():
+                cols = [id_col, num_col] + ([revision_col] if revision_col is not None else [])
+                for row in self.db.query(*cols).filter(id_col.in_(ids)).all():
+                    rec_id, num = row[0], row[1]
                     if num:
-                        out[str(rec_id)] = str(num)
+                        revision = row[2] if revision_col is not None else 0
+                        out[str(rec_id)] = suffix_revision(str(num), revision)
                 return out
             except Exception:  # noqa: BLE001
                 self.db.rollback()
                 return {}
 
         complaint_map = _num_map(Complaint.id, Complaint.complaint_number, ids_by_type.get("complaint") or set())
-        inquiry_map = _num_map(StockInquiry.id, StockInquiry.inquiry_number, ids_by_type.get("stock_inquiry") or set())
+        inquiry_map = _num_map(
+            StockInquiry.id,
+            StockInquiry.inquiry_number,
+            ids_by_type.get("stock_inquiry") or set(),
+            StockInquiry.revision_no,
+        )
         pr_ids = (ids_by_type.get("purchase_request") or set()) | (ids_by_type.get("sponsorship_form") or set())
-        pr_map = _num_map(PurchaseRequestHeader.id, PurchaseRequestHeader.request_number, pr_ids)
+        pr_map = _num_map(
+            PurchaseRequestHeader.id,
+            PurchaseRequestHeader.request_number,
+            pr_ids,
+            PurchaseRequestHeader.revision_no,
+        )
         ticket_map = _num_map(Ticket.id, Ticket.ticket_number, ids_by_type.get("ticket") or set())
 
         contact_map: dict[str, Optional[str]] = {}
