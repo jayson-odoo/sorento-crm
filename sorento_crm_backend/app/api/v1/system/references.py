@@ -1192,7 +1192,11 @@ class ResolveReferenceRequest(BaseModel):
             "Opt in to spec search. When true AND the normal (code-only) product "
             "probes return zero matches, the resolver additionally ranks the catalog "
             "against `extracted_specs` + `free_terms` and returns `spec_candidates` "
-            "plus `floor_missed`, leaving `resolutions` untouched. Absent or false "
+            "plus `floor_missed`, leaving `resolutions` untouched. Two honesty "
+            "fields come with it, and they are DIFFERENT sentences: `spec_unmet` is "
+            "a known key nothing offered can satisfy ('thickness isn't recorded for "
+            "these'), `unrecognized_terms` is a word that named nothing at all ('I "
+            "don't know what X means'). Absent or false "
             "means the response is byte-identical to today, so the feature is inert "
             "for every existing caller. It is a FALLBACK: it never runs when the "
             "normal probes already resolved something."
@@ -1760,6 +1764,23 @@ def resolve_reference(
     )
 
 
+# A token shaped like a product CODE, on the same terms the resolver itself uses
+# (`entity_resolver.extract_candidate_tokens`): letters and digits together, no
+# whitespace, nothing but code punctuation. Two shapes are deliberately outside
+# it - a number in front of letters is a measurement ("2mm"), and ONE letter in
+# front of digits is a dimension label ("L750"). Neither is a code, and reporting
+# either as a missing code would invent a failure.
+_CODE_SHAPED_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*(?:[-_./][A-Za-z0-9]+)*$")
+
+
+def _is_code_shaped(token: str) -> bool:
+    word = str(token or "").strip()
+    if len(word) < 3 or not _CODE_SHAPED_RE.match(word):
+        return False
+    letters = sum(1 for character in word if character.isalpha())
+    return letters >= 2 and any(character.isdigit() for character in word)
+
+
 def _emit_spec_matches(
     result: dict[str, Any],
     candidates: list[dict],
@@ -1862,8 +1883,15 @@ def _emit_spec_matches(
             for term in answered_terms
         )
 
+    # Spec rows answer DESCRIPTIONS. They never vouch for a CODE the catalogue
+    # does not contain, so a code-shaped token keeps its place in the footer even
+    # when the sentence around it found products: "ZZTKS999 kitchen sink" must
+    # still say the code was not found, or the customer reads the sinks as the
+    # answer to a code we never had.
     result["unresolved_tokens"] = [
-        t for t in (result.get("unresolved_tokens") or []) if not _answered(t)
+        t
+        for t in (result.get("unresolved_tokens") or [])
+        if _is_code_shaped(t) or not _answered(t)
     ]
 
 
@@ -1932,7 +1960,7 @@ def resolve_reference_post(
     ):
         import time
 
-        from app.services.product_spec_search import search_specs
+        from app.services.product_spec_search import search_specs, unrecognized_terms
 
         specs = list(payload.extracted_specs or [])
         free_terms = list(payload.free_terms or [])
@@ -1985,6 +2013,14 @@ def resolve_reference_post(
         # What the customer asked for that nothing offered can satisfy. The caller says
         # "no Cabana one, here are Sorento" rather than silently substituting.
         result["spec_unmet"] = found["unmet"]
+        # The other half of the same honesty, and a different sentence: `spec_unmet`
+        # is a KNOWN key the catalogue is silent on ("thickness isn't recorded for
+        # these"), this is a word that bound to nothing at all ("I don't know what
+        # 'flurbish' means"). Same field name and semantics as shape B's
+        # `predicate.unrecognized_terms`, so a caller learns one vocabulary.
+        result["unrecognized_terms"] = unrecognized_terms(
+            db, query=payload.query, free_terms=payload.free_terms
+        )
         result["semantic_used"] = semantic_used
         if semantic_ms is not None:
             result["semantic_ms"] = semantic_ms

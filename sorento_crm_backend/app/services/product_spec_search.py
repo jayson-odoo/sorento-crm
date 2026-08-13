@@ -31,8 +31,13 @@ from sqlalchemy.orm import Session
 
 from app.models.product import Brand, Product, ProductCategory
 from app.models.product_spec import ProductSpecifications
-from app.services.product_class_signal import resolve_classes_for_term
-from app.services.product_spec_registry import active_registry, merged_synonyms, search_policy
+from app.services.product_class_signal import resolve_classes_for_term, stored_class_labels
+from app.services.product_spec_registry import (
+    active_registry,
+    merged_allowed_values,
+    merged_synonyms,
+    search_policy,
+)
 
 # These are now DEFAULTS, not the settings. The live numbers come from
 # `product_spec_search_policy` (see product_spec_registry.search_policy), because
@@ -410,6 +415,140 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
             resolved.append({"key": key, "value": value})
 
     return resolved
+
+
+# Words that name nothing about a product and are never reported. Small and inline
+# on purpose: this whole helper is precision-first, and the cost of the two errors
+# is nowhere near symmetric. Telling a customer "I don't know what 'kitchen' means"
+# destroys the conversation; missing one alien word costs a clarifying question we
+# were going to be able to answer anyway.
+_PHRASE_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "the", "a", "an", "and", "or", "for", "in", "of", "to", "with", "without",
+        "me", "my", "i", "we", "is", "are", "it", "this", "that", "there",
+        "any", "some", "all", "want", "wanted", "need", "have", "has", "got",
+        "looking", "look", "find", "get", "send", "show", "please", "can", "you",
+        "do", "does", "like", "would", "also", "just", "about", "price",
+    }
+)
+
+# Shorter than this and a word carries no reportable meaning: "hi", "ok", "no" and
+# every stray letter left by punctuation would otherwise read as alien.
+_MIN_REPORTABLE_WORD = 3
+
+
+def _search_vocabulary(db: Session) -> frozenset[str]:
+    """Every WORD the catalogue's own vocabulary contains.
+
+    Multi-word phrases are split, so "kitchen sink" whitelists both halves: a
+    customer writes one word at a time and the sentence they wrote is the only
+    thing being checked. Three sources, the same three a term is resolved
+    against - the registry (keys, values and their synonyms), the class
+    vocabulary (labels, category search synonyms, values products actually
+    carry), and the brand names.
+    """
+    words: set[str] = set()
+
+    def absorb(text) -> None:
+        for word in re.split(r"[^a-z0-9]+", str(text or "").lower()):
+            if word:
+                words.add(word)
+
+    for row in active_registry(db):
+        absorb(row.spec_key)
+        absorb(row.label)
+        for value, synonyms in merged_synonyms(row).items():
+            if value != SELF_SYNONYM_KEY:
+                absorb(value)
+            for synonym in synonyms:
+                absorb(synonym)
+        for value in merged_allowed_values(row):
+            absorb(value)
+
+    categories = (
+        db.query(ProductCategory.class_label, ProductCategory.search_synonyms)
+        .filter(ProductCategory.is_searchable.is_(True))
+        .all()
+    )
+    for label, synonyms in categories:
+        absorb(label)
+        for synonym in synonyms or []:
+            absorb(synonym)
+    for label in stored_class_labels(db):
+        absorb(label)
+
+    for (name,) in db.query(Brand.brand_name).all():
+        absorb(name)
+
+    return frozenset(words)
+
+
+def _content_words(phrase: str) -> list[str]:
+    """The words in `phrase` that could carry product meaning, in order.
+
+    A number is never one of them: "1.2mm" and "820" are measurements, and a
+    token with a digit in it is either that or a product code - and a code is
+    reported through `unresolved_tokens`, which is the channel that can say
+    "I could not find that code" rather than "I do not know that word".
+    """
+    seen: list[str] = []
+    for raw in re.split(r"[^a-z0-9.]+", (phrase or "").lower()):
+        word = raw.strip(".")
+        if not word or word in seen:
+            continue
+        if len(word) < _MIN_REPORTABLE_WORD:
+            continue
+        if word in _PHRASE_STOPWORDS:
+            continue
+        if any(character.isdigit() for character in word):
+            continue
+        seen.append(word)
+    return seen
+
+
+def unrecognized_words(
+    db: Session, phrase: str, *, vocabulary: frozenset[str] | None = None
+) -> list[str]:
+    """Words in the sentence that name nothing this catalogue knows.
+
+    The honest counterpart to `unmet`: a key the customer named and no product
+    could answer is one sentence ("thickness isn't recorded for these"), and a
+    word that bound to nothing at all is a different one ("I don't know what
+    'flurbish' means"). Reported in the order they were written, once each.
+
+    Word level, not term level, because the raw free term IS the whole sentence
+    once the CRM reads it itself - checking the term would only ever report the
+    customer's entire message back at them.
+    """
+    known = _search_vocabulary(db) if vocabulary is None else vocabulary
+    return [word for word in _content_words(phrase) if word not in known]
+
+
+def unrecognized_terms(
+    db: Session, *, query: str | None = None, free_terms: list[str] | None = None
+) -> list[str]:
+    """Everything in the request that bound to nothing, ready to be read out.
+
+    A term the CALLER supplied is reported VERBATIM when every content word in
+    it is alien: they sent "flurbish grommet" as one thing, so answering with
+    two mystery words would misdescribe their own question. Its words are then
+    dropped from the word-level list, so each unhonourable thing is named once.
+    """
+    vocabulary = _search_vocabulary(db)
+    reported = unrecognized_words(db, query or "", vocabulary=vocabulary)
+
+    for term in free_terms or []:
+        phrase = str(term or "").strip()
+        if not phrase or phrase in reported:
+            continue
+        content = _content_words(phrase)
+        alien = [word for word in content if word not in vocabulary]
+        if not content or len(alien) != len(content):
+            continue
+        reported = [word for word in reported if word not in content]
+        reported.append(phrase)
+
+    return reported
 
 
 def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: list[str] | None = None) -> dict:
