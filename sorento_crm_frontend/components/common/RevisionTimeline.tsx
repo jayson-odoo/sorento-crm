@@ -1,10 +1,14 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
+import { Paperclip } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { RevisionSnapshotDialog } from './RevisionSnapshotDialog';
+import { RevisionSnapshotDialog, revisionAttachmentPreviewItem } from './RevisionSnapshotDialog';
 
 /**
  * The lineage of a revisable portal submission, as one vertical timeline
@@ -32,6 +36,12 @@ export interface RevisionAttachment {
   filename?: string | null;
   size?: number | null;
   mime?: string | null;
+  /** Signed url for the file as this version carried it, resolved by the backend
+   *  at read time (`_attachment_urls`) - including for a file whose link a later
+   *  revision removed. Without it the preview can only offer its download card:
+   *  `<img>`/`<video>`/`<iframe>` cannot send an auth header, so the modal renders
+   *  inline only for an absolute http/blob/data url. */
+  url?: string | null;
 }
 
 /** One stage a revision voided, and who was working it. */
@@ -126,6 +136,19 @@ function humanizeStage(code: string): string {
   return code.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/**
+ * Where the office reads an attachment's bytes.
+ *
+ * This timeline is office-only (the portal has its own history component), so the
+ * route is stated here rather than pushed onto every mounting page. Keyed on the
+ * ATTACHMENT id, not a link id - the same route the stock inquiry and purchase
+ * request attachment sections use - because a file dropped by a later revision has
+ * no `EntityAttachmentLink` left, and that is exactly the file history exists to
+ * show.
+ */
+const officeAttachmentDownloadUrl = (attachmentId: string) =>
+  `/api/v1/resource-management/attachments/${attachmentId}/download`;
+
 export interface RevisionTimelineProps {
   entries: FormRevisionEntry[];
   /** Office side additionally shows which stage each revision voided (UAC H3). */
@@ -148,6 +171,13 @@ export function RevisionTimeline({
 }: RevisionTimelineProps) {
   // The full form of one revision, opened read-only from its timeline entry.
   const [snapshotEntry, setSnapshotEntry] = useState<FormRevisionEntry | null>(null);
+  // A file as one version carried it, opened in the shared preview - the same
+  // thing the contact gets on the portal, and the same thing the office gets on
+  // the live form's attachment list.
+  const [preview, setPreview] = useState<{
+    items: AttachmentPreviewItem[];
+    index: number;
+  } | null>(null);
 
   return (
     <>
@@ -236,15 +266,32 @@ export function RevisionTimeline({
 
                 {attachments.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
-                    {attachments.map((attachment) => (
+                    {attachments.map((attachment, fileIndex) => (
                       <Badge
                         key={`${entry.id}-${attachment.attachment_id}`}
                         variant="secondary"
                         className="max-w-[220px]"
+                        asChild
                       >
-                        <span className="truncate" title={attachment.filename ?? undefined}>
-                          {attachment.filename ?? 'Attachment'}
-                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPreview({
+                              items: attachments.map((file) =>
+                                revisionAttachmentPreviewItem(file, officeAttachmentDownloadUrl),
+                              ),
+                              index: fileIndex,
+                            })
+                          }
+                          aria-label={`Preview ${attachment.filename || 'attachment'}`}
+                          className="max-w-full"
+                          data-testid="revision-attachment"
+                        >
+                          <Paperclip className="h-3 w-3 mr-1 shrink-0" />
+                          <span className="truncate" title={attachment.filename ?? undefined}>
+                            {attachment.filename ?? 'Attachment'}
+                          </span>
+                        </button>
                       </Badge>
                     ))}
                   </div>
@@ -275,9 +322,19 @@ export function RevisionTimeline({
         })}
       </ol>
 
+      {/* No `fetchBytes`: the office has a JWT session, so the modal's default
+          `apiFetch` is the correct reader. */}
       <RevisionSnapshotDialog
         entry={snapshotEntry}
         onOpenChange={(open) => !open && setSnapshotEntry(null)}
+        attachmentDownloadUrl={officeAttachmentDownloadUrl}
+      />
+
+      <AttachmentPreviewModal
+        open={Boolean(preview)}
+        onOpenChange={(open) => !open && setPreview(null)}
+        items={preview?.items ?? []}
+        startIndex={preview?.index ?? 0}
       />
     </>
   );

@@ -6,12 +6,12 @@
 import { withRevisionSuffix } from '@/lib/document-number';
 import type { FormRevisionEntry } from '@/components/common/RevisionTimeline';
 import {
-  hasRevisionLineage,
+  appendedRevisionEntries,
+  latestRevisionEntry,
   revisionDocumentNumber,
   revisionExportFilename,
   revisionInfoRows,
   revisionSheetName,
-  revisionsNewestFirst,
 } from '@/lib/revision-export';
 
 import type { PurchaseRequest } from '../types/purchaseRequest.types';
@@ -296,8 +296,29 @@ export function buildPurchaseRequestRevisionAoa(
   salesTypeLabel?: string | null,
 ): (string | number)[][] {
   const adapted = revisionEntryToPurchaseRequest(entry, live);
-  const aoa = buildPurchaseRequestOrSponsorshipAoa(adapted, salesTypeLabel);
-  const cut = titleRowIndex(adapted) + 1;
+  return withVersionBlock(
+    buildPurchaseRequestOrSponsorshipAoa(adapted, salesTypeLabel),
+    adapted,
+    entry,
+  );
+}
+
+/**
+ * The version block under the document title: which version these rows are, why
+ * it changed, when it was sent.
+ *
+ * One inserter for both users of it - a revision sheet, and the CURRENT sheet of
+ * an include-revisions workbook (whose newest entry no longer gets a sheet of its
+ * own). `entry` null leaves the rows exactly as the document builder produced
+ * them.
+ */
+function withVersionBlock(
+  aoa: (string | number)[][],
+  request: PurchaseRequest,
+  entry: FormRevisionEntry | null,
+): (string | number)[][] {
+  if (!entry) return aoa;
+  const cut = titleRowIndex(request) + 1;
   const head = aoa.slice(0, cut);
   const tail = aoa.slice(cut);
   // The sponsorship form already carries a blank row under its title; do not add
@@ -354,12 +375,16 @@ export function createSalesTypeLabelResolver(
 }
 
 /**
- * The current form, then the whole lineage newest first, one sheet each (round
- * 6, 6.4).
+ * The current form, then every EARLIER version newest first, one sheet each
+ * (round 6, 6.4; corrected round 7).
  *
- * Sheet 1 is byte-for-byte the export this page has always produced. A
- * submission with no lineage yet is silently just that sheet, mirroring the
- * PDF's `has_revision_history`.
+ * Sheet 1 is byte-for-byte the export this page has always produced, plus the
+ * version block naming the newest entry when there is one. That entry gets no
+ * sheet of its own: it is the version sheet 1 shows, so a sheet for it repeated
+ * the same form with the office fields blanked. Same rule as the PDF's
+ * `appended_revision_entries`, from the same shared helper.
+ *
+ * A submission with no lineage yet is silently just that sheet.
  */
 export async function exportPurchaseRequestOrSponsorshipWithRevisionsToExcel(
   request: PurchaseRequest,
@@ -373,22 +398,24 @@ export async function exportPurchaseRequestOrSponsorshipWithRevisionsToExcel(
 
   const wb = xlsx.utils.book_new();
   const current = xlsx.utils.aoa_to_sheet(
-    buildPurchaseRequestOrSponsorshipAoa(request, resolve(request.sales_type)),
+    withVersionBlock(
+      buildPurchaseRequestOrSponsorshipAoa(request, resolve(request.sales_type)),
+      request,
+      latestRevisionEntry(entries),
+    ),
   );
   current['!cols'] = colWidths;
   const currentSheetName = sponsorship ? 'Sponsorship Form' : 'Purchase Request';
   const taken = new Set<string>([currentSheetName]);
   xlsx.utils.book_append_sheet(wb, current, currentSheetName);
 
-  if (hasRevisionLineage(entries)) {
-    for (const entry of revisionsNewestFirst(entries)) {
-      const code = (entry.snapshot?.sales_type as string | null | undefined) ?? request.sales_type;
-      const ws = xlsx.utils.aoa_to_sheet(
-        buildPurchaseRequestRevisionAoa(entry, request, resolve(code)),
-      );
-      ws['!cols'] = colWidths;
-      xlsx.utils.book_append_sheet(wb, ws, revisionSheetName(entry, taken));
-    }
+  for (const entry of appendedRevisionEntries(entries)) {
+    const code = (entry.snapshot?.sales_type as string | null | undefined) ?? request.sales_type;
+    const ws = xlsx.utils.aoa_to_sheet(
+      buildPurchaseRequestRevisionAoa(entry, request, resolve(code)),
+    );
+    ws['!cols'] = colWidths;
+    xlsx.utils.book_append_sheet(wb, ws, revisionSheetName(entry, taken));
   }
 
   const stem = sponsorship ? 'Sponsorship_Form' : 'Purchase_Request';

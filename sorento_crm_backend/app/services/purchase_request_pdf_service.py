@@ -20,11 +20,13 @@ Sponsorship Form; rows that belong to only one type are emitted only when set.
 
 Two revision modes (round 6, PLAN-portal-submission-revisions 6.3/6.4):
 
-* ``revision_id`` - print ONE superseded version. Same letterhead, fields, items
-  table and sign-off, every value read from that version's stored snapshot
-  (header fields AND line items).
-* ``include_revisions`` - the current form first, then the whole lineage newest
-  first, each version on its own page.
+* ``revision_id`` - print ONE version. Same letterhead, fields, items table and
+  sign-off, every value read from that version's stored snapshot (header fields
+  AND line items).
+* ``include_revisions`` - the current form first, then every EARLIER version
+  newest first, each on its own page. The newest lineage entry is skipped: it is
+  the version the current form shows, so printing it too gave the reader the same
+  form twice. Its label, submitter and reason ride on the current form instead.
 
 The request TYPE (purchase request vs sponsorship form) is always read from the
 live header, never from a snapshot: a form does not change type, and the type
@@ -52,12 +54,13 @@ from app.services.pdf_render import (
     render_html,
 )
 from app.services.pdf_revision_support import (
+    appended_revision_entries,
     export_filename,
     filename_with_revision,
     find_revision_entry,
-    has_revision_history,
     is_superseded,
-    revision_attachment_names,
+    latest_revision_entry,
+    revision_attachment_sections,
     revision_document_number,
     revision_entries,
     revision_heading,
@@ -453,6 +456,25 @@ class PurchaseRequestPDFService:
             parts.append("<h2>Other Attachments</h2>" + names_list_html(others))
         return "".join(parts)
 
+    def _revision_appendix_html(self, entry: dict) -> str:
+        """The same appendix as the live form, for ONE version's files.
+
+        Unlike the live form's, this block always renders: on a historical page
+        "Attachments: None." is information (the version carried none), whereas on
+        the current form silence keeps an ordinary request to one page.
+        """
+        images, names = revision_attachment_sections(
+            self.db, entry, context="purchase request PDF"
+        )
+        if not images and not names:
+            return "<h2>Attachments</h2>" + names_list_html([])
+        parts = []
+        if images:
+            parts.append("<h2>Photos</h2>" + photos_section_html(images))
+        if names:
+            parts.append("<h2>Other Attachments</h2>" + names_list_html(names))
+        return "".join(parts)
+
     def _doc_title(self, req: PurchaseRequestHeader) -> str:
         return (
             "Project Sales Sponsorship Form"
@@ -466,14 +488,33 @@ class PurchaseRequestPDFService:
             for i, line in enumerate(_LETTERHEAD)
         )
 
-    def _current_page(self, req: PurchaseRequestHeader) -> str:
-        """The form as it stands now - the document this export has always been."""
+    def _current_page(
+        self, req: PurchaseRequestHeader, latest: Optional[dict] = None
+    ) -> str:
+        """The form as it stands now - the document this export has always been.
+
+        ``latest`` is the newest lineage entry, passed only by the
+        include-revisions export. That entry gets no page of its own (it IS this
+        form), so what it uniquely carried - which revision this is, who sent it,
+        when, and why - reads here instead, in the same wording and the same two
+        lines a revision page uses.
+        """
         get = self._reader(req)
         items_html, _ = self._lines_html(req)
         submitted = getattr(req, "submitted_at", None) or getattr(req, "request_date", None)
+        version_html = ""
+        if latest:
+            reason = revision_reason(latest)
+            version_html = (
+                f'<div class="rev-heading">'
+                f"{escape(revision_heading(latest, superseded=False))}</div>"
+            ) + (
+                f'<div class="rev-reason">Reason: {escape(reason)}</div>' if reason else ""
+            )
 
         return f"""  <div class="letterhead">{self._letterhead_html()}</div>
   <div class="doc-title">{escape(self._doc_title(req))}</div>
+  {version_html}
 
   {self._fields_html(req, get, number=display_document_number(req) or None, submitted=submitted)}
 
@@ -498,8 +539,9 @@ class PurchaseRequestPDFService:
         The Date beside the number is the date THIS version was submitted, not the
         record's - on a revision page that is the date the reader means (the live
         ``submitted_at`` is deliberately not re-stamped by a revision).
-        Attachments are LISTED by name, never re-embedded: the snapshot is the
-        record of which files the version carried (pdf_revision_support).
+        Photos are embedded from THAT version's own attachment set, through the
+        same helpers the current form's appendix uses, and everything else is
+        listed by name.
         """
         snapshot = entry.get("snapshot") or {}
         get = self._reader(req, snapshot)
@@ -509,8 +551,7 @@ class PurchaseRequestPDFService:
         reason_html = (
             f'<div class="rev-reason">Reason: {escape(reason)}</div>' if reason else ""
         )
-        names = revision_attachment_names(entry)
-        attachments_html = "<h2>Attachments</h2>" + names_list_html(names)
+        attachments_html = self._revision_appendix_html(entry)
         break_style = ' style="page-break-before: always;"' if page_break else ""
 
         return f"""  <div class="page"{break_style}>
@@ -648,23 +689,23 @@ class PurchaseRequestPDFService:
                 ),
             )
 
-        pages = [self._current_page(req)]
-        if include_revisions:
-            # The lineage prints newest first, behind the current form. The newest
-            # entry is NOT redundant with it: the live row can carry office edits
-            # made after the contact's last submission, and the entry also carries
-            # the reason and who submitted it.
-            entries = revision_entries(self.db, self._entity_type(req), str(req.id))
-            if has_revision_history(entries):
-                pages += [
-                    self._revision_page(
-                        req,
-                        entry,
-                        superseded=is_superseded(entries, entry),
-                        page_break=True,
-                    )
-                    for entry in reversed(entries)
-                ]
+        if not include_revisions:
+            return self._document(self._current_page(req)), filename
+
+        # The EARLIER versions print newest first, behind the current form. The
+        # newest entry is the version this form already shows, so it gets no page
+        # of its own - its label, submitter and reason go onto the current page.
+        entries = revision_entries(self.db, self._entity_type(req), str(req.id))
+        pages = [self._current_page(req, latest_revision_entry(entries))]
+        pages += [
+            self._revision_page(
+                req,
+                entry,
+                superseded=is_superseded(entries, entry),
+                page_break=True,
+            )
+            for entry in appended_revision_entries(entries)
+        ]
         return self._document("".join(pages)), filename
 
     def render_pdf(

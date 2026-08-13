@@ -160,13 +160,17 @@ export function revisionSubmittedLine(entry: FormRevisionEntry): string {
 }
 
 /**
- * The rows that name a revision sheet: which version, why it changed, when it
- * was sent.
+ * The rows that name a version: which one, why it changed, when it was sent.
  *
- * A sheet of superseded values is dangerous without them - it looks exactly like
- * the current form. `uppercase` follows the label casing of the sheet it joins
- * (the product inquiry form shouts its labels, the purchase request does not).
- * The reason row is omitted when there is none, exactly as the PDF omits it.
+ * On a revision sheet they are what stops a page of superseded values reading as
+ * the current form. On the CURRENT sheet of an include-revisions workbook they
+ * are the newest entry's context, which no longer has a sheet of its own - the
+ * same two lines the PDF now prints on its current form page, so the workbook and
+ * the document say the same thing.
+ *
+ * `uppercase` follows the label casing of the sheet it joins (the product inquiry
+ * form shouts its labels, the purchase request does not). The reason row is
+ * omitted when there is none, exactly as the PDF omits it.
  */
 export function revisionInfoRows(
   entry: FormRevisionEntry,
@@ -202,15 +206,49 @@ export function hasRevisionLineage(
 }
 
 /**
- * The lineage in the order an export prints it: newest first, behind the current
- * form.
+ * The lineage newest first.
  *
- * The newest entry is NOT redundant with the current form - the live row can
- * carry office edits made after the contact's last submission, and only the
- * entry carries the reason and who sent it (same call the PDF makes).
+ * The ordering primitive only. What an include-revisions export actually appends
+ * is {@link appendedRevisionEntries}, which drops the first of these.
  */
 export function revisionsNewestFirst(
   entries: FormRevisionEntry[] | null | undefined,
 ): FormRevisionEntry[] {
   return [...(entries ?? [])].reverse();
+}
+
+/**
+ * The version the record is at right now, or null when it has no lineage.
+ *
+ * The current form IS this entry, so an include-revisions export reads its label,
+ * submitter and reason onto the current sheet instead of giving it a sheet of its
+ * own. Mirrors the backend's `latest_revision_entry`.
+ */
+export function latestRevisionEntry(
+  entries: FormRevisionEntry[] | null | undefined,
+): FormRevisionEntry | null {
+  if (!hasRevisionLineage(entries)) return null;
+  const list = entries ?? [];
+  return list[list.length - 1] ?? null;
+}
+
+/**
+ * The versions an include-revisions export appends, newest first.
+ *
+ * Every entry EXCEPT the newest. The newest is the version the current sheet
+ * already holds, so a sheet for it repeats sheet 1 with the office fields blanked
+ * - the reader gets the same form twice and has to compare them to find out they
+ * are the same. What that sheet uniquely carried (which version, who sent it,
+ * why) is not lost: it moves onto the current sheet.
+ *
+ * Mirrors the backend's `appended_revision_entries` exactly, so the PDF and the
+ * workbook of one record can never disagree about which versions they contain.
+ * "Newest" is a POSITION in the lineage, not a revision number - a resubmission
+ * lineage still sitting at revision 0 follows the same rule (UAC C4).
+ */
+export function appendedRevisionEntries(
+  entries: FormRevisionEntry[] | null | undefined,
+): FormRevisionEntry[] {
+  if (!hasRevisionLineage(entries)) return [];
+  return revisionsNewestFirst(entries).slice(1);
 }

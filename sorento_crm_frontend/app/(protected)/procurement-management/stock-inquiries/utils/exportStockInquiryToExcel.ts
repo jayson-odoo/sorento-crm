@@ -7,12 +7,12 @@ import ExcelJS from 'exceljs';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import type { FormRevisionEntry } from '@/components/common/RevisionTimeline';
 import {
-  hasRevisionLineage,
+  appendedRevisionEntries,
+  latestRevisionEntry,
   revisionDocumentNumber,
   revisionExportFilename,
   revisionInfoRows,
   revisionSheetName,
-  revisionsNewestFirst,
 } from '@/lib/revision-export';
 import type { StockInquiryDetail, StockInquiry } from '../types/stockInquiry.types';
 import { revisionEntryToStockInquiry } from './revisionEntryToStockInquiry';
@@ -156,7 +156,22 @@ export function buildStockInquiryRevisionRows(
   entry: FormRevisionEntry,
   live: StockInquiryDetail,
 ): (string | number)[][] {
-  const rows = buildFormRows(revisionEntryToStockInquiry(entry, live));
+  return withVersionBlock(buildFormRows(revisionEntryToStockInquiry(entry, live)), entry);
+}
+
+/**
+ * The version block under the document title: which version these rows are, why
+ * it changed, when it was sent.
+ *
+ * One inserter for both users of it - a revision sheet, and the CURRENT sheet of
+ * an include-revisions workbook (whose newest entry no longer gets a sheet of its
+ * own). `entry` null leaves the rows exactly as the form builder produced them.
+ */
+function withVersionBlock(
+  rows: (string | number)[][],
+  entry: FormRevisionEntry | null,
+): (string | number)[][] {
+  if (!entry) return rows;
   // rows[0] is the document title and rows[1] the blank beneath it; the form
   // itself starts at rows[2] and is left exactly as it is.
   return [
@@ -195,13 +210,42 @@ export async function exportStockInquiryRevisionToExcel(
 }
 
 /**
- * The current form, then the whole lineage newest first, one sheet each (round
- * 6, 6.4).
+ * The sheets an include-revisions workbook holds, in order (round 6, 6.4;
+ * corrected round 7).
  *
- * Sheet 1 is byte-for-byte the export this page has always produced, so turning
- * the option on adds history and changes nothing about what was already there.
- * A submission with no lineage yet is silently just that sheet, mirroring the
- * PDF's `has_revision_history`.
+ * Sheet 1 is the current form - byte-for-byte the export this page has always
+ * produced, plus the version block naming the newest entry when there is one.
+ * Then one sheet per EARLIER version, newest first. The newest entry gets no
+ * sheet of its own: it is the version sheet 1 shows, so a sheet for it repeated
+ * the same form with the office fields blanked. Same rule as the PDF's
+ * `appended_revision_entries`, from the same shared helper.
+ *
+ * A submission with no lineage yet is silently just the current sheet.
+ *
+ * Split out from the writer so the sheet set is assertable without producing a
+ * file - the thing that can be wrong here is WHICH sheets a workbook has.
+ */
+export function buildStockInquiryRevisionSheets(
+  inquiry: StockInquiryDetail,
+  entries: FormRevisionEntry[] | null | undefined,
+): { name: string; rows: (string | number)[][] }[] {
+  const currentSheetName = 'Stock Inquiry';
+  const taken = new Set<string>([currentSheetName]);
+  return [
+    {
+      name: currentSheetName,
+      rows: withVersionBlock(buildFormRows(inquiry), latestRevisionEntry(entries)),
+    },
+    ...appendedRevisionEntries(entries).map((entry) => ({
+      name: revisionSheetName(entry, taken),
+      rows: buildStockInquiryRevisionRows(entry, inquiry),
+    })),
+  ];
+}
+
+/**
+ * The current form, then every earlier version newest first, one sheet each
+ * (round 6, 6.4; corrected round 7).
  */
 export async function exportStockInquiryWithRevisionsToExcel(
   inquiry: StockInquiryDetail,
@@ -209,19 +253,11 @@ export async function exportStockInquiryWithRevisionsToExcel(
   filename?: string,
 ): Promise<void> {
   const workbook = new ExcelJS.Workbook();
-  const taken = new Set<string>();
-  const currentSheetName = 'Stock Inquiry';
-  taken.add(currentSheetName);
-  const worksheet = workbook.addWorksheet(currentSheetName, {
-    views: [{ state: 'frozen', ySplit: 1 }],
-  });
-  writeRowsToSheet(worksheet, buildFormRows(inquiry));
-
-  if (hasRevisionLineage(entries)) {
-    for (const entry of revisionsNewestFirst(entries)) {
-      const sheet = workbook.addWorksheet(revisionSheetName(entry, taken));
-      writeRowsToSheet(sheet, buildStockInquiryRevisionRows(entry, inquiry));
-    }
+  for (const sheet of buildStockInquiryRevisionSheets(inquiry, entries)) {
+    writeRowsToSheet(
+      workbook.addWorksheet(sheet.name, { views: [{ state: 'frozen', ySplit: 1 }] }),
+      sheet.rows,
+    );
   }
 
   await downloadWorkbook(workbook, stockInquiryFilename(inquiry, filename));

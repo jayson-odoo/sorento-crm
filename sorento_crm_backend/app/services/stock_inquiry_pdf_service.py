@@ -15,10 +15,12 @@ mirror the rest of the UI, which still says Stock Inquiry.
 
 Two revision modes (round 6, PLAN-portal-submission-revisions 6.3/6.4):
 
-* ``revision_id`` - print ONE superseded version. Same table, same row order,
-  every value read from that version's stored snapshot.
-* ``include_revisions`` - the current form first, then the whole lineage newest
-  first, each version on its own page.
+* ``revision_id`` - print ONE version. Same table, same row order, every value
+  read from that version's stored snapshot.
+* ``include_revisions`` - the current form first, then every EARLIER version
+  newest first, each on its own page. The newest lineage entry is skipped: it is
+  the version the current form shows, so printing it too gave the reader the same
+  form twice. Its label, submitter and reason ride on the current form instead.
 
 Both are read-only views of history, so neither ever reads a value off the live
 row: that is the whole point of a snapshot.
@@ -43,12 +45,13 @@ from app.services.pdf_render import (
     today_in_malaysia,
 )
 from app.services.pdf_revision_support import (
+    appended_revision_entries,
     export_filename,
     filename_with_revision,
     find_revision_entry,
-    has_revision_history,
     is_superseded,
-    revision_attachment_names,
+    latest_revision_entry,
+    revision_attachment_sections,
     revision_document_number,
     revision_entries,
     revision_heading,
@@ -178,8 +181,15 @@ class StockInquiryPDFService:
         )
         return f"{form_rows}{extra_rows}"
 
-    def _current_page(self, inquiry: StockInquiry) -> str:
-        """The form as it stands now - the document this export has always been."""
+    def _current_page(self, inquiry: StockInquiry, latest: Optional[dict] = None) -> str:
+        """The form as it stands now - the document this export has always been.
+
+        ``latest`` is the newest lineage entry, passed only by the
+        include-revisions export. That entry gets no page of its own (it IS this
+        form), so what it uniquely carried - which revision this is, who sent it,
+        when, and why - reads here instead, in the same wording a revision page's
+        own heading uses.
+        """
         links = self._attachment_links(inquiry)
         photos_html = photos_section_html(
             embedded_images(links, context="product inquiry PDF")
@@ -188,9 +198,17 @@ class StockInquiryPDFService:
 
         title_num = _fmt(display_document_number(inquiry) or None)
         status = escape(self._status_label(inquiry))
+        version_html = ""
+        if latest:
+            heading = escape(revision_heading(latest, superseded=False))
+            reason = revision_reason(latest)
+            version_html = f'<div class="meta">{heading}</div>' + (
+                f'<div class="meta">Reason: {escape(reason)}</div>' if reason else ""
+            )
 
         return f"""  <div class="doc-title">Product Inquiry Form</div>
   <div class="meta">{title_num} · {status} · printed {today_in_malaysia().strftime('%d/%m/%Y')}</div>
+  {version_html}
 
   <table class="form">{self._form_rows(inquiry)}</table>
 
@@ -245,9 +263,14 @@ class StockInquiryPDFService:
         reason_html = (
             f'<div class="meta">Reason: {escape(reason)}</div>' if reason else ""
         )
-        # Attachments are listed by NAME for a version, never re-embedded - the
-        # snapshot is the record of which files it carried (pdf_revision_support).
-        attachments_html = names_list_html(revision_attachment_names(entry))
+        # A version's photos are embedded from ITS OWN attachment set, through the
+        # same two helpers the current form uses, so a revision page is the same
+        # document with older values rather than a list of filenames.
+        images, other_names = revision_attachment_sections(
+            self.db, entry, context="product inquiry PDF"
+        )
+        photos_html = photos_section_html(images)
+        other_html = names_list_html(other_names)
         break_style = ' style="page-break-before: always;"' if page_break else ""
 
         return f"""  <div class="page"{break_style}>
@@ -257,8 +280,11 @@ class StockInquiryPDFService:
 
   <table class="form">{self._revision_rows(entry)}</table>
 
-  <h2>Attachments</h2>
-  {attachments_html}
+  <h2>Photos</h2>
+  {photos_html}
+
+  <h2>Other Attachments</h2>
+  {other_html}
   </div>
 """
 
@@ -334,22 +360,22 @@ class StockInquiryPDFService:
                 ),
             )
 
-        pages = [self._current_page(inquiry)]
-        if include_revisions:
-            # The lineage prints newest first, behind the current form. The newest
-            # entry is NOT redundant with it: the live row can carry office edits
-            # made after the contact's last submission, and the entry also carries
-            # the reason and who submitted it.
-            entries = revision_entries(self.db, "stock_inquiry", str(inquiry.id))
-            if has_revision_history(entries):
-                pages += [
-                    self._revision_page(
-                        entry,
-                        superseded=is_superseded(entries, entry),
-                        page_break=True,
-                    )
-                    for entry in reversed(entries)
-                ]
+        if not include_revisions:
+            return self._document(self._current_page(inquiry)), filename
+
+        # The EARLIER versions print newest first, behind the current form. The
+        # newest entry is the version this form already shows, so it gets no page
+        # of its own - its label, submitter and reason go onto the current page.
+        entries = revision_entries(self.db, "stock_inquiry", str(inquiry.id))
+        pages = [self._current_page(inquiry, latest_revision_entry(entries))]
+        pages += [
+            self._revision_page(
+                entry,
+                superseded=is_superseded(entries, entry),
+                page_break=True,
+            )
+            for entry in appended_revision_entries(entries)
+        ]
         return self._document("".join(pages)), filename
 
     def render_pdf(

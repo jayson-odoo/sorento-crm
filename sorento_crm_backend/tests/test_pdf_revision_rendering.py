@@ -165,16 +165,81 @@ def test_stock_inquiry_current_form_is_unchanged_by_default(db):
     assert "page-break-before" not in html
 
 
-def test_stock_inquiry_include_revisions_appends_the_whole_lineage(db):
+def test_stock_inquiry_include_revisions_appends_every_earlier_version(db):
     row, _lineage = _si_with_two_revisions(db)
 
     html = StockInquiryPDFService(db).build_html(str(row.id), include_revisions=True)
 
-    # Current form first, then newest revision, then the original.
+    # Current form first, then revision 1, then the original. The NEWEST entry
+    # gets no page of its own - it is the version the current form already shows.
     assert html.index(THIRD_DESCRIPTION) < html.index(SECOND_DESCRIPTION)
     assert html.index(SECOND_DESCRIPTION) < html.index(ORIGINAL_DESCRIPTION)
     assert "page-break-before: always" in html
     assert "Revision 2" in html and "Revision 1" in html
+
+
+def test_stock_inquiry_include_revisions_prints_the_current_version_once(db):
+    """The newest lineage entry is the version the current form shows.
+
+    Printing it as its own page put the same form on page 1 and page 2, which is
+    what the user reported: "if we print current revision again then will be
+    double print".
+    """
+    row, entries = _si_with_two_revisions(db)
+    assert entries[-1]["revision_no"] == 2
+
+    html = StockInquiryPDFService(db).build_html(str(row.id), include_revisions=True)
+
+    # The newest version's values appear exactly once, on the current form page.
+    assert html.count(THIRD_DESCRIPTION) == 1
+    # Exactly two pages carry a superseded heading: revision 1 and the original
+    # (whose note folds into its own bracket, "Original (reconstructed, superseded)").
+    assert html.count("superseded") == 2
+    # ...and its context is not lost with its page: which revision the current
+    # form is, who sent it and why, now reads on the current form itself.
+    assert html.index("Revision 2") < html.index("Revision 1")
+    assert SECOND_REASON in html
+
+
+def test_stock_inquiry_include_revisions_handles_a_resubmission_at_revision_zero(db):
+    """An office reject that the contact answers advances the VERSION, never the
+    revision (UAC C1/C4), so both entries sit at ``revision_no = 0``. The newest is
+    still the version in play, so it is still the one that must not print twice."""
+    _token, row = _setup(db, "stock_inquiry")
+    service = PortalRevisionService(db)
+    service.record_initial("stock_inquiry", row, None)
+    row.item_description = SECOND_DESCRIPTION
+    db.commit()
+    service.record_resubmission(
+        "stock_inquiry", row, None, reason="Missing the delivery address"
+    )
+    db.commit()
+    entries = _entries(db, "stock_inquiry", row)
+    assert [e["revision_no"] for e in entries] == [0, 0]
+
+    html = StockInquiryPDFService(db).build_html(str(row.id), include_revisions=True)
+
+    assert html.count(SECOND_DESCRIPTION) == 1  # the current form, once
+    assert ORIGINAL_DESCRIPTION in html  # the version behind it, on its own page
+    assert html.count("(superseded)") == 1
+
+
+def test_stock_inquiry_newest_revision_still_exports_on_its_own(db):
+    """Skipping the newest entry is an ``include_revisions`` rule only.
+
+    Asking for that entry BY ID is a different document (UAC P1/P2) - the snapshot
+    without the office fields the live row carries - so it still prints in full.
+    """
+    row, entries = _si_with_two_revisions(db)
+    newest = entries[-1]
+
+    html = StockInquiryPDFService(db).build_html(str(row.id), revision_id=newest["id"])
+
+    assert THIRD_DESCRIPTION in html
+    assert "Revision 2" in html
+    # It is the version in play, so it is not headed as superseded.
+    assert "(superseded)" not in html
+    assert SECOND_DESCRIPTION not in html
 
 
 def test_stock_inquiry_include_revisions_on_a_never_revised_form_is_just_the_form(db):
@@ -232,6 +297,159 @@ def test_render_pdf_names_the_file_after_the_version(db):
     )
     assert newest_name == f"product-inquiry-{row.inquiry_number}-R2-as-submitted.pdf"
     assert newest_name != service.build_filename(row)
+
+
+# ---------------------------------------------------------------- attachments
+
+
+def _seed_attachment(db, row, *, filename: str, mime: str) -> str:
+    """One file linked to the entity, so the next snapshot records it."""
+    from app.models.entity_attachment import EntityAttachmentLink
+    from app.models.resources import Attachment
+
+    att = Attachment(
+        id=str(uuid.uuid4()),
+        original_filename=filename,
+        stored_filename=filename,
+        file_path=f"uploads/{filename}",
+        mime_type=mime,
+        file_size_bytes=1234,
+    )
+    db.add(att)
+    db.add(
+        EntityAttachmentLink(
+            id=str(uuid.uuid4()),
+            entity_type="stock_inquiry",
+            entity_id=str(row.id),
+            attachment_id=att.id,
+        )
+    )
+    db.commit()
+    return str(att.id)
+
+
+@pytest.fixture
+def storage(monkeypatch):
+    """Stub the storage backend: what matters is which bytes reach the page, not
+    that a real bucket answered. ``failing`` names files whose fetch blows up."""
+    import app.services.storage_router as storage_router
+
+    state = {"failing": set()}
+
+    class _Backend:
+        def download_file(self, key):
+            if any(name in str(key) for name in state["failing"]):
+                raise RuntimeError("object missing")
+            return b"\xff\xd8\xff-image-bytes"
+
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider: _Backend())
+    monkeypatch.setattr(
+        storage_router, "resolve_signed_url", lambda path, provider=None: f"https://cdn/{path}"
+    )
+    return state
+
+
+def test_stock_inquiry_revision_embeds_that_versions_own_photos(db, storage):
+    """A revision page prints its photos, from ITS OWN attachment set.
+
+    The file is unlinked after the revision, so nothing but the snapshot knows it
+    was ever there (UAC G6) - which is exactly the file a historical page exists
+    to show, and it still renders.
+    """
+    from app.models.entity_attachment import EntityAttachmentLink
+
+    token, row = _setup(db, "stock_inquiry")
+    _seed_attachment(db, row, filename="site-photo.jpg", mime="image/jpeg")
+    _revise(
+        db, token, "stock_inquiry", row,
+        {"item_description": SECOND_DESCRIPTION}, FIRST_REASON, 0,
+    )
+    db.query(EntityAttachmentLink).filter(
+        EntityAttachmentLink.entity_id == str(row.id)
+    ).delete()
+    db.commit()
+
+    entries = _entries(db, "stock_inquiry", row)
+    original = next(e for e in entries if e["version_no"] == 0)
+    html = StockInquiryPDFService(db).build_html(str(row.id), revision_id=original["id"])
+
+    assert "data:image/jpeg;base64," in html
+    assert "site-photo.jpg" in html
+    # The current form has no attachments left, so its own photo section is empty -
+    # the revision page is not reading today's files.
+    assert "data:image/jpeg;base64," not in StockInquiryPDFService(db).build_html(str(row.id))
+
+
+def test_stock_inquiry_revision_lists_a_non_image_by_name(db, storage):
+    token, row = _setup(db, "stock_inquiry")
+    _seed_attachment(db, row, filename="quotation.pdf", mime="application/pdf")
+    _revise(
+        db, token, "stock_inquiry", row,
+        {"item_description": SECOND_DESCRIPTION}, FIRST_REASON, 0,
+    )
+
+    entries = _entries(db, "stock_inquiry", row)
+    original = next(e for e in entries if e["version_no"] == 0)
+    html = StockInquiryPDFService(db).build_html(str(row.id), revision_id=original["id"])
+
+    assert "quotation.pdf" in html
+    assert "data:" not in html
+
+
+def test_an_unfetchable_revision_photo_degrades_to_its_filename(db, storage):
+    """One dead object must cost its own image, never the whole document."""
+    token, row = _setup(db, "stock_inquiry")
+    _seed_attachment(db, row, filename="gone.jpg", mime="image/jpeg")
+    _seed_attachment(db, row, filename="kept.jpg", mime="image/jpeg")
+    storage["failing"].add("gone.jpg")
+    _revise(
+        db, token, "stock_inquiry", row,
+        {"item_description": SECOND_DESCRIPTION}, FIRST_REASON, 0,
+    )
+
+    entries = _entries(db, "stock_inquiry", row)
+    original = next(e for e in entries if e["version_no"] == 0)
+    html = StockInquiryPDFService(db).build_html(str(row.id), revision_id=original["id"])
+
+    assert "data:image/jpeg;base64," in html  # the readable one still embeds
+    assert "gone.jpg" in html  # ...and the dead one is still named
+
+
+@pytest.mark.parametrize("kind", REQUEST_TYPES)
+def test_request_revision_embeds_that_versions_own_photos(db, storage, kind):
+    token, row = _setup(db, kind)
+    from app.models.entity_attachment import EntityAttachmentLink
+    from app.models.resources import Attachment
+
+    att = Attachment(
+        id=str(uuid.uuid4()),
+        original_filename="layout.png",
+        stored_filename="layout.png",
+        file_path="uploads/layout.png",
+        mime_type="image/png",
+        file_size_bytes=99,
+    )
+    db.add(att)
+    db.add(
+        EntityAttachmentLink(
+            id=str(uuid.uuid4()),
+            # Sponsorship forms share the purchase_request attachment entity type.
+            entity_type="purchase_request",
+            entity_id=str(row.id),
+            attachment_id=att.id,
+        )
+    )
+    db.commit()
+    _revise(db, token, kind, row, {"project_title": "Revised project"}, FIRST_REASON, 0)
+
+    entries = _entries(db, kind, row)
+    original = next(e for e in entries if e["version_no"] == 0)
+    html = PurchaseRequestPDFService(db).build_html(
+        str(row.id), revision_id=original["id"]
+    )
+
+    assert "data:image/png;base64," in html
+    assert "layout.png" in html
 
 
 # ------------------------------------------------------------------ timezone
@@ -329,11 +547,15 @@ def test_request_include_revisions_prints_current_then_history(db, kind):
 
     html = PurchaseRequestPDFService(db).build_html(str(row.id), include_revisions=True)
 
-    # The current form leads; the superseded version follows it.
+    # The current form leads; the superseded version follows it. Revision 1 is the
+    # version the current form shows, so it has no page of its own - its label and
+    # reason ride on the current form instead.
     assert html.index("Revised project") < html.index("Marker project")
+    assert html.count("Revised project") == 1
     assert "page-break-before: always" in html
     assert "Revision 1" in html
     assert FIRST_REASON in html
+    assert html.index("Revision 1") < html.index("Marker project")
     # The type's own heading still comes from the live header, on every page.
     title = "Project Sales Sponsorship Form" if kind == "sponsorship_form" else "Purchase Request"
     assert title in html

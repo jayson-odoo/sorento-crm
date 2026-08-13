@@ -14,6 +14,7 @@ import { revisionEntryToStockInquiry } from './revisionEntryToStockInquiry';
 import {
   buildFormRows,
   buildStockInquiryRevisionRows,
+  buildStockInquiryRevisionSheets,
   exportStockInquiryRevisionToExcel,
 } from './exportStockInquiryToExcel';
 
@@ -144,6 +145,76 @@ describe('buildStockInquiryRevisionRows', () => {
     expect(rows.map((row) => row[0]).filter(Boolean)).toEqual(
       expect.arrayContaining(currentRows.map((row) => row[0]).filter(Boolean)),
     );
+  });
+});
+
+/**
+ * The include-revisions workbook (round 6, 6.4; corrected round 7).
+ *
+ * The newest lineage entry gets NO sheet: it is the version sheet 1 already
+ * shows, so a sheet for it repeated the current form with the office fields
+ * blanked - the "double print" the user reported on the PDF, in a workbook.
+ */
+describe('buildStockInquiryRevisionSheets', () => {
+  function valueOf(rows: (string | number)[][], label: string) {
+    return rows.find((row) => row[0] === label)?.[1];
+  }
+
+  const original = () =>
+    entry({ id: 'rev-0', version_no: 0, revision_no: 0, kind: 'original', label: 'Original', reason: null });
+  const newest = () =>
+    entry({
+      id: 'rev-2',
+      version_no: 2,
+      revision_no: 2,
+      label: 'Revision 2',
+      reason: 'Model changed',
+      snapshot: { ...(entry().snapshot as Record<string, unknown>), item_description: 'Latest description' },
+    });
+
+  it('is the current form, then every EARLIER version newest first', () => {
+    const sheets = buildStockInquiryRevisionSheets(live(), [original(), entry(), newest()]);
+    expect(sheets.map((sheet) => sheet.name)).toEqual([
+      'Stock Inquiry',
+      'Revision 1',
+      'Original',
+    ]);
+  });
+
+  it('carries the newest version onto sheet 1 instead of giving it a sheet', () => {
+    const sheets = buildStockInquiryRevisionSheets(live(), [original(), entry(), newest()]);
+    expect(valueOf(sheets[0]!.rows, 'REVISION:')).toBe('Revision 2');
+    expect(valueOf(sheets[0]!.rows, 'REASON:')).toBe('Model changed');
+    expect(valueOf(sheets[0]!.rows, 'SUBMITTED:')).toBe('12/08/2026 by Alice Tan');
+    // ...and the form itself is untouched: sheet 1 is still the live record.
+    expect(valueOf(sheets[0]!.rows, 'ITEM DESCRIPTION:')).toBe('Latest description');
+    expect(valueOf(sheets[0]!.rows, 'COMMENT / REPLY BY PURCHASING:')).toBe('Stock arrives 20 Aug');
+    // Exactly one sheet holds the newest version's values.
+    const carrying = sheets.filter(
+      (sheet) => valueOf(sheet.rows, 'ITEM DESCRIPTION:') === 'Latest description',
+    );
+    expect(carrying).toHaveLength(1);
+  });
+
+  it('is just the current sheet when the lineage is only the original', () => {
+    const sheets = buildStockInquiryRevisionSheets(live(), [original()]);
+    expect(sheets.map((sheet) => sheet.name)).toEqual(['Stock Inquiry']);
+    // Nothing to say about a version, so the block does not appear at all.
+    expect(valueOf(sheets[0]!.rows, 'REVISION:')).toBeUndefined();
+    expect(sheets[0]!.rows).toEqual(buildFormRows(live()));
+  });
+
+  it('treats a resubmission lineage the same, though it is still at revision 0', () => {
+    const resubmitted = entry({
+      id: 'rev-r',
+      version_no: 1,
+      revision_no: 0,
+      kind: 'resubmission',
+      label: 'Resubmitted',
+    });
+    const sheets = buildStockInquiryRevisionSheets(live(), [original(), resubmitted]);
+    expect(sheets.map((sheet) => sheet.name)).toEqual(['Stock Inquiry', 'Original']);
+    expect(valueOf(sheets[0]!.rows, 'REVISION:')).toBe('Resubmitted');
   });
 });
 

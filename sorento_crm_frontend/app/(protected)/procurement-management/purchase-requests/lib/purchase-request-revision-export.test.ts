@@ -232,20 +232,66 @@ describe('exportPurchaseRequestOrSponsorshipWithRevisionsToExcel', () => {
       reason: null,
     }) as FormRevisionEntry;
 
-  it('puts the current form first, then the lineage newest first', async () => {
-    await exportPurchaseRequestOrSponsorshipWithRevisionsToExcel(live(), [original(), entry()]);
+  const newest = () =>
+    ({
+      ...entry(),
+      id: 'rev-2',
+      version_no: 2,
+      revision_no: 2,
+      label: 'Revision 2',
+      reason: 'Model changed',
+    }) as FormRevisionEntry;
+
+  it('puts the current form first, then every EARLIER version newest first', async () => {
+    // Round 7: the newest entry ("Revision 2") is the version sheet 1 shows, so
+    // it gets no sheet of its own - printing both was the same form twice.
+    await exportPurchaseRequestOrSponsorshipWithRevisionsToExcel(live(), [
+      original(),
+      entry(),
+      newest(),
+    ]);
     expect(appended.map((sheet) => sheet.name)).toEqual([
       'Purchase Request',
       'Revision 1',
       'Original',
     ]);
-    expect(appended[0]?.aoa).toEqual(buildPurchaseRequestAoa(live()));
     expect(writeFile).toHaveBeenCalledWith(expect.anything(), 'Purchase_Request_PR-26-0007-R2.xlsx');
+  });
+
+  it('carries the newest version onto sheet 1 instead of giving it a sheet', async () => {
+    await exportPurchaseRequestOrSponsorshipWithRevisionsToExcel(live(), [original(), newest()]);
+    expect(valueOf(appended[0]!.aoa, 'Revision:')).toBe('Revision 2');
+    expect(valueOf(appended[0]!.aoa, 'Reason:')).toBe('Model changed');
+    expect(valueOf(appended[0]!.aoa, 'Submitted:')).toBe('12/08/2026 by Alice Tan');
+    // The form itself is untouched - sheet 1 is still the live record, approval
+    // block and all.
+    expect(valueOf(appended[0]!.aoa, 'Purpose:')).toBe('Latest purpose');
+    expect(valueOf(appended[0]!.aoa, 'Approved by:')).toBe('Bob Lim');
   });
 
   it('is silently just the form when there is no lineage yet', async () => {
     await exportPurchaseRequestOrSponsorshipWithRevisionsToExcel(live(), [original()]);
     expect(appended.map((sheet) => sheet.name)).toEqual(['Purchase Request']);
+    // Nothing to say about a version, so sheet 1 is byte-for-byte the export this
+    // page has always produced.
+    expect(appended[0]?.aoa).toEqual(buildPurchaseRequestAoa(live()));
+  });
+
+  it('treats a resubmission lineage the same, though it is still at revision 0', async () => {
+    const resubmitted = {
+      ...entry(),
+      id: 'rev-r',
+      version_no: 1,
+      revision_no: 0,
+      kind: 'resubmission',
+      label: 'Resubmitted',
+    } as FormRevisionEntry;
+    await exportPurchaseRequestOrSponsorshipWithRevisionsToExcel(live(), [
+      original(),
+      resubmitted,
+    ]);
+    expect(appended.map((sheet) => sheet.name)).toEqual(['Purchase Request', 'Original']);
+    expect(valueOf(appended[0]!.aoa, 'Revision:')).toBe('Resubmitted');
   });
 
   it('reads each version through its OWN sales type label', async () => {
@@ -253,7 +299,11 @@ describe('exportPurchaseRequestOrSponsorshipWithRevisionsToExcel', () => {
       { value: 'cash_sales', label: 'Cash Sales' },
       { value: 'project', label: 'Project' },
     ]);
-    await exportPurchaseRequestOrSponsorshipWithRevisionsToExcel(live(), [entry()], resolve);
+    await exportPurchaseRequestOrSponsorshipWithRevisionsToExcel(
+      live(),
+      [entry(), newest()],
+      resolve,
+    );
     expect(valueOf(appended[0]!.aoa, 'Sales Type:')).toBe('Cash Sales');
     expect(valueOf(appended[1]!.aoa, 'Sales Type:')).toBe('Project');
   });

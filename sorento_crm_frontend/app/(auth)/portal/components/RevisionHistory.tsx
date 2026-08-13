@@ -292,9 +292,13 @@ export function RevisionHistory({
         fetchBytes={portalFetchBytes}
       />
 
+      {/* The portal has no JWT session, so the dialog's preview reads bytes
+          through the same token-authenticated path this page already uses. */}
       <RevisionSnapshotDialog
         entry={snapshotEntry}
         onOpenChange={(open) => !open && setSnapshotEntry(null)}
+        fetchBytes={portalFetchBytes}
+        attachmentDownloadUrl={portalAttachmentDownloadUrl}
       />
     </Card>
   );

@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 
 import type { FormRevisionEntry } from '@/components/common/RevisionTimeline';
 import {
+  appendedRevisionEntries,
   hasRevisionLineage,
+  latestRevisionEntry,
   revisionDocumentNumber,
   revisionExportFilename,
   revisionFileMarker,
@@ -161,5 +163,50 @@ describe('lineage', () => {
     const oldest = entry({ id: 'a', revision_no: 0 });
     const newest = entry({ id: 'b', revision_no: 1 });
     expect(revisionsNewestFirst([oldest, newest]).map((e) => e.id)).toEqual(['b', 'a']);
+  });
+});
+
+/**
+ * The rule the backend states as `appended_revision_entries`: the newest entry is
+ * the version the current form shows, so an include-revisions export appends
+ * every version EXCEPT that one. Printing both put the same form on two
+ * consecutive pages / sheets.
+ */
+describe('appended entries', () => {
+  it('appends every earlier version, newest first, and never the newest', () => {
+    const original = entry({ id: 'a', revision_no: 0, kind: 'original' });
+    const first = entry({ id: 'b', revision_no: 1 });
+    const newest = entry({ id: 'c', revision_no: 2 });
+    expect(appendedRevisionEntries([original, first, newest]).map((e) => e.id)).toEqual([
+      'b',
+      'a',
+    ]);
+  });
+
+  it('appends nothing when the lineage is only the original', () => {
+    expect(appendedRevisionEntries([entry({ kind: 'original', revision_no: 0 })])).toEqual([]);
+    expect(appendedRevisionEntries([])).toEqual([]);
+    expect(appendedRevisionEntries(null)).toEqual([]);
+  });
+
+  it('treats a resubmission lineage the same, though it is still at revision 0', () => {
+    // An office reject that the contact answers writes a history row without
+    // burning a revision (UAC C4), so "newest" is a POSITION, not a number.
+    const original = entry({ id: 'a', revision_no: 0, kind: 'original' });
+    const resubmitted = entry({ id: 'b', revision_no: 0, kind: 'resubmission' });
+    expect(appendedRevisionEntries([original, resubmitted]).map((e) => e.id)).toEqual(['a']);
+  });
+});
+
+describe('latest entry', () => {
+  it('is the newest version, whose context the current sheet carries', () => {
+    const original = entry({ id: 'a', revision_no: 0, kind: 'original' });
+    const newest = entry({ id: 'b', revision_no: 1 });
+    expect(latestRevisionEntry([original, newest])?.id).toBe('b');
+  });
+
+  it('is nothing when the record was never revised', () => {
+    expect(latestRevisionEntry([entry({ kind: 'original', revision_no: 0 })])).toBeNull();
+    expect(latestRevisionEntry([])).toBeNull();
   });
 });

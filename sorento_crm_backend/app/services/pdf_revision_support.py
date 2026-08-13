@@ -2,10 +2,15 @@
 
 Round 6 (6.3 / 6.4) of PLAN-portal-submission-revisions adds two things to the
 stock-inquiry and purchase-request PDFs: a printable copy of ONE superseded
-version, and a "with revisions" export that appends the whole lineage behind the
-current form. Both services need the same four facts - the lineage, one entry
-looked up by id, the filename marker, and the heading wording - so they live
-here instead of being written twice and drifting apart.
+version, and a "with revisions" export that appends the EARLIER versions behind
+the current form. Both services need the same facts - the lineage, one entry
+looked up by id, which entries an include-revisions export appends, the filename
+marker, the heading wording and a version's own attachments - so they live here
+instead of being written twice and drifting apart.
+
+An include-revisions export never gives the NEWEST entry a page: that entry is
+the version the current form already shows, so printing both put the same form on
+two consecutive pages. See :func:`appended_revision_entries`.
 
 The rule every caller follows: a value printed for a revision comes from that
 revision's STORED SNAPSHOT, never from the live row. The document exists to show
@@ -18,7 +23,10 @@ heading (same reasoning as ``PortalRevisionService._snapshot_fields``).
 """
 from __future__ import annotations
 
+import logging
+from collections import Counter
 from datetime import date, datetime
+from types import SimpleNamespace
 from typing import Any, Optional
 
 from fastapi import status
@@ -28,11 +36,15 @@ from app.services.document_number import suffix_revision
 from app.services.error_handler import AppException
 from app.services.pdf_render import in_malaysia
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
     "validate_export_request",
     "revision_entries",
     "find_revision_entry",
     "has_revision_history",
+    "appended_revision_entries",
+    "latest_revision_entry",
     "is_superseded",
     "export_filename",
     "filename_with_revision",
@@ -40,6 +52,7 @@ __all__ = [
     "revision_heading",
     "revision_reason",
     "revision_attachment_names",
+    "revision_attachment_sections",
     "snapshot_date",
     "snapshot_datetime",
     "snapshot_decimal",
@@ -132,6 +145,36 @@ def has_revision_history(entries: list[dict]) -> bool:
     if len(entries) > 1:
         return True
     return int(entries[0].get("revision_no") or 0) > 0
+
+
+def latest_revision_entry(entries: list[dict]) -> Optional[dict]:
+    """The version the record is at right now, or None when it has no lineage.
+
+    The current form IS this entry, so an include-revisions export reads its
+    label, submitter and reason onto the current form page instead of giving it a
+    page of its own.
+    """
+    if not has_revision_history(entries):
+        return None
+    return entries[-1] or None
+
+
+def appended_revision_entries(entries: list[dict]) -> list[dict]:
+    """The pages an include-revisions export appends, newest first.
+
+    Every entry EXCEPT the newest. The newest is the version the current form
+    already prints, so a page for it repeats page 1 verbatim - the reader gets the
+    same form twice and has to compare them to discover they are identical. What
+    that page uniquely carried (which revision it is, who sent it, why) is not
+    lost: it moves onto the current form page, which is the version it produced.
+
+    A lineage of only the original therefore appends nothing, and the document is
+    exactly the current form - which is correct, because the original IS the
+    current form on a record that was never revised.
+    """
+    if not has_revision_history(entries):
+        return []
+    return list(reversed(entries[:-1]))
 
 
 def is_superseded(entries: list[dict], entry: dict) -> bool:
@@ -246,18 +289,98 @@ def revision_reason(entry: dict) -> Optional[str]:
 
 
 def revision_attachment_names(entry: dict) -> list[str]:
-    """Filenames the version carried.
+    """Filenames the version carried, in the order the snapshot stored them.
 
-    Names only, never embedded images: the snapshot is the record of WHICH files
-    the version had, and a second image pipeline over historical attachments
-    would download every file of every version on one export. Images are embedded
-    for the CURRENT form only, exactly as before.
+    The fallback when the attachment rows cannot be read at all
+    (:func:`revision_attachment_sections` degrades to this): the snapshot is the
+    record of WHICH files the version had, so a name is always available even
+    when the bytes are not.
     """
     names: list[str] = []
     for item in entry.get("attachments") or []:
         name = str((item or {}).get("filename") or "").strip()
         names.append(name or "attachment")
     return names
+
+
+def _revision_attachment_links(db: Session, entry: dict) -> tuple[list, list[str]]:
+    """``(link-shaped objects, names with no row left)`` for ONE version's files.
+
+    The PDF image helpers read ``link.attachment``, so the rows are wrapped in
+    that shape rather than forking them: a revision page then embeds its photos
+    through exactly the same code the current form does.
+
+    Fetched BY ATTACHMENT ID, never by link: a file a later revision removed is
+    unlinked, not destroyed (UAC G6), and it is precisely the file a historical
+    page exists to show - the on-screen history already resolves the same rows
+    this way (``_attachment_urls``).
+    """
+    from app.models.resources import Attachment
+
+    items = [item or {} for item in (entry.get("attachments") or [])]
+    ids = {str(item.get("attachment_id")) for item in items if item.get("attachment_id")}
+    rows: dict[str, Any] = {}
+    if ids:
+        for att in db.query(Attachment).filter(Attachment.id.in_(ids)).all():
+            rows[str(att.id)] = att
+
+    links: list = []
+    missing: list[str] = []
+    for item in items:
+        att = rows.get(str(item.get("attachment_id") or ""))
+        if att is None:
+            missing.append(str(item.get("filename") or "").strip() or "attachment")
+            continue
+        links.append(SimpleNamespace(attachment=att))
+    return links, missing
+
+
+def revision_attachment_sections(
+    db: Session, entry: dict, *, context: str = "revision PDF"
+) -> tuple[list[dict], list[str]]:
+    """``(embedded images, filenames to list)`` for ONE version's own files.
+
+    A revision page prints its photos exactly as the current form prints its own,
+    from THAT version's attachment set - the user's expectation, in his words,
+    that "we using same printing function for all revisions". Non-image files are
+    listed by name, as everywhere else.
+
+    Best-effort in three places, because a printed history must never fail over a
+    file: an attachment row that no longer exists falls back to its snapshotted
+    name, an image whose bytes cannot be fetched falls back to its name (
+    ``embedded_images`` drops it silently, so the difference is reconciled here),
+    and a failure to read the rows at all falls back to the whole name list.
+
+    Cost: one query per revision page plus one storage download per image on it.
+    An include-revisions export of a long, photo-heavy lineage therefore does real
+    work - it runs on the RQ worker, off the request path, exactly as the current
+    form's own images already do.
+    """
+    from app.services.pdf_render import embedded_images, image_mime, non_image_names
+
+    try:
+        links, missing = _revision_attachment_links(db, entry)
+    except Exception:  # pragma: no cover - never fail a render on a lookup
+        logger.warning("%s: failed to read revision attachments", context, exc_info=True)
+        return [], revision_attachment_names(entry)
+
+    images = embedded_images(links, context=context)
+    names = list(non_image_names(links))
+
+    # An image counted here but absent from `images` never downloaded. Counted,
+    # not set-differenced, so two files sharing a name are not confused.
+    embedded = Counter(str(img.get("name") or "") for img in images)
+    for link in links:
+        att = link.attachment
+        if image_mime(att) is None:
+            continue
+        name = getattr(att, "original_filename", None) or "image"
+        if embedded.get(name, 0) > 0:
+            embedded[name] -= 1
+        else:
+            names.append(name)
+
+    return images, names + missing
 
 
 def snapshot_date(value: Any) -> Any:
