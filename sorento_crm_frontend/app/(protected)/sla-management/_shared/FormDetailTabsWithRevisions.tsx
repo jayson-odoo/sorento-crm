@@ -1,6 +1,7 @@
 'use client';
 
 import { ReactNode } from 'react';
+import { History } from 'lucide-react';
 import FormDetailWithSLATabs, { type FormDetailExtraTab } from './FormDetailWithSLATabs';
 import FormRevisionsTab, { type FormRevisionsKind } from './FormRevisionsTab';
 import { useRevisionEnabledMap } from './useRevisionEnabledMap';
@@ -74,6 +75,7 @@ export default function FormDetailTabsWithRevisions({
         {
           value: 'revisions',
           label: 'Revisions',
+          icon: <History />,
           content: <FormRevisionsTab kind={revisionsKind} entityId={sourceEntityId} />,
         },
       ]

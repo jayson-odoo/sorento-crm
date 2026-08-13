@@ -3,7 +3,16 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, ChevronLeft, ChevronRight, Plus, Sparkles, Trash2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  History,
+  Plus,
+  Sparkles,
+  Trash2,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import {
   AlertDialog,
@@ -1107,6 +1116,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       )}
       {submissionId && !reviseMode && (
         <ReviseAction
+          variant="menu"
           policy={revisionPolicy}
           onRevise={() => {
             setReviseMode(true);
@@ -1513,10 +1523,19 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       </div>
 
       {revisionsTabbed ? (
-        <Tabs defaultValue="details" className="space-y-4">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="details">Details</TabsTrigger>
-            <TabsTrigger value="revisions">Revisions</TabsTrigger>
+        <Tabs defaultValue="details">
+          {/* Same underlined strip the office detail pages use, so a record's
+              tabs look the same whichever side of the system you are on. The
+              list carries its own bottom margin, so the root drops space-y. */}
+          <TabsList variant="line" className="mb-5 w-full justify-start overflow-x-auto">
+            <TabsTrigger value="details">
+              <FileText />
+              <span>Details</span>
+            </TabsTrigger>
+            <TabsTrigger value="revisions">
+              <History />
+              <span>Revisions</span>
+            </TabsTrigger>
           </TabsList>
           <TabsContent value="details" className="m-0 space-y-4">
             {detailsContent}

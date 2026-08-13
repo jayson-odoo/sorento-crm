@@ -175,9 +175,22 @@ function openTab(name: string) {
   fireEvent.click(trigger);
 }
 
+/**
+ * Start a revision. On the detail page the action lives in the gear menu
+ * (round 6), so it takes an open first. Radix opens on pointerdown, which jsdom
+ * does not synthesize from a click.
+ */
+async function clickRevise() {
+  const gear = await screen.findByRole('button', { name: 'Submission actions' });
+  fireEvent.pointerDown(gear, { button: 0, pointerId: 1 });
+  fireEvent.pointerUp(gear, { button: 0, pointerId: 1 });
+  fireEvent.click(gear);
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Revise' }));
+}
+
 /** Open the composer and type a valid reason. */
 async function openComposer(reason = 'Customer moved the delivery date.') {
-  fireEvent.click(await screen.findByRole('button', { name: 'Revise' }));
+  await clickRevise();
   const box = screen.getByLabelText(/what changed, and why\?/i);
   fireEvent.change(box, { target: { value: reason } });
   return box;
@@ -187,8 +200,16 @@ describe('SubmissionForm - revise entry point', () => {
   it('shows the action and the remaining budget when the policy allows it', async () => {
     await renderRevisable();
 
-    expect(await screen.findByRole('button', { name: 'Revise' })).toBeInTheDocument();
+    // Demoted into the gear (round 6): the budget is the only thing shown until
+    // the contact goes looking for the action.
+    expect(
+      await screen.findByRole('button', { name: 'Submission actions' }),
+    ).toBeInTheDocument();
     expect(screen.getByText('2 of 3 revisions left')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Revise' })).toBeNull();
+
+    await clickRevise();
+    expect(screen.getByLabelText(/what changed, and why\?/i)).toBeInTheDocument();
   });
 
   it('renders one sentence and no action when the cap is used up', async () => {
@@ -202,6 +223,7 @@ describe('SubmissionForm - revise entry point', () => {
     });
 
     expect(screen.queryByRole('button', { name: 'Revise' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Submission actions' })).toBeNull();
     expect(screen.getByText('You have used all 3 revisions.')).toBeInTheDocument();
   });
 
@@ -217,6 +239,7 @@ describe('SubmissionForm - revise entry point', () => {
     });
 
     expect(screen.queryByRole('button', { name: 'Revise' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Submission actions' })).toBeNull();
     expect(screen.getByText('This form cannot be revised.')).toBeInTheDocument();
   });
 
@@ -230,6 +253,7 @@ describe('SubmissionForm - revise entry point', () => {
     });
 
     expect(screen.queryByRole('button', { name: 'Revise' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Submission actions' })).toBeNull();
     expect(
       screen.getByText('This stock inquiry is closed and can no longer be revised.'),
     ).toBeInTheDocument();
@@ -268,6 +292,21 @@ describe('SubmissionForm - the revisions tab', () => {
       'data-state',
       'active',
     );
+  });
+
+  it('wears the same underlined strip the office detail pages use', async () => {
+    await renderRevisable();
+
+    const list = await screen.findByRole('tablist');
+    // `variant="line"` on TabsList: the underline lives on the strip, and each
+    // trigger carries its own bottom border rather than a grey pill.
+    expect(list).toHaveClass('border-b');
+    expect(list).not.toHaveClass('grid');
+    for (const tab of screen.getAllByRole('tab')) {
+      expect(tab).toHaveClass('border-b-2');
+      // Bare lucide icon ahead of the label, exactly as ProductDetail does it.
+      expect(tab.querySelector('svg')).not.toBeNull();
+    }
   });
 
   it('keeps the form on Details and moves the lineage to Revisions', async () => {
@@ -317,7 +356,7 @@ describe('SubmissionForm - the revisions tab', () => {
 describe('SubmissionForm - revise composer', () => {
   it('opens the form pre-filled and keeps the requestor frozen', async () => {
     await renderRevisable();
-    fireEvent.click(await screen.findByRole('button', { name: 'Revise' }));
+    await clickRevise();
 
     // Pre-filled with the current values, and editable again.
     const quantity = document.getElementById('quantity') as HTMLInputElement;
@@ -330,7 +369,7 @@ describe('SubmissionForm - revise composer', () => {
 
   it('refuses a blank reason: no confirm dialog, one message', async () => {
     await renderRevisable();
-    fireEvent.click(await screen.findByRole('button', { name: 'Revise' }));
+    await clickRevise();
     fireEvent.click(screen.getByRole('button', { name: 'Send revision' }));
 
     expect(screen.getByText('Tell us what changed and why.')).toBeInTheDocument();
@@ -530,6 +569,8 @@ describe('SubmissionForm - the ?revise=1 deep link', () => {
     await renderRevisable();
 
     expect(screen.queryByLabelText(/what changed, and why\?/i)).toBeNull();
-    expect(await screen.findByRole('button', { name: 'Revise' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: 'Submission actions' }),
+    ).toBeInTheDocument();
   });
 });

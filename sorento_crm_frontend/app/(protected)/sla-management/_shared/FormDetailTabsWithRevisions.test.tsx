@@ -150,6 +150,13 @@ describe('FormDetailTabsWithRevisions - office visibility rule', () => {
     expect(tabLabels).toEqual(['Details', 'Revisions', 'SLA Tracking']);
   });
 
+  it('gives the Revisions tab its own icon, like every other trigger in the strip', () => {
+    useRevisionEnabledMapMock.mockReturnValue({ data: { stock_inquiry: true } });
+    renderTabs();
+
+    expect(revisionsTab()?.querySelector('svg')).not.toBeNull();
+  });
+
   it('leaves the enabled case not probing the purchase-request hook either', () => {
     useRevisionEnabledMapMock.mockReturnValue({ data: { purchase_request: true } });
     renderTabs({ revisionsKind: 'purchase_request', sourceEntityId: 'pr-1' });
