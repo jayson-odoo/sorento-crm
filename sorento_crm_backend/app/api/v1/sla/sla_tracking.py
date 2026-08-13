@@ -65,6 +65,33 @@ def _log_integration_best_effort(log_service, payload, **kwargs) -> None:
         )
 
 
+def _write_event_log_best_effort(service, payload) -> None:
+    """Write an SLA event log for a state change that is ALREADY committed.
+
+    Same rule as `_log_integration_best_effort`, and the same reason: the
+    responded / resolved stamp landed before this runs, so raising reports a
+    failure for work that succeeded - and the caller's retry takes the
+    already-responded / already-resolved short-circuit, which deliberately
+    writes no event log at all. Rolls back first: the failed insert leaves the
+    session unusable for the response the route still has to build.
+    """
+    import logging
+
+    try:
+        service.create_event_log(payload)
+    except Exception:  # noqa: BLE001 - the state change already committed
+        try:
+            service.db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        logging.getLogger(__name__).warning(
+            "SLA %s event log failed for tracking %s; the state change itself stands.",
+            getattr(payload, "event_type", "?"),
+            getattr(payload, "sla_tracking_id", "?"),
+            exc_info=True,
+        )
+
+
 class SlaTrackingConversationReplyBody(BaseModel):
     message: str = Field(..., min_length=1)
 
@@ -1823,7 +1850,7 @@ async def update_sla_tracking_status_integration(
             )
             alabel, aid = event_log_assignee_fields(db, responded_by_ref)
 
-            service.create_event_log(ConversationSLAEventLogCreate(
+            _write_event_log_best_effort(service, ConversationSLAEventLogCreate(
                 sla_tracking_id=tracking_id_str,
                 event_type="response",
                 event_at=responded_at_utc,
@@ -1845,7 +1872,7 @@ async def update_sla_tracking_status_integration(
             )
             rlabel, rid = event_log_assignee_fields(db, resolved_by_ref)
 
-            service.create_event_log(ConversationSLAEventLogCreate(
+            _write_event_log_best_effort(service, ConversationSLAEventLogCreate(
                 sla_tracking_id=tracking_id_str,
                 event_type="resolution",
                 event_at=resolved_at_utc,
