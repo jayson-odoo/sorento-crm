@@ -44,7 +44,7 @@ import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
-import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrCreateViewLink, rejectSubmittedPurchaseRequest, processPurchaseRequestByCs, closePurchaseRequestByCs, submitApprovalDecision, isDeferredDecision } from '../services/purchaseRequestService';
+import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrCreateViewLink, rejectSubmittedPurchaseRequest, processPurchaseRequestByCs, closePurchaseRequestByCs, submitApprovalDecision, isDeferredDecision, getPurchaseRequestRevisions } from '../services/purchaseRequestService';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
@@ -58,7 +58,6 @@ import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tr
 import { useReassignSLATracking } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { RevisionBanner } from '@/components/common/RevisionBanner';
-import { RevisionsSection } from '@/components/common/RevisionsSection';
 import { VoidBanner } from '@/components/common/VoidBanner';
 import { VoidDialog } from '@/components/common/VoidDialog';
 import { useFormVoid } from '@/hooks/useFormVoid';
@@ -77,7 +76,13 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { exportPurchaseRequestOrSponsorshipToExcel } from '../lib/purchase-request-excel-export';
+import {
+  createSalesTypeLabelResolver,
+  exportPurchaseRequestOrSponsorshipToExcel,
+  exportPurchaseRequestOrSponsorshipWithRevisionsToExcel,
+} from '../lib/purchase-request-excel-export';
+import { ExportWithRevisionsDialog } from '@/components/common/ExportWithRevisionsDialog';
+import { useRevisionEnabledMap } from '@/app/(protected)/sla-management/_shared/useRevisionEnabledMap';
 import { useLookupOptionsByBinding } from '@/hooks/useLookupOptionsByBinding';
 import { toast } from 'sonner';
 import LookupBoundLabel from '@/components/common/LookupBoundLabel';
@@ -235,6 +240,75 @@ export default function PurchaseRequestDetail({
   const latestRevision = (revisionsQuery.data ?? [])
     .filter((entry) => (entry.revision_no ?? 0) > 0)
     .at(-1);
+
+  /**
+   * "Include revisions?" is only a real question when this record HAS revisions
+   * and the type has them switched on (round 6, 6.4). Anywhere else both exports
+   * behave exactly as they always have, with no dialog in the way. PR and SF are
+   * separate types in the config, so the flag is read per request type.
+   */
+  const { data: revisionEnabledMap } = useRevisionEnabledMap();
+  const canOfferRevisionExport =
+    revisionEnabledMap?.[request?.request_type ?? ''] === true && revisionNo > 0;
+  const [exportChoice, setExportChoice] = useState<'excel' | 'pdf' | null>(null);
+
+  const runExcelExport = async (includeRevisions: boolean) => {
+    if (!request) return;
+    setExportingExcel(true);
+    try {
+      const resolve = createSalesTypeLabelResolver(salesTypeOptions.data?.options);
+      if (includeRevisions) {
+        // The lineage as it stands at export time. The banner query has usually
+        // already cached it (keyed on `revision_no`, so it cannot be stale after
+        // a revision lands); the direct read is the fallback for a first click
+        // before it resolves.
+        const entries = revisionsQuery.data ?? (await getPurchaseRequestRevisions(requestId));
+        await exportPurchaseRequestOrSponsorshipWithRevisionsToExcel(request, entries, resolve);
+      } else {
+        await exportPurchaseRequestOrSponsorshipToExcel(request, resolve(request.sales_type));
+      }
+      toast.success(
+        request.request_type === 'sponsorship_form'
+          ? 'Sponsorship form exported to Excel'
+          : 'Purchase request exported to Excel',
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Export failed');
+    } finally {
+      setExportingExcel(false);
+    }
+  };
+
+  const handleExportExcel = async () => {
+    if (!request) return;
+    if (canOfferRevisionExport) {
+      setExportChoice('excel');
+      return;
+    }
+    await runExcelExport(false);
+  };
+
+  const handleExportPdf = () => {
+    if (canOfferRevisionExport) {
+      setExportChoice('pdf');
+      return;
+    }
+    exportPdfMutation.mutate(requestId);
+  };
+
+  const handleExportConfirmed = (includeRevisions: boolean) => {
+    const choice = exportChoice;
+    setExportChoice(null);
+    if (choice === 'pdf') {
+      // No option chosen, no body: the request stays the one this export has
+      // always sent.
+      exportPdfMutation.mutate(
+        includeRevisions ? { id: requestId, options: { include_revisions: true } } : requestId,
+      );
+      return;
+    }
+    void runExcelExport(includeRevisions);
+  };
 
   const { data: systemSettingsPayload } = useQuery({
     queryKey: ['system-settings'],
@@ -648,26 +722,7 @@ export default function PurchaseRequestDetail({
               disabled={exportingExcel}
               onClick={async (e) => {
                 e.preventDefault();
-                if (!request) return;
-                setExportingExcel(true);
-                try {
-                  const code = (request.sales_type ?? '').trim().toLowerCase();
-                  const salesTypeLabel = code
-                    ? (salesTypeOptions.data?.options.find(
-                        (o) => o.value.toLowerCase() === code,
-                      )?.label ?? request.sales_type)
-                    : null;
-                  await exportPurchaseRequestOrSponsorshipToExcel(request, salesTypeLabel);
-                  toast.success(
-                    request.request_type === 'sponsorship_form'
-                      ? 'Sponsorship form exported to Excel'
-                      : 'Purchase request exported to Excel',
-                  );
-                } catch (err) {
-                  toast.error(err instanceof Error ? err.message : 'Export failed');
-                } finally {
-                  setExportingExcel(false);
-                }
+                await handleExportExcel();
               }}
             >
               <FileDown className="size-4" />
@@ -678,7 +733,7 @@ export default function PurchaseRequestDetail({
               disabled={exportPdfMutation.isPending}
               onSelect={(e) => {
                 e.preventDefault();
-                exportPdfMutation.mutate(requestId);
+                handleExportPdf();
               }}
             >
               <Printer className="size-4" />
@@ -751,6 +806,13 @@ export default function PurchaseRequestDetail({
           )}
         </div>
       </div>
+
+      <ExportWithRevisionsDialog
+        open={exportChoice !== null}
+        onOpenChange={(open) => !open && setExportChoice(null)}
+        title={exportChoice === 'pdf' ? 'Print / Download PDF' : 'Export to Excel'}
+        onConfirm={handleExportConfirmed}
+      />
 
       <HandlingLockBanner
         state={handlingLock.state}
@@ -1347,15 +1409,10 @@ export default function PurchaseRequestDetail({
           />
         </div>
 
-        {/* Addition only (UAC H2a): every section above keeps the placement it
-            has today. Always rendered, with an explicit empty state at revision 0. */}
-        <div className="lg:col-span-2">
-          <RevisionsSection
-            entries={revisionsQuery.data}
-            isLoading={revisionsQuery.isLoading}
-            isError={revisionsQuery.isError}
-          />
-        </div>
+        {/* The lineage lives in the page's own "Revisions" TAB (round 6), not in
+            this grid: it is reference material, and burying it under the whole
+            form meant scrolling past everything to read it. The query stays here
+            because the revise banner above quotes the newest entry. */}
 
         {request?.respond_inbox_url && (
           <Sheet

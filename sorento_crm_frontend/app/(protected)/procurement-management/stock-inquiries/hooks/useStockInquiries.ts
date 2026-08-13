@@ -30,6 +30,7 @@ import {
   type ResponseAttachmentUploadResult,
 } from '../services/stockInquiryService';
 import type { StockInquiryFormData } from '../types/stockInquiry.types';
+import type { FormPdfExportOptions } from '@/lib/revision-export';
 import { isDeferredFormAction } from '@/app/(protected)/sla-management/_shared/formAction';
 
 export type StockInquiriesListParams = DataGridApiFetchParams & {
@@ -348,12 +349,27 @@ export function useReopenStockInquiry() {
  * Queue the printable Stock Inquiry Form PDF. The render happens on the worker,
  * so success only means "queued" - invalidate the downloads feeds (drawer + the
  * per-entity chip) and the list, whose Print Count column just changed.
+ *
+ * `mutate('si-1')` stays the current-form export. The object form carries the
+ * round-6 options: one stored revision, or the form plus its whole lineage.
  */
+export type ExportStockInquiryPdfVariables =
+  | string
+  | { id: string; options?: FormPdfExportOptions | null };
+
+function exportPdfId(variables: ExportStockInquiryPdfVariables): string {
+  return typeof variables === 'string' ? variables : variables.id;
+}
+
 export function useExportStockInquiryPdf() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => exportStockInquiryPdf(id),
-    onSuccess: (_, id) => {
+    mutationFn: (variables: ExportStockInquiryPdfVariables) =>
+      typeof variables === 'string'
+        ? exportStockInquiryPdf(variables)
+        : exportStockInquiryPdf(variables.id, variables.options),
+    onSuccess: (_, variables) => {
+      const id = exportPdfId(variables);
       queryClient.invalidateQueries({ queryKey: ['my-downloads'] });
       queryClient.invalidateQueries({
         queryKey: ['entity-downloads', 'stock_inquiry', id],

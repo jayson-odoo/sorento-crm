@@ -11,6 +11,7 @@ import type {
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
 import type { FormRevisionEntry } from '@/components/common/RevisionTimeline';
+import type { FormPdfExportOptions } from '@/lib/revision-export';
 
 /**
  * Path of the stock-inquiry neighbours endpoint. Consumed by
@@ -397,15 +398,29 @@ export interface StockInquiryExportDownload {
  * Contract:
  *   POST /api/v1/procurement/stock-inquiries/{id}/export/pdf
  *   Auth: `procurement.stock_inquiries.view`
+ *   Body: OPTIONAL. Omitted body == the current form, as it has always been.
+ *     { revision_id?: string }      - print ONE stored version (round 6, 6.3)
+ *     { include_revisions?: true }  - current form + the whole lineage (6.4)
+ *     The two are mutually exclusive; sending both 400s.
  *   202-ish 200: { id, kind: 'stock_inquiry_pdf', status: 'pending', filename }
  *   The PDF is rendered by the RQ worker and surfaces in My Downloads.
  */
 export async function exportStockInquiryPdf(
   id: string,
+  options?: FormPdfExportOptions | null,
 ): Promise<StockInquiryExportDownload> {
+  // No options, no body: the request stays byte-identical to the one this export
+  // has always sent.
+  const init: RequestInit = options
+    ? {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(options),
+      }
+    : { method: 'POST' };
   const response = await apiFetch(
     `/api/v1/procurement/stock-inquiries/${id}/export/pdf`,
-    { method: 'POST' },
+    init,
   );
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to start PDF export'));

@@ -18,7 +18,6 @@ import { useReassignSLATracking } from '@/app/(protected)/sla-management/convers
 import ResponseAttachmentDropzone from '@/app/(protected)/complaint-management/complaints/components/ResponseAttachmentDropzone';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { RevisionBanner } from '@/components/common/RevisionBanner';
-import { RevisionsSection } from '@/components/common/RevisionsSection';
 import { VoidBanner } from '@/components/common/VoidBanner';
 import { VoidDialog } from '@/components/common/VoidDialog';
 import { useFormVoid } from '@/hooks/useFormVoid';
@@ -36,7 +35,12 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { exportStockInquiryToExcel } from '../utils/exportStockInquiryToExcel';
+import {
+  exportStockInquiryToExcel,
+  exportStockInquiryWithRevisionsToExcel,
+} from '../utils/exportStockInquiryToExcel';
+import { ExportWithRevisionsDialog } from '@/components/common/ExportWithRevisionsDialog';
+import { useRevisionEnabledMap } from '@/app/(protected)/sla-management/_shared/useRevisionEnabledMap';
 import { format } from 'date-fns';
 import {
   ProductInquiryFormLayout,
@@ -57,7 +61,10 @@ import {
   useExportStockInquiryPdf,
   useStockInquiryRevisions,
 } from '../hooks/useStockInquiries';
-import { getOrCreateStockInquiryViewLink } from '../services/stockInquiryService';
+import {
+  getOrCreateStockInquiryViewLink,
+  getStockInquiryRevisions,
+} from '../services/stockInquiryService';
 import { toast } from 'sonner';
 import { formatDate } from '@/lib/helpers';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -181,14 +188,69 @@ export default function StockInquiryDetail({
     .filter((entry) => (entry.revision_no ?? 0) > 0)
     .at(-1);
 
-  const handleExportExcel = async () => {
+  /**
+   * "Include revisions?" is only a real question when this record HAS revisions
+   * and the type has them switched on (round 6, 6.4). Anywhere else both exports
+   * behave exactly as they always have, with no dialog in the way. Enablement is
+   * the server's answer (global kill switch + per-type config collapsed into one
+   * boolean); "has any" is the record's own denormalized counter, so deciding
+   * costs no lineage read.
+   */
+  const { data: revisionEnabledMap } = useRevisionEnabledMap();
+  const canOfferRevisionExport =
+    revisionEnabledMap?.stock_inquiry === true && revisionNo > 0;
+  const [exportChoice, setExportChoice] = useState<'excel' | 'pdf' | null>(null);
+
+  const runExcelExport = async (includeRevisions: boolean) => {
     if (!inquiry) return;
     setExporting(true);
     try {
-      await exportStockInquiryToExcel(inquiry);
+      if (includeRevisions) {
+        // The lineage as it stands at export time. The banner query has usually
+        // already cached it (keyed on `revision_no`, so it cannot be stale after
+        // a revision lands); the direct read is the fallback for a first click
+        // before it resolves.
+        const entries = revisionsQuery.data ?? (await getStockInquiryRevisions(inquiryId));
+        await exportStockInquiryWithRevisionsToExcel(inquiry, entries);
+      } else {
+        await exportStockInquiryToExcel(inquiry);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Export failed');
     } finally {
       setExporting(false);
     }
+  };
+
+  const handleExportExcel = async () => {
+    if (!inquiry) return;
+    if (canOfferRevisionExport) {
+      setExportChoice('excel');
+      return;
+    }
+    await runExcelExport(false);
+  };
+
+  const handleExportPdf = () => {
+    if (canOfferRevisionExport) {
+      setExportChoice('pdf');
+      return;
+    }
+    exportPdfMutation.mutate(inquiryId);
+  };
+
+  const handleExportConfirmed = (includeRevisions: boolean) => {
+    const choice = exportChoice;
+    setExportChoice(null);
+    if (choice === 'pdf') {
+      // No option chosen, no body: the request stays the one this export has
+      // always sent.
+      exportPdfMutation.mutate(
+        includeRevisions ? { id: inquiryId, options: { include_revisions: true } } : inquiryId,
+      );
+      return;
+    }
+    void runExcelExport(includeRevisions);
   };
 
   /**
@@ -569,7 +631,7 @@ export default function StockInquiryDetail({
               disabled={exportPdfMutation.isPending}
               onSelect={(e) => {
                 e.preventDefault();
-                exportPdfMutation.mutate(inquiryId);
+                handleExportPdf();
               }}
             >
               <Printer className="size-4" />
@@ -604,6 +666,13 @@ export default function StockInquiryDetail({
           <StockInquiryNavigation inquiryId={inquiryId} />
         </div>
       </div>
+
+      <ExportWithRevisionsDialog
+        open={exportChoice !== null}
+        onOpenChange={(open) => !open && setExportChoice(null)}
+        title={exportChoice === 'pdf' ? 'Print / Download PDF' : 'Export to Excel'}
+        onConfirm={handleExportConfirmed}
+      />
 
       <HandlingLockBanner
         state={handlingLock.state}
@@ -1162,13 +1231,10 @@ export default function StockInquiryDetail({
         attachments={inquiry.attachments ?? []}
       />
 
-      {/* Addition only (UAC H2a): every section above keeps the placement it has
-          today. Always rendered, with an explicit empty state at revision 0. */}
-      <RevisionsSection
-        entries={revisionsQuery.data}
-        isLoading={revisionsQuery.isLoading}
-        isError={revisionsQuery.isError}
-      />
+      {/* The lineage lives in the page's own "Revisions" TAB (round 6), not in
+          this stack: it is reference material, and burying it under the whole
+          form meant scrolling past everything to read it. The query stays here
+          because the revise banner above quotes the newest entry. */}
 
       <AuditTrail entityType="stock_inquiry" entityId={inquiryId} title="Audit Trail" />
     </div>

@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import AttachmentPreviewModal, {
@@ -1089,46 +1090,16 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     return { value: id, label };
   };
 
-  return (
-    <div className="min-h-screen max-w-7xl mx-auto px-4 py-6 space-y-4">
-      <div className="flex items-center justify-between">
-        <Button variant="ghost" size="sm" asChild>
-          <Link href={portalHomePath({ type: kind })}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back
-          </Link>
-        </Button>
-        <div className="flex items-center gap-3">
-          {editing && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setAiExtractOpen(true)}
-              data-testid="ai-extract-trigger"
-            >
-              <Sparkles className="h-4 w-4 mr-2 text-primary" />
-              AI Extract
-            </Button>
-          )}
-          {detail?.reference && (
-            <span className="text-sm text-muted-foreground">
-              {detail.reference}
-              {neighbours && (
-                <span className="ml-2 text-xs text-muted-foreground/70">
-                  {neighbours.position} / {neighbours.total}
-                </span>
-              )}
-            </span>
-          )}
-          {!detail?.reference && neighbours && (
-            <span className="text-xs text-muted-foreground/70">
-              {neighbours.position} / {neighbours.total}
-            </span>
-          )}
-        </div>
-      </div>
+  // Revisions become their own tab once this type has revisions on and the
+  // submission has been saved (round 6). Everything else stays in Details, so
+  // reading the lineage is one tap instead of a scroll past the whole form.
+  // With revisions off - or on an unsaved form, where there is no lineage to
+  // read - the page keeps today's single flat stack and shows no tab strip at
+  // all: a one-tab tab bar is furniture, not navigation.
+  const revisionsTabbed = Boolean(submissionId) && revisionPolicy?.enabled === true;
 
+  const detailsContent = (
+    <>
       {!editing && (
         <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
           This submission is not editable.
@@ -1489,14 +1460,76 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           </Button>
         </div>
       )}
+    </>
+  );
 
-      {submissionId && (
-        <RevisionHistory
-          entries={revisionHistory.entries}
-          loading={revisionHistory.loading}
-          error={revisionHistory.error}
-          currentAttachments={attachments}
-        />
+  const revisionHistoryCard = submissionId ? (
+    <RevisionHistory
+      entries={revisionHistory.entries}
+      loading={revisionHistory.loading}
+      error={revisionHistory.error}
+      currentAttachments={attachments}
+    />
+  ) : null;
+
+  return (
+    <div className="min-h-screen max-w-7xl mx-auto px-4 py-6 space-y-4">
+      <div className="flex items-center justify-between">
+        <Button variant="ghost" size="sm" asChild>
+          <Link href={portalHomePath({ type: kind })}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back
+          </Link>
+        </Button>
+        <div className="flex items-center gap-3">
+          {editing && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setAiExtractOpen(true)}
+              data-testid="ai-extract-trigger"
+            >
+              <Sparkles className="h-4 w-4 mr-2 text-primary" />
+              AI Extract
+            </Button>
+          )}
+          {detail?.reference && (
+            <span className="text-sm text-muted-foreground">
+              {detail.reference}
+              {neighbours && (
+                <span className="ml-2 text-xs text-muted-foreground/70">
+                  {neighbours.position} / {neighbours.total}
+                </span>
+              )}
+            </span>
+          )}
+          {!detail?.reference && neighbours && (
+            <span className="text-xs text-muted-foreground/70">
+              {neighbours.position} / {neighbours.total}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {revisionsTabbed ? (
+        <Tabs defaultValue="details" className="space-y-4">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="details">Details</TabsTrigger>
+            <TabsTrigger value="revisions">Revisions</TabsTrigger>
+          </TabsList>
+          <TabsContent value="details" className="m-0 space-y-4">
+            {detailsContent}
+          </TabsContent>
+          <TabsContent value="revisions" className="m-0">
+            {revisionHistoryCard}
+          </TabsContent>
+        </Tabs>
+      ) : (
+        <>
+          {detailsContent}
+          {revisionHistoryCard}
+        </>
       )}
 
       <AlertDialog open={reviseConfirmOpen} onOpenChange={setReviseConfirmOpen}>

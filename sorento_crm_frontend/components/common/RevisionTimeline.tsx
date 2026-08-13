@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -130,9 +130,22 @@ export interface RevisionTimelineProps {
   entries: FormRevisionEntry[];
   /** Office side additionally shows which stage each revision voided (UAC H3). */
   showVoidedStage?: boolean;
+  /**
+   * Extra actions for one entry, rendered beside "View full form" (round 6, 6.3).
+   *
+   * A render prop rather than built-in buttons: exporting a revision needs the
+   * form type, the live record and the export mutations, none of which belong in
+   * a shared presentation component that the contact portal mounts siblings of.
+   * Absent - as it is on the portal - and the row is exactly what it was.
+   */
+  entryActions?: (entry: FormRevisionEntry) => ReactNode;
 }
 
-export function RevisionTimeline({ entries, showVoidedStage = false }: RevisionTimelineProps) {
+export function RevisionTimeline({
+  entries,
+  showVoidedStage = false,
+  entryActions,
+}: RevisionTimelineProps) {
   // The full form of one revision, opened read-only from its timeline entry.
   const [snapshotEntry, setSnapshotEntry] = useState<FormRevisionEntry | null>(null);
 
@@ -237,18 +250,24 @@ export function RevisionTimeline({ entries, showVoidedStage = false }: RevisionT
                   </div>
                 )}
 
-                {/* The complete form at this version, not only the diff above.
-                    Only offered when the payload carries the labeled snapshot. */}
-                {(entry.snapshot_fields?.length ?? 0) > 0 && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSnapshotEntry(entry)}
-                    data-testid="revision-view-form"
-                  >
-                    View full form
-                  </Button>
+                {/* The complete form at this version, not only the diff above,
+                    plus whatever the mounting page offers for one version. Wraps
+                    at 375px rather than pushing the row off the screen. */}
+                {((entry.snapshot_fields?.length ?? 0) > 0 || entryActions) && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {(entry.snapshot_fields?.length ?? 0) > 0 && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setSnapshotEntry(entry)}
+                        data-testid="revision-view-form"
+                      >
+                        View full form
+                      </Button>
+                    )}
+                    {entryActions?.(entry)}
+                  </div>
                 )}
               </div>
             </li>

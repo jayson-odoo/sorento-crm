@@ -1,16 +1,19 @@
 'use client';
 
+import { type ReactNode } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { hasRevisionLineage } from '@/lib/revision-export';
 import { RevisionTimeline, type FormRevisionEntry } from './RevisionTimeline';
 
 /**
- * The "Revisions" panel on an office detail page (UAC H2 / H2a).
+ * The body of the "Revisions" TAB on an office detail page (UAC H2 / H2a).
  *
- * ALWAYS rendered, with an explicit empty state when there is nothing to show -
- * per the CRUD UX standard a section is never hidden on missing data. It is an
- * ADDITION: attachments, chat and every existing section keep the placement they
- * have today (H2a), so this mounts as its own panel and moves nothing.
+ * ALWAYS rendered while the type has revisions on, with an explicit empty state
+ * when there is nothing to show - per the CRUD UX standard a section is never
+ * hidden on missing data. Round 6 moved it out of the Details stack and into its
+ * own tab so the lineage is one click away instead of a scroll past the whole
+ * form; every OTHER section keeps the placement it has today (H2a).
  */
 export interface RevisionsSectionProps {
   entries: FormRevisionEntry[] | undefined;
@@ -18,6 +21,8 @@ export interface RevisionsSectionProps {
   isError?: boolean;
   /** Office side shows which stage each revision voided (UAC H3). */
   showVoidedStage?: boolean;
+  /** Per-entry actions (export this version), supplied by the mounting page. */
+  entryActions?: (entry: FormRevisionEntry) => ReactNode;
 }
 
 export function RevisionsSection({
@@ -25,14 +30,14 @@ export function RevisionsSection({
   isLoading = false,
   isError = false,
   showVoidedStage = true,
+  entryActions,
 }: RevisionsSectionProps) {
   // The original submission on its own is not lineage - that is the empty state
   // (UAC H2). A second entry IS lineage even at revision 0, because a resubmit
   // after rejection writes a history row without consuming a revision (UAC C4).
+  // Same rule the exports apply, read from one place.
   const timelineEntries = entries ?? [];
-  const hasLineage =
-    timelineEntries.length > 1 ||
-    timelineEntries.some((entry) => (entry.revision_no ?? 0) > 0);
+  const hasLineage = hasRevisionLineage(timelineEntries);
 
   return (
     <Card>
@@ -59,7 +64,11 @@ export function RevisionsSection({
             No revisions - this is the original submission.
           </p>
         ) : (
-          <RevisionTimeline entries={timelineEntries} showVoidedStage={showVoidedStage} />
+          <RevisionTimeline
+            entries={timelineEntries}
+            showVoidedStage={showVoidedStage}
+            entryActions={entryActions}
+          />
         )}
       </CardContent>
     </Card>

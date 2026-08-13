@@ -391,6 +391,39 @@ class PortalRevisionService:
         cap = getattr(row, "portal_max_revisions", 2)
         return (True if enabled is None else bool(enabled), 2 if cap is None else int(cap))
 
+    def type_policy(self, source_entity_type: str) -> tuple[bool, int]:
+        """(is this type revisable at all, cap) - the part of the policy that does
+        not depend on any one submission (UAC A3/A4).
+
+        Fails closed: no adapter, no config row, the config disabled, the global
+        kill switch off, or a cap of zero all mean off. Split out so the office
+        "which tabs exist" map and the per-submission policy are ONE derivation and
+        cannot drift apart.
+        """
+        adapter = get_adapter(source_entity_type)
+        config = self.get_config(source_entity_type)
+        global_enabled, global_cap = self._global_settings()
+
+        if adapter is None or config is None or not bool(config.is_enabled) or not global_enabled:
+            return False, 0
+
+        cap = config.max_revisions if config.max_revisions is not None else global_cap
+        cap = max(0, int(cap))
+        # A cap of zero turns revisions off for this type whatever is_enabled says
+        # (UAC A4), and reads to the contact as "not available" rather than "used up".
+        return cap > 0, cap
+
+    def enabled_type_map(self) -> dict[str, bool]:
+        """`{type: effective enabled}` for every portal submission type.
+
+        What the office detail pages read to decide whether the Revisions tab
+        exists. Names every supported type, so the caller never has to tell an
+        absent key from a false one.
+        """
+        from app.services.portal_service import SUPPORTED_TYPES
+
+        return {kind: self.type_policy(kind)[0] for kind in SUPPORTED_TYPES}
+
     def resolve_policy(self, source_entity_type: str, row: Any) -> RevisionPolicy:
         """Effective revision policy for one submission (UAC A3/A4, B1, B2).
 
@@ -398,11 +431,11 @@ class PortalRevisionService:
         """
         adapter = get_adapter(source_entity_type)
         config = self.get_config(source_entity_type)
-        global_enabled, global_cap = self._global_settings()
+        type_enabled, cap = self.type_policy(source_entity_type)
 
         used = int(getattr(row, "revision_no", 0) or 0) if row is not None else 0
 
-        if adapter is None or config is None or not bool(config.is_enabled) or not global_enabled:
+        if not type_enabled or adapter is None or config is None:
             return RevisionPolicy(
                 enabled=False,
                 allowed=False,
@@ -412,14 +445,7 @@ class PortalRevisionService:
                 blocked_reason=_DISABLED_SENTENCE,
             )
 
-        cap = config.max_revisions if config.max_revisions is not None else global_cap
-        cap = max(0, int(cap))
         remaining = max(0, cap - used)
-
-        # A cap of zero turns revisions off for this type whatever is_enabled says
-        # (UAC A4), and reads to the contact as "not available" rather than "used up".
-        if cap == 0:
-            return RevisionPolicy(False, False, used, 0, 0, _DISABLED_SENTENCE)
 
         label = adapter.label
         status = (getattr(row, "status", None) or "").strip().lower()

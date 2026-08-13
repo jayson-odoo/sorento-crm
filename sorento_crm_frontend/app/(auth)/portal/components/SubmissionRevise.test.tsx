@@ -164,6 +164,17 @@ async function renderRevisable(over: Partial<PortalSubmissionDetail> = {}) {
   await waitFor(() => expect(screen.queryByText(/^loading/i)).toBeNull());
 }
 
+/**
+ * Move to a tab by its trigger. Radix activates on pointerdown, which jsdom does
+ * not synthesize from a click, so fire that explicitly.
+ */
+function openTab(name: string) {
+  const trigger = screen.getByRole('tab', { name });
+  fireEvent.pointerDown(trigger, { pointerType: 'mouse', button: 0 });
+  fireEvent.mouseDown(trigger, { button: 0 });
+  fireEvent.click(trigger);
+}
+
 /** Open the composer and type a valid reason. */
 async function openComposer(reason = 'Customer moved the delivery date.') {
   fireEvent.click(await screen.findByRole('button', { name: 'Revise' }));
@@ -229,8 +240,77 @@ describe('SubmissionForm - revise entry point', () => {
       revision: policy({ allowed: false, blocked_reason: 'This form cannot be revised.' }),
     });
 
+    // The type still HAS revisions on, so history lives behind its own tab
+    // (round 6) - blocked for this record is not the same as off for this type.
+    await screen.findByRole('tab', { name: 'Revisions' });
+    openTab('Revisions');
     expect(await screen.findByText('Revision history')).toBeInTheDocument();
     expect(screen.getByText('Original')).toBeInTheDocument();
+  });
+});
+
+/**
+ * Revisions as their own tab on the portal (round 6, requirement 6.2).
+ *
+ * The contact reads the lineage in one tap instead of scrolling past the whole
+ * form. Where there is nothing to tab TO - revisions off for the type, or an
+ * unsaved form with no lineage - the page keeps today's single flat stack and
+ * shows no tab strip at all.
+ */
+describe('SubmissionForm - the revisions tab', () => {
+  it('splits the page into Details and Revisions when the type has revisions on', async () => {
+    await renderRevisable();
+
+    const tabs = await screen.findAllByRole('tab');
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Details', 'Revisions']);
+    // Details is what the contact lands on.
+    expect(screen.getByRole('tab', { name: 'Details' })).toHaveAttribute(
+      'data-state',
+      'active',
+    );
+  });
+
+  it('keeps the form on Details and moves the lineage to Revisions', async () => {
+    await renderRevisable();
+
+    // The form is on Details; the history is not on screen with it.
+    expect(document.getElementById('quantity')).toBeInTheDocument();
+    expect(screen.queryByText('Revision history')).toBeNull();
+
+    openTab('Revisions');
+
+    expect(await screen.findByText('Revision history')).toBeInTheDocument();
+    expect(screen.getByText('Original')).toBeInTheDocument();
+  });
+
+  it('keeps the revise action and its composer inside Details', async () => {
+    await renderRevisable();
+    await openComposer();
+
+    const details = screen.getByRole('tabpanel', { name: 'Details' });
+    expect(
+      within(details).getByLabelText(/what changed, and why\?/i),
+    ).toBeInTheDocument();
+    expect(
+      within(details).getByRole('button', { name: 'Send revision' }),
+    ).toBeInTheDocument();
+  });
+
+  it('renders one flat stack with no tab strip when the type has revisions off', async () => {
+    await renderRevisable({
+      revision: policy({
+        enabled: false,
+        allowed: false,
+        max: 0,
+        remaining: 0,
+        blocked_reason: 'This form cannot be revised.',
+      }),
+    });
+
+    expect(screen.queryByRole('tablist')).toBeNull();
+    // Form and history both on screen at once, exactly as before.
+    expect(document.getElementById('quantity')).toBeInTheDocument();
+    expect(await screen.findByText('Revision history')).toBeInTheDocument();
   });
 });
 

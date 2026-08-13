@@ -20,6 +20,7 @@ from app.schemas.procurement import (
     ViewLinkResponse,
 )
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, FormVoidRequest
+from app.schemas.download import PdfExportOptions
 from app.services.error_handler import handle_internal_error
 from app.services.handling_lock_service import assert_can_act_on_form
 from app.services.revision_fence import require_current_revision
@@ -353,6 +354,7 @@ async def get_or_create_stock_inquiry_view_link(
 @router.post("/{inquiry_id}/export/pdf")
 async def export_stock_inquiry_pdf(
     inquiry_id: str,
+    options: Optional[PdfExportOptions] = Body(None),
     current_user: dict = Depends(require_permission("procurement.stock_inquiries.view")),
     db: Session = Depends(get_db),
 ):
@@ -365,10 +367,17 @@ async def export_stock_inquiry_pdf(
     My Downloads drawer. Decoupled from the request path so a slow/failed render
     (attachments are downloaded and embedded) never blocks the caller. Mirrors
     POST /complaints-management/complaints/{id}/export/pdf.
+
+    The body is optional (PLAN-portal-submission-revisions 6.3/6.4): no body is
+    the export as it has always behaved, ``{"revision_id": ...}`` prints that one
+    stored version, and ``{"include_revisions": true}`` appends the whole lineage
+    behind the current form. The two are mutually exclusive (400).
     """
     from app.schemas.download import DownloadResponse
     from app.services.download_service import DownloadService
+    from app.services.pdf_revision_support import validate_export_request
     from app.services.queue_service import enqueue_job
+    from app.services.stock_inquiry_pdf_service import FILENAME_STEM
     from app.tasks.export_tasks import generate_stock_inquiry_pdf
 
     try:
@@ -376,14 +385,32 @@ async def export_stock_inquiry_pdf(
         service = StockInquiryService(db)
         inquiry = service.get_inquiry(inquiry_id)  # 404 if missing
 
-        # Filename carries the revision, same as the document body (UAC N5).
+        revision_id = (options.revision_id if options else None) or None
+        include_revisions = bool(options.include_revisions if options else False)
+
+        # Filename carries the revision, same as the document body (UAC N5) - a
+        # single-revision export is named after THAT version's own number, which
+        # is why the composer is shared with the service rather than repeated.
         number = display_document_number(inquiry) or inquiry_id
+        # Validated BEFORE the download row exists: an unknown revision must be a
+        # 404 the caller can act on, not a failed row in their drawer.
+        filename = validate_export_request(
+            db,
+            "stock_inquiry",
+            str(inquiry_id),
+            revision_id=revision_id,
+            include_revisions=include_revisions,
+            label="stock inquiry",
+            stem=FILENAME_STEM,
+            number=number,
+            number_field="inquiry_number",
+        )
         download = DownloadService(db).create(
             user_id=str(current_user["id"]),
             kind="stock_inquiry_pdf",
             source_entity_type="stock_inquiry",
             source_entity_id=str(inquiry_id),
-            filename=f"product-inquiry-{number}.pdf",
+            filename=filename,
         )
         try:
             enqueue_job(
@@ -391,6 +418,11 @@ async def export_stock_inquiry_pdf(
                 str(download.id),
                 str(inquiry_id),
                 str(current_user["id"]),
+                # By KEYWORD, and the task's own parameters have defaults: a
+                # job queued by an older release carries three positional args
+                # and must keep running against the new task.
+                revision_id=revision_id,
+                include_revisions=include_revisions,
                 queue_name="imports",
                 job_timeout=600,
             )

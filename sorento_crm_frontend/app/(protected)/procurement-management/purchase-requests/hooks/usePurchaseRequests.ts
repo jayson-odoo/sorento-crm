@@ -25,6 +25,7 @@ import type {
   PurchaseRequestsListParams,
 } from '../services/purchaseRequestService';
 import type { PurchaseRequestFormData } from '../types/purchaseRequest.types';
+import type { FormPdfExportOptions } from '@/lib/revision-export';
 import { requestTypeLabel, requestTypeLabelLower } from '../lib/purchase-request-field-labels';
 
 /**
@@ -227,12 +228,23 @@ export function usePurchaseRequestConversation(
  * Queue a printable PR / SF PDF. Rendering is async on the RQ worker, so success
  * only means "queued" — invalidate the downloads feeds so the drawer and the
  * per-entity chip pick it up.
+ *
+ * `mutate('pr-1')` stays the current-form export. The object form carries the
+ * round-6 options: one stored revision, or the form plus its whole lineage.
  */
+export type ExportPurchaseRequestPdfVariables =
+  | string
+  | { id: string; options?: FormPdfExportOptions | null };
+
 export function useExportPurchaseRequestPdf() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => exportPurchaseRequestPdf(id),
-    onSuccess: (_, id) => {
+    mutationFn: (variables: ExportPurchaseRequestPdfVariables) =>
+      typeof variables === 'string'
+        ? exportPurchaseRequestPdf(variables)
+        : exportPurchaseRequestPdf(variables.id, variables.options),
+    onSuccess: (_, variables) => {
+      const id = typeof variables === 'string' ? variables : variables.id;
       queryClient.invalidateQueries({ queryKey: ['my-downloads'] });
       queryClient.invalidateQueries({
         queryKey: ['entity-downloads', 'purchase_request', id],

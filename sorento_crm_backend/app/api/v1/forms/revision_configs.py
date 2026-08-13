@@ -26,6 +26,7 @@ from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.models.portal import PortalRevisionConfig
 from app.services.error_handler import handle_validation_error
+from app.services.portal_revision_service import PortalRevisionService
 from app.services.portal_service import SUPPORTED_TYPES
 
 router = APIRouter()
@@ -49,6 +50,12 @@ class PortalRevisionConfigResponse(BaseModel):
 
 class PortalRevisionConfigListResponse(BaseModel):
     items: list[PortalRevisionConfigResponse]
+
+
+class PortalRevisionEnabledMapResponse(BaseModel):
+    """`{type: effective enabled}` - one boolean per portal submission type."""
+
+    types: dict[str, bool]
 
 
 class PortalRevisionConfigUpdate(BaseModel):
@@ -122,6 +129,41 @@ async def list_portal_revision_configs(
         _serialize(row) for kind, row in rows.items() if kind not in SUPPORTED_TYPES
     )
     return {"items": items}
+
+
+@router.get(
+    "/revision-configs/enabled",
+    response_model=PortalRevisionEnabledMapResponse,
+)
+async def get_portal_revision_enabled_map(
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Effective per-type enablement, for any authenticated principal.
+
+    The office detail pages read this to decide whether a form gets a Revisions
+    tab, so it is deliberately NOT admin-gated: the settings table above is an
+    admin surface, this is a handler-facing yes/no carrying four booleans.
+
+    Declared ABOVE the ``/{source_entity_type}`` route so "enabled" is matched as
+    a literal path and never swallowed as a type name.
+
+    **Known module coupling (documented, deliberately not fixed).** This router is
+    mounted under ``require_module_enabled_with_api_key("forms")`` (see
+    ``app/api/v1/__init__.py``), but its ONLY consumers are the PROCUREMENT detail
+    pages - stock inquiry, purchase request, sponsorship form - through the
+    frontend ``useRevisionEnabledMap``. A tenant with ``procurement`` enabled,
+    ``forms`` DISABLED, ``module_guard_strict`` on, and a non-admin user therefore
+    gets a 403 here: the map comes back undefined and the Revisions tab silently
+    never renders instead of failing visibly. Moving the route to a procurement
+    (or shared) mount was considered and DECLINED: it changes the URL and the
+    frontend service for a failure needing three conditions at once, and the guard
+    short-circuits entirely on installs with no module rows, which is the current
+    state - so nobody is hitting this today. If a tenant ever does, the symptom is
+    "the Revisions tab is missing on procurement pages", and the fix is enabling
+    the forms module (or moving this endpoint).
+    """
+    return {"types": PortalRevisionService(db).enabled_type_map()}
 
 
 @router.put(
