@@ -113,3 +113,31 @@ nothing Joey uploaded is duplicated.
 - **AC-E2 [FE]** Orders NOT created because another source owns them are counted and
   distinguished from orders created, so "nothing happened" is never ambiguous.
 - **AC-E3 [BE]** No upload ever creates a product. Asserted, not assumed.
+
+### Group F - the two numbers, and no double count (added 2026-08-13, ADR 0010)
+
+The sheet is exported before AutoCount has issued the SO number, so the order the sheet
+creates and the order CS's outstanding book creates carry DIFFERENT numbers for the same
+demand. Group B's adoption rule matches on `so_number` and therefore cannot see it. These are
+the criteria for the reconciliation, which lives module-side in `project_so_ingest_service`
+per ADR 0010.
+
+- **AC-F1 [BE]** GIVEN the sheet creates a sales order, THEN that row is stamped
+  `demand_origin = 'scm_order_inquiry'` at creation, and its `so_number` is the project's
+  `provisional_ref` until AutoCount issues the real number. The stamp is what every rule below
+  keys on, so it is written at creation and never backfilled.
+- **AC-F2 [BE]** GIVEN project AutoCount ingest learns the real doc number, WHEN no core sales
+  order holds that number, THEN the sheet-created row - matched on
+  `so_number = provisional_ref` AND `demand_origin = 'scm_order_inquiry'` - is RENUMBERED in
+  place to the real number. NO second row is created.
+- **AC-F3 [BE]** GIVEN the outstanding book has already created the real-numbered row, WHEN
+  project ingest learns that number, THEN the project order LINKS `so_id` to the existing row
+  and the provisional sheet-created row is RETIRED. `scm.committed_v` never counts the same
+  demand twice, asserted on the view and not on the row count alone.
+- **AC-F4 [T]** BOTH orderings are asserted in ONE test module: sheet before book (the renumber
+  case) and book before sheet (the retire case). A reconciliation that only works one way is
+  not a reconciliation, and splitting the two orderings across files is how one of them quietly
+  stops being run.
+- **AC-F5 [BE]** GIVEN a sales order whose `demand_origin` is NOT `'scm_order_inquiry'`, THEN
+  this logic never renames it, never retires it, and never otherwise touches it - whatever its
+  number collides with. `outstanding_import_service` is unchanged by all of the above.
