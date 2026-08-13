@@ -62,6 +62,16 @@ _spec_323 = importlib.util.spec_from_file_location("mig_323", _MIG_323_PATH)
 mig323 = importlib.util.module_from_spec(_spec_323)
 _spec_323.loader.exec_module(mig323)
 
+_MIG_324_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "alembic",
+    "versions",
+    "324_ticket_source_message_restore.py",
+)
+_spec_324 = importlib.util.spec_from_file_location("mig_324", _MIG_324_PATH)
+mig324 = importlib.util.module_from_spec(_spec_324)
+_spec_324.loader.exec_module(mig324)
+
 # Index names owned by this slice.
 OLD_CONTACT_SINGLETON_INDEX = "uq_conversation_sla_tracking_active_conversation_per_contact"
 NEW_SOURCE_MESSAGE_INDEX = "uq_conversation_sla_tracking_open_source_message"
@@ -756,6 +766,104 @@ def test_migration_323_swaps_to_the_contact_scoped_index():
                 """,
                 (str(uuid.uuid4()), policy_id, contact_a, "collide"),
             )
+
+
+def test_migration_324_restores_identity_321_deduped_across_contacts():
+    """321 had to guarantee a unique index on `source_message_id` ALONE, so its
+    dedupe partitioned by the message id with no contact scope: two DIFFERENT
+    contacts whose trigger messages shared an id had one of them blanked, and
+    323's relaxation to (contact, message) never gave it back. That row's
+    idempotency is gone for good - the next n8n retry opens a duplicate ticket.
+
+    Runs the real 321 -> 323 -> 324 chain, exactly as `alembic upgrade head`
+    would. Its own scratch schema (DDL test).
+    """
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    with pg_empty_schema([ConversationSLATracking.__table__]) as session:
+        schema = session.get_bind()._execution_options["schema_translate_map"][None]
+        conn = session.connection()
+        conn.exec_driver_sql(f'SET search_path TO "{schema}"')
+
+        # Pre-321 shape.
+        conn.exec_driver_sql(
+            "ALTER TABLE conversation_sla_tracking DROP COLUMN IF EXISTS source_message_id"
+        )
+        conn.exec_driver_sql(f"DROP INDEX IF EXISTS {CONTACT_SOURCE_MESSAGE_INDEX}")
+        conn.exec_driver_sql(f"DROP INDEX IF EXISTS {NEW_SOURCE_MESSAGE_INDEX}")
+
+        policy_id = str(uuid.uuid4())
+        conn.exec_driver_sql(
+            "INSERT INTO sla_policies (id, code, name, is_active) VALUES (%s, %s, %s, %s)",
+            (policy_id, "ZZT-MIG324", "Migration 324 policy", True),
+        )
+        contact_a, contact_b = str(uuid.uuid4()), str(uuid.uuid4())
+        for contact_id in (contact_a, contact_b):
+            conn.exec_driver_sql(
+                "INSERT INTO respond_contacts (id, phone_number, session_vars) "
+                "VALUES (%s, %s, %s)",
+                (contact_id, f"+601{contact_id[:8]}", "{}"),
+            )
+
+        # Two contacts, one colliding trigger message id (the repairable case).
+        cross_a, cross_b = str(uuid.uuid4()), str(uuid.uuid4())
+        # One contact, two open rows on the same message (genuinely forbidden).
+        same_new, same_old = str(uuid.uuid4()), str(uuid.uuid4())
+        rows = (
+            (cross_a, contact_a, 777, "2026-08-01 10:00:00"),
+            (cross_b, contact_b, 777, "2026-08-01 11:00:00"),
+            (same_old, contact_a, 555, "2026-08-01 09:00:00"),
+            (same_new, contact_a, 555, "2026-08-01 12:00:00"),
+        )
+        for row_id, contact_id, message_id, created_at in rows:
+            conn.exec_driver_sql(
+                """
+                INSERT INTO conversation_sla_tracking
+                    (id, policy_id, current_tier, due_at, is_responded, is_resolved,
+                     synced_to_excel, respond_contact_id, message_id, created_at)
+                VALUES (%s, %s, 1, now(), false, false, false, %s, %s, %s)
+                """,
+                (row_id, policy_id, contact_id, message_id, created_at),
+            )
+
+        def _identities():
+            return {
+                str(row_id): source_message_id
+                for row_id, source_message_id in conn.exec_driver_sql(
+                    "SELECT id, source_message_id FROM conversation_sla_tracking"
+                ).fetchall()
+            }
+
+        with Operations.context(MigrationContext.configure(conn)):
+            mig321.upgrade()
+            mig323.upgrade()
+
+        after_323 = _identities()
+        # 321 is left as it shipped - its own index needs that dedupe, and
+        # rewriting an applied migration would diverge from the databases that
+        # already ran it. The repair is a forward step, so this intermediate
+        # state is pinned deliberately.
+        assert after_323[cross_a] is None, "the older cross-contact row was blanked by 321"
+        assert after_323[cross_b] == "777"
+
+        with Operations.context(MigrationContext.configure(conn)):
+            mig324.upgrade()
+
+        after_324 = _identities()
+        assert after_324[cross_a] == "777", (
+            "different contacts sharing a message id are two distinct tickets - "
+            "both keep their identity once the index is contact-scoped"
+        )
+        assert after_324[cross_b] == "777"
+        # Same contact, same message: exactly one may hold the identity.
+        assert after_324[same_new] == "555"
+        assert after_324[same_old] is None
+
+        # Re-runnable: nothing left to restore, nothing broken by trying.
+        with Operations.context(MigrationContext.configure(conn)):
+            mig324.upgrade()
+        assert _identities() == after_324
 
 
 # ---------------------------------------------------------------------------
