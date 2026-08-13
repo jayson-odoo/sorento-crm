@@ -54,6 +54,13 @@ PERMISSION_REGISTRY.append({"slug": "order_management.orders.export", "name": "E
 PERMISSION_REGISTRY.append({"slug": "order_management.orders.bulk_delete", "name": "Bulk Delete Delivery Orders", "description": "Permission to bulk delete delivery orders."})
 PERMISSION_REGISTRY.extend(_crud("order_management", "order_statuses", "Delivery Order Statuses"))
 PERMISSION_REGISTRY.extend(_crud("order_management", "customers", "Customers"))
+PERMISSION_REGISTRY.append({
+    "slug": "order_management.customers.import",
+    "name": "Import Customers",
+    "description": (
+        "Upload a debtor listing to create and update customers for the active company."
+    ),
+})
 
 # Complaint Management
 PERMISSION_REGISTRY.extend(_crud("complaint_management", "complaints", "Complaints"))

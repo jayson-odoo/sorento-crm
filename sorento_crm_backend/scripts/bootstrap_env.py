@@ -327,6 +327,31 @@ def seed_scm_module_data() -> None:
     log.info("scm module data seeded -> aliases=%d priority_policy=%d", aliases, policies)
 
 
+def seed_customer_import_aliases() -> None:
+    """Replay migration 353's `customer` header aliases (same create_all gap as 311/338/347).
+
+    The customer importer resolves every column through `import_field_alias`, so on a
+    bootstrapped database with no `customer` rows the first upload reports every column
+    unmapped and reads as a broken importer rather than as missing seed data. The
+    migration's own `seed()` is called so the two paths cannot drift; it is idempotent.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    from app.database import engine
+
+    versions = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+    spec = importlib.util.spec_from_file_location(
+        "_customer_alias_seed_353", versions / "353_customer_import_aliases.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    with engine.begin() as conn:
+        inserted = module.seed(conn)
+    log.info("customer import aliases seeded -> %d", inserted)
+
+
 def _seed_default_company() -> None:
     """Idempotently insert the fixed Sorento company row (mirrors migration 302).
 
@@ -470,6 +495,7 @@ def main() -> int:
     if not args.skip_seed:
         seed_reference_data()
         seed_scm_module_data()
+        seed_customer_import_aliases()
     stamp_head()
     log.info("bootstrap complete")
     return 0

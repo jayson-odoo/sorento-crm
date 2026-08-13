@@ -3180,3 +3180,215 @@ def process_container_status_import(
         )
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Customers (debtor listing)
+# ---------------------------------------------------------------------------
+
+
+def _customer_import_shape(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Turn the service's outcome into the shape the import dialog renders.
+
+    `valid` answers "would anything import at all", NOT "is every row perfect": a file
+    with three bad rows out of 900 imports 897, so row problems are WARNINGS the user
+    acknowledges rather than errors that block (AC-5.6). Only an unreadable file, or one
+    with no customer code / name column, is invalid.
+    """
+    problems = result.get("problems", [])
+    unmapped = result.get("unmapped_headers", [])
+    unknown_segments = result.get("unknown_market_segments", [])
+    unknown_segment_rows = int(result.get("unknown_market_segment_rows", 0))
+    needs_review = int(result.get("needs_review", 0))
+
+    errors: List[str] = []
+    if not result.get("readable"):
+        missing = ", ".join(
+            c.replace("_", " ") for c in result.get("missing_columns", [])
+        )
+        errors.append(
+            f"The file has no {missing} column."
+            if missing
+            else "The file could not be read."
+        )
+        for problem in problems:
+            errors.append(f"Row {problem['row']}: {problem['reason']}")
+
+    warnings: List[str] = []
+    if result.get("readable"):
+        warnings.extend(f"Row {p['row']}: {p['reason']}" for p in problems)
+        warnings.extend(f"Column not recognised: {header}" for header in unmapped)
+        warnings.extend(
+            f"Market segment not recognised, left unset: {code}"
+            for code in unknown_segments
+        )
+        if unknown_segment_rows:
+            # The segment decides SCM demand class and fulfilment priority, so how MANY
+            # customers land without one is the part that matters. Each affected row also
+            # carries its own outcome code on the job detail.
+            warnings.append(
+                f"{unknown_segment_rows} row(s) import with no market segment. "
+                "Each is listed on the job."
+            )
+        if needs_review:
+            warnings.append(
+                f"{needs_review} row(s) carry a name close to one already on the same "
+                "customer code. They import; each is listed on the job."
+            )
+
+    return {
+        "valid": bool(result.get("readable")),
+        "errors": errors,
+        "warnings": warnings,
+        "summary": {
+            "total_rows": int(result.get("total_rows", 0)),
+            "would_create": int(result.get("created", 0)),
+            "would_update": int(result.get("updated", 0)),
+            "would_unchanged": int(result.get("unchanged", 0)),
+            "would_skip": int(result.get("skipped", 0)) + int(result.get("failed", 0)),
+            "needs_review": needs_review,
+            "unmapped_headers": list(unmapped),
+            "missing_columns": list(result.get("missing_columns", [])),
+            "problems": problems,
+        },
+    }
+
+
+def validate_customer_import(
+    file_data: bytes, *, company_scope: Any = _SCOPE_NOT_GIVEN
+) -> Dict[str, Any]:
+    """Dry run for a customer listing. Reads only, never writes.
+
+    Runs at the SAME company scope the real import will run at: the existing-customer
+    lookup is what decides create vs update, so a preview reading every company would
+    report "would update" on rows the scoped import inserts.
+    """
+    from app.services import customer_import_service
+
+    db = SessionLocal()
+    _apply_preview_scope(db, company_scope)
+    try:
+        return _customer_import_shape(customer_import_service.preview(db, file_data))
+    except Exception as exc:  # noqa: BLE001 - a preview must never 500
+        logger.exception("Customer import validation failed")
+        return {
+            "valid": False,
+            "errors": [f"Could not read this file: {exc}"],
+            "warnings": [],
+            "summary": {},
+        }
+    finally:
+        db.rollback()
+        db.close()
+
+
+def process_customer_import(db_job_id: str, file_data: bytes, filename: str, user_id: str):
+    """Import a customer listing into `customers` for the job's company.
+
+    Create-or-update on (company, code, name), all three; never a rename, never a delete,
+    and never a touch of the fields a person curates (account owner, notes, active flag,
+    a market segment already set). One bad row never fails the file.
+    """
+    from rq import get_current_job
+
+    from app.services import customer_import_service
+
+    db = SessionLocal()
+    _apply_import_job_scope(db, db_job_id)
+    job_service = JobService(db)
+
+    rq_job = get_current_job()
+    rq_job_id = rq_job.id if rq_job else None
+    job = job_service.get_job_by_db_id(db_job_id) if db_job_id else None
+    if not job and rq_job_id:
+        job = job_service.get_job(rq_job_id)
+    if not job:
+        logger.error("Customer import job not found: db_job_id=%s", db_job_id)
+        db.close()
+        return
+
+    job_id_str = str(job.job_id)
+    outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal)
+    try:
+        job_service.start_job(job_id_str)
+        result = customer_import_service.apply(
+            db,
+            file_data,
+            outcome,
+            actor=user_id,
+            # Publish the row total the moment the sheet is read. Without it `total_rows`
+            # first appears in `complete_job` and the upload drawer shows 0/0 for the
+            # whole run, which reads as stuck. Same as process_grn_lines_import.
+            on_total_rows=lambda total: job_service.update_job_progress(
+                job_id_str, total_rows=total, processed_rows=0
+            ),
+        )
+
+        if not result.get("readable"):
+            # Not a customer listing at all. Fail the job with the reason rather than
+            # importing zero rows and reporting success.
+            missing = ", ".join(
+                c.replace("_", " ") for c in result.get("missing_columns", [])
+            )
+            db.rollback()
+            outcome.flush()
+            job_service.fail_job(
+                job_id_str,
+                f"The file has no {missing} column." if missing
+                else "The file could not be read.",
+            )
+            _write_import_audit(
+                db,
+                entity_type="customer",
+                label=f"Customer import {filename or ''}".strip(),
+                row_count=0,
+                user_id=user_id,
+                entity_id=job_id_str,
+                status="failed",
+            )
+            return
+
+        db.commit()
+        total = int(result.get("total_rows", 0))
+        job_service.complete_job(
+            job_id=job_id_str,
+            result=outcome.finalize(
+                "Customer import completed",
+                total_rows=total,
+                created=result["created"],
+                updated=result["updated"],
+                unchanged=result["unchanged"],
+                needs_review=result["needs_review"],
+                review_rows=result["review_rows"][:50],
+                unmapped_headers=result["unmapped_headers"],
+                unknown_market_segments=result.get("unknown_market_segments", []),
+            ),
+            **outcome.completion_counts(total_rows=total),
+        )
+        _write_import_audit(
+            db,
+            entity_type="customer",
+            label=f"Customer import {filename or ''}".strip(),
+            row_count=result["created"] + result["updated"],
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="partial" if (result["failed"] or result["skipped"]) else "success",
+        )
+    except Exception as exc:  # noqa: BLE001 - the job must record why it died
+        logger.exception("Customer import job %s failed", job_id_str)
+        db.rollback()
+        # The recorder writes on its own session, so the rows it already classified
+        # survive this rollback.
+        outcome.flush()
+        job_service.fail_job(job_id_str, str(exc))
+        _write_import_audit(
+            db,
+            entity_type="customer",
+            label=f"Customer import {filename or ''}".strip(),
+            row_count=0,
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="failed",
+        )
+    finally:
+        db.close()
