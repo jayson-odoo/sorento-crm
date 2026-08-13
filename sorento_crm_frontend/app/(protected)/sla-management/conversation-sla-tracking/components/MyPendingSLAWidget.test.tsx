@@ -608,11 +608,11 @@ describe('MyPendingSLAWidget clickable rows', () => {
 
   // ---- intervention tickets (UAC AC-B1/B2) -------------------------------
 
-  it('AC-B1: two tickets for one contact both render, each with its own chips — no de-dup', async () => {
+  it('AC-B1: two tickets for one contact both render, each with its own chips - no de-dup', async () => {
     getMyPendingSLA.mockResolvedValue([ticketOne, ticketTwo]);
     renderWidget();
 
-    // Both enquiry snippets show — two distinct rows for the same contact.
+    // Both enquiry snippets show - two distinct rows for the same contact.
     expect(await screen.findByText('Yes, please connect me to a person.')).toBeInTheDocument();
     expect(
       screen.getByText('Also, can someone quote installation for 3 bathrooms?'),
@@ -623,7 +623,7 @@ describe('MyPendingSLAWidget clickable rows', () => {
     expect(hasActionButton(/Resolve/i)).toBe(false);
   });
 
-  it('AC-B2: clicking a ticket row opens the drawer in place — no navigation, no Respond', async () => {
+  it('AC-B2: clicking a ticket row opens the drawer in place - no navigation, no Respond', async () => {
     getMyPendingSLA.mockResolvedValue([ticketOne]);
     const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
     renderWidget();

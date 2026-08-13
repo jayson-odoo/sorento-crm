@@ -10,7 +10,7 @@ import {
 
 /**
  * The viewer's open intervention tickets are worklist rows already covered by
- * `getMyPendingSLA` (`/my-pending`, flagged `is_intervention_ticket: true`) —
+ * `getMyPendingSLA` (`/my-pending`, flagged `is_intervention_ticket: true`) -
  * there is no separate ticket-listing endpoint. This module covers only what's
  * specific to a ticket once it's opened: detail, thread, send, resolve.
  */

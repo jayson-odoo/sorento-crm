@@ -14,7 +14,7 @@ function msg(message: RespondMessageRenderable['message']): RespondMessageRender
 }
 
 // ---------------------------------------------------------------------------
-// describeMessageAttachments — UAC AC-D4: every inbound shape gets AT LEAST a
+// describeMessageAttachments - UAC AC-D4: every inbound shape gets AT LEAST a
 // typed placeholder; unknown types never crash and never render blank.
 // ---------------------------------------------------------------------------
 describe('describeMessageAttachments', () => {
@@ -69,7 +69,7 @@ describe('describeMessageAttachments', () => {
     );
     // No attachment/attachments field and an unrecognised top-level type: no
     // descriptor is produced (the bubble falls back to its own unknown-type
-    // rendering elsewhere) — the important behaviour under test is that this
+    // rendering elsewhere) - the important behaviour under test is that this
     // never throws.
     expect(out).toEqual([]);
   });

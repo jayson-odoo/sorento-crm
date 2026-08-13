@@ -90,7 +90,7 @@ function isFormTask(item: AnyTask): boolean {
 }
 
 /** Intervention-ticket rows are flagged by the backend (`is_intervention_ticket`),
- * never re-derived — a pre-migration conversation row keeps its old behaviour of
+ * never re-derived - a pre-migration conversation row keeps its old behaviour of
  * opening the Respond inbox. */
 function asTicket(item: AnyTask): InterventionTicketListItem | null {
   return (item as InterventionTicketListItem).is_intervention_ticket
@@ -274,7 +274,7 @@ export default function MyPendingSLAWidget() {
   }, [teamTaskParam]);
 
   // Ticket assignment-notify deep link ?ticket=<tracking_id> (UAC AC-G1): open the
-  // drawer directly (no navigation, no row lookup needed — the drawer fetches its
+  // drawer directly (no navigation, no row lookup needed - the drawer fetches its
   // own detail by id) and strip the param once consumed so a later refresh doesn't
   // reopen it.
   useEffect(() => {
@@ -284,7 +284,7 @@ export default function MyPendingSLAWidget() {
     router.replace('/', { scroll: false });
   }, [ticketParam, router]);
 
-  // Ticket rows arrive already flagged on `/my-pending` — no separate ticket fetch
+  // Ticket rows arrive already flagged on `/my-pending` - no separate ticket fetch
   // or merge (Phase 1's mock-only merge was removed in S2.7).
   const mineItems = items;
 

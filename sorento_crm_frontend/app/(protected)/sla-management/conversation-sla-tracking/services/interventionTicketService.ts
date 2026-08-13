@@ -1,12 +1,12 @@
 /**
- * Conversation intervention tickets — feature service.
+ * Conversation intervention tickets - feature service.
  *
  * Contract: documentation/plans/sla/conversation-intervention-tickets-acceptance-criteria.md
  * Plan:     documentation/plans/sla/PLAN-conversation-intervention-tickets.md
  *
  * ============================================================================
  * PHASE 2 (this file today): every function below calls the real backend
- * (S2.7). The worklist itself is NOT fetched here — a ticket is just a row on
+ * (S2.7). The worklist itself is NOT fetched here - a ticket is just a row on
  * the existing `/my-pending` response (`getMyPendingSLA` in
  * `conversationSLATrackingService.ts`) flagged `is_intervention_ticket: true`;
  * this file only covers what's specific to a ticket once it's opened (detail,
@@ -21,7 +21,7 @@
  * Datetimes are naive UTC strings (backend convention) rendered through
  * `formatDateTimeInMalaysia` / `parseDateTimeAsUTC`.
  *
- * A. CREATE (n8n -> CRM, existing route, extended) — UAC AC-A1/A2/A4
+ * A. CREATE (n8n -> CRM, existing route, extended) - UAC AC-A1/A2/A4
  *    POST /integration
  *    Request (additive to today's `ConversationSLATrackingCreate`):
  *      {
@@ -56,7 +56,7 @@
  *    Multi-open is the rule: a new `source_message_id` for a contact that already
  *    has an open ticket creates a SECOND open ticket (never merges).
  *
- * B. WORKLIST (existing `/my-pending`, extended) — UAC AC-B1
+ * B. WORKLIST (existing `/my-pending`, extended) - UAC AC-B1
  *    GET /my-pending?limit=<n>   ->  { data: MyPendingSLAItem[] }
  *    Conversation-scope rows gain (see `InterventionTicketListItem`):
  *      is_intervention_ticket: true   // explicit from the backend, never re-derived
@@ -66,13 +66,13 @@
  *    Rows are NOT de-duplicated by contact: two open tickets for one contact are
  *    two rows, each with its own `due_at` / `due_at_resolution` / tier.
  *
- * C. TICKET DETAIL (drawer header + composer state) — UAC AC-C1
+ * C. TICKET DETAIL (drawer header + composer state) - UAC AC-C1
  *    GET /{tracking_id}/ticket   ->  InterventionTicketDetail
  *    Assignee-or-manager scoped. `window` + `chat_template` come from the same
  *    backend window/template service the shared composer uses, returned inline so
  *    the drawer opens in one round trip.
  *
- * D. THREAD (shared contact conversation) — UAC AC-C2
+ * D. THREAD (shared contact conversation) - UAC AC-C2
  *    GET /{tracking_id}/conversation?limit=&cursor=   (EXISTING route)
  *      -> { items: RespondMessageItem[], pagination?: {...}, error?: string }
  *    Siblings for the same contact return the SAME thread; only the header and
@@ -86,7 +86,7 @@
  *    detail page's panel, and dropped the cursor pagination the shared service
  *    already supports.
  *
- * E. SEND (ticket-stamped) — UAC AC-D1/D2/D3, AC-E1
+ * E. SEND (ticket-stamped) - UAC AC-D1/D2/D3, AC-E1
  *    POST /{tracking_id}/ticket/send
  *      JSON body when there are no files:
  *        { text: string, reply_to_message_id?: string, reply_to_excerpt?: string }
@@ -118,7 +118,7 @@
  *        `splitQuotedPrefix`. `reply_to_message_id` is carried for the event log
  *        / audit trail only, never sent to Respond.
  *
- * E2. MANUAL TEMPLATE SEND (the composer's "Send template" dialog) — AC-E1
+ * E2. MANUAL TEMPLATE SEND (the composer's "Send template" dialog) - AC-E1
  *    POST /{tracking_id}/conversation/template-message
  *      { template_id, params, tracking_id? }
  *    The shared chat route (every chat surface mounts it), queued on the
@@ -128,7 +128,7 @@
  *    Omitted by every other surface. The worker only honours it when the
  *    ticket's contact is the one that received the template.
  *
- * F. RESOLVE — UAC AC-C3
+ * F. RESOLVE - UAC AC-C3
  *    POST /{tracking_id}/resolve   (EXISTING route)
  *    For an intervention ticket it resolves THAT row only: sibling tickets stay
  *    open and NO Respond.io conversation-close call is made (Respond is a message
@@ -289,7 +289,7 @@ function buildSendFormData(input: SendTicketMessageInput, files: File[]): FormDa
 
 /**
  * F. Resolve THIS ticket. Siblings stay open; Respond conversation untouched.
- * Delegates to the existing dedicated resolve route — a ticket is resolved
+ * Delegates to the existing dedicated resolve route - a ticket is resolved
  * exactly like any other conversation SLA row (UAC AC-C3).
  */
 export async function resolveInterventionTicket(id: string): Promise<void> {
