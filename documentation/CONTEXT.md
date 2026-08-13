@@ -189,6 +189,16 @@ form (`purchase_requests` with `request_type='sponsorship_form'`) submitted by S
 salespeople. Gains a link to a Project; the picker is enabled per contact so UAT and live
 cohorts run on one form.
 
+### Order Inquiry
+One artefact seen twice. The **derived rows** are what purchasing is told to do, computed
+from a published project sales order or an amendment to one. Never a second source of
+demand: committed quantity stays on the sales order lines. **The sheet** is the Excel export
+of those rows, which Joey edits and re-imports; it is that import, not the publish, which
+creates core `sales_orders` rows carrying `demand_origin = 'scm_order_inquiry'`.
+
+The loop is owned end to end by the Project Sales module (ADR 0010), despite the `scm_`
+prefix on that stamp.
+
 ### Project Series
 The set of `product_categories` nominated as standard for project sales. A Quotation line
 outside it raises a **non-standard SKU** alert — the control on SKU proliferation. Coarse by
