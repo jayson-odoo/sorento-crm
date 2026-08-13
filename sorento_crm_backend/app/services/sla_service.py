@@ -3,6 +3,7 @@ import logging
 import re
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func, update
+from sqlalchemy.exc import IntegrityError
 from typing import Optional
 from datetime import date, datetime, timezone, timedelta
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog, FormSLAConfig
@@ -3551,6 +3552,30 @@ class ConversationSLATrackingService:
             "agent_id": derived["agent_id"],
         }
 
+    def _open_ticket_for_identity(
+        self, respond_contact_id: str, source_message_id: str
+    ) -> Optional[ConversationSLATracking]:
+        """The OPEN ticket for this (contact, trigger message), if one exists.
+
+        FINDING 6: a ticket's identity is the PAIR, not the message alone -
+        WhatsApp message ids are not guaranteed globally unique across different
+        contacts/threads, so a bare source_message_id lookup would hand contact B
+        contact A's ticket on a coincidental collision. Mirrors the partial
+        unique index exactly (open + conversation scope), which is what makes it
+        usable both as the idempotency pre-query and as the recovery read after
+        that index rejects a concurrent insert.
+        """
+        return (
+            self.db.query(ConversationSLATracking)
+            .filter(
+                ConversationSLATracking.source_message_id == source_message_id,
+                ConversationSLATracking.respond_contact_id == respond_contact_id,
+                ConversationSLATracking.is_resolved.is_(False),
+                conversation_tracking_scope(),
+            )
+            .first()
+        )
+
     def create_tracking(self, tracking_data: ConversationSLATrackingCreate):
         """Create a new tracking record."""
         from datetime import timedelta, datetime, timezone
@@ -3819,18 +3844,9 @@ class ConversationSLATrackingService:
 
         existing = None
         if identity_key:
-            # FINDING 6: a ticket's identity is (contact, trigger message), not
-            # the message alone - WhatsApp message ids are not guaranteed
-            # globally unique across different contacts/threads. Without the
-            # contact scope, a colliding id on a DIFFERENT contact would be
-            # returned here as "already_active", handing that contact back
-            # someone else's ticket.
-            existing = self.db.query(ConversationSLATracking).filter(
-                ConversationSLATracking.source_message_id == identity_key,
-                ConversationSLATracking.respond_contact_id == tracking_dict["respond_contact_id"],
-                ConversationSLATracking.is_resolved.is_(False),
-                conversation_tracking_scope(),
-            ).first()
+            existing = self._open_ticket_for_identity(
+                str(tracking_dict["respond_contact_id"]), identity_key
+            )
 
             if existing:
                 # AC-A2: retry of the same trigger message - the only case per-
@@ -3885,7 +3901,30 @@ class ConversationSLATrackingService:
         if tracking_dict.get("due_at") is not None:
             setattr(tracking, "due_at", tracking_dict["due_at"])
         self.db.add(tracking)
-        self.db.commit()
+        try:
+            self.db.commit()
+        except IntegrityError:
+            # The pre-query above is not a lock: two concurrent deliveries of the
+            # same trigger message both miss it, and the partial unique index on
+            # (respond_contact_id, source_message_id) rejects whichever INSERT
+            # lands second. That conflict IS the idempotency question asked
+            # again, so answer it the same way rather than 500-ing: n8n would
+            # retry straight back into the race, and meanwhile report a failed
+            # intervention for a ticket that exists. Any other integrity failure
+            # (a bad FK, say) has nothing to hand back and must still raise.
+            self.db.rollback()
+            winner = (
+                self._open_ticket_for_identity(
+                    str(tracking_dict["respond_contact_id"]), identity_key
+                )
+                if identity_key
+                else None
+            )
+            if winner is None:
+                raise
+            setattr(winner, "_already_active", True)
+            setattr(winner, "_in_working_hours", in_working_hours)
+            return winner
         self.db.refresh(tracking)
         self._write_assign_event_log(tracking, covered_for_id=coverage_covered_for_id)
         self._notify_assignment_on_create(tracking)

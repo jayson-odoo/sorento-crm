@@ -336,6 +336,84 @@ def test_payload_with_no_message_identity_keeps_the_contact_singleton(db):
     assert len(_open_rows(db, seed["contact_id"])) == 1
 
 
+# ---------------------------------------------------------------------------
+# AC-A2 under concurrency: the pre-query is not the lock, the index is
+# ---------------------------------------------------------------------------
+
+
+def _blind_first_scope_call(monkeypatch):
+    """Make the NEXT conversation-scope query match nothing, then behave normally.
+
+    That is exactly what a concurrent create sees: its idempotency pre-query
+    runs BEFORE the other request's INSERT commits, so it finds no open ticket
+    for this (contact, trigger message) and proceeds to insert its own.
+    """
+    import app.services.sla_service as sla_mod
+
+    real_scope = sla_mod.conversation_tracking_scope
+    calls = {"n": 0}
+
+    def _scope():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # A predicate no row can satisfy - the pre-query comes back empty.
+            return ConversationSLATracking.id.is_(None)
+        return real_scope()
+
+    monkeypatch.setattr(sla_mod, "conversation_tracking_scope", _scope)
+
+
+def test_losing_the_index_race_hands_back_the_winners_ticket(db, monkeypatch):
+    """Two deliveries of the SAME trigger message arrive at once: both pre-queries
+    miss, and the loser's INSERT hits the partial unique index. That conflict is
+    the idempotency question asked a second time, not a server error - the loser
+    must get the winner's ticket back flagged already_active. A 500 here would
+    have n8n retry into the same race and, worse, report a failed intervention
+    for a ticket that exists."""
+    seed = _seed(db)
+    service = ConversationSLATrackingService(db)
+    winner = service.create_tracking(_payload(seed, source_message_id="msg-race"))
+
+    _blind_first_scope_call(monkeypatch)
+    loser = service.create_tracking(_payload(seed, source_message_id="msg-race"))
+
+    assert str(loser.id) == str(winner.id)
+    assert bool(getattr(loser, "_already_active", False)) is True
+    assert getattr(loser, "_in_working_hours", None) is not None
+    assert len(_open_rows(db, seed["contact_id"])) == 1
+    # The winner already owns the assign log; losing the race writes no second one.
+    assert len(_assign_logs(db, winner.id)) == 1
+
+
+def test_an_integrity_error_that_is_not_the_identity_race_still_raises(db, monkeypatch):
+    """The recovery is scoped to "somebody else already opened this exact ticket".
+    A conflict with nothing to hand back (here: a bad policy FK) must not be
+    swallowed into a silent success."""
+    seed = _seed(db)
+    service = ConversationSLATrackingService(db)
+    bad = _payload(seed, source_message_id="msg-broken")
+    bad.policy_id = seed["policy_id"]
+    monkeypatch.setattr(
+        service,
+        "_write_assign_event_log",
+        lambda *a, **k: None,
+    )
+    # Point the row at a policy that does not exist, AFTER the service's own
+    # policy lookup, by breaking the FK at flush time.
+    real_add = service.db.add
+
+    def _add(obj):
+        if isinstance(obj, ConversationSLATracking):
+            obj.policy_id = str(uuid.uuid4())
+        return real_add(obj)
+
+    monkeypatch.setattr(service.db, "add", _add)
+
+    with pytest.raises(IntegrityError):
+        service.create_tracking(bad)
+    db.rollback()
+
+
 def test_source_message_id_is_matched_only_within_the_conversation_family(db):
     """A form-SLA stage row carrying the same message must not be returned as the
     idempotent hit (AC-F3: the two families share this table)."""
