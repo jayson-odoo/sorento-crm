@@ -1735,6 +1735,9 @@ def _calculate_duration_hours(start_at, end_at) -> Decimal:
     """
     start_at_utc = _to_aware_utc(start_at)
     end_at_utc = _to_aware_utc(end_at)
+    if start_at_utc is None or end_at_utc is None:
+        # No clock start to measure from (same fallback update_tracking uses).
+        return Decimal("0.00")
 
     hours = Decimal(str((end_at_utc - start_at_utc).total_seconds() / 3600))
     return hours.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
