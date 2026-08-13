@@ -280,6 +280,64 @@ def test_mark_ticket_responded_is_a_noop_on_a_second_call(db):
     assert t1.responded_by == seed["assignee_id"], "responded_by must not change on the no-op path"
 
 
+def _response_logs(db, tracking_id):
+    from app.models.sla import ConversationSLAEventLog
+
+    return (
+        db.query(ConversationSLAEventLog)
+        .filter(
+            ConversationSLAEventLog.sla_tracking_id == str(tracking_id),
+            ConversationSLAEventLog.event_type == "response",
+        )
+        .all()
+    )
+
+
+def test_concurrent_stamps_cannot_double_stamp_the_response_clock(db):
+    """Two replies land at once (the drawer send and n8n's Respond-app-reply
+    fallback are separate requests). Both read is_responded=false before either
+    writes, so the "already responded?" check cannot be the guard - the write
+    itself must be conditional. The loser must leave the winner's clock alone
+    and write NO second response event log, or the audit trail shows two first
+    responses for one enquiry."""
+    from sqlalchemy.orm import Session
+
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed, source_message_id="wamid.msg-1")
+    tracking_id = str(t1.id)
+
+    # The concurrent winner: a second session on the same connection stamps the
+    # row and commits, while this session's `t1` still reads is_responded=false.
+    other = Session(bind=db.get_bind(), join_transaction_mode="create_savepoint")
+    try:
+        winner_row = (
+            other.query(ConversationSLATracking)
+            .filter(ConversationSLATracking.id == tracking_id)
+            .one()
+        )
+        ConversationSLATrackingService(other).mark_ticket_responded(
+            winner_row, responded_by_user_id=seed["assignee_id"]
+        )
+        winner_responded_at = winner_row.responded_at
+    finally:
+        other.close()
+
+    assert t1.is_responded is False, "the loser's in-memory row is stale by design"
+    ConversationSLATrackingService(db).mark_ticket_responded(
+        t1, responded_by_user_id=seed["other_assignee_id"]
+    )
+
+    db.expire_all()
+    row = (
+        db.query(ConversationSLATracking)
+        .filter(ConversationSLATracking.id == tracking_id)
+        .one()
+    )
+    assert row.responded_at == winner_responded_at
+    assert row.responded_by == seed["assignee_id"]
+    assert len(_response_logs(db, tracking_id)) == 1
+
+
 # --------------------------------------------------------------------------- #
 # AC-D2: closed window -> template fallback fires (reused verbatim)           #
 # --------------------------------------------------------------------------- #

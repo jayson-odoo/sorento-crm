@@ -5314,7 +5314,11 @@ class ConversationSLATrackingService:
         in the ``PUT /{tracking_id}`` route, AC-E3), this never checks sibling
         tickets. No-op when the ticket is already responded - only the FIRST
         reply stops the response clock; later sends on the same ticket are
-        ordinary conversation, not a new "first response".
+        ordinary conversation, not a new "first response". "Already responded"
+        is decided by the WRITE, not by the read before it: the drawer send and
+        n8n's Respond-app-reply fallback are separate requests that can both see
+        an unanswered ticket, so the stamp is a conditional UPDATE and only the
+        request that actually changed the row writes the response event log.
 
         ``responded_at`` lets a caller that knows WHEN the reply happened supply
         it (the Respond-app-reply endpoint forwards n8n's `replied_at`), so the
@@ -5338,12 +5342,31 @@ class ConversationSLATrackingService:
                 )
         responded_by = responded_by_user_id or self._resolve_tracking_assignee_user_id(tracking)
 
-        tracking.is_responded = True
-        tracking.responded_at = responded_at
-        tracking.responded_by = responded_by
-        tracking.response_time = response_time
+        # The guard above is a read, and a read holds nothing: a concurrent
+        # reply passes it too, then overwrites this stamp and adds a second
+        # "response" event log for one enquiry. Let the database arbitrate -
+        # rowcount 0 means somebody else stopped the clock first, so this call
+        # is the no-op the docstring promises.
+        won = (
+            self.db.query(ConversationSLATracking)
+            .filter(
+                ConversationSLATracking.id == tracking.id,
+                ConversationSLATracking.is_responded.is_(False),
+            )
+            .update(
+                {
+                    "is_responded": True,
+                    "responded_at": responded_at,
+                    "responded_by": responded_by,
+                    "response_time": response_time,
+                },
+                synchronize_session=False,
+            )
+        )
         self.db.commit()
         self.db.refresh(tracking)
+        if not won:
+            return tracking
 
         alabel, aid = event_log_assignee_fields(self.db, responded_by)
         self.create_event_log(
