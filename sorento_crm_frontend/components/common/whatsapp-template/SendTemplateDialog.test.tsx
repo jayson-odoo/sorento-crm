@@ -119,6 +119,8 @@ describe('SendTemplateDialog', () => {
       contact_id: 'contact-1',
       template_id: 'tpl-1',
       params: { '1': 'Ms Ang', '2': 'approved' },
+      // No intervention ticket on this surface: only the ticket drawer sets it.
+      tracking_id: null,
     });
     await waitFor(() => expect(onSent).toHaveBeenCalled());
   });
