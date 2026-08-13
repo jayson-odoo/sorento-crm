@@ -254,6 +254,7 @@ export default function SharedConversationComposer({
   );
 
   const addFiles = (picked: FileList | null) => {
+    if (sending) return;
     if (!picked?.length) return;
     setFiles((prev) => [...prev, ...Array.from(picked)]);
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -303,7 +304,13 @@ export default function SharedConversationComposer({
                 variant="ghost"
                 className="size-4 shrink-0"
                 aria-label={`Remove ${file.name}`}
+                // Frozen while a send is in flight: the per-file outcome is
+                // positional against the list THIS send carried, so a removal
+                // accepted mid-flight is undone by the partial re-stage below
+                // and the file goes to the contact on the next Send.
+                disabled={sending}
                 onClick={() => {
+                  if (sending) return;
                   if (notSent) setFailedFileName(null);
                   setFiles((prev) => prev.filter((_, i) => i !== idx));
                 }}

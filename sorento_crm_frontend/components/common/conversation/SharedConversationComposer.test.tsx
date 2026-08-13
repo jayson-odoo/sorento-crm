@@ -317,6 +317,50 @@ describe('SharedConversationComposer', () => {
     expect(staged).toContain('b.pdf');
   });
 
+  it('freezes the staged files while a send is in flight', async () => {
+    // The per-file outcome is POSITIONAL against the list the send carried, so
+    // a removal accepted mid-flight is silently undone when the partial result
+    // re-stages `sentFiles.slice(deliveredCount)` - the removed file comes back
+    // and the next Send delivers it to the contact after all.
+    let resolveSend: (v: unknown) => void = () => {};
+    const sendAdapter = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSend = resolve;
+        }),
+    );
+    renderComposer({ mode: 'conversation', attachmentsEnabled: true, sendAdapter });
+    await waitFor(() => expect(screen.getByTestId('composer-file-input')).toBeInTheDocument());
+
+    attach(['a.pdf', 'b.pdf', 'c.pdf']);
+    fireEvent.click(screen.getByRole('button', { name: /^Send$/i }));
+    await waitFor(() => expect(sendAdapter).toHaveBeenCalled());
+
+    const removeC = screen.getByRole('button', { name: 'Remove c.pdf' });
+    expect(removeC).toBeDisabled();
+    expect(screen.getByRole('button', { name: /attach/i })).toBeDisabled();
+
+    fireEvent.click(removeC);
+    expect(screen.getByTestId('composer-attachments').textContent).toContain('c.pdf');
+
+    resolveSend({
+      sent_as: 'attachment',
+      attachments: {
+        delivered: ['a.pdf'],
+        failed: { filename: 'b.pdf', error: 'Respond 500 unavailable' },
+      },
+    });
+
+    await waitFor(() => {
+      const staged = screen.getByTestId('composer-attachments').textContent ?? '';
+      expect(staged).not.toContain('a.pdf');
+      expect(staged).toContain('b.pdf');
+      expect(staged).toContain('c.pdf');
+    });
+    // Removal is available again once the send settles.
+    expect(screen.getByRole('button', { name: 'Remove c.pdf' })).not.toBeDisabled();
+  });
+
   // ------------------------------------------------- template send attribution
 
   it('FINDING 4: a manual template send carries the ticket id so the clock stops', async () => {
