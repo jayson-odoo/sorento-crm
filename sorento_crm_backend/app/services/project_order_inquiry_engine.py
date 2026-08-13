@@ -119,7 +119,7 @@ class CoveringPool:
 
 @dataclass(frozen=True)
 class InquiryRowPlan:
-    """One instruction, ready to be written as an ``order_inquiry_rows`` row."""
+    """One instruction, ready to be written as a ``project_order_inquiry_rows`` row."""
 
     line_id: str
     product_id: str

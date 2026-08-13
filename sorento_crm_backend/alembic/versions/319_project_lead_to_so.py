@@ -334,7 +334,7 @@ def upgrade() -> None:
     op.create_index("ix_so_amendments_order", "so_amendments", ["project_sales_order_id"])
 
     op.create_table(
-        "order_inquiries",
+        "project_order_inquiries",
         sa.Column("id", postgresql.UUID(as_uuid=False), nullable=False, primary_key=True),
         sa.Column("project_sales_order_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("project_sales_orders.id", ondelete="CASCADE"), nullable=False),
         sa.Column("amendment_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("so_amendments.id", ondelete="SET NULL"), nullable=True),
@@ -343,13 +343,13 @@ def upgrade() -> None:
         sa.Column("raised_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
         sa.Column("company_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("companies.id"), nullable=True),
     )
-    op.create_index("ix_order_inquiries_order", "order_inquiries", ["project_sales_order_id"])
-    op.create_index("ix_order_inquiries_company_id", "order_inquiries", ["company_id"])
+    op.create_index("ix_project_order_inquiries_order", "project_order_inquiries", ["project_sales_order_id"])
+    op.create_index("ix_project_order_inquiries_company_id", "project_order_inquiries", ["company_id"])
 
     op.create_table(
-        "order_inquiry_rows",
+        "project_order_inquiry_rows",
         sa.Column("id", postgresql.UUID(as_uuid=False), nullable=False, primary_key=True),
-        sa.Column("order_inquiry_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("order_inquiries.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("order_inquiry_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("project_order_inquiries.id", ondelete="CASCADE"), nullable=False),
         sa.Column("so_line_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("project_sales_order_lines.id", ondelete="SET NULL"), nullable=True),
         sa.Column("item_code", sa.String(length=120), nullable=True),
         sa.Column("qty", sa.Numeric(precision=15, scale=4), nullable=False),
@@ -362,8 +362,8 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
         sa.Column("company_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("companies.id"), nullable=True),
     )
-    op.create_index("ix_order_inquiry_rows_company_id", "order_inquiry_rows", ["company_id"])
-    op.create_index("ix_order_inquiry_rows_inquiry", "order_inquiry_rows", ["order_inquiry_id"])
+    op.create_index("ix_project_order_inquiry_rows_company_id", "project_order_inquiry_rows", ["company_id"])
+    op.create_index("ix_project_order_inquiry_rows_inquiry", "project_order_inquiry_rows", ["order_inquiry_id"])
 
     # --- leads: nullable buyer, informant, acceptance handshake -------------------
     op.alter_column("project_leads", "customer_id", existing_type=postgresql.UUID(as_uuid=False), nullable=True)
@@ -409,7 +409,7 @@ def downgrade() -> None:
     # customer_id stays nullable: re-tightening it would fail on any lead registered
     # without a buyer, which is the normal case this migration exists to allow.
     for table in (
-        "order_inquiry_rows", "order_inquiries", "so_amendments", "order_change_notices",
+        "project_order_inquiry_rows", "project_order_inquiries", "so_amendments", "order_change_notices",
         "so_draft_findings", "project_sales_order_lines", "project_sales_orders",
         "customer_item_code_map", "delivery_schedule_cells", "project_delivery_phases",
         "delivery_schedule_versions", "delivery_schedules", "project_po_annotations",

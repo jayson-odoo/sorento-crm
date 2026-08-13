@@ -24,7 +24,16 @@ down_revision = "321_allocation_tables"
 branch_labels = None
 depends_on = None
 
-TABLE = "order_inquiry_rows"
+
+def _live_name(new: str, legacy: str) -> str:
+    """Whichever of the two names this database currently carries.
+
+    Revision 353 renamed these tables to the module's `project_` prefix and 319 now
+    creates them under the new name, so a fresh database is already prefixed here. A
+    development database that stopped short of 353 still holds the old name, and this
+    revision has to run against that one too.
+    """
+    return new if sa.inspect(op.get_bind()).has_table(new) else legacy
 
 
 def _columns(table: str) -> set:
@@ -38,12 +47,14 @@ def _indexes(table: str) -> set:
 def upgrade() -> None:
     # Idempotent throughout: this branch shares a development database with other
     # worktrees, so a column may already be present from another run.
-    existing = _columns(TABLE)
+    rows = _live_name("project_order_inquiry_rows", "order_inquiry_rows")
+    inquiries = _live_name("project_order_inquiries", "order_inquiries")
+    existing = _columns(rows)
     if "note" not in existing:
-        op.add_column(TABLE, sa.Column("note", sa.Text(), nullable=True))
+        op.add_column(rows, sa.Column("note", sa.Text(), nullable=True))
     if "actioned_by" not in existing:
         op.add_column(
-            TABLE,
+            rows,
             sa.Column(
                 "actioned_by",
                 sa.String(100),
@@ -52,24 +63,33 @@ def upgrade() -> None:
             ),
         )
     if "actioned_at" not in existing:
-        op.add_column(TABLE, sa.Column("actioned_at", sa.DateTime(timezone=False), nullable=True))
+        op.add_column(rows, sa.Column("actioned_at", sa.DateTime(timezone=False), nullable=True))
 
-    if "ix_order_inquiry_rows_state" not in _indexes(TABLE):
-        op.create_index("ix_order_inquiry_rows_state", TABLE, ["state"])
+    # Index names carry the new prefix whichever table name they land on: revision 353
+    # renames an index it finds under the old name, and skips one already renamed.
+    row_indexes = _indexes(rows)
+    if not {"ix_order_inquiry_rows_state", "ix_project_order_inquiry_rows_state"} & row_indexes:
+        op.create_index("ix_project_order_inquiry_rows_state", rows, ["state"])
 
-    inquiry_indexes = _indexes("order_inquiries")
-    if "uq_order_inquiry_per_sales_order" not in inquiry_indexes:
+    inquiry_indexes = _indexes(inquiries)
+    if not {
+        "uq_order_inquiry_per_sales_order",
+        "uq_project_order_inquiry_per_sales_order",
+    } & inquiry_indexes:
         op.create_index(
-            "uq_order_inquiry_per_sales_order",
-            "order_inquiries",
+            "uq_project_order_inquiry_per_sales_order",
+            inquiries,
             ["project_sales_order_id"],
             unique=True,
             postgresql_where=sa.text("amendment_id IS NULL"),
         )
-    if "uq_order_inquiry_per_amendment" not in inquiry_indexes:
+    if not {
+        "uq_order_inquiry_per_amendment",
+        "uq_project_order_inquiry_per_amendment",
+    } & inquiry_indexes:
         op.create_index(
-            "uq_order_inquiry_per_amendment",
-            "order_inquiries",
+            "uq_project_order_inquiry_per_amendment",
+            inquiries,
             ["amendment_id"],
             unique=True,
             postgresql_where=sa.text("amendment_id IS NOT NULL"),
@@ -77,12 +97,22 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    for name in ("uq_order_inquiry_per_amendment", "uq_order_inquiry_per_sales_order"):
-        if name in _indexes("order_inquiries"):
-            op.drop_index(name, table_name="order_inquiries")
-    if "ix_order_inquiry_rows_state" in _indexes(TABLE):
-        op.drop_index("ix_order_inquiry_rows_state", table_name=TABLE)
-    existing = _columns(TABLE)
+    rows = _live_name("project_order_inquiry_rows", "order_inquiry_rows")
+    inquiries = _live_name("project_order_inquiries", "order_inquiries")
+    inquiry_indexes = _indexes(inquiries)
+    for name in (
+        "uq_project_order_inquiry_per_amendment",
+        "uq_order_inquiry_per_amendment",
+        "uq_project_order_inquiry_per_sales_order",
+        "uq_order_inquiry_per_sales_order",
+    ):
+        if name in inquiry_indexes:
+            op.drop_index(name, table_name=inquiries)
+    row_indexes = _indexes(rows)
+    for name in ("ix_project_order_inquiry_rows_state", "ix_order_inquiry_rows_state"):
+        if name in row_indexes:
+            op.drop_index(name, table_name=rows)
+    existing = _columns(rows)
     for name in ("actioned_at", "actioned_by", "note"):
         if name in existing:
-            op.drop_column(TABLE, name)
+            op.drop_column(rows, name)

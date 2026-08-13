@@ -25,8 +25,8 @@ and the spreadsheet both say so rather than defaulting to the master location.
 
 **Purchasing is handed a task, not an email** (AC-I4). It is a `project_tasks` row on
 the delivery phase, linked to the inquiry, plus an in-app notification. The rows stay in
-`order_inquiry_rows` and the task points at them, so marking one actioned updates the
-one record rather than a copy pasted into a description.
+`project_order_inquiry_rows` and the task points at them, so marking one actioned
+updates the one record rather than a copy pasted into a description.
 """
 from __future__ import annotations
 

@@ -603,7 +603,7 @@ class OrderInquiry(Base, CompanyScopedMixin):
     Never a second source of demand: committed quantity stays on `sales_order_lines`.
     """
 
-    __tablename__ = "order_inquiries"
+    __tablename__ = "project_order_inquiries"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_sales_order_id = Column(
@@ -617,19 +617,19 @@ class OrderInquiry(Base, CompanyScopedMixin):
     raised_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
-        Index("ix_order_inquiries_order", "project_sales_order_id"),
+        Index("ix_project_order_inquiries_order", "project_sales_order_id"),
         # One inquiry per publish, enforced by the database rather than by remembering
         # to check: republishing must not double what purchasing is told to buy.
         # Postgres treats NULLs as distinct, so the sales-order case needs its own
         # predicate rather than a plain unique on the pair.
         Index(
-            "uq_order_inquiry_per_sales_order",
+            "uq_project_order_inquiry_per_sales_order",
             "project_sales_order_id",
             unique=True,
             postgresql_where=text("amendment_id IS NULL"),
         ),
         Index(
-            "uq_order_inquiry_per_amendment",
+            "uq_project_order_inquiry_per_amendment",
             "amendment_id",
             unique=True,
             postgresql_where=text("amendment_id IS NOT NULL"),
@@ -649,11 +649,11 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     explanation are separate fields because they answer separate questions.
     """
 
-    __tablename__ = "order_inquiry_rows"
+    __tablename__ = "project_order_inquiry_rows"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     order_inquiry_id = Column(
-        UUID(as_uuid=False), ForeignKey("order_inquiries.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("project_order_inquiries.id", ondelete="CASCADE"), nullable=False
     )
     so_line_id = Column(
         UUID(as_uuid=False), ForeignKey("project_sales_order_lines.id", ondelete="SET NULL"),
@@ -675,8 +675,8 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
-        Index("ix_order_inquiry_rows_inquiry", "order_inquiry_id"),
-        Index("ix_order_inquiry_rows_state", "state"),
+        Index("ix_project_order_inquiry_rows_inquiry", "order_inquiry_id"),
+        Index("ix_project_order_inquiry_rows_state", "state"),
     )
 
 
