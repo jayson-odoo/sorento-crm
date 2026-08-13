@@ -29,7 +29,7 @@ from sqlalchemy import cast, func, literal, or_
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
-from app.models.product import Product, ProductCategory
+from app.models.product import Brand, Product, ProductCategory
 from app.models.product_spec import ProductSpecifications
 from app.services.product_class_signal import resolve_classes_for_term
 from app.services.product_spec_registry import active_registry, merged_synonyms, search_policy
@@ -296,6 +296,34 @@ def _resolve_quantities(
     return resolved
 
 
+def _brand_from_haystack(db: Session, haystack: str, registry_rows) -> str | None:
+    """The brand named in the customer's words, in the catalog's own spelling.
+
+    One query, name column only: the brand set is small and the words are already
+    in memory. `excluded_values` on the registry row is how the catalog records the
+    ABSENCE of a brand (OTHERS, NO LOGO) - real values on real rows, but not
+    something a customer ever asks for, so they are never bound.
+
+    Longest name wins, for the same reason the synonym loop above prefers the
+    longest phrase: a specific reading beats a generic one that is a substring of
+    the same words.
+    """
+    brand_row = next((row for row in registry_rows if row.spec_key == "brand"), None)
+    excluded = {
+        str(value).strip().lower()
+        for value in (getattr(brand_row, "excluded_values", None) or [])
+    }
+    names = [
+        str(name).strip()
+        for (name,) in db.query(Brand.brand_name).all()
+        if str(name or "").strip() and str(name).strip().lower() not in excluded
+    ]
+    for name in sorted(names, key=len, reverse=True):
+        if re.search(rf"(?<!\w){re.escape(name.lower())}(?!\w)", haystack):
+            return name
+    return None
+
+
 def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
     """Turn customer words into registry spec values, longest phrase first.
 
@@ -343,6 +371,7 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
             best[key] = (length, value)
 
     types = {row.spec_key: row.data_type for row in rows}
+    brand_binding = _brand_from_haystack(db, haystack, rows) if "brand" not in best else None
     resolved: list[dict] = []
     for key, (_, value) in best.items():
         # The synonym map is JSON, so every key arrives as a string. Coerce back to the
@@ -356,6 +385,15 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
             except (TypeError, ValueError):
                 continue
         resolved.append({"key": key, "value": value})
+
+    # A brand is a brand. The registry's `brand` row ships with an empty synonym map,
+    # so "sorento" bound to nothing and the word was left to the code probes, which
+    # prefix-matched it into SORENTOBAG and SORENTO188 (live turn 12303509). The names
+    # are read from the `brands` table rather than hand-seeded into the registry, so a
+    # brand added tomorrow is understood the same day, spelled exactly as the catalog
+    # spells it - which is the spelling the derived `brand` values carry.
+    if brand_binding is not None:
+        resolved.append({"key": "brand", "value": brand_binding})
 
     # Numbers the customer typed: "trap 200mm", "thickness 1.2mm", 'S trap 8"'.
     # A value stated in WORDS wins over one bound by proximity — "double bowl" is a

@@ -5,6 +5,7 @@ external caller) can disambiguate codes mid-turn. The resolver itself lives in
 `app.services.entity_resolver`.
 """
 import logging
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -1296,6 +1297,78 @@ def _product_words_unanswered(result: dict[str, Any]) -> bool:
     return False
 
 
+def _has_unresolved_tokens(result: dict[str, Any]) -> bool:
+    """OR-shaped result in which at least one token found nothing.
+
+    A token that matched nothing is unanswered by definition, and the whole point
+    of spec search is to answer the words a code probe cannot. Before this,
+    "Sorento" prefix-matching four stale codes was enough to declare the turn
+    answered, and "double bowl kitchen sink" beside it never reached the ranker
+    (live turn 12303509). The relevance floor stays the counterweight against
+    nonsense: opening the path is not the same as offering something.
+    """
+    resolutions = result.get("resolutions")
+    if not isinstance(resolutions, list):
+        return False
+    return any(not (tr.get("matches") or []) for tr in resolutions)
+
+
+def _suppress_brand_prefix_junk(db: Session, result: dict[str, Any]) -> None:
+    """A brand word is answered as a brand, not as whatever codes start with it.
+
+    "sorento" prefix-matches SORENTOBAG and SORENTO188 ("NOT USE THIS CODE"), and
+    those rows are what the customer was shown as the answer to a kitchen sink
+    question. Once the ranker HAS answered, a code that merely CONTAINS the brand
+    word is catalogue noise; an exact full code is still a code and stays, as does
+    every non-product match (the brand entity itself among them).
+
+    Only ever called with spec candidates in hand: junk beats silence, so nothing
+    is removed on a turn where the ranker found nothing to put in its place.
+    """
+    resolutions = result.get("resolutions")
+    if not isinstance(resolutions, list) or not resolutions:
+        return
+    tokens = {(tr.get("token") or "").strip().lower() for tr in resolutions}
+    tokens.discard("")
+    if not tokens:
+        return
+
+    brand_tokens = {
+        str(name).strip().lower()
+        for (name,) in db.query(Brand.brand_name)
+        .filter(func.lower(Brand.brand_name).in_(sorted(tokens)))
+        .all()
+    }
+    if not brand_tokens:
+        return
+
+    unresolved = list(result.get("unresolved_tokens") or [])
+    ambiguous = list(result.get("ambiguous_tokens") or [])
+    for tr in resolutions:
+        token = (tr.get("token") or "").strip().lower()
+        if token not in brand_tokens:
+            continue
+        matches = tr.get("matches") or []
+        kept = [
+            m
+            for m in matches
+            if m.get("entity_type") != "product"
+            or str(m.get("canonical_code") or "").strip().lower() == token
+        ]
+        if len(kept) == len(matches):
+            continue
+        tr["matches"] = kept
+        tr["resolved"] = len(kept) == 1
+        tr["ambiguous"] = len(kept) > 1
+        if not tr["ambiguous"] and tr.get("token") in ambiguous:
+            ambiguous = [t for t in ambiguous if t != tr.get("token")]
+        if not kept and tr.get("token") not in unresolved:
+            unresolved.append(tr.get("token"))
+    result["unresolved_tokens"] = unresolved
+    if "ambiguous_tokens" in result:
+        result["ambiguous_tokens"] = ambiguous
+
+
 def _collect_match_types(result: dict[str, Any]) -> list[str]:
     """Distinct `entity_type` values across resolutions / intersection."""
     types: set[str] = set()
@@ -1687,7 +1760,12 @@ def resolve_reference(
     )
 
 
-def _emit_spec_matches(result: dict[str, Any], candidates: list[dict], token: str) -> None:
+def _emit_spec_matches(
+    result: dict[str, Any],
+    candidates: list[dict],
+    token: str,
+    free_terms: list[str] | None = None,
+) -> None:
     """Emit ranker candidates as ordinary product matches.
 
     `spec_candidates` alone was a dead end: it is a different shape parked beside
@@ -1759,11 +1837,33 @@ def _emit_spec_matches(result: dict[str, Any], candidates: list[dict], token: st
         # so this honestly yields no claims.
         _attach_and_coverage(result)
     result.setdefault("resolutions", []).append(spec_resolution)
-    # Something was found, so the token is no longer unresolved. Nothing else is
-    # touched: `unresolved_tokens` and `alternatives` are what drive "did you
-    # mean", and a match is neither.
+    # Something was found, so the words it answered are no longer unresolved.
+    #
+    # Equality with the emitted token alone was not enough: the caller sends the
+    # sentence as ONE token here and its own per-token split as separate ones, so
+    # "double bowl kitchen sink" stayed in the footer and the customer read
+    # "Couldn't find: double bowl kitchen sink" underneath the sinks that answered
+    # it. A token that appears, whole word, inside a term the ranker searched on
+    # HAS been answered by these rows.
+    #
+    # Nothing else is touched: `unresolved_tokens` and `alternatives` are what
+    # drive "did you mean", and a match is neither.
+    answered_terms = [
+        str(term).strip().lower() for term in (free_terms or []) if str(term or "").strip()
+    ]
+    answered_terms.append(str(spec_resolution["token"]).strip().lower())
+
+    def _answered(candidate_token: str) -> bool:
+        word = str(candidate_token or "").strip().lower()
+        if not word:
+            return False
+        return any(
+            word == term or re.search(rf"(?<!\w){re.escape(word)}(?!\w)", term)
+            for term in answered_terms
+        )
+
     result["unresolved_tokens"] = [
-        t for t in (result.get("unresolved_tokens") or []) if t != spec_resolution["token"]
+        t for t in (result.get("unresolved_tokens") or []) if not _answered(t)
     ]
 
 
@@ -1810,7 +1910,12 @@ def resolve_reference_post(
             "truncated": outcome["truncated"],
             "unrecognized_terms": outcome["unrecognized_terms"],
         }
-        _emit_spec_matches(result, outcome["candidates"], payload.query or "")
+        _emit_spec_matches(
+            result,
+            outcome["candidates"],
+            payload.query or "",
+            payload.free_terms or [payload.query or ""],
+        )
         return _stamp_brand_on_products(db, result)
 
     # Spec search is a FALLBACK, never a parallel path. It runs only when the caller
@@ -1821,7 +1926,9 @@ def resolve_reference_post(
     # request that resolves a code fully. The product probes themselves are
     # untouched: see _and_probe_product's "CODE-ONLY by design" note.
     if payload.spec_fallback and (
-        _result_has_zero_matches(result) or _product_words_unanswered(result)
+        _result_has_zero_matches(result)
+        or _product_words_unanswered(result)
+        or _has_unresolved_tokens(result)
     ):
         import time
 
@@ -1868,8 +1975,13 @@ def resolve_reference_post(
         result["spec_candidates"] = found["candidates"]
         result["floor_missed"] = found["floor_missed"]
 
+        # A brand token's code-prefix junk stops headlining, but only now that the
+        # ranker has something to show instead.
+        if found["candidates"]:
+            _suppress_brand_prefix_junk(db, result)
+
         # AND emit them as ordinary product matches (see _emit_spec_matches).
-        _emit_spec_matches(result, found["candidates"], payload.query or "")
+        _emit_spec_matches(result, found["candidates"], payload.query or "", free_terms)
         # What the customer asked for that nothing offered can satisfy. The caller says
         # "no Cabana one, here are Sorento" rather than silently substituting.
         result["spec_unmet"] = found["unmet"]
