@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field
 from app.dependencies import get_current_user_or_api_key, require_permission, get_current_user
 from app.services.sla_service import (
     ConversationSLATrackingService,
-    to_naive_datetime,
     compute_tracking_timings,
     event_log_assignee_fields,
 )
@@ -1688,24 +1687,33 @@ async def delete_sla_tracking(
         raise handle_internal_error(str(e))
 
 
+def _to_aware_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Normalize an inbound timestamp to aware UTC, matching the column convention.
+
+    These columns hold naive **UTC** (create_tracking stamps them from
+    `_now_utc()`, update_tracking runs every datetime field through the
+    service's own `_to_aware_utc`), so a naive value already means UTC and an
+    aware one converts to it. The route previously ran aware values through
+    `to_naive_datetime`, which produces naive **Malaysia** wall clock - storing
+    an n8n-reported reply eight hours after it happened.
+    """
+    if not isinstance(dt, datetime):
+        return dt
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def _calculate_duration_hours(start_at, end_at) -> Decimal:
     """Calculate duration in hours with two-decimal precision.
-    
-    Handles both naive and timezone-aware datetimes.
-    Naive datetimes are treated as UTC+8 (local timezone).
+
+    Handles both naive and timezone-aware datetimes. Naive means UTC - that is
+    what the tracking columns store, so reading `initiated_at` as UTC+8 (as
+    this used to) inflated every duration computed here by eight hours.
     """
-    from datetime import timedelta
-    
-    # Convert naive datetimes to UTC+8 for calculation
-    if start_at.tzinfo is None:
-        start_at = start_at.replace(tzinfo=timezone(timedelta(hours=8)))
-    if end_at.tzinfo is None:
-        end_at = end_at.replace(tzinfo=timezone(timedelta(hours=8)))
-    
-    # Normalize both to UTC for calculation
-    start_at_utc = start_at.astimezone(timezone.utc)
-    end_at_utc = end_at.astimezone(timezone.utc)
-    
+    start_at_utc = _to_aware_utc(start_at)
+    end_at_utc = _to_aware_utc(end_at)
+
     hours = Decimal(str((end_at_utc - start_at_utc).total_seconds() / 3600))
     return hours.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
@@ -1745,14 +1753,14 @@ async def update_sla_tracking_status_integration(
         update_dict.pop("resolution_duration", None)
         update_dict.pop("resolution_time", None)
 
-        # Convert timestamps to naive (no timezone) before storing
+        # Normalize timestamps to UTC before storing (the columns are naive UTC)
         if update_data.responded_at:
-            update_dict["responded_at"] = to_naive_datetime(update_data.responded_at) if isinstance(update_data.responded_at, datetime) and update_data.responded_at.tzinfo else update_data.responded_at
+            update_dict["responded_at"] = _to_aware_utc(update_data.responded_at)
             update_dict["response_time"] = _calculate_duration_hours(
                 tracking.initiated_at, update_dict["responded_at"]
             )
         if update_data.resolved_at:
-            update_dict["resolved_at"] = to_naive_datetime(update_data.resolved_at) if isinstance(update_data.resolved_at, datetime) and update_data.resolved_at.tzinfo else update_data.resolved_at
+            update_dict["resolved_at"] = _to_aware_utc(update_data.resolved_at)
             update_dict["resolution_duration"] = _calculate_duration_hours(
                 tracking.initiated_at, update_dict["resolved_at"]
             )
@@ -1779,10 +1787,9 @@ async def update_sla_tracking_status_integration(
             and not ambiguous_responded_skipped
             and not already_responded
         ):
-            # Convert responded_at to UTC before creating event log
-            responded_at_utc = update_data.responded_at
-            if isinstance(responded_at_utc, datetime) and responded_at_utc.tzinfo:
-                responded_at_utc = responded_at_utc.astimezone(timezone.utc)
+            # Aware UTC for the event log too: create_event_log reads a NAIVE
+            # datetime as Malaysia time, which would shift the logged instant.
+            responded_at_utc = _to_aware_utc(update_data.responded_at)
 
             responded_by_ref = (
                 str(getattr(tracking, "responded_by"))
@@ -1802,11 +1809,9 @@ async def update_sla_tracking_status_integration(
 
         if update_data.is_resolved and not already_resolved:
             # Use tracking.resolved_at (set by service if not sent) for event log
-            resolved_at_utc = update_data.resolved_at or getattr(tracking, "resolved_at", None)
-            if isinstance(resolved_at_utc, datetime) and resolved_at_utc.tzinfo:
-                resolved_at_utc = resolved_at_utc.astimezone(timezone.utc)
-            elif isinstance(resolved_at_utc, datetime) and not resolved_at_utc.tzinfo:
-                resolved_at_utc = resolved_at_utc.replace(tzinfo=timezone.utc)
+            resolved_at_utc = _to_aware_utc(
+                update_data.resolved_at or getattr(tracking, "resolved_at", None)
+            )
 
             resolved_by_ref = (
                 str(getattr(tracking, "resolved_by"))
