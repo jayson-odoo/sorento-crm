@@ -44,6 +44,27 @@ from app.services.banner_person_service import (
 router = APIRouter()
 
 
+def _log_integration_best_effort(log_service, payload, **kwargs) -> None:
+    """Write an integration_log for work that is ALREADY committed.
+
+    Post-commit side effects are best-effort (PRINCIPLES.md): re-raising here
+    answers 500 for a create/stamp that actually succeeded, so n8n reports a
+    failed intervention and retries into the idempotent path - which never
+    backfills the missing log. Warn and carry on instead.
+    """
+    import logging
+
+    try:
+        log_service.create_integration_log(payload, **kwargs)
+    except Exception:  # noqa: BLE001 - the logged work already committed
+        logging.getLogger(__name__).warning(
+            "integration_log write failed for %s %s; the operation itself succeeded.",
+            getattr(payload, "business_table", "?"),
+            getattr(payload, "business_id", "?"),
+            exc_info=True,
+        )
+
+
 class SlaTrackingConversationReplyBody(BaseModel):
     message: str = Field(..., min_length=1)
 
@@ -1385,7 +1406,8 @@ async def create_sla_tracking_integration(
             integration_channel = "sla_tracking_update"
         else:
             integration_channel = "sla_tracking_creation"
-        log_service.create_integration_log(
+        _log_integration_best_effort(
+            log_service,
             IntegrationLogCreate(
                 integration_channel=integration_channel,
                 business_table="conversation_sla_tracking",
@@ -1836,7 +1858,8 @@ async def update_sla_tracking_status_integration(
             if getattr(getattr(tracking, "contact", None), "phone_number", None) is not None
             else tracking_id_result_str
         )
-        log_service.create_integration_log(
+        _log_integration_best_effort(
+            log_service,
             IntegrationLogCreate(
                 integration_channel="sla_tracking_update",
                 business_table="conversation_sla_tracking",
