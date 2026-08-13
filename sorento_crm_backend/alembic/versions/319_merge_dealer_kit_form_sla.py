@@ -18,10 +18,15 @@ added migrations forks the revision graph, and the fork has to be closed
 explicitly.
 
 Verified single-head after this file: the graph walk over
-`alembic/versions/*.py` reports exactly one head, `319_merge_dealer_kit_and_form_sla`.
+`alembic/versions/*.py` reports exactly one head, `319_merge_dealer_kit_form_sla`.
+
+The id is kept under 32 characters on purpose: `scripts/bootstrap_env.py` stamps
+the head into a freshly created `alembic_version`, whose `version_num` is
+`varchar(32)` until migration `103b` widens it - and that migration never runs on
+the stamp path. A longer id fails the bootstrap with StringDataRightTruncation.
 """
 
-revision = "319_merge_dealer_kit_and_form_sla"
+revision = "319_merge_dealer_kit_form_sla"
 down_revision = ("310_form_sla_skip_stage", "318_dealer_kit_edition")
 branch_labels = None
 depends_on = None
