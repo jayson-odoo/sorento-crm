@@ -1,0 +1,457 @@
+# PLAN - Spec Authoring and Verification (milestone 1)
+
+**Slug:** `spec-authoring-verification` · **Domain:** master-data · **Milestone:** 1 of 2
+**UAC:** `spec-authoring-verification-acceptance-criteria.md` (the contract - this plan fulfils it)
+**Classification:** CORE, schema `public`, normal FKs
+**Status:** DRAFT - pre-code, pending captain review. Two sign-offs outstanding (see "Decisions").
+
+## Goal
+
+Make the spec table the single source of truth for product specifications, and make a person able
+to vouch for it. Editable table, paste-once extraction, pill statuses, and a verification workflow
+built for a person going through thousands of codes.
+
+The journeys are in the UAC and they come first. This plan is the design that serves them; per
+`PRINCIPLES.md` step 0 a plan opening with a schema is a process violation, so the schema below
+appears where it belongs - after the journey it exists to support.
+
+## Milestone boundary
+
+Milestone 2 is the supplier portal: a supplier-facing surface, request-scoped tokens, staged
+submissions and a second verification identity. **Its UAC and plan are authored separately**
+(suggested slug `supplier-spec-portal`). This milestone builds none of it, but carries all eight
+seams (M2-S1 to M2-S8 in the UAC) as requirements, because each is cheap now and expensive to
+retrofit. The two milestones share exactly one artifact: the verification model, designed once
+here and party-scoped from its first migration.
+
+---
+
+## How this plan was produced
+
+The design authority is the `spec-verification-design` report (642 lines) and the
+`product-spec-editable` scout investigation (578 lines) beneath it. Neither could reach a database
+and neither re-verified every code claim.
+
+Before writing, four read-only DB measurements were taken (the ones the design flagged as
+blocking), and four sub-plan investigations were run against real code, each producing
+`file:line`-anchored findings. That is the `/wayfinder`-equivalent charting step `PRINCIPLES.md`
+requires for module-sized work.
+
+**Process note, stated rather than hidden:** `PRINCIPLES.md` names `/wayfinder`, `/grill-me`,
+`/grill-with-docs`, `/to-spec` and `/to-tickets` as pipeline steps. Only `feature` and
+`codex-review` exist as skills in this repo; the rest are named but not installed. The
+investigation and slicing were therefore performed directly rather than through those skills, and
+the grill step ran without a human in the loop, which is a real gap: a grill is a conversation and
+this one was self-adversarial. The captain should treat plan review as the first genuine grill.
+
+---
+
+## The four measurements, and what each one changed
+
+All taken 2026-08-13 against the local `sorento_ai_automation` (a copy of prod). Full numbers are
+in the UAC's measured baseline table.
+
+| # | Question the design could not answer | Answer | What it changed |
+|---|---|---|---|
+| 1 | Do `master_data.spec_registry.*` rows exist? | Yes, all four. Granted to **zero roles**. | Bigger than the design assumed. It is not just the `keys-for-product` read: the whole master spec screen is admin-only by accident today. A grant sweep plus two relaxations now ship in PR 2, and PR 3 inherits the blocker. |
+| 2 | Flyer blast radius | 756 flyer rows from one import; **3,353** provenance entries, 1,389 rows, **695 codes** (6.1%) | Sizes the promote migration exactly. Also shows the design's "systematic catalogue-wide re-ranking" framing is overstated - flyer is 3.3% of all provenance entries. |
+| 3 | Authored values and copy divergence | **Zero** authored entries; **zero** diverging copies | Removes work. The scout's feared convergence migration has nothing to converge; the fan-out is purely forward-looking and **no reconciliation backfill is written**. |
+| 4 | `product_suppliers` reality | Default setting NULL; a "DEFAULT" supplier holds 11,412 links, 0 primary; 47.5% of codes have only that link; 11,392 product rows have no link at all | Milestone 2 sizing, recorded for its UAC. The last figure is load-bearing: supplier resolution must go through `product_code`, never `product_id`. |
+
+**All four were taken.** Nothing in this plan is estimated where it could have been measured.
+
+---
+
+## Corrections to the design
+
+The design is followed except where the code says otherwise. Each correction below was verified
+against a `file:line` anchor, and each is a case where building the design as written would have
+produced something slow, wrong, or dead on arrival.
+
+### C1 - `keys-for-product` returns the numerator, not the denominator (load-bearing, hits PR 2 and PR 3)
+
+The design uses `GET /spec-registry/keys-for-product` as the source of "keys applicable to this
+product's class", for both PR 2's add-spec picker (described as "nearly free") and PR 3's coverage
+denominator. The endpoint builds its response from `spec.values` - the keys the product **already
+holds**. It is the numerator. It is also one query per code and sits behind a permission granted
+to nobody.
+
+The scout's supporting citation is dead too: `applies_to_classes` "was never seeded, never read by
+anything, and never held a value in any row". Applicability is `applies_when` alone, evaluated by
+derivation's `_apply_scope`, where an absent gate value never excludes a key.
+
+**Correction:** a new `applicable_keys_for_code` service, mirroring `_apply_scope`, owned by PR 2
+and reused by PR 3. Computed server-side, because milestone 2's pre-seeding calls the same logic
+and a second copy of the gate rules on the frontend would drift the first time someone edits
+`applies_when`.
+
+### C2 - the permission hole is wider than flagged, and the fix is relaxation plus a scoped sweep
+
+Measured: all four `spec_registry` slugs exist with zero grants; `products.view` has 10 roles,
+`.edit` has 9. The precedent for the fix is already in the same file 300 lines above the offending
+route: `GET /spec-registry` runs on `master_data.products.view` with the reasoning written into a
+comment.
+
+**Correction:** relax the two product-scoped registry reads to `products.view`, **and** sweep
+`spec_registry.{view,edit,add}` from the corresponding `products.*` holders. The sweep **excludes
+`integration_*` roles** - `integration_n8n`, `integration_sorento_mcp` and
+`integration_foundryx_esb` are API-key principals, and letting the n8n parser mint vocabulary keys
+inverts the one-source-of-truth guarantee this whole milestone exists to establish. `.delete`
+stays ungranted.
+
+### C3 - seeding the boost row without changing the boost branch is a demotion (load-bearing, PR 1 owes PR 4)
+
+`product_spec_search.py` hardcodes `source == "flyer"`. The captain settled `human_source_boost` at
+1.5 so the flyer migration is ranking-neutral - but the policy row alone changes nothing. Ship the
+row without a source-keyed lookup and PR 4's promote migration becomes a straight 1.5x to 1.0x
+demotion for 695 codes, and PR 4 gets blamed for a PR 1 omission.
+
+**Correction:** PR 1 ships the source-keyed branch, and PR 4 verifies it is present before running
+the promote migration rather than assuming it. `flyer_source_boost` stays a separate knob so the
+two can be retuned apart.
+
+### C4 - nothing in the system can resolve a `ProductSpecException` (load-bearing, PR 3)
+
+The captain settled that a product with open exceptions cannot be verified. Correct rule - but
+there is no `resolved_at` writer anywhere in the backend outside the models module, and
+`derive_for_code` deletes open rows and re-inserts whatever it currently flags. Measured: **258
+codes carry open exceptions**, 237 of them `shape_mismatch`, which is raised deterministically
+from stored dimension columns a merchandiser cannot change by editing specs.
+
+Shipped as designed, those 258 codes are permanently unverifiable and the workbench offers no way
+out - the worst possible outcome for a screen whose promise is "the next thing to do is on top".
+
+**Correction:** PR 3 ships a resolve action **and** changes the exception rebuild from
+delete-and-reinsert to an upsert carrying `resolved_at` forward when the reason and payload are
+unchanged (a changed payload is a new fact and correctly re-opens). If the captain will not fund
+this, the only honest alternative is to downgrade the block to a prominent warning with a second
+confirm. **Do not ship the hard block without the escape.**
+
+### C5 - do not virtualize the worklist, paginate it
+
+The design specifies a virtualized list for "thousands of rows". The repo has no virtualization
+library and never loads thousands of rows client-side; every listing is server-paginated.
+
+**Correction:** server-paginated shared `DataGrid`, page size 50, prefetching page N+1 as the
+keyboard cursor nears the boundary. Zero new dependencies, the repo's standard behaviour, and it
+makes cross-page `j`/`k` traversal a solved problem rather than an afterthought - which a
+client-side virtual list would not have been anyway, since it still needs the data.
+
+### C6 - "worst coverage first" is nearly degenerate
+
+Measured spec-key count per code: median 4, max 14, against a denominator of 45-52. Every product
+sits between 0% and 27% coverage, so "worst coverage first" collapses to ascending key count and
+sends the reviewer to the emptiest, slowest products first, exactly where throughput matters most.
+
+**Correction:** default order is needs-re-verify first, then unverified **grouped by class then
+code** - batching one class at a time is what makes each review fast, because the reviewer holds
+one mental model of what a Water Closet should carry. Coverage stays a displayed column and an
+explicit sort. This is a query param, so the captain can overrule it without a schema change.
+
+### C7 - the coverage query is not the risk it looked like
+
+Flagged going in as the single biggest unpriced risk. Measured with `EXPLAIN ANALYZE`: **113 ms
+with coverage vs 120 ms without**, and 101 ms company-scoped with discontinued excluded. The
+registry is 52 rows with 7 gated; coverage is 52 rows hashed once and probed 7 times per row.
+
+**Correction:** compute it inline in SQL. No materialized column, no precomputed table, no refresh
+hook. Add materialization only if measured p95 exceeds 400 ms after the joins land - a measured
+threshold, not a speculative optimisation. Worth recording that the risk was real in the design's
+version: `keys-for-product` per code would have been 8,812 round trips returning the wrong number.
+
+### C8 - the flyer retirement order is wrong in two places
+
+- **Findability breaks at step 2, not step 4.** Its selector filters on `source='flyer'`, which
+  the promote migration empties. The panel would keep rendering and quietly report a weaker test
+  under the same numbers, which is worse than it being gone. Retire it in the same deploy as the
+  migration.
+- **Steps 2 and 3 must ship in the same deploy.** The gap is one-directional data loss: step 3
+  before step 2 means the next `derive_for_code` on an affected code - fired by the change
+  listener on any description edit, not only the nightly job - permanently drops every flyer-only
+  value on that code.
+
+### C9 - derivation should not call the choke point; both should call one shared writer
+
+The design says all three writers refactor onto `apply_spec_values`. But the choke point itself
+calls `derive_for_code` (so a conflict surfaces in the same click), and derivation is a whole-row
+rebuild while the authored write is a per-key patch. Inverting that produces a mutual call or a
+mode flag.
+
+**Correction:** both call one `write_spec_row()` and share one `merge_authored_over()`. This
+preserves the design's actual intent - one place owns the merge rule, one place decides
+invalidation - and makes the hard-fail review rule mechanically greppable rather than a judgement
+call: **a write to `spec.values` / `spec.provenance` / `spec.rendered_text` outside
+`app/services/product_spec_write.py` is auto-reject.** Verified: exactly three such sites exist
+today, so the rule is enforceable from day one.
+
+### C10 - smaller corrections, recorded so they are not rediscovered at implementation
+
+- **A tombstoned key is never conflict-flagged.** Derivation re-derives it every run, so flagging
+  it would park a permanent unresolvable row in a table whose contract forbids routine successes.
+- **`SpecWorkbench` is already taken** by the master screen's tab shell. The new screen is
+  `SpecVerificationWorkbench`.
+- **`PillList` already exists** meaning a row of *vocabulary-value* pills, unrelated to section
+  C's *status* pills. Do not conflate them.
+- **Exclude discontinued codes by default:** 11,415 to **8,812**, a 24% cut and the largest
+  workload reduction available for one line of SQL.
+- **Stamp `verified_by_name`.** A no-FK `text` user id cannot be joined for a display name, and
+  the repo forbids UUIDs in the UI.
+- **Extraction applies as one batch call**, not N per-key writes - N would produce N fan-outs, N
+  rendered-text rebuilds and N verification diffs for one user action.
+- **The spec table renders even when empty.** Today the block is hidden entirely when a product
+  has no specs, which is a live breach of the never-hide-a-section mandate that this slice fixes.
+- **The prompt dry-run button** will produce a misleading result for `spec_extractor`, which is
+  not an assistant node. Hide it for non-assistant keys.
+- **`status='authored'`, not `approved`.** `approved` is documented but has never been written,
+  and it reads as a verification claim - which is per code, not per row.
+
+### Where the design is over-stated rather than wrong
+
+The design calls the flyer-to-authored move a "systematic re-ranking" of the catalogue. Measured,
+it touches 3.3% of provenance entries across 6.1% of codes. Not catalogue-wide. It is still worth
+mitigating, because the affected entries concentrate in the two most discriminating keys (`finish`
+990, `material` 864) and those 695 codes would move down on exactly the queries they used to win.
+The mitigation costs one migration and one branch, so the over-description costs nothing - but it
+did make an unmeasured number sound like the biggest thing in the slice. The biggest thing in that
+slice is actually the ordering constraint in C8.
+
+---
+
+## PR sequence
+
+Vertical slices with blocking edges, per `/to-tickets` shape. Each PR's issue body links this plan
+and the UAC; the files stay the contract and an issue that contradicts the UAC loses.
+
+| PR | Contents | Depends on | Design est. | **Re-estimate** |
+|---|---|---|---|---|
+| 1 | Foundations: `product_spec_write` with `write_spec_row` + `merge_authored_over`, canonical hash, tombstone + merge change, fan-out, `human_override_conflict`, `AUTHORED_SOURCES`, `status` fix, `human_source_boost` row **and the source-keyed boost branch**, listener backstop | boost decision (settled) | 3-5 d | **5-7 d** |
+| 2 | Editable table (A) + pills (C) + inline add-value + add-key picker + `applicable_keys_for_code` + permission relaxation and grant sweep | PR 1 | 5-8 d | **9-13 d** |
+| 3 | Verification model + workbench (D) + exception resolve action | PR 1; PR 2 for the shared table | 8-12 d | **12-17 d** |
+| 4 | Prompt box + extraction proposals (B), batch apply, then promote migration + retirements + full re-derive | PR 1 (incl. the boost branch) | 6-10 d | **9-12 d** |
+| | **Milestone 1 total** | | **22-35 d** | **35-49 d** |
+
+### On the estimate difference - reported, not hidden
+
+My total is **35-49 engineer-days against the design's 22-35**: roughly **+13 to +14 days**, or
++50% at the midpoint. That is not a rounding error and it is not padding. Every PR came in above
+the design's number, and each one for the same reason: the design priced the diff, not the slice.
+
+The gap is almost entirely **unpriced items**, not resizing:
+
+- **PR 1 (+2):** restructuring `derive_for_code`'s loop against a 720-line pinning test file;
+  building the **first ever** route tests for `product_specifications.py` (it has zero pytest
+  coverage today); the `derived_hash` invalidation and immediate re-derive the design never
+  mentions; the RQ worker not registering the spec listeners, which would leave the new backstop
+  blind on that path.
+- **PR 2 (+4-5):** the `keys-for-product` correction (C1) turning a "nearly free" picker into a
+  backend service with tests; the permission work being a migration rather than a line change
+  (C2); the Specifications tab being a rewrite onto react-query rather than an edit, since it
+  calls services directly from `useState` today; the tombstone rendering contract; a shared
+  `SearchableSelect` change with cross-product blast radius; and 375px, where a five-column
+  editable table does not survive.
+- **PR 3 (+4-5):** the exception resolve action (C4, ~1.5 d and without it the feature has a
+  visible dead end on day one); hash canonicalisation against 18,403 numeric and 408 array values,
+  each of which would otherwise produce phantom invalidations that look like a broken feature;
+  cross-page keyboard traversal; stamping `verified_by_name`; and the `spec_registry` grant hole
+  it inherits from PR 2.
+- **PR 4 (+2):** the full-catalogue re-derive (removing the flyer from the input fingerprint
+  invalidates all 11,415 codes and rewrites all 22,805 rows - an ops task with verification, not a
+  side effect to discover when the nightly job runs long); the findability timing correction
+  moving frontend work into the migration deploy; deleting six-plus derivation tests and a whole
+  test file, which is slower than writing tests because each deletion must be justified in review;
+  and a shipped FE type change the design's retirement list omits.
+
+Some things came in **cheaper** and are netted into the numbers above: no reconciliation backfill
+(measurement 3), no virtualization dependency (C5), no coverage materialization (C7), no
+`DISTINCT ON` in the worklist, and a 24% smaller worklist from excluding discontinued codes.
+
+**Recommendation:** plan against 35-49 days. If the captain needs a smaller first commitment, PR 1
+and PR 2 (14-20 days) deliver the editable table, which is the requirement with the most immediate
+daily value, and PR 3 can follow without rework because the model is designed here.
+
+---
+
+## Phase structure per PR
+
+Every PR runs `PRINCIPLES.md`'s three-phase loop. Two are backend-first exceptions to
+Phase-1-mock-first, and per the rule that is **stated in the PR description, not silently
+skipped**.
+
+### PR 1 - Foundations (backend only; Phase 1 does not apply)
+
+No UI, so there is no UX to settle against a mock. Phase 2 only, test-first.
+
+- **Models/services:** `app/services/product_spec_write.py` with `AUTHORED_SOURCES`,
+  `canonical_values_hash`, `write_spec_row`, `merge_authored_over`, `apply_spec_values`.
+- **Migration:** exactly one, the idempotent policy seed. **No DDL.** Say so explicitly in the PR
+  description, because "a merge-semantics change with no migration" reads as an omission until
+  you say why.
+- **Routes:** the existing hand-set and clear routes reduced to validation plus a service call;
+  the tombstone reachable so it is end-to-end testable. Contracts unchanged, so the shipped FE
+  keeps working.
+- **Tests (red first):** the resurrection pin; hash canonicality including the numeric, array,
+  unit and provenance-exclusion cases; fan-out across copies; conflict once per code and never for
+  a tombstone; status precedence; both boost cases; the listener backstop; and the first route
+  tests this module has ever had.
+- **DoD note for the reviewer:** gate 2 (backfill) binds on exactly one artifact here, the policy
+  row, satisfied by the idempotent seed. No column is added to `product_specifications`. Gate 3
+  (permissions) does not bind - no new slug.
+
+### PR 2 - Editable table + pills (Phase 1 first)
+
+- **Phase 1 (mock, no backend, no tests):** the `spec-table/` component trio built props-driven
+  against fixtures covering every state - derived, flyer, category and authored values, a
+  tombstoned key, an open conflict, an enum key, a numeric key with a unit, a boolean, a free-text
+  key, and a stored key the registry no longer defines. Verify in a real browser by **sidebar
+  clicks from `/`**, never a deep link, at 375px and 1280px. Document the contract at the top of
+  the service file.
+- **Phase 2 (test-first):** `applicable_keys_for_code`, the `similar` endpoint and its server-side
+  guard, the split-by-field `PATCH` permission for add-a-value, the two relaxations and the grant
+  migration; then the frontend off mocks onto react-query hooks. Delete `AddSpecByHand.tsx` rather
+  than leaving it beside the new component.
+- **Deliberate deviation:** the spec table is a **CSS grid, not a `<table>` and not `DataGrid`**.
+  `DataGrid` is the listing pattern - this surface has no pagination, sort, search or selection;
+  it is one record's field list, which is what the same-layout mandate governs. It is also the
+  only layout that survives 375px with an editable value cell. Called out in the PR description.
+- **Carry `FlyerCard` across unchanged.** It is the single easiest thing to tidy up by accident,
+  and doing so would drag PR 4's decisions into this PR.
+
+### PR 3 - Verification model + workbench (Phase 1 first)
+
+- **Phase 1:** the whole workbench against fixtures - all three states, a code with open
+  exceptions, a code with 0 specs and one with 14, a needs-re-verify with a 3-key diff, an empty
+  result. Two fixtures deserve the captain's attention at prototype review: the progress line
+  reads **"0 of 8,812"** on day one, and the needs-re-verify state is unreachable with real data
+  until someone makes the first edit.
+- **Phase 2 (test-first):** the migration and model; the worklist with inline coverage, ordering,
+  filters, summary and pagination; the verify endpoint with row locking, same-transaction hash
+  compare and a distinguishable 409 taxonomy; the exception resolve action and the rebuild
+  carry-forward; the verification block folded into the existing `by-product/{id}` response.
+- **Nav:** a new Master Data leaf. The group already carries the right module key and the backend
+  router is already module-guarded, so **no module-guard change is needed**.
+- **Permissions:** reuse `products.view` / `.edit`. Minting `master_data.spec_verification.*`
+  would ship the feature 403'd to everyone - exactly what happened to the spec registry.
+
+### PR 4 - Prompt box, extraction, flyer discard (Phase 1 first, then a staged migration)
+
+- **Phase 1:** the prompt box and the shared review component against fixtures - a three-kind
+  result, a zero-proposal result, a degraded no-model result, and the error and applying states.
+- **Phase 2 (test-first):** the extract endpoint returning proposals only; the sibling extractor
+  sharing the registry validation helpers plus the scope gate; the `spec_extractor` prompt key
+  with zero declared variables and a hardcoded fallback; the batch apply route; then the staged
+  migration.
+- **Migration runbook** (this is the risky part, and it is a runbook, not a step):
+  1. Verify PR 1's source-keyed boost branch is present. Do not proceed without it.
+  2. `pg_dump --data-only -t product_specifications` as a pre-flight.
+  3. Run the promote migration. Verify the stated before/after counts, and confirm a checksum over
+     `values` is **identical** - that is what proves it moved provenance and nothing else.
+  4. Same deploy: derivation stops reading the flyer, and findability retires.
+  5. Schedule and verify the full-catalogue re-derive.
+  6. A later deploy: drop `ProductFlyerText`, after its own `pg_dump`.
+  Steps 1-4 are revertible. Step 6 is not.
+
+---
+
+## Reuse (no new one-offs)
+
+`lib/status-pill.ts`, `SearchableSelect`/`SearchableMultiSelect`, `ConfirmDeleteDialog`,
+`DataGrid` (worklist only), `extractApiError`, `buildDataGridParams`, the mutation-hook factories,
+`RecordNavigation` + `useRecordNeighbours` (fallback path), the existing exception card, the
+prompt registry, and derivation's own `_apply_scope` gate rather than a second copy of it.
+
+Two components are built once and consumed twice by design: the editable spec table (product tab
+and review pane, and milestone 2's portal) and the proposal review (extraction and milestone 2's
+supplier acceptance).
+
+---
+
+## Risks
+
+- **The exception dead end (C4)** is the one that would embarrass us on day one: 258 codes
+  unverifiable with no way out. Mitigated by shipping the resolve action in the same PR.
+- **The migration ordering window (C8)** is the one that loses data rather than time. Mitigated by
+  shipping steps 2 and 3 together and by an exact, written downgrade.
+- **The boost branch omission (C3)** is a cross-PR dependency that fails silently and gets blamed
+  on the wrong slice. Mitigated by PR 4 verifying it rather than assuming it.
+- **Alembic head forking.** The repo has a single head today, but PR #57 (dealer kit) carries ten
+  migrations plus a merge revision. Chain onto the committed head and re-check immediately before
+  opening each PR; fix a fork with `alembic merge`, never by editing a landed revision.
+- **Dealer-kit collision: investigated, low.** PR #57 touches no `product_spec*`, `product_flyer*`
+  or findability file, and the bulk flyer importer is **already dead code on main** (zero callers;
+  its source table does not exist in main's migrations). One decision to record rather than a code
+  conflict: **flyer readings feed the dealer kit's brochure and no longer feed the spec engine; a
+  flyer reaches specs by a person pasting a card into the prompt box.** Without that written down,
+  a future dealer-kit slice re-wires them and reintroduces the second source of truth this
+  milestone exists to remove.
+- **Phantom invalidations** if the canonical hash is wrong - 18,403 numeric and 408 array values
+  are live traps, and the symptom (everything permanently needs-re-verify) looks like a broken
+  feature rather than a hashing bug.
+- **A unit change in the registry invalidates every verification carrying that key**,
+  catalogue-wide. Arguably correct, definitely rare, and it must be *stated* in the unit editor
+  ("this will require re-verifying N codes") rather than discovered.
+- **Cross-company visibility of a verification.** 25 codes exist in one company and not the other;
+  a stamp from one company's worklist shows on the other's product page. Correct under the code
+  grain, and the one place that grain is visible to a user.
+
+---
+
+## Decisions
+
+### Settled by the captain before planning (built on, not reopened)
+
+`human_source_boost` at 1.5; promote-then-discard for flyer values; three-state value-change
+invalidation; staged supplier submissions; evidence behind a badge; `spec_registry.add` for key
+creation from the product page; an authored value always wins a conflict.
+
+### Settled here, as planner-of-record (all within the design's own "an engineer can settle" list)
+
+- Tombstone stays `absent: true` inside the provenance entry - no migration, and the merge is
+  defensive about the general "authored key, no value" shape anyway.
+- An authored write forces an immediate re-derive of the code, matching today's delete path, so a
+  conflict surfaces in the same click.
+- `status='authored'`, not the documented-but-unused `approved`.
+- The RQ worker gains the missing spec-listener registration, folded in with a loud PR note: the
+  backstop is dishonest without it. It also fixes a pre-existing hole, which is disclosed rather
+  than presented as part of the feature.
+- Verification grain is `product_code`; ordering groups by class; discontinued excluded by
+  default; server pagination over virtualization; coverage computed inline.
+
+### Outstanding - the captain's call at plan review
+
+1. **The workbench deviation (UAC D5).** `PRINCIPLES.md` mandates detail pages carry prev/next
+   `RecordNavigation`; the split-pane workbench deviates deliberately. **Sign-off was NOT
+   obtained.** The standard-owner is the captain (traced through git blame on the mandate), and
+   this was planned autonomously with no human in the loop, so no one could give it. The fallback
+   is fully designed and the model is genuinely indifferent: every endpoint, the table and the
+   schema are unchanged, only the presentation swaps. Measured trade: the fallback is 1.5-2 days
+   cheaper to build and costs 2-3 hours of accumulated user waiting across 8,812 live codes.
+   Recommendation: approve the workbench. Either answer can be taken at review without re-planning
+   anything else.
+2. **The no-`DataGrid` spec table (PR 2).** Worth settling before Phase 1 rather than at review -
+   if a reviewer rejects it late, the slice grows 1-2 days and the inline-edit UX degrades.
+3. **Funding the exception resolve action in PR 3 (C4).** If it is cut, the block must downgrade
+   to a warning with a second confirm. Do not ship the hard block without the escape.
+4. **Whether value near-duplicate checking must also be enforced server-side.** It is client-side
+   as planned, which protects the UI and nothing else. Key creation is guarded server-side because
+   keys are catalogue-wide and milestone 2 needs it. +0.5 d if wanted for values too.
+
+---
+
+## Filed separately
+
+**Issue #139** - the `product_spec` embedding queue has a consumer and no producer;
+`enqueue_spec_embedding` has zero callers monorepo-wide, and `product_spec` has zero rows in both
+`embedding_queue` and `embedding_documents` while the neighbouring `product` type has 11,401
+documents. Semantic spec search has never been fed. **This predates all of this work** and hand
+edits will not move it, but it will be blamed on this milestone the first time someone edits a
+spec and semantic search does not move. Not fixed here. The cheapest time to fix it is right after
+PR 1, when `apply_spec_values` gives it a single correct call site.
+
+## Follow-ups this PR deliberately does not take
+
+- New domain vocabulary (authored value, tombstone, values hash, party, needs-re-verify) has no
+  glossary entry; `CONTEXT.md` covers no spec terms at all today. This PR touches only
+  `documentation/plans/master-data/`, so the glossary and any ADR are a follow-up.
+- Converting the master spec list's hand-rolled table to `DataGrid` - pre-existing debt, wrong
+  blast radius for these PRs.
+- Dropping the findability tables once their surfaces retire.
