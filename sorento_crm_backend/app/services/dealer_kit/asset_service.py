@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 
 from app.models.dealer_kit import Asset
 from app.models.resources import Attachment
+from app.services.company_scope import get_company_scope, resolve_write_company_id
 from app.services.image_thumbnailer import store_thumbnail, thumbnail_key_for
 from app.services.storage_router import (
     cdn_base_url,
@@ -165,6 +166,16 @@ def _persist_asset(
         uploaded_by=user_id,
         uploader_kind="user" if user_id else "system",
         storage_provider=provider,
+        # An attachment is ``__company_shared__``, so the before_insert auto-stamp
+        # SKIPS it and NULL means SHARED - a kit asset uploaded inside one company
+        # would be visible from the other through the generic attachment surfaces,
+        # even though its ``Asset`` row is correctly owned. Stamping through the
+        # same helper the ``Asset`` hook uses keeps the pair in agreement: one
+        # active company -> that company; scope ``None`` (the system principal)
+        # -> the incumbent, which is what the hook stamps too. ``ambiguous=None``
+        # leaves NULL rather than guess, and nothing persists anyway - the
+        # ``Asset`` insert below raises ``company_scope_required`` on the spot.
+        company_id=resolve_write_company_id(get_company_scope(db), ambiguous=None),
     )
     db.add(attachment)
     db.flush()
