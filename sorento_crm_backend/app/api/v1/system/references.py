@@ -1830,18 +1830,29 @@ def resolve_reference_post(
         specs = list(payload.extracted_specs or [])
         free_terms = list(payload.free_terms or [])
 
-        # Reading the sentence with a model costs 2-3 SECONDS on the reply path, so it
-        # is opt-in and it announces itself. `semantic_used` lets the caller tell the
-        # customer why the answer is slow instead of leaving them watching nothing:
-        # the chatbot can say it is looking properly and thank them for waiting.
+        # The sentence is ALWAYS read - this is the same wiring the Product
+        # Specifications preview page uses, which is why raw text "just works"
+        # there. The word-level read (allow_model=False) is deterministic and
+        # free; only the MODEL read costs 2-3 SECONDS on the reply path, so that
+        # half stays behind the caller's flag, and `semantic_used` lets the
+        # caller tell the customer why the answer is slow instead of leaving
+        # them watching nothing.
+        #
+        # Before this ran unconditionally, a caller sending only `query` left
+        # the ranker blind, so n8n rebuilt free_terms from its parser's entities
+        # - a lossy hop that dropped "thickness 1.0mm" before the CRM ever saw
+        # it (live turn 12303548). Raw text in, CRM derives; explicit
+        # extracted_specs/free_terms still win over the derived reading.
         semantic_used = False
         semantic_ms = None
         exclusions: list[dict] = []
-        if payload.understand_phrase and payload.query:
+        if payload.query:
             from app.services.product_spec_understanding import understand_phrase
 
             started = time.monotonic()
-            understanding = understand_phrase(db, payload.query)
+            understanding = understand_phrase(
+                db, payload.query, allow_model=payload.understand_phrase
+            )
             semantic_ms = int((time.monotonic() - started) * 1000)
             semantic_used = understanding.source == "semantic"
             stated = {entry["key"] for entry in specs}
