@@ -796,6 +796,61 @@ def test_all_attachments_succeed_stamps_the_response_clock_and_reports_none_fail
     assert t1.is_responded is True
 
 
+def test_a_storage_failure_is_a_per_file_failure_like_any_other(db):
+    """The per-file contract cannot depend on the failure being an AppException.
+    An upload can die on a botocore ClientError or a corrupt-image error, and
+    that escaping the loop is the exact regression the contract exists to stop:
+    the caption and the earlier files are already with the contact, the response
+    clock never gets stamped, and the caller's retry re-sends what landed."""
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed, source_message_id="wamid.msg-1")
+    service = ConversationSLATrackingService(db)
+
+    def _upload_dies_on_b(*, business_table, business_id, content, filename, mime):
+        if filename == "b.pdf":
+            raise RuntimeError("S3 upload failed: connection reset")
+        return _fake_upload_chat_attachment(
+            business_table=business_table,
+            business_id=business_id,
+            content=content,
+            filename=filename,
+            mime=mime,
+        )
+
+    text_client = _FakeClient()
+    attachment_client = _FakeAttachmentClient()
+    with patch(
+        "app.services.respond_messaging_service.get_window_state", _open_window
+    ), patch(
+        "app.services.respond_chat_template_service.upload_chat_attachment",
+        _upload_dies_on_b,
+    ), patch(
+        "app.services.integration_service.RespondClient",
+        _respond_client_mock(text_client=text_client, attachment_client=attachment_client),
+    ):
+        result = service.send_ticket_message(
+            str(t1.id),
+            text="see attached",
+            files=[
+                (b"a", "a.pdf", "application/pdf"),
+                (b"b", "b.pdf", "application/pdf"),
+                (b"c", "c.pdf", "application/pdf"),
+            ],
+            reply_to_message_id=None,
+            reply_to_excerpt=None,
+            sender_user_id=seed["assignee_id"],
+            sender_name="Agent One",
+        )
+
+    assert result["attachments"]["delivered"] == ["a.pdf"]
+    assert result["attachments"]["failed"]["filename"] == "b.pdf"
+    assert "S3 upload failed" in result["attachments"]["failed"]["error"]
+    assert len(attachment_client.calls) == 1, "nothing after the failure is attempted"
+
+    db.refresh(t1)
+    assert t1.is_responded is True, "the caption and a.pdf reached the contact - must stamp"
+
+
 # --------------------------------------------------------------------------- #
 # FINDING 4 (code review): "Send template" from the ticket drawer posts to the #
 # generic /{id}/conversation/template-message route, which never stamped the   #

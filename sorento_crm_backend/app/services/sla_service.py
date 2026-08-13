@@ -5854,6 +5854,22 @@ class ConversationSLATrackingService:
                     error_message = _detail.get("detail") or _detail.get("message") or str(e)
                     failed = {"filename": filename, "error": str(error_message)}
                     break
+                except Exception as e:  # noqa: BLE001
+                    # The per-file contract cannot depend on the failure being
+                    # an AppException: the upload can die on a botocore
+                    # ClientError or a corrupt-image error, and letting that
+                    # escape is precisely what the contract forbids - the
+                    # caption and files 1..N-1 are already with the contact,
+                    # the response clock would never be stamped, and the
+                    # caller's retry would re-send what already landed.
+                    _module_logger.warning(
+                        "send_ticket_message: attachment %s failed for %s",
+                        filename,
+                        business_id,
+                        exc_info=True,
+                    )
+                    failed = {"filename": filename, "error": str(e) or e.__class__.__name__}
+                    break
                 delivered.append(filename)
 
             if delivered:
