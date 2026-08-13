@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Upload Activity drawer — right-side Sheet, opens via context state.
+ * Upload Activity drawer - right-side Sheet, opens via context state.
  *
  * Single instance mounted near the top nav. Icon → dispatches
  * `setDrawerOpen(true)` to open. On open: force `refetch()` to honour
@@ -15,6 +15,7 @@ import {
   Sheet,
   SheetBody,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
@@ -43,6 +44,13 @@ export function UploadActivityDrawer() {
           <SheetTitle className="p-0 text-base leading-none">
             Upload activity
           </SheetTitle>
+          {/* Radix points the panel's `aria-describedby` at this node. Without it every
+              open logs "Missing `Description` ... for {DialogContent}" and the panel
+              reaches a screen reader as a title with no body. Screen-reader only: the
+              header is one compact row, and on-screen prose is not wanted here. */}
+          <SheetDescription className="sr-only">
+            Recent uploads and imports, newest first.
+          </SheetDescription>
         </SheetHeader>
         <SheetBody className="p-0">
           <ScrollArea className="h-[calc(100vh-12rem)] min-h-[200px]">

@@ -94,9 +94,16 @@ class Customer(Base, CompanyScopedMixin):
         Index("ix_customers_account_owner_user_id", "account_owner_user_id"),
         # Composite uniqueness — see column docstring. Created as a functional
         # UNIQUE INDEX by migration 220 so case + whitespace differences don't
-        # produce silent duplicates.
+        # produce silent duplicates, then re-created WITH company_id by migration
+        # 305: the same code+name legally exists once per company (884 pairs are
+        # held by both Sorento and Mocha today), so the pre-305 global shape would
+        # reject a real row. `products` was updated to its composite at the time
+        # and this one was not, which mattered because a test building its schema
+        # from `Base.metadata.create_all` got the GLOBAL index and failed on data
+        # production accepts. Keep this in step with the live index.
         Index(
-            "uq_customers_code_name_lower",
+            "uq_customers_company_code_name_lower",
+            "company_id",
             func.lower(func.btrim(customer_code)),
             func.lower(func.btrim(customer_name)),
             unique=True,
