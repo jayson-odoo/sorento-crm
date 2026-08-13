@@ -1,8 +1,8 @@
 /**
- * SCM M8 — useMarketProposal (slice E, M8-E5). The unified assistant's "Search
+ * SCM M8 - useMarketProposal (slice E, M8-E5). The unified assistant's "Search
  * market" runs a live scan and returns a CONFIRM-GATED per-line qty proposal; the
  * hook wraps the mutation, forwarding the run id + query/signal to the endpoint.
- * Nothing is written here — the returned lines are proposals the user confirms.
+ * Nothing is written here - the returned lines are proposals the user confirms.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -12,7 +12,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 const getMarketProposal = vi.fn();
 vi.mock('../services/explainerService', () => ({
   getMarketProposal: (...a: unknown[]) => getMarketProposal(...a),
-  // The hook module imports several service fns at load — stub the rest as noops.
+  // The hook module imports several service fns at load - stub the rest as noops.
   askRecommendation: vi.fn(),
   askRunChat: vi.fn(),
   getRecommendationAdvisory: vi.fn(),

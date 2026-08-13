@@ -42,6 +42,16 @@ class EmailOutbox(Base):
 
     coalesce_key = Column(String(255), nullable=True, index=True)
 
+    # An optional document to attach, held as a storage reference rather than bytes: the row is
+    # read on every drain pass and a megabyte of base64 in it would be paid for on each one. The
+    # drainer fetches the object at send time. Nullable, so every existing producer is
+    # unaffected - `send_mime_email` already accepted attachments, the outbox was the one path
+    # that could not pass any, and forking a second SMTP producer to gain that was the
+    # alternative.
+    attachment_filename = Column(String(255), nullable=True)
+    attachment_storage_provider = Column(String(16), nullable=True)
+    attachment_storage_key = Column(String(512), nullable=True)
+
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 

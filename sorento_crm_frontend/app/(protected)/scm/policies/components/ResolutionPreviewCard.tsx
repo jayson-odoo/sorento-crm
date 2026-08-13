@@ -25,7 +25,7 @@ const REASON_LABEL: Record<ResolutionChainLink['reason'], string> = {
   inactive: 'Policy exists but inactive',
 };
 
-/** One rung of the resolution ladder — the winning rung is highlighted. */
+/** One rung of the resolution ladder - the winning rung is highlighted. */
 function ChainRung({ link, isLast }: { link: ResolutionChainLink; isLast: boolean }) {
   return (
     <div className="relative">
@@ -77,10 +77,10 @@ function ChainRung({ link, isLast }: { link: ResolutionChainLink; isLast: boolea
   );
 }
 
-/** Effective values of the winning policy — what the run would actually use. */
+/** Effective values of the winning policy - what the run would actually use. */
 function EffectiveValues({ policy }: { policy: ReorderPolicyRow }) {
   const rows: { label: string; value: string }[] = [
-    { label: 'Scope', value: `${SCOPE_TYPE_LABEL[policy.scope_type]} — ${policy.scope_label}` },
+    { label: 'Scope', value: `${SCOPE_TYPE_LABEL[policy.scope_type]} - ${policy.scope_label}` },
     { label: 'Policy type', value: POLICY_TYPE_LABEL[policy.policy_type] },
     {
       label: 'Safety stock',

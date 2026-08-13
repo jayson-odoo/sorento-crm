@@ -85,7 +85,7 @@ export function SupplierScoringPanel() {
         {!data?.exists && !isLoading ? (
           <Alert>
             <AlertDescription>
-              No scoring policy saved yet — the seeded defaults below are shown. Save to store them.
+              No scoring policy saved yet - the seeded defaults below are shown. Save to store them.
             </AlertDescription>
           </Alert>
         ) : null}
@@ -132,7 +132,7 @@ export function SupplierScoringPanel() {
             >
               <span>Weights total</span>
               <span className="font-semibold tabular-nums">
-                {Number.isFinite(weightSum) ? `${weightSum}%` : '—'}
+                {Number.isFinite(weightSum) ? `${weightSum}%` : '-'}
                 {!sumOk ? ' (must be 100%)' : ''}
               </span>
             </div>

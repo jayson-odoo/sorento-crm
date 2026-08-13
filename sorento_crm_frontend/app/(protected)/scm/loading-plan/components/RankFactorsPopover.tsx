@@ -1,0 +1,67 @@
+'use client';
+
+import { Button } from '@/components/ui/button';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { EM_DASH } from '../../lib/format';
+import type { LoadingPlanLine } from '../../services/fulfilmentService';
+
+/**
+ * Why this line ranked where it did (AC-E7).
+ *
+ * A rank a planner cannot decompose is one they stop trusting the first time it disagrees
+ * with them, so every factor is shown with its weight and its value - including the ones
+ * weighted zero, because "the policy ignores need-by today" is itself the answer to half the
+ * questions this popover gets opened for.
+ */
+
+const FACTOR_LABELS: Record<string, string> = {
+  po_document_sequence: 'Order sequence',
+  demand_class: 'Demand class',
+  need_by_date: 'Needed by',
+  document_age: 'Order age',
+};
+
+function pct(v: number | null): string {
+  return v === null ? EM_DASH : `${Math.round(v * 100)}%`;
+}
+
+export function RankFactorsPopover({ line }: { line: LoadingPlanLine }) {
+  const score = line.rank_score === null ? EM_DASH : line.rank_score.toFixed(2);
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="sm" className="h-7 px-2 tabular-nums">
+          {score}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-72" align="end">
+        <h4 className="text-xs font-semibold">How this line ranked</h4>
+        <table className="mt-2 w-full text-2xs">
+          <thead className="text-muted-foreground">
+            <tr>
+              <th className="text-start font-normal">Factor</th>
+              <th className="text-end font-normal">Weight</th>
+              <th className="text-end font-normal">Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {line.factors.map((f) => (
+              <tr key={f.key} className={f.weight === 0 ? 'text-muted-foreground' : undefined}>
+                <td className="py-0.5">{FACTOR_LABELS[f.key] ?? f.key}</td>
+                <td className="py-0.5 text-end tabular-nums">{f.weight}</td>
+                <td className="py-0.5 text-end tabular-nums">
+                  {f.present ? pct(f.value) : 'not known'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="mt-2 text-2xs text-muted-foreground">
+          Score {score}. A factor with no weight does not move it.
+        </p>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+export default RankFactorsPopover;

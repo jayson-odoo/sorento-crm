@@ -1,5 +1,5 @@
 /**
- * AddEditTopicModal — required-field validation (label + search prompt) and
+ * AddEditTopicModal - required-field validation (label + search prompt) and
  * hydrate-on-edit (an existing topic populates the form).
  */
 import React from 'react';

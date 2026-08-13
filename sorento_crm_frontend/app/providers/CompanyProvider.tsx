@@ -58,8 +58,12 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     queryKey: ['company-my-context'],
     queryFn: getMyCompanyContext,
     enabled: isAuthenticated,
-    staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
+    staleTime: 30 * 1000,
+    // The active company is a SERVER fact on a row several sessions can write (one dev
+    // account, one `last_active_company_id`). A five-minute cache with focus refetching off
+    // is how the header came to name one company while every API call was scoped to
+    // another. Re-read on focus so returning to the tab cannot show a stale company.
+    refetchOnWindowFocus: true,
     retry: 1,
   });
 
@@ -86,12 +90,16 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   // The claim stays as the fallback for the first render after login, before
   // my-context resolves.
   const claimActiveId = context?.active_company_id ?? session?.user?.active_company_id ?? null;
+  // Optimistic switch first, then whatever the backend says.
+  const resolvedActiveId = pendingId ?? claimActiveId;
 
   const activeCompany = useMemo<ActiveCompany | null>(() => {
     if (grants.length === 0) return null;
-    const preferred = pendingId ?? claimActiveId;
-    return grants.find((c) => c.id === preferred) ?? grants[0];
-  }, [grants, pendingId, claimActiveId]);
+    // No `?? grants[0]`. Falling back to whichever company sorted first is how the chip
+    // came to read "Sorento" while the backend was serving Mocha - and an empty screen is
+    // then blamed on the screen. Naming no company is honest; naming the wrong one is not.
+    return grants.find((c) => c.id === resolvedActiveId) ?? null;
+  }, [grants, resolvedActiveId]);
 
   const setActiveCompany = useCallback(
     (companyId: string) => {
@@ -107,8 +115,10 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
           // the token's active_company_id claim over persisted last_active, so a
           // refetch on the OLD token would still be scoped to the previous company.
           await update({ active_company_id: companyId });
-          // Every company-scoped list is now stale — force a refetch under the new
-          // company so the UI reflects the switch without a manual reload.
+          // Every company-scoped list is now stale - force a refetch under the new
+          // company so the UI reflects the switch without a manual reload. my-context
+          // included: it is the source the header now reads, so leaving it cached would
+          // leave the chip on the old company until the next focus.
           await queryClient.invalidateQueries();
           const next = grants.find((c) => c.id === companyId);
           toast.success(next ? `Switched to ${next.name}` : 'Company switched');

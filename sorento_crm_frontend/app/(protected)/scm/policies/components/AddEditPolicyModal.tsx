@@ -68,11 +68,15 @@ interface FormState {
   xyz: string;
   policy_type: PolicyType;
   safety_stock_method: SafetyStockMethod;
-  service_level_pct: string; // 0–100
+  service_level_pct: string; // 0-100
   safety_days: string;
   review_period_days: string;
   lead_time_default_days: string;
   forecast_window_days: string;
+  trajectory_window_retail_months: string;
+  trajectory_window_project_months: string;
+  price_stale_after_days: string;
+  price_movement_threshold_pct: string;
   baseline_source: string;
   spike_handling: string;
   buy_scope: string;
@@ -99,6 +103,11 @@ const EMPTY_FORM: FormState = {
   lead_time_default_days: '14',
   // Engine defaults (mirror reorder_engine.ensure_reorder_policy_defaults).
   forecast_window_days: '90',
+  // Trajectory defaults: retail is stable so a quarter reads it; project takes a year.
+  trajectory_window_retail_months: '3',
+  trajectory_window_project_months: '12',
+  price_stale_after_days: '180',
+  price_movement_threshold_pct: '5',
   baseline_source: 'continuous_only',
   spike_handling: 'committed_only',
   buy_scope: 'network',
@@ -128,6 +137,10 @@ function hydrate(row: ReorderPolicyRow): FormState {
     review_period_days: row.review_period_days != null ? String(row.review_period_days) : '',
     lead_time_default_days: row.lead_time_default_days != null ? String(row.lead_time_default_days) : '',
     forecast_window_days: row.forecast_window_days != null ? String(row.forecast_window_days) : '90',
+    trajectory_window_retail_months: row.trajectory_window_retail_months != null ? String(row.trajectory_window_retail_months) : '3',
+    trajectory_window_project_months: row.trajectory_window_project_months != null ? String(row.trajectory_window_project_months) : '12',
+    price_stale_after_days: row.price_stale_after_days != null ? String(row.price_stale_after_days) : '180',
+    price_movement_threshold_pct: row.price_movement_threshold_pct != null ? String(row.price_movement_threshold_pct) : '5',
     baseline_source: row.baseline_source ?? 'continuous_only',
     spike_handling: row.spike_handling ?? 'committed_only',
     buy_scope: row.buy_scope ?? 'network',
@@ -225,6 +238,10 @@ export function AddEditPolicyModal({
       { key: 'review_period_days', err: 'Must be a positive number of days.' },
       { key: 'lead_time_default_days', err: 'Must be a positive number of days.' },
       { key: 'forecast_window_days', err: 'Must be a positive number of days.' },
+      { key: 'trajectory_window_retail_months', err: 'Must be a positive number of months.' },
+      { key: 'trajectory_window_project_months', err: 'Must be a positive number of months.' },
+      { key: 'price_stale_after_days', err: 'Must be a positive number of days.' },
+      { key: 'price_movement_threshold_pct', err: 'Must be a positive percentage.' },
       { key: 'dead_stock_days', err: 'Must be a positive number of days.' },
       { key: 'overstock_days', err: 'Must be a positive number of days.' },
     ];
@@ -262,6 +279,10 @@ export function AddEditPolicyModal({
       safety_days: numOrNull(form.safety_days),
       review_period_days: form.policy_type === 'periodic_review' ? numOrNull(form.review_period_days) : null,
       forecast_window_days: numOrNull(form.forecast_window_days),
+      trajectory_window_retail_months: numOrNull(form.trajectory_window_retail_months),
+      trajectory_window_project_months: numOrNull(form.trajectory_window_project_months),
+      price_stale_after_days: numOrNull(form.price_stale_after_days),
+      price_movement_threshold_pct: numOrNull(form.price_movement_threshold_pct),
       baseline_source: form.baseline_source || null,
       spike_handling: form.spike_handling || null,
       buy_scope: form.buy_scope || null,
@@ -559,6 +580,63 @@ export function AddEditPolicyModal({
               />
             </Field>
             <Field
+              label="Retail trend window (months)"
+              help="How many months of retail orders decide whether demand is rising or dying off."
+              error={errors.trajectory_window_retail_months}
+            >
+              <Input
+                type="number"
+                min={1}
+                inputMode="numeric"
+                value={form.trajectory_window_retail_months}
+                onChange={(e) => set('trajectory_window_retail_months', e.target.value)}
+                placeholder="e.g. 3"
+              />
+            </Field>
+            <Field
+              label="Project trend window (months)"
+              help="Project demand is erratic, so its window is longer."
+              error={errors.trajectory_window_project_months}
+            >
+              <Input
+                type="number"
+                min={1}
+                inputMode="numeric"
+                value={form.trajectory_window_project_months}
+                onChange={(e) => set('trajectory_window_project_months', e.target.value)}
+                placeholder="e.g. 12"
+              />
+            </Field>
+            <Field
+              label="Price too old after (days)"
+              help="A last purchase older than this gets a re-quote suggestion."
+              error={errors.price_stale_after_days}
+            >
+              <Input
+                type="number"
+                min={1}
+                inputMode="numeric"
+                value={form.price_stale_after_days}
+                onChange={(e) => set('price_stale_after_days', e.target.value)}
+                placeholder="e.g. 180"
+              />
+            </Field>
+            <Field
+              label="Price change worth acting on (%)"
+              help="Flags a moved price, and gates the cheaper-supplier suggestion."
+              error={errors.price_movement_threshold_pct}
+            >
+              <Input
+                type="number"
+                min={0.1}
+                step={0.1}
+                inputMode="decimal"
+                value={form.price_movement_threshold_pct}
+                onChange={(e) => set('price_movement_threshold_pct', e.target.value)}
+                placeholder="e.g. 5"
+              />
+            </Field>
+            <Field
               label="Baseline demand"
               help="Which sales feed the forecast. Continuous demand only excludes one-off spikes; All demand counts everything."
             >
@@ -615,7 +693,7 @@ export function AddEditPolicyModal({
             </Field>
             <Field
               label="Active"
-              help="Inactive policies are ignored by the reorder run — the next-most-specific active policy resolves instead."
+              help="Inactive policies are ignored by the reorder run - the next-most-specific active policy resolves instead."
             >
               <div className="flex h-10 items-center">
                 <Switch checked={form.is_active} onCheckedChange={(v) => set('is_active', v)} />

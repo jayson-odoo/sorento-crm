@@ -5,6 +5,7 @@ SCM operator capability). No UUIDs surfaced — SO by so_number.
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Response, status
@@ -36,10 +37,41 @@ def list_sales_orders(
     query: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     priority: Optional[str] = Query(None),
+    source: Optional[str] = Query(
+        None,
+        description="Where the order came from: inquiry | upload. Omit for all.",
+    ),
+    date_from: Optional[date] = Query(None, description="Earliest order date, inclusive."),
+    date_to: Optional[date] = Query(None, description="Latest order date, inclusive."),
+    customer_code: Optional[str] = Query(
+        None,
+        description="Keep only this customer's orders. By code, which several legal entities "
+                    "can share, so it means all of them.",
+    ),
+    outstanding: bool = Query(
+        False, description="Keep only orders with quantity still owed. Off narrows nothing."
+    ),
     db: Session = Depends(get_db),
     _user: dict = Depends(_READ),
 ):
-    return SalesOrderService(db).list(page, limit, sort, dir, query, status, priority)
+    """The sales-order list.
+
+    `source=inquiry` answers "show me the orders the Order Inquiry sheet created" - a filter
+    on this list rather than a screen of its own, because a second list of the same entity is
+    how two screens start disagreeing about the same order.
+
+    The date range is inclusive of both ends, and `outstanding` reads the same rule the
+    netting engine does (`app.services.scm.demand`) so this screen and the plan cannot
+    disagree about which orders are still owed.
+    """
+    svc = SalesOrderService(db)
+    out = svc.list(
+        page, limit, sort, dir, query, status, priority, source,
+        date_from=date_from, date_to=date_to, customer_code=customer_code,
+        outstanding=outstanding,
+    )
+    out["data"] = svc.with_links(out["data"])
+    return out
 
 
 @router.get("/sales-orders/{so_id}", response_model=SalesOrder)

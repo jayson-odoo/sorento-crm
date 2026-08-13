@@ -1,4 +1,5 @@
 import { MenuItem } from '@/config/types';
+import { isUnderPath } from '@/lib/menu-path-match';
 
 type MenuConfig = MenuItem[];
 
@@ -15,9 +16,8 @@ export const useMenu = (pathname: string): UseMenuReturn => {
   const isActive = (path: string | undefined): boolean => {
     if (path && path === '/') {
       return path === pathname;
-    } else {
-      return !!path && pathname.startsWith(path);
     }
+    return !!path && isUnderPath(path, pathname);
   };
 
   const hasActiveChild = (children: MenuItem[] | undefined): boolean => {
@@ -36,65 +36,44 @@ export const useMenu = (pathname: string): UseMenuReturn => {
     );
   };
 
-  const getCurrentItem = (items: MenuConfig): MenuItem | undefined => {
-    for (const item of items) {
-      if (item.path && isActive(item.path)) {
-        if (item.children && item.children.length > 0) {
-          const childMatch = getCurrentItem(item.children);
-          return childMatch || item;
-        }
-        return item;
-      }
-      if (item.children && item.children.length > 0) {
-        const childMatch = getCurrentItem(item.children);
-        if (childMatch) {
-          return childMatch;
-        }
-      }
-    }
-    return undefined;
-  };
-
+  /**
+   * The most specific match wins, not the first one found.
+   *
+   * A section landing page is a prefix of every page in its section (`/scm` is a prefix of
+   * `/scm/sales-orders`), so first-match-wins named the landing page on every page below it:
+   * the breadcrumb and the highlighted menu entry both pointed somewhere the user was not.
+   */
   const getBreadcrumb = (items: MenuConfig): MenuItem[] => {
-    const findBreadcrumb = (
-      nodes: MenuItem[],
-      breadcrumb: MenuItem[] = [],
-    ): MenuItem[] => {
+    let best: MenuItem[] = [];
+    let bestLength = -1;
+
+    const walk = (nodes: MenuItem[], chain: MenuItem[]): void => {
       for (const item of nodes) {
-        const currentBreadcrumb = [...breadcrumb, item];
-
-        // Check if this item is active
-        if (item.path && isActive(item.path)) {
-          return currentBreadcrumb; // Return the breadcrumb up to this point
+        const currentChain = [...chain, item];
+        if (item.path && isActive(item.path) && item.path.length > bestLength) {
+          best = currentChain;
+          bestLength = item.path.length;
         }
-
-        // If item has children, recurse and check them
         if (item.children && item.children.length > 0) {
-          const childBreadcrumb = findBreadcrumb(
-            item.children,
-            currentBreadcrumb,
-          );
-          if (childBreadcrumb.length > currentBreadcrumb.length) {
-            return childBreadcrumb; // Return the deeper breadcrumb if found
-          }
+          walk(item.children, currentChain);
         }
       }
-      return breadcrumb; // Return current breadcrumb if no match found
     };
 
-    const breadcrumb = findBreadcrumb(items);
-    return breadcrumb.length > 0 ? breadcrumb : [];
+    walk(items, []);
+    return best;
+  };
+
+  const getCurrentItem = (items: MenuConfig): MenuItem | undefined => {
+    const chain = getBreadcrumb(items);
+    return chain.length > 0 ? chain[chain.length - 1] : undefined;
   };
 
   const getChildren = (items: MenuConfig, level: number): MenuConfig | null => {
     const hasActiveChildAtLevel = (items: MenuConfig): boolean => {
       for (const item of items) {
         if (
-          (item.path &&
-            (item.path === pathname ||
-              (item.path !== '/' &&
-                item.path !== '' &&
-                pathname.startsWith(item.path)))) ||
+          (item.path && item.path !== '' && isActive(item.path)) ||
           (item.children && hasActiveChildAtLevel(item.children))
         ) {
           return true;

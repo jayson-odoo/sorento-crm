@@ -18,7 +18,7 @@ import PurchaseOrdersList from './components/PurchaseOrdersList';
 
 export const metadata: Metadata = {
   title: 'Purchase Orders',
-  description: 'Inbound supply — the on-order record feeding net position.',
+  description: 'Inbound supply - the on-order record feeding net position.',
 };
 
 export default function PurchaseOrdersPage() {

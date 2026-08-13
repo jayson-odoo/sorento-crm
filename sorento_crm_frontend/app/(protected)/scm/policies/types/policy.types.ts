@@ -1,11 +1,11 @@
 /**
- * SCM Policy Configuration — types.
+ * SCM Policy Configuration - types.
  *
  * These mirror the Phase-2 backend contract documented at the top of
  * `services/scmPolicyService.ts`. Three policy families feed the reorder engine:
- *   1. reorder_policy       — scoped CRUD, resolved most-specific-active-wins.
- *   2. abc_xyz_policy        — single global classification-threshold row.
- *   3. supplier_scoring_policy — single global supplier-scoring row.
+ *   1. reorder_policy       - scoped CRUD, resolved most-specific-active-wins.
+ *   2. abc_xyz_policy        - single global classification-threshold row.
+ *   3. supplier_scoring_policy - single global supplier-scoring row.
  * Plus a resolution preview that (Phase 2) calls the SAME resolver the run uses.
  *
  * No UUIDs are ever surfaced in the UI: SKU shows `product_code · name`, class
@@ -35,16 +35,24 @@ export interface ReorderPolicyRow {
    *   global         → null
    */
   scope_ref: string | null;
-  /** Human-readable target, no UUID. `—` for global. */
+  /** Human-readable target, no UUID. `-` for global. */
   scope_label: string;
   policy_type: PolicyType;
-  /** Statistical service level 0–1 (exclusive); null unless statistical. */
+  /** Statistical service level 0-1 (exclusive); null unless statistical. */
   service_level: number | null;
   safety_stock_method: SafetyStockMethod;
   /** Buffer days for fixed_days; also the manual SS value carrier. */
   safety_days: number | null;
   review_period_days: number | null;
   forecast_window_days: number | null;
+  /** S13d trajectory windows: months of orders deciding sustaining vs dying off.
+   *  Null = code default (retail 3, project 12). */
+  trajectory_window_retail_months: number | null;
+  trajectory_window_project_months: number | null;
+  /** S13e price-advice thresholds: when a last price is too old to trust, and what
+   *  price difference is worth acting on. Null = code default (180 days, 5%). */
+  price_stale_after_days: number | null;
+  price_movement_threshold_pct: number | null;
   baseline_source: string | null;
   spike_handling: string | null;
   buy_scope: string | null;
@@ -60,20 +68,20 @@ export interface ReorderPolicyRow {
   lead_time_default_days: number | null;
 }
 
-/** Write payload — same as the row minus server-owned id + scope_label. */
+/** Write payload - same as the row minus server-owned id + scope_label. */
 export type ReorderPolicyWrite = Omit<ReorderPolicyRow, 'id' | 'scope_label'>;
 
 /** Global classification thresholds (single active row). */
 export interface AbcXyzPolicy {
-  /** Cumulative-value cut for class A (0–1). */
+  /** Cumulative-value cut for class A (0-1). */
   abc_a_pct: number;
-  /** Cumulative-value cut for class B (0–1); A + B < 1. */
+  /** Cumulative-value cut for class B (0-1); A + B < 1. */
   abc_b_pct: number;
   /** Demand CV ceiling for class X. */
   xyz_x_max: number;
   /** Demand CV ceiling for class Y (X ≤ Y). */
   xyz_y_max: number;
-  /** False when no row exists yet — the panel shows seeded defaults. */
+  /** False when no row exists yet - the panel shows seeded defaults. */
   exists: boolean;
 }
 
@@ -81,9 +89,9 @@ export type AbcXyzWrite = Omit<AbcXyzPolicy, 'exists'>;
 
 /** Global supplier-scoring weights (single active row). */
 export interface SupplierScoringPolicy {
-  /** On-time delivery weight (0–1); delivery + quality = 1. */
+  /** On-time delivery weight (0-1); delivery + quality = 1. */
   delivery_weight: number;
-  /** Quality weight (0–1). */
+  /** Quality weight (0-1). */
   quality_weight: number;
   /** Days a delivery may slip and still count "on time". */
   grace_days: number;
@@ -93,6 +101,15 @@ export interface SupplierScoringPolicy {
 }
 
 export type SupplierScoringWrite = Omit<SupplierScoringPolicy, 'exists'>;
+
+/** The ONE universal planning-mode switch (S1). Reads/writes the GLOBAL
+ *  reorder_policy row's `policy_type`: 'auto' -> reorder_point, 'manual' ->
+ *  reorder_level. Per-product override rows still win over this default. */
+export interface PlanningMode {
+  mode: 'auto' | 'manual';
+}
+
+export type PlanningModeWrite = PlanningMode;
 
 /** Why a scope link did (or did not) win, for the preview teaching surface. */
 export type ResolutionReason =

@@ -168,9 +168,12 @@ def test_confirm_consolidates_one_draft_po_per_supplier(scm_app):
 # AC-M4.6 — on_order excludes a draft; includes it once confirmed (BOTH directions)
 # ===========================================================================
 
-def _on_order(db, product_id, warehouse_id) -> float:
+def _ordered(db, product_id, warehouse_id) -> float:
+    """The PLACED-order figure. `on_order_v` is the SPO allocation now (migration 337), and
+    a PO the decision flow raises has nothing shipped against it, so it would read 0 there
+    whether the flow worked or not."""
     v = db.execute(text(
-        "SELECT on_order FROM scm.on_order_v WHERE product_id = :p AND warehouse_id = :w"
+        "SELECT ordered FROM scm.po_ordered_v WHERE product_id = :p AND warehouse_id = :w"
     ), {"p": product_id, "w": warehouse_id}).scalar()
     return float(v) if v is not None else 0.0
 
@@ -183,17 +186,17 @@ def test_draft_excluded_from_on_order_until_confirmed(scm_app):
     run_id = _run_buys(db, wid_code)
     rec_a = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}[a]
 
-    before = _on_order(db, a, wid)
+    before = _ordered(db, a, wid)
     dsvc.accept_recommendation(db, rec_a["id"], actor="tester")
     db.flush()
     # accept alone stages nothing on-order (no PO yet)
-    assert _on_order(db, a, wid) == before, "a staged accept must NOT appear in on_order_v"
+    assert _ordered(db, a, wid) == before, "a staged accept must NOT appear as ordered"
 
     # confirm decisions → draft PO exists but is still OUTSIDE on_order (M4-D5)
     dsvc.confirm_decisions(db, run_id, ids=None, actor="tester")
     po_id = _po_id_for_rec(db, rec_a["id"])
     assert po_id is not None
-    assert _on_order(db, a, wid) == before, "a draft PO must NOT appear in on_order_v"
+    assert _ordered(db, a, wid) == before, "a draft PO must NOT appear as ordered"
 
     ordered_qty = float(db.execute(text(
         "SELECT qty_ordered FROM purchase_order_lines WHERE purchase_order_id = :id"
@@ -203,7 +206,7 @@ def test_draft_excluded_from_on_order_until_confirmed(scm_app):
     # confirm the DRAFT → active → NOW counts as on_order (M4-D6)
     out = PurchaseOrderService(db).bulk_confirm([po_id], actor="tester")
     assert out["confirmed_count"] == 1
-    assert _on_order(db, a, wid) == before + ordered_qty
+    assert _ordered(db, a, wid) == before + ordered_qty
 
 
 def test_confirm_renumbers_draft_to_canonical_sequential(scm_app):

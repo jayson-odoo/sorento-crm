@@ -19,13 +19,13 @@ function ok(body: unknown) {
 function calledUrl(idx = -1): URL {
   const calls = apiFetch.mock.calls;
   const raw = String(calls[idx < 0 ? calls.length + idx : idx][0]);
-  // Absolute base is irrelevant — we only inspect path + query.
+  // Absolute base is irrelevant - we only inspect path + query.
   return new URL(raw, 'http://x');
 }
 
 beforeEach(() => apiFetch.mockReset());
 
-describe('scmDashboardService — contract param mapping', () => {
+describe('scmDashboardService - contract param mapping', () => {
   it('net-position sends warehouse (comma-joined), health, and product search as query', async () => {
     apiFetch.mockResolvedValue(ok({ data: [], empty: true, pagination: { total: 0, page: 1 } }));
     const filters: ScmFilters = {
@@ -52,7 +52,7 @@ describe('scmDashboardService — contract param mapping', () => {
     // lifecycle scope is always sent so FE↔BE agree on the focused default
     expect(u.searchParams.get('active_status')).toBe('active');
     expect(u.searchParams.get('lifecycle')).toBe('ongoing');
-    // never a repeatable `warehouses` alias — we send `warehouse`
+    // never a repeatable `warehouses` alias - we send `warehouse`
     expect(u.searchParams.get('warehouses')).toBeNull();
   });
 
@@ -70,7 +70,7 @@ describe('scmDashboardService — contract param mapping', () => {
     expect(u.searchParams.get('active_status')).toBe('active');
     expect(u.searchParams.get('lifecycle')).toBe('ongoing');
 
-    // "Show all" widens both — the query must reflect it.
+    // "Show all" widens both - the query must reflect it.
     await getRollups({ ...EMPTY_SCM_FILTERS, activeStatus: 'all', lifecycle: 'all' });
     u = calledUrl();
     expect(u.searchParams.get('active_status')).toBe('all');

@@ -1,5 +1,5 @@
 /**
- * usePolicies — query + mutation hook tests (AC-EDIT-5, AC-STD-2).
+ * usePolicies - query + mutation hook tests (AC-EDIT-5, AC-STD-2).
  *
  * Mocks the feature service so the hooks are exercised in isolation:
  *   - query hooks return the resolved data

@@ -18,6 +18,23 @@ vi.mock('../hooks/useExplainer', () => ({
   useAskRecommendation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
+// The Coverage Timeline panel is react-query-backed too, and its own states are
+// covered in CoverageTimelinePanel.test.tsx. Here we only need to know WHICH row it
+// was asked about, so the stepping test can prove it follows the pager.
+const coverage = vi.hoisted(() => ({
+  useCoverageTimeline: vi.fn(),
+  useAcceptCoverageTransfer: vi.fn(),
+}));
+vi.mock('../hooks/useCoverage', () => coverage);
+coverage.useCoverageTimeline.mockReturnValue({
+  data: undefined,
+  isLoading: false,
+  isError: false,
+  error: null,
+  refetch: vi.fn(),
+});
+coverage.useAcceptCoverageTransfer.mockReturnValue({ mutate: vi.fn(), isPending: false });
+
 // jsdom polyfills for Radix Dialog / Tooltip.
 class ResizeObserverStub {
   observe() {}
@@ -99,7 +116,7 @@ describe('ReorderExplanationDialog', () => {
   it('explains a BUY recommendation with the step-by-step derivation', () => {
     render(<ReorderExplanationDialog rec={rec({})} open onOpenChange={() => {}} />);
 
-    // The old deterministic one-liner headline is gone — the AI summary block is
+    // The old deterministic one-liner headline is gone - the AI summary block is
     // now the sole top-of-dialog narrative (covered in the explainer suite).
 
     // every derivation step is spelled out
@@ -218,6 +235,55 @@ describe('ReorderExplanationDialog', () => {
     expect(onNavigate).toHaveBeenCalledWith(recs[0]);
   });
 
+  it('asks for the STEPPED row when the pager moves, not the row the dialog opened on', () => {
+    const recs = [
+      rec({ id: 'r1', sku: 'SKU-ONE', warehouse_code: 'BRW-BB', reorder_point: 8 }),
+      rec({ id: 'r2', sku: 'SKU-TWO', warehouse_code: 'MWH-IR', reorder_point: 0 }),
+    ];
+    const { rerender } = render(
+      <ReorderExplanationDialog
+        rec={recs[0]}
+        open
+        onOpenChange={() => {}}
+        recs={recs}
+        totalCount={2}
+        pageItemOffset={0}
+        onNavigate={vi.fn()}
+      />,
+    );
+    expect(coverage.useCoverageTimeline).toHaveBeenLastCalledWith(
+      expect.objectContaining({ product_code: 'SKU-ONE', pool_code: 'BRW-BB', floor: 8 }),
+      true,
+    );
+
+    rerender(
+      <ReorderExplanationDialog
+        rec={recs[1]}
+        open
+        onOpenChange={() => {}}
+        recs={recs}
+        totalCount={2}
+        pageItemOffset={0}
+        onNavigate={vi.fn()}
+      />,
+    );
+    expect(coverage.useCoverageTimeline).toHaveBeenLastCalledWith(
+      expect.objectContaining({ product_code: 'SKU-TWO', pool_code: 'MWH-IR', floor: 0 }),
+      true,
+    );
+  });
+
+  it('renders the Coverage timeline section for a DISPOSITION row too, never hides it', () => {
+    render(
+      <ReorderExplanationDialog
+        rec={rec({ type: 'disposition', supplier: null, disposition_action: 'hold' })}
+        open
+        onOpenChange={() => {}}
+      />,
+    );
+    expect(screen.getByText('Coverage timeline')).toBeInTheDocument();
+  });
+
   it('labels the ABC rank factor with the layman term "Value", not "ABC value" (M8-F4)', () => {
     render(
       <ReorderExplanationDialog
@@ -258,5 +324,249 @@ describe('ReorderExplanationDialog', () => {
     );
     expect(screen.getByText(/No supplier is linked to this SKU/i)).toBeInTheDocument();
     expect(screen.getByText('Forecast demand')).toBeInTheDocument(); // derivation still shown
+  });
+});
+
+describe('ReorderExplanationDialog - why this supplier, and where its cost came from', () => {
+  // > "should show the alternative supplier with its cost and why we chosen what we have
+  // >  chose because it is cheaper"
+  //
+  // "Chosen by lowest cost" named the RULE. It never said which supplier was beaten or by
+  // how much, which is the part a buyer is actually checking.
+
+  const cheapest = (over: Partial<ReorderRecommendation> = {}) =>
+    rec({
+      supplier: {
+        supplier_code: 'SUP-ACME',
+        supplier_name: 'Acme Sanitary Sdn Bhd',
+        unit_cost: 8,
+        unit_cost_source: 'last_po',
+        unit_cost_ref: '202606-S0024',
+        unit_cost_at: '2026-06-01',
+        lead_time_days: 30,
+        composite_score: 70,
+        is_primary: false,
+      },
+      alternatives: [
+        {
+          supplier_code: 'SUP-DEAR',
+          supplier_name: 'Kaiping Kaixin',
+          unit_cost: 12,
+          unit_cost_source: 'contract',
+          lead_time_days: 45,
+          composite_score: 90,
+          is_primary: true,
+        },
+      ],
+      supplier_selection: 'lowest_cost',
+      supplier_reason: {
+        basis: 'lowest_cost',
+        runner_up: 'Kaiping Kaixin',
+        runner_up_cost: 12,
+        saving_per_unit: 4,
+      },
+      ...over,
+    });
+
+  it('names the supplier it beat and the saving per unit', () => {
+    render(<ReorderExplanationDialog rec={cheapest()} open onOpenChange={() => {}} />);
+
+    // Cents kept: a per-unit saving of 0.50 rounded to "RM 1" would be a doubling.
+    // "less than the next best", never "under": the earlier wording read as the chosen
+    // price being RM 4.00 AT Kaiping Kaixin, which is the saving mistaken for the price
+    // and the beaten supplier mistaken for the chosen one.
+    expect(
+      screen.getByText(/cheapest.*RM 4\.00 per unit less than the next best, Kaiping Kaixin/i),
+    ).toBeInTheDocument();
+  });
+
+  it('quotes the beaten supplier’s own price, so the subtraction is checkable', () => {
+    render(<ReorderExplanationDialog rec={cheapest()} open onOpenChange={() => {}} />);
+
+    expect(
+      screen.getByText(/less than the next best, Kaiping Kaixin at RM 12\.00/i),
+    ).toBeInTheDocument();
+  });
+
+  it('lists the alternative with its own cost, so the comparison is checkable', () => {
+    render(<ReorderExplanationDialog rec={cheapest()} open onOpenChange={() => {}} />);
+
+    expect(screen.getByText('Kaiping Kaixin')).toBeInTheDocument();
+    expect(screen.getAllByText(/RM 12/).length).toBeGreaterThan(0);
+  });
+
+  it('says the cost is what we last paid, and on which order', () => {
+    // A price we paid and a price somebody typed carry different weight, and the buyer is
+    // entitled to know which one is driving the cash impact.
+    render(<ReorderExplanationDialog rec={cheapest()} open onOpenChange={() => {}} />);
+
+    expect(screen.getByText(/last paid.*202606-S0024/i)).toBeInTheDocument();
+  });
+
+  it('claims no saving when the runner-up has no cost of its own', () => {
+    // The gap to an unpriced supplier is unknowable, not infinite.
+    const r = cheapest({
+      supplier_reason: {
+        basis: 'lowest_cost',
+        runner_up: 'Kaiping Kaixin',
+        runner_up_cost: null,
+        saving_per_unit: null,
+      },
+    });
+    render(<ReorderExplanationDialog rec={r} open onOpenChange={() => {}} />);
+
+    expect(screen.queryByText(/per unit cheaper/i)).not.toBeInTheDocument();
+  });
+
+  it('does not call a lone supplier the cheapest', () => {
+    const r = cheapest({
+      alternatives: [],
+      supplier_reason: { basis: 'only_supplier', runner_up: null, saving_per_unit: null },
+    });
+    render(<ReorderExplanationDialog rec={r} open onOpenChange={() => {}} />);
+
+    expect(screen.getByText(/only supplier linked to this item/i)).toBeInTheDocument();
+    expect(screen.queryByText(/cheapest/i)).not.toBeInTheDocument();
+  });
+
+  it('reads a free item as free, never as missing a cost', () => {
+    // 637 lines in the order book record 0. Free is a price; it funds at zero and plans
+    // like anything else.
+    const r = cheapest({
+      supplier: {
+        supplier_code: 'SUP-ACME',
+        supplier_name: 'Acme Sanitary Sdn Bhd',
+        unit_cost: 0,
+        unit_cost_source: 'last_po',
+        unit_cost_ref: '202606-S0024',
+        lead_time_days: 30,
+        composite_score: 70,
+        is_primary: false,
+      },
+      alternatives: [],
+      supplier_reason: { basis: 'only_supplier', runner_up: null, saving_per_unit: null },
+    });
+    render(<ReorderExplanationDialog rec={r} open onOpenChange={() => {}} />);
+
+    expect(screen.queryByText(/No supplier cost/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('ReorderExplanationDialog - two prices, two currencies', () => {
+  // The purchase-order book is 8438 lines USD against 4186 MYR, and 892 of the 1051 SKUs
+  // with more than one priced supplier have those suppliers in DIFFERENT currencies. So
+  // the popup that explains "we chose this one because it is cheaper" has to say cheaper
+  // IN WHAT, or it is asserting a comparison it did not make.
+
+  const crossCurrency = (over: Partial<ReorderRecommendation> = {}) =>
+    rec({
+      supplier: {
+        supplier_code: 'SUP-USD',
+        supplier_name: 'Acme Sanitary Sdn Bhd',
+        unit_cost: 45,
+        currency: 'USD',
+        unit_cost_base: 198,
+        base_currency: 'MYR',
+        rate_to_base: 4.4,
+        rate_as_of: '2026-08-01',
+        unit_cost_source: 'last_po',
+        unit_cost_ref: '202606-S0024',
+        lead_time_days: 30,
+        composite_score: 70,
+        is_primary: false,
+      },
+      alternatives: [
+        {
+          supplier_code: 'SUP-MYR',
+          supplier_name: 'Kaiping Kaixin',
+          unit_cost: 210,
+          currency: 'MYR',
+          unit_cost_base: 210,
+          base_currency: 'MYR',
+          lead_time_days: 45,
+          composite_score: 90,
+          is_primary: true,
+        },
+      ],
+      supplier_selection: 'lowest_cost',
+      supplier_reason: {
+        basis: 'lowest_cost',
+        runner_up: 'Kaiping Kaixin',
+        runner_up_cost: 210,
+        runner_up_currency: 'MYR',
+        runner_up_cost_base: 210,
+        compared_in: 'MYR',
+        missing_rates: [],
+        saving_per_unit: 12,
+      },
+      ...over,
+    });
+
+  it("shows the chosen supplier's price in the currency it will be paid in", () => {
+    render(<ReorderExplanationDialog rec={crossCurrency()} open onOpenChange={() => {}} />);
+
+    expect(screen.getAllByText(/USD 45\.00/).length).toBeGreaterThan(0);
+    // and never as ringgit, which would be a quarter of the real price
+    expect(screen.queryByText(/^RM 45$/)).not.toBeInTheDocument();
+  });
+
+  it('shows what that price converts to, and at what rate', () => {
+    // Otherwise "USD 45 beat MYR 210" reads as a mistake rather than a conversion.
+    render(<ReorderExplanationDialog rec={crossCurrency()} open onOpenChange={() => {}} />);
+
+    expect(screen.getByText(/RM 198\.00/)).toBeInTheDocument();
+    expect(screen.getByText(/4\.4/)).toBeInTheDocument();
+  });
+
+  it('lists the alternative in its own currency too', () => {
+    render(<ReorderExplanationDialog rec={crossCurrency()} open onOpenChange={() => {}} />);
+
+    expect(screen.getAllByText(/RM 210\.00/).length).toBeGreaterThan(0);
+  });
+
+  it('quotes the saving in the currency the comparison was made in', () => {
+    render(<ReorderExplanationDialog rec={crossCurrency()} open onOpenChange={() => {}} />);
+
+    // In MYR, the currency the ranking happened in - never in the winner's USD, where
+    // "USD 12.00" would understate the gap by a factor of the rate.
+    expect(
+      screen.getByText(/RM 12\.00 per unit less than the next best, Kaiping Kaixin at RM 210\.00/i),
+    ).toBeInTheDocument();
+  });
+
+  it('does not claim a cheapest when no price could be converted', () => {
+    // Two prices in two currencies we hold no rates for cannot be ranked on cost at all.
+    const r = crossCurrency({
+      supplier_reason: {
+        basis: 'no_comparable_cost',
+        runner_up: 'Kaiping Kaixin',
+        missing_rates: ['CNY', 'EUR'],
+        saving_per_unit: null,
+      },
+    });
+    render(<ReorderExplanationDialog rec={r} open onOpenChange={() => {}} />);
+
+    expect(screen.queryByText(/cheapest/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/no exchange rate/i)).toBeInTheDocument();
+  });
+
+  it('names the currency whose rate is missing, so the buyer knows what to add', () => {
+    const r = crossCurrency({
+      supplier_reason: {
+        basis: 'lowest_cost',
+        runner_up: 'Kaiping Kaixin',
+        missing_rates: ['CNY'],
+        saving_per_unit: null,
+      },
+    });
+    render(<ReorderExplanationDialog rec={r} open onOpenChange={() => {}} />);
+
+    expect(screen.getByText(/CNY/)).toBeInTheDocument();
+  });
+
+  it('says nothing about rates when every price converted', () => {
+    render(<ReorderExplanationDialog rec={crossCurrency()} open onOpenChange={() => {}} />);
+
+    expect(screen.queryByText(/no exchange rate/i)).not.toBeInTheDocument();
   });
 });

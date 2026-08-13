@@ -1,12 +1,12 @@
 /**
  * ============================================================================
- * SCM M8 — presentational plan-row types + adapters (Phase-2, real backend)
+ * SCM M8 - presentational plan-row types + adapters (Phase-2, real backend)
  * ============================================================================
  * The M8 planning grid renders a light `PlanRow` shape rather than the full
  * `ReorderRecommendation` so the div-grid, drag, and inline popovers stay lean.
  * These adapters map the REAL run payload (recommendations + disposition rows)
  * onto that shape. The two heavy drills (net breakdown, days-cover demand) are
- * NOT baked onto the row — they're fetched lazily from their own endpoints when
+ * NOT baked onto the row - they're fetched lazily from their own endpoints when
  * a popover opens (see `services/drillService.ts` + `hooks/useDrills.ts`), so
  * the plan loads fast and the frozen numbers are always live.
  *
@@ -23,7 +23,7 @@ export interface PlanRowSupplier {
   lead_time_days: number;
 }
 
-/** Order-qty derivation inputs shown in the order-qty drill (M8-A4) — read off the
+/** Order-qty derivation inputs shown in the order-qty drill (M8-A4) - read off the
  *  recommendation's already-frozen fields, never recomputed on the client. */
 export interface PlanRowOrderQtyInputs {
   safety_stock: number | null;
@@ -50,19 +50,28 @@ export interface PlanRowSupplierOption {
  * to the detail dialog + the decision endpoints so nothing is re-derived.
  */
 export interface M8PlanRow {
-  id: string; // recommendation id — powers explain-net + detail + decisions
+  id: string; // recommendation id - powers explain-net + detail + decisions
   rank: number;
   sku: string;
   product_name: string;
   type: 'buy';
   order_qty: number;
   original_order_qty: number;
+  /** What the SUPPLIER charges, in `currency`. Shown on the row; never summed. */
   unit_cost: number | null;
+  currency: string | null;
+  /**
+   * The same price in the BUDGET's currency. This is the only figure cash is computed
+   * from: the budget is one pot of ringgit and the book prices mostly in dollars, so
+   * multiplying the supplier's own figure understates a buy roughly fourfold.
+   * Null when the price could not be converted, which means no cash figure at all.
+   */
+  unit_cost_base: number | null;
   net: number | null;
   days_cover: number | null;
   /** Frozen average daily demand the engine used to compute `days_cover`
    *  (`net / forecast_daily_demand = days_cover`). Drives the days-cover drill's
-   *  headline avg/day + arithmetic so the equation reconciles exactly — the live
+   *  headline avg/day + arithmetic so the equation reconciles exactly - the live
    *  `explain/demand` recompute (a different window) is evidence-only. */
   forecast_daily_demand: number | null;
   warehouse: string;
@@ -73,14 +82,22 @@ export interface M8PlanRow {
   /** Data-only ids for the days-cover demand drill (never rendered). */
   product_id: string | null;
   warehouse_id: string | null;
-  /** The source recommendation — passed straight to the detail dialog + decisions. */
+  /** The source recommendation - passed straight to the detail dialog + decisions. */
   rec: ReorderRecommendation;
 }
 
-/** Cash impact for a row = live qty × unit cost. null when the row is uncosted. */
-export function m8CashImpact(row: Pick<M8PlanRow, 'order_qty' | 'unit_cost'>): number | null {
-  if (row.unit_cost === null) return null;
-  return row.order_qty * row.unit_cost;
+/**
+ * Cash impact for a row = live qty x the price IN THE BUDGET'S CURRENCY.
+ *
+ * Null when there is no convertible price, whether because nobody has priced the item or
+ * because we hold no rate for the money it is priced in. Both park the row in front of a
+ * human, which is right; a face-value number would quietly fund it at a quarter of cost.
+ */
+export function m8CashImpact(
+  row: Pick<M8PlanRow, 'order_qty' | 'unit_cost' | 'unit_cost_base'>,
+): number | null {
+  if (row.unit_cost_base === null || row.unit_cost_base === undefined) return null;
+  return row.order_qty * row.unit_cost_base;
 }
 
 /** Human warehouse label for a rec (never a UUID); a network rec reads "Network". */
@@ -129,6 +146,13 @@ export function recToPlanRow(rec: ReorderRecommendation): M8PlanRow {
     order_qty: orderQty,
     original_order_qty: orderQty,
     unit_cost: rec.unit_cost ?? null,
+    currency: rec.currency ?? rec.supplier?.currency ?? null,
+    // Prefer the run's own frozen cash figure over re-deriving it: it was computed with
+    // the rate the run used, and re-deriving from today's would explain a decision
+    // nobody made. Falls back to the chosen supplier's converted price.
+    unit_cost_base:
+      rec.supplier?.unit_cost_base ??
+      (rec.cash_impact !== null && rec.order_qty ? rec.cash_impact / rec.order_qty : null),
     net: rec.net_position,
     days_cover: rec.days_of_cover,
     forecast_daily_demand: rec.forecast_daily_demand,
@@ -150,7 +174,7 @@ export function recToPlanRow(rec: ReorderRecommendation): M8PlanRow {
 }
 
 // ---------------------------------------------------------------------------
-// Disposition (Stock allocation) rows — read-only list.
+// Disposition (Stock allocation) rows - read-only list.
 // ---------------------------------------------------------------------------
 
 export type M8DispositionAction = 'discontinue' | 'promo' | 'hold';
@@ -184,7 +208,7 @@ export interface M8DispositionSplit {
   hold: M8DispositionRow[];
 }
 
-/** Split allocation rows into actionable vs FYI hold — drives the grid's two
+/** Split allocation rows into actionable vs FYI hold - drives the grid's two
  *  sections and the tile's actionable-only count (M8-F18). */
 export function splitDispositionRows(rows: M8DispositionRow[]): M8DispositionSplit {
   const actionable: M8DispositionRow[] = [];
@@ -218,7 +242,7 @@ export function recToDispositionRow(rec: ReorderRecommendation): M8DispositionRo
 }
 
 // ---------------------------------------------------------------------------
-// Market-bump proposal line (slice E) — one confirm-gated qty delta.
+// Market-bump proposal line (slice E) - one confirm-gated qty delta.
 // ---------------------------------------------------------------------------
 
 export interface M8ProposalLine {
@@ -229,4 +253,18 @@ export interface M8ProposalLine {
   new_qty: number;
   unit_cost: number;
   reason: string;
+}
+
+/**
+ * A staged decision on a line, as the plan's own vocabulary.
+ *
+ * Lived in the results grid that S11 replaced. Kept here, beside the row model, because it is
+ * a fact about a plan row rather than about any one component that draws it.
+ */
+export type M8RowDecision = 'accepted' | 'rejected' | null;
+
+/** The draft purchase order a confirmed line landed in. */
+export interface RowPoLink {
+  po_number: string;
+  po_id: string | null;
 }

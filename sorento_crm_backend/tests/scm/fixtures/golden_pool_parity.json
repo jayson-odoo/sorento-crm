@@ -1,0 +1,16 @@
+{
+  "_note": "Snapshot of per-warehouse planning taken BEFORE the default scope became pool-aware. Singleton-pool output must stay byte-identical; see ADR-0011's pool-scope amendment.",
+  "solo": [
+    {
+      "days_of_cover": null,
+      "net_position": -35.0,
+      "product": "ZZPARITY-SOLO",
+      "rec_type": "buy",
+      "recommended_qty": 135.5,
+      "reorder_point": 55.5,
+      "rounded_qty": 140.0,
+      "triggered_reason": "reorder_point: net -35 <= ROP 55.5",
+      "warehouse": "ZZPARITY-SOLO"
+    }
+  ]
+}

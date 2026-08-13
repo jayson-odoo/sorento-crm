@@ -21,6 +21,7 @@ from app.models.procurement import (
     Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation,
     PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine,
     ApprovalToken,
+    PurchaseOrderLine,
     ViewToken,
 )
 from app.models.product import Product
@@ -42,6 +43,7 @@ from app.services.error_handler import (
     handle_unprocessable,
     handle_validation_error,
 )
+from app.services.scm.money import BASE_CURRENCY as MONEY_BASE_CURRENCY
 from app.services.document_number import display_document_number, strip_revision_suffix
 from app.services.response_gate import (
     assert_response_write_allowed,
@@ -1475,8 +1477,100 @@ class SPOAllocationService:
         self.db.add(allocation)
         self.db.commit()
         self.db.refresh(allocation)
+        self._capture_incoming_cost(allocation)
         InboundShipmentService(self.db).refresh_shipment_line_statuses(allocation.inbound_shipment_id)
         return allocation
+
+    def _capture_incoming_cost(self, allocation: SPOAllocation) -> None:
+        """Stamp the packing-list cost, in its currency, on the inbound shipment line.
+
+        AC-C3.2. The allocation is the moment the incoming cost becomes a fact about this
+        purchase, so it is captured here rather than left to be reconstructed later.
+
+        The packing-list line IS ``inbound_shipment_lines``, so the cost is already on the
+        row this writes to; the half that is missing is the CURRENCY, which the packing list
+        does not state. It resolves through ``po_line_id`` to the ordered line's currency,
+        and where there is no such source it stays NULL. It is never guessed: a currency
+        invented for a cost silently changes what the variance means.
+
+        The ordered line is only READ (AC-C3.3). Its cost, its currency and its updated_at
+        must come out untouched, because a supplier whose incoming cost drifts above its
+        ordered cost has repriced after we committed, and overwriting the ordered figure
+        destroys the only evidence of that.
+
+        NOTE (external dependency, recorded in PLAN-scm-purchasing-fulfilment): the
+        packing-list ingest cannot supply a cost today -- the extracted product carries
+        product_code and quantity only -- so in production every line takes the uncosted
+        branch below and is logged. The mechanism is correct the day a cost arrives.
+
+        Best-effort: this runs AFTER the allocation has committed, so a failure here must
+        not turn a successful write into a 500 for the caller.
+        """
+        try:
+            line = (
+                self.db.query(InboundShipmentLine)
+                .filter(
+                    InboundShipmentLine.shipment_id == allocation.inbound_shipment_id,
+                    InboundShipmentLine.product_id == allocation.product_id,
+                )
+                .first()
+            )
+            if line is None:
+                # An allocation against a product that is not on the packing list. Real,
+                # and not this function's problem to resolve.
+                return
+
+            if line.unit_cost is None:
+                # Reported, never defaulted. A zero here would read as free goods and would
+                # flow into the variance as a 100% saving.
+                logger.warning(
+                    "SPO allocation %s is written against an uncosted packing-list line "
+                    "(shipment %s, product %s): no incoming cost to capture, so the cost "
+                    "variance against the ordered line is not computable",
+                    allocation.id,
+                    allocation.inbound_shipment_id,
+                    allocation.product_id,
+                )
+                return
+
+            if line.currency:
+                # The packing list stated the unit itself. Nothing to resolve, and the
+                # stated currency is never overwritten by an inferred one.
+                return
+
+            currency = None
+            if allocation.po_line_id:
+                currency = (
+                    self.db.query(PurchaseOrderLine.currency)
+                    .filter(PurchaseOrderLine.id == allocation.po_line_id)
+                    .scalar()
+                )
+
+            if not currency:
+                logger.warning(
+                    "SPO allocation %s captured an incoming cost of %s with no currency "
+                    "(shipment %s, product %s): %s, so the unit stays unknown rather than "
+                    "assumed",
+                    allocation.id,
+                    line.unit_cost,
+                    allocation.inbound_shipment_id,
+                    allocation.product_id,
+                    "the allocation links no PO line"
+                    if not allocation.po_line_id
+                    else "the linked PO line states no currency",
+                )
+                return
+
+            line.currency = currency
+            line.updated_at = datetime.utcnow()
+            self.db.commit()
+        except Exception:  # noqa: BLE001 - best-effort side effect, see docstring
+            logger.warning(
+                "Failed to capture the incoming cost for SPO allocation %s",
+                getattr(allocation, "id", None),
+                exc_info=True,
+            )
+            self.db.rollback()
 
     def upsert_allocation(
         self, allocation_data: SPOAllocationCreate, created_by: str
@@ -1523,6 +1617,10 @@ class SPOAllocationService:
         existing.updated_at = datetime.utcnow()
         self.db.commit()
         self.db.refresh(existing)
+        # The allocation was written, so the incoming cost is re-captured against it
+        # (AC-C3.2). The "unchanged" path above returns before any write and stamps
+        # nothing, because there was no moment of allocation to capture at.
+        self._capture_incoming_cost(existing)
         InboundShipmentService(self.db).refresh_shipment_line_statuses(existing.inbound_shipment_id)
         return ("updated", existing)
 
@@ -4548,6 +4646,25 @@ class ProductSupplierService:
             raise handle_not_found("Product Supplier", product_supplier_id)
         return product_supplier
     
+    @staticmethod
+    def _assert_priced_in_a_currency(unit_cost, currency) -> None:
+        """A price with no currency is read as ringgit everywhere downstream.
+
+        `scm.money.normalize_currency` treats a blank code as the base currency, which is
+        right for rows that predate the book having more than one currency. It is wrong
+        for a price somebody types today: a yuan figure saved with no code is silently
+        ranked, summed and budgeted as if it were ringgit, understating the buy. Nothing
+        later can detect that, because the number looks perfectly valid. So the pairing is
+        required at the point of entry, where the person still knows what they meant.
+        """
+        if unit_cost is None:
+            return
+        if not (currency or "").strip():
+            raise handle_validation_error(
+                "Enter the currency this price is in. A price with no currency is read as "
+                f"{MONEY_BASE_CURRENCY}, which would understate the cost if it is not."
+            )
+
     def create_product_supplier(self, product_supplier_data: ProductSupplierCreate):
         """Create a new product supplier relationship."""
         # Check if relationship already exists
@@ -4557,8 +4674,16 @@ class ProductSupplierService:
         ).first()
         if existing:
             raise handle_conflict("Product supplier relationship already exists.")
-        
-        product_supplier = ProductSupplier(**product_supplier_data.model_dump())
+
+        self._assert_priced_in_a_currency(
+            product_supplier_data.unit_cost, product_supplier_data.currency
+        )
+        # exclude_none, not a plain dump: `is_primary_supplier` is NOT NULL with a column
+        # default, so passing the unset field through as an explicit None would insert NULL
+        # and fail. Every other field is nullable, where omitted and null mean the same.
+        product_supplier = ProductSupplier(
+            **product_supplier_data.model_dump(exclude_none=True)
+        )
         self.db.add(product_supplier)
         self.db.commit()
         self.db.refresh(product_supplier)
@@ -4573,11 +4698,21 @@ class ProductSupplierService:
     def update_product_supplier(self, product_supplier_id: str, product_supplier_data: ProductSupplierUpdate):
         """Update a product supplier relationship."""
         product_supplier = self.get_product_supplier(product_supplier_id)
-        
+
         update_data = product_supplier_data.model_dump(exclude_unset=True)
+        # Check the MERGED row, not the patch: setting only a price on a row whose currency
+        # is blank is exactly the case the rule exists for, and the patch alone cannot see it.
+        self._assert_priced_in_a_currency(
+            update_data.get("unit_cost", product_supplier.unit_cost),
+            update_data.get("currency", product_supplier.currency),
+        )
         for key, value in update_data.items():
+            # Same NOT NULL column as on create: an explicit null for the primary flag is
+            # not a value, so leave the row's own.
+            if key == "is_primary_supplier" and value is None:
+                continue
             setattr(product_supplier, key, value)
-        
+
         self.db.commit()
         self.db.refresh(product_supplier)
         

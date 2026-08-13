@@ -49,7 +49,7 @@ import { DemandTrendLine } from './DemandTrendLine';
 import { WarehouseBreakdownTable } from './WarehouseBreakdownTable';
 
 /** Right-aligned tabular numeric header + cell classes (the "type signature").
- *  `whitespace-nowrap` keeps numerics — money especially — on a single line
+ *  `whitespace-nowrap` keeps numerics - money especially - on a single line
  *  (per the no-wrap-on-numerics rule); columns are sized to fit. */
 const NUM = {
   headerClassName: 'text-right',
@@ -60,7 +60,7 @@ const NUM = {
 type M2Row = NetPositionRow & { _doc_infinite: boolean };
 
 /** ∞ days-of-cover = there is stock (net position > 0) but no forward demand, so
- *  the cover never runs out. Deficits (net < 0) render "—", not ∞. */
+ *  the cover never runs out. Deficits (net < 0) render "-", not ∞. */
 function docInfinite(row: NetPositionRow): boolean {
   return (row.avg_daily_demand === null || row.avg_daily_demand === 0) && row.net_position > 0;
 }
@@ -100,7 +100,7 @@ export function ProductPerspectiveGrid({
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [filters]);
 
-  // Real analytics rows — only derive the ∞ days-of-cover flag for rendering.
+  // Real analytics rows - only derive the ∞ days-of-cover flag for rendering.
   const rows = useMemo<M2Row[]>(
     () => (data?.data ?? []).map((r) => ({ ...r, _doc_infinite: docInfinite(r) })),
     [data],
@@ -140,7 +140,7 @@ export function ProductPerspectiveGrid({
         meta: {
           expandedContent: (row: M2Row) => (
             <>
-              {/* Real 12-month DO-outflow trend, fetched on expand — above the
+              {/* Real 12-month DO-outflow trend, fetched on expand - above the
                   per-warehouse breakdown. Product view aggregates warehouses. */}
               <DemandTrendLine
                 className="border-b border-border/60 bg-muted/30 px-4 pb-2 pt-3"
@@ -284,7 +284,7 @@ export function ProductPerspectiveGrid({
       },
       {
         // Column header is plain-language "Value"; the underlying field stays
-        // `abc_class` (A/B/C) — see lib/health display maps.
+        // `abc_class` (A/B/C) - see lib/health display maps.
         id: 'abc_class',
         header: ({ column }) => <DataGridColumnHeader title="Value" column={column} />,
         cell: ({ row }) => (
@@ -298,7 +298,7 @@ export function ProductPerspectiveGrid({
       },
       {
         // Column header is plain-language "Demand"; underlying field stays
-        // `xyz_class` (X/Y/Z) — see lib/health display maps.
+        // `xyz_class` (X/Y/Z) - see lib/health display maps.
         id: 'xyz_class',
         header: ({ column }) => <DataGridColumnHeader title="Demand" column={column} />,
         cell: ({ row }) => (

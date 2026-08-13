@@ -1,15 +1,15 @@
 /**
  * ============================================================================
- * SCM option lists — real bindings for the filter bar + sales-order form
+ * SCM option lists - real bindings for the filter bar + sales-order form
  * ============================================================================
  * SCM has no dedicated option endpoints, so these reuse existing peer routes
  * (all reachable by an admin):
- *   warehouses  — derived from GET /scm/dashboard/warehouses
- *   suppliers   — derived from GET /scm/dashboard/suppliers
- *   categories  — GET /master-data/product-categories/select (value = id)
- *   customers   — GET /order-management/customers/select (value = customer_code)
- *   products    — GET /master-data/products/select (value = product_code)
- *   order types — GET /lookup/by-binding?table=sales_orders&column=order_type
+ *   warehouses  - derived from GET /scm/dashboard/warehouses
+ *   suppliers   - derived from GET /scm/dashboard/suppliers
+ *   categories  - GET /master-data/product-categories/select (value = id)
+ *   customers   - GET /order-management/customers/select (value = customer_code)
+ *   products    - GET /master-data/products/select (value = product_code)
+ *   order types - GET /lookup/by-binding?table=sales_orders&column=order_type
  *                 (falls back to a sensible static list when no binding exists)
  * ============================================================================
  */
@@ -46,7 +46,7 @@ export async function getCustomerOptions(): Promise<Option[]> {
   const body = (await res.json()) as {
     data: { customer_code: string; customer_name: string; market_segment_code?: string | null }[];
   };
-  // customer_code is not unique in this dataset — dedupe to one option per code.
+  // customer_code is not unique in this dataset - dedupe to one option per code.
   const seen = new Set<string>();
   const out: Option[] = [];
   for (const c of body.data) {
