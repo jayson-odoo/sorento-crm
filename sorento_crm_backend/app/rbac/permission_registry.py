@@ -114,6 +114,7 @@ PERMISSION_REGISTRY.extend(_crud("sla_management", "escalation_logs", "SLA Event
 PERMISSION_REGISTRY.extend([
     {"slug": "sla_management.form_sla_config.view", "name": "View Form SLA Configurations", "description": "View per-form SLA stage configurations (start / respond / resolve trigger transitions, agent + chain)."},
     {"slug": "sla_management.form_sla_config.manage", "name": "Manage Form SLA Configurations", "description": "Create, update, delete per-form SLA stage configurations."},
+    {"slug": "sla_management.form_sla.undo_action", "name": "Undo Form SLA Action", "description": "Reverse a form action after its grace window has closed (voids the stage it opened and reopens the previous one). The in-grace undo needs no permission - it belongs to whoever started the action."},
 ])
 
 # Coverage (SLA task coverage / delegation). Self-service coverage ("I cover for X")
@@ -130,11 +131,15 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "products", "Products"))
 PERMISSION_REGISTRY.append({"slug": "master_data.products.import", "name": "Import Products", "description": "Permission to bulk import products."})
 PERMISSION_REGISTRY.append({"slug": "master_data.products.export", "name": "Export Products", "description": "Permission to export products with dynamic fields."})
 PERMISSION_REGISTRY.append({"slug": "master_data.products.bulk_delete", "name": "Bulk Delete Products", "description": "Permission to bulk delete products."})
+# The spec-search vocabulary. Editing it silently reshapes every future product search
+# for every customer, so it gets its own permission rather than riding on products.edit.
+PERMISSION_REGISTRY.extend(_crud("master_data", "spec_registry", "Spec Registry"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "product_attachments", "Product Attachments"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "product_categories", "Product Categories"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "lookup_sets", "Lookup Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "units_of_measure", "Units of Measure"))
+PERMISSION_REGISTRY.extend(_with_import_export("master_data", "certificates", "Certificates"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_root_causes", "Complaint Root Causes"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_resolutions", "Complaint Resolutions"))
 
@@ -143,6 +148,8 @@ PERMISSION_REGISTRY.extend(_crud("procurement", "suppliers", "Suppliers"))
 PERMISSION_REGISTRY.append({"slug": "procurement.suppliers.export", "name": "Export Suppliers", "description": "Permission to export suppliers with dynamic fields."})
 PERMISSION_REGISTRY.extend(_crud("procurement", "product_suppliers", "Product-Suppliers"))
 PERMISSION_REGISTRY.extend(_crud("procurement", "packing_lists", "Packing Lists"))
+PERMISSION_REGISTRY.append({"slug": "procurement.packing_lists.import_container_status", "name": "Import Container Status", "description": "Permission to import the Container Status workbook onto packing lists."})
+PERMISSION_REGISTRY.append({"slug": "procurement.packing_lists.view_clearance", "name": "View Container Clearance Dates", "description": "See ETA delay, CIDB inspection/approval and gatepass dates. Without it these keys are absent from API responses, not null."})
 PERMISSION_REGISTRY.extend(_crud("procurement", "spo_allocations", "SPO Allocations"))
 PERMISSION_REGISTRY.append({"slug": "procurement.spo_allocations.import", "name": "Import SPO Allocations", "description": "Permission to import SPO allocations."})
 PERMISSION_REGISTRY.extend(_crud("procurement", "grn", "GRN"))
@@ -161,7 +168,13 @@ PERMISSION_REGISTRY.extend([
 PERMISSION_REGISTRY.extend(_crud("procurement", "purchase_requests", "Purchase Requests"))
 PERMISSION_REGISTRY.extend(_crud("procurement", "sponsorship_forms", "Sponsorship Forms"))
 PERMISSION_REGISTRY.extend([
-    {"slug": "procurement.purchase_requests.send_for_approval", "name": "Send purchase request / sponsorship form for approval", "description": "Set request to pending approval and send approval link. Also grants Reject before sending for approval (mandatory reason)."},
+    # TRIAGE (before a decision exists): move a submitted request to pending approval,
+    # or reject it outright. Deliberately separate from `.approve` so a sales admin can
+    # triage without gaining the approver's decision on requests already pending.
+    {"slug": "procurement.purchase_requests.send_for_approval", "name": "Send purchase request / sponsorship form for approval", "description": "Triage a SUBMITTED request: change it to pending approval, or reject it before approval (mandatory reason). Does NOT grant the in-system Approve/Reject decision once a request is pending - that is procurement.purchase_requests.approve."},
+    # DECISION (once pending approval): the approver's in-system Approve / Reject, which
+    # is identical in effect to the emailed approval link.
+    {"slug": "procurement.purchase_requests.approve", "name": "Approve / reject purchase request / sponsorship form", "description": "Approver decision on a request that is PENDING APPROVAL: the in-system Approve / Reject buttons, identical in effect to the emailed approval link (same status transition, notifications, form-SLA event and approval automation)."},
     {"slug": "procurement.purchase_requests.process", "name": "Process purchase request / sponsorship form (CS)", "description": "Customer-service action: mark an approved purchase request or sponsorship form as processed by CS (status='processed_by_cs'; closes the customer-service SLA stage)."},
     {"slug": "procurement.purchase_requests.close", "name": "Close purchase request / sponsorship form (CS)", "description": "Customer-service action: close an approved purchase request or sponsorship form that can't be fulfilled (status='closed'; closes the customer-service SLA stage). Separate from Process so it can be granted independently."},
     # PR + SF share the router AND the detail component, so they share one void slug
@@ -393,6 +406,42 @@ PERMISSION_REGISTRY.extend([
             "Create, edit, and delete statuses and transitions, and migrate records "
             "between statuses."
         ),
+    },
+])
+
+
+# SCM (supply chain) — these five were previously created ONLY by migration 274's data
+# seed. Any database built the way CI and `scripts/bootstrap_env` build one (create_all
+# from the ORM, seed reference data, stamp alembic at head) never executes that seed, so
+# the slugs did not exist and every SCM route answered 403 "Permission required:
+# scm.dashboard.view". Declaring them here is what makes them real on a fresh database;
+# migration 274 stays as the path for databases that were already migrated. `sync_permissions`
+# skips slugs that exist, so the two paths cannot conflict.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "scm.dashboard.view",
+        "name": "View SCM dashboard",
+        "description": "View the supply-chain / reorder dashboard and position views.",
+    },
+    {
+        "slug": "scm.reorder.run",
+        "name": "Run reorder engine",
+        "description": "Trigger a reorder run that produces recommendations.",
+    },
+    {
+        "slug": "scm.recommendation.manage",
+        "name": "Manage reorder recommendations",
+        "description": "Review, override, approve, or reject reorder recommendations.",
+    },
+    {
+        "slug": "scm.policy.manage",
+        "name": "Manage reorder policies",
+        "description": "Create, update, and delete reorder / scoring / demand policies.",
+    },
+    {
+        "slug": "scm.config.manage",
+        "name": "Manage SCM configuration",
+        "description": "Manage SCM module configuration, budgets, and reason vocabularies.",
     },
 ])
 

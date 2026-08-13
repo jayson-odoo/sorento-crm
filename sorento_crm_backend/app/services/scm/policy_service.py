@@ -82,6 +82,8 @@ _ROW_SELECT = """
            rp.forecast_window_days, rp.baseline_source, rp.spike_handling, rp.buy_scope,
            rp.dead_stock_days, rp.overstock_days, rp.min_override, rp.max_override,
            rp.factor_toggles, rp.is_active, rp.priority,
+           rp.trajectory_window_retail_months, rp.trajectory_window_project_months,
+           rp.price_stale_after_days, rp.price_movement_threshold_pct,
            p.product_code, p.product_name, pc.category_name, pc.category_code
     FROM scm.reorder_policy rp
     LEFT JOIN products p
@@ -140,6 +142,11 @@ def _serialize(m) -> dict:
         "is_active": bool(m["is_active"]),
         "supplier_selection": toggles["supplier_selection"],
         "lead_time_default_days": _i(toggles["lead_time_default_days"]),
+        # Both in BOTH manual builders (select + dict), or the FE never sees a saved value.
+        "trajectory_window_retail_months": _i(m["trajectory_window_retail_months"]),
+        "trajectory_window_project_months": _i(m["trajectory_window_project_months"]),
+        "price_stale_after_days": _i(m["price_stale_after_days"]),
+        "price_movement_threshold_pct": _f(m["price_movement_threshold_pct"]),
     }
 
 
@@ -248,6 +255,10 @@ def _insert_params(body: ReorderPolicyWrite) -> dict:
         "overstock_days": body.overstock_days, "min_override": body.min_override,
         "max_override": body.max_override, "is_active": body.is_active,
         "priority": body.priority, "toggles": json.dumps(toggles),
+        "trajectory_window_retail_months": body.trajectory_window_retail_months,
+        "trajectory_window_project_months": body.trajectory_window_project_months,
+        "price_stale_after_days": body.price_stale_after_days,
+        "price_movement_threshold_pct": body.price_movement_threshold_pct,
     }
 
 
@@ -263,12 +274,16 @@ def create_policy(db: Session, body: ReorderPolicyWrite) -> dict:
         "(id, scope_type, scope_ref, policy_type, service_level, safety_stock_method, "
         " safety_days, review_period_days, forecast_window_days, baseline_source, "
         " spike_handling, buy_scope, dead_stock_days, overstock_days, min_override, "
-        " max_override, factor_toggles, is_active, priority, source_system, source_ref, "
-        " created_at, updated_at) "
+        " max_override, factor_toggles, is_active, priority, "
+        " trajectory_window_retail_months, trajectory_window_project_months, "
+        " price_stale_after_days, price_movement_threshold_pct, "
+        " source_system, source_ref, created_at, updated_at) "
         "VALUES (:id, :scope_type, :scope_ref, :policy_type, :service_level, "
         " :safety_stock_method, :safety_days, :review_period_days, :forecast_window_days, "
         " :baseline_source, :spike_handling, :buy_scope, :dead_stock_days, :overstock_days, "
         " :min_override, :max_override, CAST(:toggles AS jsonb), :is_active, :priority, "
+        " :trajectory_window_retail_months, :trajectory_window_project_months, "
+        " :price_stale_after_days, :price_movement_threshold_pct, "
         " 'manual', 'ui', now(), now())"
     ), params)
     db.commit()
@@ -302,6 +317,10 @@ def update_policy(db: Session, policy_id: str, body: ReorderPolicyWrite) -> dict
         "dead_stock_days=:dead_stock_days, overstock_days=:overstock_days, "
         "min_override=:min_override, max_override=:max_override, "
         "factor_toggles=CAST(:toggles AS jsonb), is_active=:is_active, priority=:priority, "
+        "trajectory_window_retail_months=:trajectory_window_retail_months, "
+        "trajectory_window_project_months=:trajectory_window_project_months, "
+        "price_stale_after_days=:price_stale_after_days, "
+        "price_movement_threshold_pct=:price_movement_threshold_pct, "
         "updated_at=now() WHERE id=:id"
     ), params)
     db.commit()

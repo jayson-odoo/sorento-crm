@@ -14,10 +14,16 @@ import base64
 import logging
 import mimetypes
 import os
+from datetime import datetime, timezone
 from html import escape
-from typing import Optional
+from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
+
+# The timezone every date in this system means (same constant as
+# certificate_service._MY_TZ).
+_MY_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 
 _IMAGE_MIME_PREFIX = "image/"
 # Fallback when the stored mime_type is missing/generic (e.g. WhatsApp .jpeg
@@ -28,6 +34,36 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".heic", ".heif
 
 class PDFRenderingUnavailable(RuntimeError):
     """Raised when WeasyPrint cannot render (native libs missing)."""
+
+
+def in_malaysia(value: Any) -> Any:
+    """A stored timestamp as the wall clock the rest of the system shows.
+
+    Timestamps are stored NAIVE UTC. A PDF that formats those components raw
+    prints a different day from every other surface for any instant past 16:00
+    UTC, because the frontend runs the identical string through
+    ``formatDateInMalaysia`` (parse as UTC, shift +8): one revision submitted at
+    17:00 UTC would be dated 12/08/2026 on the PDF and 13/08/2026 on the screen
+    and the Excel sheet, and the two documents of ONE version would disagree.
+
+    Only datetimes move. A plain ``date`` carries no instant to convert (a
+    delivery date is the day the contact wrote down), and anything else - free
+    text such as "ASAP" - passes straight through, so this is safe to apply
+    inside a formatter that sees every kind of value.
+    """
+    if isinstance(value, datetime):
+        aware = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+        return aware.astimezone(_MY_TZ).replace(tzinfo=None)
+    return value
+
+
+def today_in_malaysia():
+    """"Today" as the reader's calendar has it, not the server's.
+
+    A "printed <date>" line rendered from ``date.today()`` on a UTC host is a day
+    behind the office from 08:00 Malaysia time onwards.
+    """
+    return datetime.now(_MY_TZ).date()
 
 
 def image_mime(att) -> Optional[str]:

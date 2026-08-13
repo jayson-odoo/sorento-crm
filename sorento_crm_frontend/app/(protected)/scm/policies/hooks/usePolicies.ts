@@ -7,18 +7,21 @@ import {
   deleteReorderPolicy,
   getClassification,
   getClassScopeOptions,
+  getPlanningMode,
   getProductScopeOptions,
   getSupplierScoring,
   getWarehouseScopeOptions,
   listReorderPolicies,
   resolvePolicy,
   saveClassification,
+  savePlanningMode,
   saveSupplierScoring,
   updateReorderPolicy,
   type PolicyListQuery,
 } from '../services/scmPolicyService';
 import type {
   AbcXyzWrite,
+  PlanningModeWrite,
   ReorderPolicyWrite,
   SupplierScoringWrite,
 } from '../types/policy.types';
@@ -26,6 +29,7 @@ import type {
 const REORDER_KEY = ['scm', 'policies', 'reorder'] as const;
 const CLASSIFICATION_KEY = ['scm', 'policies', 'classification'] as const;
 const SUPPLIER_KEY = ['scm', 'policies', 'supplier-scoring'] as const;
+const PLANNING_MODE_KEY = ['scm', 'policies', 'planning-mode'] as const;
 
 const optionOpts = { staleTime: 5 * 60_000, refetchOnWindowFocus: false, retry: 1 } as const;
 
@@ -117,6 +121,29 @@ export function useSaveSupplierScoring() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: SUPPLIER_KEY });
       toast.success('Supplier scoring saved');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+// ── Planning mode (single global switch, S1) ────────────────────────────────
+
+export function usePlanningMode() {
+  return useQuery({
+    queryKey: PLANNING_MODE_KEY,
+    queryFn: getPlanningMode,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
+export function useSavePlanningMode() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: PlanningModeWrite) => savePlanningMode(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: PLANNING_MODE_KEY });
+      toast.success('Planning mode saved - applies from the next run');
     },
     onError: (e: Error) => toast.error(e.message),
   });

@@ -105,7 +105,36 @@ async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content=content,
+        headers=_cors_headers_for(request),
     )
+
+
+def _cors_headers_for(request: Request) -> dict:
+    """The CORS headers this response would have got if it had come back normally.
+
+    Starlette runs `Exception` handlers in `ServerErrorMiddleware`, which sits OUTSIDE the
+    user middleware stack - so `CORSMiddleware` never sees a 500 raised from a route and the
+    response goes back with no `Access-Control-Allow-Origin`. The browser then refuses to
+    read it and reports `TypeError: Failed to fetch`, which looks like the network died.
+
+    The cost is not cosmetic: a real, logged, diagnosable 500 (a unique-constraint violation
+    on an upload) reached the user as "Failed to fetch", with the actual cause visible only
+    in the server log. Whoever is looking at the screen deserves the status code at least.
+
+    Echoes the request's own origin, and only when it is on the configured allow-list, so
+    this cannot become a wildcard that leaks a credentialed response to any origin.
+    """
+    origin = request.headers.get("origin")
+    if not origin:
+        return {}
+    allowed = settings.cors_origins_list
+    if origin not in allowed and "*" not in allowed:
+        return {}
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Credentials": "true",
+        "Vary": "Origin",
+    }
 
 # Validation error handler to see detailed errors
 @app.exception_handler(RequestValidationError)
@@ -191,6 +220,14 @@ scheduler = None
 async def startup_event():
     """Startup event: initialize scheduler and audit listeners."""
     global scheduler
+    # Build the storage client once at boot instead of letting the cost land on
+    # the first request this worker happens to serve (see storage_router).
+    try:
+        from app.services.storage_router import warm_backends
+
+        warm_backends()
+    except Exception as e:  # noqa: BLE001 — never block boot on storage config
+        logging.warning("Storage backend warm-up failed: %s", e)
     try:
         from app.services.audit_service import register_audit_listeners
         register_audit_listeners()
@@ -203,6 +240,21 @@ async def startup_event():
         logging.info("Embedding change listeners registered")
     except Exception as e:
         logging.error(f"Failed to register embedding change listeners: {str(e)}", exc_info=True)
+    try:
+        from app.services.product_spec_change_listener import register_product_spec_listeners
+        register_product_spec_listeners()
+        logging.info("Product spec listeners registered")
+    except Exception as e:
+        logging.error(f"Failed to register product spec listeners: {str(e)}", exc_info=True)
+    try:
+        # The status engine ships with an empty registry; every entity arrives from
+        # a module. `inbound_shipment` is the first adopter in this repo, and it
+        # registers a CHECKPOINT TIMELINE rather than a single-status graph - see
+        # the module docstring for why there is no `status_id` column.
+        from app.status_engine.entities.inbound_shipment import register as register_inbound_shipment_status
+        register_inbound_shipment_status()
+    except Exception as e:
+        logging.error(f"Failed to register status entities: {str(e)}", exc_info=True)
     # Register task handlers unconditionally so manual "run now" works on API
     # containers even when scheduler ticks are gated to the worker container.
     try:
@@ -240,6 +292,20 @@ async def startup_event():
             _db.close()
     except Exception as e:
         logging.error(f"Failed to sync MCP tool catalog at startup: {str(e)}", exc_info=True)
+
+    try:
+        # Seeds a denied agent_field_access row per gated field, so an admin opens
+        # the screen to a complete checklist. A gate whose fields never appear
+        # anywhere to tick is indistinguishable from a broken feature.
+        from app.database import SessionLocal
+        from app.services import container_status_bootstrap
+        _db = SessionLocal()
+        try:
+            container_status_bootstrap.run(_db)
+        finally:
+            _db.close()
+    except Exception as e:
+        logging.error(f"Container status bootstrap failed: {str(e)}", exc_info=True)
 
     try:
         from app.database import SessionLocal

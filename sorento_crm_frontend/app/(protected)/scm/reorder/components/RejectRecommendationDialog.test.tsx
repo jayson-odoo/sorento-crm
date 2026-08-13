@@ -1,5 +1,5 @@
 /**
- * SCM M4 Slice B — RejectRecommendationDialog (AC-M4.8).
+ * SCM M4 Slice B - RejectRecommendationDialog (AC-M4.8).
  * Destructive AlertDialog confirm with a REQUIRED reason: submit is blocked +
  * an inline error shows when the reason is empty; a filled reason emits the
  * payload; the destructive button carries the destructive styling.

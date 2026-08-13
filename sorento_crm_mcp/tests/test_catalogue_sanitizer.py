@@ -96,7 +96,10 @@ def test_catalogue_end_to_end_sanitize():
         assert dropped not in row
     assert row["mime_type"] == "application/pdf"
     assert row["access_levels"] == ["sorento_office", "dealer"]
-    assert row["uploaded_at"] == "2026-05-15T03:18:25.004877"
+    # Malaysia wall-clock, naive: the raw row carries 03:18:25 UTC. `uploaded_at`
+    # is an attachment's freshness date (the table has no `updated_at`), so it is
+    # normalized like `updated_at` - see test_updated_at_timezone.
+    assert row["uploaded_at"] == "2026-05-15T11:18:25.004877"
 
 
 def test_non_dict_rows_pass_through():

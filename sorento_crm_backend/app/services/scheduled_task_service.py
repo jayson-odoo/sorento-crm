@@ -7,6 +7,7 @@ from typing import Callable, Optional, Any, Dict
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
+from app.models.base import set_company_scope
 from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
 
 # Module-level UTC handle: update_task() shadows the imported `timezone` with its
@@ -41,6 +42,36 @@ def _task_key(task: ScheduledTask) -> str:
 
 def _run_id(run: ScheduledTaskRun) -> str:
     return str(getattr(run, "id"))
+
+
+def task_company_scope(task: ScheduledTask):
+    """Which companies this task is allowed to touch, from ``metadata.company_ids``.
+
+    Absent / null / empty -> ``None`` = every company, which is exactly what every
+    task did before this existed. An untouched task is therefore bit-for-bit
+    unaffected: the scope only narrows when someone deliberately sets the key.
+
+    Set -> a frozenset, which the ``do_orm_execute`` filter turns into
+    ``company_id IN (...)`` on the 35 ``CompanyScopedMixin`` tables. Users,
+    notifications, system settings and the scheduler's own tables are NOT
+    company-scoped, so a narrowed task still notifies whoever it always did - only
+    the business rows it reads are restricted.
+
+    Accepts a list or a comma string; the admin UI sends a list.
+    """
+    meta = getattr(task, "metadata_", None) or {}
+    if not isinstance(meta, dict):
+        return None
+    raw = meta.get("company_ids")
+    if not raw:
+        return None
+    if isinstance(raw, str):
+        ids = [p.strip() for p in raw.split(",") if p.strip()]
+    else:
+        ids = [str(p).strip() for p in raw if str(p).strip()]
+    # An explicitly empty list means the same as unset. Returning an empty
+    # frozenset here would fail-closed to zero rows and look like a broken job.
+    return frozenset(ids) if ids else None
 
 
 def register_handler(key: str, handler: TaskHandler) -> None:
@@ -328,6 +359,12 @@ def _execute_task_run(
 ) -> None:
     """Run handler in a fresh DB session. Intended to run inside a background thread."""
     bg_db: Session = SessionLocal()
+    # A bare SessionLocal() has NO scope key, and absent == UNSET == fail-closed,
+    # so until this line a manual "Run now" saw ZERO rows in every company-scoped
+    # table while reporting success - the same defect run_due_tasks was fixed for,
+    # never applied to this path. Narrowed to the task's own scope below, once the
+    # task row is loaded.
+    set_company_scope(bg_db, None)
     start = datetime.utcnow()
     try:
         task = bg_db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
@@ -352,6 +389,9 @@ def _execute_task_run(
         if requested_by_user_id:
             setattr(task, "_manual_run_requested_by_user_id", str(requested_by_user_id))
         try:
+            # Same per-task scope as the cron path, so "Run now" and the scheduled
+            # run cannot disagree about which companies the job may touch.
+            set_company_scope(bg_db, task_company_scope(task))
             summary = handler(bg_db, task)
             duration_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
             finish_run(bg_db, run_id, status="success", duration_ms=duration_ms, summary=summary or {})
@@ -456,11 +496,53 @@ def update_task_after_run(
     db.commit()
 
 
+def mark_task_unhandled(db: Session, task_id: str) -> bool:
+    """Record that THIS process cannot run the task, without consuming its tick.
+
+    Deliberately leaves `last_run_at` (and `next_run_at`) alone. `_is_task_due` measures
+    from `last_run_at`, so stamping it here would make a process that cannot run the task
+    suppress it for a whole interval - and when several schedulers share one database
+    (worktrees locally; a rolling deploy where the old image has not been replaced yet),
+    whichever one lacks the handler silently starves the one that has it.
+
+    Observed locally: 441 skipped vs 504 success on `form_action_commit`, i.e. 47% of
+    ticks eaten by two workers running branches without the handler, which stretched a
+    15s grace-window sweep out to 45s+ and looked exactly like "the message never sent".
+
+    Idempotent by content: an orphaned key (handler renamed or removed everywhere)
+    stays due on every heartbeat, and re-writing the same skip mark each tick would
+    cost an UPDATE+COMMIT per process per 10s forever. Returns True only when the
+    mark was actually written, so the caller can throttle its warning the same way.
+    """
+    task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+    if not task:
+        return False
+    reason = "no handler registered in this process"
+    if getattr(task, "last_status", None) == "skipped" and getattr(task, "last_error", None) == reason:
+        return False
+    setattr(task, "last_status", "skipped")
+    setattr(task, "last_error", reason)
+    setattr(task, "updated_at", datetime.utcnow())
+    db.commit()
+    return True
+
+
 def run_due_tasks(db: Session) -> None:
     """
     Find due tasks, run their handlers, persist run logs and update next_run_at.
-    Handlers are looked up by task.key; unknown keys are skipped (run marked skipped).
+    Handlers are looked up by task.key. A key this process has no handler for is left
+    DUE - see `mark_task_unhandled` - so another instance that can run it still will.
+
+    Scheduled tasks are system jobs: they sweep every company, so the session runs
+    system-scoped. The caller (``_scheduled_tasks_heartbeat``) opens a bare
+    ``SessionLocal()``, whose company scope is therefore UNSET — and UNSET fail-closes
+    to ``false()``, so every handler touching a ``CompanyScopedMixin`` table read zero
+    rows. ``promotion_active_window`` ran hourly for months reporting success with
+    ``scanned: 0``, which is why promotions past their ``end_date`` stayed active.
+    Scoping here rather than in the heartbeat covers every caller, and mirrors what
+    the RQ workers already do (``import_tasks`` / ``export_tasks``).
     """
+    set_company_scope(db, None)
     due = get_due_tasks(db)
     if not due:
         return
@@ -468,30 +550,26 @@ def run_due_tasks(db: Session) -> None:
         run = None
         start = datetime.utcnow()
         try:
-            run = create_run(db, _task_id(task), status="started")
+            # Look the handler up BEFORE opening a run. An unhandled task is not a run
+            # that happened - and at a 15s interval, writing one per tick would add
+            # ~5.7k rows a day to `scheduled_task_runs` for work nobody performed.
             handler = TASK_HANDLERS.get(_task_key(task))
             if not handler:
-                finish_run(
-                    db,
-                    _run_id(run),
-                    status="skipped",
-                    duration_ms=int((datetime.utcnow() - start).total_seconds() * 1000),
-                    summary={"reason": "no handler registered"},
-                )
-                update_task_after_run(
-                    db,
-                    _task_id(task),
-                    last_status="skipped",
-                    last_error=None,
-                    summary={"reason": "no handler registered"},
-                    next_run_at=compute_next_run(
-                        *_task_schedule_args(task),
-                        start,
-                    ),
-                )
-                logger.warning("Scheduled task %s has no registered handler", _task_key(task))
+                if mark_task_unhandled(db, _task_id(task)):
+                    logger.warning(
+                        "Scheduled task %s has no registered handler in this process; "
+                        "leaving it due for one that has.",
+                        _task_key(task),
+                    )
                 continue
-            summary = handler(db, task)
+            run = create_run(db, _task_id(task), status="started")
+            try:
+                # Per-task company scope. Restored to None afterwards so a narrowed
+                # task cannot leak its scope into the next task in the same sweep.
+                set_company_scope(db, task_company_scope(task))
+                summary = handler(db, task)
+            finally:
+                set_company_scope(db, None)
             duration_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
             finish_run(db, _run_id(run), status="success", duration_ms=duration_ms, summary=summary or {})
             next_run = compute_next_run(

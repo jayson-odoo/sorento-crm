@@ -5,9 +5,11 @@ from app.models.company import Company, UserCompany, RespondContactCompany
 from app.models.user import User, UserRole, UserRoleAssignment, UserPermission, UserRolePermission, SystemLog, SystemSetting, UserQuickAccess, UserListColumnConfig
 from app.models.auth import VerificationToken
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure
+from app.models.product_spec import ProductSpecRegistry, ProductSpecifications, ProductSpecException
 from app.models.order import Order, OrderStatus, Customer, CustomerContact, OrderLine, SalesOrder, SalesOrderLine
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine, PurchaseOrder, PurchaseOrderLine
+from app.models.supplier_notice import SupplierNotice, SupplierNoticeLine
 from app.models.marketing import Promotion, PromotionGroup, PromotionProduct, CampaignType, MarketingCampaign
 from app.models.forms import Form, FormSection, FormField, FormVersion, FormSubmission
 from app.models.workflow_forms import (
@@ -23,6 +25,7 @@ from app.models.entity_attachment import EntityAttachmentLink
 from app.models.attachment_field_link import AttachmentFieldLink
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog, FormSLAConfig
 from app.models.resources import Attachment, AttachmentType
+from app.models.certificate import Certificate, CertificateRevision, CertificateProduct
 from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondContact, RespondContactCustomer, respond_contact_access_types, MarketSegment, respond_contact_market_segments, team_member_market_segments
 from app.models.respond_workspace import RespondWorkspace
 from app.models.respond_template import (
@@ -35,6 +38,7 @@ from app.models.entity_conversation import EntityConversationMessage
 from app.models.integration import Integration, IntegrationApiKey, IntegrationLog
 from app.models.integration_reference import IntegrationReference
 from app.models.import_log import ImportLog
+from app.models.import_alias import ImportFieldAlias
 from app.models.calendar import PublicHoliday, WorkCalendarConfig
 from app.models.job import ImportJob, ImportJobRow
 from app.models.download import UserDownload, DownloadStatus
@@ -59,7 +63,12 @@ from app.models.ai_prompt import AIPromptVersion, AIPromptLabel
 from app.models.chat_history import ChatHistory
 from app.models.conversation_frame import ConversationFrame
 from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
-from app.models.portal import PortalToken, PortalOtpCode
+from app.models.portal import (
+    PortalToken,
+    PortalOtpCode,
+    PortalFormRevision,
+    PortalRevisionConfig,
+)
 from app.models.user_session import UserSession
 from app.models.activities import ActivityEvent, InternalNote, ActivityMention
 from app.models.tickets import Ticket, TicketWatcher, TicketRespondContactLink
@@ -99,9 +108,12 @@ from app.models.scm import (
     MarketSignal,
     ScmAnalyticsRun,
     MarketResearchRun,
+    PriorityPolicy,
 )
 
 __all__ = [
+    "ImportFieldAlias",
+    "PriorityPolicy",
     "Company",
     "UserCompany",
     "RespondContactCompany",
@@ -131,6 +143,8 @@ __all__ = [
     "StockBatch",
     "StockLedger",
     "Supplier",
+    "SupplierNotice",
+    "SupplierNoticeLine",
     "ProductSupplier",
     "InboundShipment",
     "InboundShipmentLine",
@@ -170,6 +184,9 @@ __all__ = [
     "FormSLAConfig",
     "Attachment",
     "AttachmentType",
+    "Certificate",
+    "CertificateRevision",
+    "CertificateProduct",
     "AccessAgent",
     "ContactAgentAccess",
     "ContactAccessType",
@@ -225,6 +242,8 @@ __all__ = [
     "LookupBinding",
     "PortalToken",
     "PortalOtpCode",
+    "PortalFormRevision",
+    "PortalRevisionConfig",
     "UserSession",
     "ActivityEvent",
     "InternalNote",

@@ -7,9 +7,14 @@ import {
   createReorderRun,
   getAllDispositionRecommendations,
   getBuyRecommendationsForCash,
+  getCoveredRecommendations,
+  getNeedsLevelRecommendations,
+  getRecommendationDemand,
   getReorderRun,
   getRecommendations,
   getTodayRun,
+  getSetAsideDemand,
+  getUnlocatedDemand,
   listReorderRuns,
   type RecommendationQuery,
 } from '../services/reorderRunService';
@@ -51,7 +56,7 @@ export interface ReorderRunController {
   isRunning: boolean;
   isComplete: boolean;
   isFailed: boolean;
-  /** Still `running` past MAX_POLL_MS — polling stopped, run may have stalled/failed. */
+  /** Still `running` past MAX_POLL_MS - polling stopped, run may have stalled/failed. */
   isStalled: boolean;
   error: string | null;
   start: (req: CreateReorderRunRequest) => Promise<void>;
@@ -91,7 +96,7 @@ export function useReorderRun(): ReorderRunController {
     retry: 2,
   });
 
-  // A failed POST has no run to poll — synthesize a failed record so the view can
+  // A failed POST has no run to poll - synthesize a failed record so the view can
   // render the retry card (not just a toast).
   const syntheticFailed: ReorderRun | null = startError
     ? {
@@ -187,6 +192,44 @@ export function useTodayRun() {
     refetchOnWindowFocus: false,
     staleTime: 10_000,
     retry: 1,
+    // A plan is built by a background worker, so the page that opened while one was
+    // running has no other way to learn it finished. Poll only while that is true, and
+    // stop the moment nothing is in flight.
+    refetchInterval: (query) => (query.state.data?.in_progress ? 5_000 : false),
+  });
+}
+
+/** React-query cache key for the unlocated-demand signal. */
+export const unlocatedDemandKey = ['scm', 'reorder', 'unlocated-demand'];
+
+/** React-query cache key for the set-aside project demand signal. */
+export const setAsideDemandKey = ['scm', 'reorder', 'set-aside-demand'];
+
+/**
+ * Project demand no Order Inquiry names, so the plan set it aside (S13b). Like unlocated
+ * demand, a property of the demand book rather than of any one run.
+ */
+export function useSetAsideDemand() {
+  return useQuery({
+    queryKey: setAsideDemandKey,
+    queryFn: () => getSetAsideDemand(),
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
+    retry: 1,
+  });
+}
+
+/**
+ * Demand the plan cannot net because the sales-order line names no warehouse. A property
+ * of the demand book, not of any one run, so it is keyed on its own and survives a re-plan.
+ */
+export function useUnlocatedDemand() {
+  return useQuery({
+    queryKey: unlocatedDemandKey,
+    queryFn: () => getUnlocatedDemand(),
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
+    retry: 1,
   });
 }
 
@@ -209,7 +252,7 @@ export function useReorderRunHistory(page: number, limit: number, enabled = true
 
 /**
  * Load a PAST run's summary (status + roll-up counts) so the tiles + grid can
- * render it WITHOUT re-running. Reuses the poll cache key — revisiting the live
+ * render it WITHOUT re-running. Reuses the poll cache key - revisiting the live
  * run is a cache hit. Only enabled for a completed/failed run being viewed.
  */
 export function useReorderRunDetail(runId: string | null, enabled: boolean) {
@@ -224,11 +267,66 @@ export function useReorderRunDetail(runId: string | null, enabled: boolean) {
 }
 
 /**
- * The FULL buy recommendation set for the M4 cash co-pilot (not paginated —
+ * The FULL buy recommendation set for the M4 cash co-pilot (not paginated -
  * greedy funding runs across the whole ranked list). Fetched once; the budget
  * slider then recomputes funded/deferred live client-side via `computeFunding`,
  * so this does NOT refetch per slider tick.
  */
+/**
+ * Every `covered` row for a run: demand the location's own stock already covers.
+ *
+ * Its own query, never merged into the cash set. A covered row is not a purchase, and
+ * letting it into the funding split would spend budget on something nobody agreed to buy.
+ */
+export function useCoveredRecommendations(runId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['scm', 'reorder', 'covered-recs', runId],
+    queryFn: () => getCoveredRecommendations(runId as string),
+    enabled: enabled && !!runId,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
+/**
+ * Items the plan could not size because nobody has set a reorder level for them.
+ *
+ * Fetched separately from the buys for the same reason covered rows are: they are not
+ * purchases and must not reach the cash split. They still have to be VISIBLE, though - a
+ * plan that drops them reports "nothing to do" for stock that was never set up.
+ */
+export function useNeedsLevelRecommendations(runId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['scm', 'reorder', 'needs-level-recs', runId],
+    queryFn: () => getNeedsLevelRecommendations(runId as string),
+    enabled: enabled && !!runId,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
+/**
+ * The open order lines a planned quantity was built from. Fetched only when the drill is
+ * opened: the row carries the total, and pulling every contributing line for every row on
+ * load is a cost nobody asked for.
+ */
+export function useRecommendationDemand(
+  runId: string | null,
+  recId: string | null,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ['scm', 'reorder', 'rec-demand', runId, recId],
+    queryFn: () => getRecommendationDemand(runId as string, recId as string),
+    enabled: enabled && !!runId && !!recId,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
 export function useBuyRecommendationsForCash(runId: string | null, enabled: boolean) {
   return useQuery({
     queryKey: ['scm', 'reorder', 'cash-recs', runId],
@@ -243,7 +341,7 @@ export function useBuyRecommendationsForCash(runId: string | null, enabled: bool
 /**
  * The FULL disposition (Stock allocation) recommendation set for a run. The M8-F18
  * view needs every row to split actionable (Discontinue / Promote) from FYI hold
- * and to count only the actionable subset on the tile — so it is fetched whole
+ * and to count only the actionable subset on the tile - so it is fetched whole
  * (paged internally past the 1000-row cap) and cached per run, not paginated. Kept
  * enabled in the buy view too so the tile's actionable count is always live.
  */

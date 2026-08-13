@@ -26,7 +26,6 @@ from app.models.access import (
     respond_contact_market_segments,
     team_member_market_segments,
 )
-from app.models.respond_workspace import RespondWorkspace
 from app.services.error_handler import (
     handle_conflict,
     handle_not_found,
@@ -52,28 +51,33 @@ class MarketSegmentService:
     # ------------------------------------------------------------------ resolve
 
     def resolve_contact_segments(
-        self, respond_io_id: str, space_id: Optional[str] = None
+        self,
+        respond_io_id: Optional[str] = None,
+        space_id: Optional[str] = None,
+        phone: Optional[str] = None,
     ) -> set[str]:
         """Return the contact's segment codes (empty set on miss / untagged).
 
         Lenient by design: routing must never break on an unknown contact, so a
         missing contact / workspace mismatch yields ``set()`` (= no filter), never 404.
+
+        ``phone`` is the AC-B1 fallback. n8n sends ``contact_phone_number`` and no
+        ``contact_id``, so without it this filter never ran in production and a
+        phone-only caller silently got an unfiltered pool. Identity resolution is
+        shared with company routing so both axes agree on which contact this is.
         """
-        rid = (respond_io_id or "").strip()
-        if not rid:
-            return set()
-        q = self.db.query(RespondContact).filter(RespondContact.respond_io_id == rid)
-        sid = (space_id or "").strip()
-        if sid:
-            q = q.join(
-                RespondWorkspace, RespondWorkspace.id == RespondContact.workspace_id
-            ).filter(RespondWorkspace.space_id == sid)
-        contact = q.first()
+        from app.services.company_routing_service import find_routing_contact
+
+        contact = find_routing_contact(
+            self.db, contact_id=respond_io_id, space_id=space_id, phone=phone
+        )
         if contact is None:
             logger.info(
-                "market-segment: no contact for respond_io_id=%r space_id=%r -> unfiltered",
-                rid,
-                sid or None,
+                "market-segment: no contact for respond_io_id=%r space_id=%r phone=%r "
+                "-> unfiltered",
+                (respond_io_id or "").strip() or None,
+                (space_id or "").strip() or None,
+                (phone or "").strip() or None,
             )
             return set()
         return {str(s.code) for s in contact.market_segments}

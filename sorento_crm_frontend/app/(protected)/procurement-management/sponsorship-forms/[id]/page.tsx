@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
 import PurchaseRequestDetail from '../../purchase-requests/components/PurchaseRequestDetail';
-import FormDetailWithSLATabs from '@/app/(protected)/sla-management/_shared/FormDetailWithSLATabs';
+import FormDetailTabsWithRevisions from '@/app/(protected)/sla-management/_shared/FormDetailTabsWithRevisions';
 import RecordEntityRegistrar from '@/components/common/RecordEntityRegistrar';
 
 export const metadata: Metadata = {
@@ -31,7 +31,7 @@ export default function SponsorshipFormDetailPage({
           </BreadcrumbItem>
           <BreadcrumbSeparator />
           <BreadcrumbItem>
-            <BreadcrumbLink href="/procurement-management">Procurement</BreadcrumbLink>
+            <BreadcrumbPage>Project Sales Admin</BreadcrumbPage>
           </BreadcrumbItem>
           <BreadcrumbSeparator />
           <BreadcrumbItem>
@@ -59,12 +59,16 @@ async function SponsorshipFormDetailWrapper({
 }) {
   const { id } = await params;
   return (
-    <FormDetailWithSLATabs sourceEntityType="sponsorship_form" sourceEntityId={id}>
+    <FormDetailTabsWithRevisions
+      sourceEntityType="sponsorship_form"
+      sourceEntityId={id}
+      revisionsKind="sponsorship_form"
+    >
       <RecordEntityRegistrar entityType="sponsorship_form" id={id} />
       <PurchaseRequestDetail
         requestId={id}
         basePath="/procurement-management/sponsorship-forms"
       />
-    </FormDetailWithSLATabs>
+    </FormDetailTabsWithRevisions>
   );
 }

@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
 import PurchaseRequestDetail from '../components/PurchaseRequestDetail';
-import FormDetailWithSLATabs from '@/app/(protected)/sla-management/_shared/FormDetailWithSLATabs';
+import FormDetailTabsWithRevisions from '@/app/(protected)/sla-management/_shared/FormDetailTabsWithRevisions';
 import RecordEntityRegistrar from '@/components/common/RecordEntityRegistrar';
 
 export const metadata: Metadata = {
@@ -31,7 +31,7 @@ export default function PurchaseRequestDetailPage({
           </BreadcrumbItem>
           <BreadcrumbSeparator />
           <BreadcrumbItem>
-            <BreadcrumbLink href="/procurement-management">Procurement</BreadcrumbLink>
+            <BreadcrumbPage>Project Sales Admin</BreadcrumbPage>
           </BreadcrumbItem>
           <BreadcrumbSeparator />
           <BreadcrumbItem>
@@ -59,9 +59,13 @@ async function PurchaseRequestDetailWrapper({
 }) {
   const { id } = await params;
   return (
-    <FormDetailWithSLATabs sourceEntityType="purchase_request" sourceEntityId={id}>
+    <FormDetailTabsWithRevisions
+      sourceEntityType="purchase_request"
+      sourceEntityId={id}
+      revisionsKind="purchase_request"
+    >
       <RecordEntityRegistrar entityType="purchase_request" id={id} />
       <PurchaseRequestDetail requestId={id} />
-    </FormDetailWithSLATabs>
+    </FormDetailTabsWithRevisions>
   );
 }

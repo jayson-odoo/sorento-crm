@@ -34,7 +34,10 @@ TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {}
 # Without a narrowing key, short-circuit to empty page (and let the agent know
 # via tool description that the param is required).
 TOOL_REQUIRED_NARROWING_FILTERS: dict[str, tuple[str, ...]] = {
-    "crm_master_product_attachments_list": ("product_ids", "attachment_ids"),
+    # certificate_ids is a narrowing key in its own right. Without it listed
+    # here, "the files for this certificate" short-circuits to an empty page
+    # even though the filter itself works - a silent wrong answer.
+    "crm_master_product_attachments_list": ("product_ids", "attachment_ids", "certificate_ids"),
     "crm_marketing_promotion_products_list": ("promotion_ids", "product_ids"),
     "crm_marketing_promotion_attachments_list": ("promotion_ids", "attachment_ids"),
     "crm_order_management_orders_by_product_list": ("product_ids",),
@@ -56,7 +59,18 @@ TOOL_REQUIRED_NARROWING_FILTERS: dict[str, tuple[str, ...]] = {
     # Global document library: never browse the whole library — require at least
     # one narrower (attachment / directory / type / uploader UUID) or empty page.
     "crm_resource_attachments_list": (
-        "attachment_ids", "directory_id", "attachment_type_id", "uploaded_by",
+        "attachment_ids", "directory_id", "attachment_type_id", "attachment_type_ids",
+        # By NAME as well as by UUID. An agent answering "send me the container
+        # status list" has the document class, not its UUID, and forcing a
+        # lookup first turns one turn into two - or, more often, into an empty
+        # page the agent narrates as "there is no such document".
+        "attachment_type_code", "attachment_type_codes", "uploaded_by",
+        # `contact_id` is deliberately NOT here. It scopes the answer to that
+        # contact's entitlements, which bounds the result to a handful of files -
+        # but a document request has to name a DOCUMENT. A contact-only call
+        # returns everything that contact may have and leaves the caller to pick,
+        # which is a directory listing, not an answer. Asking for nothing must
+        # return nothing.
     ),
 }
 
@@ -114,6 +128,11 @@ TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
     "crm_resource_attachments_catalogue": {"attachment_type_code": "catalogue"},
     # Resource library list is hard-pinned to dealer-downloadable (direct-access)
     # types — it only ever surfaces files flagged is_direct_access.
+    # Deliberately NOT resolve_signed_urls: the tool returns the bare storage key
+    # ("import-sources/<uuid>/Container Status 2026.xlsx") and n8n signs it on the
+    # way out. Signing here would mint a 1-hour URL at list time that expires on
+    # its own schedule, for every row, whether or not the file is ever sent.
+    # A caller that wants a ready-to-open link passes resolve_signed_urls=true.
     "crm_resource_attachments_list": {"direct_access_only": "true"},
 }
 
@@ -565,12 +584,23 @@ def _to_malaysia_iso(value: Any) -> Any:
     return dt.astimezone(_MALAYSIA_TZ).replace(tzinfo=None).isoformat()
 
 
+#: Timestamp keys rewritten to Malaysia wall-clock on every response.
+#:
+#: `uploaded_at` is here because for an attachment it IS the freshness date - the
+#: file is never edited in place, so there is no `updated_at` column on the table
+#: at all. Left in UTC it was wrong twice over: the envelope's `last_updated_at`
+#: reported a UTC instant, and the per-file "Uploaded" line is the DAY of that
+#: instant, so anything uploaded after 16:00 MYT (08:00Z) renders as the previous
+#: date to a Malaysian reader.
+_MALAYSIA_TIME_KEYS = ("updated_at", "uploaded_at")
+
+
 def _normalize_updated_at(value: Any) -> Any:
-    """Recursively rewrite every `updated_at` string to Asia/Kuala_Lumpur ISO 8601.
+    """Recursively rewrite every timestamp in `_MALAYSIA_TIME_KEYS` to Malaysia time.
 
     Applies to every MCP tool response so n8n / the AI assistant render a
-    consistent "last updated" timezone regardless of which tool produced the
-    row. Non-`updated_at` fields are left untouched.
+    consistent timezone regardless of which tool produced the row. Other fields
+    are left untouched.
     """
     if isinstance(value, list):
         return [_normalize_updated_at(item) for item in value]
@@ -578,7 +608,7 @@ def _normalize_updated_at(value: Any) -> Any:
         return value
     out: dict[str, Any] = {}
     for key, raw in value.items():
-        if key == "updated_at":
+        if key in _MALAYSIA_TIME_KEYS:
             out[key] = _to_malaysia_iso(raw)
         elif isinstance(raw, (dict, list)):
             out[key] = _normalize_updated_at(raw)

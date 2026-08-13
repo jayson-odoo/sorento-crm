@@ -10,4 +10,9 @@ export interface AttachmentTypeFormData {
   /** Max attachments of this type per entity row; null = unlimited. */
   max_count_per_entity?: number | null;
   supports_field_linkage?: boolean;
+  triggers_n8n_webhook?: boolean;
+  /** Cert-bearing signal: gates whether an upload also files a certificate. */
+  is_certificate?: boolean;
+  /** Plausibility ceiling for a certificate's validity span; null = no limit. */
+  max_validity_months?: number | null;
 }

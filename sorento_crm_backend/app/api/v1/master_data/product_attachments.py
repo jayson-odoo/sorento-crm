@@ -170,6 +170,14 @@ async def get_product_attachments(
         None,
         description="Canonical AttachmentType UUIDs (csv/JSON/repeated) — narrows to brochure/spec sheet/installation guide/etc.",
     ),
+    certificate_ids: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Canonical Certificate UUIDs (csv/JSON/repeated) — the product↔file rows whose file is a "
+            "filed revision of those certificates. Superseded revisions are included; read "
+            "`certificate.is_current_revision` on each row to tell them apart."
+        ),
+    ),
     product_id: Optional[str] = Query(None, description="Legacy: single product UUID."),
     attachment_id: Optional[str] = Query(None, description="Legacy: single attachment UUID."),
     user_type: Optional[str] = Query(None, description="Legacy single access-level filter."),
@@ -190,6 +198,7 @@ async def get_product_attachments(
             product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
             attachment_ids=parse_uuid_list(attachment_ids, param_name="attachment_ids"),
             attachment_type_ids=parse_uuid_list(attachment_type_ids, param_name="attachment_type_ids"),
+            certificate_ids=parse_uuid_list(certificate_ids, param_name="certificate_ids"),
             query=query,
             user_type=user_type,
             contact_access_codes=None,

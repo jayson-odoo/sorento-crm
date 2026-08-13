@@ -292,10 +292,27 @@ class SalesOrder(Base, CompanyScopedMixin):
     # (when the SO was raised); drives the FE "requested_delivery_date" column.
     requested_delivery_date = Column(Date, nullable=True)
     order_type = Column(String(50), nullable=True)  # lookup code (continuous / spike vocab)
+    # project | retail, resolved from the customer's market segment at import. Belongs to
+    # the DEMAND, not the buyer: the same customer can place both kinds, and fulfilment
+    # priority is decided by this. Nullable because a row whose class cannot be resolved is
+    # rejected at import rather than silently defaulted to retail.
+    demand_class = Column(String(32), nullable=True)
+    # Which feed ORIGINATED this order - 'scm_order_inquiry' when the Order Inquiry sheet
+    # created it. Its own column, never source_system: adoption by the outstanding extract
+    # overwrites source_system to take ownership, and project demand is keyed on origin
+    # (S13b), so reading origin off source_system would delete demand as a side effect of
+    # the handover. Stamped at creation, never rewritten.
+    demand_origin = Column(String(32), nullable=True)
     priority = Column(String(20), nullable=True)
     status = Column(String(50), default="open", nullable=False)
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
+    # The document number in the system this order came from, and free text carried with it.
+    # Both columns already existed on the table and were simply not mapped, so every read
+    # through the ORM silently dropped them - the Order Inquiry feed needs `internal_note` to
+    # keep a project name it cannot resolve to a customer.
+    source_doc_no = Column(String, nullable=True)
+    internal_note = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -324,6 +341,23 @@ class SalesOrderLine(Base, CompanyScopedMixin):
     qty_ordered = Column(Numeric(15, 4), default=0, nullable=False)
     qty_delivered = Column(Numeric(15, 4), default=0, nullable=False)
     priority = Column(String(20), nullable=True)  # inherit from header / override
+    # When this line's quantity must be on hand. PER LINE, not per header: the order
+    # inquiry the business works from states a delivery date per line and one SO routinely
+    # carries several, so the header's requested_delivery_date cannot drive netting.
+    # Without this the Coverage Timeline has no time axis at all (ADR-0011).
+    required_date = Column(Date, nullable=True)
+    # What purchasing should plan for, when that is not simply what is still owed to the
+    # customer. NULL means nobody has said otherwise, so the netting falls back to
+    # `qty_ordered - qty_delivered`. Set by the Order Inquiry feed, which is CS stating the
+    # quantity they want covered; kept apart from `qty_ordered` so a sales-order amendment
+    # and a purchasing decision cannot overwrite one another.
+    qty_required = Column(Numeric(15, 4), nullable=True)
+    # Where this line stands in purchasing. `not_reviewed` (nobody has looked at it yet, and
+    # it still counts as demand), `needs_purchase` (CS says buy it, nothing placed),
+    # `ordered` (a purchase order covers it), `covered` (CS ruled it out).
+    purchasing_status = Column(
+        String(24), default="not_reviewed", server_default="not_reviewed", nullable=False
+    )
     line_status = Column(String(50), default="open", nullable=False)
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)

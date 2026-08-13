@@ -651,7 +651,7 @@ def _svc_for_notify():
 
 def _tier_map(mapping):
     """side_effect for get_tier_team_and_notify: {tier: (team_id, notify) or None}."""
-    def _fn(agent_id, tier, team_set_code=None):
+    def _fn(agent_id, tier, team_set_code=None, *, company_id=None):
         return mapping.get(tier)
     return _fn
 

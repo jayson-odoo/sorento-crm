@@ -1,12 +1,14 @@
 /**
  * Number/currency formatting for the SCM dashboard. Right-aligned tabular
- * figures are the "type signature" of the dashboard — deferred values render as
+ * figures are the "type signature" of the dashboard - deferred values render as
  * an em dash, never a fabricated 0.
  *
  * Phase 1 hard-codes "RM"; Phase 2 will thread the system currency format
  * (`useCurrencyFormat`) through instead.
  */
-export const EM_DASH = '—';
+// A plain hyphen, deliberately. Em-dashes are banned in this codebase's writing and the
+// user does not want to see them in the UI either.
+export const EM_DASH = '-';
 
 const intFmt = new Intl.NumberFormat('en-MY', { maximumFractionDigits: 0 });
 const moneyFmt = new Intl.NumberFormat('en-MY', {
@@ -20,7 +22,7 @@ export function fmtInt(value: number | null | undefined): string {
   return intFmt.format(value);
 }
 
-/** Signed integer — used for net position (deficit shows a leading −). */
+/** Signed integer - used for net position (deficit shows a leading −). */
 export function fmtSigned(value: number | null | undefined): string {
   if (value === null || value === undefined) return EM_DASH;
   const s = intFmt.format(Math.abs(value));
@@ -28,10 +30,42 @@ export function fmtSigned(value: number | null | undefined): string {
   return s;
 }
 
-/** Currency valuation. Deferred/uncosted (null) → em dash. */
+/**
+ * The currency every figure on this dashboard is reported in: valuations, the budget,
+ * cash impact. Mirrors `app.services.scm.money.BASE_CURRENCY` on the backend.
+ */
+export const BASE_CURRENCY = 'MYR';
+
+/** Currency valuation, in the base currency. Deferred/uncosted (null) → em dash. */
 export function fmtMoney(value: number | null | undefined): string {
   if (value === null || value === undefined) return EM_DASH;
   return `RM ${moneyFmt.format(value)}`;
+}
+
+const costFmt = new Intl.NumberFormat('en-MY', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+/**
+ * A price in the SUPPLIER's own currency.
+ *
+ * `fmtMoney` hard-codes RM, and the purchase-order book is 8438 lines USD against 4186
+ * MYR: rendering a USD price as "RM 45" is a wrong number printed as a fact, sitting next
+ * to a purchase order that says otherwise. Cents are kept because a unit price of 4.35 is
+ * not 4.
+ *
+ * A row carrying no currency code predates the book having more than one, so its figure
+ * already meant ringgit and reads as base.
+ */
+export function fmtSupplierCost(
+  value: number | null | undefined,
+  currency: string | null | undefined,
+): string {
+  if (value === null || value === undefined) return EM_DASH;
+  const code = (currency || '').trim().toUpperCase() || BASE_CURRENCY;
+  const label = code === BASE_CURRENCY ? 'RM' : code;
+  return `${label} ${costFmt.format(value)}`;
 }
 
 /** Short relative "days ago" for last-movement; null → em dash. */
@@ -52,7 +86,7 @@ export const INFINITY = '∞';
 
 /**
  * Days-of-cover cell text. `∞` = stock on hand with no demand (never runs out);
- * `—` = nothing meaningful to quote (no demand + no stock, or a deficit).
+ * `-` = nothing meaningful to quote (no demand + no stock, or a deficit).
  */
 export function fmtDoc(days: number | null | undefined, infinite: boolean): string {
   if (infinite) return INFINITY;
@@ -69,7 +103,7 @@ export function fmtDecimal(value: number | null | undefined, dp = 1): string {
   });
 }
 
-/** Percentage from a 0–1 ratio. null → em dash. */
+/** Percentage from a 0-1 ratio. null → em dash. */
 export function fmtPct(ratio: number | null | undefined, dp = 0): string {
   if (ratio === null || ratio === undefined) return EM_DASH;
   return `${(ratio * 100).toLocaleString('en-MY', {
@@ -79,13 +113,28 @@ export function fmtPct(ratio: number | null | undefined, dp = 0): string {
 }
 
 /** Absolute short date (e.g. incoming PO ETA). null → em dash. */
+/**
+ * The one date shape this product uses: `dd/mm/yyyy`.
+ *
+ * Exported so every other SCM formatter (the coverage timeline's day label, the plan
+ * header's run stamp) builds on the SAME parts rather than restating them. Three copies of
+ * "a date" is how one screen came to read `07 Jan 2020` while the rest of the app read
+ * `07/01/2020`, and a reader cannot tell a deliberate difference from an accidental one.
+ *
+ * `en-GB` because it orders day before month, which is what Malaysia writes; `2-digit` on
+ * both because `7/1/2020` is ambiguous to anybody who reads month-first.
+ */
+export const DATE_PARTS = {
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+} as const;
+
+export const DATE_LOCALE = 'en-GB';
+
 export function fmtDate(iso: string | null | undefined): string {
   if (!iso) return EM_DASH;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return EM_DASH;
-  return d.toLocaleDateString('en-MY', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
+  return d.toLocaleDateString(DATE_LOCALE, DATE_PARTS);
 }

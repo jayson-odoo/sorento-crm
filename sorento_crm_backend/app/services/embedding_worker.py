@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import SessionLocal
 from app.models.base import set_company_scope
+from app.models.certificate import Certificate, CertificateProduct
 from app.models.embeddings import EmbeddingQueue, EmbeddingDocument, EmbeddingChunk
 from app.models.product import Product, ProductCategory, Brand
 from app.models.marketing import Promotion
@@ -34,6 +35,8 @@ logger = logging.getLogger(__name__)
 # shared knowledge visible under every scope.
 _SOURCE_MODEL_FOR_COMPANY = {
     "product": Product,
+    # product_spec is keyed on product_id, so the product row carries its company.
+    "product_spec": Product,
     "promotion": Promotion,
     "promotion_product": PromotionProduct,
     "promotion_attachment": PromotionAttachment,
@@ -48,6 +51,7 @@ _SOURCE_MODEL_FOR_COMPANY = {
     "order_line": OrderLine,
     "customer": Customer,
     "transporter": Transporter,
+    "certificate": Certificate,
 }
 
 
@@ -131,6 +135,45 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
             "metadata": {"category": category.category_name if category else None, "brand": brand.brand_name if brand else None},
         }
 
+    if source_type == "product_spec":
+        # A SECOND product source type, deliberately not a replacement for "product".
+        # The existing product body embeds the product code twice, the category code,
+        # and the raw description (which contains OTHER products' codes). Rewriting it
+        # in place would change order-filter fuzzy matching and assistant RAG in the
+        # same commit as a new feature. See documentation/adr/0013.
+        #
+        # The body here is the rendered spec sentence and nothing else: built from spec
+        # VALUES, never from products.description, with code-shaped tokens stripped.
+        # That is what keeps the code-only product resolution rule intact while still
+        # allowing semantic search.
+        from app.models.product_spec import ProductSpecifications
+
+        row = (
+            db.query(ProductSpecifications, Product)
+            .join(Product, Product.id == ProductSpecifications.product_id)
+            .filter(ProductSpecifications.product_id == source_id)
+            .first()
+        )
+        if not row:
+            raise ValueError(f"Product specifications not found: {source_id}")
+        spec, product = row
+        if not (spec.rendered_text or "").strip():
+            # An empty sentence embeds to a vector near everything, so the product
+            # would surface for every query. Enqueue is guarded too; this is defence
+            # in depth.
+            raise ValueError(f"Product {source_id} has no spec text to embed")
+        return {
+            "source_key": product.product_code,
+            "title": product.product_code,
+            "body_text": spec.rendered_text,
+            "visibility_scope": "customer",
+            "source_updated_at": spec.updated_at or spec.created_at,
+            "metadata": {
+                "product_code": product.product_code,
+                "spec_keys": sorted((spec.values or {}).keys()),
+            },
+        }
+
     if source_type == "promotion":
         promotion = db.query(Promotion).filter(Promotion.id == source_id).first()
         if not promotion:
@@ -178,6 +221,56 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
             "visibility_scope": "customer",
             "source_updated_at": attachment.created_at,
             "metadata": {"entity_type": attachment.entity_type, "access_levels": attachment.access_levels or []},
+        }
+
+    if source_type == "certificate":
+        certificate = db.query(Certificate).filter(Certificate.id == source_id).first()
+        if not certificate:
+            raise ValueError(f"Certificate not found: {source_id}")
+        product_codes = [
+            code
+            for (code,) in (
+                db.query(Product.product_code)
+                .join(
+                    CertificateProduct,
+                    CertificateProduct.product_id == Product.id,
+                )
+                .filter(CertificateProduct.certificate_id == str(certificate.id))
+                .order_by(Product.product_code)
+                .all()
+            )
+            if code
+        ]
+        # Dates are deliberately NOT embedded: validity is a SQL question
+        # (derive_validity off the current revision), and an embedded expiry
+        # would go stale the day after it is written.
+        identity_text = "\n".join(
+            [
+                "Source Type: Certificate",
+                f"Scheme: {certificate.scheme}",
+                f"Certificate Number: {certificate.certificate_number}",
+                f"Certifying Body: {certificate.certifying_body or ''}",
+                f"Issuer: {certificate.issuer or ''}",
+                f"Title: {certificate.title or ''}",
+                "Intent Keywords: certificate certification approval compliance scheme certifying body",
+            ]
+        ).strip()
+        body = f"{identity_text}\nCovered Products: {', '.join(product_codes)}".strip()
+        return {
+            "source_key": f"{certificate.scheme} {certificate.certificate_number}",
+            "title": f"{certificate.scheme} {certificate.certificate_number}",
+            "body_text": body,
+            "visibility_scope": "customer",
+            "source_updated_at": certificate.updated_at or certificate.created_at,
+            "metadata": {
+                "scheme": certificate.scheme,
+                "certificate_number": certificate.certificate_number,
+                "certifying_body": certificate.certifying_body,
+                "status": certificate.status,
+                "identity_text": identity_text,
+                "covered_products": product_codes,
+                "covered_product_count": len(product_codes),
+            },
         }
 
     if source_type == "form":
@@ -549,6 +642,24 @@ def _chunks_for_source(source_type: str, source: dict[str, Any]) -> list[str]:
             chunks.append(f"Optional fields for {title}: " + ", ".join(optional_fields))
         if chunks:
             return chunks
+
+    if source_type == "certificate":
+        md = source.get("metadata") or {}
+        identity = str(md.get("identity_text") or source.get("title") or "").strip()
+        codes = [str(c).strip() for c in (md.get("covered_products") or []) if str(c).strip()]
+        if identity:
+            # Identity chunk first, then the covered codes in batches that each
+            # REPEAT the identity. A certificate covering 68 products would
+            # otherwise chunk into fragments reading only "SRTWC8088, SRTWC8090",
+            # which no query can match back to a certificate.
+            chunks = [identity]
+            batch = 25
+            for start in range(0, len(codes), batch):
+                chunks.append(
+                    f"{identity}\nCovered Products: " + ", ".join(codes[start : start + batch])
+                )
+            return chunks
+
     return _chunk_text(source["body_text"], settings.embedding_chunk_size, settings.embedding_chunk_overlap)
 
 

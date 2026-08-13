@@ -375,6 +375,16 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'scm.reorder.run',
       },
       {
+        title: 'Loading Plan',
+        path: '/scm/loading-plan',
+        permission: 'scm.reorder.run',
+      },
+      {
+        title: 'Incoming Containers',
+        path: '/scm/incoming',
+        permission: 'scm.reorder.run',
+      },
+      {
         title: 'Policies',
         path: '/scm/policies',
         permission: 'scm.policy.manage',
@@ -393,6 +403,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Market Signals',
         path: '/scm/market-signals',
         permission: 'scm.dashboard.view',
+      },
+      {
+        title: 'Simulation',
+        path: '/scm/simulation',
+        permission: 'scm.reorder.run',
       },
     ],
   },
@@ -546,9 +561,19 @@ export const MENU_SIDEBAR: MenuConfig = [
       ],
     },
     {
+      title: 'Certificates',
+      path: '/master-data-management/certificates',
+      permission: 'master_data.certificates.view',
+    },
+    {
       title: 'Product Categories',
       path: '/master-data-management/product-categories',
       permission: 'master_data.product_categories.view',
+    },
+    {
+      title: 'Product Specifications',
+      path: '/master-data-management/product-specifications',
+      permission: 'master_data.products.view',
     },
     {
       title: 'Brands',
@@ -752,6 +777,11 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Import Logs',
         path: '/system-management/import-logs',
+        superadminOnly: true,
+      },
+      {
+        title: 'Tracking Validation',
+        path: '/system-management/tracking-validation',
         superadminOnly: true,
       },
       {
@@ -1401,9 +1431,19 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       ],
     },
     {
+      title: 'Certificates',
+      path: '/master-data-management/certificates',
+      permission: 'master_data.certificates.view',
+    },
+    {
       title: 'Product Categories',
       path: '/master-data-management/product-categories',
       permission: 'master_data.product_categories.view',
+    },
+    {
+      title: 'Product Specifications',
+      path: '/master-data-management/product-specifications',
+      permission: 'master_data.products.view',
     },
     {
       title: 'Brands',
@@ -1607,6 +1647,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Import Logs',
         path: '/system-management/import-logs',
+        superadminOnly: true,
+      },
+      {
+        title: 'Tracking Validation',
+        path: '/system-management/tracking-validation',
         superadminOnly: true,
       },
       {

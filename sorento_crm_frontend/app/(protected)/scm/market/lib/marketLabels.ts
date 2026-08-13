@@ -22,14 +22,14 @@ export const CADENCE_LABEL: Record<MarketCadence, string> = {
   manual: 'Manual only',
 };
 
-/** Common trade currencies (static — no dedicated currency endpoint). */
+/** Common trade currencies (static - no dedicated currency endpoint). */
 export const CURRENCY_OPTIONS: SearchableSelectOption[] = [
-  { value: 'MYR', label: 'MYR — Malaysian Ringgit' },
-  { value: 'USD', label: 'USD — US Dollar' },
-  { value: 'EUR', label: 'EUR — Euro' },
-  { value: 'CNY', label: 'CNY — Chinese Yuan' },
-  { value: 'JPY', label: 'JPY — Japanese Yen' },
-  { value: 'SGD', label: 'SGD — Singapore Dollar' },
+  { value: 'MYR', label: 'MYR - Malaysian Ringgit' },
+  { value: 'USD', label: 'USD - US Dollar' },
+  { value: 'EUR', label: 'EUR - Euro' },
+  { value: 'CNY', label: 'CNY - Chinese Yuan' },
+  { value: 'JPY', label: 'JPY - Japanese Yen' },
+  { value: 'SGD', label: 'SGD - Singapore Dollar' },
 ];
 
 /**
@@ -65,7 +65,7 @@ export function resolveCategoryLabel(
   if (!ref) return null;
   const match = options?.find((o) => o.value === ref);
   if (match) return match.label;
-  // Never surface a raw UUID (e.g. before options load) — show a neutral
+  // Never surface a raw UUID (e.g. before options load) - show a neutral
   // placeholder; a readable code ref falls through unchanged.
   return UUID_RE.test(ref) ? 'Category' : ref;
 }

@@ -102,7 +102,14 @@ export function useListingColumnPreferences<TData extends object>({
     }
 
     if (payload.columnVisibility && typeof payload.columnVisibility === 'object') {
-      const filteredVisibility: ColumnVisibilityState = {};
+      // MERGE over the listing's own defaults, never replace them. A saved payload
+      // predates any column added since it was written, so replacing would silently
+      // reveal every new column to users who happen to have a saved config - a column
+      // the listing deliberately ships hidden would appear for them and stay hidden
+      // for everyone else. Only ids the payload actually mentions are overridden.
+      const filteredVisibility: ColumnVisibilityState = {
+        ...((table.getState() as ColumnStateFromTanStack)?.columnVisibility ?? {}),
+      };
       for (const [colId, visible] of Object.entries(payload.columnVisibility as Record<string, unknown>)) {
         if (canHideIds.has(colId)) filteredVisibility[colId] = Boolean(visible);
       }

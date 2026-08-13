@@ -1,5 +1,5 @@
 /**
- * SCM M8 — useReorderPlan (slice C, Phase 2, test-first). The shared plan state:
+ * SCM M8 - useReorderPlan (slice C, Phase 2, test-first). The shared plan state:
  * adapts the run's buy recs onto grid rows, SEEDS pins/rejects/edits from the
  * decision overlay, runs the pin-aware budget split LIVE, and lands every decision
  * on the server.
@@ -40,7 +40,7 @@ const beta: SupplierChoice = {
   lead_time_days: 21, composite_score: 80, is_primary: false,
 };
 
-/** Buy rec — qty 10 × unit_cost 100 = 1000 cash each; beta alt at 80. */
+/** Buy rec - qty 10 × unit_cost 100 = 1000 cash each; beta alt at 80. */
 function rec(id: string, rank: number): ReorderRecommendation {
   return {
     id, type: 'buy', sku: `SKU-${id}`, product_name: `Product ${id}`,
@@ -68,6 +68,8 @@ function routeApi(recs: ReorderRecommendation[], decisions: RecDecision[] = []) 
     if (method === 'POST' && url.includes('/reject')) return Promise.resolve(ok({}));
     if (method === 'POST' && url.includes('/confirm-decisions')) return Promise.resolve(ok({ confirmed_count: 1, po_count: 1 }));
     if (method === 'PUT' && url.includes('/budget')) return Promise.resolve(ok({ run_id: 'run-1', budget: 0, funded_count: 0, deferred_count: 0, needs_cost_count: 0, funded_cash: 0, deferred_cash: 0 }));
+    // No company budget configured, which is the honest default: the plan then opens whole.
+    if (url.includes('/config/cash-budget')) return Promise.resolve(ok({ configured: false, budget_amount: null, currency: null, period_start: null, period_end: null, note: null, set_by: null }));
     if (url.includes('/decisions')) return Promise.resolve(ok({ data: decisions }));
     if (url.includes('/recommendations')) return Promise.resolve(ok({ data: recs, pagination: { page: 1, limit: 1000, total: recs.length, total_pages: 1 } }));
     return Promise.resolve(ok({}));
@@ -91,7 +93,7 @@ beforeEach(() => {
   toastSuccess.mockReset();
 });
 
-describe('useReorderPlan — adapter + rows', () => {
+describe('useReorderPlan - adapter + rows', () => {
   it('loads the run’s buy recs and adapts them onto M8 grid rows', async () => {
     routeApi([rec('a', 1), rec('b', 2)]);
     const { result } = renderHook(() => useReorderPlan('run-1', true), { wrapper });
@@ -108,7 +110,7 @@ describe('useReorderPlan — adapter + rows', () => {
   });
 });
 
-describe('useReorderPlan — seed pins/rejects/edits from the decision overlay', () => {
+describe('useReorderPlan - seed pins/rejects/edits from the decision overlay', () => {
   it('accepted → pin, dismissed → reject, adjusted → pin + edited row (override qty applied)', async () => {
     const decisions: RecDecision[] = [
       { recommendation_id: 'a', status: 'accepted', override_qty: null, override_supplier_code: null, override_supplier_name: null, reason_text: null, draft_po_number: null, draft_po_id: null },
@@ -147,7 +149,7 @@ describe('useReorderPlan — seed pins/rejects/edits from the decision overlay',
   });
 });
 
-describe('useReorderPlan — pin-aware budget split (M8-C2 / M8-C3)', () => {
+describe('useReorderPlan - pin-aware budget split (M8-C2 / M8-C3)', () => {
   it('clearing the budget to 0 defers every un-pinned costed row (committed 0)', async () => {
     routeApi([rec('a', 1), rec('b', 2), rec('c', 3)]);
     const { result } = renderHook(() => useReorderPlan('run-1', true), { wrapper });
@@ -176,13 +178,13 @@ describe('useReorderPlan — pin-aware budget split (M8-C2 / M8-C3)', () => {
   });
 });
 
-describe('useReorderPlan — sticky sections (M8-F12)', () => {
-  it('rejecting a within-budget line does NOT reflow the table — no row moves sections, cash drops from committed', async () => {
+describe('useReorderPlan - sticky sections (M8-F12)', () => {
+  it('rejecting a within-budget line does NOT reflow the table - no row moves sections, cash drops from committed', async () => {
     routeApi([rec('a', 1), rec('b', 2), rec('c', 3)]);
     const { result } = renderHook(() => useReorderPlan('run-1', true), { wrapper });
     await waitFor(() => expect(result.current.rows).toHaveLength(3));
     // Raise the budget so all three fund (a budget change is the only thing that
-    // re-sections) — baseline: 3 within, 0 over, RM3000 committed.
+    // re-sections) - baseline: 3 within, 0 over, RM3000 committed.
     act(() => result.current.setBudget(5000));
     await waitFor(() => expect(result.current.funding.within).toHaveLength(3));
     const withinBefore = result.current.funding.within.map((r) => r.id);
@@ -195,7 +197,7 @@ describe('useReorderPlan — sticky sections (M8-F12)', () => {
     });
     await waitFor(() => expect(result.current.rejects.has('a')).toBe(true));
 
-    // Section membership is byte-identical — the rejected row STAYS within (greyed in
+    // Section membership is byte-identical - the rejected row STAYS within (greyed in
     // the UI), and the freed budget does NOT auto-promote any over-budget row.
     expect(result.current.funding.within.map((r) => r.id)).toEqual(withinBefore);
     expect(result.current.funding.over).toHaveLength(0);
@@ -212,7 +214,7 @@ describe('useReorderPlan — sticky sections (M8-F12)', () => {
     await waitFor(() => expect(result.current.funding.within.map((r) => r.id)).toEqual(['a']));
     const overBefore = result.current.funding.over.map((r) => r.id);
 
-    // Accept the within row — it pins but must not move any over-budget row up.
+    // Accept the within row - it pins but must not move any over-budget row up.
     await act(async () => {
       result.current.fund(result.current.funding.within[0]);
     });
@@ -222,7 +224,7 @@ describe('useReorderPlan — sticky sections (M8-F12)', () => {
   });
 });
 
-describe('useReorderPlan — server decisions', () => {
+describe('useReorderPlan - server decisions', () => {
   it('fund → POST /accept and pins the row (M8-C6)', async () => {
     routeApi([rec('a', 1)]);
     const { result } = renderHook(() => useReorderPlan('run-1', true), { wrapper });
@@ -329,5 +331,78 @@ describe('useReorderPlan — server decisions', () => {
       result.current.fund(result.current.rows[0]);
     });
     await waitFor(() => expect(toastError).toHaveBeenCalled());
+  });
+});
+
+describe('useReorderPlan - a budget with nothing funded must be true, not a stale section', () => {
+  it('derives the split while membership is unshaped, so a switched run never reads as unfunded', async () => {
+    // The screen showed `Within budget 0` beside `RM 5,923,000 free` on a plan whose whole
+    // 230 lines cost less than the budget. Membership is sticky STATE so a drag moves one
+    // row; the trap is that an empty set and "not shaped yet" used to look identical, and a
+    // run switch produced the empty one. Then the table blamed the budget, and no budget
+    // could ever fix it - only nudging the number.
+    routeApi([rec('a', 1), rec('b', 2)]);
+    const { result, rerender } = renderHook(({ id }: { id: string }) => useReorderPlan(id, true), {
+      wrapper,
+      initialProps: { id: 'run-1' },
+    });
+    // With no configured budget the plan opens WHOLE, so both fund. What matters is that
+    // they stay funded across the switch.
+    await waitFor(() => expect(result.current.funding.within.length).toBe(2));
+
+    // Switch run, then back: the reset clears membership without touching the budget.
+    rerender({ id: 'run-2' });
+    rerender({ id: 'run-1' });
+
+    await waitFor(() => expect(result.current.funding.within.length).toBeGreaterThan(0));
+    expect(result.current.funding.committed).toBeGreaterThan(0);
+  });
+
+  it('still reports nothing funded when the budget genuinely affords nothing', async () => {
+    // The honest case has to keep working, or the fix would just always fund everything.
+    routeApi([rec('a', 1), rec('b', 2)]);
+    const { result } = renderHook(() => useReorderPlan('run-1', true), { wrapper });
+    await waitFor(() => expect(result.current.rows).toHaveLength(2));
+
+    await act(async () => {
+      result.current.setBudget(0);
+    });
+
+    await waitFor(() => expect(result.current.funding.within).toHaveLength(0));
+    expect(result.current.funding.over).toHaveLength(2);
+    expect(result.current.funding.committed).toBe(0);
+  });
+});
+
+describe('useReorderPlan - the budget is the company\'s, not a guess', () => {
+  it('opens at the configured company budget when one is set', async () => {
+    // `scm.purchasing_budget` had existed since M0 with nothing reading it, so the plan
+    // seeded ~60% of its own cost and called the remainder Over budget.
+    routeApi([rec('a', 1), rec('b', 2)]);
+    const base = apiFetch.getMockImplementation()!;
+    apiFetch.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes('/config/cash-budget')) {
+        return Promise.resolve(
+          ok({ configured: true, budget_amount: 1000, currency: 'MYR', period_start: null, period_end: null, note: null, set_by: null }),
+        );
+      }
+      return base(url, init);
+    });
+
+    const { result } = renderHook(() => useReorderPlan('run-1', true), { wrapper });
+
+    await waitFor(() => expect(result.current.budget).toBe(1000));
+    // RM 1,000 funds exactly one of the two RM 1,000 lines.
+    expect(result.current.funding.within).toHaveLength(1);
+  });
+
+  it('opens on the whole plan when no budget is configured, deferring nothing', async () => {
+    routeApi([rec('a', 1), rec('b', 2)]);
+
+    const { result } = renderHook(() => useReorderPlan('run-1', true), { wrapper });
+
+    await waitFor(() => expect(result.current.funding.within).toHaveLength(2));
+    expect(result.current.funding.over).toHaveLength(0);
+    expect(result.current.budget).toBeGreaterThanOrEqual(2000);
   });
 });

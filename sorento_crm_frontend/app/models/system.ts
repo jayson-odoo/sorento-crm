@@ -33,6 +33,8 @@ export interface SystemSetting {
 
   /** Takeover cooldown window in seconds (0 = instant takeover). */
   takeoverCooldownSeconds?: number;
+  /** Global default undo grace window for form-SLA actions, in seconds. */
+  formSlaGraceSeconds?: number;
 
   /** System default approver for procurement "Send for approval" (skips chooser when set). */
   purchaseRequestDefaultApproverUserId?: string | null;
@@ -84,6 +86,14 @@ export interface SystemSetting {
   // Form handling-lock ("I'm handling this"): the source_entity_types the per-form lock
   // is enabled for (e.g. ["complaint", "stock_inquiry"]). Empty = lock off everywhere.
   handlingLockEnabledTypes: string[];
+
+  // Portal submission revisions (UAC A1). `portalRevisionsEnabled` is the kill
+  // switch and applies to every form type regardless of its own config row;
+  // `portalMaxRevisions` is the fallback cap a type inherits when its own
+  // `max_revisions` is NULL.
+  portalRevisionsEnabled: boolean;
+  portalMaxRevisions: number;
+
   // System Health observability (daily digest + immediate anomaly alerts).
   /** Send the daily system-health digest (in-app + email) to the notify roles. */
   healthDigestEnabled: boolean;

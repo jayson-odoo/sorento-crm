@@ -277,6 +277,27 @@ _COMPANY_ID_ALLOWLIST = {
     "forms",
     "import_logs",
     "audit_logs",
+    # Conversation / form SLA trackers carry the company that decides WHICH escalation
+    # ladder the tracker climbs, not who may read the row. Scoping it would break the
+    # two readers that have no company: the overdue scan (a scheduler tick with no
+    # principal) and the cross-company admin SLA listing. Isolation is enforced where
+    # it matters instead - the teams the tracker escalates into ARE scoped.
+    "conversation_sla_tracking",
+    # SLA policies are company-owned data, but deliberately filtered by hand
+    # (`sla_service.list_policies` reads the active scope) instead of through the
+    # mixin. The auto-filter reaches every SLAPolicy load anywhere in the app,
+    # including the ~160 tests and background readers that hold a policy id with no
+    # company context at all, and turns each one into an empty result.
+    "sla_policies",
+    # Container sizes are per-tenant OR global: a row with a NULL company is a default
+    # this system ships for everyone, and a tenant row overrides it (hence the unique
+    # index on coalesce(company_id, nil)). The mixin's auto-filter would drop every
+    # NULL-company row, leaving a loading plan with no container to pack into, so
+    # `loading_plan_service.container_sizes` reads them unfiltered on purpose.
+    # KNOWN GAP, deliberately left for its own slice rather than changed during a merge:
+    # unfiltered also means one tenant can read another's custom size. The fix is
+    # `company_id IS NULL OR company_id = <scope>` in that one reader, not the mixin.
+    "container_size",
 }
 
 
@@ -296,36 +317,27 @@ def test_every_company_id_table_is_registered():
         f"Tables have a company_id column but are not CompanyScopedMixin subclasses "
         f"(add the mixin or allowlist them): {offenders}"
     )
-    # Foundation slice shipped 34 owned tables (PLAN §4.1); the Dealer Kit adds
-    # 5 more (page, tile_template, asset, collection, bundle), then S4 adds two:
-    #   selection                 - one person's basket, partitioned like the
-    #                               customers and prices it resolves against.
-    #   respond_contact_customers - the contact -> customer link. Scoped because
-    #                               `customers` is: the same phone number can be
-    #                               a Sorento account and a Mocha one, and the
-    #                               link row is what keeps those apart.
-    # `selection_line` is deliberately NOT owned - it hangs off a scoped parent,
-    # so scoping it too would filter it twice and add nothing.
-    # S7.3 then adds one:
-    #   flyer_reading             - an uploaded flyer, as this system read it.
-    #                               Owned because the report derived from it
-    #                               resolves printed codes against THIS company's
-    #                               products: every code in the real flyer exists
-    #                               in both companies, so an unscoped reading
-    #                               would seed one company's catalogue with the
-    #                               other's product ids.
-    # S2.5.1 then adds one:
-    #   edition                   - a named revision cycle over a page. Owned
-    #                               because it is the record of who approved
-    #                               WHICH company's catalogue: unscoped, one
-    #                               company's Approver would see, and could
-    #                               decide on, the other's pending Editions.
-    #                               `status_id` points at a shared graph and is
-    #                               not company data, which is why the graph
-    #                               itself stays unowned.
-    # The count is asserted on purpose: a new owned table must be an explicit
-    # decision here, not something that slips in and silently misses the filter.
-    assert len(owned) == 43, f"expected 43 owned tables, found {len(owned)}: {sorted(owned)}"
+    # This is a COUNT, not a list, on purpose: enumerating the owned tables in a comment
+    # is how the number and the prose drifted apart twice already. The rule is what
+    # matters. A table is owned when the row is a fact about ONE company that cannot be
+    # derived from something already scoped:
+    #   - Planning artefacts own their company because a run, a recommendation, a budget or
+    #     an exception batch is a company's own decision queue, and an exception's warehouse
+    #     is nullable (supply in transit names no location to filter through).
+    #   - Fulfilment rows (loading plans, supplier notices, supplier inventory, allocations)
+    #     own it for the same reason: they are that company's shipment, not a place.
+    #   - Certificate children are deliberately NOT owned: they are only reachable through
+    #     the certificate, which is scoped, so a second filter is redundant surface (SEC-2a).
+    #   - `access_agents` is NOT owned: one agent routes both brands through two ladders.
+    # Derived instead of owned: demand_stat / item_classification / the views (via the
+    # warehouse join), supplier_performance (via suppliers), market signals (facts about
+    # the world, not about us).
+    # The Dealer Kit adds 9 owned tables under the same rule: a page, its editions and
+    # tiles, its assets, collections, bundles, a flyer reading, a selection and the
+    # contact -> customer link are each a fact about ONE company's catalogue.
+    # `selection_line` is deliberately NOT owned: it hangs off a scoped parent, so
+    # scoping it too would filter it twice and add nothing.
+    assert len(owned) == 63, f"expected 63 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------

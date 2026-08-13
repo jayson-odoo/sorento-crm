@@ -22,9 +22,24 @@ from app.schemas.scm_reorder import (
     ReorderRunListResponse,
     ReorderRunStatusResponse,
     ReorderRunTodayResponse,
+    UnlocatedDemandResponse,
+)
+from app.services.company_scope_sql import company_sql_predicate
+from app.services.scm import cover_service
+from app.services.scm import price_history_service
+from app.services.scm import (
+    level_suggestion_service,
+    po_book_service,
+    product_economics_service,
+    purchase_trend_service,
+    trajectory_service,
 )
 from app.services.error_handler import AppException
 from app.services.scm import reorder_run_service as svc
+from app.services.scm import demand_source_service
+from app.services.scm import unplanned_demand_service
+from app.services.scm import demand_breakdown_service
+from app.services.scm.money import BASE_CURRENCY
 
 router = APIRouter()
 
@@ -61,6 +76,9 @@ def create_reorder_run(
     result = svc.create_run(
         db,
         warehouse_codes=payload.warehouse_codes or [],
+        # Passed through EMPTY-AS-NONE deliberately: an unnarrowed run must carry no product
+        # scope at all, which is what the daily scheduled run sends.
+        product_codes=payload.product_codes or None,
         budget_id=payload.budget_id,
         actor=(_user or {}).get("id"),
         include_market=payload.include_market,
@@ -82,13 +100,19 @@ def list_reorder_runs(
     summary counts read from the immutable ``run_log``. The FE loads a past run's
     detail by reusing ``GET /{id}`` (summary) + ``/{id}/recommendations`` (grid).
     No UUIDs surface — runs are identified by time + warehouses."""
-    total = db.execute(text("SELECT count(*) FROM scm.reorder_run")).scalar() or 0
-    rows = db.execute(text("""
+    # Raw SQL, so the ORM isolation filter never sees it: this company's run history only.
+    co, co_params = company_sql_predicate(db, "company_id", param_prefix="crl")
+    where = f"WHERE {co}" if co else ""
+    total = db.execute(
+        text(f"SELECT count(*) FROM scm.reorder_run {where}"), co_params
+    ).scalar() or 0
+    rows = db.execute(text(f"""
         SELECT id, status, buy_scope, warehouse_ids, started_at, finished_at, run_log
         FROM scm.reorder_run
+        {where}
         ORDER BY started_at DESC NULLS LAST, created_at DESC
         LIMIT :limit OFFSET :offset
-    """), {"limit": limit, "offset": (page - 1) * limit}).mappings().all()
+    """), {"limit": limit, "offset": (page - 1) * limit, **co_params}).mappings().all()
 
     # Resolve every warehouse id across the page → human code in ONE query.
     all_ids: set[str] = set()
@@ -186,7 +210,38 @@ def get_today_reorder_run(
             code_by_id[wr["id"]] = wr["warehouse_code"]
     item = _list_item(row, code_by_id, _costed_buy_counts(db, [str(row["id"])]))
     item["is_today"] = picked["is_today"]
+    item["in_progress"] = bool(picked.get("in_progress"))
     return item
+
+
+# Also above ``/reorder-runs/{run_id}`` - a static segment declared after a path parameter
+# is captured by it.
+@router.get("/reorder-runs/unlocated-demand", response_model=UnlocatedDemandResponse)
+def get_unlocated_demand(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Open demand carrying no stock location, so the plan cannot net it against anything.
+
+    Answers "why is this product not in my planning" for the case the counts alone cannot:
+    the demand is real and committed, and it is invisible because nobody said where it ships
+    from."""
+    return unplanned_demand_service.unlocated_demand(db)
+
+
+# Above ``/reorder-runs/{run_id}`` for the same route-shadowing reason as its neighbour.
+@router.get("/reorder-runs/set-aside-demand")
+def get_set_aside_demand(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Project demand the plan did NOT count, because no Order Inquiry named it (S13b).
+
+    The other half of the demand split: CS filters project sales orders into the Order
+    Inquiry, so a project SO outside it is set aside - and this report is what keeps that
+    from reading as demand silently going missing. Whole-book, like unlocated-demand: it
+    describes the CURRENT book, not a frozen run."""
+    return demand_source_service.set_aside_project_demand(db)
 
 
 @router.get("/reorder-runs/{run_id}", response_model=ReorderRunStatusResponse)
@@ -197,11 +252,14 @@ def get_reorder_run(
 ):
     """Poll a run's status. ``summary`` is populated once ``status='completed'``;
     ``error`` once ``status='failed'``."""
+    co, co_params = company_sql_predicate(db, "company_id", param_prefix="crg")
     row = db.execute(text(
         "SELECT id, status, buy_scope, error_text, run_log FROM scm.reorder_run "
-        "WHERE id = :id"
-    ), {"id": run_id}).mappings().first()
+        f"WHERE id = :id AND {co or 'true'}"
+    ), {"id": run_id, **co_params}).mappings().first()
     if not row:
+        # 404 rather than 403 - another company's run must not be distinguishable
+        # from one that does not exist.
         raise AppException(status_code=404, message="Reorder run not found.")
     log_obj = row["run_log"] or {}
     summary = None
@@ -224,6 +282,210 @@ def get_reorder_run(
     }
 
 
+@router.get("/reorder-runs/{run_id}/recommendations/{rec_id}/demand")
+def recommendation_demand(
+    run_id: str,
+    rec_id: str,
+    limit: int = Query(200, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The open order lines a planned quantity was built from.
+
+    Answers "why is it bought into BRW when I ordered for BRW-IB, and why so many" from the
+    row itself: pooled netting is the reason, and the orders are the evidence."""
+    svc.assert_run_visible(db, run_id)
+    return demand_breakdown_service.demand_for_recommendation(db, rec_id, limit)
+
+
+@router.get("/reorder-runs/{run_id}/cover-sources")
+def list_cover_sources(
+    run_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Stock held somewhere else that could cover a shortage instead of buying it.
+
+    Keyed by product rather than folded onto each row, because the pool is SHARED: two lines
+    for the same product draw on the same units, and duplicating it per row would let the
+    screen promise the same stock twice. The caller holds one pool and spends it down as
+    decisions are made.
+
+    Free means surplus - a location's on-hand less its OWN demand - so a location that is
+    short of its own requirement offers nothing, however much it is holding.
+    """
+    svc.assert_run_visible(db, run_id)
+    product_ids = [
+        r[0]
+        for r in db.execute(
+            text(
+                "SELECT DISTINCT product_id::text FROM scm.reorder_recommendation "
+                "WHERE run_id::text = :run AND rec_type IN ('buy', 'needs_level')"
+            ),
+            {"run": run_id},
+        ).fetchall()
+    ]
+    free = cover_service.free_stock_by_product(db, run_id, product_ids)
+    return {
+        "sources": {
+            pid: [
+                {
+                    "warehouse_id": s.warehouse_id,
+                    "warehouse_code": s.warehouse_code,
+                    "segment": s.segment,
+                    "qty": s.qty,
+                }
+                for s in sources
+            ]
+            for pid, sources in free.items()
+        }
+    }
+
+
+@router.get("/reorder-runs/{run_id}/price-history")
+def list_price_history(
+    run_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """What we last paid each supplier for each item in the plan, and how old that is.
+
+    Keyed ``"{product_id}:{supplier_code}"`` because that pair is the question: a cheaper
+    price from another supplier is a different negotiation and cannot stand in for it.
+
+    Everything here comes out of our own purchase ledger. The ``advice`` code names which
+    fact dominates (no history, unknown age, stale, moving, recent); it is never a claim
+    about what the item is worth today, because nothing in this system can see that.
+    """
+    svc.assert_run_visible(db, run_id)
+    history = price_history_service.price_history_for_run(db, run_id)
+    # The applied thresholds ride on every entry (policy override or default), so the
+    # header echoes the first entry rather than restating the module constants.
+    first = next(iter(history.values()), None)
+
+    def _purchase(p) -> Optional[dict]:
+        if p is None:
+            return None
+        return {
+            "po_number": p.po_number,
+            "issue_date": p.issue_date.isoformat() if p.issue_date else None,
+            "unit_cost": p.unit_cost,
+            "currency": p.currency,
+            "qty": p.qty,
+        }
+
+    return {
+        "stale_after_days": (
+            first.stale_after_days if first else price_history_service.STALE_AFTER_DAYS
+        ),
+        "movement_threshold_pct": (
+            first.movement_threshold_pct if first else price_history_service.MOVEMENT_PCT
+        ),
+        "prices": {
+            key: {
+                "advice": a.advice,
+                "last": _purchase(a.last),
+                "previous": _purchase(a.previous),
+                "age_days": a.age_days,
+                "movement_pct": a.movement_pct,
+                "currency_changed": a.currency_changed,
+                "standing_cost": a.standing_cost,
+                "standing_currency": a.standing_currency,
+                "standing_gap_pct": a.standing_gap_pct,
+                "free_of_charge_lines": a.free_of_charge_lines,
+            }
+            for key, a in history.items()
+        },
+    }
+
+
+@router.get("/reorder-runs/{run_id}/trajectory")
+def get_trajectory(
+    run_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Is each product's demand sustaining or dying off, per side (S13d).
+
+    Keyed ``"{product_id}:{segment}"`` - project and retail are never merged into one
+    figure. Everything comes out of our own order book: the verdict compares the configured
+    recent window against the window before it AND the same window last year, side by side,
+    with the monthly series behind it for the popup's line graph.
+    """
+    svc.assert_run_visible(db, run_id)
+    return trajectory_service.trajectory_for_run(db, run_id)
+
+
+@router.get("/reorder-runs/{run_id}/po-book")
+def get_po_book(
+    run_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The open PO lines behind each row's "Use PO" suggestion (S15).
+
+    Keyed ``"{product_id}:{warehouse_id}"``. The engine never nets the PO book into a buy
+    (incoming = SPO allocation, the standing rule); this serves the receipts so "use the
+    PO, don't order" is a decision the buyer can verify against numbers and dates.
+    """
+    svc.assert_run_visible(db, run_id)
+    return po_book_service.po_book_for_run(db, run_id)
+
+
+@router.get("/reorder-runs/{run_id}/purchase-trend")
+def get_purchase_trend(
+    run_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The mirror of the order trend, on the buy side: who we bought from, and when.
+
+    Keyed by product id, across every supplier - this is the whole purchase story for the
+    item, not narrowed to one supplier pair (that question is `price-history`'s). A small
+    monthly trend (`recent_qty` vs `previous_qty`) plus the last few purchase lines
+    (supplier, date, quantity, cost), newest first. A draft this run itself proposed is
+    never read back as a purchase we made.
+    """
+    svc.assert_run_visible(db, run_id)
+    return purchase_trend_service.purchase_trend_for_run(db, run_id)
+
+
+@router.get("/reorder-runs/{run_id}/product-economics")
+def list_product_economics(
+    run_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Sell-price, stock and turnover facts for every product the run planned.
+
+    Keyed by product id. Feeds the margin column and the discontinue advisory: realized
+    average selling price (last 12 months of real order lines; `sell_source` names the
+    fallback when list price had to stand in), total on hand, average monthly outflow and
+    months-of-stock. The verdicts are drawn on the frontend against the policy thresholds
+    carried here, so both sides use the same line.
+    """
+    svc.assert_run_visible(db, run_id)
+    return product_economics_service.economics_for_run(db, run_id)
+
+
+@router.get("/reorder-runs/{run_id}/level-suggestions")
+def list_level_suggestions(
+    run_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The AutoCount levels this run suggests changing (S13f).
+
+    Keyed ``"{product_id}:{warehouse_id}"``. Each entry carries the current level beside
+    the suggestion and the full arithmetic (`basis`), because "set it to 12" means nothing
+    without "it is 20 today" and the sums that produced the 12. The stored `level` is never
+    written by the engine - accepting a suggestion stays the buyer's click, and applying it
+    in AutoCount stays the buyer's job.
+    """
+    svc.assert_run_visible(db, run_id)
+    return level_suggestion_service.suggestions_for_run(db, run_id)
+
+
 @router.get("/reorder-runs/{run_id}/recommendations")
 def list_recommendations(
     run_id: str,
@@ -234,26 +496,24 @@ def list_recommendations(
     sort: Optional[str] = Query(None),
     dir: str = Query("asc"),
     query: Optional[str] = Query(None),
-    type: Optional[str] = Query(None),  # buy | disposition | exception
+    type: Optional[str] = Query(None),  # buy | covered | disposition | exception | needs_level
     budget: Optional[float] = Query(None, ge=0),  # M4 — live funding what-if
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
     """Paginated recommendations for a completed run (DataGrid). Server-side sort over
-    the allowlisted rec columns; ``type`` filter (buy|disposition|exception); ``query``
+    the allowlisted rec columns; ``type`` filter (buy|covered|disposition|exception); ``query``
     on SKU/product name. Each row carries its frozen inputs (AC-M3.11).
 
     M4: when ``budget`` is supplied, buy rows carry a LIVE ``funding_status``
     (funded|deferred|needs_cost) from the greedy skip-overflow allocation over the
     run's FROZEN rank_score — no engine re-run, no persistence. Omitting ``budget``
     returns the last persisted funding_status (or null for costed buys never funded)."""
-    if not db.execute(text("SELECT 1 FROM scm.reorder_run WHERE id = :id"),
-                      {"id": run_id}).first():
-        raise AppException(status_code=404, message="Reorder run not found.")
+    svc.assert_run_visible(db, run_id)
 
     where = ["rr.run_id = :rid"]
     params: dict[str, Any] = {"rid": run_id}
-    if type in ("buy", "disposition", "exception"):
+    if type in ("buy", "covered", "disposition", "exception", "needs_level"):
         where.append("rr.rec_type = :type")
         params["type"] = type
     if query:
@@ -276,8 +536,9 @@ def list_recommendations(
                rr.days_of_cover, rr.rounded_qty, rr.recommended_qty, rr.confidence_band,
                rr.allocation, rr.inputs,
                rr.rank, rr.rank_score, rr.unit_cost, rr.cash_impact, rr.funding_status,
+               rr.currency, rr.rate_to_base, rr.rate_as_of, rr.status,
                p.product_code, p.product_name,
-               w.warehouse_code, w.warehouse_name,
+               w.warehouse_code, w.warehouse_name, w.segment,
                su.supplier_code, su.supplier_name
         FROM scm.reorder_recommendation rr
         JOIN products p ON p.id = rr.product_id
@@ -315,9 +576,7 @@ def apply_reorder_run_budget(
 
     Full-budget request (``full: true`` OR a null ``budget``) funds every costed buy — the
     daily-cron / 'fund all' path — and stamps a null ``budget_amount``."""
-    if not db.execute(text("SELECT 1 FROM scm.reorder_run WHERE id = :id"),
-                      {"id": run_id}).first():
-        raise AppException(status_code=404, message="Reorder run not found.")
+    svc.assert_run_visible(db, run_id)
     budget = payload.get("budget")
     if payload.get("full") or budget is None:
         return svc.apply_run_budget(db, run_id, None, full=True)
@@ -349,6 +608,8 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
     inp = r["inputs"] or {}
     is_network = r["warehouse_id"] is None
     is_buy = r["rec_type"] == "buy"
+    # A covered row is priced like a buy so "buy anyway" has a figure beside it.
+    is_priced = r["rec_type"] in ("buy", "covered")
     allocation = None
     if r["allocation"]:
         allocation = [{"warehouse_code": a.get("warehouse_code"),
@@ -370,10 +631,14 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
         "warehouse_id": str(r["warehouse_id"]) if r["warehouse_id"] is not None else None,
         "is_network": is_network,
         "allocation": allocation,
-        "order_qty": _f(r["rounded_qty"]) if r["rec_type"] == "buy" else None,
+        # A ``covered`` row carries a quantity too: it is what buying anyway would cost
+        # you, and without it the choice between stock and a purchase has one side missing.
+        "order_qty": (_f(r["rounded_qty"])
+                      if r["rec_type"] in ("buy", "covered") else None),
         # Pre-rounding order qty (order-up-to − net) so the derivation popup can show
         # the raw figure BEFORE MoQ / pack-multiple rounding lands on `order_qty`.
-        "recommended_qty": _f(r["recommended_qty"]) if r["rec_type"] == "buy" else None,
+        "recommended_qty": (_f(r["recommended_qty"])
+                            if r["rec_type"] in ("buy", "covered") else None),
         "reorder_point": _f(r["reorder_point"]),
         "min_qty": inp.get("min_qty"),
         "max_qty": inp.get("max_qty"),
@@ -385,8 +650,21 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
         "confidence": r["confidence_band"],
         "sample_size": int(inp.get("sample_size") or 0),
         "supplier": inp.get("supplier"),
+        # Why this supplier and not the runner-up, frozen at run time. Without it the
+        # "why this one" popup has nothing to render, which is how it first shipped.
+        "supplier_reason": inp.get("supplier_reason"),
         "alternatives": inp.get("alternatives") or [],
         "is_exception": bool(inp.get("is_exception")),
+        # --- covered rows: the two numbers the stock-or-buy choice turns on ---
+        # The decision taken on this row, if any. A covered row KEEPS its place in the
+        # list after a decision so it can be changed; without the state the list would
+        # look untouched and the click would read as having done nothing.
+        "decision_status": r["status"],
+        "covered_committed": inp.get("covered_committed"),
+        # Part of this row's demand arrived with no stated location, so the reader can
+        # weigh it accordingly rather than assuming every unit was located by CS.
+        "unlocated_demand": inp.get("unlocated_demand"),
+        "covered_available": inp.get("covered_available"),
         "disposition_action": inp.get("disposition_action"),
         "transfer_flag": inp.get("transfer_flag"),
         # --- frozen derivation inputs (drive the plain-language explanation popup) ---
@@ -403,11 +681,55 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
         "review_days": inp.get("review_days"),
         "moq": inp.get("moq"),
         "order_multiple": inp.get("order_multiple"),
+        # --- S10: the weekly checklist, so the row answers "should I order this" alone ---
+        "segment": r["segment"],
+        # The window the daily rate was averaged over, so the row can show "N units over
+        # M days" instead of a bare rate.
+        "demand_window_days": inp.get("demand_window_days"),
+        "on_hand": inp.get("on_hand"),
+        # SPO on the water vs the ordered-not-received PO book. Two different questions.
+        "incoming_spo": inp.get("on_order"),
+        "outstanding_po": inp.get("po_ordered"),
+        "outstanding_sales": inp.get("committed"),
+        # What master data says, beside what the plan computed. The buyer asked to see both:
+        # where they disagree is where the master record needs updating.
+        "master_reorder_level": inp.get("master_reorder_level"),
+        "master_reorder_quantity": inp.get("master_reorder_quantity"),
+        "reorder_level": inp.get("reorder_level"),
+        "reorder_level_source": inp.get("reorder_level_source"),
+        "suggested_level": inp.get("suggested_level"),
+        "suggestion_basis": inp.get("suggestion_basis"),
+        # What we last paid, and how it was attributed. `unattributed` is said out loud
+        # because most purchase history names no destination: presenting it as the dealer
+        # or project cost would invent the split the buyer asked us for.
+        "last_purchase_cost": (inp.get("last_purchase") or {}).get("cost"),
+        "last_purchase_currency": (inp.get("last_purchase") or {}).get("currency"),
+        "last_purchase_date": (inp.get("last_purchase") or {}).get("at"),
+        "last_purchase_ref": (inp.get("last_purchase") or {}).get("ref"),
+        "last_purchase_basis": inp.get("last_purchase_basis"),
         "policy_type": inp.get("policy_type"),
         "supplier_selection": inp.get("selection"),
         # --- M4 cash co-pilot (buy rows only; non-buy leave these null) ---
-        "unit_cost": _f(r["unit_cost"]) if is_buy else None,
-        "cash_impact": _f(r["cash_impact"]) if is_buy else None,
+        # `unit_cost` is what the SUPPLIER charges, in `currency`. `cash_impact` is what the
+        # buy draws from the budget, always in `base_currency`. They are deliberately in
+        # different money, so both are labelled: an unlabelled 45 beside an unlabelled 1980
+        # reads as an arithmetic error.
+        "unit_cost": _f(r["unit_cost"]) if is_priced else None,
+        "currency": (r["currency"] if is_priced else None),
+        "cash_impact": _f(r["cash_impact"]) if is_priced else None,
+        "base_currency": BASE_CURRENCY if is_priced else None,
+        "rate_to_base": _f(r["rate_to_base"]) if is_priced else None,
+        "rate_as_of": (r["rate_as_of"].isoformat()
+                       if is_priced and r["rate_as_of"] else None),
+        # Why there is no cash figure, when there is none: `no_cost` (nobody has ever
+        # priced it) and `no_rate` (priced, in money we cannot convert) send the buyer to
+        # two different screens, so "needs cost" alone would send half of them to the
+        # wrong one.
+        "cost_status": _cost_status(r, inp, is_buy),
+        "missing_rate_currencies": (
+            list((inp.get("supplier_reason") or {}).get("missing_rates") or [])
+            if is_buy else []
+        ),
         "rank": int(r["rank"]) if (is_buy and r["rank"] is not None) else None,
         "rank_score": _f(r["rank_score"]) if is_buy else None,
         "funding_status": _funding_status(r, is_buy, funding_by_id),
@@ -419,6 +741,23 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
             (inp.get("market_factor") or {}).get("summary") if is_buy else None
         ),
     }
+
+
+def _cost_status(r, inp: dict, is_buy: bool) -> Optional[str]:
+    """`ok`, `no_cost`, or `no_rate` - which of the two reasons a buy has no cash figure.
+
+    Both currently land in the same `needs_cost` funding bucket, which is right (a human
+    has to look at them either way), but the fix differs: one is "buy it once so we know
+    what it costs", the other is "enter a rate for CNY". A single label would send half the
+    rows to the wrong screen.
+    """
+    if not is_buy:
+        return None
+    if r["cash_impact"] is not None:
+        return "ok"
+    if r["unit_cost"] is None:
+        return "no_cost"
+    return "no_rate"
 
 
 def _funding_status(r, is_buy: bool,

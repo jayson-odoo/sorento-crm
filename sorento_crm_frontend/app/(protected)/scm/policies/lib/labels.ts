@@ -35,7 +35,7 @@ export const SUPPLIER_SELECTION_LABEL: Record<SupplierSelection, string> = {
   lowest_cost: 'Lowest cost',
 };
 
-// Scope choices offered in the Add modal — `global` is deliberately absent
+// Scope choices offered in the Add modal - `global` is deliberately absent
 // (the global default is edited, never created; AC-EDIT-1/AC-EDIT-4).
 export const SCOPE_TYPE_OPTIONS: { value: Exclude<ScopeType, 'global'>; label: string }[] = [
   { value: 'sku', label: 'SKU' },

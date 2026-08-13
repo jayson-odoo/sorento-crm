@@ -1,5 +1,9 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import {
+  isDeferredFormAction,
+  type DeferredFormAction,
+} from '@/app/(protected)/sla-management/_shared/formAction';
 import type {
   PurchaseRequest,
   PurchaseRequestFormData,
@@ -23,6 +27,8 @@ import type {
   DataGridApiFetchParams,
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
+import type { FormRevisionEntry } from '@/components/common/RevisionTimeline';
+import type { FormPdfExportOptions } from '@/lib/revision-export';
 
 /**
  * List query shape for purchase requests / sponsorship forms. The snake_case
@@ -87,6 +93,31 @@ export async function getPurchaseRequest(id: string): Promise<PurchaseRequestDet
   const response = await apiFetch(`/api/v1/procurement/purchase-requests/${id}`);
   if (!response.ok) throw new Error('Failed to load record');
   return response.json();
+}
+
+/**
+ * Revision lineage for the office Revisions panel (UAC H2/H3).
+ *
+ * Contract:
+ *   GET /api/v1/procurement/purchase-requests/{id}/revisions
+ *   Serves BOTH purchase requests and sponsorship forms: the backend reads the
+ *   header's own `request_type`, so the caller never has to say which it is.
+ *   Auth: the existing purchase request view permission.
+ *   200: { items: FormRevisionEntry[] } - oldest first, each entry carrying what
+ *        changed since the version before it plus the voided-stage context.
+ *   Read-only: the office never creates, edits or deletes a revision (UAC H5).
+ */
+export async function getPurchaseRequestRevisions(
+  id: string,
+): Promise<FormRevisionEntry[]> {
+  const response = await apiFetch(
+    `/api/v1/procurement/purchase-requests/${id}/revisions`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load revisions'));
+  }
+  const data = await response.json();
+  return (data?.items ?? []) as FormRevisionEntry[];
 }
 
 export async function linkPurchaseRequestAttachment(
@@ -250,11 +281,17 @@ export async function sendApprovalLink(
  * Approve / Reject buttons). Behaves identically to the public approval link.
  * Reject requires a reason (`comments`).
  */
+// The 202 contract has ONE definition - the shared module the complaint, stock-inquiry
+// and ticket services already import. These aliases keep this service's existing import
+// surface working without a second copy of the shape that can drift.
+export type DeferredApprovalDecision = DeferredFormAction;
+export const isDeferredDecision = isDeferredFormAction;
+
 export async function submitApprovalDecision(
   id: string,
   action: 'approved' | 'rejected',
   comments?: string,
-): Promise<PurchaseRequest> {
+): Promise<PurchaseRequest | DeferredApprovalDecision> {
   const response = await apiFetch(
     `/api/v1/procurement/purchase-requests/${id}/approval-decision`,
     {
@@ -272,7 +309,7 @@ export async function submitApprovalDecision(
 export async function rejectSubmittedPurchaseRequest(
   id: string,
   rejectionReason: string,
-): Promise<PurchaseRequest> {
+): Promise<PurchaseRequest | DeferredApprovalDecision> {
   const response = await apiFetch(
     `/api/v1/procurement/purchase-requests/${id}/reject-submitted`,
     {
@@ -297,7 +334,7 @@ export async function rejectSubmittedPurchaseRequest(
   return response.json();
 }
 
-export async function setPendingApproval(id: string): Promise<PurchaseRequest> {
+export async function setPendingApproval(id: string): Promise<PurchaseRequest | DeferredApprovalDecision> {
   const response = await apiFetch(
     `/api/v1/procurement/purchase-requests/${id}/set-pending-approval`,
     { method: 'POST' },
@@ -315,7 +352,7 @@ async function finalizeRequestByCs(
   id: string,
   action: 'process' | 'close',
   note?: string,
-): Promise<PurchaseRequest> {
+): Promise<PurchaseRequest | DeferredApprovalDecision> {
   const response = await apiFetch(
     `/api/v1/procurement/purchase-requests/${id}/${action}`,
     {
@@ -336,14 +373,14 @@ async function finalizeRequestByCs(
 export function processPurchaseRequestByCs(
   id: string,
   note?: string,
-): Promise<PurchaseRequest> {
+): Promise<PurchaseRequest | DeferredApprovalDecision> {
   return finalizeRequestByCs(id, 'process', note);
 }
 
 export function closePurchaseRequestByCs(
   id: string,
   note?: string,
-): Promise<PurchaseRequest> {
+): Promise<PurchaseRequest | DeferredApprovalDecision> {
   return finalizeRequestByCs(id, 'close', note);
 }
 
@@ -438,6 +475,44 @@ export async function getPurchaseRequestConversation(
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
     throw new Error(err.detail || err.message || 'Failed to load conversation');
+  }
+  return response.json();
+}
+
+/**
+ * Queue a printable Purchase Request / Sponsorship Form PDF.
+ *
+ * Exists because the Excel export auto-sizes its columns, so a long delivery
+ * address made the printed sheet unusable. The PDF is fixed-layout.
+ *
+ * Contract:
+ *   POST /api/v1/procurement/purchase-requests/{id}/export/pdf
+ *   Body: OPTIONAL. Omitted body == the current form, as it has always been.
+ *     { revision_id?: string }      - print ONE stored version (round 6, 6.3)
+ *     { include_revisions?: true }  - current form + the whole lineage (6.4)
+ *     The two are mutually exclusive; sending both 400s.
+ *   200: { download_id, status: 'queued' }
+ *   Rendered by the RQ worker; surfaces in My Downloads.
+ */
+export async function exportPurchaseRequestPdf(
+  id: string,
+  options?: FormPdfExportOptions | null,
+): Promise<{ download_id: string; status: string }> {
+  // No options, no body: the request stays byte-identical to the one this export
+  // has always sent.
+  const init: RequestInit = options
+    ? {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(options),
+      }
+    : { method: 'POST' };
+  const response = await apiFetch(
+    `/api/v1/procurement/purchase-requests/${id}/export/pdf`,
+    init,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to start PDF export'));
   }
   return response.json();
 }

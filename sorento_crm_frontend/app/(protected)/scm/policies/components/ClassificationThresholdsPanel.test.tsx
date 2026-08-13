@@ -1,5 +1,5 @@
 /**
- * ClassificationThresholdsPanel — loading / empty / error / data states + save.
+ * ClassificationThresholdsPanel - loading / empty / error / data states + save.
  *   AC-CFG-1 (renders the single row, empty state, "next analytics run" copy),
  *   AC-CFG-2 (save upserts with fractional values), AC-STD-4.
  */

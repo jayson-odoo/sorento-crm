@@ -33,7 +33,7 @@ from app.services.scm import market_proposal_service as proposal_svc
 from app.services.scm import market_research_service
 from app.services.scm import reorder_engine
 from app.services.scm import reorder_run_service as run_svc
-from tests.scm.conftest import requires_pg
+from tests.scm.conftest import SORENTO_COMPANY_ID, requires_pg
 from tests.scm.test_m4_cash import _client, _seed_two_buys
 from tests.scm.test_m5_explainer import _install_provider, _seed_run, _user_block
 
@@ -74,10 +74,10 @@ def _mk_run(db, *, status="completed", created_at=None):
     rid = str(uuid.uuid4())
     db.execute(
         text(
-            "INSERT INTO scm.reorder_run (id, status, created_at) "
-            "VALUES (:id, :st, COALESCE(:ca, now()))"
+            "INSERT INTO scm.reorder_run (id, status, company_id, created_at) "
+            "VALUES (:id, :st, :co, COALESCE(:ca, now()))"
         ),
-        {"id": rid, "st": status, "ca": created_at},
+        {"id": rid, "st": status, "ca": created_at, "co": SORENTO_COMPANY_ID},
     )
     return rid
 
@@ -89,20 +89,22 @@ def _mk_hist_rec(db, run_id, product_id, *, rounded_qty=100, funding_status="fun
         text(
             "INSERT INTO scm.reorder_recommendation "
             "(id, run_id, rec_type, product_id, rounded_qty, funding_status, status, "
-            "days_of_cover, inputs, created_at) "
-            "VALUES (:id, :run, 'buy', :p, :q, :fs, :st, :doc, cast(:inp as jsonb), now())"
+            "days_of_cover, inputs, company_id, created_at) "
+            "VALUES (:id, :run, 'buy', :p, :q, :fs, :st, :doc, cast(:inp as jsonb), :co, now())"
         ),
         {"id": rid, "run": run_id, "p": product_id, "q": rounded_qty, "fs": funding_status,
-         "st": status, "doc": days_of_cover, "inp": json.dumps({"sku": "x"})},
+         "st": status, "doc": days_of_cover, "inp": json.dumps({"sku": "x"}),
+         "co": SORENTO_COMPANY_ID},
     )
     if override_reason is not None:
         db.execute(
             text(
                 "INSERT INTO scm.recommendation_override "
-                "(id, recommendation_id, reason_text, action_applied, created_at) "
-                "VALUES (:id, :rec, :reason, false, now())"
+                "(id, recommendation_id, reason_text, action_applied, company_id, created_at) "
+                "VALUES (:id, :rec, :reason, false, :co, now())"
             ),
-            {"id": str(uuid.uuid4()), "rec": rid, "reason": override_reason},
+            {"id": str(uuid.uuid4()), "rec": rid, "reason": override_reason,
+             "co": SORENTO_COMPANY_ID},
         )
     return rid
 

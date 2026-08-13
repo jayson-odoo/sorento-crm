@@ -199,14 +199,31 @@ def create_promotion(
     if payload.access_levels is not None:
         promotion_kw["access_levels"] = payload.access_levels
 
-    # TCK-2026-000020: when n8n re-sends a promotion with the same description,
-    # update the still-editable row in place (replace groups + products + links)
-    # instead of duplicate-creating. "Locked" = end_date already passed.
+    # TCK-2026-000020: when n8n re-sends a promotion, update the still-editable row
+    # in place (replace groups + products + links) instead of duplicate-creating.
+    # "Locked" = end_date already passed.
+    #
+    # Resolve the existing row by ATTACHMENT first, description second. n8n posts
+    # `description = attachment_filename`, but the upload path runs that name through
+    # `sanitize_storage_filename`, which strips `@ ( ) , &` — so a promotion stored as
+    # "@ CABANA COMBINE PROMO (OFFICE)_08072026.pdf" is linked to an attachment named
+    # "CABANA COMBINE PROMO OFFICE_08072026.pdf" and the two never compare equal.
+    # Matching on description alone therefore missed and created a SECOND active
+    # promotion for the same flyer. The attachment is the stable identity; the
+    # description is a display string a user can rename, so the attachment wins.
     from sqlalchemy import func as _sa_func
 
     desc_norm = (payload.promotions.description or "").strip()
     existing_promotion = None
-    if desc_norm:
+    if _attachment_ids:
+        existing_promotion = (
+            db.query(Promotion)
+            .join(PromotionAttachment, PromotionAttachment.promotion_id == Promotion.id)
+            .filter(PromotionAttachment.attachment_id.in_(_attachment_ids))
+            .order_by(Promotion.created_at.desc())
+            .first()
+        )
+    if existing_promotion is None and desc_norm:
         existing_promotion = (
             db.query(Promotion)
             .filter(_sa_func.lower(_sa_func.trim(Promotion.description)) == desc_norm.lower())

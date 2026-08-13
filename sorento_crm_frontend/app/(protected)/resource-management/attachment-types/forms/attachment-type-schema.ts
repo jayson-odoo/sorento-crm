@@ -27,6 +27,20 @@ export const AttachmentTypeSchema = z.object({
     .nullable()
     .optional(),
   supports_field_linkage: z.boolean().optional(),
+  triggers_n8n_webhook: z.boolean().optional(),
+  // The cert-bearing signal. The external attachment endpoint honours the
+  // certificate fields on an n8n payload ONLY when the attachment's type has
+  // this on, so without it in the UI the register can never be switched on.
+  is_certificate: z.boolean().optional(),
+  // Ceiling used by the review rules: a validity span longer than this is
+  // flagged as implausible rather than trusted. Blank = no ceiling.
+  max_validity_months: z
+    .number()
+    .int({ message: 'Maximum validity must be a whole number of months.' })
+    .min(1, { message: 'Maximum validity must be at least 1 month.' })
+    .max(600, { message: 'Maximum validity must not exceed 600 months.' })
+    .nullable()
+    .optional(),
 });
 
 export type AttachmentTypeSchemaType = z.infer<typeof AttachmentTypeSchema>;

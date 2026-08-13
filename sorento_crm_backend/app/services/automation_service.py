@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -76,6 +77,55 @@ def _compute_next_run(automation: Automation) -> Optional[datetime]:
         automation.run_time,  # type: ignore[arg-type]
         str(automation.timezone or "Asia/Kuala_Lumpur"),
     )
+
+
+@dataclass(frozen=True)
+class _ExpiryBatchSpec:
+    """How a scheduled expiry trigger stamps its batch and groups its email.
+
+    Both members of the family (promotion end, certificate expiry) behave the
+    same way: one batch id per run stamped on every kept row BEFORE the send, a
+    deep link back to exactly that batch, and one grouped email per recipient
+    listing every row they matched. Only the entity nouns differ, so they live in
+    a table instead of a second copy of the code.
+    """
+
+    context_key: str  # "promotion" -> match.context["promotion"]
+    plural_key: str  # "promotions" -> ctx key the email template loops over
+    list_path: str  # frontend list route the batch link points at
+
+
+# Membership here IS what grouping depends on, so every key must also carry
+# supports_grouping=True on its TriggerSpec (automation_triggers.py) - that flag
+# is how the FE decides whether to offer the "Combine into one email" switch.
+# Adding a trigger here without the flag ships a grouping engine the user can
+# never turn on; test_automation_trigger_catalog.py fails if the two disagree.
+_EXPIRY_BATCH_SPECS: dict[str, _ExpiryBatchSpec] = {
+    "days_before_promotion_end": _ExpiryBatchSpec(
+        context_key="promotion",
+        plural_key="promotions",
+        list_path="/marketing-management/promotions",
+    ),
+    "days_before_certificate_expiry": _ExpiryBatchSpec(
+        context_key="certificate",
+        plural_key="certificates",
+        list_path="/master-data-management/certificates",
+    ),
+}
+
+
+def _expiry_batch_model(context_key: str):
+    """The ORM model carrying ``expiry_notified_at`` / ``expiry_notify_batch_id``
+    for a batch-stamped trigger. Imported lazily to keep this module light."""
+    if context_key == "promotion":
+        from app.models.marketing import Promotion
+
+        return Promotion
+    if context_key == "certificate":
+        from app.models.certificate import Certificate
+
+        return Certificate
+    return None
 
 
 class AutomationService:
@@ -397,28 +447,30 @@ class AutomationService:
             # everything (backward compatible).
             matches = self._filter_matches_by_conditions(automation, matches)
 
-            # Batch stamp (promotion-expiry only): mint one batch id, stamp every
-            # kept promo (stamp-first, before send), and build the deep link the
-            # reminder email points at.
+            # Batch stamp (the scheduled expiry triggers): mint one batch id,
+            # stamp every kept row (stamp-first, before send), and build the deep
+            # link the reminder email points at.
+            batch_spec = _EXPIRY_BATCH_SPECS.get(str(automation.trigger_type))
             batch_id: Optional[str] = None
             batch_link: Optional[str] = None
-            if str(automation.trigger_type) == "days_before_promotion_end":
-                batch_id, batch_link = self._stamp_expiry_batch(matches)
+            if batch_spec is not None:
+                batch_id, batch_link = self._stamp_expiry_batch(matches, batch_spec)
 
             template_service = EmailTemplateService(self.db)
 
-            # Group only the promotion-expiry trigger: it is the sole multi-match
-            # scheduled trigger and its template renders a `promotions` list. Other
-            # (event-driven) triggers always have one match and singular-entity
-            # templates, so they always take the per-match path.
+            # Group only the scheduled expiry triggers: they are the multi-match
+            # ones and their templates render a list (`promotions` /
+            # `certificates`). Other (event-driven) triggers always have one match
+            # and singular-entity templates, so they always take the per-match path.
             do_group = bool(getattr(automation, "group_matches", True)) and (
-                str(automation.trigger_type) == "days_before_promotion_end"
+                batch_spec is not None
             )
 
             if do_group:
                 attempted, summary = self._send_grouped(
                     automation, run, matches, template, template_service, owner_user_id,
                     batch_id=batch_id, batch_link=batch_link,
+                    spec=batch_spec,
                 )
             else:
                 attempted, summary = self._send_per_match(
@@ -498,37 +550,43 @@ class AutomationService:
         return kept
 
     def _stamp_expiry_batch(
-        self, matches: list["automation_triggers.TriggerMatch"]
+        self,
+        matches: list["automation_triggers.TriggerMatch"],
+        spec: _ExpiryBatchSpec,
     ) -> tuple[Optional[str], Optional[str]]:
-        """Mint a batch id, stamp every kept promo, commit (stamp-first), and
+        """Mint a batch id, stamp every kept row, commit (stamp-first), and
         return ``(batch_id, batch_link)``. No matches → ``(None, None)``."""
         if not matches:
             return None, None
         from uuid import uuid4
 
         from app.config import settings
-        from app.models.marketing import Promotion
+        from app.models.base import company_scope
+
+        model = _expiry_batch_model(spec.context_key)
+        if model is None:
+            return None, None
 
         batch_id = str(uuid4())
         now = datetime.utcnow()
         for m in matches:
-            promo = None
+            row = None
             fact_sources = getattr(m, "fact_sources", None)
-            if fact_sources and isinstance(fact_sources.get("promotion"), Promotion):
-                promo = fact_sources["promotion"]
-            if promo is None:
-                promo = (
-                    self.db.query(Promotion)
-                    .filter(Promotion.id == m.source_id)
-                    .first()
-                )
-            if promo is not None:
-                promo.expiry_notified_at = now
-                promo.expiry_notify_batch_id = batch_id
+            if fact_sources and isinstance(fact_sources.get(spec.context_key), model):
+                row = fact_sources[spec.context_key]
+            if row is None:
+                # Both models are company-scoped and this runs on a scheduler
+                # session (scope UNSET = fail-closed), so the fallback re-query
+                # has to run all-companies or it silently finds nothing.
+                with company_scope(self.db, None):
+                    row = self.db.query(model).filter(model.id == m.source_id).first()
+            if row is not None:
+                row.expiry_notified_at = now
+                row.expiry_notify_batch_id = batch_id
         self.db.commit()
 
         base = (settings.frontend_base_url or "").rstrip("/")
-        path = f"/marketing-management/promotions?expiry_notify_batch_id={batch_id}"
+        path = f"{spec.list_path}?expiry_notify_batch_id={batch_id}"
         batch_link = f"{base}{path}" if base else path
         return batch_id, batch_link
 
@@ -603,14 +661,21 @@ class AutomationService:
         owner_user_id: Optional[str],
         batch_id: Optional[str] = None,
         batch_link: Optional[str] = None,
+        spec: Optional[_ExpiryBatchSpec] = None,
     ) -> tuple[int, dict[str, Any]]:
-        """One combined email per recipient listing every promotion they match.
+        """One combined email per recipient listing every row they match.
 
-        Recipients are still resolved per-match so per-promotion entitlement
+        Recipients are still resolved per-match so per-row entitlement
         (include_promotion_owner / include_assigned_cs_pic) is respected — a
-        recipient only receives the promotions they are actually entitled to.
+        recipient only receives the rows they are actually entitled to.
+
+        ``spec`` names the entity: a promotion run renders `promotions` /
+        `promotion` / `promotions_count`, a certificate run renders
+        `certificates` / `certificate` / `certificates_count`. The singular key
+        stays for templates that only show the first row.
         """
-        # email(lower) -> {"recipient": {...}, "promotions": [...], "source_ids": [...]}
+        spec = spec or _EXPIRY_BATCH_SPECS["days_before_promotion_end"]
+        # email(lower) -> {"recipient": {...}, "entities": [...], "source_ids": [...]}
         buckets: dict[str, dict[str, Any]] = {}
         for match in matches:
             recipients = automation_recipients.resolve_recipients(
@@ -619,14 +684,14 @@ class AutomationService:
                 promotion_context=match.context,
                 source_id=match.source_id,
             )
-            promo = match.context.get("promotion") or {}
+            entity = match.context.get(spec.context_key) or {}
             for recipient in recipients:
                 key = recipient["email"].lower()
                 bucket = buckets.setdefault(
                     key,
-                    {"recipient": recipient, "promotions": [], "source_ids": []},
+                    {"recipient": recipient, "entities": [], "source_ids": []},
                 )
-                bucket["promotions"].append(promo)
+                bucket["entities"].append(entity)
                 bucket["source_ids"].append(match.source_id)
 
         today = matches[0].context.get("today") if matches else None
@@ -634,11 +699,11 @@ class AutomationService:
         groups_detail: list[dict[str, Any]] = []
         for bucket in buckets.values():
             recipient = bucket["recipient"]
-            promotions = bucket["promotions"]
+            entities = bucket["entities"]
             ctx: dict[str, Any] = {
-                "promotions": promotions,
-                "promotion": promotions[0],  # back-compat: singular = first promo
-                "promotions_count": len(promotions),
+                spec.plural_key: entities,
+                spec.context_key: entities[0],  # back-compat: singular = first row
+                f"{spec.plural_key}_count": len(entities),
                 "today": today,
                 "recipient": {
                     "name": recipient.get("name") or recipient["email"],
@@ -657,8 +722,8 @@ class AutomationService:
                 metadata={
                     "automation_id": str(automation.id),
                     "automation_run_id": str(run.id),
-                    "promotion_ids": bucket["source_ids"],
-                    "source_kind": "promotion_group",
+                    f"{spec.context_key}_ids": bucket["source_ids"],
+                    "source_kind": f"{spec.context_key}_group",
                     "source_id": str(run.id),
                     "trigger_type": str(automation.trigger_type),
                 },
@@ -667,7 +732,7 @@ class AutomationService:
             groups_detail.append(
                 {
                     "email": recipient["email"],
-                    "promotions": len(promotions),
+                    spec.plural_key: len(entities),
                     "subject": rendered["subject"],
                 }
             )

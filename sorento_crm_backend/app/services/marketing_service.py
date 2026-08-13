@@ -244,6 +244,28 @@ class PromotionService:
     ) -> dict[str, list[PromotionAttachment]]:
         return _load_attachments_by_promotion_ids(self.db, promotion_ids)
 
+    def _load_product_counts_for_promotion_ids(
+        self, promotion_ids: list[str]
+    ) -> dict[str, int]:
+        """Distinct product count per promotion, in ONE query for the whole page.
+
+        Counting per promotion inside the serializer loop was an N+1: a 50-row
+        page issued 50 round trips to fetch 50 integers. Promotions with no
+        products are simply absent from the result, so callers default to 0.
+        """
+        if not promotion_ids:
+            return {}
+        rows = (
+            self.db.query(
+                PromotionProduct.promotion_id,
+                func.count(func.distinct(PromotionProduct.product_id)),
+            )
+            .filter(PromotionProduct.promotion_id.in_(promotion_ids))
+            .group_by(PromotionProduct.promotion_id)
+            .all()
+        )
+        return {pid: count for pid, count in rows}
+
     @staticmethod
     def _filter_attachments_by_codes(
         attachments: list[PromotionAttachment],
@@ -468,7 +490,7 @@ class PromotionService:
                 pc_subq = (
                     select(
                         PromotionProduct.promotion_id.label("pid"),
-                        func.count(PromotionProduct.id).label("pcnt"),
+                        func.count(func.distinct(PromotionProduct.product_id)).label("pcnt"),
                     )
                     .group_by(PromotionProduct.promotion_id)
                     .subquery()
@@ -590,11 +612,19 @@ class PromotionService:
         attachments_by_promotion = self._load_attachments_for_promotion_ids(
             [p.id for p in promotions]
         )
+        # DISTINCT product, not row: one product legitimately appears in several
+        # promotion_groups (same item, different bundle price), so a row count
+        # reports 17 under a column headed "Products" when the promotion covers 12.
+        #
+        # One grouped query for the whole page, not one per promotion - the same
+        # batching `_load_attachments_for_promotion_ids` does above. Per-row it was
+        # a clean N+1: a 50-row page issued 50 extra round trips to return 50
+        # integers.
+        counts_by_promotion = self._load_product_counts_for_promotion_ids(
+            [p.id for p in promotions]
+        )
         for promotion in promotions:
-            products_count = self.db.query(func.count(PromotionProduct.id)).filter(
-                PromotionProduct.promotion_id == promotion.id
-            ).scalar() or 0
-            promotion.products_count = products_count
+            promotion.products_count = counts_by_promotion.get(promotion.id, 0)
             promotion.attachments = self._filter_attachments_by_codes(
                 attachments_by_promotion.get(promotion.id, []),
                 contact_access_codes,
@@ -804,7 +834,7 @@ class PromotionService:
 
             groups = sorted(promotion.promotion_groups or [], key=lambda g: (g.sort_order, g.created_at))
             promotion.products_count = (
-                self.db.query(func.count(PromotionProduct.id))
+                self.db.query(func.count(func.distinct(PromotionProduct.product_id)))
                 .filter(PromotionProduct.promotion_id == resolved_pid)
                 .scalar()
                 or 0
@@ -836,7 +866,7 @@ class PromotionService:
             for pp in sorted(g.promotion_products or [], key=lambda x: x.created_at):
                 flat.append(pp)
 
-        promotion.products_count = len(flat)
+        promotion.products_count = len({pp.product_id for pp in flat})
         promotion.products = flat
         # Expose sorted groups for API (nested products on each group)
         promotion.promotion_groups = groups

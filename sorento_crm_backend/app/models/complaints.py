@@ -75,6 +75,18 @@ class Complaint(Base):
         order_by="ComplaintProductLine.sort_order",
     )
 
+    @property
+    def response_write_allowed(self) -> bool:
+        """Whether ``technical_team_response`` may be written at this status (UAC O1).
+
+        Read straight off ``response_gate`` - the same module the write path raises
+        from - so the flag the UI gates on and the rule the server enforces cannot
+        disagree. Derived live; never a column, nothing to backfill.
+        """
+        from app.services.response_gate import COMPLAINT, is_response_status_allowed
+
+        return is_response_status_allowed(COMPLAINT, self.status)
+
     __table_args__ = (
         Index("ix_complaints_delivery_order_number", "delivery_order_number"),
         Index("ix_complaints_complaint_date", "complaint_date"),

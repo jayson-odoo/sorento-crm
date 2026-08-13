@@ -68,6 +68,9 @@ export interface PromptKeySummary {
   latest_version: number | null;
   updated_at: string | null;
   updated_by_name: string | null;
+  /** The LLM this agent runs on. null = the global assistant model. */
+  provider: string | null;
+  model: string | null;
 }
 
 export interface PromptVersionRow {
@@ -212,6 +215,26 @@ export async function setLabel(name: string, payload: SetLabelPayload): Promise<
     body: JSON.stringify(payload),
   });
   if (!r.ok) throw new Error(await extractApiError(r, 'Failed to move label'));
+  return r.json();
+}
+
+export interface SetAgentModelPayload {
+  label?: string;
+  provider: string | null;
+  model: string | null;
+}
+
+/** Point one agent at one LLM. Empty strings clear the override. */
+export async function setAgentModel(
+  name: string,
+  payload: SetAgentModelPayload,
+): Promise<{ provider: string | null; model: string | null }> {
+  const r = await apiFetch(`${BASE}/${encodeURIComponent(name)}/model`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label: 'production', ...payload }),
+  });
+  if (!r.ok) throw new Error(await extractApiError(r, 'Failed to set the model'));
   return r.json();
 }
 

@@ -10,6 +10,7 @@ import { injectPublishedWorkflowForms } from '@/config/workflow-forms-dynamic-me
 import { MenuConfig, MenuItem } from '@/config/types';
 import { usePublishedWorkflowDefinitionsForSubmissionQuery } from '@/app/(protected)/workflow-forms-management/hooks/useWorkflowForms';
 import { cn } from '@/lib/utils';
+import { collectMenuPaths, matchesMenuPath } from '@/lib/menu-path-match';
 import { usePermissions, useHasAnyPermission } from '@/hooks/usePermissions';
 import { WORKFLOW_PUBLISHED_FOR_SUBMISSION_PERMISSIONS } from '@/config/workflow-forms-dynamic-menu';
 import { useTenantModules } from '@/hooks/useTenantModules';
@@ -124,11 +125,13 @@ export function SidebarMenu() {
     isSuperadmin,
   ]);
 
+  // Every path the visible menu can highlight, so a match can be tested against its rivals.
+  const menuPaths = useMemo(() => collectMenuPaths(effectiveMenu), [effectiveMenu]);
+
   // Memoize matchPath to prevent unnecessary re-renders
   const matchPath = useCallback(
-    (path: string): boolean =>
-      path === pathname || (path.length > 1 && pathname.startsWith(path)),
-    [pathname],
+    (path: string): boolean => matchesMenuPath(path, pathname, menuPaths),
+    [pathname, menuPaths],
   );
 
   // Global classNames for consistent styling

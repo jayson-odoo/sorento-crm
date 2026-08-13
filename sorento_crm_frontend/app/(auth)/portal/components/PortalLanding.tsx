@@ -52,9 +52,12 @@ import { complaintStatusLabel, complaintStatusPillClass } from '@/lib/complaint-
 import {
   portalDetailPath,
   portalNewPath,
+  portalRevisePath,
   portalVerifyPath,
 } from '../lib/portal-paths';
+import { useRevisionPolicy } from '../hooks/useRevisions';
 import { BookmarkHint } from './BookmarkHint';
+import { ReviseAction } from './ReviseAction';
 
 // Display order differs from the canonical list: stock inquiry first.
 const TYPES: PortalSubmissionKind[] = [
@@ -687,6 +690,9 @@ function SubmissionPreviewDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
+  // The list carries no policy block, so the card reads the same `revision`
+  // block the detail page renders from. One GET, opened on long press only.
+  const { policy } = useRevisionPolicy(kind, row?.id ?? null);
   const meta = row ? pickCardMeta(row) : { product: undefined, project: undefined, customer: undefined };
   const entries: { label: string; value: string }[] = [];
   if (row) {
@@ -745,6 +751,14 @@ function SubmissionPreviewDialog({
             </div>
           ))}
         </div>
+        <ReviseAction
+          policy={policy}
+          onRevise={() => {
+            if (row) router.push(portalRevisePath(kind, row.id, slug));
+            onOpenChange(false);
+          }}
+          className="border-t pt-3"
+        />
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} className="h-10">
             Close

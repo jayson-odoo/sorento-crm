@@ -9,6 +9,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { useQuery } from '@tanstack/react-query';
+import { getCompaniesSelect } from '@/app/(protected)/system-management/companies/services/companyService';
 import type { ScheduledTask } from '../types/scheduledTask.types';
 import { parseDateTimeAsUTC } from '@/lib/helpers';
 
@@ -37,6 +40,8 @@ const schema = z.object({
   interval_unit: z.enum(['seconds', 'minutes', 'hours', 'days']),
   timezone: z.string().optional(),
   start_at: z.date().nullable().optional(),
+  // Empty = every company (the default for every task). Narrowing is opt-in.
+  company_ids: z.array(z.string()).optional(),
   send_in_app: z.boolean().optional(),
   send_email: z.boolean().optional(),
   // Empty string = "use the global default". NaN is what an `Input type=number`
@@ -62,6 +67,7 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
     register,
     handleSubmit,
     setValue,
+    reset,
     watch,
     formState: { errors, isDirty },
   } = useForm<FormValues>({
@@ -74,6 +80,9 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
       interval_unit: task.interval_unit as 'seconds' | 'minutes' | 'hours' | 'days',
       timezone: task.timezone || 'UTC',
       start_at: task.start_at ? parseDateTimeAsUTC(task.start_at) ?? undefined : undefined,
+      company_ids: Array.isArray(task.metadata?.company_ids)
+        ? (task.metadata.company_ids as string[])
+        : [],
       send_in_app:
         task.key === 'user_sla_daily_summary'
           ? (task.metadata?.send_in_app as boolean | undefined) !== false
@@ -89,38 +98,46 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
     },
   });
 
+  const { data: companies } = useQuery({
+    queryKey: ['companies-select'],
+    queryFn: getCompaniesSelect,
+  });
+
   const enabled = watch('enabled');
   const intervalUnit = watch('interval_unit');
   const startAt = watch('start_at');
 
   useEffect(() => {
-    setValue('name', task.name);
-    setValue('description', task.description ?? '');
-    setValue('enabled', task.enabled);
-    setValue('interval_value', task.interval_value);
-    setValue('interval_unit', task.interval_unit as 'seconds' | 'minutes' | 'hours' | 'days');
-    setValue('timezone', task.timezone || 'UTC');
-    setValue(
-      'start_at',
-      task.start_at ? parseDateTimeAsUTC(task.start_at) ?? undefined : undefined,
-    );
-    setValue(
-      'grace_percent',
-      typeof task.metadata?.grace_percent === 'number'
-        ? (task.metadata.grace_percent as number)
-        : '',
-    );
-    if (task.key === 'user_sla_daily_summary') {
-      setValue(
-        'send_in_app',
-        (task.metadata?.send_in_app as boolean | undefined) !== false,
-      );
-      setValue(
-        'send_email',
-        (task.metadata?.send_email as boolean | undefined) !== false,
-      );
-    }
-  }, [task, setValue]);
+    // reset(), not a pile of setValue() calls. setValue updates the VALUE but leaves
+    // react-hook-form's defaultValues on the stale server state, so `isDirty` keeps
+    // comparing against what the task looked like at mount. After saving companies
+    // and then clearing them, the form read as pristine and "Save changes" stayed
+    // disabled - the change could not be saved back. reset() re-baselines both.
+    reset({
+      name: task.name,
+      description: task.description ?? '',
+      enabled: task.enabled,
+      interval_value: task.interval_value,
+      interval_unit: task.interval_unit as 'seconds' | 'minutes' | 'hours' | 'days',
+      timezone: task.timezone || 'UTC',
+      start_at: task.start_at ? parseDateTimeAsUTC(task.start_at) ?? undefined : undefined,
+      grace_percent:
+        typeof task.metadata?.grace_percent === 'number'
+          ? (task.metadata.grace_percent as number)
+          : '',
+      company_ids: Array.isArray(task.metadata?.company_ids)
+        ? (task.metadata.company_ids as string[])
+        : [],
+      send_in_app:
+        task.key === 'user_sla_daily_summary'
+          ? (task.metadata?.send_in_app as boolean | undefined) !== false
+          : true,
+      send_email:
+        task.key === 'user_sla_daily_summary'
+          ? (task.metadata?.send_email as boolean | undefined) !== false
+          : true,
+    });
+  }, [task, reset]);
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
@@ -170,6 +187,23 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
           </div>
         </div>
       )}
+
+      <div className="space-y-2 rounded-md border p-4">
+        <Label>Companies</Label>
+        <SearchableMultiSelect
+          value={watch('company_ids') ?? []}
+          onChange={(v) => setValue('company_ids', v, { shouldDirty: true })}
+          options={(companies ?? []).map((c) => ({
+            value: c.id,
+            label: `${c.name} (${c.code})`,
+          }))}
+          placeholder="All companies"
+        />
+        <p className="text-muted-foreground text-xs">
+          Leave empty to run across every company. Selecting companies restricts this
+          task to their data only - it does not change who gets notified.
+        </p>
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <div className="space-y-2">

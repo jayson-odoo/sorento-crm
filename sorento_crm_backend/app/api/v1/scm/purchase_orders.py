@@ -38,10 +38,24 @@ def list_purchase_orders(
     query: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     supplier: Optional[str] = Query(None),
+    product_code: Optional[str] = Query(
+        None,
+        description="Keep only orders carrying this SKU, and report what we last paid for it.",
+    ),
     db: Session = Depends(get_db),
     _user: dict = Depends(_READ),
 ):
-    return PurchaseOrderService(db).list(page, limit, sort, dir, query, status, supplier)
+    """The purchase-order list.
+
+    `product_code` answers the question this screen could not be asked before - "have we ever
+    bought this item, and for how much" - which matters because the plan now takes its cost
+    from this book. The response carries a `product_cost` block beside the rows: the most
+    recent priced line, or null when we have never bought it. A recorded 0 comes back as 0,
+    because free and never-bought are different answers.
+    """
+    return PurchaseOrderService(db).list(
+        page, limit, sort, dir, query, status, supplier, product_code=product_code,
+    )
 
 
 @router.post("/purchase-orders/bulk-confirm", response_model=BulkConfirmResult)

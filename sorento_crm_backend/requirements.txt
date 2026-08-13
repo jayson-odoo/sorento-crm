@@ -45,3 +45,4 @@ playwright>=1.40
 # Anthropic SDK — SCM market-research live web search (web_search_20250305, key-gated).
 # Optional at runtime (local import), but must ship in the image or the search no-ops.
 anthropic>=0.96.0
+xlrd>=2.0.1

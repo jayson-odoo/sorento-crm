@@ -1,5 +1,5 @@
 /**
- * SCM M8 — useDrills (M8-A1/A2). The two heavy drills must be LAZY: the query
+ * SCM M8 - useDrills (M8-A1/A2). The two heavy drills must be LAZY: the query
  * only fires when `enabled` (the popover is open) AND the id is present, so the
  * plan grid loads without N drill round-trips. `useExplainDemand` passes a null
  * warehouseId straight through (network row → demand sums across warehouses).
@@ -28,7 +28,7 @@ beforeEach(() => {
   getRecommendationDemand.mockReset().mockResolvedValue({ product_id: 'p', warehouse_id: null, avg_daily_demand: 5, demand_cv: 0.2, method: 'x', demand_dos: [], buckets: [] });
 });
 
-describe('useExplainNet — lazy on popover open (M8-A1)', () => {
+describe('useExplainNet - lazy on popover open (M8-A1)', () => {
   it('does NOT fetch while the popover is closed (enabled=false)', () => {
     renderHook(() => useExplainNet('rec-1', false), { wrapper });
     expect(getRecommendationNet).not.toHaveBeenCalled();
@@ -46,7 +46,7 @@ describe('useExplainNet — lazy on popover open (M8-A1)', () => {
   });
 });
 
-describe('useExplainDemand — lazy on popover open (M8-A2)', () => {
+describe('useExplainDemand - lazy on popover open (M8-A2)', () => {
   it('does NOT fetch while closed', () => {
     renderHook(() => useExplainDemand('prod-1', 'wh-1', false), { wrapper });
     expect(getRecommendationDemand).not.toHaveBeenCalled();

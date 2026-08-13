@@ -3,7 +3,7 @@ import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 
 /**
  * Builds the "Actions" dropdown items for the Purchase Orders bulk strip
- * (M4-D6/D9), gated by the current selection — same pattern as the Unified
+ * (M4-D6/D9), gated by the current selection - same pattern as the Unified
  * Drive's `buildDriveBulkActions`. Pure + unit-testable.
  *
  * Gating:
@@ -15,7 +15,7 @@ import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
  *    so the Actions button does not render.
  */
 export interface PoBulkActionState {
-  /** How many selected rows are drafts — the confirmable subset. */
+  /** How many selected rows are drafts - the confirmable subset. */
   draftCount: number;
 }
 

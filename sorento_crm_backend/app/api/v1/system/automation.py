@@ -46,6 +46,7 @@ async def get_trigger_catalog(
                 description=spec.description,
                 config_schema=spec.config_schema,
                 fact_sources=list(spec.fact_sources),
+                supports_grouping=spec.supports_grouping,
             )
             for spec in automation_triggers.list_specs()
         ]

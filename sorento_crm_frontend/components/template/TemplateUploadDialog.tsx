@@ -41,6 +41,10 @@ interface TemplateUploadDialogProps {
   onTest?: (data: any[], file?: File) => Promise<ValidateImportResult>;
   accept?: string;
   maxRows?: number; // If undefined, no limit
+  /** Override the dialog heading. Default: the generic Excel-upload copy. */
+  title?: string;
+  /** Override the sub-heading. Default: the generic Excel-upload copy. */
+  description?: string;
 }
 
 export function TemplateUploadDialog({
@@ -50,6 +54,8 @@ export function TemplateUploadDialog({
   onTest,
   accept: acceptProp,
   maxRows = 100000, // Increased default to 100,000 rows
+  title = 'Upload Excel File',
+  description = 'Upload an Excel file to create or update records. The file should match the template format.',
 }: TemplateUploadDialogProps) {
   const acceptFromSettings = useExcelAccept();
   const accept = acceptProp ?? acceptFromSettings;
@@ -192,10 +198,8 @@ export function TemplateUploadDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] flex flex-col">
         <DialogHeader className="shrink-0">
-          <DialogTitle>Upload Excel File</DialogTitle>
-          <DialogDescription>
-            Upload an Excel file to create or update records. The file should match the template format.
-          </DialogDescription>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 min-h-0 flex-1 overflow-y-auto">
           {!file ? (

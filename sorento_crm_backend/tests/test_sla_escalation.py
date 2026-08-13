@@ -60,11 +60,13 @@ def test_get_escalation_assignee_for_tier_returns_assignee_when_configured():
         svc.get_team_id_by_tier.return_value = "team1"
         svc.get_next_assignee.return_value = expected
 
-        assignee = service.get_escalation_assignee_for_tier("complaint", 2)
+        assignee = service.get_escalation_assignee_for_tier("complaint", 2, company_id="00000000-0000-0000-0000-000000000001")
 
         assert assignee == expected
         svc.get_agent_id_by_code.assert_called_once_with("complaint")
-        svc.get_team_id_by_tier.assert_called_once_with("agent1", 2, team_set_code=None)
+        svc.get_team_id_by_tier.assert_called_once_with(
+            "agent1", 2, team_set_code=None, company_id="00000000-0000-0000-0000-000000000001"
+        )
         svc.get_next_assignee.assert_called_once_with("agent1", "team1")
 
 
@@ -80,11 +82,13 @@ def test_get_escalation_assignee_for_tier_defaults_none_to_complaint():
         svc.get_team_id_by_tier.return_value = "team1"
         svc.get_next_assignee.return_value = expected
 
-        assignee = service.get_escalation_assignee_for_tier(None, 2)
+        assignee = service.get_escalation_assignee_for_tier(None, 2, company_id="00000000-0000-0000-0000-000000000001")
 
         assert assignee == expected
         svc.get_agent_id_by_code.assert_called_once_with("complaint")
-        svc.get_team_id_by_tier.assert_called_once_with("agent1", 2, team_set_code=None)
+        svc.get_team_id_by_tier.assert_called_once_with(
+            "agent1", 2, team_set_code=None, company_id="00000000-0000-0000-0000-000000000001"
+        )
 
 
 def test_get_escalation_assignee_for_tier_unknown_agent_raises():
@@ -97,7 +101,7 @@ def test_get_escalation_assignee_for_tier_unknown_agent_raises():
         svc.get_agent_id_by_code.return_value = None
 
         with pytest.raises(HTTPException) as exc_info:
-            service.get_escalation_assignee_for_tier("stock_inquiry", 2)
+            service.get_escalation_assignee_for_tier("stock_inquiry", 2, company_id="00000000-0000-0000-0000-000000000001")
         assert exc_info.value.status_code == 400
         msg = _http_exception_message(exc_info.value)
         assert "lead_time_enquiries" in msg
@@ -114,7 +118,7 @@ def test_get_escalation_assignee_for_tier_missing_tier_team_raises():
         svc.get_team_id_by_tier.return_value = None
 
         with pytest.raises(HTTPException) as exc_info:
-            service.get_escalation_assignee_for_tier("complaint", 3)
+            service.get_escalation_assignee_for_tier("complaint", 3, company_id="00000000-0000-0000-0000-000000000001")
         assert exc_info.value.status_code == 400
         msg = _http_exception_message(exc_info.value)
         assert "tier 3" in msg or "3" in msg
@@ -167,6 +171,12 @@ def test_create_tracking_agent_code_with_explicit_assignee_skips_round_robin():
     ), patch.object(service, "_write_assign_event_log"), patch(
         "app.services.user_service.AccessAgentService.resolve_policy_id_for",
         return_value=None,
+    ), patch(
+        # Stamping the tracker's company reads the contact's company rows. Stub it for
+        # the same reason resolve_policy_id_for is stubbed: it would otherwise consume
+        # the fixed .first() sequence this test drives the session with.
+        "app.services.company_routing_service.company_for_contact",
+        return_value="00000000-0000-0000-0000-000000000001",
     ):
         payload = ConversationSLATrackingCreate(
             contact_phone_number="+60166753328",
@@ -226,7 +236,7 @@ def test_get_escalation_assignee_for_tier_empty_team_raises():
         svc.get_next_assignee.return_value = None
 
         with pytest.raises(HTTPException) as exc_info:
-            service.get_escalation_assignee_for_tier("purchase_request", 2)
+            service.get_escalation_assignee_for_tier("purchase_request", 2, company_id="00000000-0000-0000-0000-000000000001")
         assert exc_info.value.status_code == 400
         msg = _http_exception_message(exc_info.value)
         assert "No assignee" in msg

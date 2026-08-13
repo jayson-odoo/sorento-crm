@@ -18,24 +18,8 @@ import {
   useTestAIAssistantConnection,
   useUpdateAIAssistantConfig,
 } from '../hooks/useAIAssistantAdmin';
+import { MODEL_OPTIONS, PROVIDER_OPTIONS } from '../lib/modelOptions';
 
-const PROVIDER_OPTIONS: { value: string; label: string }[] = [
-  { value: 'openai', label: 'OpenAI' },
-  { value: 'anthropic', label: 'Anthropic' },
-];
-
-const MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
-  openai: [
-    { value: 'gpt-4o-mini', label: 'GPT-4o mini' },
-    { value: 'gpt-4o', label: 'GPT-4o' },
-    { value: 'gpt-4.1', label: 'GPT-4.1' },
-  ],
-  anthropic: [
-    { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
-    { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
-    { value: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
-  ],
-};
 
 export default function AIAssistantSettingsForm() {
   const { data, isLoading, isError, error } = useAIAssistantConfig();

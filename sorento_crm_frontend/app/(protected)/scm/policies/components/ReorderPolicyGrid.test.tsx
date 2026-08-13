@@ -1,5 +1,5 @@
 /**
- * ReorderPolicyGrid — loading / error / data / empty-hint states.
+ * ReorderPolicyGrid - loading / error / data / empty-hint states.
  *   AC-STD-4 (every state renders), AC-LIST-1 (readable scope labels, no UUID),
  *   AC-LIST-4 (global-only empty hint), AC-LIST-5 ("next reorder run" copy),
  *   AC-DEL-2 (global row has no delete affordance).
@@ -28,7 +28,7 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-// DataGrid persists column prefs via this hook (fires network) — stub it.
+// DataGrid persists column prefs via this hook (fires network) - stub it.
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
@@ -51,7 +51,7 @@ function row(over: Partial<ReorderPolicyRow>): ReorderPolicyRow {
     id: 'pol-x',
     scope_type: 'global',
     scope_ref: null,
-    scope_label: '—',
+    scope_label: '-',
     policy_type: 'reorder_point',
     service_level: null,
     safety_stock_method: 'fixed_days',
@@ -73,7 +73,7 @@ function row(over: Partial<ReorderPolicyRow>): ReorderPolicyRow {
   };
 }
 
-const GLOBAL = row({ id: 'pol-global', scope_type: 'global', scope_label: '—', priority: 0 });
+const GLOBAL = row({ id: 'pol-global', scope_type: 'global', scope_label: '-', priority: 0 });
 const CLASS = row({
   id: 'pol-class',
   scope_type: 'product_class',

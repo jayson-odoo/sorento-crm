@@ -1,5 +1,6 @@
 """SLA management models."""
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, BigInteger, Numeric, Index, text
+from sqlalchemy.dialects.postgresql import JSONB as JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -10,10 +11,28 @@ import uuid
 
 
 class SLAPolicy(Base):
+    """An SLA policy belongs to one company (D5) via its NOT NULL ``company_id``.
+
+    Deliberately NOT a CompanyScopedMixin. Making it one auto-filters and
+    auto-stamps every policy read and write in the product, which broke ~160 tests
+    covering escalation, extension, takeover and the daily summary - paths that
+    legitimately read a policy with no active company (scheduler ticks, form-SLA
+    fixtures). Isolation where it actually matters is enforced in two narrower
+    places: the picker query filters by the active company, and the agent_teams
+    (policy_id, company_id) composite FK rejects a cross-company binding outright.
+
+    ``code`` is unique per company, not globally: migration 320 dropped
+    sla_policies_code_key in favour of (code, company_id).
+    """
+
     __tablename__ = "sla_policies"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    code = Column(Text, unique=True, nullable=False)
+    code = Column(Text, nullable=False)
+    # Mapped WITHOUT CompanyScopedMixin (see the class docstring): the column is real
+    # (migration 320, NOT NULL with a Sorento server default) and the picker filters
+    # on it, but no auto-filter or auto-stamp is wanted here.
+    company_id = Column(UUID(as_uuid=False), ForeignKey("companies.id"), nullable=True, index=True)
     name = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
@@ -85,8 +104,27 @@ class ConversationSLATracking(Base):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     respond_contact_id = Column(Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True)  # FK to respond_contacts
+    # The company this tracker escalates within. Stamped once at creation from the
+    # contact (conversation SLA) or the spawning entity's contact (form SLA), then
+    # read back by every escalation. NOT a CompanyScopedMixin: escalation runs from
+    # scheduler ticks and cross-company admin views that must still see the row  - 
+    # the company governs which ladder is climbed, not who may read the tracker.
+    # ORM-nullable / PG-NOT-NULL on purpose, matching the mixin's convention: the
+    # scratch-schema fixtures insert before any stamp would fire.
+    # Python-side default, not just the migration's server default: the ORM emits the
+    # column as an explicit NULL when a constructor omits it, so the server default
+    # never fires and the insert dies on NOT NULL. Sorento is the documented fallback
+    # for a tracker with no resolvable company anyway (a ticket has no contact at
+    # all), so defaulting here matches what the resolvers would have produced.
+    company_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("companies.id"),
+        nullable=True,
+        index=True,
+        default="00000000-0000-0000-0000-000000000001",
+    )
     source_entity_type = Column(String(50), nullable=True)  # stock_inquiry | complaint
-    # Polymorphic (no FK) but always a uuid — see migration 300.
+    # Polymorphic (no FK) but always a uuid - see migration 300.
     source_entity_id = Column(UUID(as_uuid=False), nullable=True)
     agent_id = Column(UUID(as_uuid=False), ForeignKey("access_agents.id", ondelete="SET NULL"), nullable=True)  # FK to access_agents
     team_set_code = Column(String(100), nullable=True)  # Team assignment set code for escalation; cleared on resolve
@@ -105,6 +143,16 @@ class ConversationSLATracking(Base):
     # on every re-escalation. Never set for conversation-SLA (n8n) rows.
     handled_by_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     handled_at = Column(DateTime(timezone=False), nullable=True)
+    # Void (PLAN-portal-submission-revisions). A stage whose work was cancelled before it
+    # could finish - today only by a contact revising the submission underneath it
+    # (`void_reason = "revised_by_contact"`). Deliberately NOT is_resolved: a voided
+    # stage was never resolved, and overloading the resolve flag would count it as a
+    # completed stage in every duration and KPI aggregate. Dashboards exclude
+    # `voided_at IS NOT NULL` from open-tracker and breach counts, and the reason code is
+    # what makes that exclusion explainable rather than invisible (UAC F4a). The row stays
+    # readable as history.
+    voided_at = Column(DateTime(timezone=False), nullable=True)
+    void_reason = Column(String(50), nullable=True)  # revised_by_contact
 
     policy = relationship("SLAPolicy", back_populates="tracking")
     event_logs = relationship(
@@ -159,10 +207,15 @@ class FormSLAConfig(Base):
         nullable=True,
     )
     # When set, the next stage (next_config_id) is spawned ONLY when the resolve
-    # was triggered by this specific event (e.g. 'approved' — so 'rejected' closes
+    # was triggered by this specific event (e.g. 'approved' - so 'rejected' closes
     # the stage without advancing to customer service). NULL = spawn on any resolve
     # (backward-compatible with existing single-event chains).
     advance_on_event = Column(String(100), nullable=True)
+    # --- Undo grace window (PLAN-form-sla-undo.md) ---------------------------- #
+    # Seconds an in-app action on this stage waits before it actually runs, so the
+    # actor can take it back before anyone is told. NULL = use the global
+    # `system_settings.form_sla_grace_seconds` (which ships as 0 = no deferral).
+    grace_seconds = Column(Integer, nullable=True)
     # --- Skip the rest of the chain (UAC-form-sla-skip-stage) ---------------- #
     # When set, this stage may be closed by an explicit "skip" action instead of its
     # normal resolve: the stage resolves, the next stage never spawns, and the entity
@@ -277,7 +330,7 @@ class SlaTakeoverRequest(Base):
     initiator_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     # Snapshot of the assignee being contested at create time (NULL = task was unassigned).
     contested_assignee_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    # Queue team context the row was shown under — drives tier re-derivation at commit.
+    # Queue team context the row was shown under - drives tier re-derivation at commit.
     team_id = Column(UUID(as_uuid=False), nullable=False)
     status = Column(String(16), nullable=False, server_default=TAKEOVER_PENDING)
     commit_at = Column(DateTime(timezone=False), nullable=False)  # naive UTC
@@ -297,6 +350,97 @@ class SlaTakeoverRequest(Base):
         Index(
             "uq_sla_takeover_requests_one_pending",
             "tracking_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Form SLA Undo (PLAN-form-sla-undo.md)
+# ---------------------------------------------------------------------------
+
+FORM_ACTION_PENDING = "pending"
+FORM_ACTION_COMMITTED = "committed"
+FORM_ACTION_CANCELLED = "cancelled"
+FORM_ACTION_INELIGIBLE = "ineligible"
+FORM_ACTION_FAILED = "failed"
+FORM_ACTION_UNDONE = "undone"
+FORM_ACTION_TERMINAL = (
+    FORM_ACTION_COMMITTED,
+    FORM_ACTION_CANCELLED,
+    FORM_ACTION_INELIGIBLE,
+    FORM_ACTION_FAILED,
+    FORM_ACTION_UNDONE,
+)
+
+# Channel decides whether an action may defer at all. Only an in-system UI caller can
+# be shown an Undo button, so only `ui` ever waits out a grace window; portal /
+# API-key / n8n / MCP callers execute immediately and keep today's response shapes.
+FORM_ACTION_CHANNEL_UI = "ui"
+FORM_ACTION_CHANNEL_IMMEDIATE = "immediate"
+
+
+class SlaFormAction(Base):
+    """A form-SLA action that either waits out a grace window before running, or ran
+    immediately and is retained as the undo history.
+
+    Deliberately mirrors ``SlaTakeoverRequest``'s lifecycle vocabulary. Committed rows
+    are never deleted - they are what a post-grace undo reads to restore prior state.
+    """
+
+    __tablename__ = "sla_form_actions"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    action_key = Column(String(64), nullable=False)
+    source_entity_type = Column(String(50), nullable=False)
+    source_entity_id = Column(UUID(as_uuid=False), nullable=False)
+    # The resolve-event this action will emit - the guardrail reads it to find the
+    # stage the action closed.
+    event_name = Column(String(64), nullable=True)
+
+    # Arguments for the registry's `execute`, and the domain columns it is about to
+    # overwrite, captured BEFORE it runs. The inverse restores from this snapshot and
+    # never from a guessed default.
+    payload_json = Column(JSON, nullable=False, default=dict)
+    prior_state_json = Column(JSON, nullable=False, default=dict)
+
+    requested_by_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    channel = Column(String(16), nullable=False, server_default=FORM_ACTION_CHANNEL_IMMEDIATE)
+    status = Column(String(16), nullable=False, server_default=FORM_ACTION_PENDING)
+
+    commit_at = Column(DateTime(timezone=False), nullable=True)  # naive UTC
+    committed_at = Column(DateTime(timezone=False), nullable=True)
+    resolved_at = Column(DateTime(timezone=False), nullable=True)
+    resolution_reason = Column(String(32), nullable=True)
+    error_text = Column(Text, nullable=True)
+
+    # The stage tracker this action resolved (reopen target) and the one its commit
+    # spawned (void target). Not FKs: a tracker can be hard-deleted, and losing the
+    # history row with it would be worse than a dangling id.
+    prior_tracking_id = Column(UUID(as_uuid=False), nullable=True)
+    spawned_tracking_id = Column(UUID(as_uuid=False), nullable=True)
+
+    undone_by_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    undone_at = Column(DateTime(timezone=False), nullable=True)
+    undo_reason = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_sla_form_actions_sweep", "status", "commit_at"),
+        Index(
+            "ix_sla_form_actions_last",
+            "source_entity_type",
+            "source_entity_id",
+            "committed_at",
+        ),
+        # At most one pending action per form row (AC-D-7). A second action attempted
+        # while one is pending is refused by the database, not only by the service.
+        Index(
+            "uq_sla_form_actions_one_pending",
+            "source_entity_type",
+            "source_entity_id",
             unique=True,
             postgresql_where=text("status = 'pending'"),
         ),

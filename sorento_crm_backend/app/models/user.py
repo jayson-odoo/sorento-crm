@@ -257,6 +257,9 @@ class SystemSetting(Base):
     # during which the original assignee can reject and the initiator can cancel.
     # 0 = disabled (takeover commits instantly, pre-feature behavior). See PLAN-takeover-cooldown.
     takeover_cooldown_seconds = Column(Integer, nullable=False, server_default="60", default=60)
+    # Global default grace window for form-SLA actions (PLAN-form-sla-undo.md). 0 =
+    # every action fires immediately, i.e. today's behaviour; a stage may override it.
+    form_sla_grace_seconds = Column(Integer, nullable=False, server_default="0", default=0)
 
     # System-health observability (PLAN-system-health-observability):
     # daily digest + immediate watchdog alerts. Recipients = role ids (like notify_*_role_ids).
@@ -347,6 +350,16 @@ class SystemSetting(Base):
     # = today's status+permission-only gating. Read via
     # handling_lock_service.is_handling_lock_enabled.
     handling_lock_enabled_types = Column(Text, nullable=True, server_default="")
+
+    # Portal submission revisions (PLAN-portal-submission-revisions). Global defaults;
+    # per-type overrides live in portal_revision_configs.
+    # `portal_revisions_enabled` is the kill switch: false disables revisions for every
+    # type regardless of its config row. `portal_max_revisions` is the fallback cap used
+    # when a type's own max_revisions is NULL.
+    # Both must ALSO appear in the settings GET dict AND SystemSettingUpdate - the
+    # routes build a manual dict and silently drop anything not listed there.
+    portal_revisions_enabled = Column(Boolean, nullable=False, server_default="true", default=True)
+    portal_max_revisions = Column(Integer, nullable=False, server_default="2", default=2)
 
 
 class UserQuickAccess(Base):

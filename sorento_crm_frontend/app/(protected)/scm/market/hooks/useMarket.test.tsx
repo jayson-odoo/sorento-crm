@@ -1,5 +1,5 @@
 /**
- * useMarket hooks — useRunResearch running→complete→failed + toast copy, and the
+ * useMarket hooks - useRunResearch running→complete→failed + toast copy, and the
  * topic mutation hooks (create/update/delete) invalidating the topics query.
  */
 import React from 'react';
@@ -78,7 +78,7 @@ describe('useRunResearch', () => {
     expect(result.current.isFailed).toBe(false);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['scm', 'market', 'signals'] });
     expect(toastSuccess).toHaveBeenCalledWith(
-      'Research complete — 2 new market signals captured',
+      'Research complete - 2 new market signals captured',
     );
   });
 
@@ -90,7 +90,7 @@ describe('useRunResearch', () => {
       await result.current.start();
     });
     await waitFor(() => expect(result.current.isComplete).toBe(true));
-    expect(toastSuccess).toHaveBeenCalledWith('Research complete — no new signals this run');
+    expect(toastSuccess).toHaveBeenCalledWith('Research complete - no new signals this run');
   });
 
   it('surfaces a failed run + error toast when the run rejects', async () => {

@@ -177,6 +177,7 @@ def test_escalation_assignee_segment_scoped(db):
             None, 1, TEAM_SET,
             agent_id_override=agent_id,
             contact_segments=contact_segments,
+            company_id="00000000-0000-0000-0000-000000000001",
         )["id"]
 
     retail_picks = {pick({"retail"}) for _ in range(6)}

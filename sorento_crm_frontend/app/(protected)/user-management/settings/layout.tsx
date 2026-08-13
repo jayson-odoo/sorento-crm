@@ -50,6 +50,8 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
       typeof raw.takeover_cooldown_seconds === 'number'
         ? raw.takeover_cooldown_seconds
         : 60,
+    formSlaGraceSeconds:
+      typeof raw.form_sla_grace_seconds === 'number' ? raw.form_sla_grace_seconds : 0,
     purchaseRequestDefaultApproverUserId:
       (raw.purchase_request_default_approver_user_id as string | null) ?? null,
     purchaseRequestDefaultApproverName:
@@ -71,6 +73,15 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
     handlingLockEnabledTypes: Array.isArray(raw.handling_lock_enabled_types)
       ? (raw.handling_lock_enabled_types as string[])
       : [],
+    // Portal submission revisions. Both columns are on the GET dict AND on
+    // SystemSettingUpdate server-side; they must appear in this manual mapper too
+    // or the UI would always render the default rather than the saved value.
+    portalRevisionsEnabled:
+      typeof raw.portal_revisions_enabled === 'boolean'
+        ? raw.portal_revisions_enabled
+        : true,
+    portalMaxRevisions:
+      typeof raw.portal_max_revisions === 'number' ? raw.portal_max_revisions : 2,
     healthDigestEnabled: Boolean(raw.health_digest_enabled),
     healthAlertsEnabled: Boolean(raw.health_alerts_enabled),
     healthNotifyRoleIds: Array.isArray(raw.health_notify_role_ids)
@@ -136,6 +147,7 @@ function createDefaultSettings(): SystemSetting {
     defaultProductSupplierId: null,
     defaultProductStandardLeadTimeDays: 90,
     takeoverCooldownSeconds: 60,
+    formSlaGraceSeconds: 0,
     purchaseRequestDefaultApproverUserId: null,
     purchaseRequestDefaultApproverName: null,
     purchaseRequestDefaultApproverEmail: null,
@@ -163,6 +175,8 @@ function createDefaultSettings(): SystemSetting {
     notifySystemErrorRoleIds: [],
     complaintDoDeliveredNotifyTiers: '1,2',
     handlingLockEnabledTypes: [],
+    portalRevisionsEnabled: true,
+    portalMaxRevisions: 2,
     healthDigestEnabled: false,
     healthAlertsEnabled: false,
     healthNotifyRoleIds: [],
@@ -208,6 +222,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       complaints: {
         title: 'Complaints',
         path: '/user-management/settings/complaints',
+      },
+      'portal-revisions': {
+        title: 'Portal Revisions',
+        path: '/user-management/settings/portal-revisions',
       },
       'system-health': {
         title: 'System Health',

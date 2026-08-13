@@ -1,27 +1,42 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { Edit, Trash2, ArrowLeft } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import {
+  ArrowLeft,
+  Boxes,
+  Edit,
+  FileText,
+  GitBranch,
+  Paperclip,
+  Receipt,
+  ScrollText,
+  Tag,
+  Trash2,
+  Truck,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useProduct } from '../../hooks/useProducts';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { useProduct, useProductPurchaseHistory } from '../../hooks/useProducts';
+import { formatDateSafe, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useQuery } from '@tanstack/react-query';
 import ProductAttachmentsTab from '../../components/ProductAttachmentsTab';
 import ProductStockTab from './ProductStockTab';
+import ProductPurchaseHistoryTab from './ProductPurchaseHistoryTab';
 import ProductSuppliersTab from './ProductSuppliersTab';
 import ProductPromotionsTab from './ProductPromotionsTab';
 import ProductVariantsTab from './ProductVariantsTab';
+import ProductSpecificationsTab from './ProductSpecificationsTab';
 import { useProductAttachmentsByProduct } from '../../../product-attachments/hooks/useProductAttachments';
 import { getPromotionsByProductId } from '@/app/(protected)/marketing-management/promotions/services/promotionService';
 import ProductDeleteDialog from '../../components/product-delete-dialog';
 import ProductNavigation from './ProductNavigation';
 import AuditTrail from '@/components/audit/AuditTrail';
 import FieldAttachmentTooltip from './FieldAttachmentTooltip';
+import { NO_CURRENCY_NOTE, formatUnitCost } from '../lib/cost';
 
 interface ProductDetailProps {
   productId: string;
@@ -29,8 +44,28 @@ interface ProductDetailProps {
 
 export default function ProductDetail({ productId }: ProductDetailProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+
+  // Kept in the URL, not component state: ProductNavigation reads the CURRENT url's
+  // search params when Next/Prev is clicked, so a tab living here is the only way it
+  // survives stepping to a different product without extra plumbing between the two
+  // components.
+  const activeTab = searchParams.get('tab') || 'overview';
+  const handleTabChange = useCallback(
+    (tab: string) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (tab === 'overview') {
+        params.delete('tab');
+      } else {
+        params.set('tab', tab);
+      }
+      const qs = params.toString();
+      router.replace(`${pathname}${qs ? `?${qs}` : ''}`, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
   const { data: product, isLoading } = useProduct(productId);
 
   // Tab badge counts — same hooks the tab content components use, so React
@@ -43,6 +78,10 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
     enabled: !!productId,
   });
   const promotionsCount = Array.isArray(promotionsData) ? promotionsData.length : 0;
+  // Same query the Purchase History tab reads, so the Overview's cost and the orders that
+  // prove it can never disagree.
+  const { data: purchaseHistory } = useProductPurchaseHistory(productId || null);
+  const purchaseCost = purchaseHistory?.cost ?? null;
   const variantsCount = Array.isArray(product?.variants) ? product.variants.length : 0;
 
   const navigationBasePath = '/master-data-management/products';
@@ -172,21 +211,48 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
 
         {/* Main Content - Tabs */}
         <div className="lg:col-span-3">
-          <Tabs defaultValue="overview" className="w-full">
-            <TabsList className="w-full justify-start overflow-x-auto">
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="stock">Stock</TabsTrigger>
-              <TabsTrigger value="attachments">
-                Attachments{attachmentsCount ? ` (${attachmentsCount})` : ''}
+          {/* Controlled, because the tab lives in the URL so stepping to the next product
+              keeps the tab you were reading. */}
+          <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+            {/* Same underlined strip the user detail page uses, so a record's tabs look the
+                same wherever you are in the system rather than one screen per style. */}
+            <TabsList variant="line" className="mb-5 w-full justify-start overflow-x-auto">
+              <TabsTrigger value="overview">
+                <FileText />
+                <span>Overview</span>
               </TabsTrigger>
-              <TabsTrigger value="suppliers">Suppliers</TabsTrigger>
+              <TabsTrigger value="stock">
+                <Boxes />
+                <span>Stock</span>
+              </TabsTrigger>
+              <TabsTrigger value="purchases">
+                <Receipt />
+                <span>Purchase History</span>
+              </TabsTrigger>
+              <TabsTrigger value="attachments">
+                <Paperclip />
+                <span>Attachments{attachmentsCount ? ` (${attachmentsCount})` : ''}</span>
+              </TabsTrigger>
+              <TabsTrigger value="suppliers">
+                <Truck />
+                <span>Suppliers</span>
+              </TabsTrigger>
               <TabsTrigger value="promotions">
-                Promotions{promotionsCount ? ` (${promotionsCount})` : ''}
+                <Tag />
+                <span>Promotions{promotionsCount ? ` (${promotionsCount})` : ''}</span>
               </TabsTrigger>
               <TabsTrigger value="variants">
-                Variants{variantsCount ? ` (${variantsCount})` : ''}
+                <GitBranch />
+                <span>Variants{variantsCount ? ` (${variantsCount})` : ''}</span>
               </TabsTrigger>
-              <TabsTrigger value="audit">Audit Trail</TabsTrigger>
+              <TabsTrigger value="audit">
+                <ScrollText />
+                <span>Audit Trail</span>
+              </TabsTrigger>
+              <TabsTrigger value="specifications">
+                <ScrollText />
+                <span>Specifications</span>
+              </TabsTrigger>
             </TabsList>
 
             {/* Tab: Overview - always show all fields from edit view regardless of value */}
@@ -249,6 +315,36 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                             : '-'}
                         </p>
                       </div>
+                    </div>
+
+                    {/* Cost Price above is a figure somebody typed. This one is money that
+                        actually moved, and it names the order it came from - a cost with no
+                        provenance cannot be checked, and the planning that runs on it cannot
+                        be trusted either. */}
+                    <div className="mt-4 rounded-lg border border-border bg-muted/30 p-3 text-sm">
+                      <p className="text-muted-foreground">Last purchase price</p>
+                      {purchaseCost?.status === 'ok' ? (
+                        <>
+                          <p className="text-lg font-medium">
+                            {formatUnitCost(purchaseCost.unit_cost, purchaseCost.currency)}
+                            <span className="ms-1 text-xs font-normal text-muted-foreground">
+                              per unit
+                            </span>
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {purchaseCost.po_number} ·{' '}
+                            {purchaseCost.supplier_name ?? 'no supplier on the order'} ·{' '}
+                            {formatDateSafe(purchaseCost.issue_date)}
+                            {purchaseCost.currency ? '' : ` · ${NO_CURRENCY_NOTE}`}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {purchaseCost?.status === 'no_price_recorded'
+                            ? 'Purchased before, but no unit cost was recorded on any order.'
+                            : 'Never purchased, so there is no cost from history.'}
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -356,6 +452,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
               <ProductStockTab productId={productId} />
             </TabsContent>
 
+            {/* Tab: Purchase History */}
+            <TabsContent value="purchases">
+              <ProductPurchaseHistoryTab productId={productId} />
+            </TabsContent>
+
             {/* Tab: Attachments */}
             <TabsContent value="attachments">
               <ProductAttachmentsTab productId={productId} isEditMode={false} />
@@ -380,6 +481,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                 variants={product.variants}
                 variantLinkManual={product.variant_link_manual}
               />
+            </TabsContent>
+
+            {/* Tab: Specifications — what spec-search derived from this product */}
+            <TabsContent value="specifications">
+              <ProductSpecificationsTab productId={productId} />
             </TabsContent>
 
             {/* Tab: Audit Trail */}

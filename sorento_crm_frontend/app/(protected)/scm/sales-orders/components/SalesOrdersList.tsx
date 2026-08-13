@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import {
   ColumnDef,
   PaginationState,
@@ -31,8 +33,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Switch } from '@/components/ui/switch';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { useCustomerOptions } from '../../hooks/useScmOptions';
+import { useRouter } from 'next/navigation';
 import {
   useCreateDoFromSalesOrder,
   useCreateSalesOrder,
@@ -85,6 +90,29 @@ const STATUS_FILTER_OPTIONS = [
   { value: 'cancelled', label: 'Cancelled' },
 ];
 
+/** Who wrote the order. `Order inquiry` is separate from `Outstanding upload` because an
+ *  order Joey's sheet created is one CS has never seen, and it decides who may edit it. */
+const SOURCE_FILTER_OPTIONS = [
+  { value: '', label: 'All sources' },
+  { value: 'inquiry', label: 'Order inquiry' },
+  { value: 'upload', label: 'Outstanding upload' },
+  { value: 'history', label: 'Absorbed history' },
+  { value: 'manual', label: 'Manual' },
+];
+
+/** How many purchase orders to name in the cell before collapsing the rest into a count. */
+const WAITING_ON_LIMIT = 2;
+
+const SOURCE_LABELS: Record<string, string> = {
+  inquiry: 'Order inquiry',
+  upload: 'Outstanding upload',
+  // 11,006 of the orders in the book were absorbed from a six-year AutoCount export. Calling
+  // one "Manual" claims somebody keyed a 2020 order by hand, and it is the same word the
+  // detail page uses so the two screens cannot disagree about the same row.
+  history: 'Absorbed history',
+  manual: 'Manual',
+};
+
 const PRIORITY_FILTER_OPTIONS = [
   { value: '', label: 'All priorities' },
   { value: 'urgent', label: 'Urgent' },
@@ -100,6 +128,16 @@ export default function SalesOrdersList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('');
+  // "Show me the orders the Order Inquiry sheet created" is a filter on this list rather
+  // than a screen of its own: a second list of the same entity is how two screens start
+  // disagreeing about the same order.
+  const [sourceFilter, setSourceFilter] = useState('');
+  // The three questions this screen is actually asked: what came in over these dates, whose
+  // orders are these, and what is still owed.
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [customerFilter, setCustomerFilter] = useState('');
+  const [outstandingOnly, setOutstandingOnly] = useState(false);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<SalesOrder | null>(null);
@@ -113,7 +151,15 @@ export default function SalesOrdersList() {
     searchQuery,
     status: statusFilter || null,
     priority: priorityFilter || null,
+    source: sourceFilter || null,
+    dateFrom: dateFrom || null,
+    dateTo: dateTo || null,
+    customerId: customerFilter || null,
+    outstanding: outstandingOnly,
   });
+
+  const customerOptions = useCustomerOptions();
+  const router = useRouter();
 
   const createMut = useCreateSalesOrder();
   const updateMut = useUpdateSalesOrder();
@@ -122,9 +168,52 @@ export default function SalesOrdersList() {
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [searchQuery, statusFilter, priorityFilter]);
+  }, [
+    searchQuery,
+    statusFilter,
+    priorityFilter,
+    sourceFilter,
+    dateFrom,
+    dateTo,
+    customerFilter,
+    outstandingOnly,
+  ]);
 
   const rows = useMemo<SalesOrder[]>(() => data?.data ?? [], [data]);
+
+  // Carried into the detail URL so its prev/next pager walks the SAME filtered, sorted page
+  // the user was reading (same param names as the list GET). Mirrors the purchase-order list.
+  const detailSearch = useMemo(
+    () =>
+      buildDetailSearch(
+        { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery },
+        {
+          status: statusFilter || undefined,
+          priority: priorityFilter || undefined,
+          source: sourceFilter || undefined,
+          date_from: dateFrom || undefined,
+          date_to: dateTo || undefined,
+          customer_code: customerFilter || undefined,
+          outstanding: outstandingOnly ? 'true' : undefined,
+        },
+      ),
+    [
+      pagination.pageIndex,
+      pagination.pageSize,
+      sorting,
+      searchQuery,
+      statusFilter,
+      priorityFilter,
+      sourceFilter,
+      dateFrom,
+      dateTo,
+      customerFilter,
+      outstandingOnly,
+    ],
+  );
+
+  const detailHref = (so: SalesOrder) =>
+    `/scm/sales-orders/${so.id}${detailSearch ? `?${detailSearch}` : ''}`;
 
   const handleSubmit = async (formData: SalesOrderFormData) => {
     if (editing) {
@@ -143,7 +232,16 @@ export default function SalesOrdersList() {
         header: ({ column }) => <DataGridColumnHeader title="SO number" column={column} />,
         cell: ({ row }) => (
           <div className="flex flex-col">
-            <span className="font-medium">{row.original.so_number}</span>
+            {/* The document number IS the way in, the same as the purchase-order list. The
+                list query rides along so the detail page's prev/next walks the page the
+                user was actually reading. */}
+            <Link
+              href={detailHref(row.original)}
+              onClick={(e) => e.stopPropagation()}
+              className="font-medium text-primary hover:underline"
+            >
+              {row.original.so_number}
+            </Link>
             <span className="text-xs text-muted-foreground">{fmtDate(row.original.order_date)}</span>
           </div>
         ),
@@ -225,6 +323,66 @@ export default function SalesOrdersList() {
         meta: { headerTitle: 'Requested delivery' },
       },
       {
+        accessorKey: 'stock_locations',
+        header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
+        cell: ({ row }) => {
+          // Plural, because one order can land in two and showing the first would be a
+          // quiet lie about where the stock is going.
+          const codes = row.original.stock_locations ?? [];
+          if (!codes.length) return <span className="text-muted-foreground">-</span>;
+          return (
+            <span className="truncate" title={codes.join(', ')}>
+              {codes.join(', ')}
+            </span>
+          );
+        },
+        size: 130,
+        enableSorting: false,
+        meta: { headerTitle: 'Location' },
+      },
+      {
+        accessorKey: 'linked_purchase_orders',
+        header: ({ column }) => <DataGridColumnHeader title="Waiting on" column={column} />,
+        cell: ({ row }) => {
+          // The UNRESOLVED ones only. "Which of my orders is stuck behind a purchase order
+          // we have not received" is the question this column exists to answer, and listing
+          // the matched ones alongside would bury it.
+          const waiting = (row.original.linked_purchase_orders ?? []).filter(
+            (l) => !l.resolved,
+          );
+          if (!waiting.length) return <span className="text-muted-foreground">-</span>;
+          // Capped, because a real order waits on 23 purchase orders and the full list
+          // renders as a wall of text that says less than the first two plus a count. The
+          // whole list is still on the title attribute for anyone who needs it.
+          const numbers = waiting.map((l) => l.po_number);
+          const shown = numbers.slice(0, WAITING_ON_LIMIT).join(', ');
+          const hidden = numbers.length - Math.min(numbers.length, WAITING_ON_LIMIT);
+          return (
+            <span className="truncate" title={numbers.join(', ')}>
+              {shown}
+              {hidden > 0 ? (
+                <span className="text-muted-foreground"> +{hidden} more</span>
+              ) : null}
+            </span>
+          );
+        },
+        size: 170,
+        enableSorting: false,
+        meta: { headerTitle: 'Waiting on' },
+      },
+      {
+        accessorKey: 'source',
+        header: ({ column }) => <DataGridColumnHeader title="Source" column={column} />,
+        cell: ({ row }) => (
+          <Badge variant={row.original.source === 'inquiry' ? 'primary' : 'secondary'} appearance="light">
+            {SOURCE_LABELS[row.original.source ?? 'manual'] ?? 'Manual'}
+          </Badge>
+        ),
+        size: 150,
+        enableSorting: false,
+        meta: { headerTitle: 'Source' },
+      },
+      {
         id: 'actions',
         header: '',
         cell: ({ row }) => {
@@ -280,7 +438,10 @@ export default function SalesOrdersList() {
         enableSorting: false,
       },
     ],
-    [],
+    // `detailSearch` is read by the SO-number link and the row-click handler. Left out of
+    // the deps, the columns kept the query from the FIRST render, so every row linked to
+    // page 1 of an unfiltered list and the detail pager walked a set the user never chose.
+    [detailSearch],
   );
 
   const table = useReactTable({
@@ -298,7 +459,29 @@ export default function SalesOrdersList() {
     enableColumnResizing: true,
   });
 
-  const filtersActive = (statusFilter ? 1 : 0) + (priorityFilter ? 1 : 0);
+  const filtersActive =
+    (statusFilter ? 1 : 0) +
+    (priorityFilter ? 1 : 0) +
+    (sourceFilter ? 1 : 0) +
+    (dateFrom ? 1 : 0) +
+    (dateTo ? 1 : 0) +
+    (customerFilter ? 1 : 0) +
+    (outstandingOnly ? 1 : 0);
+
+  // An empty book and an over-filtered one look identical in the grid, so they say different
+  // things: one is a dead end the user can clear, the other is the step they have not done yet.
+  const emptyMessage =
+    filtersActive || searchQuery ? (
+      'No sales order matches this search and filter.'
+    ) : (
+      <span>
+        No sales orders yet. Upload the Order Inquiry sheet from{' '}
+        <Link href="/scm/reorder" className="text-primary underline underline-offset-2">
+          Reorder planning
+        </Link>{' '}
+        to create them, or add one with Add sales order.
+      </span>
+    );
 
   return (
     <>
@@ -306,6 +489,10 @@ export default function SalesOrdersList() {
         table={table}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
+        emptyMessage={emptyMessage}
+        // The whole row opens the order. The SO-number link stays a real anchor so
+        // middle-click and copy-link still work, and stops its own click propagating.
+        onRowClick={(row) => router.push(detailHref(row))}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       >
         <Card>
@@ -339,9 +526,63 @@ export default function SalesOrdersList() {
                 activeCount: filtersActive,
                 content: (
                   <div className="space-y-4">
+                    <div className="flex items-center justify-between gap-3 rounded-md border p-2.5">
+                      <Label htmlFor="so-outstanding-only" className="cursor-pointer">
+                        Still outstanding
+                      </Label>
+                      <Switch
+                        id="so-outstanding-only"
+                        checked={outstandingOnly}
+                        onCheckedChange={setOutstandingOnly}
+                      />
+                    </div>
                     <div>
-                      <Label className="mb-1 block">Status</Label>
+                      <Label htmlFor="so-customer" className="mb-1 block">
+                        Customer
+                      </Label>
                       <SearchableSelect
+                        id="so-customer"
+                        value={customerFilter}
+                        onChange={setCustomerFilter}
+                        options={customerOptions.data ?? []}
+                        placeholder="All customers"
+                        clearable
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <Label htmlFor="so-date-from" className="mb-1 block">
+                          Ordered from
+                        </Label>
+                        <Input
+                          id="so-date-from"
+                          type="date"
+                          value={dateFrom}
+                          // Bounded by each other so the range cannot be inverted into a
+                          // filter that silently matches nothing.
+                          max={dateTo || undefined}
+                          onChange={(e) => setDateFrom(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="so-date-to" className="mb-1 block">
+                          Ordered to
+                        </Label>
+                        <Input
+                          id="so-date-to"
+                          type="date"
+                          value={dateTo}
+                          min={dateFrom || undefined}
+                          onChange={(e) => setDateTo(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <Label htmlFor="so-status" className="mb-1 block">
+                        Status
+                      </Label>
+                      <SearchableSelect
+                        id="so-status"
                         value={statusFilter}
                         onChange={setStatusFilter}
                         options={STATUS_FILTER_OPTIONS}
@@ -349,12 +590,28 @@ export default function SalesOrdersList() {
                       />
                     </div>
                     <div>
-                      <Label className="mb-1 block">Priority</Label>
+                      <Label htmlFor="so-priority" className="mb-1 block">
+                        Priority
+                      </Label>
                       <SearchableSelect
+                        id="so-priority"
                         value={priorityFilter}
                         onChange={setPriorityFilter}
                         options={PRIORITY_FILTER_OPTIONS}
                         placeholder="All priorities"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="so-source" className="mb-1 block">
+                        Source
+                      </Label>
+                      <SearchableSelect
+                        id="so-source"
+                        value={sourceFilter}
+                        onChange={setSourceFilter}
+                        options={SOURCE_FILTER_OPTIONS}
+                        placeholder="All sources"
+                        clearable
                       />
                     </div>
                     {filtersActive > 0 ? (
@@ -365,6 +622,11 @@ export default function SalesOrdersList() {
                           onClick={() => {
                             setStatusFilter('');
                             setPriorityFilter('');
+                            setSourceFilter('');
+                            setDateFrom('');
+                            setDateTo('');
+                            setCustomerFilter('');
+                            setOutstandingOnly(false);
                           }}
                         >
                           Clear filters

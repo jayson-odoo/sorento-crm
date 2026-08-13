@@ -45,12 +45,12 @@ const SCOPE_BADGE: Record<ReorderPolicyRow['scope_type'], 'primary' | 'info' | '
 /** Trigger-threshold summary per policy type (novice-friendly). */
 function triggerSummary(row: ReorderPolicyRow): string {
   if (row.policy_type === 'min_max') {
-    const min = row.min_override != null ? row.min_override : '—';
-    const max = row.max_override != null ? row.max_override : '—';
+    const min = row.min_override != null ? row.min_override : '-';
+    const max = row.max_override != null ? row.max_override : '-';
     return `Min ${min} / Max ${max}`;
   }
   if (row.policy_type === 'periodic_review') {
-    return row.review_period_days != null ? `Every ${row.review_period_days}d` : '—';
+    return row.review_period_days != null ? `Every ${row.review_period_days}d` : '-';
   }
   return 'Reorder point';
 }
@@ -65,14 +65,14 @@ export function ReorderPolicyGrid() {
   const [editing, setEditing] = useState<ReorderPolicyRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ReorderPolicyRow | null>(null);
 
-  // Debounce the search input — server-side query (backend covers scope label +
+  // Debounce the search input - server-side query (backend covers scope label +
   // product_code / name / category, not just the readable columns).
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 300);
     return () => clearTimeout(t);
   }, [searchQuery]);
 
-  // Server-side paging / sorting / search — the backend GET /policies honours
+  // Server-side paging / sorting / search - the backend GET /policies honours
   // page/limit/sort/dir/query, so nothing is truncated and search reaches fields
   // the grid never renders (product_code, name, category).
   const { data, isLoading, isError, error } = useReorderPolicies({

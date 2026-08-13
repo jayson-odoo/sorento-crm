@@ -4,7 +4,7 @@ Covers:
   * D8 — ``_handler_scm_reorder_run`` creates a run over ALL warehouses (warehouse_codes
     empty), market insight OFF, and the full-budget path funds every costed buy (M8-D1/D6),
     plus the seeded ``scheduled_tasks`` row (days/1 + 06:00-KL anchor + metadata).
-  * D9 — the create-run REQUEST no longer carries ``buy_scope`` (defaults to network
+  * D9 — the create-run REQUEST no longer carries ``buy_scope`` (defaults to warehouse
     internally); ``GET /reorder-runs/today`` returns today's snapshot, and falls back to
     the latest completed run when none started today.
 
@@ -41,7 +41,7 @@ pytestmark = requires_pg
 # ===========================================================================
 
 def test_scheduled_handler_runs_all_warehouses_market_off_full_budget(scm_app, monkeypatch):
-    """M8-D1/D6/D8: the scheduled handler creates a NETWORK run with market OFF over all
+    """M8-D1/D6/D8: the scheduled handler creates a run with market OFF over all
     warehouses (empty warehouse_codes) and the full-budget path funds every costed buy.
 
     The catalog is shrunk to one controlled warehouse (monkeypatching the all-warehouses
@@ -76,7 +76,7 @@ def test_scheduled_handler_runs_all_warehouses_market_off_full_budget(scm_app, m
         "FROM scm.reorder_run WHERE id = :id"
     ), {"id": result["run_id"]}).mappings().first()
     assert run["status"] == "completed"
-    assert run["buy_scope"] == "network"
+    assert run["buy_scope"] == "warehouse"
     assert run["include_market"] is False
     assert run["budget_amount"] is None          # full budget stamps a null cap
 
@@ -113,21 +113,23 @@ def test_scheduled_handler_seed_row_exists_days_1_at_0600_kl(scm_app):
 # D9 — drop buy_scope from the create-run request
 # ===========================================================================
 
-def test_create_run_request_without_buy_scope_defaults_network(scm_app):
+def test_create_run_request_without_buy_scope_defaults_warehouse(scm_app):
     """M8-D5: the create-run REQUEST no longer takes ``buy_scope``; the run defaults to
-    network. A stray ``buy_scope`` in the body is ignored (schema dropped it)."""
+    per-warehouse planning, so every buy is tied to a real warehouse rather than an
+    aggregated Network row. A stray ``buy_scope`` in the body is ignored (schema dropped
+    it)."""
     app, db = _client(scm_app, "purchasing")
     with TestClient(app) as c:
-        # no buy_scope in the body → network default
+        # no buy_scope in the body -> warehouse default
         res = c.post("/api/v1/scm/reorder-runs", json={"warehouse_codes": []})
         assert res.status_code == 202, res.text
-        assert res.json()["buy_scope"] == "network"
+        assert res.json()["buy_scope"] == "warehouse"
 
-        # a stray buy_scope is ignored (not honoured) → still network
+        # a stray buy_scope is ignored (not honoured) -> still warehouse
         res2 = c.post("/api/v1/scm/reorder-runs",
-                      json={"warehouse_codes": [], "buy_scope": "warehouse"})
+                      json={"warehouse_codes": [], "buy_scope": "network"})
         assert res2.status_code == 202, res2.text
-        assert res2.json()["buy_scope"] == "network"
+        assert res2.json()["buy_scope"] == "warehouse"
 
 
 # ===========================================================================
@@ -145,7 +147,7 @@ def test_today_returns_todays_completed_snapshot(scm_app):
     _link(db, pid, _mk_supplier(db, "M8D Today Supplier"))
     db.flush()
 
-    created = svc.create_run(db, ["M8DW-TODAY"], enqueue=False)  # network default
+    created = svc.create_run(db, ["M8DW-TODAY"], enqueue=False)  # warehouse default
     svc.run_reorder(created["run_id"], db=db)
 
     with TestClient(app) as c:
@@ -156,7 +158,7 @@ def test_today_returns_todays_completed_snapshot(scm_app):
         assert body["run_id"] == created["run_id"]
         assert body["is_today"] is True
         assert body["status"] == "completed"
-        assert body["buy_scope"] == "network"
+        assert body["buy_scope"] == "warehouse"
         assert body["summary"]["recommendation_count"] >= 1
 
 
@@ -180,6 +182,46 @@ def test_today_falls_back_to_latest_completed_when_none_today(scm_app):
     assert picked is not None, "expected a completed-run fallback"
     assert picked["is_today"] is False
     assert picked["row"]["status"] == "completed"
+
+
+def test_an_unfinished_run_never_hides_the_last_completed_plan(scm_app):
+    """A run started today that has not finished is NOT the plan.
+
+    It carries no recommendations, so presenting it empties the page and the planner sees
+    "No plan yet" while a perfectly good snapshot sits behind it. That is exactly what a
+    queued job with no worker looks like from their chair: they press Plan now and the plan
+    they had disappears. The unfinished run is reported as ``in_progress`` instead.
+    """
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "M8DW-PROG")
+    pid = _mk_product(db, "M8DP-PROG")
+    _mk_stock(db, pid, wid, 8)
+    _mk_demand(db, pid, wid, 11.0)
+    _link(db, pid, _mk_supplier(db, "M8D Prog Supplier"))
+    db.flush()
+
+    done = svc.create_run(db, ["M8DW-PROG"], enqueue=False)
+    svc.run_reorder(done["run_id"], db=db)
+
+    # A second plan is asked for and never drains (no worker) - it stays 'running'.
+    stuck = svc.create_run(db, ["M8DW-PROG"], enqueue=False)
+    db.flush()
+
+    picked = svc.today_or_latest_run(db)
+    assert picked is not None
+    assert str(picked["row"]["id"]) == done["run_id"], "the completed run must still be shown"
+    assert str(picked["row"]["id"]) != stuck["run_id"]
+    assert picked["row"]["status"] == "completed"
+    assert picked["is_today"] is True
+    assert picked["in_progress"] is True, "the page must be able to say a plan is being built"
+
+
+def test_in_progress_is_a_fact_about_one_day_not_a_sticky_flag(scm_app):
+    """No run started on the day asked about, no banner. Asked about a day nothing ran on,
+    so the answer cannot depend on whatever else the database happens to hold."""
+    _, db, _, _ = scm_app
+    quiet_day = date.today() + timedelta(days=5)
+    assert svc._run_in_progress(db, quiet_day) is False
 
 
 def test_today_auth_denied_without_dashboard_view(scm_app):
