@@ -206,6 +206,48 @@ describe('RevisionHistory', () => {
     expect(screen.queryAllByTestId('revision-view-form')).toHaveLength(0);
   });
 
+  /**
+   * The other half of the round-7 auth split (mirrored in
+   * `RevisionTimeline.attachmentAuth.test.tsx` for the office side, which
+   * asserts the opposite: no fetchBytes override). The snapshot dialog's own
+   * attachment badges - opened via "View full form" - must reach the shared
+   * modal with the portal's token-authenticated reader, exactly like the
+   * entry-level badges already covered above. A silent regression back onto
+   * the modal's JWT default would 401 every historical attachment for a
+   * contact and nothing here would fail without this test.
+   */
+  it('opens the full-form dialog preview with the portal byte reader, not the JWT default', () => {
+    render(
+      <RevisionHistory
+        entries={[
+          entry({
+            snapshot_fields: [{ field: 'quantity', label: 'Quantity', value: '4' }],
+            attachments: [
+              { attachment_id: 'att-1', link_id: null, filename: 'quote.pdf', size: 10 },
+              { attachment_id: 'att-2', link_id: null, filename: 'photo.jpg', size: 20 },
+            ],
+          }),
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('revision-view-form'));
+    const dialog = screen.getByRole('dialog');
+    const badges = within(dialog).getAllByTestId('snapshot-attachment');
+    expect(badges).toHaveLength(2);
+
+    fireEvent.click(badges[1]);
+
+    const opened = previewCalls.filter((c) => c.open).at(-1);
+    expect(opened).toBeDefined();
+    expect(opened?.fetchBytes).toBe(portalFetchBytes);
+    expect(opened?.startIndex).toBe(1);
+    expect(opened?.items[1]).toMatchObject({
+      id: 'att-2',
+      downloadUrl: '/api/v1/public/portal/attachments/att-2/download',
+    });
+  });
+
   it('opens the shared preview modal in place from a history entry, with the portal byte reader', () => {
     render(
       <RevisionHistory

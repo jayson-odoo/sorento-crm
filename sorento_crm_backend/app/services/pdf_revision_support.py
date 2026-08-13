@@ -303,6 +303,33 @@ def revision_attachment_names(entry: dict) -> list[str]:
     return names
 
 
+class _SnapshotNamedAttachment:
+    """The live attachment row, wearing the filename the SNAPSHOT recorded.
+
+    A historical page has to name a file as it was named THEN. Reading
+    ``original_filename`` off today's row would print a renamed file's CURRENT
+    name under an "as it was" heading - the same lie the snapshot exists to
+    prevent, moved from the field values into the attachment list.
+
+    Only the name is overridden. The bytes, the storage provider and the mime
+    still come from the live row, because the snapshot records which files the
+    version had, not where they live now. The mime is pinned when the live row
+    is an image so that a snapshotted name without a usable extension cannot
+    drop a photo out of the grid (``image_mime`` falls back to the extension
+    only when the stored mime is not ``image/*``).
+    """
+
+    __slots__ = ("_att", "original_filename", "mime_type")
+
+    def __init__(self, att: Any, filename: Optional[str], mime: Optional[str]) -> None:
+        self._att = att
+        self.original_filename = filename
+        self.mime_type = mime
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(object.__getattribute__(self, "_att"), name)
+
+
 def _revision_attachment_links(db: Session, entry: dict) -> tuple[list, list[str]]:
     """``(link-shaped objects, names with no row left)`` for ONE version's files.
 
@@ -314,8 +341,13 @@ def _revision_attachment_links(db: Session, entry: dict) -> tuple[list, list[str
     unlinked, not destroyed (UAC G6), and it is precisely the file a historical
     page exists to show - the on-screen history already resolves the same rows
     this way (``_attachment_urls``).
+
+    The row is then wrapped so it answers with the name the SNAPSHOT stored (see
+    :class:`_SnapshotNamedAttachment`); the live name is used only where the
+    snapshot has none.
     """
     from app.models.resources import Attachment
+    from app.services.pdf_render import image_mime
 
     items = [item or {} for item in (entry.get("attachments") or [])]
     ids = {str(item.get("attachment_id")) for item in items if item.get("attachment_id")}
@@ -328,10 +360,15 @@ def _revision_attachment_links(db: Session, entry: dict) -> tuple[list, list[str
     missing: list[str] = []
     for item in items:
         att = rows.get(str(item.get("attachment_id") or ""))
+        snapshot_name = str(item.get("filename") or "").strip()
         if att is None:
-            missing.append(str(item.get("filename") or "").strip() or "attachment")
+            missing.append(snapshot_name or "attachment")
             continue
-        links.append(SimpleNamespace(attachment=att))
+        name = snapshot_name or getattr(att, "original_filename", None)
+        mime = image_mime(att) or getattr(att, "mime_type", None)
+        links.append(
+            SimpleNamespace(attachment=_SnapshotNamedAttachment(att, name, mime))
+        )
     return links, missing
 
 
@@ -344,6 +381,10 @@ def revision_attachment_sections(
     from THAT version's attachment set - the user's expectation, in his words,
     that "we using same printing function for all revisions". Non-image files are
     listed by name, as everywhere else.
+
+    Every filename on the page is the SNAPSHOT's, never the live row's: a file
+    renamed after this version was submitted must still be named here as it was
+    named then (UAC P3). The live name is used only when the snapshot has none.
 
     Best-effort in three places, because a printed history must never fail over a
     file: an attachment row that no longer exists falls back to its snapshotted
@@ -368,7 +409,9 @@ def revision_attachment_sections(
     names = list(non_image_names(links))
 
     # An image counted here but absent from `images` never downloaded. Counted,
-    # not set-differenced, so two files sharing a name are not confused.
+    # not set-differenced, so two files sharing a name are not confused. Both
+    # sides read the snapshotted name (the links are wrapped), so the tally
+    # cannot be thrown off by a file renamed since this version.
     embedded = Counter(str(img.get("name") or "") for img in images)
     for link in links:
         att = link.attachment

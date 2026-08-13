@@ -415,6 +415,54 @@ def test_an_unfetchable_revision_photo_degrades_to_its_filename(db, storage):
     assert "gone.jpg" in html  # ...and the dead one is still named
 
 
+@pytest.mark.parametrize(
+    "filename, mime, unfetchable",
+    [
+        ("site-photo.jpg", "image/jpeg", False),  # the caption under an embedded photo
+        ("quotation.pdf", "application/pdf", False),  # a listed non-image
+        ("gone.jpg", "image/jpeg", True),  # an image degraded to its name
+    ],
+)
+def test_a_file_renamed_later_is_named_as_it_was_at_that_revision(
+    db, storage, filename, mime, unfetchable
+):
+    """A historical page names a file as it was named THEN.
+
+    Reading the live row would print today's name under an "as it was" heading -
+    the same lie the snapshot exists to prevent, moved from the field values into
+    the attachment list. Asserted on all three surfaces the name can reach: the
+    photo caption, the listed non-image, and the degraded name of an image whose
+    bytes cannot be fetched (UAC P3).
+    """
+    from app.models.resources import Attachment
+
+    token, row = _setup(db, "stock_inquiry")
+    attachment_id = _seed_attachment(db, row, filename=filename, mime=mime)
+    if unfetchable:
+        storage["failing"].add(filename)
+    _revise(
+        db, token, "stock_inquiry", row,
+        {"item_description": SECOND_DESCRIPTION}, FIRST_REASON, 0,
+    )
+
+    # Renamed after that version was submitted. The object never moves, so the
+    # version's own bytes are still the ones the page embeds.
+    renamed = f"renamed-today{filename[filename.rfind('.'):]}"
+    att = db.query(Attachment).filter(Attachment.id == attachment_id).one()
+    att.original_filename = renamed
+    att.stored_filename = renamed
+    db.commit()
+
+    entries = _entries(db, "stock_inquiry", row)
+    original = next(e for e in entries if e["version_no"] == 0)
+    html = StockInquiryPDFService(db).build_html(str(row.id), revision_id=original["id"])
+
+    assert filename in html
+    assert renamed not in html
+    if mime.startswith("image/") and not unfetchable:
+        assert "data:image/jpeg;base64," in html
+
+
 @pytest.mark.parametrize("kind", REQUEST_TYPES)
 def test_request_revision_embeds_that_versions_own_photos(db, storage, kind):
     token, row = _setup(db, kind)

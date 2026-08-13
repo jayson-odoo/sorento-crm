@@ -5,11 +5,24 @@
  * never from the live row: the reader sees the values AS THEY WERE at that
  * version. Read only - no inputs, no actions.
  */
+import type { ReactNode } from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 
-import { RevisionSnapshotDialog } from './RevisionSnapshotDialog';
+import { RevisionSnapshotDialog, revisionAttachmentPreviewItem } from './RevisionSnapshotDialog';
 import type { FormRevisionEntry } from './RevisionTimeline';
+
+// The preview badge opens the real AttachmentPreviewModal (not mocked in this
+// file), which mounts embla-carousel - it needs layout/observer APIs jsdom
+// lacks. Same stub as AttachmentPreviewModal.test.tsx: the logic under test
+// here is the badge/click wiring, not the carousel engine.
+vi.mock('@/components/ui/carousel', () => ({
+  Carousel: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  CarouselContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  CarouselItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  CarouselNext: () => <button type="button">next</button>,
+  CarouselPrevious: () => <button type="button">prev</button>,
+}));
 
 function entry(overrides: Partial<FormRevisionEntry> = {}): FormRevisionEntry {
   return {
@@ -189,6 +202,28 @@ describe('RevisionSnapshotDialog', () => {
     expect(screen.getByText('None')).toBeInTheDocument();
   });
 
+  it('keeps the attachment badge a clickable button that opens the preview, not a static label', () => {
+    render(
+      <RevisionSnapshotDialog
+        entry={entry({ attachments: [{ attachment_id: 'att-1', filename: 'quote.pdf' }] })}
+        onOpenChange={() => {}}
+      />,
+    );
+
+    const badge = screen.getByTestId('snapshot-attachment');
+    expect(badge.tagName).toBe('BUTTON');
+    expect((badge as HTMLButtonElement).type).toBe('button');
+
+    fireEvent.click(badge);
+
+    // The preview modal stacks as a second dialog beside the snapshot dialog
+    // (Escape closes the preview first, the version underneath stays open) -
+    // asserted here as a second `dialog` role appearing, not the modal's
+    // internals.
+    expect(screen.getAllByRole('dialog')).toHaveLength(2);
+    expect(screen.getByText('This attachment has no previewable URL.')).toBeInTheDocument();
+  });
+
   it('contains no form controls: the view is read only', () => {
     render(<RevisionSnapshotDialog entry={entry()} onOpenChange={() => {}} />);
     const dialog = screen.getByRole('dialog');
@@ -200,5 +235,75 @@ describe('RevisionSnapshotDialog', () => {
     render(<RevisionSnapshotDialog entry={entry()} onOpenChange={onOpenChange} />);
     fireEvent.click(screen.getByRole('button', { name: /close/i }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+});
+
+/**
+ * `revisionAttachmentPreviewItem` is the one place both sides of the dialog's
+ * auth split (office `RevisionTimeline`, portal `RevisionHistory`) build a
+ * preview item from a revision's snapshotted attachment, so it is worth
+ * pinning on its own rather than only through each caller's render test.
+ */
+describe('revisionAttachmentPreviewItem', () => {
+  it('maps attachment_id, filename and size, and uses the entry own signed url', () => {
+    const item = revisionAttachmentPreviewItem({
+      attachment_id: 'att-1',
+      filename: 'quote.pdf',
+      size: 1024,
+      url: 'https://cdn.example.com/signed/quote.pdf?sig=1',
+    });
+
+    expect(item).toEqual({
+      id: 'att-1',
+      name: 'quote.pdf',
+      url: 'https://cdn.example.com/signed/quote.pdf?sig=1',
+      downloadUrl: undefined,
+      sizeBytes: 1024,
+    });
+  });
+
+  it('produces a downloadUrl only when the caller supplies an attachmentDownloadUrl builder', () => {
+    const withBuilder = revisionAttachmentPreviewItem(
+      { attachment_id: 'att-1', filename: 'quote.pdf' },
+      (id) => `/download/${id}`,
+    );
+    expect(withBuilder.downloadUrl).toBe('/download/att-1');
+
+    const withoutBuilder = revisionAttachmentPreviewItem({
+      attachment_id: 'att-1',
+      filename: 'quote.pdf',
+    });
+    expect(withoutBuilder.downloadUrl).toBeUndefined();
+  });
+
+  it('degrades rather than breaking for an attachment with no signed url', () => {
+    const item = revisionAttachmentPreviewItem(
+      { attachment_id: 'att-2', filename: 'no-url.jpg' },
+      (id) => `/download/${id}`,
+    );
+
+    // The item still builds - the modal is what decides how to show the
+    // fallback, not this mapper.
+    expect(item.url).toBe('');
+    expect(item.name).toBe('no-url.jpg');
+    expect(item.downloadUrl).toBe('/download/att-2');
+  });
+
+  it('falls back to a generic name and no size when the attachment carries neither', () => {
+    const item = revisionAttachmentPreviewItem({ attachment_id: 'att-3' });
+
+    expect(item.name).toBe('Attachment');
+    expect(item.sizeBytes).toBeNull();
+  });
+
+  it('never asks for a downloadUrl off an attachment with no id', () => {
+    const attachmentDownloadUrl = vi.fn((id: string) => `/download/${id}`);
+    const item = revisionAttachmentPreviewItem(
+      { attachment_id: '', filename: 'orphan.jpg' },
+      attachmentDownloadUrl,
+    );
+
+    expect(item.downloadUrl).toBeUndefined();
+    expect(attachmentDownloadUrl).not.toHaveBeenCalled();
   });
 });

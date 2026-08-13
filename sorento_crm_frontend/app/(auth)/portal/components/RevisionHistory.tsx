@@ -248,7 +248,9 @@ export function RevisionHistory({
                               type="button"
                               onClick={() => setPreview({ items, index: fileIndex })}
                               aria-label={`Preview ${file.filename || 'attachment'}`}
-                              className="max-w-full"
+                              // Tailwind's preflight gives a button `cursor: default`,
+                              // so an openable file has to say so itself.
+                              className="max-w-full cursor-pointer transition-colors hover:bg-secondary/80"
                             >
                               <Paperclip className="h-3 w-3 mr-1 shrink-0" />
                               <span className="truncate">

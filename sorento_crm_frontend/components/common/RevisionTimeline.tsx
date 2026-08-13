@@ -284,7 +284,9 @@ export function RevisionTimeline({
                             })
                           }
                           aria-label={`Preview ${attachment.filename || 'attachment'}`}
-                          className="max-w-full"
+                          // Tailwind's preflight gives a button `cursor: default`,
+                          // so an openable file has to say so itself.
+                          className="max-w-full cursor-pointer transition-colors hover:bg-secondary/80"
                           data-testid="revision-attachment"
                         >
                           <Paperclip className="h-3 w-3 mr-1 shrink-0" />
