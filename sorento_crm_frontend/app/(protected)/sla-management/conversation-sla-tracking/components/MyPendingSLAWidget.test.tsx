@@ -71,8 +71,22 @@ vi.mock('@/app/(protected)/account/notifications/components', () => ({
 // The ticket drawer is exercised on its own (InterventionTicketDrawer.test.tsx);
 // here we only care that the widget opens/closes it with the right ticketId.
 vi.mock('./InterventionTicketDrawer', () => ({
-  default: ({ ticketId, open }: { ticketId: string | null; open: boolean }) =>
-    open ? <div data-testid="ticket-drawer" data-ticket-id={ticketId ?? ''} /> : null,
+  default: ({
+    ticketId,
+    open,
+    onSent,
+  }: {
+    ticketId: string | null;
+    open: boolean;
+    onSent?: () => void;
+  }) =>
+    open ? (
+      <div data-testid="ticket-drawer" data-ticket-id={ticketId ?? ''}>
+        <button data-testid="drawer-sent" onClick={() => onSent?.()}>
+          sent
+        </button>
+      </div>
+    ) : null,
 }));
 
 function renderWidget() {
@@ -647,6 +661,28 @@ describe('MyPendingSLAWidget clickable rows', () => {
     renderWidget();
 
     expect(await screen.findByText('Enquiry from this contact')).toBeInTheDocument();
+  });
+
+  it('a reply from the drawer reloads the worklist so the chips agree', async () => {
+    // The worklist is loaded imperatively (getMyPendingSLA into useState), not
+    // through react-query, so invalidating a query key refreshes nothing: the
+    // row behind the drawer keeps the pre-reply "Respond by" chip until the
+    // drawer is closed. The drawer reports the send instead.
+    getMyPendingSLA.mockResolvedValue([ticketOne]);
+    renderWidget();
+
+    await waitFor(() =>
+      expect(screen.getByText('Yes, please connect me to a person.')).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText('Yes, please connect me to a person.'));
+    await screen.findByTestId('ticket-drawer');
+
+    const before = getMyPendingSLA.mock.calls.length;
+    fireEvent.click(screen.getByTestId('drawer-sent'));
+
+    await waitFor(() =>
+      expect(getMyPendingSLA.mock.calls.length).toBeGreaterThan(before),
+    );
   });
 
   it('deep link ?ticket= opens the drawer directly and strips the query param', async () => {

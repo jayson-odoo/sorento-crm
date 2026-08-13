@@ -42,6 +42,13 @@ interface InterventionTicketDrawerProps {
   onOpenChange: (open: boolean) => void;
   /** Called after a resolve so the worklist can drop the row. */
   onResolved?: () => void;
+  /**
+   * Called after a reply goes out. The worklist behind this drawer loads
+   * imperatively (getMyPendingSLA into state), not through react-query, so no
+   * query invalidation reaches it - it has to be told, or the row keeps its
+   * pre-reply countdown chips until the drawer closes.
+   */
+  onSent?: () => void;
 }
 
 /** Short excerpt of a message, used as the quoted text on a reply. */
@@ -63,6 +70,7 @@ export default function InterventionTicketDrawer({
   open,
   onOpenChange,
   onResolved,
+  onSent,
 }: InterventionTicketDrawerProps) {
   const [replyTo, setReplyTo] = useState<{ messageId: string | number | null; excerpt: string } | null>(
     null,
@@ -227,6 +235,7 @@ export default function InterventionTicketDrawer({
                 onSent={() => {
                   void ticketQuery.refetch();
                   void threadQuery.refetch();
+                  onSent?.();
                 }}
                 replyTo={replyTo}
                 onClearReplyTo={() => setReplyTo(null)}

@@ -38,22 +38,29 @@ vi.mock('@/components/common/conversation/SharedConversationComposer', () => ({
     notAvailableMessage,
     sendAdapter,
     templateSendTrackingId,
+    onSent,
   }: {
     canReply: boolean;
     attachmentsEnabled?: boolean;
     notAvailableMessage?: string;
     sendAdapter: (payload: { text: string; files: File[] }) => Promise<unknown>;
     templateSendTrackingId?: string | null;
+    onSent?: () => void;
   }) =>
     canReply ? (
-      <button
-        data-testid="composer-send"
-        data-attachments-enabled={String(!!attachmentsEnabled)}
-        data-template-tracking-id={templateSendTrackingId ?? ''}
-        onClick={() => void sendAdapter({ text: 'hello', files: [] })}
-      >
-        Send
-      </button>
+      <>
+        <button
+          data-testid="composer-send"
+          data-attachments-enabled={String(!!attachmentsEnabled)}
+          data-template-tracking-id={templateSendTrackingId ?? ''}
+          onClick={() => void sendAdapter({ text: 'hello', files: [] })}
+        >
+          Send
+        </button>
+        <button data-testid="composer-sent" onClick={() => onSent?.()}>
+          sent
+        </button>
+      </>
     ) : (
       <p data-testid="composer-unavailable">{notAvailableMessage}</p>
     ),
@@ -126,16 +133,18 @@ beforeEach(() => {
 function renderDrawer(props: Partial<React.ComponentProps<typeof InterventionTicketDrawer>> = {}) {
   const onOpenChange = vi.fn();
   const onResolved = vi.fn();
+  const onSent = vi.fn();
   render(
     <InterventionTicketDrawer
       ticketId="t1"
       open
       onOpenChange={onOpenChange}
       onResolved={onResolved}
+      onSent={onSent}
       {...props}
     />,
   );
-  return { onOpenChange, onResolved };
+  return { onOpenChange, onResolved, onSent };
 }
 
 describe('InterventionTicketDrawer', () => {
@@ -207,6 +216,18 @@ describe('InterventionTicketDrawer', () => {
       'data-template-tracking-id',
       't1',
     );
+  });
+
+  it('a send tells the worklist to reload, not just this drawer', async () => {
+    // The worklist behind the drawer loads outside react-query, so nothing a
+    // mutation invalidates reaches it - the drawer has to say so directly.
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    const { onSent } = renderDrawer();
+
+    await waitFor(() => expect(screen.getByTestId('composer-sent')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('composer-sent'));
+
+    expect(onSent).toHaveBeenCalled();
   });
 
   it('composer: disabled with a reason once the ticket is resolved', async () => {

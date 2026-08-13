@@ -42,7 +42,9 @@ export function useSendInterventionTicketMessage(id: string) {
       // the drawer refreshes BOTH surfaces (prefix match covers limit/cursor).
       queryClient.invalidateQueries({ queryKey: ['sla-tracking-conversation', id] });
       queryClient.invalidateQueries({ queryKey: ['intervention-ticket', id] });
-      queryClient.invalidateQueries({ queryKey: ['intervention-tickets', 'mine'] });
+      // The worklist is NOT a react-query cache entry: MyPendingSLAWidget calls
+      // getMyPendingSLA into component state, so there is no key to invalidate.
+      // The drawer's onSent reloads it (InterventionTicketDrawer -> onSent).
       // A partially-delivered multi-file send returns 200: the composer names
       // the file that did not make it and keeps it staged, so a blanket
       // "Message sent" here would contradict it.
@@ -58,11 +60,11 @@ export function useSendInterventionTicketMessage(id: string) {
 
 /** Resolve one ticket. Sibling tickets for the same contact stay open. */
 export function useResolveInterventionTicket() {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => resolveInterventionTicket(id),
+    // The worklist reload is the drawer's onResolved (see the send hook above):
+    // that list lives in component state, not in the query cache.
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['intervention-tickets', 'mine'] });
       toast.success('Ticket resolved.');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to resolve ticket'),
