@@ -70,7 +70,7 @@ beforeEach(() => {
   toastError.mockReset();
 });
 
-describe('useReorderRun — lifecycle', () => {
+describe('useReorderRun - lifecycle', () => {
   it('POSTs then polls to completion, exposing the summary', async () => {
     routeApi([RUNNING, COMPLETED]);
     const { result } = renderHook(() => useReorderRun(), { wrapper });
@@ -128,7 +128,7 @@ describe('useReorderRun — lifecycle', () => {
   it('stops polling and surfaces a stalled state once the poll cap elapses', async () => {
     vi.useFakeTimers();
     try {
-      routeApi([RUNNING]); // never terminates — simulates an orphaned run
+      routeApi([RUNNING]); // never terminates - simulates an orphaned run
       const { result } = renderHook(() => useReorderRun(), { wrapper });
       await act(async () => {
         await result.current.start({ warehouse_codes: ['WH-KL'] });
@@ -146,7 +146,7 @@ describe('useReorderRun — lifecycle', () => {
       expect(result.current.isStalled).toBe(true);
       expect(result.current.isRunning).toBe(false);
 
-      // polling has stopped — no further GETs beyond what already fired
+      // polling has stopped - no further GETs beyond what already fired
       const getsBefore = apiFetch.mock.calls.filter(
         (c) => (c[1] as RequestInit | undefined)?.method !== 'POST',
       ).length;
@@ -186,10 +186,11 @@ const TODAY_RUN = {
   started_at: '2026-07-17T06:00:00',
   finished_at: '2026-07-17T06:00:08',
   is_today: true,
+  in_progress: false,
   summary: { buy_count: 4, disposition_count: 1, exception_count: 0, total_cash_impact: 9000, recommendation_count: 5 },
 };
 
-describe('useTodayRun — the page default run (M8-D3/D4)', () => {
+describe('useTodayRun - the page default run (M8-D3/D4)', () => {
   it('GETs /reorder-runs/today and exposes today’s snapshot', async () => {
     apiFetch.mockResolvedValue(jsonRes(TODAY_RUN));
     const { result } = renderHook(() => useTodayRun(), { wrapper });

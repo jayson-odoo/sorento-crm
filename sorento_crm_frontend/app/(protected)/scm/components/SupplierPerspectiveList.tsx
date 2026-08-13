@@ -19,7 +19,7 @@ import { ScmPager } from './ScmPager';
 /** Supplier cards per page. */
 const SUPPLIER_PAGE_SIZE = 10;
 
-/** One metric in the supplier scorecard — reuses the roll-up stat-tile look. */
+/** One metric in the supplier scorecard - reuses the roll-up stat-tile look. */
 function ScoreMetric({
   label,
   value,
@@ -58,7 +58,7 @@ function compositeAccent(score: number): string {
 }
 
 /**
- * Supplier performance scorecard — real supplier-level analytics
+ * Supplier performance scorecard - real supplier-level analytics
  * (`supplier.performance`), null when the supplier was never scored. A
  * `low`-confidence score is muted end-to-end + flagged so a thin sample is
  * never mistaken for a confident one (plan §6).
@@ -69,7 +69,7 @@ function SupplierScorecard({ supplier }: { supplier: SupplierGroup }) {
   if (!perf) {
     return (
       <div className="border-b border-border bg-muted/10 px-4 py-3 text-2xs text-muted-foreground">
-        No performance history yet — needs received purchase orders to score.
+        No performance history yet - needs received purchase orders to score.
       </div>
     );
   }
@@ -154,7 +154,7 @@ function SupplierCard({ supplier }: { supplier: SupplierGroup }) {
 
       <SupplierScorecard supplier={supplier} />
 
-      {/* Disclosure header — click anywhere to expand/collapse the product list.
+      {/* Disclosure header - click anywhere to expand/collapse the product list.
           Same chevron affordance as the Product grid's expandable rows. */}
       <button
         type="button"

@@ -1,119 +1,24 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, LoaderCircleIcon, Save } from 'lucide-react';
+import { Plus, LoaderCircleIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { getProductSuppliersByProductId, createProductSupplier, updateProductSupplier, deleteProductSupplier } from '../../../procurement-management/product-suppliers/services/productSupplierService';
 import { useSupplierSelectQuery } from '../../../procurement-management/suppliers/hooks/useSupplierSelectQuery';
+import { getCurrencyRates } from '../../../scm/services/currencyRateService';
 import { toast } from 'sonner';
-import type { ProductSupplier } from '../../../procurement-management/product-suppliers/types/productSupplier.types';
-
-function ProductSupplierRow({
-  ps,
-  onUpdateLeadTime,
-  onRemove,
-  isUpdating,
-  isDeleting,
-}: {
-  ps: ProductSupplier;
-  onUpdateLeadTime: (days: number) => void;
-  onRemove: () => void;
-  isUpdating: boolean;
-  isDeleting: boolean;
-}) {
-  const currentDays = ps.standard_lead_time_days ?? ps.lead_time_days ?? 0;
-  const [leadTimeInput, setLeadTimeInput] = useState(String(currentDays));
-  const [hasChange, setHasChange] = useState(false);
-
-  useEffect(() => {
-    setLeadTimeInput(String(currentDays));
-  }, [currentDays]);
-
-  const handleLeadTimeBlur = () => {
-    const num = parseInt(leadTimeInput, 10);
-    if (!hasChange) return;
-    if (isNaN(num) || num < 0) {
-      setLeadTimeInput(String(currentDays));
-      setHasChange(false);
-      return;
-    }
-    onUpdateLeadTime(num);
-    setHasChange(false);
-  };
-
-  const handleLeadTimeKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      (e.target as HTMLInputElement).blur();
-    }
-  };
-
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <Badge variant="secondary">
-          {ps.supplier?.supplier_code || 'N/A'}
-        </Badge>
-        <span className="text-sm font-medium">
-          {ps.supplier?.supplier_name || 'Unknown Supplier'}
-        </span>
-        <div className="flex items-center gap-2">
-          <Label className="text-xs text-muted-foreground whitespace-nowrap">Lead time (days)</Label>
-          <Input
-            type="number"
-            min={0}
-            className="w-20 h-8"
-            value={leadTimeInput}
-            onChange={(e) => {
-              setLeadTimeInput(e.target.value);
-              setHasChange(true);
-            }}
-            onBlur={handleLeadTimeBlur}
-            onKeyDown={handleLeadTimeKeyDown}
-            disabled={isUpdating}
-          />
-          {hasChange && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-8"
-              onClick={() => {
-                const num = parseInt(leadTimeInput, 10);
-                if (!isNaN(num) && num >= 0) {
-                  onUpdateLeadTime(num);
-                  setHasChange(false);
-                }
-              }}
-              disabled={isUpdating}
-            >
-              {isUpdating ? <LoaderCircleIcon className="size-4 animate-spin" /> : <Save className="size-4" />}
-            </Button>
-          )}
-        </div>
-      </div>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        onClick={onRemove}
-        disabled={isDeleting}
-      >
-        {isDeleting ? (
-          <LoaderCircleIcon className="size-4 animate-spin" />
-        ) : (
-          <Trash2 className="size-4 text-destructive" />
-        )}
-      </Button>
-    </div>
-  );
-}
+import {
+  ProductSupplierTermsRow,
+  draftToPatch,
+  termsError,
+  type SupplierTermsDraft,
+} from './ProductSupplierTermsRow';
 
 interface ProductSuppliersSectionProps {
   productId: string | undefined;
@@ -127,6 +32,27 @@ export default function ProductSuppliersSection({
   const queryClient = useQueryClient();
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
   const [leadTimeDays, setLeadTimeDays] = useState<string>('');
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  // Only currencies we hold a rate for are offered. A price in a currency with no rate
+  // cannot be compared to the budget, so the plan would drop the buy straight back into
+  // "No price yet" - offering it here would be inviting the buyer to do work twice.
+  const { data: currencyRates } = useQuery({
+    queryKey: ['scm-currency-rates'],
+    queryFn: getCurrencyRates,
+    enabled: isEditMode,
+    // The read is gated on an SCM permission a master-data editor may not hold. A failure
+    // is not worth a toast: the select falls back to whatever is already on the row.
+    retry: false,
+  });
+  const currencyOptions = useMemo(() => {
+    const base = currencyRates?.base_currency;
+    const codes = [
+      ...(base ? [base] : []),
+      ...(currencyRates?.rates ?? []).map((r) => r.currency),
+    ];
+    return Array.from(new Set(codes)).map((c) => ({ value: c, label: c }));
+  }, [currencyRates]);
 
   // Fetch existing product suppliers
   const { data: productSuppliers, isLoading: isLoadingSuppliers } = useQuery({
@@ -162,25 +88,27 @@ export default function ProductSuppliersSection({
     },
   });
 
-  // Update lead time mutation
+  // One save per row, carrying every term at once: a price and its currency have to land
+  // together or the row is briefly priced in the wrong money.
   const updateMutation = useMutation({
-    mutationFn: ({ id, standard_lead_time_days }: { id: string; standard_lead_time_days: number }) =>
-      updateProductSupplier(id, { standard_lead_time_days }),
+    mutationFn: ({ id, draft }: { id: string; draft: SupplierTermsDraft }) =>
+      updateProductSupplier(id, draftToPatch(draft)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['product-suppliers', productId] });
-      toast.success('Lead time updated');
+      toast.success('Supplier terms updated');
     },
     onError: (error: Error) => {
-      toast.error(error.message || 'Failed to update lead time');
+      toast.error(error.message || 'Failed to update supplier terms');
     },
+    onSettled: () => setSavingId(null),
   });
 
-  // Delete mutation
+  // Delete mutation. No success toast here: the confirmation dialog raises its own, and two
+  // toasts for one action reads as two things having happened.
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteProductSupplier(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['product-suppliers', productId] });
-      toast.success('Supplier removed successfully');
     },
     onError: (error: Error) => {
       toast.error(error.message || 'Failed to remove supplier');
@@ -209,10 +137,6 @@ export default function ProductSuppliersSection({
     }
 
     createMutation.mutate({ supplierId: selectedSupplierId, leadTime });
-  };
-
-  const handleRemoveSupplier = (id: string) => {
-    deleteMutation.mutate(id);
   };
 
   // Get available suppliers (not already added)
@@ -299,14 +223,21 @@ export default function ProductSuppliersSection({
         ) : productSuppliers && productSuppliers.length > 0 ? (
           <div className="space-y-2">
             {productSuppliers.map((ps) => (
-              <ProductSupplierRow
+              <ProductSupplierTermsRow
                 key={ps.id}
                 ps={ps}
-                onUpdateLeadTime={(days) =>
-                  updateMutation.mutate({ id: ps.id, standard_lead_time_days: days })
-                }
-                onRemove={() => handleRemoveSupplier(ps.id)}
-                isUpdating={updateMutation.isPending}
+                currencyOptions={currencyOptions}
+                onSave={(draft) => {
+                  const invalid = termsError(draft);
+                  if (invalid) {
+                    toast.error(invalid);
+                    return;
+                  }
+                  setSavingId(ps.id);
+                  updateMutation.mutate({ id: ps.id, draft });
+                }}
+                onRemove={() => deleteMutation.mutateAsync(ps.id).then(() => undefined)}
+                isSaving={updateMutation.isPending && savingId === ps.id}
                 isDeleting={deleteMutation.isPending}
               />
             ))}

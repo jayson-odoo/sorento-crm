@@ -36,7 +36,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { cn } from '@/lib/utils';
 import { ConfidenceBadge } from '../../components/HealthIndicators';
-import { EM_DASH, fmtDoc, fmtInt, fmtMoney, fmtSigned } from '../../lib/format';
+import { EM_DASH, fmtDoc, fmtInt, fmtMoney, fmtSigned, fmtSupplierCost } from '../../lib/format';
 import { useReorderRecommendations } from '../hooks/useReorderRun';
 import type {
   AllocationLine,
@@ -46,22 +46,22 @@ import type {
 } from '../types/reorder.types';
 import { ReorderExplanationDialog } from './ReorderExplanationDialog';
 
-/** Plain-language header tooltips — spell out every metric for a novice. Keyboard-
+/** Plain-language header tooltips - spell out every metric for a novice. Keyboard-
  *  accessible (the trigger is focusable) and reused as the aria-label. */
 const HEADER_TIPS = {
   order_qty:
     "How many to order = Order-up-to − Net position, rounded to the supplier's pack size / minimum order.",
   reorder_point:
     'The stock level that triggers a reorder = forecast demand over the lead time + safety stock. When net position falls to/below it, reorder.',
-  min: 'Min — the floor under a Min/Max policy. When net falls to/below Min, reorder up to Max.',
-  max: 'Max — the ceiling a Min/Max policy replenishes up to.',
+  min: 'Min - the floor under a Min/Max policy. When net falls to/below Min, reorder up to Max.',
+  max: 'Max - the ceiling a Min/Max policy replenishes up to.',
   order_up_to:
     "The target stock level you replenish to = reorder point + one review-period's demand.",
   net: 'Net position = on hand + on order − committed.',
   days_of_cover:
     'How many days your net position lasts at the forecast demand (net ÷ daily demand).',
   confidence:
-    'How much data backs the recommendation (demand pattern + sample size) — not a promise the number is correct.',
+    'How much data backs the recommendation (demand pattern + sample size) - not a promise the number is correct.',
 } as const;
 
 /** Keyboard-accessible info icon for a metric column header (mirrors the M2
@@ -100,7 +100,7 @@ const DISPOSITION_LABEL: Record<DispositionAction, string> = {
   hold: 'Hold',
 };
 
-/** Type chip — buy / disposition / no-supplier exception are visually distinct. */
+/** Type chip - buy / disposition / no-supplier exception are visually distinct. */
 function TypeChip({ rec }: { rec: ReorderRecommendation }) {
   if (rec.type === 'buy') {
     return (
@@ -131,7 +131,7 @@ function TypeChip({ rec }: { rec: ReorderRecommendation }) {
   );
 }
 
-/** Network warehouse cell — a chevron button opens the per-warehouse split. */
+/** Network warehouse cell - a chevron button opens the per-warehouse split. */
 function AllocationCell({ allocation }: { allocation: AllocationLine[] }) {
   const total = allocation.reduce((sum, a) => sum + a.qty, 0);
   return (
@@ -184,7 +184,7 @@ function ScoreDot({ score }: { score: number | null }) {
 function SupplierCell({ rec }: { rec: ReorderRecommendation }) {
   if (rec.is_exception || !rec.supplier) {
     return (
-      <Badge variant="warning" appearance="light" size="md" title="No linked supplier — resolve before ordering">
+      <Badge variant="warning" appearance="light" size="md" title="No linked supplier - resolve before ordering">
         No supplier
       </Badge>
     );
@@ -197,7 +197,8 @@ function SupplierCell({ rec }: { rec: ReorderRecommendation }) {
           {rec.supplier.supplier_name}
         </div>
         <div className="text-xs text-muted-foreground tabular-nums">
-          {fmtMoney(rec.supplier.unit_cost)} · {fmtInt(rec.supplier.lead_time_days)}d lead
+          {fmtSupplierCost(rec.supplier.unit_cost, rec.supplier.currency)} ·{' '}
+          {fmtInt(rec.supplier.lead_time_days)}d lead
         </div>
       </div>
       {others.length ? (
@@ -242,7 +243,9 @@ function SupplierCell({ rec }: { rec: ReorderRecommendation }) {
                           </Badge>
                         ) : null}
                       </span>
-                      <span className="text-right tabular-nums">{fmtMoney(s.unit_cost)}</span>
+                      <span className="text-right tabular-nums">
+                        {fmtSupplierCost(s.unit_cost, s.currency)}
+                      </span>
                       <span className="text-right tabular-nums">{fmtInt(s.lead_time_days)}d</span>
                       <span className="text-right">
                         <ScoreDot score={s.composite_score} />
@@ -269,14 +272,14 @@ export function ReorderResultsGrid({
 }: {
   runId: string | null;
   enabled: boolean;
-  /** Controlled type filter — shared with the clickable stat tiles. */
+  /** Controlled type filter - shared with the clickable stat tiles. */
   typeFilter: string;
   onTypeFilterChange: (value: string) => void;
 }) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  // The row-click explanation popup — deterministic derivation from frozen inputs.
+  // The row-click explanation popup - deterministic derivation from frozen inputs.
   const [explainRec, setExplainRec] = useState<ReorderRecommendation | null>(null);
 
   const { data, isLoading, isFetching, refetch } = useReorderRecommendations(
@@ -511,7 +514,7 @@ export function ReorderResultsGrid({
       <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
         <Info className="mt-0.5 size-4 shrink-0" />
         <span>
-          Read-only recommendations — click any row to see how the numbers were reached. Accepting,
+          Read-only recommendations - click any row to see how the numbers were reached. Accepting,
           adjusting and dismissing are not yet available.
         </span>
       </div>

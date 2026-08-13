@@ -1,5 +1,5 @@
 /**
- * SCM M8 — drill feature service (Phase 2, test-first).
+ * SCM M8 - drill feature service (Phase 2, test-first).
  * The two lazy plan-grid drills fetch their working keyed off the recommendation:
  *   M8-A1 Net breakdown       → GET /scm/recommendations/{id}/explain-net
  *   M8-A2 Days-cover demand   → GET /scm/analytics/explain/demand?product_id&warehouse_id

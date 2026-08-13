@@ -8,6 +8,7 @@ FE contract in ``reorder/services/decisionService.ts``. No UUIDs surface.
 """
 from __future__ import annotations
 
+from pydantic import BaseModel
 from fastapi import APIRouter, Body, Depends
 from sqlalchemy.orm import Session
 
@@ -25,6 +26,7 @@ from app.schemas.scm_decisions import (
     RecDecisionListResponse,
     RejectRequest,
 )
+from app.services.scm import reorder_run_service
 from app.services.scm import decision_service as svc
 
 router = APIRouter()
@@ -87,6 +89,24 @@ def adjust(
     return result
 
 
+class CoveredDecisionRequest(BaseModel):
+    """`use_stock` keeps the stock already there; `buy` turns the row into a purchase."""
+    choice: str
+
+
+@router.post("/recommendations/{rec_id}/covered-decision")
+def covered_decision(
+    rec_id: str,
+    payload: CoveredDecisionRequest = Body(...),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_RUN),
+):
+    """Resolve a covered-by-stock row. The engine deliberately does not decide this."""
+    result = svc.decide_covered(db, rec_id, payload.choice, (_user or {}).get("id"))
+    db.commit()
+    return result
+
+
 @router.post("/recommendations/{rec_id}/reject")
 def reject(
     rec_id: str,
@@ -108,6 +128,7 @@ def confirm_decisions(
     db: Session = Depends(get_db),
     _user: dict = Depends(_RUN),
 ):
+    reorder_run_service.assert_run_visible(db, run_id)
     result = svc.confirm_decisions(db, run_id, payload.ids, (_user or {}).get("id"))
     db.commit()
     return result
@@ -119,6 +140,7 @@ def list_decisions(
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
+    reorder_run_service.assert_run_visible(db, run_id)
     return {"data": svc.list_decisions(db, run_id)}
 
 
@@ -133,6 +155,7 @@ def reset_decisions(
     demonstrated again. Only draft POs are removed; confirmed (active) orders are left
     untouched. Guarded by ``scm.reorder.run`` (the same permission that makes the
     decisions)."""
+    reorder_run_service.assert_run_visible(db, run_id)
     result = svc.reset_run_decisions(db, run_id, (_user or {}).get("id"))
     db.commit()
     return result

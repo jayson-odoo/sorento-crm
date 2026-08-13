@@ -250,6 +250,156 @@ class AllocationResult:
     deferred_cash: float
 
 
+# ---------------------------------------------------------------------------
+# generic scarce-capacity allocation
+#
+# Cash is not the only scarce thing a plan is cut by. A container runs out of VOLUME,
+# and an arriving shipment runs out of QUANTITY, and both want the same decision:
+# rank the candidates, fill until the capacity is gone, and say why each loser lost.
+# So the greedy core lives here once and `allocate_funding` is a thin adapter over it.
+#
+# The one real difference is divisibility. A buy is all-or-nothing because of MOQ, so a
+# buy that does not fit is SKIPPED and the allocator moves on. A container line can be
+# part-loaded, so it takes the remainder instead. That is the `divisible` flag and it is
+# the only behavioural fork; everything else (rank order, pins, rejects, the unmeasured
+# bucket, the epsilon, the rounding) is shared.
+#
+# Guarded by tests/scm/test_capacity_allocator_parity.py: 1,152 snapshotted scenarios
+# must stay byte-identical for the cash path. A failure there means this refactor is
+# wrong, not that the snapshot is stale.
+# ---------------------------------------------------------------------------
+
+ALLOCATED = "allocated"
+PARTIAL = "partial"
+DEFERRED = "deferred"
+UNMEASURED = "unmeasured"
+
+
+@dataclass(frozen=True)
+class CapacityItem:
+    """A ranked candidate competing for a scarce capacity.
+
+    ``demand`` is how much of the capacity it wants, in whatever unit the capacity is
+    measured in - ringgit, cubic metres, units. ``None`` means unmeasured: we cannot
+    rank it against a capacity we cannot compare it to, so it is parked rather than
+    guessed at (an uncosted buy, a shipment line with no volume on file).
+    """
+
+    id: str
+    rank: Optional[int]
+    demand: Optional[float]
+    divisible: bool = False
+
+
+@dataclass(frozen=True)
+class CapacityResult:
+    status_by_id: dict[str, str]
+    granted_by_id: dict[str, float]
+    granted_total: float
+    deferred_total: float
+    granted_count: int
+    partial_count: int
+    deferred_count: int
+    unmeasured_count: int
+
+
+def allocate_capacity(
+    items: Sequence[CapacityItem],
+    capacity: Optional[float],
+    *,
+    pinned_ids: Optional[Collection[str]] = None,
+    excluded_ids: Optional[Collection[str]] = None,
+    uncapped: bool = False,
+    precision: int = 2,
+) -> CapacityResult:
+    """Greedy-by-rank allocation of one scarce capacity, with a manual-override layer.
+
+    Buckets, in order:
+
+    * **excluded** - out of every bucket, absent from the result, never draws capacity.
+    * **unmeasured** (``demand`` None) - parked as ``unmeasured``; never granted, never
+      deferred, never draws capacity, EVEN when pinned. A pin cannot fund an unknown.
+    * **pinned** (measured) - force-granted and consume capacity FIRST, staying granted
+      even past the cap, so a pin never loses on a cut and the caller's free figure can
+      legitimately go negative.
+    * **un-pinned** (measured) - fill the leftover by rank. An indivisible item is granted
+      only if it fits whole, else skipped and the next is tried. A divisible item takes the
+      remainder and is marked ``partial``.
+
+    ``uncapped`` (or ``capacity is None``) grants everything measured: the daily-cron path.
+    """
+    pinned = set(pinned_ids or ())
+    excluded = set(excluded_ids or ())
+    no_cap = uncapped or capacity is None
+    ordered = sorted(items, key=lambda i: (i.rank if i.rank is not None else 1 << 30))
+
+    status: dict[str, str] = {}
+    granted: dict[str, float] = {}
+    granted_total = deferred_total = 0.0
+
+    measured: list[CapacityItem] = []
+    for it in ordered:
+        if it.id in excluded:
+            continue
+        if it.demand is None:
+            status[it.id] = UNMEASURED
+            continue
+        measured.append(it)
+
+    if no_cap:
+        for it in measured:
+            want = float(it.demand)  # type: ignore[arg-type]
+            status[it.id] = ALLOCATED
+            granted[it.id] = want
+            granted_total += want
+    else:
+        has_capacity = bool(capacity and capacity > 0)
+        remaining = float(capacity) if capacity else 0.0
+
+        for it in measured:
+            if it.id not in pinned:
+                continue
+            want = float(it.demand)  # type: ignore[arg-type]
+            remaining -= want
+            granted_total += want
+            granted[it.id] = want
+            status[it.id] = ALLOCATED
+
+        for it in measured:
+            if it.id in pinned:
+                continue
+            want = float(it.demand)  # type: ignore[arg-type]
+            if has_capacity and want <= remaining + 1e-9:
+                remaining -= want
+                granted_total += want
+                granted[it.id] = want
+                status[it.id] = ALLOCATED
+            elif it.divisible and has_capacity and remaining > 1e-9:
+                # Take what is left. This is the container case: a part-loaded line is a
+                # real outcome, not a failure, and the shortfall is what gets deferred.
+                part = remaining
+                remaining = 0.0
+                granted_total += part
+                granted[it.id] = part
+                deferred_total += want - part
+                status[it.id] = PARTIAL
+            else:
+                deferred_total += want
+                granted[it.id] = 0.0
+                status[it.id] = DEFERRED
+
+    return CapacityResult(
+        status_by_id=status,
+        granted_by_id={k: round(v, precision) for k, v in granted.items()},
+        granted_total=round(granted_total, precision),
+        deferred_total=round(deferred_total, precision),
+        granted_count=sum(1 for s in status.values() if s == ALLOCATED),
+        partial_count=sum(1 for s in status.values() if s == PARTIAL),
+        deferred_count=sum(1 for s in status.values() if s == DEFERRED),
+        unmeasured_count=sum(1 for s in status.values() if s == UNMEASURED),
+    )
+
+
 def allocate_funding(
     buys: Sequence[Buy],
     budget: Optional[float],
@@ -282,64 +432,29 @@ def allocate_funding(
     the pre-M8 ``budget=None`` meaning ('fund nothing'); the only caller that passed None
     (the live-view route) guards ``budget is not None`` before calling, so nothing breaks.
     """
-    pinned = set(pinned_ids or ())
-    rejected = set(rejected_ids or ())
-    full_budget = full or budget is None
-    ordered = sorted(buys, key=lambda b: (b.rank if b.rank is not None else 1 << 30))
+    # Cash is the INDIVISIBLE case of `allocate_capacity`: MOQ means a buy either fits
+    # whole or is skipped, so `divisible` stays False and no buy is ever part-funded.
+    # This function keeps its own vocabulary (funded / deferred / needs_cost) because three
+    # callers and the FE contract depend on those exact strings; only the maths is shared.
+    res = allocate_capacity(
+        [CapacityItem(id=b.id, rank=b.rank, demand=b.cash_impact, divisible=False) for b in buys],
+        budget,
+        pinned_ids=pinned_ids,
+        excluded_ids=rejected_ids,
+        uncapped=full,
+        precision=2,
+    )
 
-    status: dict[str, str] = {}
-    funded_cash = deferred_cash = 0.0
-
-    # Costed buys still in the plan (rejected excluded, uncosted parked as needs_cost).
-    costed: list[Buy] = []
-    for b in ordered:
-        if b.id in rejected:
-            continue
-        if b.cash_impact is None:
-            status[b.id] = "needs_cost"
-            continue
-        costed.append(b)
-
-    if full_budget:
-        # Fund everything costed — no cap.
-        for b in costed:
-            status[b.id] = "funded"
-            funded_cash += float(b.cash_impact)  # type: ignore[arg-type]
-    else:
-        has_budget = bool(budget and budget > 0)
-        remaining = float(budget) if budget else 0.0
-        # 1) Pins first — force-funded, consume budget first (even into the negative).
-        for b in costed:
-            if b.id not in pinned:
-                continue
-            cost = float(b.cash_impact)  # type: ignore[arg-type]
-            remaining -= cost
-            funded_cash += cost
-            status[b.id] = "funded"
-        # 2) Un-pinned greedily fill the leftover budget by rank (skip-overflow).
-        for b in costed:
-            if b.id in pinned:
-                continue
-            cost = float(b.cash_impact)  # type: ignore[arg-type]
-            if has_budget and cost <= remaining + 1e-9:
-                remaining -= cost
-                funded_cash += cost
-                status[b.id] = "funded"
-            else:
-                deferred_cash += cost
-                status[b.id] = "deferred"
-
-    funded_count = sum(1 for s in status.values() if s == "funded")
-    deferred_count = sum(1 for s in status.values() if s == "deferred")
-    needs_cost_count = sum(1 for s in status.values() if s == "needs_cost")
+    _CASH_STATUS = {ALLOCATED: "funded", DEFERRED: "deferred", UNMEASURED: "needs_cost"}
+    status = {k: _CASH_STATUS[v] for k, v in res.status_by_id.items()}
 
     return AllocationResult(
         status_by_id=status,
-        funded_count=funded_count,
-        deferred_count=deferred_count,
-        needs_cost_count=needs_cost_count,
-        funded_cash=round(funded_cash, 2),
-        deferred_cash=round(deferred_cash, 2),
+        funded_count=res.granted_count,
+        deferred_count=res.deferred_count,
+        needs_cost_count=res.unmeasured_count,
+        funded_cash=res.granted_total,
+        deferred_cash=res.deferred_total,
     )
 
 

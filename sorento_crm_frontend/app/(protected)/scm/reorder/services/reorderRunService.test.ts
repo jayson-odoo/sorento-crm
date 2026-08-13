@@ -32,7 +32,7 @@ function lastInit(): RequestInit {
 
 beforeEach(() => apiFetch.mockReset());
 
-describe('reorderRunService — createReorderRun', () => {
+describe('reorderRunService - createReorderRun', () => {
   it('POSTs warehouse_codes + null budget, and normalises the 202 body', async () => {
     apiFetch.mockResolvedValue(
       ok({ run_id: 'run-9', status: 'running', buy_scope: 'network', stage: 'resolving_policies' }),
@@ -61,9 +61,30 @@ describe('reorderRunService — createReorderRun', () => {
     });
     expect(JSON.parse(String(lastInit().body))).toMatchObject({ include_market: true });
   });
+
+  it('OMITS product_codes when the run was not narrowed, so an all-products run is unchanged (AC-B8a)', async () => {
+    apiFetch.mockResolvedValue(
+      ok({ run_id: 'run-11', status: 'running', buy_scope: 'warehouse', stage: 'resolving_policies' }),
+    );
+    await createReorderRun({ warehouse_codes: ['WH-KL'], product_codes: [] });
+    expect(JSON.parse(String(lastInit().body))).not.toHaveProperty('product_codes');
+  });
+
+  it('forwards product_codes as human codes when the run IS narrowed (AC-B8a)', async () => {
+    apiFetch.mockResolvedValue(
+      ok({ run_id: 'run-12', status: 'running', buy_scope: 'warehouse', stage: 'resolving_policies' }),
+    );
+    await createReorderRun({
+      warehouse_codes: ['WH-KL'],
+      product_codes: ['SRTWT7408', 'SRTBS4832'],
+    });
+    expect(JSON.parse(String(lastInit().body))).toMatchObject({
+      product_codes: ['SRTWT7408', 'SRTBS4832'],
+    });
+  });
 });
 
-describe('reorderRunService — getReorderRun', () => {
+describe('reorderRunService - getReorderRun', () => {
   it('maps the poll payload including the completed summary', async () => {
     apiFetch.mockResolvedValue(
       ok({
@@ -89,7 +110,7 @@ describe('reorderRunService — getReorderRun', () => {
   });
 });
 
-describe('reorderRunService — getRecommendations', () => {
+describe('reorderRunService - getRecommendations', () => {
   it('sends page/limit + sort/dir + type + query as server-side params', async () => {
     apiFetch.mockResolvedValue(
       ok({ data: [], pagination: { page: 3, limit: 25, total: 0, total_pages: 1 } }),
@@ -123,7 +144,7 @@ describe('reorderRunService — getRecommendations', () => {
   });
 });
 
-describe('reorderRunService — listReorderRuns', () => {
+describe('reorderRunService - listReorderRuns', () => {
   it('requests newest-first page/limit and returns the history envelope', async () => {
     apiFetch.mockResolvedValue(
       ok({

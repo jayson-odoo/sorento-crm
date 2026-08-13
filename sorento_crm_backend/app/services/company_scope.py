@@ -26,7 +26,7 @@ by definition (AC-H5).
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import event, false, or_
 from sqlalchemy.orm import Mapper, ORMExecuteState, Session, object_session, with_loader_criteria
@@ -156,6 +156,45 @@ def admin_listing_company_filter(db, column) -> Optional[ColumnElement]:
 _ENFORCE = os.getenv("COMPANY_SCOPE_ENFORCE", "1") != "0"
 
 
+_RAISE_ON_AMBIGUOUS = object()
+
+
+def resolve_write_company_id(
+    scope: CompanyScope, *, ambiguous: Any = _RAISE_ON_AMBIGUOUS
+) -> Optional[str]:
+    """The company an owned row being written belongs to, from the session scope.
+
+    Extracted so a RAW-SQL insert into an owned table can stamp the same company the
+    ORM `before_insert` hook would. Raw SQL bypasses that hook entirely, so an owned
+    row inserted by hand lands with a NULL company_id and is then invisible to every
+    scoped read - the failure looks like missing data, not like a missing stamp.
+
+    ``ambiguous`` is what an UNSET / empty / multi-company scope resolves to. It raises
+    by default, because a request that cannot name one company must not create an owned
+    row. A caller that legitimately has no scope at all - a cron handler, which has no
+    request and no principal - passes the company it means explicitly, at its own call
+    site, where the choice is visible.
+    """
+    if isinstance(scope, frozenset) and len(scope) == 1:
+        return next(iter(scope))
+    # ``None`` = the deliberate system / all-companies principal; see the long note in
+    # ``_stamp_company_id`` for why that write lands in the incumbent company.
+    if scope is None:
+        return DEFAULT_COMPANY_ID
+    if ambiguous is not _RAISE_ON_AMBIGUOUS:
+        return ambiguous
+    if _TEST_LEAVE_NULL_OWNED_INSERT:
+        return None
+    raise AppException(
+        status_code=400,
+        message=(
+            "Cannot create this record without an active company. "
+            "A single active company is required to stamp company_id."
+        ),
+        code="company_scope_required",
+    )
+
+
 def register_company_scope_listeners() -> None:
     """Install the scope SELECT filter + insert auto-stamp. Idempotent."""
     global _INSTALLED
@@ -216,33 +255,20 @@ def register_company_scope_listeners() -> None:
         sess = object_session(target)
         scope = get_company_scope(sess) if sess is not None else UNSET
 
-        if isinstance(scope, frozenset) and len(scope) == 1:
-            target.company_id = next(iter(scope))
-            return
-
         # ``None`` = the deliberate system / all-companies principal (a valid
         # X-API-Key call with NO contact_id/space_id — the n8n backward-compat
         # path). Such a caller writing an owned row belongs to the INCUMBENT
         # company (Sorento) — this matches migration 306's DB DEFAULT and the
         # pre-multi-company behaviour where every write went to the single
         # company. Without this, n8n owned-writes (SPO / GRN / packing-list
-        # creates that come in with no contact identity) would be rejected below
+        # creates that come in with no contact identity) would be rejected
         # → a backward-compat break. Reads under ``None`` already return all
         # companies; writes now land in the incumbent. A Mocha n8n flow that
         # must write Mocha data passes contact identity → single-company scope.
-        if scope is None:
-            target.company_id = DEFAULT_COMPANY_ID
-            return
-
-        # UNSET (resolver never ran / unresolved contact) / empty / multi-company:
-        # genuinely ambiguous — never insert an owned row with a null company (AC-D4).
-        if _TEST_LEAVE_NULL_OWNED_INSERT:
-            return  # test-only: leave company_id null (see flag docs above)
-        raise AppException(
-            status_code=400,
-            message=(
-                "Cannot create this record without an active company. "
-                "A single active company is required to stamp company_id."
-            ),
-            code="company_scope_required",
-        )
+        #
+        # UNSET (resolver never ran / unresolved contact) / empty / multi-company is
+        # genuinely ambiguous, and raises: never insert an owned row with a null
+        # company (AC-D4). ``_TEST_LEAVE_NULL_OWNED_INSERT`` is the test-only escape.
+        company_id = resolve_write_company_id(scope)
+        if company_id is not None:
+            target.company_id = company_id

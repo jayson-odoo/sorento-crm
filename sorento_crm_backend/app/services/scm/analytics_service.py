@@ -36,6 +36,9 @@ from typing import Any, Iterable, Optional, Sequence
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.models.base import get_company_scope
+from app.services.company_scope import DEFAULT_COMPANY_ID, resolve_write_company_id
+
 # --- locked engine constants (see PLAN/UAC M2 + golden derivation) -----------
 WINDOW_DAYS = 90
 BUCKET_DAYS = 7  # weekly buckets — makes CV + the 10% trim meaningful
@@ -710,13 +713,24 @@ def run_analytics(db: Session, scope: Optional[dict] = None,
     started = datetime.utcnow()
     run_id = str(uuid.uuid4())
 
-    # open the run log first so a crash still leaves a 'running'/'failed' trace
+    # open the run log first so a crash still leaves a 'running'/'failed' trace.
+    # `company_id` is stamped by hand: this is raw SQL, so the ORM `before_insert`
+    # hook never fires, and an analytics run with a NULL company is hidden from
+    # every scoped read of the table it just wrote.
     db.execute(text(
         "INSERT INTO scm.scm_analytics_run "
-        "(id, started_at, status, scope, window_days, config_ref, source_system, source_ref, created_at) "
-        "VALUES (:id, :started, 'running', CAST(:scope AS jsonb), :win, :cfg, :src, 'run', now())"
+        "(id, started_at, status, scope, window_days, config_ref, source_system, source_ref, "
+        "company_id, created_at) "
+        "VALUES (:id, :started, 'running', CAST(:scope AS jsonb), :win, :cfg, :src, 'run', "
+        ":company_id, now())"
     ), {"id": run_id, "started": started, "scope": _json(scope),
-        "win": WINDOW_DAYS, "cfg": as_of.isoformat(), "src": _SEED})
+        "win": WINDOW_DAYS, "cfg": as_of.isoformat(), "src": _SEED,
+        # `ambiguous=DEFAULT_COMPANY_ID`: the nightly recompute runs on the scheduler,
+        # which has no request and therefore no scope at all, and a run that refused to
+        # start would take the whole night's analytics with it. One recompute serves the
+        # whole install today; a per-company nightly run is its own slice.
+        "company_id": resolve_write_company_id(
+            get_company_scope(db), ambiguous=DEFAULT_COMPANY_ID)})
     db.commit()
 
     try:

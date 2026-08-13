@@ -130,7 +130,7 @@ export function useDemandExplain(
   });
 }
 
-/** Global dead-stock threshold (days) — drives the M1 "dead" status. */
+/** Global dead-stock threshold (days) - drives the M1 "dead" status. */
 export function useDeadStockDays() {
   return useQuery({
     queryKey: ['scm', 'config', 'dead-stock-days'],

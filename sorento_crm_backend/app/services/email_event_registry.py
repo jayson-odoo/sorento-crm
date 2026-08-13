@@ -162,6 +162,13 @@ EMAIL_EVENT_REGISTRY: list[EventDef] = [
         priority=20,
     ),
     EventDef(
+        "supplier_loading_notice",
+        "Supplier loading notice",
+        "Bilingual pack-and-ship notice sent to a supplier when a Loading Plan is approved, "
+        "carrying the plan document as an attachment.",
+        priority=5,
+    ),
+    EventDef(
         "notification_delivery",
         "Generic notification delivery",
         "Fallback event_key for legacy NotificationDelivery rows whose event_type does not "

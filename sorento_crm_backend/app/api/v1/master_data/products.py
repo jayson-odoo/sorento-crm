@@ -9,6 +9,7 @@ from typing import Optional, List
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.product_service import ProductService
+from app.services import product_purchase_history_service
 from app.services.attachment_field_link_service import AttachmentFieldLinkService
 from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, BulkImportProductsRequest, BulkDeleteProductsRequest
@@ -247,6 +248,30 @@ def get_product(
         service = ProductService(db)
         product = service.get_product(product_id)
         return product
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{product_id}/purchase-history")
+def get_product_purchase_history(
+    product_id: str,
+    limit: int = Query(
+        50, ge=1, le=200,
+        description="Max number of purchase-history rows to return (not a DataGrid page size).",
+    ),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Every purchase order that bought this product, newest first, plus the cost summary.
+
+    The product is fetched first, through the service, so a product this company cannot see
+    returns 404 here too rather than leaking whether another company buys it.
+    """
+    try:
+        ProductService(db).get_product(product_id)   # visibility gate (404s on miss)
+        return product_purchase_history_service.purchase_history(db, product_id, limit)
     except HTTPException:
         raise
     except Exception as e:

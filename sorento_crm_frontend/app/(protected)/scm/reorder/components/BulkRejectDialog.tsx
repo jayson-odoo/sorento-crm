@@ -15,7 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 
 /**
- * Bulk Reject (M4-D8/D9) — destructive confirm with ONE shared, required reason
+ * Bulk Reject (M4-D8/D9) - destructive confirm with ONE shared, required reason
  * applied to every selected pending recommendation. Count-bearing title.
  */
 export function BulkRejectDialog({

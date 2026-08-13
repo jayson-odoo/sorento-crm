@@ -76,7 +76,11 @@ class ProductSupplier(Base, CompanyScopedMixin):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
     supplier_id = Column(UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False)
-    standard_lead_time_days = Column(Integer, nullable=True)
+    # NOT NULL in the database, with no default. The model said nullable and the API let
+    # the field be omitted, so creating a link without a lead time raised an IntegrityError
+    # and the caller got a 500 for what is really a missing required field. The column is
+    # the truth; the model is corrected to match it rather than the other way round.
+    standard_lead_time_days = Column(Integer, nullable=False)
     # SCM (M0): sourcing parameters used by the reorder engine.
     moq = Column(Integer, nullable=True)
     order_multiple = Column(Integer, nullable=True)
@@ -281,6 +285,14 @@ class InboundShipmentLine(Base, CompanyScopedMixin):
     cartons_count = Column(Integer, default=1, nullable=False)
     weight_per_carton = Column(Numeric(10, 2), nullable=True)
     unit_cost = Column(Numeric(12, 2), nullable=True)
+    # The unit `unit_cost` is stated in (AC-C3.2). Mirrors purchase_order_lines.currency
+    # as String(3) so the incoming and the ordered figure are comparable at all; a cost
+    # with no currency is a number with no meaning.
+    # NULLABLE, and never defaulted: where no currency is knowable (the packing list does
+    # not state one and the linked PO line has none either) it stays NULL. A house default
+    # here would silently assert that ordered and incoming are in the same unit, which is
+    # the whole content of the variance.
+    currency = Column(String(3), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
@@ -317,11 +329,29 @@ class SPOAllocation(Base, CompanyScopedMixin):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     created_by = Column(UUID(as_uuid=False), nullable=True)
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
+    # Which Supply PO line this allocation draws down. The chain is PO -> SPO -> GRN, and
+    # this table carried no PO reference at all; only picking_lines.po_line_id existed,
+    # which is one step too late (goods-received, after the allocation was decided).
+    # NULLABLE: 860 pre-existing rows have no PO, and stock can arrive against no PO.
+    # The constraint is named explicitly so a create_all schema and a migrated schema agree.
+    # Left implicit, Postgres names it `spo_allocations_po_line_id_fkey` under create_all
+    # while migration 311 creates `fk_spo_allocations_po_line_id`, and anything that drops
+    # the constraint by name then works on one path and fails on the other.
+    po_line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(
+            "purchase_order_lines.id",
+            ondelete="SET NULL",
+            name="fk_spo_allocations_po_line_id",
+        ),
+        nullable=True,
+    )
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     
     inbound_shipment = relationship("InboundShipment", back_populates="spo_allocations")
+    po_line = relationship("PurchaseOrderLine", foreign_keys=[po_line_id])
     warehouse = relationship("Warehouse", back_populates="spo_allocations")
     storage_zone = relationship("StorageZone", back_populates="spo_allocations")
     product = relationship("Product", back_populates="spo_allocations")

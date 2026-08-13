@@ -67,7 +67,7 @@ export function CashBudgetPanel({
           <div>
             <div className="text-sm font-semibold">Cash budget</div>
             <div className="text-xs text-muted-foreground">
-              Slide to fund the highest-ranked buys that fit — the rest defer with their
+              Slide to fund the highest-ranked buys that fit - the rest defer with their
               stockout risk.
             </div>
           </div>
@@ -90,7 +90,7 @@ export function CashBudgetPanel({
         </div>
       </div>
 
-      {/* The one bold element — the slider + funded-vs-budget fill bar. */}
+      {/* The one bold element - the slider + funded-vs-budget fill bar. */}
       <div className="space-y-2">
         <Slider
           value={[budget]}
@@ -149,7 +149,7 @@ export function CashBudgetPanel({
         <Readout label="Remaining" value={fmtMoney(remaining)} />
       </div>
 
-      {/* Uncosted buys can't be cash-ranked (M4-D16) — kept visible, not hidden. */}
+      {/* Uncosted buys can't be cash-ranked (M4-D16) - kept visible, not hidden. */}
       {needsCost.length > 0 ? (
         <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
           <CircleDollarSign className="size-3.5 shrink-0" aria-hidden />
@@ -158,7 +158,7 @@ export function CashBudgetPanel({
               {fmtInt(needsCost.length)}
             </span>{' '}
             {needsCost.length === 1 ? 'buy needs' : 'buys need'} a supplier cost before they can be
-            cash-ranked — shown in the Needs cost section below.
+            cash-ranked - shown in the Needs cost section below.
           </span>
         </div>
       ) : null}

@@ -1,5 +1,5 @@
 /**
- * MarketSignalsPanel — loading / empty / error / data states (CRUD UX standard)
+ * MarketSignalsPanel - loading / empty / error / data states (CRUD UX standard)
  * + trend colour mapping (up = adverse/red, down = favourable/green, flat/null =
  * neutral) + topic_label rendered as a human label (never a UUID).
  */

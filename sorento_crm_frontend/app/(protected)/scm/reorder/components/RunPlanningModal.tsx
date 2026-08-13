@@ -15,7 +15,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { useWarehouseOptions } from '../../hooks/useScmOptions';
+import { useProductOptions, useWarehouseOptions } from '../../hooks/useScmOptions';
 
 /** Manual-plan inputs (M8-D5, revised): warehouse(s) + budget ONLY. No market-insight
  *  toggle - market never enters a run; it reaches the plan only through the chat
@@ -23,6 +23,13 @@ import { useWarehouseOptions } from '../../hooks/useScmOptions';
  *  several, or Select all) so a manual run can cover any subset like the daily run. */
 export interface ManualPlanInputs {
   warehouse_codes: string[];
+  /**
+   * Optional product scope (AC-B8a). **Empty means all products**, so the existing
+   * behaviour and the scheduled daily run are unchanged. Human product codes, never
+   * ids. This is an explicit product list and NOT a reinstatement of the removed
+   * `buy_scope` category filter.
+   */
+  product_codes: string[];
   budget: number;
 }
 
@@ -43,6 +50,7 @@ export function RunPlanningModal({
   isSubmitting: boolean;
 }) {
   const [warehouses, setWarehouses] = useState<string[]>([]);
+  const [products, setProducts] = useState<string[]>([]);
   const [budget, setBudget] = useState('72000');
   const [error, setError] = useState<string | null>(null);
 
@@ -52,12 +60,19 @@ export function RunPlanningModal({
     isError: warehousesError,
   } = useWarehouseOptions();
 
+  const {
+    data: productOptions,
+    isLoading: productsLoading,
+    isError: productsError,
+  } = useProductOptions();
+
   const allCodes = (warehouseOptions ?? []).map((o) => o.value);
   const allSelected = allCodes.length > 0 && warehouses.length === allCodes.length;
 
   useEffect(() => {
     if (!open) return;
     setWarehouses([]);
+    setProducts([]);
     setBudget('72000');
     setError(null);
   }, [open]);
@@ -70,6 +85,10 @@ export function RunPlanningModal({
     }
     onSubmit({
       warehouse_codes: warehouses,
+      // Empty = all products. Products are deliberately NOT required: narrowing to
+      // one is the exception, and forcing a pick would make every run harder than
+      // the daily one it stands in for.
+      product_codes: products,
       budget: Number(budget) || 0,
     });
   };
@@ -111,6 +130,32 @@ export function RunPlanningModal({
             <p className="mt-1 text-2xs text-muted-foreground">
               Pick one or more warehouses, or Select all. The scheduled daily run always covers all
               warehouses.
+            </p>
+          </div>
+
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <Label>Products</Label>
+              {products.length ? (
+                <button
+                  type="button"
+                  className="text-2xs font-medium text-primary underline-offset-2 hover:underline"
+                  onClick={() => setProducts([])}
+                >
+                  Clear all
+                </button>
+              ) : null}
+            </div>
+            <SearchableMultiSelect
+              value={products}
+              onChange={setProducts}
+              options={productOptions ?? []}
+              disabled={productsLoading}
+              placeholder={productsLoading ? 'Loading products...' : 'All products'}
+              emptyMessage={productsError ? 'Could not load products.' : 'No products found.'}
+            />
+            <p className="mt-1 text-2xs text-muted-foreground">
+              Leave empty to plan every product.
             </p>
           </div>
 

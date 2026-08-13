@@ -1,5 +1,5 @@
 /**
- * MarketTopicsGrid — data / empty / error states, client-side search filtering,
+ * MarketTopicsGrid - data / empty / error states, client-side search filtering,
  * and the hard-delete confirmation dialog (ConfirmDeleteDialog copy + wiring).
  */
 import React from 'react';

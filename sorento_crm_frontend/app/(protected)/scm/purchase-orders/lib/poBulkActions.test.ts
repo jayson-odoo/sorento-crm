@@ -1,5 +1,5 @@
 /**
- * SCM M4 Slice B — buildPoBulkActions gating (AC-M4.6).
+ * SCM M4 Slice B - buildPoBulkActions gating (AC-M4.6).
  * The PO Actions dropdown surfaces Confirm ONLY when the selection contains ≥1
  * draft, and returns [] (button hidden) when no draft is selected.
  */

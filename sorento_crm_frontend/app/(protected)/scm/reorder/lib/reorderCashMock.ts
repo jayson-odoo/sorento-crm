@@ -1,8 +1,8 @@
 /**
  * ============================================================================
- * SCM M4 — Cash co-pilot DETERMINISTIC MOCK  (Phase 1 only)
+ * SCM M4 - Cash co-pilot DETERMINISTIC MOCK  (Phase 1 only)
  * ============================================================================
- * PROTOTYPE DATA. No network, no `Math.random`, no `Date` — every value is a
+ * PROTOTYPE DATA. No network, no `Math.random`, no `Date` - every value is a
  * hand-authored constant so the funded/deferred split renders identically on
  * every load and the greedy skip-overflow allocation is fully reproducible.
  *
@@ -12,11 +12,11 @@
  * `computeFunding` helper below runs client-side for the live slider what-if.
  *
  * `computeFunding` IS the deterministic allocation (M4-D3, greedy by rank,
- * skip-overflow-continue) and is exported for reuse in Phase 2 + tests — the
+ * skip-overflow-continue) and is exported for reuse in Phase 2 + tests - the
  * mock only supplies the frozen recommendation set it operates on.
  *
  * The buy set is intentionally a MIX of costed (margin factor present) and
- * uncosted (margin DROPPED, urgency-dominant) SKUs — mirroring the real data
+ * uncosted (margin DROPPED, urgency-dominant) SKUs - mirroring the real data
  * where most SKUs have no cost (M4-D14). The frozen `rank`/`cash_impact` are
  * tuned so a mid-range budget lands the funded boundary mid-list with a big
  * item SKIPPED and a smaller later item still FUNDED (skip-overflow visible).
@@ -57,7 +57,7 @@ const WEIGHTS: Record<RankFactor['key'], number> = {
   market: 0.1,
 };
 
-/** Build the factor set for a rec. Pass `margin: null` for an uncosted SKU — its
+/** Build the factor set for a rec. Pass `margin: null` for an uncosted SKU - its
  *  margin factor is DROPPED (present:false), matching the graceful-degrade rule. */
 function factors(vals: {
   urgency: number;
@@ -97,7 +97,7 @@ function supplier(
   };
 }
 
-/** Shorthand seed for one buy rec — only the fields that vary across the set. */
+/** Shorthand seed for one buy rec - only the fields that vary across the set. */
 interface Seed {
   rank: number;
   sku: string;
@@ -126,7 +126,7 @@ interface Seed {
 
 // Ranks 1..14 are pre-sorted by frozen rank_score (desc). cash_impact is tuned so
 // that at DEFAULT_BUDGET the greedy allocator skips the big rank-6/8/13 items and
-// still funds the small rank-9 item after them — the skip-overflow demo.
+// still funds the small rank-9 item after them - the skip-overflow demo.
 const SEEDS: Seed[] = [
   { rank: 1, sku: 'BRK-450', product_name: 'Brake Disc 450mm', abc_class: 'A', xyz_class: 'X', order_qty: 40, unit_cost: 80, cash_impact: 3_200, net_position: -12, days_of_cover: 3, days_to_stockout: 3, reorder_point: 60, supplier_name: 'Apex Auto Parts', supplier_code: 'SUP-APX', lead_time_days: 7, fac: { urgency: 0.98, margin: 0.62, abc: 1.0, priority: 0.8, committed: 0.7 } },
   { rank: 2, sku: 'SPK-010', product_name: 'Spark Plug 010', abc_class: 'A', xyz_class: 'X', order_qty: 300, unit_cost: null, cash_impact: null, net_position: -40, days_of_cover: 4, days_to_stockout: 4, reorder_point: 220, supplier_name: 'Volt Electricals', supplier_code: 'SUP-VLT', lead_time_days: 10, fac: { urgency: 0.95, margin: null, abc: 1.0, priority: 0.75, committed: 0.65 } },
@@ -176,7 +176,7 @@ function buildRec(seed: Seed): ReorderRecommendation {
       seed.lead_time_days,
       82,
     ),
-    // A ranked alternative set for the M4 Slice B "switch supplier" flow — the
+    // A ranked alternative set for the M4 Slice B "switch supplier" flow - the
     // primary plus two deterministic alternatives (one pricier + slower, one
     // cheaper + slower) so the Adjust recompute preview is demonstrable.
     alternatives: [
@@ -230,9 +230,9 @@ export const MOCK_BUY_RECS: ReorderRecommendation[] = SEEDS.map(buildRec);
 /** Σ cash_impact across all costed buy recs (uncosted contribute 0). */
 export const TOTAL_BUY_CASH = totalCostedCash(MOCK_BUY_RECS);
 
-/** Slider ceiling — Σ costed cash with ~10% headroom, rounded to RM 1,000. */
+/** Slider ceiling - Σ costed cash with ~10% headroom, rounded to RM 1,000. */
 export const SLIDER_MAX = sliderMaxFor(MOCK_BUY_RECS);
 
-/** Default budget — derived from the fixture's costed total; lands the funded
+/** Default budget - derived from the fixture's costed total; lands the funded
  *  boundary mid-list with a visible skip-overflow. */
 export const DEFAULT_BUDGET = defaultBudgetFor(MOCK_BUY_RECS);

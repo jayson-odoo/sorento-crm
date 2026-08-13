@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Popover as PopoverPrimitive } from 'radix-ui';
 import {
@@ -37,10 +37,19 @@ import {
   useRecommendationExplanation,
 } from '../hooks/useExplainer';
 import { REFUSAL } from '../lib/explainerMockStore';
+import { CoverageTimelinePanel } from './CoverageTimelinePanel';
 import type { AskTurn } from '../types/explainer.types';
 import { xyzLabel } from '../../lib/health';
 import type { XyzClass } from '../../types/scm.types';
-import { EM_DASH, fmtInt, fmtMoney, fmtPct } from '../../lib/format';
+import {
+  BASE_CURRENCY,
+  EM_DASH,
+  fmtDate,
+  fmtInt,
+  fmtMoney,
+  fmtPct,
+  fmtSupplierCost,
+} from '../../lib/format';
 import { ConfidenceBadge } from '../../components/HealthIndicators';
 import type {
   RankFactor,
@@ -49,7 +58,7 @@ import type {
 } from '../types/reorder.types';
 
 /**
- * Row-click explanation popup — the headline "make it fool-proof" surface.
+ * Row-click explanation popup - the headline "make it fool-proof" surface.
  *
  * Turns a recommendation's FROZEN inputs (AC-M3.11) into a plain-language,
  * step-by-step derivation a supply-chain novice can follow: it never recomputes
@@ -59,7 +68,7 @@ import type {
  * qty = order-up-to − net), and the modal is mobile-scrollable.
  */
 
-/** Compact number for the arithmetic — trims trailing zeros so 11.0 reads "11". */
+/** Compact number for the arithmetic - trims trailing zeros so 11.0 reads "11". */
 function dec(v: number | null | undefined): string {
   if (v === null || v === undefined) return EM_DASH;
   return Number(v.toFixed(2)).toLocaleString('en-MY', { maximumFractionDigits: 2 });
@@ -90,6 +99,8 @@ const POLICY_TYPE_LABEL: Record<string, string> = {
   reorder_point: 'Reorder point',
   min_max: 'Min / Max',
   periodic_review: 'Periodic review',
+  // S1's global toggle (or a per-product override) can freeze this basis onto a row too.
+  reorder_level: 'Reorder level (manual)',
 };
 
 const SELECTION_LABEL: Record<string, string> = {
@@ -143,7 +154,7 @@ const RANK_FACTOR_LABEL: Record<RankFactor['key'], string> = {
   market: 'Market trend',
 };
 
-/** M4 "why this rank" block — which cash-ranking factors were present, and which
+/** M4 "why this rank" block - which cash-ranking factors were present, and which
  *  dominated. Margin is DROPPED (not zeroed) for uncosted SKUs (M4-D14), shown
  *  greyed so a novice sees exactly why urgency ended up dominant. */
 function RankExplanation({ rec }: { rec: ReorderRecommendation }) {
@@ -199,7 +210,7 @@ function RankExplanation({ rec }: { rec: ReorderRecommendation }) {
                     {fmtPct(f.value)} <span className="text-2xs">· weight {f.weight}</span>
                   </>
                 ) : (
-                  <span className="text-2xs italic">dropped — no cost on file</span>
+                  <span className="text-2xs italic">dropped - no cost on file</span>
                 )}
               </span>
             </div>
@@ -210,14 +221,14 @@ function RankExplanation({ rec }: { rec: ReorderRecommendation }) {
         <div className="flex items-start gap-2 rounded-lg border border-scm-incoming/40 bg-scm-incoming-soft p-2.5 text-xs">
           <TrendingUp className="mt-0.5 size-3.5 shrink-0 text-scm-incoming" aria-hidden />
           <span>
-            <span className="font-medium">Market trend applied:</span> {rec.market_signal} — this
+            <span className="font-medium">Market trend applied:</span> {rec.market_signal} - this
             lifted the funding priority (rank), not the order quantity.
           </span>
         </div>
       ) : null}
       <p className="text-xs text-muted-foreground">
         {isNeedsCost
-          ? 'Without a supplier cost the margin factor drops out and there is no cash impact to weigh against the budget, so this buy stays in Needs cost. It is still a real must-buy — add a cost to fund it.'
+          ? 'Without a supplier cost the margin factor drops out and there is no cash impact to weigh against the budget, so this buy stays in Needs cost. It is still a real must-buy - add a cost to fund it.'
           : 'Rank orders the buys for funding: higher-ranked buys are funded first when the budget is tight. Factors without data are dropped so they never dilute the score.'}
       </p>
     </div>
@@ -269,7 +280,7 @@ function DetailLine({ label, value, sub }: { label: string; value: React.ReactNo
   );
 }
 
-/** Click-to-reveal supplier scorecard — kept OUT of the always-on table so the row
+/** Click-to-reveal supplier scorecard - kept OUT of the always-on table so the row
  *  stays scannable; a planner who wants "why this supplier" clicks the chevron and
  *  gets the composite score breakdown, reliability, cost + ordering constraints,
  *  plus how it ranked vs the chosen supplier. Frozen numbers only (M5 boundary). */
@@ -282,9 +293,11 @@ function SupplierScoreDetail({
   selected: boolean;
   chosen: SupplierChoice | null;
 }) {
+  // Compared in base currency, because subtracting a USD price from a ringgit one
+  // produces a number that looks like money and is not.
   const costDelta =
-    !selected && chosen?.unit_cost != null && s.unit_cost != null
-      ? s.unit_cost - chosen.unit_cost
+    !selected && chosen?.unit_cost_base != null && s.unit_cost_base != null
+      ? s.unit_cost_base - chosen.unit_cost_base
       : null;
   const leadDelta =
     !selected && chosen?.lead_time_days != null && s.lead_time_days != null
@@ -341,7 +354,11 @@ function SupplierScoreDetail({
                   .join(' · ') || undefined
               }
             />
-            <DetailLine label="Unit cost" value={fmtMoney(s.unit_cost)} />
+            <DetailLine
+              label="Unit cost"
+              value={fmtSupplierCost(s.unit_cost, s.currency)}
+              sub={convertedNote(s)}
+            />
             {s.moq != null && s.moq > 0 ? (
               <DetailLine label="Min order" value={fmtInt(s.moq)} />
             ) : null}
@@ -354,7 +371,7 @@ function SupplierScoreDetail({
                 {costDelta != null ? (
                   <span className={cn(costDelta > 0 ? 'text-scm-stockout' : 'text-scm-incoming')}>
                     {costDelta > 0 ? '+' : ''}
-                    {fmtMoney(costDelta)}
+                    {fmtSupplierCost(costDelta, chosen?.base_currency)}
                   </span>
                 ) : null}
                 {costDelta != null && leadDelta != null ? ', ' : ''}
@@ -370,6 +387,93 @@ function SupplierScoreDetail({
         </PopoverContent>
       </PopoverPrimitive.Portal>
     </Popover>
+  );
+}
+
+
+/**
+ * "and that is RM X at the rate we used" - said only when the supplier prices in something
+ * other than the base currency, because on a ringgit price it would be noise.
+ *
+ * Without it, "USD 45 beat MYR 210" reads as an arithmetic mistake rather than a
+ * conversion, and a buyer cannot check the decision they are being asked to approve.
+ */
+function convertedNote(s: SupplierChoice): string | undefined {
+  if (s.missing_rate_currency) {
+    return `No exchange rate on file for ${s.missing_rate_currency}, so this price could not be compared.`;
+  }
+  const base = s.base_currency ?? BASE_CURRENCY;
+  const code = (s.currency || '').trim().toUpperCase();
+  if (!code || code === base || s.unit_cost_base == null) return undefined;
+  const rate = s.rate_to_base != null ? ` at ${s.rate_to_base}` : '';
+  const asOf = s.rate_as_of ? ` (${fmtDate(s.rate_as_of)})` : '';
+  return `${fmtSupplierCost(s.unit_cost_base, base)}${rate}${asOf}`;
+}
+
+/** Why this supplier, in words, from the reason frozen at run time.
+ *
+ * "Chosen by lowest cost" named the RULE and stopped there. What a buyer checks is which
+ * supplier was beaten and by how much, so that is what this says - and only when the run
+ * actually knew it. A saving needs BOTH costs; a lone supplier is not "cheapest".
+ */
+function SupplierReason({ rec }: { rec: ReorderRecommendation }) {
+  const reason = rec.supplier_reason;
+  const chosen = rec.supplier;
+  const paid =
+    chosen?.unit_cost_source === 'last_po' && chosen.unit_cost_ref
+      ? `Cost is what we last paid, on ${chosen.unit_cost_ref}${
+          chosen.unit_cost_at ? ` (${fmtDate(chosen.unit_cost_at)})` : ''
+        }.`
+      : chosen?.unit_cost_source === 'contract'
+        ? 'Cost is the contract price on the product record, not a purchase we have made.'
+        : null;
+
+  const comparedIn = reason?.compared_in ?? BASE_CURRENCY;
+  const missing = reason?.missing_rates ?? [];
+
+  let why: string | null = null;
+  if (reason?.basis === 'only_supplier') {
+    why = 'The only supplier linked to this item.';
+  } else if (reason?.basis === 'no_comparable_cost') {
+    // Every candidate priced in money we hold no rate for. Ranking them by cost would be
+    // a claim we cannot support, so the popup says what happened instead of inventing it.
+    why = 'No supplier price could be compared, so this one was not chosen on cost.';
+  } else if (reason?.basis === 'lowest_cost' && reason.runner_up) {
+    // "RM 10.47 per unit under X" read as "it costs RM 10.47 at X" - the saving was taken
+    // for the price and the beaten supplier for the chosen one, which is the exact opposite
+    // of what happened. Name the gap as a gap, name the supplier it is measured against, and
+    // give that supplier's own comparable price so the subtraction is checkable on screen.
+    const runnerUpCost =
+      reason.runner_up_cost_base != null
+        ? ` at ${fmtSupplierCost(reason.runner_up_cost_base, comparedIn)}`
+        : reason.runner_up_cost != null
+          ? ` at ${fmtSupplierCost(reason.runner_up_cost, reason.runner_up_currency)}`
+          : '';
+    why =
+      reason.saving_per_unit != null
+        ? `Cheapest of the linked suppliers: ${fmtSupplierCost(
+            reason.saving_per_unit,
+            comparedIn,
+          )} per unit less than the next best, ${reason.runner_up}${runnerUpCost}.`
+        : `Cheapest of the priced suppliers. ${reason.runner_up} has no cost we could compare, so the gap is unknown.`;
+  } else if (rec.supplier_selection) {
+    why = `Chosen by ${SELECTION_LABEL[rec.supplier_selection] ?? rec.supplier_selection}.`;
+  }
+
+  // Named, not implied: a buyer cannot add a rate they were never told was missing.
+  const rateGap = missing.length
+    ? `No exchange rate on file for ${missing.join(', ')}, so ${
+        missing.length > 1 ? 'those prices were' : 'that price was'
+      } left out of the comparison.`
+    : null;
+
+  if (!why && !paid && !rateGap) return null;
+  return (
+    <div className="space-y-0.5 text-xs text-muted-foreground">
+      {why ? <div>{why}</div> : null}
+      {paid ? <div>{paid}</div> : null}
+      {rateGap ? <div>{rateGap}</div> : null}
+    </div>
   );
 }
 
@@ -390,11 +494,7 @@ function SupplierBlock({ rec }: { rec: ReorderRecommendation }) {
   const ranked: SupplierChoice[] = [rec.supplier, ...others];
   return (
     <div className="space-y-2">
-      {rec.supplier_selection ? (
-        <div className="text-xs text-muted-foreground">
-          Chosen by {SELECTION_LABEL[rec.supplier_selection] ?? rec.supplier_selection}.
-        </div>
-      ) : null}
+      <SupplierReason rec={rec} />
       <div className="overflow-hidden rounded-lg border border-border">
         <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 border-b bg-muted/40 px-3 py-1.5 text-2xs font-medium text-muted-foreground">
           <span>Supplier</span>
@@ -423,7 +523,17 @@ function SupplierBlock({ rec }: { rec: ReorderRecommendation }) {
                   </Badge>
                 ) : null}
               </span>
-              <span className="text-right tabular-nums">{fmtMoney(s.unit_cost)}</span>
+              <span className="text-right tabular-nums">
+                <span className="block">{fmtSupplierCost(s.unit_cost, s.currency)}</span>
+                {/* The converted figure sits under the price rather than inside a popover:
+                    it is the number the ranking used, so "USD 45 beat MYR 210" has to be
+                    checkable without a second click. */}
+                {convertedNote(s) ? (
+                  <span className="block text-2xs font-normal text-muted-foreground">
+                    {convertedNote(s)}
+                  </span>
+                ) : null}
+              </span>
               <span className="text-right tabular-nums">
                 {s.lead_time_days != null ? `${fmtInt(s.lead_time_days)}d` : EM_DASH}
               </span>
@@ -441,7 +551,7 @@ function SupplierBlock({ rec }: { rec: ReorderRecommendation }) {
   );
 }
 
-/** Forecast-demand derivation row — the daily usage that drives ROP and
+/** Forecast-demand derivation row - the daily usage that drives ROP and
  *  days-of-cover. Shared by the buy and disposition variants so the demand that
  *  PRODUCED the days-of-cover is always spelled out (value + /day + pattern). */
 function ForecastDemandStep({ rec }: { rec: ReorderRecommendation }) {
@@ -460,7 +570,7 @@ function ForecastDemandStep({ rec }: { rec: ReorderRecommendation }) {
   );
 }
 
-/** Buy / exception derivation — the arithmetic laid out step by step. */
+/** Buy / exception derivation - the arithmetic laid out step by step. */
 function BuyDerivation({ rec }: { rec: ReorderRecommendation }) {
   const ssWhy = rec.safety_stock_method
     ? SS_METHOD_WHY[rec.safety_stock_method]?.(rec)
@@ -555,7 +665,7 @@ function BuyDerivation({ rec }: { rec: ReorderRecommendation }) {
   );
 }
 
-/** Disposition explanation — why (dead / overstock) + suggested action. No buy maths. */
+/** Disposition explanation - why (dead / overstock) + suggested action. No buy maths. */
 function DispositionExplanation({ rec }: { rec: ReorderRecommendation }) {
   const isDead = rec.reason === 'dead';
   return (
@@ -615,15 +725,42 @@ function DispositionExplanation({ rec }: { rec: ReorderRecommendation }) {
 }
 
 /**
- * M5 semantic layer — the LLM narrator that sits ON TOP of the deterministic
- * derivation above. A generated one-sentence explanation (clearly badged "AI" so
- * it's never mistaken for the frozen arithmetic below it) plus an optional market
- * advisory. Buy / exception recs only — disposition rows don't get a buy
- * narrative. Speaks only the rec's frozen numbers (M5 boundary).
+ * M5 semantic layer - the LLM narrator that sits ON TOP of the deterministic derivation
+ * below. Clearly badged "AI" so it is never mistaken for the frozen arithmetic.
+ *
+ * ON DEMAND, not on open. It used to fire two model calls (explanation + market advisory)
+ * every single time somebody opened a row, and the drawer is opened to READ THE NUMBERS -
+ * stepping through 230 recommendations spent 460 calls on a sentence that restates the
+ * figures printed underneath it. The button costs one click and nothing until then.
  */
 function AiSummaryBlock({ rec, enabled }: { rec: ReorderRecommendation; enabled: boolean }) {
-  const explanation = useRecommendationExplanation(rec, enabled);
-  const advisory = useRecommendationAdvisory(rec, enabled);
+  const [asked, setAsked] = useState(false);
+  // `enabled` still gates on the dialog being open, so closing it cannot leave a request
+  // running; `asked` is what actually authorises the spend.
+  const active = enabled && asked;
+  const explanation = useRecommendationExplanation(rec, active);
+  const advisory = useRecommendationAdvisory(rec, active);
+
+  // A new rec means a new question: stepping to the next row must not show the previous
+  // row's sentence, and must not silently re-buy an explanation nobody asked for.
+  useEffect(() => {
+    setAsked(false);
+  }, [rec.id]);
+
+  if (!asked) {
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        className="gap-1.5"
+        onClick={() => setAsked(true)}
+        data-testid="explain-in-words"
+      >
+        <Sparkles className="size-3.5 text-primary" aria-hidden />
+        Explain in plain language
+      </Button>
+    );
+  }
 
   return (
     <div className="space-y-2">
@@ -641,14 +778,14 @@ function AiSummaryBlock({ rec, enabled }: { rec: ReorderRecommendation; enabled:
           </div>
         ) : explanation.isError ? (
           <p className="text-sm text-muted-foreground">
-            Couldn&apos;t generate a plain-language summary — the derivation below still applies.
+            Couldn&apos;t generate a plain-language summary - the derivation below still applies.
           </p>
         ) : (
           <p className="text-sm">{explanation.data?.explanation}</p>
         )}
       </div>
 
-      {/* Market advisory — subtle info callout, only when a signal matched. */}
+      {/* Market advisory - subtle info callout, only when a signal matched. */}
       {advisory.data?.advisory ? (
         <div className="flex items-start gap-2 rounded-lg border border-scm-incoming/40 bg-scm-incoming-soft p-3 text-sm">
           <TrendingUp className="mt-0.5 size-4 shrink-0 text-scm-incoming" aria-hidden />
@@ -665,7 +802,7 @@ function AiSummaryBlock({ rec, enabled }: { rec: ReorderRecommendation; enabled:
 }
 
 /**
- * M5 Ask box — a bounded Q&A grounded in THIS rec's frozen numbers. Keeps a short
+ * M5 Ask box - a bounded Q&A grounded in THIS rec's frozen numbers. Keeps a short
  * transcript in local state (reset when the dialog steps to another rec via the
  * `key` on DialogBody). A question that needs a number the rec doesn't carry
  * comes back as the exact refusal string, which we style as a muted turn so the
@@ -753,17 +890,17 @@ export function ReorderExplanationDialog({
   rec: ReorderRecommendation | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Current grid-page rows, in the active sort/filter order — powers the
+  /** Current grid-page rows, in the active sort/filter order - powers the
    *  in-place prev/next pager so the user can step recommendations without
    *  closing the popup. Optional so the dialog still renders standalone. */
   recs?: ReorderRecommendation[];
-  /** Full filtered total (all pages) — the pager's denominator. */
+  /** Full filtered total (all pages) - the pager's denominator. */
   totalCount?: number;
   /** 0-based index of the first `recs` row within the full filtered list. */
   pageItemOffset?: number;
   /** Step to a neighbouring recommendation in place (no close). */
   onNavigate?: (rec: ReorderRecommendation) => void;
-  /** The draft PO this rec was confirmed into (M8-F8) — drives the "View PO"
+  /** The draft PO this rec was confirmed into (M8-F8) - drives the "View PO"
    *  button that deep-links to the PO detail page. null when not yet confirmed. */
   poLink?: { po_number: string; po_id: string | null } | null;
 }) {
@@ -796,7 +933,7 @@ export function ReorderExplanationDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange} modal>
       {/* `overflow-y-hidden` overrides the base `overflow-y-auto` (same
-          tailwind-merge group) so only the body scrolls — the header + pager
+          tailwind-merge group) so only the body scrolls - the header + pager
           stay pinned. `max-h-[85dvh]` keeps the tallest derivation on-screen,
           reachable at ~375px mobile width. */}
       <DialogContent
@@ -828,7 +965,7 @@ export function ReorderExplanationDialog({
               <span className="flex flex-wrap items-center gap-2">
                 <TypeChip rec={rec} />
                 <span className="font-medium text-foreground">{rec.sku}</span>
-                {rec.product_name ? <span>— {rec.product_name}</span> : null}
+                {rec.product_name ? <span>- {rec.product_name}</span> : null}
                 {/* View PO (M8-F8): once the line is confirmed into a draft PO, jump
                     straight to that PO's detail page. */}
                 {poLink?.po_id ? (
@@ -848,9 +985,28 @@ export function ReorderExplanationDialog({
           // `key` resets scroll to top when stepping to a neighbouring rec.
           <DialogBody key={rec.id} className="grow space-y-5 overflow-y-auto min-h-0 -mx-6 px-6">
             {/* M5 AI narration + market advisory IS the headline for EVERY rec type
-                (buy / exception / disposition) — the old deterministic one-liner was
+                (buy / exception / disposition) - the old deterministic one-liner was
                 redundant with it. */}
             <AiSummaryBlock rec={rec} enabled={open} />
+
+            {/* Coverage Timeline (UAC Group B) - the dated evidence for the number
+                above, sitting directly under it because the planner's first question
+                on opening a row is "do I believe this?", and the answer is a list of
+                documents she recognises. Rendered for EVERY rec type: a disposition
+                row's excess is as much a coverage question as a buy row's shortage.
+                The pool is resolved from the row's own location code (a code with no
+                pool pointer is its own pool), and the floor is the row's reorder
+                point - 0 when it has none, which is the project-demand case. */}
+            <div>
+              <SectionTitle>Coverage timeline</SectionTitle>
+              <CoverageTimelinePanel
+                productCode={rec.sku}
+                productName={rec.product_name}
+                poolCode={rec.warehouse_code}
+                floor={rec.reorder_point ?? 0}
+                enabled={open}
+              />
+            </div>
 
             {/* Step-by-step derivation */}
             <div>
@@ -930,7 +1086,7 @@ export function ReorderExplanationDialog({
               </div>
             ) : null}
 
-            {/* M5 Ask box — bounded Q&A over this rec's frozen numbers (buy /
+            {/* M5 Ask box - bounded Q&A over this rec's frozen numbers (buy /
                 exception only). Lives at the bottom so the derivation is read
                 first; the dialog body is already mobile-scrollable. */}
             <AskSection rec={rec} />
