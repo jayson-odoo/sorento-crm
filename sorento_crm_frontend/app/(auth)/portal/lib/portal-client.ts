@@ -100,8 +100,100 @@ export interface PortalAttachment {
   can_unlink?: boolean;
 }
 
+/**
+ * Everything the portal needs to render (or not render) the Revise action.
+ * Comes back on the submission detail itself, so no extra round trip.
+ * `used` is the current revision_no, echoed back as `expected_revision_no` so a
+ * double tap cannot produce two revisions.
+ */
+export interface PortalRevisionPolicy {
+  enabled: boolean;
+  allowed: boolean;
+  used: number;
+  max: number;
+  remaining: number;
+  blocked_reason: string | null;
+  /**
+   * Where a revision sends this form back to, in words ("Project Sales",
+   * "Customer Service"). Resolved from the type's revision config plus its SLA
+   * chain, so the confirm dialog names the real destination instead of promising
+   * one it does not know (UAC E1a). Null when there is nothing to name, and the
+   * generic sentence stands.
+   */
+  restart_stage_label?: string | null;
+}
+
+/**
+ * One file as it stood at a given version.
+ *
+ * The snapshot itself stores no url - a signed one would be dead by the time
+ * history is read - so the backend resolves `url` per entry at read time,
+ * including for a file whose link a later revision removed. That is what keeps a
+ * historical file previewable in place (UAC I2a / G6). Null when the attachment
+ * row is gone or its signer failed.
+ */
+export interface PortalRevisionAttachment {
+  attachment_id: string;
+  link_id?: string | null;
+  filename?: string | null;
+  size?: number | null;
+  mime?: string | null;
+  url?: string | null;
+}
+
+export interface PortalRevisionChange {
+  field: string;
+  label: string;
+  from: unknown;
+  to: unknown;
+}
+
+/** One stage a revision voided, and who was working it. */
+export interface PortalRevisionVoidedStage {
+  stage_code?: string | null;
+  assignee_name?: string | null;
+}
+
+/** One labeled field of a revision's snapshot, in form order - same shape the
+ *  office timeline reads, rendered by the backend from its adapter field list. */
+export interface PortalRevisionSnapshotField {
+  field: string;
+  label: string;
+  value: unknown;
+  /** Server-rendered presentation of `value` (a lookup option's label, a
+   *  DD/MM/YYYY date). Null when the raw value already reads correctly. */
+  display?: string | null;
+}
+
+export interface PortalRevisionEntry {
+  id: string;
+  version_no: number;
+  revision_no: number;
+  kind: string;
+  /** Server-rendered: "Original", "Original (reconstructed)", "Revision 2", ... */
+  label: string;
+  reason: string | null;
+  submitted_at: string | null;
+  submitted_by: string | null;
+  is_reconstructed: boolean;
+  snapshot: Record<string, unknown>;
+  attachments: PortalRevisionAttachment[];
+  invalidated: Record<string, unknown> | null;
+  voided_stage_code: string | null;
+  voided_assignee_name: string | null;
+  /** EVERY stage this revision voided, newest first. Optional: a revision row
+   *  written before `voided_stages_json` existed carries only the scalar pair
+   *  above, which the timeline falls back to. */
+  voided_stages?: PortalRevisionVoidedStage[] | null;
+  changes: PortalRevisionChange[];
+  /** The whole form at this version, labeled and ordered. Optional: absent on a
+   *  payload from a backend that predates the full-form viewer. */
+  snapshot_fields?: PortalRevisionSnapshotField[] | null;
+}
+
 export interface PortalSubmissionDetail extends PortalSubmissionSummary {
   attachments?: PortalAttachment[];
+  revision?: PortalRevisionPolicy;
   // Free-form fields per type, populated by the backend serializer.
   [key: string]: unknown;
 }
@@ -366,6 +458,64 @@ export async function submitDraft(
   return unwrap<PortalSubmissionDetail>(res, 'Failed to submit.');
 }
 
+/** GET .../submissions/{kind}/{id}/revisions - the original plus every version
+ *  since, oldest first, each carrying what changed vs the one before it. */
+export async function fetchRevisions(
+  kind: PortalSubmissionKind,
+  id: string,
+): Promise<PortalRevisionEntry[]> {
+  const res = await portalFetch(
+    `/api/v1/public/portal/submissions/${kind}/${encodeURIComponent(id)}/revisions`,
+  );
+  const data = await unwrap<{ items?: PortalRevisionEntry[] }>(
+    res,
+    'Failed to load revision history.',
+  );
+  return data.items ?? [];
+}
+
+export interface ReviseSubmissionInput {
+  reason: string;
+  /** The revision_no the contact was looking at. A mismatch is a 409. */
+  expectedRevisionNo: number;
+  fields: Record<string, unknown>;
+  products?: Record<string, unknown>[];
+}
+
+export interface ReviseSubmissionResult {
+  submission: PortalSubmissionDetail;
+  revision: PortalRevisionPolicy;
+  revision_no: number;
+}
+
+/**
+ * POST .../submissions/{kind}/{id}/revise - send a revision.
+ *
+ * 409 (someone revised it first / double tap) and 422 (policy refused it) both
+ * carry one human sentence, surfaced verbatim through `unwrap` ->
+ * `extractApiError`.
+ */
+export async function reviseSubmission(
+  kind: PortalSubmissionKind,
+  id: string,
+  input: ReviseSubmissionInput,
+): Promise<ReviseSubmissionResult> {
+  const res = await portalFetch(
+    `/api/v1/public/portal/submissions/${kind}/${encodeURIComponent(id)}/revise`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reason: input.reason,
+        expected_revision_no: input.expectedRevisionNo,
+        fields: input.fields,
+        products: input.products,
+      }),
+    },
+  );
+  return unwrap<ReviseSubmissionResult>(res, 'Failed to send revision.');
+}
+
 export async function deleteDraftSubmission(
   kind: PortalSubmissionKind,
   id: string,
@@ -391,6 +541,49 @@ export async function uploadAttachment(
   form.set('file', file, file.name);
   const res = await portalMultipartFetch('/api/v1/public/portal/attachments', form);
   return unwrap<PortalAttachment>(res, 'Upload failed.');
+}
+
+/**
+ * Same-origin bytes route for a portal attachment, keyed on `attachment_id`
+ * (NOT `link_id`): an attachment removed during a revision is unlinked but
+ * stays visible in that revision's history, so a link-keyed URL would 404 on
+ * exactly the historical files. Backed by the portal token, so it works on a
+ * surface with no NextAuth session.
+ */
+export function portalAttachmentDownloadUrl(attachmentId: string): string {
+  return `/api/v1/public/portal/attachments/${encodeURIComponent(attachmentId)}/download`;
+}
+
+/**
+ * Read attachment bytes with the portal token. Feeds the shared
+ * AttachmentPreviewModal's `fetchBytes` escape hatch (Download button + inline
+ * Excel), which otherwise calls `apiFetch` and 401s here.
+ *
+ * Goes to the API host directly ({@link absoluteApiUrl}), NOT through the
+ * same-origin path every other portal call uses: in production those land on
+ * the Next.js catch-all proxy (`app/api/v1/public/[...path]/route.ts`), which
+ * re-serializes every backend response as JSON and would hand back `{}`
+ * instead of the file. Same reason `portalMultipartFetch` bypasses it.
+ */
+export async function fetchPortalAttachmentBytes(
+  downloadUrl: string,
+): Promise<Response> {
+  const token = readPortalToken();
+  const url = absoluteApiUrl(downloadUrl);
+  const init: RequestInit = {
+    method: 'GET',
+    headers: token ? { 'X-Portal-Token': token } : undefined,
+  };
+  if (url.startsWith('http')) {
+    init.mode = 'cors';
+    init.credentials = 'omit';
+  }
+  const res = await fetch(url, init);
+  if (res.status === 401) {
+    clearPortalToken();
+    throw new PortalUnauthorizedError();
+  }
+  return res;
 }
 
 export async function deleteAttachment(linkId: string): Promise<void> {

@@ -163,6 +163,16 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const businessCtasEnabled =
     handlingLock.businessCtasEnabled && !isVoided && !formAction.ctasDisabled;
   const [undoDialogOpen, setUndoDialogOpen] = useState(false);
+  // The technical team response may only be written while the complaint is still
+  // waiting for one (UAC O1) - the backend returns 422 outside those statuses,
+  // so the affordance is REMOVED rather than left to fail on a toast. Chat
+  // Records stays available at every status (UAC O2).
+  //
+  // The decision is the SERVER's, read straight off the payload. A status list
+  // kept here as well would be a second source for one rule, and the first time
+  // the two drifted this would either hide a working button or show one that
+  // 422s. Absent means not gated, as on the backend.
+  const responseWritable = complaint?.response_write_allowed !== false;
   // "Settled on site" - the third technical-team outcome beside Approve and Reject.
   // The technician fixed the issue during the visit, so no replacement DO is arranged
   // and the customer-service stage never spawns. Config-driven: the item only appears
@@ -338,7 +348,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               someone else / unclaimed - keeps the header uncluttered. When the
               lock does not bite (tier 1, flag off, or I hold it) businessCtasEnabled
               is true and they render on their normal status+permission gates. */}
-          {businessCtasEnabled && (
+          {businessCtasEnabled && responseWritable && (
             <Button
               // Submitted = the technical team's response is the next action, so make
               // it the primary CTA; otherwise it's a secondary edit.
@@ -538,7 +548,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 View in system
               </DropdownMenuItem>
             )}
-            {canUseRespondChat && !isVoided && (
+            {canUseRespondChat && !isVoided && responseWritable && (
               <DropdownMenuItem
                 disabled={openingReplySheet || updateComplaintAndReplyMutation.isPending}
                 onClick={async () => {
@@ -1261,7 +1271,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           <div>
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm text-muted-foreground">Technical Team Response</p>
-              {businessCtasEnabled && (
+              {businessCtasEnabled && responseWritable && (
                 <Button
                   variant="ghost"
                   size="sm"

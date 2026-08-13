@@ -17,9 +17,11 @@ import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tr
 import { useReassignSLATracking } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
 import ResponseAttachmentDropzone from '@/app/(protected)/complaint-management/complaints/components/ResponseAttachmentDropzone';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
+import { RevisionBanner } from '@/components/common/RevisionBanner';
 import { VoidBanner } from '@/components/common/VoidBanner';
 import { VoidDialog } from '@/components/common/VoidDialog';
 import { useFormVoid } from '@/hooks/useFormVoid';
+import { withRevisionSuffix } from '@/lib/document-number';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { Button } from '@/components/ui/button';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -33,7 +35,12 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { exportStockInquiryToExcel } from '../utils/exportStockInquiryToExcel';
+import {
+  exportStockInquiryToExcel,
+  exportStockInquiryWithRevisionsToExcel,
+} from '../utils/exportStockInquiryToExcel';
+import { ExportWithRevisionsDialog } from '@/components/common/ExportWithRevisionsDialog';
+import { useRevisionEnabledMap } from '@/app/(protected)/sla-management/_shared/useRevisionEnabledMap';
 import { format } from 'date-fns';
 import {
   ProductInquiryFormLayout,
@@ -52,8 +59,12 @@ import {
   useReopenStockInquiry,
   useUploadStockInquiryResponseAttachments,
   useExportStockInquiryPdf,
+  useStockInquiryRevisions,
 } from '../hooks/useStockInquiries';
-import { getOrCreateStockInquiryViewLink } from '../services/stockInquiryService';
+import {
+  getOrCreateStockInquiryViewLink,
+  getStockInquiryRevisions,
+} from '../services/stockInquiryService';
 import { toast } from 'sonner';
 import { formatDate } from '@/lib/helpers';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -155,15 +166,91 @@ export default function StockInquiryDetail({
     queryKeysToInvalidate: [['stock-inquiry', inquiryId]],
   });
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
+  // Denormalized revision counter (UAC H4). Drives the banner, the number
+  // suffix and the revision-lineage refetch.
+  const revisionNo = Number(inquiry?.revision_no ?? 0);
+  const revisionsQuery = useStockInquiryRevisions(
+    isValidId ? inquiryId : null,
+    revisionNo,
+  );
+  // The purchasing response may only be written while the inquiry is still with
+  // purchasing (UAC O1) - the backend returns 422 outside those statuses, so the
+  // affordance is REMOVED rather than left to fail on a toast. Chat Records
+  // stays available at every status (UAC O2).
+  //
+  // The decision is the SERVER's, read straight off the payload. A status list
+  // kept here as well would be a second source for one rule, and the first time
+  // the two drifted this would either hide a working button or show one that
+  // 422s. Absent means not gated, as on the backend.
+  const responseWritable = inquiry?.response_write_allowed !== false;
+  // The newest entry carries the reason and submitter the banner quotes verbatim.
+  const latestRevision = (revisionsQuery.data ?? [])
+    .filter((entry) => (entry.revision_no ?? 0) > 0)
+    .at(-1);
 
-  const handleExportExcel = async () => {
+  /**
+   * "Include revisions?" is only a real question when this record HAS revisions
+   * and the type has them switched on (round 6, 6.4). Anywhere else both exports
+   * behave exactly as they always have, with no dialog in the way. Enablement is
+   * the server's answer (global kill switch + per-type config collapsed into one
+   * boolean); "has any" is the record's own denormalized counter, so deciding
+   * costs no lineage read.
+   */
+  const { data: revisionEnabledMap } = useRevisionEnabledMap();
+  const canOfferRevisionExport =
+    revisionEnabledMap?.stock_inquiry === true && revisionNo > 0;
+  const [exportChoice, setExportChoice] = useState<'excel' | 'pdf' | null>(null);
+
+  const runExcelExport = async (includeRevisions: boolean) => {
     if (!inquiry) return;
     setExporting(true);
     try {
-      await exportStockInquiryToExcel(inquiry);
+      if (includeRevisions) {
+        // The lineage as it stands at export time. The banner query has usually
+        // already cached it (keyed on `revision_no`, so it cannot be stale after
+        // a revision lands); the direct read is the fallback for a first click
+        // before it resolves.
+        const entries = revisionsQuery.data ?? (await getStockInquiryRevisions(inquiryId));
+        await exportStockInquiryWithRevisionsToExcel(inquiry, entries);
+      } else {
+        await exportStockInquiryToExcel(inquiry);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Export failed');
     } finally {
       setExporting(false);
     }
+  };
+
+  const handleExportExcel = async () => {
+    if (!inquiry) return;
+    if (canOfferRevisionExport) {
+      setExportChoice('excel');
+      return;
+    }
+    await runExcelExport(false);
+  };
+
+  const handleExportPdf = () => {
+    if (canOfferRevisionExport) {
+      setExportChoice('pdf');
+      return;
+    }
+    exportPdfMutation.mutate(inquiryId);
+  };
+
+  const handleExportConfirmed = (includeRevisions: boolean) => {
+    const choice = exportChoice;
+    setExportChoice(null);
+    if (choice === 'pdf') {
+      // No option chosen, no body: the request stays the one this export has
+      // always sent.
+      exportPdfMutation.mutate(
+        includeRevisions ? { id: inquiryId, options: { include_revisions: true } } : inquiryId,
+      );
+      return;
+    }
+    void runExcelExport(includeRevisions);
   };
 
   /**
@@ -284,7 +371,9 @@ export default function StockInquiryDetail({
         <div className="space-y-1 min-w-0">
           <h1 className="text-2xl font-bold break-words">
             Stock Inquiry -{' '}
-            {inquiry.inquiry_number || inquiry.product_code || 'Details'}
+            {withRevisionSuffix(inquiry.inquiry_number, revisionNo) ||
+              inquiry.product_code ||
+              'Details'}
           </h1>
           <p className="text-sm text-muted-foreground">
             Created:{' '}
@@ -356,9 +445,7 @@ export default function StockInquiryDetail({
               )}
             </>
           )}
-          {businessCtasEnabled &&
-            (inquiry.status === 'pending_purchasing' ||
-              inquiry.status === 'responded') && (
+          {businessCtasEnabled && responseWritable && (
             <Button
               // Pending purchasing = the purchasing response is the next action →
               // primary CTA; once responded it's a secondary edit.
@@ -521,8 +608,7 @@ export default function StockInquiryDetail({
             )}
             {businessCtasEnabled &&
               inquiry.respond_inbox_url &&
-              (inquiry.status === 'pending_purchasing' ||
-                inquiry.status === 'responded') && (
+              responseWritable && (
                 <DropdownMenuItem
                   disabled={openingReplySheet || updateAndReplyMutation.isPending}
                   onClick={async () => {
@@ -545,7 +631,7 @@ export default function StockInquiryDetail({
               disabled={exportPdfMutation.isPending}
               onSelect={(e) => {
                 e.preventDefault();
-                exportPdfMutation.mutate(inquiryId);
+                handleExportPdf();
               }}
             >
               <Printer className="size-4" />
@@ -580,6 +666,13 @@ export default function StockInquiryDetail({
           <StockInquiryNavigation inquiryId={inquiryId} />
         </div>
       </div>
+
+      <ExportWithRevisionsDialog
+        open={exportChoice !== null}
+        onOpenChange={(open) => !open && setExportChoice(null)}
+        title={exportChoice === 'pdf' ? 'Print / Download PDF' : 'Export to Excel'}
+        onConfirm={handleExportConfirmed}
+      />
 
       <HandlingLockBanner
         state={handlingLock.state}
@@ -866,8 +959,7 @@ export default function StockInquiryDetail({
                 ? 'Saving…'
                 : 'Save only'}
             </Button>
-            {inquiry.respond_inbox_url &&
-              (inquiry.status === 'pending_purchasing' || inquiry.status === 'responded') && (
+            {inquiry.respond_inbox_url && responseWritable && (
                 <Button
                   variant="primary"
                   data-guide-target="procurement.stock-inquiries.update-and-reply-button"
@@ -917,6 +1009,16 @@ export default function StockInquiryDetail({
           rejectedAt={inquiry.rejected_at}
         />
       )}
+
+      {/* Contact revised their submission (UAC H1). Renders nothing at revision 0. */}
+      <RevisionBanner
+        revisionNo={revisionNo}
+        documentNumber={inquiry.inquiry_number}
+        revisedAt={inquiry.last_revised_at}
+        revisedByName={latestRevision?.submitted_by}
+        reason={latestRevision?.reason}
+        restartedAtLabel="Project Sales"
+      />
 
       <VoidBanner
         voided={isVoided}
@@ -1013,7 +1115,7 @@ export default function StockInquiryDetail({
               <div className="min-w-0 flex-1">
                 <InquiryReadValue>{inquiry.purchasing_response}</InquiryReadValue>
               </div>
-              {!isVoided && (
+              {!isVoided && responseWritable && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1128,6 +1230,11 @@ export default function StockInquiryDetail({
         inquiryId={inquiryId}
         attachments={inquiry.attachments ?? []}
       />
+
+      {/* The lineage lives in the page's own "Revisions" TAB (round 6), not in
+          this stack: it is reference material, and burying it under the whole
+          form meant scrolling past everything to read it. The query stays here
+          because the revise banner above quotes the newest entry. */}
 
       <AuditTrail entityType="stock_inquiry" entityId={inquiryId} title="Audit Trail" />
     </div>

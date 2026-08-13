@@ -7,6 +7,7 @@ storage key) or 'failed' (with an error). The "My Downloads" drawer polls the
 per-user rows while any are in flight.
 """
 import logging
+from typing import Optional
 
 from app.database import SessionLocal
 from app.services.company_scope import set_company_scope
@@ -63,11 +64,23 @@ def generate_complaint_pdf(download_id: str, complaint_id: str, user_id: str) ->
         db.close()
 
 
-def generate_stock_inquiry_pdf(download_id: str, inquiry_id: str, user_id: str) -> dict:
+def generate_stock_inquiry_pdf(
+    download_id: str,
+    inquiry_id: str,
+    user_id: str,
+    revision_id: Optional[str] = None,
+    include_revisions: bool = False,
+) -> dict:
     """Render a product inquiry PDF, store it, and update the download row.
 
     Best-effort and self-contained: any failure marks the download 'failed' with
     a readable message rather than raising into RQ's failed registry.
+
+    ``revision_id`` / ``include_revisions`` were added by
+    PLAN-portal-submission-revisions 6.3/6.4. They are ordinary
+    positional-or-keyword parameters WITH DEFAULTS, and the routes pass them by
+    keyword; the defaults are what keeps a job queued by an older release -
+    three positional args, no keywords - running here unchanged.
     """
     db = SessionLocal()
     # Worker sessions default to the fail-closed UNSET scope; stock inquiries are a
@@ -80,7 +93,11 @@ def generate_stock_inquiry_pdf(download_id: str, inquiry_id: str, user_id: str) 
 
         from app.services.stock_inquiry_pdf_service import StockInquiryPDFService
 
-        pdf_bytes, filename = StockInquiryPDFService(db).render_pdf(inquiry_id)
+        pdf_bytes, filename = StockInquiryPDFService(db).render_pdf(
+            inquiry_id,
+            revision_id=revision_id,
+            include_revisions=bool(include_revisions),
+        )
 
         provider = default_provider()
         backend = get_backend(provider)
@@ -114,12 +131,19 @@ def generate_stock_inquiry_pdf(download_id: str, inquiry_id: str, user_id: str) 
         db.close()
 
 
-def generate_purchase_request_pdf(download_id: str, request_id: str, user_id: str) -> dict:
+def generate_purchase_request_pdf(
+    download_id: str,
+    request_id: str,
+    user_id: str,
+    revision_id: Optional[str] = None,
+    include_revisions: bool = False,
+) -> dict:
     """Render a purchase request / sponsorship form PDF, store it, update the row.
 
     Best-effort and self-contained: any failure marks the download 'failed' with a
     readable message rather than raising into RQ's failed registry. Mirrors
-    generate_stock_inquiry_pdf.
+    generate_stock_inquiry_pdf, including the optional revision parameters and
+    their defaults.
     """
     db = SessionLocal()
     # Worker sessions default to the fail-closed UNSET scope. PR/SF are global
@@ -132,7 +156,11 @@ def generate_purchase_request_pdf(download_id: str, request_id: str, user_id: st
 
         from app.services.purchase_request_pdf_service import PurchaseRequestPDFService
 
-        pdf_bytes, filename = PurchaseRequestPDFService(db).render_pdf(request_id)
+        pdf_bytes, filename = PurchaseRequestPDFService(db).render_pdf(
+            request_id,
+            revision_id=revision_id,
+            include_revisions=bool(include_revisions),
+        )
 
         provider = default_provider()
         backend = get_backend(provider)

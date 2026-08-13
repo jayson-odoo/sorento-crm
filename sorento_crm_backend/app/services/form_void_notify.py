@@ -31,13 +31,15 @@ def notify_form_voided_in_app(
     notified: set[str] = set()
     try:
         from app.models.sla import ConversationSLATracking
+        from app.services.sla_scope import open_tracker_scope
 
         tracker = (
             db.query(ConversationSLATracking)
             .filter(
                 ConversationSLATracking.source_entity_type == source_entity_type,
                 ConversationSLATracking.source_entity_id == str(source_entity_id),
-                ConversationSLATracking.is_resolved.is_(False),
+                # Whoever held a stage voided by an earlier revision was already told.
+                *open_tracker_scope(),
             )
             .order_by(ConversationSLATracking.initiated_at.desc())
             .first()

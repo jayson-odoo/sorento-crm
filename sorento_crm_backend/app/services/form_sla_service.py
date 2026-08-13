@@ -23,6 +23,7 @@ from app.models.sla import (
     FormSLAConfig,
     SLAPolicyTier,
 )
+from app.services.document_number import suffix_revision
 from app.services.error_handler import handle_validation_error
 from app.services.notification_service import NotificationService
 
@@ -108,33 +109,42 @@ def _working_due_naive(db: Session, start_dt: datetime, hours: float) -> datetim
     return start_dt + timedelta(hours=float(hours))
 
 
-# (table, number column) per form type - for resolving a human-readable document
-# number instead of showing the raw UUID in notifications.
+# (table, number column, carries portal revisions) per form type - for resolving a
+# human-readable document number instead of showing the raw UUID in notifications.
+# The third flag says whether the table has the denormalized `revision_no` column,
+# so the number can be rendered at its revision (UAC N1/N5).
 _ENTITY_NUMBER_SOURCE: dict = {
-    "complaint": ("complaints", "complaint_number"),
-    "stock_inquiry": ("stock_inquiries", "inquiry_number"),
-    "purchase_request": ("purchase_requests", "request_number"),
-    "sponsorship_form": ("purchase_requests", "request_number"),
-    "ticket": ("tickets", "ticket_number"),
+    "complaint": ("complaints", "complaint_number", False),
+    "stock_inquiry": ("stock_inquiries", "inquiry_number", True),
+    "purchase_request": ("purchase_requests", "request_number", True),
+    "sponsorship_form": ("purchase_requests", "request_number", True),
+    "ticket": ("tickets", "ticket_number", False),
 }
 
 
 def _resolve_entity_number(db: Session, source_entity_type: str, source_entity_id: str) -> Optional[str]:
     """Human-readable document number (e.g. CMP-2026-0001) for a form row; None if
-    not resolvable (caller falls back to a generic label, never the UUID)."""
+    not resolvable (caller falls back to a generic label, never the UUID).
+
+    Revisable types render at their revision (``SI-26-0184-R2``), so an SLA
+    notification names the version the recipient is actually being asked to work.
+    """
     src = _ENTITY_NUMBER_SOURCE.get(source_entity_type)
     if not src or not source_entity_id:
         return None
-    table, col = src
+    table, col, has_revision = src
     try:
         from sqlalchemy import text as _text
 
+        select_cols = f"{col}, revision_no" if has_revision else f"{col}, 0"
         row = db.execute(
-            _text(f"SELECT {col} FROM {table} WHERE id = CAST(:id AS uuid)"),
+            _text(f"SELECT {select_cols} FROM {table} WHERE id = CAST(:id AS uuid)"),
             {"id": str(source_entity_id)},
         ).fetchone()
         val = (row[0] if row else None)
-        return str(val).strip() if val else None
+        if not val:
+            return None
+        return suffix_revision(str(val), row[1] if row else 0) or None
     except Exception:  # pragma: no cover - never break notifications on lookup
         logger.warning("SLA notify: number lookup failed for %s/%s", source_entity_type, source_entity_id, exc_info=True)
         return None
@@ -407,15 +417,128 @@ class FormSLAOrchestrator:
             .all()
         )
 
+    def _open_form_trackers(
+        self,
+        source_entity_type: str,
+        source_entity_id: str,
+    ) -> list[ConversationSLATracking]:
+        """The ONE query for "which stages of this form row are still open", newest
+        first. Both the identify side (``active_trackers_for_source``) and the void
+        side (``void_active_for_source``) go through it, so they cannot answer
+        differently about the same rows.
+
+        Pinned to FORM types AND passed through the negated conversation scope: that
+        discriminator is the only thing separating the two SLA systems inside
+        ``conversation_sla_tracking``, and a form row falsely matching a
+        conversation-keyed query is a bug this repo has already had (UAC F4b).
+        """
+        from sqlalchemy import not_ as sql_not
+
+        from app.services.sla_scope import open_tracker_scope
+        from app.services.sla_service import conversation_tracking_scope
+
+        entity_type = (source_entity_type or "").strip()
+        if entity_type not in FORM_SLA_TYPES:
+            return []
+
+        return (
+            self.db.query(ConversationSLATracking)
+            .filter(
+                ConversationSLATracking.source_entity_type == entity_type,
+                ConversationSLATracking.source_entity_id == str(source_entity_id),
+                sql_not(conversation_tracking_scope()),
+                *open_tracker_scope(),
+            )
+            .order_by(ConversationSLATracking.initiated_at.desc())
+            .all()
+        )
+
+    def active_trackers_for_source(
+        self,
+        source_entity_type: str,
+        source_entity_id: str,
+    ) -> list[ConversationSLATracking]:
+        """Open (unresolved, not voided) form trackers for one form row, newest first.
+
+        Several stages of one form can be open at once, so this returns them all.
+        This is what ``revise()`` uses to name the stages it is about to void, so it
+        MUST be the same query the void performs - see ``_open_form_trackers``.
+        """
+        return self._open_form_trackers(source_entity_type, source_entity_id)
+
+    def void_active_for_source(
+        self,
+        source_entity_type: str,
+        source_entity_id: str,
+        *,
+        reason: str,
+        void_reason: str = "revised_by_contact",
+        now: Optional[datetime] = None,
+    ) -> list[ConversationSLATracking]:
+        """Cancel every open stage of one form row and return the trackers voided.
+
+        Mirrors ``_escalate_tracker``'s bookkeeping minus the reassignment: the stage
+        stops where it is, the handling lock is released (nobody can claim a stage that
+        no longer exists), and one ``void`` event log is written per tracker so the
+        cancellation is readable in the timeline.
+
+        ``is_resolved`` is deliberately left alone (UAC F4/F4a): a voided stage was
+        never resolved, and marking it so would count it as completed in every KPI. The
+        void marker is what dashboards and open-tracker queries filter on - see
+        ``app/services/sla_scope.py``.
+
+        **Conversation SLA is never touched** (UAC F4b). The two systems share this
+        table and are discriminated only by ``source_entity_type``, so the selection
+        runs through ``_open_form_trackers``, which pins the type to form types AND
+        negates the conversation scope - the same query the caller used to name the
+        stages it is voiding.
+
+        Does NOT commit: the caller owns the transaction. Pending takeovers are voided
+        by the caller after that commit, because ``void_for_tracking`` commits itself.
+        """
+        now = now or _utc_naive_now()
+        trackers = self._open_form_trackers(source_entity_type, source_entity_id)
+        if not trackers:
+            return []
+
+        for tracker in trackers:
+            tracker.voided_at = now
+            tracker.void_reason = void_reason
+            # A voided stage cannot be held: clear the handling lock, exactly as an
+            # escalation does when the tier changes. Smuggle the holder out on the
+            # instance first - the caller still has to TELL them their work stopped,
+            # and by then the column is empty. The marker dies on any re-query, so
+            # read it off the returned objects.
+            tracker._voided_handled_by_id = tracker.handled_by_id  # noqa: SLF001
+            tracker.handled_by_id = None
+            tracker.handled_at = None
+        self.db.flush()
+
+        for tracker in trackers:
+            self._write_event_log(
+                tracker_id=str(tracker.id),
+                event_type="void",
+                from_tier=tracker.current_tier,
+                to_tier=tracker.current_tier,
+                reason=reason,
+                assigned_to_id=tracker.assigned_to_id,
+                # Naive-UTC column into an event-log payload: _write_event_log wraps
+                # every datetime through _to_aware_utc, or it lands shifted -8h.
+                due_at=tracker.due_at,
+                trigger="auto",
+            )
+        return trackers
+
     def scan_overdue_and_escalate(self) -> dict:
         """Find form trackers past due + not escalated this tier, escalate to next tier."""
+        from app.services.sla_scope import open_tracker_scope
         from app.services.user_service import AccessAgentService
 
         now = _utc_naive_now()
         candidates = (
             self.db.query(ConversationSLATracking)
             .filter(
-                ConversationSLATracking.is_resolved.is_(False),
+                *open_tracker_scope(),
                 ConversationSLATracking.source_entity_type.in_(FORM_SLA_TYPES),
             )
             .all()
@@ -663,6 +786,10 @@ class FormSLAOrchestrator:
             raise FormEscalationBlocked("not_form", "This tracking row is not a form SLA stage.")
         if bool(tracker.is_resolved):
             raise FormEscalationBlocked("resolved", "SLA is already resolved; cannot escalate.")
+        if getattr(tracker, "voided_at", None) is not None:
+            raise FormEscalationBlocked(
+                "voided", "This stage was voided when the form was revised; cannot escalate."
+            )
 
         reason_text = f"manual: {reason}" if reason else "manual escalation"
         self._escalate_tracker(
@@ -699,12 +826,16 @@ class FormSLAOrchestrator:
         # policy_id: policy_id is a snapshot the tracker stored at create time, so
         # editing a stage's policy afterward would orphan the live tracker - its
         # resolve/respond events would no longer find it.
+        # A VOIDED stage is not an active one (UAC F4): without this the revision
+        # restart would find the stage it just voided and skip spawning stage 1.
+        from app.services.sla_scope import open_tracker_scope
+
         q = (
             self.db.query(ConversationSLATracking)
             .filter(
                 ConversationSLATracking.source_entity_type == config.source_entity_type,
                 ConversationSLATracking.source_entity_id == str(source_entity_id),
-                ConversationSLATracking.is_resolved.is_(False),
+                *open_tracker_scope(),
             )
         )
         if config.team_set_code is None:

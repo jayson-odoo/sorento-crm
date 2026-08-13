@@ -1,6 +1,7 @@
 'use client';
 
 import { ReactNode } from 'react';
+import { FileText, Timer } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import FormSLATrackingTab from './FormSLATrackingTab';
 import type { FormSLASourceType } from './formSLAService';
@@ -9,6 +10,12 @@ export interface FormDetailExtraTab {
   value: string;
   label: string;
   content: ReactNode;
+  /**
+   * Bare lucide icon for the trigger (no size class - the `line` variant sizes
+   * it). Optional so a caller that has nothing meaningful to draw renders a
+   * label-only trigger rather than a filler icon.
+   */
+  icon?: ReactNode;
 }
 
 interface FormDetailWithSLATabsProps {
@@ -26,15 +33,25 @@ export default function FormDetailWithSLATabs({
   extraTabs = [],
 }: FormDetailWithSLATabsProps) {
   return (
-    <Tabs defaultValue="details" className="space-y-4">
-      <TabsList>
-        <TabsTrigger value="details">Details</TabsTrigger>
+    <Tabs defaultValue="details">
+      {/* The house underlined strip (same as the product/user detail pages), so
+          every record in the system wears one tab style. The list carries its
+          own bottom margin, so the root drops space-y. */}
+      <TabsList variant="line" className="mb-5 w-full justify-start overflow-x-auto">
+        <TabsTrigger value="details">
+          <FileText />
+          <span>Details</span>
+        </TabsTrigger>
         {extraTabs.map((tab) => (
           <TabsTrigger key={tab.value} value={tab.value}>
-            {tab.label}
+            {tab.icon}
+            <span>{tab.label}</span>
           </TabsTrigger>
         ))}
-        <TabsTrigger value="sla">SLA Tracking</TabsTrigger>
+        <TabsTrigger value="sla">
+          <Timer />
+          <span>SLA Tracking</span>
+        </TabsTrigger>
       </TabsList>
       <TabsContent value="details" className="m-0">
         {children}

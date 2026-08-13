@@ -351,6 +351,16 @@ class SystemSetting(Base):
     # handling_lock_service.is_handling_lock_enabled.
     handling_lock_enabled_types = Column(Text, nullable=True, server_default="")
 
+    # Portal submission revisions (PLAN-portal-submission-revisions). Global defaults;
+    # per-type overrides live in portal_revision_configs.
+    # `portal_revisions_enabled` is the kill switch: false disables revisions for every
+    # type regardless of its config row. `portal_max_revisions` is the fallback cap used
+    # when a type's own max_revisions is NULL.
+    # Both must ALSO appear in the settings GET dict AND SystemSettingUpdate - the
+    # routes build a manual dict and silently drop anything not listed there.
+    portal_revisions_enabled = Column(Boolean, nullable=False, server_default="true", default=True)
+    portal_max_revisions = Column(Integer, nullable=False, server_default="2", default=2)
+
 
 class UserQuickAccess(Base):
     """Per-user quick access (pinned menu items and attachment folders) for sidebar."""
