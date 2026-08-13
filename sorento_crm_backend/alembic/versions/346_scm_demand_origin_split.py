@@ -18,7 +18,7 @@ Two changes, one rule:
    already reports) counts straight from the book. What the filter sets aside is counted by
    `demand_source_service.set_aside_project_demand` - excluded, never silently dropped.
 
-The body lives in `app.services.scm.demand.COMMITTED_V_SQL`, as it has since 340, so the
+The body lives in `app.services.scm.demand.COMMITTED_V_SQL`, as it did when this migration shipped (frozen here since the live-import replay broke production; see 340), and the
 view and the Python expression cannot be edited apart.
 
 Revision ID: 346_scm_demand_origin_split
@@ -27,13 +27,30 @@ Revises: 345_scm_pooled_netting_toggle
 import sqlalchemy as sa
 from alembic import op
 
-from app.services.scm.demand import COMMITTED_V_SQL
-
 revision = "346_scm_demand_origin_split"
 down_revision = "345_scm_pooled_netting_toggle"
 branch_labels = None
 depends_on = None
 
+
+_AS_OF_346 = """
+CREATE OR REPLACE VIEW scm.committed_v AS
+SELECT sol.product_id,
+       sol.warehouse_id,
+       SUM(GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
+                    - COALESCE(sol.qty_delivered, 0), 0)) AS committed
+FROM sales_order_lines sol
+JOIN sales_orders so ON so.id = sol.sales_order_id
+WHERE so.status = 'open'
+  AND sol.line_status = 'open'
+  AND sol.purchasing_status <> 'covered'
+  AND GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
+               - COALESCE(sol.qty_delivered, 0), 0) > 0
+  -- S13b: project demand comes from the Order Inquiry; the book supplies the rest
+  AND (so.demand_class IS DISTINCT FROM 'project'
+       OR so.demand_origin = 'scm_order_inquiry')
+GROUP BY sol.product_id, sol.warehouse_id;
+"""
 
 _PREVIOUS_VIEW = """
 CREATE OR REPLACE VIEW scm.committed_v AS
@@ -60,7 +77,7 @@ def upgrade() -> None:
         "UPDATE sales_orders SET demand_origin = 'scm_order_inquiry' "
         "WHERE source_system = 'scm_order_inquiry'"
     )
-    op.execute(COMMITTED_V_SQL)
+    op.execute(_AS_OF_346)
 
 
 def downgrade() -> None:
