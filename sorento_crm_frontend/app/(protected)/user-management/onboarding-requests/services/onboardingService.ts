@@ -2,12 +2,9 @@
  * The captain-side onboarding API contract (UAC AC-6, AC-9).
  *
  *   GET    /api/v1/user-management/onboarding/requests            `.view`
- *          DataGrid page of OnboardingRequestSummary.
  *   POST   /api/v1/user-management/onboarding/requests            `.add`
- *          { company_id, title, requester_name, requester_email, requester_phone,
- *            expiry_days } -> the request plus its intake link.
  *   GET    /api/v1/user-management/onboarding/requests/{id}       `.view`
- *          OnboardingRequestDetail, with collisions computed live on read.
+ *          Detail, with collisions computed live on read.
  *   DELETE /api/v1/user-management/onboarding/requests/{id}       `.delete`
  *          Hard delete; people cascade.
  *   POST   .../requests/{id}/send                                 `.add`
@@ -15,27 +12,26 @@
  *   POST   .../requests/{id}/regenerate-token                     `.edit`
  *   POST   .../requests/{id}/start-review                         `.edit`
  *   PUT    .../requests/{id}/people/{person_id}                   `.edit`
+ *   POST   .../requests/{id}/people/{person_id}/keep              `.edit`
  *   POST   .../requests/{id}/people/{person_id}/reject { reason } `.edit`
  *          422 when the reason is blank - checked server-side, not only in the dialog.
  *   POST   .../requests/{id}/approve                              `.approve`
  *          Transitions in_review -> processing and queues the provisioning job.
- *          409 on a second approve, by construction of the status graph.
+ *          422 on a second approve, by construction of the status graph.
  *
- * PHASE 1: the bodies answer from fixtures so the review screens can be built
- * and reviewed before the endpoints exist. Phase 2 replaces the bodies with
- * `apiFetch` + `extractApiError` + `buildDataGridParams`; the signatures are the
- * contract the backend is built to.
+ * `apiFetch('/api/user-management/...')` maps straight onto the FastAPI backend
+ * at `/api/v1/user-management/...` via the rewrite table in `lib/api.ts`.
  */
 
+import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import type {
   OnboardingPersonPatch,
   OnboardingRequestDetail,
   OnboardingRequestSummary,
 } from '@/components/common/onboarding/types';
-import {
-  MOCK_PEOPLE,
-  MOCK_TEMPLATES,
-} from '@/app/(auth)/onboarding/__mocks__/onboarding';
+
+const BASE = '/api/user-management/onboarding';
 
 export interface OnboardingRequestListParams {
   page?: number;
@@ -49,158 +45,161 @@ export interface OnboardingRequestListResult {
   pagination: { page: number; limit: number; total: number };
 }
 
-const MOCK_DELAY_MS = 200;
-
-function later<T>(value: T): Promise<T> {
-  return new Promise((resolve) => setTimeout(() => resolve(value), MOCK_DELAY_MS));
+export interface OnboardingApproveResult {
+  status: string;
+  /** Null when the transition committed but the job could not be queued. */
+  job_id: string | null;
+  queued_people: number;
 }
 
-const MOCK_SUMMARIES: OnboardingRequestSummary[] = [
-  {
-    id: 'req-mocha',
-    title: 'MOCHA staff onboarding',
-    company_name: 'MOCHA Sdn Bhd',
-    requester_name: 'Esther Lim',
-    requester_email: 'esther@mocha.com.my',
-    status: 'submitted',
-    people_count: 18,
-    approved_count: 0,
-    rejected_count: 0,
-    submitted_at: '2026-08-14T09:12:00',
-    created_at: '2026-08-12T10:00:00',
-    expires_at: '2026-08-26T10:00:00',
-    revoked_at: null,
-  },
-  {
-    id: 'req-dealers',
-    title: 'Northern dealer wave',
-    company_name: 'Sorento Sdn Bhd',
-    requester_name: 'Faridah Osman',
-    requester_email: 'faridah@sorento.com.my',
-    status: 'sent',
-    people_count: 0,
-    approved_count: 0,
-    rejected_count: 0,
-    submitted_at: null,
-    created_at: '2026-08-13T14:30:00',
-    expires_at: '2026-08-27T14:30:00',
-    revoked_at: null,
-  },
-  {
-    id: 'req-warehouse',
-    title: 'Warehouse night shift',
-    company_name: 'Sorento Sdn Bhd',
-    requester_name: 'Hafiz Rahim',
-    requester_email: 'hafiz@sorento.com.my',
-    status: 'partially_completed',
-    people_count: 4,
-    approved_count: 4,
-    rejected_count: 0,
-    submitted_at: '2026-08-10T08:00:00',
-    created_at: '2026-08-09T08:00:00',
-    expires_at: '2026-08-23T08:00:00',
-    revoked_at: null,
-  },
-];
+async function readOrThrow<T>(response: Response, fallback: string): Promise<T> {
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, fallback));
+  }
+  return response.json();
+}
 
+/**
+ * The queue.
+ *
+ * The endpoint answers with the whole list rather than a page: a review queue is
+ * tens of rows, not thousands, and paginating server-side would cost a second
+ * round trip to show a count nobody is waiting on. The grid still paginates
+ * client-side, so the slice is done here.
+ */
 export async function listOnboardingRequests(
   params: OnboardingRequestListParams = {},
 ): Promise<OnboardingRequestListResult> {
-  const query = (params.query ?? '').trim().toLowerCase();
-  const filtered = query
-    ? MOCK_SUMMARIES.filter(
-        (r) =>
-          r.title.toLowerCase().includes(query) ||
-          r.requester_name.toLowerCase().includes(query) ||
-          r.company_name.toLowerCase().includes(query),
-      )
-    : MOCK_SUMMARIES;
-  return later({
-    data: filtered,
-    pagination: { page: params.page ?? 1, limit: params.limit ?? 10, total: filtered.length },
-  });
+  const search = new URLSearchParams();
+  if (params.query?.trim()) search.set('query', params.query.trim());
+  if (params.status) search.set('status_key', params.status);
+  const suffix = search.toString() ? `?${search.toString()}` : '';
+
+  const response = await apiFetch(`${BASE}/requests${suffix}`);
+  const rows = await readOrThrow<OnboardingRequestSummary[]>(
+    response,
+    'Could not load onboarding requests',
+  );
+
+  const page = params.page ?? 1;
+  const limit = params.limit ?? 10;
+  const start = (page - 1) * limit;
+  return {
+    data: rows.slice(start, start + limit),
+    pagination: { page, limit, total: rows.length },
+  };
 }
 
 export async function getOnboardingRequest(id: string): Promise<OnboardingRequestDetail> {
-  const summary = MOCK_SUMMARIES.find((r) => r.id === id) ?? MOCK_SUMMARIES[0];
-  const isEmptyRequest = summary.people_count === 0;
-  const people = isEmptyRequest
-    ? []
-    : MOCK_PEOPLE.map((person, index) => {
-        // A couple of collisions and one provisioned lane so every chip state is
-        // exercised on the prototype rather than only the happy one.
-        if (index === 1) {
-          return {
-            ...person,
-            collisions: [
-              { kind: 'user_email' as const, label: 'Already a user: Tan Wei Ming' },
-            ],
-          };
-        }
-        if (index === 4) {
-          return {
-            ...person,
-            collisions: [
-              { kind: 'contact_phone' as const, label: 'Already a WhatsApp contact' },
-            ],
-          };
-        }
-        if (index === 10) {
-          return {
-            ...person,
-            review_status: 'rejected' as const,
-            rejection_reason: 'Left the company last month.',
-          };
-        }
-        return person;
-      });
+  const response = await apiFetch(`${BASE}/requests/${id}`);
+  return readOrThrow(response, 'Could not load this onboarding request');
+}
 
-  return later({
-    ...summary,
-    reviewer_note: null,
-    requester_note: isEmptyRequest ? null : 'Zul starts next month - no rush on his account.',
-    reviewed_by_name: null,
-    provisioned_at: null,
-    source_file_name: isEmptyRequest ? null : 'PHONE LIST.xlsx',
-    templates: MOCK_TEMPLATES,
-    people,
+export interface CreateOnboardingRequestInput {
+  company_id: string;
+  title: string;
+  requester_name: string;
+  requester_email: string;
+  requester_phone?: string | null;
+  expiry_days?: number;
+}
+
+export async function createOnboardingRequest(
+  input: CreateOnboardingRequestInput,
+): Promise<OnboardingRequestDetail> {
+  const response = await apiFetch(`${BASE}/requests`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
   });
+  return readOrThrow(response, 'Could not create the onboarding request');
+}
+
+async function post(path: string, fallback: string, body?: unknown): Promise<void> {
+  const response = await apiFetch(path, {
+    method: 'POST',
+    ...(body === undefined
+      ? {}
+      : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, fallback));
+  }
 }
 
 export async function updateOnboardingPerson(
-  _requestId: string,
-  _personId: string,
-  _patch: OnboardingPersonPatch,
+  requestId: string,
+  personId: string,
+  patch: OnboardingPersonPatch,
 ): Promise<void> {
-  await later(undefined);
+  const response = await apiFetch(`${BASE}/requests/${requestId}/people/${personId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not save that change'));
+  }
 }
 
 export async function rejectOnboardingPerson(
-  _requestId: string,
-  _personId: string,
+  requestId: string,
+  personId: string,
   reason: string,
 ): Promise<void> {
+  // Checked here so the dialog can refuse instantly, and AGAIN server-side -
+  // this is the last place that can stop a rejection the requester cannot act on.
   if (!reason.trim()) {
     throw new Error('Say why it is being rejected. The requester sees this.');
   }
-  await later(undefined);
+  await post(
+    `${BASE}/requests/${requestId}/people/${personId}/reject`,
+    'Could not reject that person',
+    { reason },
+  );
 }
 
 export async function approveOnboardingPerson(
-  _requestId: string,
-  _personId: string,
+  requestId: string,
+  personId: string,
 ): Promise<void> {
-  await later(undefined);
+  await post(
+    `${BASE}/requests/${requestId}/people/${personId}/keep`,
+    'Could not keep that person',
+  );
 }
 
-export async function startOnboardingReview(_requestId: string): Promise<void> {
-  await later(undefined);
+export async function startOnboardingReview(requestId: string): Promise<void> {
+  await post(`${BASE}/requests/${requestId}/start-review`, 'Could not start the review');
 }
 
-export async function approveOnboardingRequest(_requestId: string): Promise<void> {
-  await later(undefined);
+export async function approveOnboardingRequest(
+  requestId: string,
+): Promise<OnboardingApproveResult> {
+  const response = await apiFetch(`${BASE}/requests/${requestId}/approve`, {
+    method: 'POST',
+  });
+  return readOrThrow(response, 'Could not approve this request');
 }
 
-export async function deleteOnboardingRequest(_requestId: string): Promise<void> {
-  await later(undefined);
+export async function sendOnboardingRequest(requestId: string): Promise<void> {
+  await post(`${BASE}/requests/${requestId}/send`, 'Could not send the intake link');
+}
+
+export async function revokeOnboardingRequest(requestId: string): Promise<void> {
+  await post(`${BASE}/requests/${requestId}/revoke`, 'Could not revoke the link');
+}
+
+export async function regenerateOnboardingToken(requestId: string): Promise<void> {
+  await post(
+    `${BASE}/requests/${requestId}/regenerate-token`,
+    'Could not issue a new link',
+  );
+}
+
+export async function deleteOnboardingRequest(requestId: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/requests/${requestId}`, { method: 'DELETE' });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not delete this request'));
+  }
 }

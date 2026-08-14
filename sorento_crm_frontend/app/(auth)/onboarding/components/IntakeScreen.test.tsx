@@ -1,0 +1,226 @@
+/**
+ * The requester's screen, across the states she can actually land in.
+ *
+ * The two that matter most are the ones a happy-path-only test would miss: a
+ * dead link (she needs to be told to ask for a new one, not shown an empty
+ * form), and a submitted batch (the same link becomes a read-only status page,
+ * which is the whole point of the token being multi-use).
+ */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { OnboardingIntakeContext } from '@/components/common/onboarding/types';
+import { IntakeScreen } from './IntakeScreen';
+
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+}));
+
+const fetchIntakeContext = vi.fn();
+const parseSheet = vi.fn();
+const saveRows = vi.fn();
+const submitIntake = vi.fn();
+
+vi.mock('../lib/onboarding-client', async () => {
+  const actual = await vi.importActual<typeof import('../lib/onboarding-client')>(
+    '../lib/onboarding-client',
+  );
+  return {
+    ...actual,
+    fetchIntakeContext: (...args: unknown[]) => fetchIntakeContext(...args),
+    parseSheet: (...args: unknown[]) => parseSheet(...args),
+    saveRows: (...args: unknown[]) => saveRows(...args),
+    submitIntake: (...args: unknown[]) => submitIntake(...args),
+  };
+});
+
+const CONTEXT: OnboardingIntakeContext = {
+  title: 'MOCHA staff onboarding',
+  company_name: 'MOCHA Sdn Bhd',
+  requester_name: 'Esther Lim',
+  requester_email: 'esther@mocha.com.my',
+  status: 'sent',
+  expires_at: '2026-08-28T09:00:00',
+  editable: true,
+  requester_note: null,
+  templates: [
+    {
+      id: 'tpl-sales',
+      name: 'Salesperson',
+      description: 'Sees their own orders.',
+      default_needs_system_account: true,
+      default_needs_respond_contact: true,
+      default_needs_agent_seat: false,
+    },
+  ],
+  people: [],
+};
+
+function renderScreen(token = 'TOKEN') {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <IntakeScreen token={token} />
+    </QueryClientProvider>,
+  );
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe('IntakeScreen', () => {
+  it('tells her what the system already knows, and asks nothing for it', async () => {
+    fetchIntakeContext.mockResolvedValue(CONTEXT);
+    renderScreen();
+    expect(await screen.findByText('MOCHA staff onboarding')).toBeInTheDocument();
+    expect(screen.getByText('MOCHA Sdn Bhd')).toBeInTheDocument();
+    expect(screen.getByText('Esther Lim')).toBeInTheDocument();
+    expect(screen.getByText(/Link valid until/)).toBeInTheDocument();
+  });
+
+  it('shows a loading state before the context lands', () => {
+    fetchIntakeContext.mockReturnValue(new Promise(() => {}));
+    const { container } = renderScreen();
+    expect(container.querySelectorAll('[data-slot="skeleton"], .animate-pulse').length)
+      .toBeGreaterThan(0);
+  });
+
+  it('tells her to ask for a new link rather than showing an empty form', async () => {
+    fetchIntakeContext.mockRejectedValue(new Error('This onboarding link has expired.'));
+    renderScreen();
+    expect(await screen.findByText('This onboarding link has expired.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Submit for review/ })).not.toBeInTheDocument();
+  });
+
+  it('refuses to submit an empty batch', async () => {
+    fetchIntakeContext.mockResolvedValue(CONTEXT);
+    renderScreen();
+    const submit = await screen.findByRole('button', { name: /Submit for review/ });
+    expect(submit).toBeDisabled();
+  });
+
+  it('fills the grid from a parsed sheet and counts what it read', async () => {
+    fetchIntakeContext.mockResolvedValue(CONTEXT);
+    parseSheet.mockResolvedValue({
+      rows: [
+        {
+          row_number: 1,
+          full_name: 'Nurul Aisyah',
+          nick_name: 'Aisyah',
+          phone_raw: '012-3456781',
+          email_raw: 'aisyah@mocha.com.my',
+          section_label: 'SALES PERSON',
+          problems: [],
+        },
+        {
+          row_number: 2,
+          full_name: 'Ahmad Zulkifli',
+          nick_name: 'Zul',
+          phone_raw: '017-3456786',
+          email_raw: null,
+          section_label: 'SALES PERSON',
+          problems: ['no email'],
+        },
+      ],
+      problems: [],
+      unmapped_headers: [],
+      missing_columns: [],
+      total_rows: 2,
+      sections: ['SALES PERSON'],
+    });
+
+    const { container } = renderScreen();
+    await screen.findByText('MOCHA staff onboarding');
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['x'], 'PHONE LIST.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => expect(parseSheet).toHaveBeenCalled());
+    expect(await screen.findByText('2 people ready to submit.')).toBeInTheDocument();
+    // A row the parser could not fully read is kept, with its complaint on it.
+    expect(screen.getAllByText('no email').length).toBeGreaterThan(0);
+  });
+
+  it('lets her add a person by hand without a spreadsheet', async () => {
+    fetchIntakeContext.mockResolvedValue(CONTEXT);
+    renderScreen();
+    fireEvent.click(await screen.findByRole('button', { name: /Add a person/ }));
+    expect(await screen.findByText('1 person ready to submit.')).toBeInTheDocument();
+    // Still blocked: an unnamed row cannot be submitted.
+    expect(screen.getByRole('button', { name: /Submit for review/ })).toBeDisabled();
+    expect(screen.getByText(/Every row needs a name/)).toBeInTheDocument();
+  });
+
+  it('turns into a read-only status page once submitted', async () => {
+    fetchIntakeContext.mockResolvedValue({
+      ...CONTEXT,
+      status: 'submitted',
+      editable: false,
+      people: [
+        {
+          id: 'p1',
+          row_number: 1,
+          full_name: 'Nurul Aisyah',
+          nick_name: 'Aisyah',
+          phone_raw: '012-3456781',
+          email_raw: 'aisyah@mocha.com.my',
+          section_label: 'SALES PERSON',
+          template_id: 'tpl-sales',
+          requester_note: null,
+          reviewer_note: null,
+          needs_system_account: true,
+          needs_respond_contact: true,
+          needs_agent_seat: false,
+          review_status: 'approved' as const,
+          rejection_reason: null,
+          problems: [],
+          collisions: [],
+          user_step: 'done' as const,
+          user_error: null,
+          user_label: 'Nurul Aisyah',
+          contact_step: 'pending' as const,
+          contact_error: null,
+          agent_step: 'pending' as const,
+          agent_error: null,
+        },
+      ],
+    });
+
+    renderScreen();
+    expect(await screen.findByText(/1 people submitted for review/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Submit for review/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Add a person/ })).not.toBeInTheDocument();
+    // Her rows are still on screen - the link is a status page, not a dead end.
+    expect(screen.getAllByText('Nurul Aisyah').length).toBeGreaterThan(0);
+  });
+
+  it('submits the batch and flips to the status view', async () => {
+    fetchIntakeContext.mockResolvedValue(CONTEXT);
+    saveRows.mockResolvedValue({ ...CONTEXT, people: [] });
+    submitIntake.mockResolvedValue({
+      ...CONTEXT,
+      status: 'submitted',
+      editable: false,
+      people: [],
+    });
+
+    renderScreen();
+    fireEvent.click(await screen.findByRole('button', { name: /Add a person/ }));
+    const nameInputs = await screen.findAllByLabelText('Name, row 1');
+    fireEvent.change(nameInputs[0], { target: { value: 'Typed Person' } });
+
+    const submit = screen.getByRole('button', { name: /Submit for review/ });
+    await waitFor(() => expect(submit).not.toBeDisabled());
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(submitIntake).toHaveBeenCalled());
+    // Saved before submitting: the rows have to reach the server first.
+    expect(saveRows).toHaveBeenCalled();
+    expect(await screen.findByText(/submitted for review/)).toBeInTheDocument();
+  });
+});

@@ -1,9 +1,12 @@
 /**
- * The public onboarding intake API contract (UAC AC-3.6).
+ * The public onboarding intake API client (UAC AC-3.6).
  *
- * Every call is gated by the per-request token, sent as `X-Onboarding-Token`.
- * There is no account, no NextAuth session and no cookie: this module is the
- * whole auth story for the intake page.
+ * Every call is gated by the per-request intake token, sent as
+ * `X-Onboarding-Token`. There is no account, no NextAuth session and no cookie:
+ * this module is the whole auth story for the intake page. The token comes from
+ * the URL path and is passed in explicitly rather than stashed in
+ * localStorage - the link IS the credential, and a token cached from a previous
+ * batch would answer for the wrong request.
  *
  *   GET  /api/v1/public/onboarding/me
  *        200 OnboardingIntakeContext - company, requester, expiry, status,
@@ -12,19 +15,15 @@
  *
  *   POST /api/v1/public/onboarding/parse        multipart { file }
  *        200 OnboardingParseResult - rows plus per-row problems. Writes nothing.
- *        429 per-IP rate limit (the endpoint is unauthenticated compute).
+ *        422 not an Excel workbook.  429 per-IP rate limit.
  *
  *   PUT  /api/v1/public/onboarding/rows          { rows: OnboardingDraftRow[] }
- *        200 { people } - whole-list replace, keyed on row_number.
+ *        200 OnboardingIntakeContext - whole-list replace, keyed on row_number.
  *        409 once the request has left `sent`.
  *
  *   POST /api/v1/public/onboarding/submit        { requester_note }
  *        200 OnboardingIntakeContext with `editable: false`. The same token now
- *            serves the read-only status page (AC-3.4).
- *
- * PHASE 1: the bodies below answer from `__mocks__/onboarding.ts` so the screen
- * can be built and reviewed before any endpoint exists. Phase 2 replaces the
- * bodies only - the signatures above are the contract the backend is built to.
+ *            serves the read-only status page.
  */
 
 import type {
@@ -33,11 +32,8 @@ import type {
   OnboardingPerson,
   OnboardingPersonPatch,
 } from '@/components/common/onboarding/types';
-import {
-  MOCK_INTAKE_CONTEXT,
-  MOCK_PARSE_RESULT,
-  MOCK_PEOPLE,
-} from '../__mocks__/onboarding';
+
+const BASE_PATH = '/api/v1/public/onboarding';
 
 /** A row on its way to the server: no ids, no lane state, no verdict. */
 export interface OnboardingDraftRow {
@@ -78,66 +74,90 @@ export function applyPersonPatch(
   return { ...person, ...patch };
 }
 
-const MOCK_DELAY_MS = 250;
+/**
+ * The backend base URL.
+ *
+ * Absolute when `NEXT_PUBLIC_API_URL` is set; otherwise relative, so the Next
+ * rewrite proxies `/api/v1/*` to FastAPI. Same resolution the contact portal
+ * uses - see `app/(auth)/portal/lib/portal-client.ts`.
+ */
+function apiBase(): string {
+  if (typeof process !== 'undefined') {
+    const env = process.env?.NEXT_PUBLIC_API_URL;
+    if (env) return env.replace(/\/$/, '');
+  }
+  return '';
+}
 
-function later<T>(value: T): Promise<T> {
-  return new Promise((resolve) => setTimeout(() => resolve(value), MOCK_DELAY_MS));
+function url(path: string): string {
+  return `${apiBase()}${BASE_PATH}${path}`;
+}
+
+/** The server's message, or the fallback. Never a bare "Failed to fetch". */
+async function errorFrom(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    return body?.detail || body?.message || body?.error || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function request<T>(
+  token: string,
+  path: string,
+  init: RequestInit,
+  fallback: string,
+): Promise<T> {
+  if (!token) throw new Error('This link is missing its token.');
+  const headers = new Headers(init.headers || {});
+  headers.set('X-Onboarding-Token', token);
+  if (init.body && !(init.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json');
+  }
+  const response = await fetch(url(path), { ...init, headers });
+  if (!response.ok) {
+    throw new Error(await errorFrom(response, fallback));
+  }
+  return response.json();
 }
 
 export async function fetchIntakeContext(token: string): Promise<OnboardingIntakeContext> {
-  // PHASE 1 mock. `token` is threaded through so the swap is body-only.
-  if (!token) throw new Error('This link is missing its token.');
-  if (token === 'expired') throw new Error('This link has expired.');
-  if (token === 'empty') return later({ ...MOCK_INTAKE_CONTEXT, people: [] });
-  if (token === 'submitted') {
-    return later({
-      ...MOCK_INTAKE_CONTEXT,
-      status: 'submitted' as const,
-      editable: false,
-      people: MOCK_PEOPLE,
-    });
-  }
-  return later({ ...MOCK_INTAKE_CONTEXT, people: [] });
+  return request(token, '/me', { method: 'GET' }, 'This link is no longer valid.');
 }
 
 export async function parseSheet(token: string, file: File): Promise<OnboardingParseResult> {
-  if (!token) throw new Error('This link is missing its token.');
-  // PHASE 1 mock: any workbook answers with the PHONE LIST shape.
-  if (!/\.(xlsx|xlsm|xls)$/i.test(file.name)) {
-    throw new Error('Upload an Excel workbook (.xlsx, .xlsm or .xls).');
-  }
-  return later(MOCK_PARSE_RESULT);
+  const form = new FormData();
+  form.append('file', file);
+  // No Content-Type header: fetch must set the multipart boundary itself.
+  return request(
+    token,
+    '/parse',
+    { method: 'POST', body: form },
+    'Could not read that workbook.',
+  );
 }
 
 export async function saveRows(
   token: string,
   rows: OnboardingDraftRow[],
-): Promise<{ people: OnboardingPerson[] }> {
-  if (!token) throw new Error('This link is missing its token.');
-  return later({
-    people: rows.map((row, index) => ({
-      ...MOCK_PEOPLE[0],
-      ...row,
-      id: `person-${index + 1}`,
-      reviewer_note: null,
-      review_status: 'proposed' as const,
-      rejection_reason: null,
-      problems: [],
-      collisions: [],
-    })),
-  });
+): Promise<OnboardingIntakeContext> {
+  return request(
+    token,
+    '/rows',
+    { method: 'PUT', body: JSON.stringify({ rows }) },
+    'Could not save these rows.',
+  );
 }
 
 export async function submitIntake(
   token: string,
   requesterNote: string | null,
 ): Promise<OnboardingIntakeContext> {
-  if (!token) throw new Error('This link is missing its token.');
-  return later({
-    ...MOCK_INTAKE_CONTEXT,
-    status: 'submitted' as const,
-    editable: false,
-    requester_note: requesterNote,
-    people: MOCK_PEOPLE,
-  });
+  return request(
+    token,
+    '/submit',
+    { method: 'POST', body: JSON.stringify({ requester_note: requesterNote }) },
+    'Could not submit this batch.',
+  );
 }

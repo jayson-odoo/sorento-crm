@@ -31,7 +31,7 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import { RecordNavigation } from '@/components/common/RecordNavigation';
+import RecordNavigation from '@/components/common/RecordNavigation';
 import { PeopleGrid } from '@/components/common/onboarding/PeopleGrid';
 import {
   ONBOARDING_STATUS_LABELS,
@@ -140,9 +140,22 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
 
   const approveMutation = useMutation({
     mutationFn: () => approveOnboardingRequest(requestId),
-    onSuccess: () => {
+    onSuccess: (result) => {
       invalidate();
-      toast.success('Approved. Provisioning has been queued.');
+      if (result.job_id) {
+        toast.success(
+          `Approved. Provisioning queued for ${result.queued_people} ${
+            result.queued_people === 1 ? 'person' : 'people'
+          }.`,
+        );
+      } else {
+        // The approval committed but the queue did not take the job. Saying so
+        // is the point: the request sits in Provisioning with nothing running,
+        // and silence here would read as "it is working on it".
+        toast.warning(
+          'Approved, but provisioning could not be queued. Ask an admin to requeue it.',
+        );
+      }
     },
     onError: (e: Error) => toast.error(e.message),
   });
