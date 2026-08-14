@@ -246,6 +246,15 @@ lavish artifacts, not blocking waits.
 
 ## Risks / open questions
 
+- Secret ops (binding, from n8n rev-2 manifest 2026-08-15): n8n retains the plaintext
+  X-CRM-Webhook-Secret verbatim in execution runData on every authenticated call and
+  nothing in n8n prevents it - treat the secret as disclosed to anyone with n8n access;
+  never dump a webhook-lane execution with the Webhook node included; rotation order is
+  digest SET first, then CRM env change, and rotation is complete only when
+  pre-rotation executions age out of retention. Durable fix = HMAC-over-body -
+  deliberately out of S4.1 scope; becomes a named follow-up if this secret ever gates
+  more than the one bot-pause lane.
+
 - Q1. Respond API may not support sticker or reply-to sends (R1) - composer scope shrinks,
   not blocks.
 - Q4. `assigned_to` is Text + `assigned_to_id` FK both exist - tickets should write both

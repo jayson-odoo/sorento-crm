@@ -256,7 +256,15 @@ into it.
   wiring-only change leaves the ht lane inert on webhook invocations. The build widens
   the envelope source resolution (same isExecuted ternary the SLA nodes already use)
   while keeping ht-gate's fail-closed semantics byte-intact. Acceptance = the ht lane
-  demonstrably ARMS on a pin-data webhook payload, not merely that edges exist.)
+  demonstrably ARMS on a pin-data webhook payload, not merely that edges exist.
+  Load-bearing coupling, MEASURED in rev-2 (exec 12475154): n8n fan-out is not
+  independent by default - a throwing sla-agent-replied call kills the SIBLING
+  Update-a-Contact before it runs, i.e. bot never pauses on every staff reply for as
+  long as the CRM endpoint is missing. `onError: continueRegularOutput` on the SLA call
+  is the only decoupler (exec 12475390 proves contact write + ht lane + notice complete
+  with it). Even so, "PR #137 deployed" stays a hard promote gate: onError converts an
+  endpoint outage from "bot-pause dead" to "stamp missing", it does not make promoting
+  ahead of the endpoint free.)
 - **AC-J5 [BE][T]** Given a drawer send that fires BOTH the direct webhook and Respond's
   own outgoing-message trigger, When both lanes mirror the message to `chat_histories`,
   Then exactly ONE row exists per Respond `messageId` - the ingest endpoint upserts
