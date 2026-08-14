@@ -2081,11 +2081,23 @@ async def get_sla_tracking_conversation(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    """List Respond.io messages for the contact linked to this SLA tracking (respond_io_id on respond_contacts)."""
+    """List Respond.io messages for the contact linked to this SLA tracking (respond_io_id on respond_contacts).
+
+    The listing is a real Respond.io HTTP call (``RespondClient.list_messages``,
+    15s timeout) behind a synchronous service method, so this ``async def``
+    route hands it to ``run_in_threadpool`` rather than blocking the event loop
+    for its duration - same treatment as its siblings ``GET .../ticket`` and
+    ``POST .../ticket/send``. The drawer opens both, milliseconds apart.
+    """
+    from starlette.concurrency import run_in_threadpool
+
     try:
         service = ConversationSLATrackingService(db)
-        return service.fetch_respond_conversation_for_tracking(
-            str(tracking_id), limit=limit, cursor=cursor
+        return await run_in_threadpool(
+            service.fetch_respond_conversation_for_tracking,
+            str(tracking_id),
+            limit=limit,
+            cursor=cursor,
         )
     except HTTPException:
         raise

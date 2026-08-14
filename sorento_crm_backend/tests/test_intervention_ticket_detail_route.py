@@ -218,6 +218,31 @@ def test_unknown_tracking_id_is_also_404(client, db):
     assert resp.status_code == 404, resp.text
 
 
+def test_conversation_thread_route_offloads_to_a_threadpool(client, db, monkeypatch):
+    """The drawer's OTHER Respond call. GET .../{id}/conversation is `async def`
+    and ran ``fetch_respond_conversation_for_tracking`` -> ``RespondClient.
+    list_messages`` (a synchronous 15s-timeout HTTP call) INLINE, so opening a
+    drawer blocked the event loop twice: once here and once in .../ticket.
+    Same offload as its two siblings."""
+    seed = _seed(db)
+    tracking = _create_ticket(db, seed)
+    _act_as(seed["assignee_id"])
+
+    calls = []
+
+    async def _fake_run_in_threadpool(func, *args, **kwargs):
+        calls.append(func)
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr("starlette.concurrency.run_in_threadpool", _fake_run_in_threadpool)
+
+    resp = client.get(f"{BASE}/{tracking.id}/conversation")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["items"] == []
+    assert calls, "GET .../conversation must offload via run_in_threadpool, not call it inline"
+
+
 def test_ticket_detail_route_offloads_to_a_threadpool(client, db, monkeypatch):
     """FINDING 7 (code review): this route is `async def` but called the sync
     Respond HTTP path (get_window_state_for -> RespondClient.list_messages,
