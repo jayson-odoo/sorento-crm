@@ -120,7 +120,9 @@ def build_allocation_pool(
 
     So each allocation's consumption is the sum of the DRAWN quantity (see the
     convention note above) over the picking lines linked to it, REGARDLESS of
-    approval status, plus whatever
+    approval status - except lines on a REJECTED GRN, which must not consume
+    capacity (the same rule the forward-match candidate filter states) - plus
+    whatever
     receipt the stored column claims that no picking line explains (an
     integration's write - real stock, and it must still consume capacity).
     Subtracting the linked total before taking that excess is what stops a
@@ -170,6 +172,7 @@ def build_allocation_pool(
         .filter(
             PickingLine.spo_allocation_id.in_(allocation_ids),
             PickingHeader.picking_type == "goods_received",
+            PickingHeader.picking_status != "rejected",
         )
         .group_by(PickingLine.spo_allocation_id)
     )

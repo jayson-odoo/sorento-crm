@@ -2621,17 +2621,20 @@ class PickingHeaderService:
             # Consume from SPO pool by received qty when present; otherwise expected (draft line with only expected filled).
             remaining = quantity_picked if quantity_picked > 0 else quantity_expected
 
-            # Every chunk carries the quantity IT drew, in BOTH columns. This used
-            # to put the whole `quantity_expected` on the first chunk and 0 on the
-            # rest, which made the GRN-line writers disagree: the import writes
-            # the per-chunk draw, so the same receipt came out as different rows
-            # depending on which writer produced it (AC-FM-19 compares
+            # Every chunk of a SPLIT carries the quantity IT drew, in BOTH columns.
+            # This used to put the whole `quantity_expected` on the first chunk and
+            # 0 on the rest, which made the GRN-line writers disagree: the import
+            # writes the per-chunk draw, so the same receipt came out as different
+            # rows depending on which writer produced it (AC-FM-19 compares
             # `quantity_expected`), and every reader that sums that column charged
             # one line's whole draw to its first allocation. See the convention note
             # in `app.services.grn_spo_matching`. The cost, stated plainly: a
             # receipt SPLIT across allocations can no longer carry an
             # expected-vs-picked discrepancy, because the split is a fact about
-            # what arrived. An unsplit line still can.
+            # what arrived. An unsplit line still can - a single fully-covering
+            # draw keeps the caller's `quantity_expected`, so a short receipt's
+            # shortfall stays visible (AC-FM-30), the same guard forward matching
+            # applies.
             draws = matching.draw_fifo(
                 pool,
                 warehouse_id=str(source_warehouse_id) if source_warehouse_id else None,
@@ -2648,10 +2651,12 @@ class PickingHeaderService:
                 )
                 continue
 
+            split = len(draws) > 1
             for draw in draws:
                 self._add_picking_line(
                     grn_id, product_id, source_warehouse_id,
-                    draw.quantity, draw.quantity, draw.allocation_id, stated_spo,
+                    draw.quantity if split else quantity_expected,
+                    draw.quantity, draw.allocation_id, stated_spo,
                     company_id=str(company_id) if company_id else None,
                 )
 

@@ -327,6 +327,25 @@ def test_a_line_on_another_grn_consumes_capacity_even_unapproved(world):
     assert pool == []
 
 
+def test_a_rejected_grns_lines_release_their_capacity(world):
+    """AC-FM-17b at the pool, not only at the candidate filter. A GRN links while
+    a draft (the normal imported state) and `update_grn` only unlinks on leaving
+    APPROVED, so rejecting a draft keeps the link rows - but a rejected receipt
+    must not consume allocation capacity, or the 50 it never took is withheld from
+    every later GRN and from forward matching, forever."""
+    product, warehouse = world.product(), world.warehouse()
+    allocation = world.allocation(product_id=product, warehouse_id=warehouse, quantity=50)
+    rejected = world.grn(status="rejected")
+    world.line(
+        header_id=rejected, product_id=product, warehouse_id=warehouse,
+        quantity=50, allocation_id=allocation,
+    )
+
+    pool = build_allocation_pool(world.db, product_id=product, spo_number=SPO)
+
+    assert [(e.allocation_id, e.available) for e in pool] == [(allocation, 50)]
+
+
 def test_a_split_chunk_consumes_the_quantity_it_actually_drew(world):
     """The pool measures ``quantity_picked``, because that is the only column that
     is right on the rows already in the database.
@@ -839,6 +858,36 @@ def test_approving_a_grn_splits_both_quantity_columns_together(world):
         for l in world.lines_of(grn)
     )
     assert placed == sorted([(same_warehouse, 30, 30), (elsewhere, 70, 70)])
+
+
+def test_approving_an_unsplit_short_receipt_keeps_its_discrepancy(world):
+    """AC-FM-30 at the approval writer, the same guard forward matching applies:
+    only a receipt actually SPLIT across allocations collapses
+    ``quantity_expected`` to the draw. A single fully-covering draw is not a
+    split, so a line that expected 100 and received 60 must come out (100, 60) -
+    writing the draw into both columns erased the 40-unit shortfall, which is
+    exactly the thing the office needs to see."""
+    product, warehouse = world.product(), world.warehouse()
+    allocation = world.allocation(product_id=product, warehouse_id=warehouse, quantity=100)
+    grn = world.grn(status="draft", spo_number=SPO)
+
+    _update(
+        world.db, grn,
+        picking_status="approved",
+        picking_lines=[
+            {
+                "product_id": product, "quantity_expected": 100, "quantity_picked": 60,
+                "source_warehouse_id": warehouse,
+            }
+        ],
+    )
+
+    lines = world.lines_of(grn)
+    assert [
+        (l.spo_allocation_id, l.quantity_expected, l.quantity_picked) for l in lines
+    ] == [(allocation, 100, 60)]
+    # Only what was picked drew on the allocation.
+    assert world.drawn_total(allocation) == 60
 
 
 def test_approving_a_grn_cannot_over_draw_what_a_draft_already_took(world):
