@@ -75,7 +75,7 @@
 import { getPromotions } from '@/app/(protected)/marketing-management/promotions/services/promotionService';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { apiFetch } from '@/lib/api';
-import { extractApiError } from '@/lib/api-client';
+import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 
 const BASE = '/api/v1/master-data/product-attachments/brochure-images';
 
@@ -127,15 +127,18 @@ export async function listBrochureImages(
   const { promotionId = '', onlyUnset = true, query = '', page = 1, limit = BROCHURE_IMAGE_PAGE_SIZE } =
     params;
 
-  const search = new URLSearchParams({
-    only_unset: String(onlyUnset),
-    page: String(page),
-    limit: String(limit),
-  });
-  if (promotionId) search.set('promotion_id', promotionId);
-  // An empty `query=` is a filter matching nothing on some backends; absent
-  // means "no filter".
-  if (query.trim()) search.set('query', query.trim());
+  // buildDataGridParams takes a 0-based pageIndex and emits 1-based `page`,
+  // matching this route's contract. `searchQuery` is only written when
+  // truthy, which is what leaves an empty `query=` off the request - an
+  // empty value is a filter matching nothing on some backends; absent means
+  // "no filter".
+  const search = buildDataGridParams(
+    { pageIndex: page - 1, pageSize: limit, searchQuery: query.trim() },
+    {
+      only_unset: String(onlyUnset),
+      promotion_id: promotionId || undefined,
+    },
+  );
 
   const response = await apiFetch(`${BASE}?${search.toString()}`);
   if (!response.ok) {

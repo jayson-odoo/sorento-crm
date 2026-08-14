@@ -982,24 +982,19 @@ export function RoomDesigner() {
                       <Label htmlFor="dk-opening-wall" className="text-xs">
                         Wall
                       </Label>
-                      <select
+                      <SearchableSelect
                         id="dk-opening-wall"
-                        className="h-8 w-24 rounded-md border border-border bg-background px-2 text-sm"
-                        value={selectedOpening.wallIndex}
-                        onChange={(event) =>
-                          moveOpening(
-                            selectedOpening.id,
-                            selectedOpening.offsetMm,
-                            Number(event.target.value),
-                          )
+                        size="sm"
+                        triggerClassName="w-32"
+                        value={String(selectedOpening.wallIndex)}
+                        onChange={(value) =>
+                          moveOpening(selectedOpening.id, selectedOpening.offsetMm, Number(value))
                         }
-                      >
-                        {wallLengths(outline).map((length, index) => (
-                          <option key={index} value={index}>
-                            {index + 1} ({Math.round(length)} mm)
-                          </option>
-                        ))}
-                      </select>
+                        options={wallLengths(outline).map((length, index) => ({
+                          value: String(index),
+                          label: `${index + 1} (${Math.round(length)} mm)`,
+                        }))}
+                      />
                     </div>
                     <div className="flex flex-col gap-1">
                       <Label htmlFor="dk-opening-sill" className="text-xs">

@@ -2,12 +2,13 @@
 
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { AlertCircle, Package, Plus, Trash2 } from 'lucide-react';
+import { AlertCircle, Package, Plus, Search, Trash2 } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { BundleCard } from '../../components/BundleCard';
 import { deleteBundle, listBundles } from '../../services/catalogueService';
@@ -27,6 +28,7 @@ import type { ResolvedBundle } from '@/lib/dealer-kit/types';
  * without anyone having edited it.
  */
 export function BundlesList() {
+  const [search, setSearch] = useState('');
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<ResolvedBundle | null>(null);
 
@@ -35,7 +37,20 @@ export function BundlesList() {
     queryFn: listBundles,
   });
 
-  const bundles = useMemo(() => data ?? [], [data]);
+  const bundles = useMemo(() => {
+    const all = data ?? [];
+    const needle = search.trim().toLowerCase();
+    if (!needle) return all;
+    // A bundle carries no description of its own - what filters here is the
+    // name and the parts underneath it, since those are what the card shows.
+    return all.filter(
+      (bundle) =>
+        bundle.name.toLowerCase().includes(needle) ||
+        bundle.components.some((component) =>
+          component.productName.toLowerCase().includes(needle),
+        ),
+    );
+  }, [data, search]);
 
   if (isError) {
     return (
@@ -51,13 +66,21 @@ export function BundlesList() {
 
   return (
     <Card>
-      <CardHeader className="block py-5">
-        <div className="flex justify-end">
-          <Button size="sm" onClick={() => setCreating(true)}>
-            <Plus className="size-4" />
-            New bundle
-          </Button>
+      <CardHeader className="flex-wrap gap-2 py-5">
+        <div className="relative w-full sm:max-w-xs">
+          <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            className="ps-9"
+            placeholder="Search bundles"
+            aria-label="Search bundles"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
         </div>
+        <Button size="sm" onClick={() => setCreating(true)}>
+          <Plus className="size-4" />
+          New bundle
+        </Button>
       </CardHeader>
 
       <CardContent>
@@ -72,15 +95,20 @@ export function BundlesList() {
         {!isLoading && bundles.length === 0 && (
           <div className="py-10 text-center">
             <Package className="mx-auto size-6 text-muted-foreground" />
-            <p className="mt-3 text-sm font-medium text-foreground">No bundles yet</p>
-            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-              A bundle sells several products together under one price. Create one, then drop a
-              bundle block onto any catalogue page.
+            <p className="mt-3 text-sm font-medium text-foreground">
+              {search ? 'No bundles match that search' : 'No bundles yet'}
             </p>
-            <Button className="mt-4" size="sm" onClick={() => setCreating(true)}>
-              <Plus className="size-4" />
-              New bundle
-            </Button>
+            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+              {search
+                ? 'Try a different name.'
+                : 'A bundle sells several products together under one price. Create one, then drop a bundle block onto any catalogue page.'}
+            </p>
+            {!search && (
+              <Button className="mt-4" size="sm" onClick={() => setCreating(true)}>
+                <Plus className="size-4" />
+                New bundle
+              </Button>
+            )}
           </div>
         )}
 
