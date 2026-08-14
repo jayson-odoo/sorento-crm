@@ -398,6 +398,22 @@ class MediaExtractService:
 
     # ----- Voice ------------------------------------------------------------
 
+    @staticmethod
+    def _resolve_voice_model(tier: Optional[str], settings: Any) -> str:
+        """The transcription model for this call, degraded tier included.
+
+        The mirror of `_resolve_image_provider`'s tier branch, and it was
+        missing: `job.tier` was ignored here, so an over-quota voice note was
+        transcribed on the standard model while the contact was told accuracy
+        had dropped. A NULL `media_voice_degraded_model` means the quota refuses
+        rather than degrades, so a `degraded` tier only reaches this branch while
+        a model is actually named - the `or` is belt and braces, not a fallback
+        anyone should rely on.
+        """
+        if tier == "degraded" and getattr(settings, "voice_degraded_model", None):
+            return str(settings.voice_degraded_model)
+        return str(settings.transcribe_model)
+
     def _extract_voice(self, job: MediaJobInput, settings: Any) -> MediaExtractionOutcome:
         from app.models.ai_assistant import AIAssistantConfig
         from app.services.ai_extract.extract_service import AIExtractService
@@ -409,11 +425,12 @@ class MediaExtractService:
             .order_by(AIAssistantConfig.created_at.asc())
             .first()
         )
+        model_name = self._resolve_voice_model(job.tier, settings)
         started = time.perf_counter()
         try:
             heard = transcribe(
                 data,
-                model=settings.transcribe_model,
+                model=model_name,
                 # Built from settings at call time (UAC S5-01/S5-02): pinned,
                 # hints or auto, defaulting to pinned/`en`.
                 strategy=settings.language_strategy(),
@@ -494,6 +511,30 @@ class MediaExtractService:
             answered=answered,
         )
 
+    def _is_orphaned(self, job: MediaJobInput) -> bool:
+        """Did the task give up on this extraction while it was still running?
+
+        `_run_bounded` joins the extraction thread with a timeout. On a timeout
+        the task marks the job `failed` and moves on, but the thread is still
+        alive and eventually finishes its provider call - and it used to stamp
+        token counts onto a row already recorded as a failure, annotating it as
+        a success it was not.
+
+        Terminal here means exactly that case: on the normal path this runs
+        before the task writes `completed`, so the status is still `running`. A
+        missing job row is NOT treated as orphaned, since a caller running an
+        extraction without a job row (a direct service call) still wants its
+        spend recorded.
+        """
+        from app.models.media import MediaExtractionJob
+
+        status = (
+            self.db.query(MediaExtractionJob.status)
+            .filter(MediaExtractionJob.id == job.job_id)
+            .scalar()
+        )
+        return status in ("completed", "failed")
+
     def _stamp_usage_cost(
         self, job: MediaJobInput, outcome: MediaExtractionOutcome
     ) -> None:
@@ -502,12 +543,30 @@ class MediaExtractService:
         The ledger is the metered fact and the decision it recorded is already
         committed; failing to annotate it must never turn a successful
         extraction into a failed job.
+
+        An extraction the task already timed out on does not stamp - it logs
+        instead. The spend happened either way and must not be invisible, but
+        the row says `failed` and writing success-shaped token counts onto it
+        would be a record of something that did not happen.
         """
         if not job.usage_id:
             return
         from app.models.media import ContactMediaUsage
 
         try:
+            if self._is_orphaned(job):
+                logger.warning(
+                    "media extract: job %s finished AFTER the worker gave up on "
+                    "it; spend not stamped on usage %s (provider=%s model=%s "
+                    "prompt_tokens=%s completion_tokens=%s)",
+                    job.job_id,
+                    job.usage_id,
+                    outcome.provider,
+                    outcome.model,
+                    outcome.prompt_tokens,
+                    outcome.completion_tokens,
+                )
+                return
             usage = (
                 self.db.query(ContactMediaUsage)
                 .filter(ContactMediaUsage.id == job.usage_id)

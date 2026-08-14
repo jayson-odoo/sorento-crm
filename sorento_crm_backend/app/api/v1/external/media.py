@@ -4,9 +4,12 @@ One call per inbound media message, **and n8n waits for it**. The wire is
 synchronous; the execution is not, and that distinction is the whole design:
 
 * the fast path - resolve the contact, probe idempotency, gate, cap, pace, meter,
-  record, create the job - is ordinary milliseconds-of-SQLAlchemy work and runs
-  inline, then **commits before any waiting begins**, so the ledger row and the
-  decision are durable even if the wait or the worker later dies;
+  record, create the job, enqueue it - is ordinary milliseconds of work and
+  **commits before any waiting begins**, so the ledger row and the decision are
+  durable even if the wait or the worker later dies. It runs through
+  `asyncio.to_thread` rather than inline: every step of it is blocking I/O
+  (Postgres for the ledger, Redis for the burst check and the enqueue), and a
+  stall in either must not freeze every other in-flight turn;
 * the multi-second extraction runs in the RQ work-horse. The handler enqueues and
   then awaits the job row through `asyncio.to_thread`, so a hundred concurrent
   media turns cost sleeping coroutines rather than blocked workers.
@@ -28,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, status
@@ -101,17 +105,45 @@ async def _await_job(job_id: str) -> Optional[dict[str, Any]]:
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
 
 
-@router.post(
-    "/process", response_model=MediaProcessResponse, status_code=status.HTTP_200_OK
-)
-async def process_media(
-    payload: MediaProcessRequest,
-    current_user: dict = Depends(get_external_api_user),
-    db: Session = Depends(get_db),
-):
-    """Decide, meter, record - then await the worker's result on the same call."""
-    _ = current_user
+@dataclass
+class _FastPathResult:
+    """A plain snapshot of the fast path, taken on the worker thread.
 
+    Everything the response needs is copied out BEFORE the wait, so nothing
+    below reads an ORM attribute afterwards. The fast path's commit already
+    released this session's pooled connection; touching an expired ORM attribute
+    during or after a wait of up to `media_sync_wait_seconds` would check one
+    back out and hold it for the rest of the call, which at any real concurrency
+    exhausts the pool and stalls unrelated requests. `_await_job` reads through
+    its own short-lived sessions for the same reason.
+    """
+
+    decision: str
+    idempotent_replay: bool
+    tier: Optional[str]
+    quota: dict
+    notices: list[dict] = field(default_factory=list)
+    language_strategy: Optional[dict] = None
+    job_id: Optional[str] = None
+    job_status: Optional[str] = None
+    job_result: Optional[dict] = None
+    job_error: Optional[str] = None
+    sync_wait_seconds: float = 30.0
+
+
+def _decide_meter_record_and_enqueue(
+    db: Session, payload: MediaProcessRequest
+) -> _FastPathResult:
+    """PLAN 3.3 steps 1-9 plus the enqueue, as ONE synchronous unit.
+
+    Called only through `asyncio.to_thread`. It is grouped rather than awaited
+    piecemeal because every step in it is blocking I/O of one kind or another -
+    the settings read and the ledger writes are Postgres, the burst check and the
+    enqueue are Redis - and PLAN 3.3b's guarantee is that none of it runs on the
+    event loop. It is milliseconds of work (measured p50 ~9ms, section 15.1), but
+    a Redis or Postgres stall is exactly the tail this design refuses to let
+    block a hundred other in-flight turns.
+    """
     settings = resolve_media_settings(db)
     decision = decide_and_record(
         db,
@@ -136,55 +168,77 @@ async def process_media(
     # Everything above is durable from here on, including every refusal.
     db.commit()
 
+    fast = _FastPathResult(
+        decision=decision.decision,
+        idempotent_replay=decision.idempotent_replay,
+        tier=decision.tier,
+        quota=dict(decision.quota),
+        notices=[dict(notice) for notice in decision.notices],
+        language_strategy=decision.language_strategy,
+        sync_wait_seconds=settings.sync_wait_seconds,
+    )
     if not decision.accepted or decision.job is None:
+        return fast
+
+    fast.job_id = str(decision.job.id)
+    fast.job_status = str(decision.job.status)
+    fast.job_result = decision.job.result
+    fast.job_error = decision.job.error
+
+    if not decision.idempotent_replay:
+        fast.job_status, fast.job_error = _enqueue(db, decision.job, fast.job_id)
+    return fast
+
+
+@router.post(
+    "/process", response_model=MediaProcessResponse, status_code=status.HTTP_200_OK
+)
+async def process_media(
+    payload: MediaProcessRequest,
+    current_user: dict = Depends(get_external_api_user),
+    db: Session = Depends(get_db),
+):
+    """Decide, meter, record - then await the worker's result on the same call.
+
+    Nothing in this coroutine blocks: the fast path (Postgres + the two Redis
+    calls) runs through `asyncio.to_thread`, and the wait polls the job row the
+    same way. `tests/test_media_job_lifecycle.py` enforces that statically.
+    """
+    _ = current_user
+
+    fast = await asyncio.to_thread(_decide_meter_record_and_enqueue, db, payload)
+
+    if fast.job_id is None:
         return MediaProcessResponse(
             job_id=None,
-            decision=decision.decision,
+            decision=fast.decision,
             status=None,
-            idempotent_replay=decision.idempotent_replay,
-            tier=decision.tier,
-            quota=decision.quota,
-            notices=decision.notices,
-            language_strategy=decision.language_strategy,
+            idempotent_replay=fast.idempotent_replay,
+            tier=fast.tier,
+            quota=fast.quota,
+            notices=fast.notices,
+            language_strategy=fast.language_strategy,
             result=None,
         )
 
-    job_id = str(decision.job.id)
-    job_status = str(decision.job.status)
-    job_result = decision.job.result
-    job_error = decision.job.error
-
-    if not decision.idempotent_replay:
-        job_status, job_error = _enqueue(db, decision.job, job_id)
-
-    # Snapshot everything the response still needs BEFORE the wait, so nothing
-    # below reads an ORM attribute afterwards. The commit above already released
-    # this session's pooled connection; touching an expired ORM attribute during
-    # or after a wait of up to `media_sync_wait_seconds` would check one back out
-    # and hold it for the rest of the call, which at any real concurrency
-    # exhausts the pool and stalls unrelated requests. `_await_job` reads through
-    # its own short-lived sessions for the same reason.
-    quota = dict(decision.quota)
-    notices = [dict(notice) for notice in decision.notices]
-    tier = decision.tier
-    decision_name = decision.decision
-    replay = decision.idempotent_replay
-    language_strategy = decision.language_strategy
-
-    if job_status not in TERMINAL_STATUSES:
-        snapshot = await _wait_for_worker(job_id, settings.sync_wait_seconds)
+    if fast.job_status not in TERMINAL_STATUSES:
+        snapshot = await _wait_for_worker(fast.job_id, fast.sync_wait_seconds)
     else:
-        snapshot = {"status": job_status, "result": job_result, "error": job_error}
+        snapshot = {
+            "status": fast.job_status,
+            "result": fast.job_result,
+            "error": fast.job_error,
+        }
 
     return MediaProcessResponse(
-        job_id=job_id,
-        decision=decision_name,
+        job_id=fast.job_id,
+        decision=fast.decision,
         status=(snapshot or {}).get("status") or "pending",
-        idempotent_replay=replay,
-        tier=tier,
-        quota=quota,
-        notices=notices,
-        language_strategy=language_strategy,
+        idempotent_replay=fast.idempotent_replay,
+        tier=fast.tier,
+        quota=fast.quota,
+        notices=fast.notices,
+        language_strategy=fast.language_strategy,
         result=(snapshot or {}).get("result"),
         error=(snapshot or {}).get("error"),
     )

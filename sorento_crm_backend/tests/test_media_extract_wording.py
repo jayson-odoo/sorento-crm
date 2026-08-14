@@ -61,36 +61,75 @@ def test_burst_message_does_not_imply_exhaustion():
     assert not any(ch.isdigit() for ch in text)
 
 
-def test_quota_exhausted_states_the_limit_and_a_human_readable_reset_date():
-    assert wording.quota_exhausted(50, "1 September") == (
-        "You have used all 50 of this month's photo and voice reads. The "
-        "allowance resets on 1 September. Type the codes and I will look "
-        "them up straight away."
+def test_quota_exhausted_image_names_photos_only_and_says_it_was_not_read():
+    """S6-04 + PLAN 16.2: the quotas are per modality, so the text names one of
+    them. And this is the HARD refusal (no degraded model configured), so it
+    must say the read did not happen - `degraded()` is the message for 'it
+    happened, worse'."""
+    text = wording.quota_exhausted(50, "1 September", "image")
+    assert text == (
+        "You have used all 50 of this month's photo reads, so I have not read "
+        "this one. The allowance resets on 1 September. Type the codes and I "
+        "will look them up straight away."
     )
+    assert "voice" not in text
+
+
+def test_quota_exhausted_voice_names_voice_only_and_says_it_was_not_heard():
+    text = wording.quota_exhausted(100, "1 September", "voice")
+    assert text == (
+        "You have used all 100 of this month's voice notes, so I have not "
+        "listened to this one. The allowance resets on 1 September. Type your "
+        "message and I will help straight away."
+    )
+    assert "photo" not in text
 
 
 def test_warn_threshold_states_x_of_y_left_never_a_percentage():
     """S6-04."""
-    text = wording.warn_threshold(9, 50, "1 September")
+    text = wording.warn_threshold(9, 50, "1 September", "image")
     assert text == (
-        "You have 9 of 50 photo and voice reads left this month. The "
-        "allowance resets on 1 September."
+        "You have 9 of 50 photo reads left this month. The allowance resets "
+        "on 1 September."
     )
     assert "%" not in text
     assert "left" in text
+    assert "voice" not in text
+
+
+def test_warn_threshold_voice_counts_voice_notes_not_a_shared_allowance():
+    """PLAN 16.2: a dealer near the voice limit still has their whole photo
+    allowance, so the warning must not describe one pool."""
+    assert wording.warn_threshold(20, 100, "1 September", "voice") == (
+        "You have 20 of 100 voice notes left this month. The allowance resets "
+        "on 1 September."
+    )
 
 
 def test_degraded_notice_leads_with_the_accuracy_warning_then_the_allowance():
     """PLAN section 6: 'tightened to lead with the accuracy warning rather
     than the allowance, because the accuracy warning is the part that
     prevents harm'."""
-    text = wording.degraded("1 September")
+    text = wording.degraded("1 September", "image")
     assert text == (
         "I am reading this one with a simpler model and may get it wrong, "
-        "so typing the codes is exact. This month's full-accuracy reads are "
-        "used up and the allowance resets on 1 September."
+        "so typing the codes is exact. This month's full-accuracy photo reads "
+        "are used up and the allowance resets on 1 September."
     )
     assert text.index("simpler model") < text.index("allowance resets")
+
+
+def test_degraded_notice_voice_keeps_both_halves_of_the_captains_constraint():
+    """The accuracy drop AND that typing is exact, said for voice - and about
+    voice notes only."""
+    text = wording.degraded("1 September", "voice")
+    assert text == (
+        "I am listening to this one with a simpler model and may get it "
+        "wrong, so typing your message is exact. This month's full-accuracy "
+        "voice notes are used up and the allowance resets on 1 September."
+    )
+    assert text.index("simpler model") < text.index("allowance resets")
+    assert "photo" not in text
 
 
 def test_nothing_read_names_the_escape_hatch():
@@ -116,9 +155,12 @@ def test_truncated_note_names_the_cap():
 
 def test_dates_render_human_readable_never_iso():
     for text in (
-        wording.quota_exhausted(50, "1 September"),
-        wording.warn_threshold(9, 50, "1 September"),
-        wording.degraded("1 September"),
+        wording.quota_exhausted(50, "1 September", "image"),
+        wording.warn_threshold(9, 50, "1 September", "image"),
+        wording.degraded("1 September", "image"),
+        wording.quota_exhausted(100, "1 September", "voice"),
+        wording.warn_threshold(20, 100, "1 September", "voice"),
+        wording.degraded("1 September", "voice"),
     ):
         assert "1 September" in text
         assert "2026-09-01" not in text

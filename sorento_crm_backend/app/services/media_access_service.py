@@ -25,7 +25,7 @@ import logging
 import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Optional, cast
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func
@@ -136,6 +136,7 @@ class MediaSettings:
     image_model: Optional[str]
     image_degraded_model: Optional[str]
     transcribe_model: str
+    voice_degraded_model: Optional[str]
     language_mode: str
     language_pinned: str
     language_hints: list[str]
@@ -146,6 +147,23 @@ class MediaSettings:
     def monthly_limit_for(self, modality: str) -> int:
         return (
             self.voice_monthly_limit if modality == "voice" else self.image_monthly_limit
+        )
+
+    def degraded_model_for(self, modality: str) -> Optional[str]:
+        """The degraded model for THIS modality, or None if there is not one.
+
+        Per modality, not shared: reading the image column for a voice note
+        degraded a transcription that then ran on exactly the same model as
+        always, so the voice quota was decorative and the contact was told their
+        accuracy had dropped when nothing had changed. None means the quota is a
+        hard refusal, which is what PLAN 3.2 specifies for an unconfigured
+        degraded tier and is the honest answer while no cheaper transcription
+        model has been measured.
+        """
+        return (
+            self.voice_degraded_model
+            if modality == "voice"
+            else self.image_degraded_model
         )
 
     def language_strategy(self) -> dict:
@@ -194,13 +212,16 @@ def resolve_media_settings(db: Session) -> MediaSettings:
         warn_threshold_percent=int(
             _column(row, "media_warn_threshold_percent", "warn_threshold_percent")
         ),
-        # NULL is meaningful for all three of these, so they are read raw: the two
+        # NULL is meaningful for all four of these, so they are read raw: the two
         # provider columns inherit the AIAssistantConfig row, and a NULL degraded
-        # model means degradation is impossible.
+        # model means degradation is impossible FOR THAT MODALITY. Image ships
+        # seeded (migration 358, measured in PLAN 14.1); voice ships unseeded,
+        # because no cheaper transcription model has been measured.
         image_provider=getattr(row, "media_image_provider", None) if row else None,
         image_model=getattr(row, "media_image_model", None) if row else None,
         image_degraded_model=getattr(row, "media_image_degraded_model", None) if row else None,
         transcribe_model=str(_column(row, "media_transcribe_model", "transcribe_model")),
+        voice_degraded_model=getattr(row, "media_voice_degraded_model", None) if row else None,
         language_mode=str(_column(row, "media_language_mode", "language_mode")),
         language_pinned=str(_column(row, "media_language_pinned", "language_pinned")),
         language_hints=[part.strip() for part in hints_csv.split(",") if part.strip()],
@@ -523,7 +544,9 @@ def decide_and_record(
         }
 
     def _refuse(outcome: str, notices: list[dict]) -> MediaDecision:
-        usage = _record(db, request, contact, period_key, outcome, tier=None)
+        usage = _record(
+            db, request, contact, period_key, outcome, tier=None, notices=notices
+        )
         return MediaDecision(
             decision=_OUTCOME_TO_DECISION[outcome],
             tier=None,
@@ -583,29 +606,36 @@ def decide_and_record(
         )
         return _refuse("refused_burst", notices)
 
-    # 6. Quota. Over the limit degrades when a degraded model is configured;
-    #    `denied_quota` is only ever returned when degradation is impossible.
+    # 6. Quota. Over the limit degrades when a degraded model is configured FOR
+    #    THIS MODALITY; `denied_quota` is only ever returned when degradation is
+    #    impossible. Reading one modality's degraded model for the other would
+    #    run the same model at full price and still tell the contact their
+    #    accuracy had dropped.
     tier = "standard"
     notices: list[dict] = []
     if used >= limit:
-        if not settings.image_degraded_model:
+        if not settings.degraded_model_for(request.modality):
             return _refuse(
                 "refused_quota",
                 [
                     _notice(
-                        "quota_exhausted", wording.quota_exhausted(limit, resets_on)
+                        "quota_exhausted",
+                        wording.quota_exhausted(limit, resets_on, request.modality),
                     )
                 ],
             )
         tier = "degraded"
 
-    # 7. Record. Recording precedes spending, so "crashed after spending, before
-    #    recording" cannot happen.
-    usage = _record(db, request, contact, period_key, "accepted", tier=tier)
-    used_after = used + 1
-
     # 8. Notices, stamped in the same transaction so each can fire only once per
     #    period per modality even under a retry.
+    #
+    #    Computed BEFORE the ledger insert even though the plan numbers it after,
+    #    because every input is already known (`used + 1`, and the two
+    #    once-per-period stamps on the limit row) and the notices then travel in
+    #    the insert itself. The ledger is the metered fact and is append-mostly:
+    #    an INSERT followed by an UPDATE of the row just written would make it
+    #    churn for no gain.
+    used_after = used + 1
     threshold = _warn_threshold_count(limit, settings.warn_threshold_percent)
     if (
         tier == "standard"
@@ -617,12 +647,25 @@ def decide_and_record(
         notices.append(
             _notice(
                 "warn_80",
-                wording.warn_threshold(max(0, limit - used_after), limit, resets_on),
+                wording.warn_threshold(
+                    max(0, limit - used_after), limit, resets_on, request.modality
+                ),
             )
         )
     if tier == "degraded" and limit_row.degraded_notified_period != period_key:
         limit_row.degraded_notified_period = period_key
-        notices.append(_notice("degraded", wording.degraded(resets_on)))
+        notices.append(
+            _notice("degraded", wording.degraded(resets_on, request.modality))
+        )
+
+    # 7. Record, with the notices on it. Recording precedes spending, so
+    #    "crashed after spending, before recording" cannot happen - and storing
+    #    the notices on the metered fact is what lets a replay and the callback
+    #    carry the same text this response does. The notices are part of what was
+    #    decided, not a by-product of rendering it.
+    usage = _record(
+        db, request, contact, period_key, "accepted", tier=tier, notices=notices
+    )
 
     # 9. The job row. The caller enqueues it after the commit, so the worker
     #    cannot pick up a row that is not there yet.
@@ -681,7 +724,14 @@ def _replay(
     settings: MediaSettings,
     resets_on: str,
 ) -> MediaDecision:
-    """The stored decision, returned again, with nothing re-run and nothing spent."""
+    """The stored decision, returned again, with nothing re-run and nothing spent.
+
+    Including the notices it carried. A replay is the response n8n's
+    `retryOnFail` actually delivers to the dealer, so returning an empty list
+    meant a retried `denied_gate` reached them with no message at all - the one
+    case where the customer needs the text most, because there is no extraction
+    result to speak for itself.
+    """
     job = (
         db.query(MediaExtractionJob)
         .filter(MediaExtractionJob.usage_id == usage.id)
@@ -706,7 +756,7 @@ def _replay(
             "period_key": usage.period_key,
             "resets_on": resets_on,
         },
-        notices=[],
+        notices=[dict(notice) for notice in cast(list[dict], usage.notices or [])],
         language_strategy=(
             settings.language_strategy() if usage.modality == "voice" else None
         ),
@@ -721,11 +771,17 @@ def _record(
     outcome: str,
     *,
     tier: Optional[str],
+    notices: Optional[list[dict]] = None,
 ) -> ContactMediaUsage:
     """`INSERT ... ON CONFLICT DO NOTHING`, then re-select.
 
     The conflict path is the concurrent-duplicate case: two n8n retries racing
     each other must produce ONE ledger row and one job, not two of each.
+
+    `notices` travels in the insert rather than being written over the row
+    afterwards: the ledger is append-mostly and must not churn, and on the
+    conflict path the notices that count are the ones the FIRST caller recorded,
+    which is exactly what "insert or leave alone" gives.
     """
     statement = (
         pg_insert(ContactMediaUsage.__table__)
@@ -741,6 +797,7 @@ def _record(
             turn_id=request.turn_id,
             bytes=request.bytes,
             duration_ms=request.duration_ms,
+            notices=list(notices) if notices else None,
         )
         .on_conflict_do_nothing(constraint="uq_contact_media_usage_idempotency")
     )

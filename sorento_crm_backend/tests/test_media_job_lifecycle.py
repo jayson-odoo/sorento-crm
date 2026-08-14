@@ -57,6 +57,7 @@ S3-06, S3-07, S3-08, S3-09.
 """
 from __future__ import annotations
 
+import ast
 import inspect
 import threading
 import time
@@ -134,7 +135,9 @@ def real_chain():
     db.close()
 
 
-def _seed_job_row(*, callback_url=None, callback_headers=None, context=None) -> str:
+def _seed_job_row(
+    *, callback_url=None, callback_headers=None, context=None, notices=None
+) -> str:
     """Seeds a standalone `contact_media_usage` + `media_extraction_job` pair
     (no `contact_media_limit`, no gate involved) directly at "queued", the
     state the task-level tests below start from. Returns the job id. Caller
@@ -164,6 +167,7 @@ def _seed_job_row(*, callback_url=None, callback_headers=None, context=None) -> 
         period_key="2026-08",
         outcome="accepted",
         tier="standard",
+        notices=notices,
     )
     db.add(usage)
     db.flush()
@@ -582,6 +586,90 @@ def test_the_media_route_module_calls_no_known_blocking_primitive():
         assert banned not in source, f"blocking primitive found in the route module: {banned}"
 
 
+# Blocking I/O by the name it is called under in this module. Postgres
+# (`decide_and_record`, `resolve_media_settings`, `commit`, `refresh`, the query
+# builders) and Redis (`enqueue_job`, and `rate_limit.hit` reached through
+# `decide_and_record`) both count: PLAN 3.3b's guarantee is about the event loop,
+# and it does not care which service stalled.
+_BLOCKING_CALL_NAMES = {
+    "decide_and_record",
+    "resolve_media_settings",
+    "enqueue_job",
+    "hit",
+    "commit",
+    "refresh",
+    "execute",
+    "flush",
+    "sleep",
+}
+
+
+def _blocking_calls_in_coroutines(module) -> list[str]:
+    """Every direct call to a known blocking name inside an `async def`.
+
+    A call handed to `asyncio.to_thread(fn, ...)` is a bare `Name`, not a
+    `Call`, so the correct form is invisible to this walk and only a direct
+    invocation is reported. Nested plain `def`s are skipped: those run on a
+    thread by definition, which is the whole point of extracting them.
+    """
+    tree = ast.parse(inspect.getsource(module))
+    found: list[str] = []
+    # `await asyncio.sleep(...)` is the non-blocking form of a name that is
+    # blocking when called plainly, so an awaited call is never an offender.
+    awaited = {
+        id(node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Await) and isinstance(node.value, ast.Call)
+    }
+
+    class _Visitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.in_coroutine = False
+
+        def visit_FunctionDef(self, node):  # a sync helper, not the loop's problem
+            was, self.in_coroutine = self.in_coroutine, False
+            self.generic_visit(node)
+            self.in_coroutine = was
+
+        def visit_AsyncFunctionDef(self, node):
+            was, self.in_coroutine = self.in_coroutine, True
+            self.generic_visit(node)
+            self.in_coroutine = was
+
+        def visit_Call(self, node):
+            if self.in_coroutine and id(node) not in awaited:
+                func = node.func
+                name = (
+                    func.attr
+                    if isinstance(func, ast.Attribute)
+                    else getattr(func, "id", "")
+                )
+                if name in _BLOCKING_CALL_NAMES:
+                    found.append(f"{name}() at line {node.lineno}")
+            self.generic_visit(node)
+
+    _Visitor().visit(tree)
+    return found
+
+
+def test_no_async_handler_in_the_media_route_calls_blocking_io_directly():
+    """PLAN 3.3b, widened after review: the original guard only looked for
+    `time.sleep` / `requests.*` string fragments in the whole module, so it
+    could not see the two synchronous Redis calls (`enqueue_job` and
+    `rate_limit.hit`, the latter reached through `decide_and_record`) that sat
+    inside the `async def` handler for three slices. Anything blocking must be
+    handed to `asyncio.to_thread`, which makes it a bare name here rather than
+    a call."""
+    from app.api.v1.external import media as media_route
+
+    offenders = _blocking_calls_in_coroutines(media_route)
+    assert offenders == [], (
+        "blocking I/O called directly from an `async def` in the media route: "
+        + ", ".join(offenders)
+        + " -- hand it to `asyncio.to_thread` instead (PLAN 3.3b)"
+    )
+
+
 def test_the_process_handler_is_a_coroutine_function():
     from app.api.v1.external import media as media_route
 
@@ -620,6 +708,8 @@ def _fake_settings(**overrides):
         image_model=None,
         image_degraded_model="gpt-4o-mini",
         transcribe_model="whisper-1",
+        # NULL, as it ships: image's tiers were measured, voice's were not.
+        voice_degraded_model=None,
         language_mode="pinned",
         language_pinned="en",
         language_hints=["en", "ms", "zh"],
@@ -834,3 +924,61 @@ def test_second_unrelated_request_returns_promptly_while_extraction_is_in_flight
     )
     # the slow one legitimately took close to the full extraction time.
     assert slow_response.json()["status"] in ("completed", "pending")
+
+
+# --------------------------------------------------------------------------- #
+# The callback body carries the notices, not an empty list (PLAN 16.5)        #
+# --------------------------------------------------------------------------- #
+
+
+def test_the_callback_body_carries_the_notices_the_fast_path_recorded():
+    """S3-02b's "one shape, three transports" was only true because nothing
+    populated `notices` - it was hardcoded `[]`. A consumer reading the callback
+    or the polling endpoint must get the same customer text the synchronous
+    response carried, or the far end has to re-derive it and the guarantee is
+    decorative."""
+    import app.tasks.media_tasks as media_tasks
+
+    warning = {
+        "kind": "warn_80",
+        "text": "You have 9 of 50 photo reads left this month. The allowance "
+        "resets on 1 September.",
+        "append": True,
+    }
+    job_id, contact_id = _seed_job_row(notices=[warning])
+    try:
+        db = SessionLocal()
+        try:
+            job = (
+                db.query(media_tasks.MediaExtractionJob)
+                .filter(media_tasks.MediaExtractionJob.id == job_id)
+                .first()
+            )
+            body = media_tasks.build_callback_body(db, job)
+        finally:
+            db.close()
+
+        assert body["notices"] == [warning]
+    finally:
+        _cleanup_chain(contact_id)
+
+
+def test_a_job_whose_decision_carried_no_notices_still_reports_a_list():
+    """The shape does not change with the content: `notices` is always a list,
+    never null, so the far end never branches on its absence."""
+    import app.tasks.media_tasks as media_tasks
+
+    job_id, contact_id = _seed_job_row()
+    try:
+        db = SessionLocal()
+        try:
+            job = (
+                db.query(media_tasks.MediaExtractionJob)
+                .filter(media_tasks.MediaExtractionJob.id == job_id)
+                .first()
+            )
+            assert media_tasks.build_callback_body(db, job)["notices"] == []
+        finally:
+            db.close()
+    finally:
+        _cleanup_chain(contact_id)

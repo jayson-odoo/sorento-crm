@@ -189,6 +189,11 @@ def build_callback_body(db, job: MediaExtractionJob) -> dict:
 
     The turn context is echoed back verbatim so the far end can rebuild the turn
     without re-reading anything.
+
+    `notices` comes off the ledger row the fast path wrote, not a hardcoded empty
+    list: a consumer reading the callback or the polling endpoint must get the
+    same customer text the synchronous response carried, or the guarantee is only
+    true because nothing populated the field.
     """
     usage = (
         db.query(ContactMediaUsage)
@@ -205,7 +210,7 @@ def build_callback_body(db, job: MediaExtractionJob) -> dict:
         "context": job.context,
         "tier": job.tier,
         "result": job.result,
-        "notices": [],
+        "notices": list(usage.notices or []) if usage else [],
         "error": job.error,
     }
 

@@ -224,3 +224,51 @@ def test_clearing_the_override_returns_to_the_default():
         db.flush()
 
         assert resolve_effective_limit(db, contact.id, "image") == 50
+
+
+# --------------------------------------------------------------------------- #
+# The degraded tier is resolved per modality (PLAN 16.1)                      #
+# --------------------------------------------------------------------------- #
+
+
+def test_degraded_model_is_resolved_per_modality_never_shared():
+    """One shared column meant the image tier decided what happened to a voice
+    note. They are separate quotas with separate ledger counts, so they get
+    separate degraded models - and voice's ships NULL because no cheaper
+    transcription model has been measured."""
+    from app.services.media_access_service import resolve_media_settings
+
+    with blank_session() as db:
+        _system_setting_row(
+            db,
+            media_image_degraded_model="gpt-4o-mini",
+            media_voice_degraded_model=None,
+        )
+        settings = resolve_media_settings(db)
+
+        assert settings.degraded_model_for("image") == "gpt-4o-mini"
+        assert settings.degraded_model_for("voice") is None
+
+
+def test_degraded_model_for_voice_reads_its_own_column_once_it_is_named():
+    from app.services.media_access_service import resolve_media_settings
+
+    with blank_session() as db:
+        _system_setting_row(db, media_voice_degraded_model="whisper-cheap")
+        settings = resolve_media_settings(db)
+
+        assert settings.degraded_model_for("voice") == "whisper-cheap"
+        # Naming a voice tier must not invent an image one.
+        assert settings.degraded_model_for("image") is None
+
+
+def test_no_system_settings_row_means_no_degraded_tier_for_either_modality():
+    """A blank install refuses at the quota rather than degrading, which is the
+    behaviour PLAN 3.2 specifies for an unconfigured degraded tier."""
+    from app.services.media_access_service import resolve_media_settings
+
+    with blank_session() as db:
+        settings = resolve_media_settings(db)
+
+        assert settings.degraded_model_for("image") is None
+        assert settings.degraded_model_for("voice") is None

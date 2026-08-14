@@ -191,6 +191,7 @@ Append-mostly, one row per media item, including refusals. This is the metered f
 | `turn_id` | Text, nullable | n8n `$execution.id` |
 | `bytes` | Integer, nullable | |
 | `duration_ms` | Integer, nullable | voice |
+| `notices` | JSONB, nullable | the customer text this decision produced, so a replay and the callback carry what the original response did (added in review, section 16.6) |
 | `model`, `provider` | Text, nullable | stamped after extraction |
 | `prompt_tokens`, `completion_tokens` | Integer, nullable | |
 | `created_at` | TIMESTAMPTZ default now() | |
@@ -280,6 +281,7 @@ frontend; this is a documented repeat failure in this repo.
 | `media_image_provider` / `media_image_model` | `openai` / `gpt-4o` | seeded by the migration on the evidence in section 14.1; NULL still falls back to the `AIAssistantConfig` row |
 | `media_image_degraded_model` | `gpt-4o-mini` | the degraded tier, seeded by the migration. Measured as materially worse on the corpus (section 14.1), which is precisely what the degradation notice tells the contact |
 | `media_transcribe_model` | `whisper-1` | |
+| `media_voice_degraded_model` | NULL, and **not seeded** | voice's own degraded tier (added in review, section 16.1). Image's tiers were measured so migration 358 seeds them; no cheaper transcription model has been measured, so NULL here means the voice quota is a hard refusal rather than a claimed degradation that did not happen |
 | `media_language_mode` | `pinned` | `pinned`, `hints`, `auto` |
 | `media_language_pinned` | `en` | |
 | `media_language_hints` | `en,ms,zh` | CSV, only used in `hints` mode |
@@ -1061,6 +1063,29 @@ outstanding.
   held only because nothing populated it.
 - **A replayed refusal returned no customer text**, so if n8n's retry is the response that reaches
   the dealer, a `denied_gate` arrives with no message at all.
+
+### 16.6 How the two notice items were fixed, since it needed a column
+
+The last two items above are one problem seen from two transports: the notices existed only in the
+synchronous response's own local variable, so neither a replay nor a callback could reach them.
+Both are fixed by storing them once, on the thing that already records what was decided:
+**`contact_media_usage.notices` (JSONB, nullable, migration 359)**.
+
+Recorded here rather than silently added because section 2.1 lists that table's columns and this
+adds one to it. Three properties made the ledger the right home rather than the job row:
+
+- a **refusal has no job row at all**, and the refusal replay is the case that reaches a dealer with
+  nothing to say for itself;
+- the notices are **part of what was decided**, decided in the same transaction as the outcome and
+  the once-per-period stamps, not a by-product of rendering the response;
+- `build_callback_body` already loads the usage row, so the callback and the polling endpoint get
+  the same list with no extra query.
+
+The insert carries them rather than an UPDATE writing them over the row just created: section 2.1
+calls the ledger append-mostly, and every input to the notice text (`used + 1`, and the two
+once-per-period stamps on the limit row) is known before the insert. There is **no backfill** -
+rows written before this column had their notices delivered on the original response, and inventing
+text for them afterwards would be fabricating a record of something that was never sent.
 
 ## Appendix A - the extraction system prompt
 
