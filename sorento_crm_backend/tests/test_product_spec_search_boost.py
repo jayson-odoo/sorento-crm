@@ -215,6 +215,12 @@ def _run_upgrade(db):
     return module
 
 
+def _run_downgrade(db, module) -> None:
+    ctx = MigrationContext.configure(db.connection())
+    with Operations.context(ctx):
+        module.downgrade()
+
+
 @pytest.fixture
 def blank_db():
     """A schema with NO search policy rows at all - the migration's own precondition,
@@ -248,3 +254,20 @@ def test_the_migration_inserts_the_row_idempotently(blank_db):
         .count()
     )
     assert count == 1
+
+
+def test_the_migration_downgrade_deletes_exactly_the_row_it_inserted(blank_db):
+    """N3's sibling - the downgrade half. Deletes the row keyed on `policy_key`,
+    unconditionally, and nothing else on the table."""
+    module = _run_upgrade(blank_db)
+    assert (
+        blank_db.query(ProductSpecSearchPolicy).filter_by(policy_key="human_source_boost").first()
+        is not None
+    )
+
+    _run_downgrade(blank_db, module)
+
+    assert (
+        blank_db.query(ProductSpecSearchPolicy).filter_by(policy_key="human_source_boost").first()
+        is None
+    )

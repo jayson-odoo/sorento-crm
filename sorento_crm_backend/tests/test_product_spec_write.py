@@ -46,16 +46,31 @@ def test_module_never_compares_against_the_literal_human_alone():
     every "did a person set this" check must ask membership in AUTHORED_SOURCES, not
     equality against the single string "human". A stray `== "human"` would silently
     treat a supplier-sourced entry as machine-derived everywhere that check runs.
+
+    Widened per the phase 3 review (PR1-CONTRACT.md section 6b): AC-F.7 names the
+    merge, the search boost branch AND the source labels, not just this module.
+    `product_spec_derivation.py` (the merge, exercised by `merge_authored_over`) and
+    `product_spec_search.py` (the boost branch) are scanned too. The route module
+    (`app/api/v1/master_data/product_specifications.py`) is deliberately NOT scanned:
+    it carries two legitimate `"human"` literals (the source a write chooses, and the
+    response contract the frontend reads), both assignments, never comparisons - the
+    same `==`/`!=` pattern would not trip on either, but scoping the guard to the
+    three modules that actually decide authorship is the honest boundary.
     """
     import inspect
 
+    import app.services.product_spec_derivation as derivation_module
+    import app.services.product_spec_search as search_module
     import app.services.product_spec_write as write_module
 
-    source = inspect.getsource(write_module)
-    for op in ("==", "!="):
-        for quote in ('"', "'"):
-            needle = f"{op} {quote}human{quote}"
-            assert needle not in source, f"found a bare comparison against literal human: {needle!r}"
+    for module in (write_module, derivation_module, search_module):
+        source = inspect.getsource(module)
+        for op in ("==", "!="):
+            for quote in ('"', "'"):
+                needle = f"{op} {quote}human{quote}"
+                assert needle not in source, (
+                    f"{module.__name__}: found a bare comparison against literal human: {needle!r}"
+                )
 
 
 # --------------------------------------------------------------------------- #
@@ -201,6 +216,65 @@ def test_a_provenance_only_tombstone_drops_the_value_and_keeps_the_flag_verbatim
     assert provenance["material"]["source"] == "human"
     assert provenance["material"]["absent"] is True
     assert conflicts == []
+
+
+def test_the_old_merge_line_resurrects_the_value_the_new_merge_does_not():
+    """AC-F.3, made a real pin rather than a documented-but-unasserted claim.
+
+    The docstring on the test above only asserts the NEW merge's behaviour, so a
+    regression that reintroduced the resurrection bug would not fail anything named
+    "resurrection". This test inlines the OLD merge line verbatim (PR1-CONTRACT.md
+    section 1.3, `product_spec_derivation.py:1292-1301` before this PR) as a local
+    helper, runs it against the SAME tombstone fixture, and asserts it fails for the
+    documented reason - the derived value comes back badged as human-set - before
+    asserting `merge_authored_over` does not.
+    """
+    derived_values = {"material": {"value": "ceramic"}}
+    derived_provenance = {"material": {"source": "derived", "confidence": 1.0, "evidence": "CERAMIC"}}
+    existing_values: dict = {}
+    existing_provenance = {
+        "material": {"source": "human", "confidence": 1.0, "evidence": "removed by a person", "absent": True}
+    }
+
+    class _Result:
+        values = derived_values
+        provenance = derived_provenance
+
+    def _old_merge(result, spec_values, spec_provenance):
+        """Verbatim inline of the pre-PR1 merge line quoted in the contract."""
+        kept_values, kept_provenance = {}, {}
+        for key, entry in (spec_provenance or {}).items():
+            if entry.get("source") == "human":
+                kept_provenance[key] = entry
+                if key in (spec_values or {}):
+                    kept_values[key] = spec_values[key]
+        values = {**result.values, **kept_values}
+        provenance = {**result.provenance, **kept_provenance}
+        return values, provenance
+
+    old_values, old_provenance = _old_merge(_Result(), existing_values, existing_provenance)
+
+    # The pin fails for the RIGHT reason only if the old merge actually resurrects the
+    # value: the key falls through to derivation's answer while provenance still says
+    # a human set it.
+    assert old_values["material"] == derived_values["material"], (
+        "the old merge line must resurrect the derived value under a tombstone - if "
+        "this fails, the trap this test pins has changed shape and the test itself "
+        "needs re-reading, not the source"
+    )
+    assert old_provenance["material"]["source"] == "human", (
+        "the old merge keeps the human provenance verbatim - that is what makes the "
+        "resurrected value a lie about who set it"
+    )
+
+    new_values, new_provenance, new_conflicts = merge_authored_over(
+        derived_values, derived_provenance, existing_values, existing_provenance
+    )
+
+    assert "material" not in new_values, "merge_authored_over must not resurrect the value"
+    assert new_provenance["material"]["source"] == "human"
+    assert new_provenance["material"]["absent"] is True
+    assert new_conflicts == []
 
 
 # --------------------------------------------------------------------------- #
@@ -411,8 +485,22 @@ def test_derived_hash_is_set_when_a_real_value_is_passed():
     assert spec.derived_hash == "a-new-fingerprint"
 
 
-def test_unchanged_sentinel_is_distinct_from_none():
-    assert _UNCHANGED is not None
+def test_unchanged_sentinel_leaves_derived_hash_alone_while_none_clears_it_on_the_same_row():
+    """`assert _UNCHANGED is not None` is true of every object in existence and pins
+    nothing about behaviour. The property that matters, both exercised on ONE row so
+    the sentinel's actual job is unambiguous: omitting `derived_hash` from the call
+    leaves the column exactly as it was, and passing `derived_hash=None` explicitly
+    clears it."""
+    spec = _spec()
+    spec.derived_hash = "an-existing-hash"
+
+    write_spec_row(spec, values={}, provenance={})
+    assert spec.derived_hash == "an-existing-hash", "omitting derived_hash must not touch it"
+
+    write_spec_row(spec, values={}, provenance={}, derived_hash=None)
+    assert spec.derived_hash is None, "an explicit None must clear it"
+
+    assert _UNCHANGED is not None, "the sentinel must itself be distinguishable from None"
 
 
 # --------------------------------------------------------------------------- #

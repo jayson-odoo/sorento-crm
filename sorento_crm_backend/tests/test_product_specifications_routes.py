@@ -192,6 +192,28 @@ def test_put_404s_for_an_unknown_spec_key(api, db):
     assert response.status_code == 404
 
 
+def test_put_rejects_an_empty_string_for_a_free_text_key(api, db):
+    """6b.5 - an empty free-text value is rejected with a readable message pointing
+    at the remove action: stored, it canonicalises to nothing while derivation keeps
+    producing something, which would raise the same conflict on every run forever."""
+    client, allow = api
+    allow.add("master_data.products.edit")
+    _registry_key(db, "notes", data_type="text")  # no allowed_values - free text
+    product = _product(db, "ZZT-RT-PUT-EMPTY")
+    db.commit()
+
+    response = client.put(
+        f"{ENDPOINT}/by-product/{product.id}/values/notes",
+        json={"value": "   "},
+    )
+
+    assert response.status_code == 400, response.text
+    # AppException's body IS exc.detail directly (app/main.py's app_exception_handler
+    # returns JSONResponse(content=exc.detail)), not wrapped in a further "detail" key.
+    message = response.json()["message"].lower()
+    assert "blank" in message, message
+
+
 def test_put_404s_for_an_unknown_product(api, db):
     client, allow = api
     allow.add("master_data.products.edit")
@@ -270,7 +292,70 @@ def test_delete_rejects_an_invalid_mode(api, db):
         f"{ENDPOINT}/by-product/{product.id}/values/material", params={"mode": "nonsense"}
     )
 
-    assert response.status_code in (400, 422), response.text
+    # `_spec_reject` is the only path an invalid mode can reach - it always raises a
+    # 400 AppException, never a 422 - so pin the reachable one rather than accepting
+    # either.
+    assert response.status_code == 400, response.text
+
+
+def test_delete_mode_absent_404s_for_a_spec_key_the_registry_does_not_define(api, db):
+    """6b.6 - mode=absent pins `status='authored'` on every copy of the code for good,
+    so the key it names must be one the registry knows, or a typo writes a permanent
+    provenance entry no registry-driven screen will ever show."""
+    client, allow = api
+    allow.add("master_data.products.edit")
+    product = _product(db, "ZZT-RT-DEL-ABSENT-UNKNOWN")
+    db.commit()
+
+    response = client.delete(
+        f"{ENDPOINT}/by-product/{product.id}/values/not_a_real_spec_key",
+        params={"mode": "absent"},
+    )
+
+    assert response.status_code == 404, response.text
+
+
+def test_delete_mode_revert_succeeds_for_a_stored_key_the_registry_no_longer_defines(api, db):
+    """6b.6 - the deliberate asymmetry: mode=revert is NOT checked against the
+    registry, because a key the registry has since dropped is still stored on the
+    row and handing it back to derivation must stay possible. This is the one most
+    likely to be "tidied" away later into a symmetric check with mode=absent."""
+    from app.models.base import company_scope
+    from app.services.product_spec_write import apply_spec_values
+
+    client, allow = api
+    allow.add("master_data.products.edit")
+    product = _product(db, "ZZT-RT-DEL-REVERT-UNKNOWN")
+    db.commit()
+
+    # Hand-write a value under a key the registry never defines, mirroring a key the
+    # registry dropped after a row already carried it.
+    with company_scope(db, None):
+        apply_spec_values(
+            db,
+            "ZZT-RT-DEL-REVERT-UNKNOWN",
+            [
+                {
+                    "spec_key": "legacy_key_not_in_registry",
+                    "op": "set",
+                    "value": "x",
+                    "source": "human",
+                }
+            ],
+        )
+    db.commit()
+
+    response = client.delete(
+        f"{ENDPOINT}/by-product/{product.id}/values/legacy_key_not_in_registry",
+        params={"mode": "revert"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "spec_key": "legacy_key_not_in_registry",
+        "cleared": True,
+        "mode": "revert",
+    }
 
 
 def test_delete_denies_without_the_edit_permission(api, db):

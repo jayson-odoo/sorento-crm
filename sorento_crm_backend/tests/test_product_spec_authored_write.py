@@ -433,3 +433,183 @@ def test_a_code_with_no_product_rows_raises_the_apps_not_found_error(db):
             [{"spec_key": "material", "op": "set", "value": "brass"}],
             actor=_ACTOR,
         )
+
+
+def test_a_code_with_no_product_rows_raises_not_found_even_with_an_empty_batch(db):
+    """N1 - the contract's empty-batch return (`{"rows_written": 0, ...}`) sits INSIDE
+    the all-companies scope, AFTER the not-found check, so an unknown code 404s
+    whether or not the caller had anything to write. A 404-or-200 that turns on the
+    length of the batch is a contract nobody can code against."""
+    from app.services.error_handler import AppException
+
+    with pytest.raises(AppException):
+        apply_spec_values(db, "ZZT-AW-EMPTY-DOES-NOT-EXIST", [], actor=_ACTOR)
+
+
+# --------------------------------------------------------------------------- #
+# source: supplier, end to end (coverage the coder flagged as still missing)
+# --------------------------------------------------------------------------- #
+def test_source_supplier_writes_through_apply_spec_values_end_to_end(db):
+    """M2-S1 - 'supplier' is reserved now but must already behave exactly like
+    'human' through the real write path: authored status, survives re-derivation,
+    boosted like a human entry (asserted separately in
+    test_product_spec_search_boost.py).
+
+    "mounting" rather than "material", deliberately: derivation never produces a
+    value for "mounting" from a plain kitchen-sink description (same choice
+    `test_a_non_conflicting_authored_write_leaves_no_exception` makes), so this
+    isolates the source label from AC-F.5's conflict behaviour, which is pinned
+    separately."""
+    _product(db, "ZZT-AW-SUPPLIER-1")
+    derive_for_code(db, "ZZT-AW-SUPPLIER-1")
+    assert "mounting" not in _one_spec(db, "ZZT-AW-SUPPLIER-1").values
+
+    apply_spec_values(
+        db,
+        "ZZT-AW-SUPPLIER-1",
+        [{"spec_key": "mounting", "op": "set", "value": "wall_hung", "source": "supplier"}],
+        actor=_ACTOR,
+    )
+
+    spec = _one_spec(db, "ZZT-AW-SUPPLIER-1")
+    assert spec.values["mounting"]["value"] == "wall_hung"
+    assert spec.provenance["mounting"]["source"] == "supplier"
+    assert spec.status == "authored"
+    assert _open_reasons(db, "ZZT-AW-SUPPLIER-1") == set()
+
+    # A later, independent derive must not resurrect anything - the same promise a
+    # human-sourced entry gets.
+    derive_for_code(db, "ZZT-AW-SUPPLIER-1")
+    spec_after = _one_spec(db, "ZZT-AW-SUPPLIER-1")
+    assert spec_after.values["mounting"]["value"] == "wall_hung"
+    assert spec_after.provenance["mounting"]["source"] == "supplier"
+
+
+# --------------------------------------------------------------------------- #
+# a batch mixing set / absent / revert in one call (coverage the coder flagged)
+# --------------------------------------------------------------------------- #
+def test_a_batch_mixing_set_absent_and_revert_applies_all_three_ops_in_one_call(db):
+    _product(db, "ZZT-AW-MIX-1")
+    derive_for_code(db, "ZZT-AW-MIX-1")
+
+    # First hand-set two keys so absent/revert in the batch under test have something
+    # to act on.
+    apply_spec_values(
+        db,
+        "ZZT-AW-MIX-1",
+        [
+            {"spec_key": "mounting", "op": "set", "value": "wall_hung"},
+            {"spec_key": "is_smart", "op": "set", "value": True},
+        ],
+        actor=_ACTOR,
+    )
+
+    result = apply_spec_values(
+        db,
+        "ZZT-AW-MIX-1",
+        [
+            {"spec_key": "material", "op": "set", "value": "brass"},
+            {"spec_key": "mounting", "op": "absent"},
+            {"spec_key": "is_smart", "op": "revert"},
+        ],
+        actor=_ACTOR,
+    )
+
+    spec = _one_spec(db, "ZZT-AW-MIX-1")
+    assert spec.values["material"]["value"] == "brass", "set applied"
+    assert "mounting" not in spec.values, "absent removed the value"
+    assert spec.provenance["mounting"]["absent"] is True
+    assert "is_smart" not in spec.values, "revert removed the value entirely"
+    assert "is_smart" not in spec.provenance
+    assert set(result["spec_keys"]) == {"material", "mounting", "is_smart"}
+
+
+# --------------------------------------------------------------------------- #
+# a code whose company copies start with diverging stored values
+# --------------------------------------------------------------------------- #
+def test_a_batch_write_converges_company_copies_that_started_diverged(db):
+    """M3 measured zero diverging company copies in production - the UAC's own
+    instruction is that every test must manufacture the changed case rather than
+    rely on finding one. Two copies are hand-diverged (direct assignment, acceptable
+    in tests per tests/test_product_spec_search.py:983-984) to set up the starting
+    condition apply_spec_values must not be able to produce on its own; the write
+    under test then converges both."""
+    with company_scope(db, None):
+        p1 = _product(db, "ZZT-AW-DIVERGE-1")
+        p2 = _product(db, "ZZT-AW-DIVERGE-1", company_id=_REFS["company2"])
+        derive_for_code(db, "ZZT-AW-DIVERGE-1")
+
+        spec1 = db.query(ProductSpecifications).filter_by(product_id=p1.id).first()
+        spec2 = db.query(ProductSpecifications).filter_by(product_id=p2.id).first()
+        spec1.values = {**spec1.values, "material": {"value": "brass"}}
+        spec1.provenance = {
+            **spec1.provenance,
+            "material": {"source": "human", "confidence": 1.0, "evidence": "old copy 1"},
+        }
+        spec2.values = {**spec2.values, "material": {"value": "steel"}}
+        spec2.provenance = {
+            **spec2.provenance,
+            "material": {"source": "human", "confidence": 1.0, "evidence": "old copy 2"},
+        }
+        db.flush()
+
+        apply_spec_values(
+            db,
+            "ZZT-AW-DIVERGE-1",
+            [{"spec_key": "material", "op": "set", "value": "ceramic"}],
+            actor=_ACTOR,
+        )
+
+        specs = _specs_for(db, "ZZT-AW-DIVERGE-1")
+        assert len(specs) == 2
+        assert all(s.values["material"]["value"] == "ceramic" for s in specs), (
+            "apply_spec_values overwrites both copies identically, converging the "
+            "divergence they started with"
+        )
+        assert all(s.provenance["material"]["source"] == "human" for s in specs)
+
+
+# --------------------------------------------------------------------------- #
+# 6b.4 - the row lock apply_spec_values takes on the existing-rows read
+# --------------------------------------------------------------------------- #
+def test_apply_spec_values_locks_existing_rows_with_for_update(db):
+    """A genuinely deterministic two-session interleaving test is not achievable
+    inside `blank_session`'s fixture: every write in a test lives in ONE uncommitted
+    outer transaction on one connection (rolled back at teardown), so a second real
+    session opened against the same blank schema would not even see the row to
+    contend for it - there is nothing to lock against, and a test built around
+    "sleep, then check" would be passing by timing, which CLAUDE.md rules out
+    explicitly. Stated plainly per the tester brief rather than skipped silently.
+
+    What IS asserted: the SELECT that reads existing spec rows is compiled with
+    `FOR UPDATE`, which is the actual mechanism a real lost update between two
+    sessions would be blocked by.
+    """
+    from sqlalchemy import event
+
+    _product(db, "ZZT-AW-LOCK-1")
+    derive_for_code(db, "ZZT-AW-LOCK-1")
+
+    statements: list[str] = []
+
+    def _capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    bind = db.get_bind()
+    event.listen(bind, "before_cursor_execute", _capture)
+    try:
+        apply_spec_values(
+            db,
+            "ZZT-AW-LOCK-1",
+            [{"spec_key": "material", "op": "set", "value": "brass"}],
+            actor=_ACTOR,
+        )
+    finally:
+        event.remove(bind, "before_cursor_execute", _capture)
+
+    locked = [
+        s
+        for s in statements
+        if "for update" in s.lower() and "product_specifications" in s.lower()
+    ]
+    assert locked, "the existing-rows read in apply_spec_values must take FOR UPDATE"
