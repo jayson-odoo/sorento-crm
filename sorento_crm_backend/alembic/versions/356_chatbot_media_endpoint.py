@@ -19,7 +19,9 @@ Two deliberate choices worth stating because they look like omissions:
   hard refusal. Shipping a second paid model switched on for everyone is not a
   decision this migration gets to make; the operator turns it on from the settings
   page. It also keeps "set this back to nothing" writable, which a defaulted
-  column would not be.
+  column would not be. (Superseded in part by migration 358: the corpus
+  measurement named the tier, so 358 SEEDS `gpt-4o-mini` into the row once. It
+  is still not a column default, so it stays clearable.)
 * `contact_media_usage.media_ordinal` exists and is part of the unique key even
   though it will be 0 for every row we expect. Whether one WhatsApp message
   carrying several images yields one messageId or several cannot be answered from
