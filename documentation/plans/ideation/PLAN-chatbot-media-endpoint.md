@@ -1174,6 +1174,13 @@ written so the change is visible; each item says what the constraint was.
    quota is a hard refusal, which is the behaviour section 3.2 already describes; switching a
    second paid model on for every contact is left as an operator decision.
 
+   **Half-superseded by section 14.1, and note which half.** The corpus measurement named the
+   model, so migration 358 seeds `openai` / `gpt-4o` / `gpt-4o-mini` into the singleton row and
+   degradation now works out of the box. The second reason above survives intact and is why the
+   seed is a one-time `UPDATE ... WHERE col IS NULL` rather than a column default: an operator can
+   still clear the degraded model back to NULL and get the hard refusal, which a Python-side
+   default would silently undo.
+
 3. **Timestamps are naive UTC (`DateTime(timezone=False)`)**, not the TIMESTAMPTZ section 2.1
    specifies - matching every other table in this repo. The Asia/Kuala_Lumpur period is a separate,
    explicit concept (`period_key`), so nothing depends on reading a timezone off a raw column.

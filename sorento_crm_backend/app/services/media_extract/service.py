@@ -343,10 +343,11 @@ class MediaExtractService:
         Reads `media_image_provider` / `media_image_model` first and falls back
         to the `AIAssistantConfig` row - the same source the chat assistant and
         `ai_extract` use, so one API key configuration serves all three. A
-        `degraded` tier uses `media_image_degraded_model`; that column ships
-        NULL, and when it is NULL the quota is a hard refusal, so a degraded tier
-        only ever reaches here once an operator has named a model (PLAN section
-        12, item 2).
+        `degraded` tier uses `media_image_degraded_model`. Migration 358 seeds
+        the measured tiers (`openai`/`gpt-4o` standard, `gpt-4o-mini` degraded -
+        PLAN section 14.1), but all three columns stay clearable: a NULL
+        `media_image_degraded_model` means the quota is a hard refusal instead of
+        a degrade, so a degraded tier only reaches here while a model is named.
         """
         from app.models.ai_assistant import AIAssistantConfig
         from app.services.llm_provider import get_provider
