@@ -1,0 +1,81 @@
+# Dealer Kit session handoff (2026-08-15)
+
+Self-contained state document per the no-compact directive: everything a fresh session
+needs to continue, with file pointers. Companion to
+`DEALER-KIT-SELF-REVIEW-2026-08-14.md` (the audit that drove this work).
+
+## Where things stand
+
+**The Dealer Kit is on main** (PR #57, squash-merged 2026-08-14 11:32, commit `392d26fd2`).
+The working branch `feat/dealer-kit-hardening` (worktree
+`.claude/worktrees/dealer-kit`, ports 3040 FE / 8040 BE) carries the post-merge audit
+fix wave, all committed and test-verified, NOT yet pushed:
+
+| Commit | What |
+|---|---|
+| `6b009f792` | Self-review verdict document |
+| `b2ba383d4` | Merge origin/main, adopting PR #57's canonical migration graph (single alembic head `322_merge_dealer_kit_customers`; the stale `319_..and..`/`320_..page..` files deleted) |
+| `1dcbb7f79` | AC-G3 fix: brand-level visibility filter in `collection_service.resolve_tiles_bulk` (the audit's one true leak) |
+| `84b461f0f` | Docs honesty pass, 7 edits (AC-B5 superseded, AC-L2/G5/H3 corrected, design-doc destaled, ledger jsdom excuse killed, B2 caveat into the edition plan) |
+| `0ad01fee1` | FE mechanical: artboard pulled from palette, buildDataGridParams in brochureImageService, search on TileDesignsList + BundlesList, SearchableSelect in RoomDesigner |
+| `d1862211d` | AC-L11: Edition transitions audited, plus two pre-existing shared `audit_service` defects fixed (non-idempotent listener registration; no-op guard that could drop a real change's row) |
+
+Verification evidence lives in each commit message. Totals across the wave: 85 edition +
+22 audit + 61 resolution-family + 24 resolution + 55 selection/pricing backend tests
+green; 441 dealer-kit frontend tests green (was 429); every behavioural fix
+mutation-tested with the failing assertion named.
+
+## Blocked or open, in order
+
+1. **Prod rebuild of :3040 + browser check.** The FE changed, so the running prod build
+   is stale and :3040 is currently DOWN (old server killed pre-build; three build
+   attempts were killed by machine-wide background-task reaping under load 30-130 from
+   other sessions). When the machine is quiet:
+   `cd sorento_crm_frontend && npm run build && PORT=3040 npm start`
+   Then verify with agent-browser (Chrome is uninstalled; Playwright MCP banned):
+   `npx -y agent-browser open http://localhost:3040` -> sidebar -> Dealer Kit ->
+   check: block palette has no Artboard; Tile Designs list has a search box; Bundles
+   list has a search box; brochure-images list still paginates. `agent-browser close`
+   when done.
+2. **Container PDF-export smoke test** (audit blocker AC-I8, pre-deploy gate).
+   `CONTAINER-PDF-EXPORT-RUNBOOK.md` names the exact two compose changes: a
+   `sorento_network` alias for `frontend_blue`, and `DEALER_KIT_PRINT_BASE_URL` on the
+   worker. The image itself is proven; the running-stack path is not.
+3. **Push + follow-up PR.** Branch is local-only. The captain gates pushes/PRs
+   (never merge to main directly - merge is the deploy trigger).
+4. **Captain decisions outstanding** (from the audit): build-or-descope on
+   certification badges (Group E, schema-only), asset library UI (Group D), floor-plan
+   upload/tracing (AC-R3/R4); the quote handoff (design doc §7.1); whether to converge
+   Print Preview onto CatalogueRenderer (AC-H3 parity risk, now documented).
+
+## Standing constraints active in this effort
+
+- Fable orchestrates; execution delegated to sonnet/haiku subagents (firstmate directive
+  2026-08-14). TDD with red-first evidence; mutation-test anything behavioural.
+- Chrome UNINSTALLED; agent-browser only (`npx -y agent-browser open/snapshot/eval`);
+  zero Playwright-driven verification. The committed `e2e/` spec suite stays.
+- Never /compact - write a handoff doc (this pattern) instead.
+- One pytest at a time on the shared DB (`sorento_ai_automation` - a COPY OF
+  PRODUCTION; ZZT-scoped writes only). Other sessions violate this; keep runs small and
+  re-run contention-shaped flakes.
+- This worktree has NO venv: use
+  `/Users/tehjayson/Documents/foundryx/sorento_crm/sorento_crm_backend/venv/bin/pytest`.
+- Kill only your own PIDs (`lsof -nP -ti :PORT -sTCP:LISTEN`, then verify cwd with
+  `lsof -a -p PID -d cwd`). Never a pattern kill.
+- Never bare `git stash` (shared stack across worktrees).
+- Deploy only with explicit per-deploy permission. Nothing here is deployed.
+- No em-dashes or en-dashes in anything written.
+
+## Environment facts worth knowing
+
+- The dev DB's alembic head is `353_project_order_inquiry_rename`, a revision from the
+  project-sales worktree's branch that this tree does not carry. Do not run
+  `alembic upgrade` from this tree; tests do not need it.
+- `sorento_crm_backend/.env` here sets `DEALER_KIT_PRINT_BASE_URL=http://localhost:3040`
+  (fixed 2026-08-09; it wrongly said 3020, which is the spec-search worktree's FE with
+  no /c/print route - renders die on a print-ready timeout that looks like a broken
+  print page).
+- `test_dealer_kit_pdf_render.py` needs the stack up on 3040/8040 and defaults to 3040.
+- The 8040 backend may need rebooting:
+  `cd sorento_crm_backend && venv-path/uvicorn app.main:app --reload --host 0.0.0.0 --port 8040`
+  (use the main checkout's venv).
