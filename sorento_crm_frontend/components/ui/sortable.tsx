@@ -683,14 +683,26 @@ function SortableItem({ value, asChild = false, className, children, disabled }:
   );
 }
 
-export interface SortableItemHandleProps {
+/**
+ * Extends the div's own props so `aria-label` and friends REACH the element.
+ *
+ * They did not. Every caller passing `aria-label="Drag to reorder"` was having
+ * it silently dropped, so the only control that reorders a list had no
+ * accessible name anywhere in the system - a screen reader announced an empty
+ * group, and a test could not find the handle it was looking at.
+ */
+export interface SortableItemHandleProps extends React.ComponentPropsWithoutRef<'div'> {
   asChild?: boolean;
-  className?: string;
-  children?: React.ReactNode;
   cursor?: boolean;
 }
 
-function SortableItemHandle({ asChild, className, children, cursor = true }: SortableItemHandleProps) {
+function SortableItemHandle({
+  asChild,
+  className,
+  children,
+  cursor = true,
+  ...props
+}: SortableItemHandleProps) {
   const { listeners, isDragging, disabled } = React.useContext(SortableItemContext);
 
   const Comp = asChild ? Slot : 'div';
@@ -700,6 +712,7 @@ function SortableItemHandle({ asChild, className, children, cursor = true }: Sor
       data-slot="sortable-item-handle"
       data-dragging={isDragging}
       data-disabled={disabled}
+      {...props}
       {...listeners}
       className={cn(cursor && (isDragging ? '!cursor-grabbing' : '!cursor-grab'), className)}
     >

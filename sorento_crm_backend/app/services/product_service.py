@@ -2488,12 +2488,14 @@ class ProductAttachmentService:
         ).first()
         if existing:
             update_dict = product_attachment_data.model_dump(exclude_unset=True)
+            chosen = update_dict.pop("is_primary", None)
             for key, value in update_dict.items():
                 if key in ("product_id", "attachment_id"):
                     continue
                 setattr(existing, key, value)
             from datetime import datetime as _dt
             existing.updated_at = _dt.utcnow()
+            self._apply_brochure_choice(existing, chosen)
             self.db.commit()
             self.db.refresh(existing)
             row = self.db.query(ProductAttachment).options(
@@ -2505,11 +2507,16 @@ class ProductAttachmentService:
             return row
 
         attachment_dict = product_attachment_data.model_dump()
+        chosen = attachment_dict.pop("is_primary", None)
         if created_by:
             attachment_dict["created_by"] = created_by
 
         product_attachment = ProductAttachment(**attachment_dict)
         self.db.add(product_attachment)
+        # Flushed rather than committed: the choice funnel below reads this row
+        # back, and a refused choice (a PDF) must leave no link behind.
+        self.db.flush()
+        self._apply_brochure_choice(product_attachment, chosen)
         self.db.commit()
         self.db.refresh(product_attachment)
 
@@ -2518,17 +2525,56 @@ class ProductAttachmentService:
             joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
         ).filter(ProductAttachment.id == product_attachment.id).first()
     
+    def _apply_brochure_choice(self, link, chosen: Optional[bool]) -> None:
+        """Set or clear the brochure image flag through the one service that owns it.
+
+        `is_primary` decides which photo a catalogue tile shows, and this class
+        has two older write paths into it (this PUT and the n8n link POST) that
+        used to setattr it and commit. That was wrong twice over: it never
+        cleared the product's previous choice, so the partial unique index
+        rejected the write and the IntegrityError escaped as a 500 carrying a
+        raw psycopg constraint message; and it never checked the file was an
+        image, so a spec sheet could carry the flag, after which the picker
+        reports no chosen image for a product whose row says otherwise.
+
+        Routing both through `brochure_image_service` leaves ONE way to set this
+        flag, with one rule and one refusal message. A refusal is an
+        AppException (400/404) and reaches the client as itself, because the
+        routes re-raise HTTPException before their catch-all.
+
+        `chosen=None` means the caller did not mention the flag: left alone.
+        """
+        if chosen is None:
+            return
+
+        from app.services import brochure_image_service
+
+        product_id = str(link.product_id)
+        if chosen:
+            brochure_image_service.set_brochure_image(
+                self.db, product_id, str(link.attachment_id)
+            )
+        elif link.is_primary:
+            # Clearing the product's choice IS clearing this row, since only one
+            # row per product can carry the flag. Guarded on the row actually
+            # holding it so `is_primary: false` on some OTHER photo cannot wipe
+            # a choice the user never touched.
+            brochure_image_service.clear_brochure_image(self.db, product_id)
+
     def update_product_attachment(self, product_attachment_id: str, product_attachment_data: ProductAttachmentUpdate):
         """Update a product attachment relationship."""
         product_attachment = self.get_product_attachment(product_attachment_id)
-        
+
         update_data = product_attachment_data.model_dump(exclude_unset=True)
+        # Applied FIRST, so a refused choice raises before anything else on the
+        # row has been touched.
+        self._apply_brochure_choice(product_attachment, update_data.pop("is_primary", None))
         for key, value in update_data.items():
             setattr(product_attachment, key, value)
-        
+
         from datetime import datetime
         product_attachment.updated_at = datetime.now()
-        
+
         self.db.commit()
         self.db.refresh(product_attachment)
         

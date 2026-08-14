@@ -1,13 +1,22 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useState } from 'react';
 import Link from 'next/link';
-import { ApexOptions } from 'apexcharts';
-import ApexCharts from 'react-apexcharts';
+import type { ApexOptions } from 'apexcharts';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+
+// react-apexcharts touches `window` while the module is being evaluated, so a
+// static import runs it during server render and throws "window is not defined".
+// The rejection is unhandled and takes the whole Next server process down with
+// it, so one request to this page kills the site. Loaded client-side only, the
+// same way SLATrackingDashboard already does it.
+const ApexCharts = dynamic(() => import('react-apexcharts').then((mod) => mod.default), {
+  ssr: false,
+});
 
 export function Orders() {
   const data = {
