@@ -106,6 +106,20 @@ selection is not masking ordering effects on either side.
 - Browser verification uses `npx -y agent-browser`. `chrome-devtools-axi` is dead (Chrome
   uninstalled) and Playwright is not to be used.
 - Never run `/compact`. Update this file instead.
+- **Every FE production build takes a machine-wide lock.** Parallel Next builds drove machine load
+  to 80 across the fleet. `flock` does not exist on this macOS box, so use the mkdir spin-wait, and
+  the `trap` is mandatory rather than tidiness: a build that dies without releasing the lockdir
+  wedges every other lane indefinitely.
+
+  ```bash
+  while ! mkdir /tmp/fm-fe-build.lockdir 2>/dev/null; do sleep 30; done
+  trap 'rmdir /tmp/fm-fe-build.lockdir 2>/dev/null' EXIT
+  npm run build
+  ```
+
+  This bites at handoff, since handing off to the user requires a prod build. Vitest and pytest are
+  explicitly fine unserialised; do not serialise test runs. If the spin-wait blocks far longer than
+  a build should take, check for a live `next build` process before assuming the lockdir is stale.
 
 ## Known unmet, not to be papered over
 
