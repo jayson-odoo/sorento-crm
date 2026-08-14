@@ -51,6 +51,9 @@ interface InterventionTicketDrawerProps {
   onSent?: () => void;
 }
 
+/** How often an open drawer re-reads the thread (paused in a background tab). */
+const THREAD_POLL_MS = 10_000;
+
 /** Short excerpt of a message, used as the quoted text on a reply. */
 function excerptOf(item: RespondMessageRenderable): string {
   const text = (item.message?.text ?? '').trim();
@@ -80,7 +83,14 @@ export default function InterventionTicketDrawer({
   const ticketQuery = useInterventionTicket(open ? ticketId : null);
   // The SAME query the SLA detail page's conversation panel uses (one key, one
   // cache entry): a send from here refreshes that panel too, and vice versa.
-  const threadQuery = useSlaTrackingConversation(open ? ticketId : null, { limit: 50 });
+  // Polls while the drawer is open (and the tab is focused): a contact's reply
+  // arrives on their schedule, not on ours, so an assignee reading the thread
+  // must see it without hunting for a refresh. Stops the moment the drawer
+  // closes, because the query is disabled with no ticket id.
+  const threadQuery = useSlaTrackingConversation(open ? ticketId : null, {
+    limit: 50,
+    refetchIntervalMs: THREAD_POLL_MS,
+  });
   const sendMutation = useSendInterventionTicketMessage(ticketId ?? '');
   const resolveMutation = useResolveInterventionTicket();
 

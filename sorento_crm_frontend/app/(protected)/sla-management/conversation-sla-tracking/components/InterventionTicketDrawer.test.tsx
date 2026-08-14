@@ -185,7 +185,26 @@ describe('InterventionTicketDrawer', () => {
     useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
     renderDrawer();
     await waitFor(() => expect(screen.getByTestId('chat-list')).toBeInTheDocument());
-    expect(useSlaTrackingConversation).toHaveBeenCalledWith('t1', { limit: 50 });
+    expect(useSlaTrackingConversation).toHaveBeenCalledWith(
+      't1',
+      expect.objectContaining({ limit: 50 }),
+    );
+  });
+
+  it('an open drawer polls the thread, so a contact reply appears on its own', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket()));
+    renderDrawer();
+    await waitFor(() => expect(screen.getByTestId('chat-list')).toBeInTheDocument());
+    expect(useSlaTrackingConversation).toHaveBeenCalledWith(
+      't1',
+      expect.objectContaining({ refetchIntervalMs: 10_000 }),
+    );
+  });
+
+  it('a closed drawer asks for no ticket at all, so the polling stops with it', () => {
+    useInterventionTicket.mockReturnValue(mockQuery(undefined));
+    renderDrawer({ open: false });
+    expect(useSlaTrackingConversation).toHaveBeenCalledWith(null, expect.anything());
   });
 
   it('AC-E7: a blank enquiry text falls back to a neutral header label', async () => {

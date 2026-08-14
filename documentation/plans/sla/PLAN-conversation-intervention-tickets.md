@@ -197,14 +197,19 @@ existing UAC.
 - AI assist: existing CRM AI assistant drafts into the composer input, grounded on the
   visible thread; no new AI surface.
 
-### S4.5 Post-resolve reassurance + close semantics (UAC M) [FE coder + n8n peer]
+### S4.5 Post-resolve reassurance + close semantics (UAC M) [FE coder + BE coder + n8n peer]
 
 - Drawer stays open post-resolve in a Resolved state (badge, composer disabled, thread
   readable); "recently resolved" affordance links to the SLA tracking listing filtered
   to the contact.
-- n8n peer edits at flip: null-guard `resolved_by` in respond-close-convo (API closes
-  have `closedBy: null` - would write the literal string "undefined"); AC-M4 decision on
-  the contact-facing close message (default: keep, gated on no-open-tickets).
+- Close signal (AC-M3 REVISED, user direction 2026-08-14): mirror the respond-send-user
+  dual-trigger pattern. n8n peer adds a plain-webhook trigger to respond-close-convo;
+  CRM resolve calls it directly with a deterministic payload (tracking id, contact,
+  real resolved_by, category/summary), best-effort post-commit. The Respond-trigger
+  lane gains a `closedBySource == "user"` gate so the CRM's API close cannot double-run
+  the flow; manual Respond-app closes keep working unchanged. Kills the
+  literal-"undefined" resolved_by risk by construction.
+- AC-M4 DECIDED: keep the contact-facing close message, gated on no-open-tickets.
 
 ### S4.6 Inbound quote rendering (UAC L6) [FE coder]
 
@@ -212,11 +217,21 @@ existing UAC.
   renders "replying to" block above the message body. Outbound quoting stays the
   existing prefix emulation (no API support - verified).
 
-### Phase 4 execution order
+### Phase 4 execution order (user-approved 2026-08-14)
 
 S4.1 and S4.2 first (they close the two live operational gaps: bot does not pause, thread
-does not update). S4.3-S4.4 next (parity). S4.5-S4.6 last (polish). n8n edits batch into
-the existing flip window with the peer session; nothing publishes without the user's go.
+does not update). S4.3-S4.4 next (parity). S4.5-S4.6 last (polish). ALL slices are built
+in full with equal diligence - the order is sequencing, not priority-cutting (user:
+"you must build all with diligence").
+
+**n8n change cycle (binding, user 2026-08-14): plan -> build -> test -> promote, and the
+promote step ALWAYS needs the user's explicit call** - per the sorento-crm-n8n working
+convention: build on a fork/staging copy, verify with pin-data runs and a dev-contact
+canary, publish to the live workflow only on the user's go. Applies to every n8n edit in
+this phase (respond-send-user webhook-lane wiring, respond-close-convo webhook trigger +
+closedBySource gate, flip-window edits). Decisions locked: AC-M4 keep-the-close-message;
+comment mirroring to Respond best-effort; outbound reply-to confirmed impossible
+(custom_payload 403 on our channel, tested 2026-08-14).
 
 ## Execution model (per PRINCIPLES.md - named executor per step)
 

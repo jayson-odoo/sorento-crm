@@ -143,9 +143,16 @@ export function useConversationSLATestOverrides(trackingId: string) {
   });
 }
 
+/**
+ * The shared contact thread. `refetchIntervalMs` opts a surface into polling so
+ * an open, idle chat shows the contact's next message without a manual refresh;
+ * it is opt-in because every poll is a live Respond.io call, and the surfaces
+ * that merely display the thread should not pay for one. Polling stops while
+ * the tab is in the background and whenever the query is disabled.
+ */
 export function useSlaTrackingConversation(
   trackingId: string | null,
-  options?: { limit?: number; cursor?: string; enabled?: boolean },
+  options?: { limit?: number; cursor?: string; enabled?: boolean; refetchIntervalMs?: number },
 ) {
   return useQuery({
     queryKey: ['sla-tracking-conversation', trackingId, options?.limit, options?.cursor],
@@ -156,6 +163,8 @@ export function useSlaTrackingConversation(
       }),
     enabled: !!trackingId && (options?.enabled !== false),
     staleTime: 30 * 1000,
+    refetchInterval: options?.refetchIntervalMs ?? false,
+    refetchIntervalInBackground: false,
   });
 }
 

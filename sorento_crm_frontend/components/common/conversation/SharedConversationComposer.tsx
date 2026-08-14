@@ -194,11 +194,23 @@ export default function SharedConversationComposer({
       const failed = 'attachments' in result ? (result.attachments?.failed ?? null) : null;
       const deliveredCount =
         'attachments' in result ? (result.attachments?.delivered?.length ?? 0) : 0;
+      // Staged files but nothing reported delivered and nothing reported failed:
+      // the send silently degraded to text-only somewhere in the chain, and the
+      // contact never got the file. Treat it as a failure - clearing the chips
+      // here is what made the backend's multipart parsing bug invisible for so
+      // long. The text itself did go out, so only the files stay staged.
+      const attachmentsDropped = sentFiles.length > 0 && !failed && deliveredCount === 0;
       setReplyText('');
-      setFiles(failed ? sentFiles.slice(deliveredCount) : []);
+      setFiles(failed ? sentFiles.slice(deliveredCount) : attachmentsDropped ? sentFiles : []);
       setFailedFileName(failed?.filename ?? null);
       onClearReplyTo?.();
-      if (failed) {
+      if (attachmentsDropped) {
+        toast.error(
+          sentFiles.length === 1
+            ? `${sentFiles[0].name} was not sent. Try again.`
+            : 'The attachments were not sent. Try again.',
+        );
+      } else if (failed) {
         toast.error(`${failed.filename} was not sent: ${failed.error}`);
       } else if (!sendAdapter) {
         // The adapter owns its own success feedback (it knows what it sent).

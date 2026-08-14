@@ -303,6 +303,51 @@ describe('SharedConversationComposer', () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
+  it('a send that reports NO delivered attachment is an error, not a silent success', async () => {
+    // The backend degraded to a text-only send (its multipart parsing dropped
+    // the file) and still answered 200. Clearing the chips here is what made
+    // that invisible: the operator saw "Message sent" and the contact got
+    // nothing. Files stay staged; the text did go out, so the box clears.
+    const sendAdapter = vi.fn().mockResolvedValue({
+      sent_as: 'text',
+      rendered_text: 'here is the photo',
+      attachments: null,
+    });
+    renderComposer({ mode: 'conversation', attachmentsEnabled: true, sendAdapter });
+    await waitFor(() => expect(screen.getByTestId('composer-file-input')).toBeInTheDocument());
+
+    attach(['photo.jpg']);
+    fireEvent.change(screen.getByPlaceholderText('Type your message...'), {
+      target: { value: 'here is the photo' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Send$/i }));
+
+    await waitFor(() => expect(sendAdapter).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('photo.jpg was not sent. Try again.'),
+    );
+    expect(screen.getByTestId('composer-attachments').textContent).toContain('photo.jpg');
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it('a text-only send with no files staged is unaffected by the dropped-attachment guard', async () => {
+    const sendAdapter = vi.fn().mockResolvedValue({
+      sent_as: 'text',
+      rendered_text: 'hello',
+      attachments: null,
+    });
+    renderComposer({ mode: 'conversation', attachmentsEnabled: true, sendAdapter });
+    await waitFor(() => expect(screen.getByTestId('composer-file-input')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText('Type your message...'), {
+      target: { value: 'hello' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Send$/i }));
+
+    await waitFor(() => expect(sendAdapter).toHaveBeenCalled());
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
   it('FINDING 3: a thrown send keeps every file staged (nothing reached the contact)', async () => {
     const sendAdapter = vi.fn().mockRejectedValue(new Error('Network down'));
     renderComposer({ mode: 'conversation', attachmentsEnabled: true, sendAdapter });

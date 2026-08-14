@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import {
@@ -32,16 +32,17 @@ export function useInterventionTicket(id: string | null) {
  * the same contact still render the SAME messages (UAC AC-C2).
  */
 
-/** Ticket-stamped send. Refreshes this ticket + the thread; siblings are untouched. */
+/** Ticket-stamped send. The caller refreshes; siblings are untouched. */
 export function useSendInterventionTicketMessage(id: string) {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: SendTicketMessageInput) => sendInterventionTicketMessage(id, input),
-    onSuccess: (result) => {
-      // Same key the SLA detail page's conversation panel uses, so a send from
-      // the drawer refreshes BOTH surfaces (prefix match covers limit/cursor).
-      queryClient.invalidateQueries({ queryKey: ['sla-tracking-conversation', id] });
-      queryClient.invalidateQueries({ queryKey: ['intervention-ticket', id] });
+    onSuccess: (result, input) => {
+      // NO invalidateQueries here. The drawer's `onSent` already refetches the
+      // ticket AND the thread explicitly (InterventionTicketDrawer), so
+      // invalidating the same two keys fired every GET twice per send - two
+      // round trips to Respond.io for one reply. One trigger, and it is the
+      // caller's, because the caller also owns the follow-up pulses that chase
+      // the delivery ticks.
       // The worklist is NOT a react-query cache entry: MyPendingSLAWidget calls
       // getMyPendingSLA into component state, so there is no key to invalidate.
       // The drawer's onSent reloads it (InterventionTicketDrawer -> onSent).
@@ -49,6 +50,11 @@ export function useSendInterventionTicketMessage(id: string) {
       // the file that did not make it and keeps it staged, so a blanket
       // "Message sent" here would contradict it.
       if (result.attachments?.failed) return;
+      // Files went up but none came back delivered: the composer says so and
+      // keeps them staged. A "Message sent" toast beside that error is a lie.
+      if ((input.attachments?.length ?? 0) > 0 && !(result.attachments?.delivered?.length ?? 0)) {
+        return;
+      }
       toast.success(
         result.sent_as === 'template' ? 'Delivered as a template message' : 'Message sent',
       );

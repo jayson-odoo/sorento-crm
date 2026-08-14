@@ -281,8 +281,10 @@ Feasibility grounding (Respond API v2 inventory, 2026-08-14): comments ARE suppo
 endpoint) - so the CRM DB is the comment source of truth. Snippets, variables, emoji,
 AI assist have NO Respond API (client-side features of their app) - ours are self-hosted
 equivalents. NOT buildable and explicitly out of scope: reactions (Respond itself has
-none), true outbound reply-to (no context param on the send API; quote-prefix emulation
-stays), sticker sends.
+none), true outbound reply-to (no context param on the send API; ALSO verified
+empirically 2026-08-14: the undocumented custom_payload escape hatch carrying WhatsApp
+context.message_id returns 403 "Channel not supporting custom payload" on our WhatsApp
+channel - quote-prefix emulation stays), sticker sends.
 
 - **AC-L1 [BE][FE][T]** Given a ticket drawer, When the assignee writes an internal comment
   with an @mention (typeahead over CRM users), Then the comment persists in the CRM
@@ -319,15 +321,20 @@ closes, so it WILL fire on our close once live. Two consequences need explicit h
 - **AC-M2 [FE][T]** Given a just-resolved ticket, When the pending-tasks widget refreshes,
   Then the row leaves the pending list but a "recently resolved" affordance (drawer link
   to the SLA tracking listing filtered to this contact) gives the one-click history path.
-- **AC-M3 [BE][T]** Given the CRM closes the Respond conversation on resolve, When
-  `respond-close-convo` fires with `closedBy: null` (API close has no acting user), Then
-  the n8n flow does not write the literal string "undefined" into `resolved_by` (n8n edit:
-  null-guard the expression; CRM-side: the idempotent resolve path ignores a stale PUT).
-- **AC-M4 [decision]** The contact-facing "your conversation is marked as closed and
-  resolved" message that respond-close-convo sends will now also fire for CRM resolves.
-  DECISION NEEDED at flip approval: keep (contact gets closure) or kill (silent close).
-  Default if unanswered: keep, gated on "contact has no open tickets" (already the CRM
-  close gate).
+- **AC-M3 [BE][T]** (REVISED 2026-08-14, user direction: "use same method as
+  respond-send-user") Given the assignee resolves in the CRM, When the resolve commits
+  (and the contact has no other open ticket), Then the CRM calls a NEW direct webhook on
+  `respond-close-convo` (same dual-trigger pattern as respond-send-user) with a
+  deterministic payload: tracking id, contact id/phone, `resolved_by` as the real CRM
+  staff identity (mapped Respond user id where available), category, summary. The
+  existing Respond-trigger lane gates on `closedBySource == "user"` so the API close the
+  CRM performs cannot double-run the flow - manual closes in the Respond app keep working
+  unchanged, and a literal-"undefined" `resolved_by` becomes structurally impossible on
+  the webhook lane. Best-effort post-commit; a webhook failure logs and never fails the
+  resolve.
+- **AC-M4 [DECIDED 2026-08-14: KEEP]** The contact-facing "your conversation is marked as
+  closed and resolved" message stays, gated on "contact has no open tickets" (already the
+  CRM close gate). It now reaches the contact for CRM resolves too, via the webhook lane.
 
 ### B-additions (widget actions on ticket rows) - added 2026-08-14
 
