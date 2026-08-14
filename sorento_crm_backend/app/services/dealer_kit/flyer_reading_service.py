@@ -16,13 +16,29 @@ not 998 - which buys an answer that is true at the moment it is read. If that
 ever stops being cheap, the fix is a cache with an explicit invalidation on
 product and promotion writes, NOT a column.
 
-**Extraction runs inside the request.** The real 36 page flyer extracts in about
-a second, so a queue here would buy nothing and cost a state machine: a pending
-row, a polling screen, a failure path, and a worker restart every time this
-module changes. It stops being true if extraction reaches roughly ten seconds -
-a flyer several times the size of the real one, or artwork rasterisation landing
-in S7.5 - at which point this moves onto the ``imports`` queue and the route
-returns 202 with a row to watch, exactly as the catalogue PDF export does.
+**Extraction runs inside the request, off the event loop.** Measured, not
+estimated: the real ``_SORENTO A3 FLYER 2025-2026_compressed.pdf`` (20.1 MB, 36
+A3 pages, 998 codes) takes **17 to 18 seconds** in ``extract_flyer`` on a quiet
+machine, and 40 to 60 seconds end to end through the route on a loaded one.
+Profiled, 72 percent of that is PyMuPDF's ``get_text("dict")`` and 22 percent its
+``get_image_info``, both native - so there is no algorithmic win hiding in our
+own code, and under 7 percent of the time is even ours to optimise.
+
+This docstring used to say "about a second", and named ten seconds as the point
+where a queue wins. By its own criterion the argument had already lapsed. The
+number now written here is the one that was measured, with the document it was
+measured against, so the next person decides on evidence.
+
+What was actually wrong was not the duration but WHERE it ran: the upload route
+was ``async def``, so all of it happened on the event loop and one read served
+nothing else from that worker for its whole duration (a ``GET /health`` probe
+waited 57.5 seconds on a single worker). The route now hands this function to a
+threadpool. Callers of ``create_reading`` are therefore expected to be off the
+loop already - a plain ``def`` route, a threadpool, or a worker.
+
+The queue is still the end state and is deliberately not built yet: it costs a
+pending row, a polling screen, a failure path and a worker restart per change to
+this module. Re-take that decision when artwork rasterisation lands.
 """
 from __future__ import annotations
 
@@ -45,7 +61,7 @@ from app.services.dealer_kit.flyer_extraction import (
     extract_flyer,
 )
 from app.services.dealer_kit.flyer_matching import MatchReport, match_reading
-from app.services.error_handler import AppException
+from app.services.error_handler import AppException, handle_not_found
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +78,24 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 # What the stored JSON is shaped like. Bumped if the extractor's dataclasses
 # change shape, so an old row is recognisably old rather than silently misread.
 READING_FORMAT_VERSION = 1
+
+# What a stored attachment may claim to be and still be handed to the extractor.
+# ``application/pdf`` is what every real upload path records; the rest are the
+# spellings other systems emit for the same thing.
+PDF_MIME_TYPES = frozenset(
+    {
+        "application/pdf",
+        "application/x-pdf",
+        "application/acrobat",
+        "applications/vnd.pdf",
+        "text/pdf",
+        "text/x-pdf",
+    }
+)
+
+# Mime types that say "we did not know", not "this is not a PDF". A row carrying
+# one of these is let through to the extractor rather than refused on metadata.
+_UNKNOWN_MIME_TYPES = frozenset({"application/octet-stream", "binary/octet-stream"})
 
 
 def assert_within_limit(byte_size: int) -> None:
@@ -86,6 +120,45 @@ def assert_within_limit(byte_size: int) -> None:
 
 def _megabytes(value: int) -> str:
     return f"{value / (1024 * 1024):.2f}".rstrip("0").rstrip(".")
+
+
+def _not_a_pdf(reason: str) -> AppException:
+    """The one 400 for "this is not a flyer", wherever it was noticed.
+
+    Built here rather than written out at each site so both sources say the same
+    words for the same failure. A designer who picks the wrong file from the
+    library and a designer who uploads it get one message to recognise, and the
+    FE has one code to key on.
+    """
+    return AppException(
+        status_code=400,
+        message=(
+            f"That file could not be read as a PDF ({reason}). "
+            "Upload the flyer as a PDF export rather than a Word or image file."
+        ),
+        code="FLYER_NOT_A_PDF",
+    )
+
+
+def assert_pdf_mime(mime_type: Optional[str]) -> None:
+    """Refuse a stored file the library ALREADY says is not a PDF.
+
+    Only reachable from the from-attachment path, where the type is known before
+    a single byte is fetched. An upload has no equivalent: its declared content
+    type is the browser's guess about a file we are holding anyway, so the
+    extractor stays the only judge there.
+
+    Refuses on positive evidence only. A row with no recorded mime, or the
+    generic ``application/octet-stream`` that a bulk import leaves behind, is
+    "we do not know" rather than "this is a spreadsheet" - those go to the
+    extractor, which reaches the same 400 with the same code if it is right.
+    Refusing them here would make a perfectly readable flyer unpickable on the
+    strength of a metadata gap.
+    """
+    recorded = (mime_type or "").split(";")[0].strip().lower()
+    if not recorded or recorded in _UNKNOWN_MIME_TYPES or recorded in PDF_MIME_TYPES:
+        return
+    raise _not_a_pdf(f"it is filed as {recorded}")
 
 
 # --------------------------------------------------------------------------- #
@@ -285,7 +358,13 @@ def create_reading(
     data: bytes,
     user_id: Optional[str],
 ) -> FlyerReadingRecord:
-    """Read the uploaded PDF and keep what it says.
+    """Read a flyer's bytes and keep what they say.
+
+    Both sources end here, and that is deliberate: the upload and the
+    from-attachment route differ only in where the bytes came from, so a reading
+    made either way is the same row, with the same banners in the library and the
+    same report. Anything either source needs to do on its own belongs BEFORE
+    this call, never inside it.
 
     ``extract_flyer`` raises ``ValueError`` for anything that is not a readable
     PDF, and that becomes a 400 in words. The alternatives are both worse: a 500
@@ -314,14 +393,7 @@ def create_reading(
             code="FLYER_PASSWORD_PROTECTED",
         ) from exc
     except ValueError as exc:
-        raise AppException(
-            status_code=400,
-            message=(
-                f"That file could not be read as a PDF ({exc}). "
-                "Upload the flyer as a PDF export rather than a Word or image file."
-            ),
-            code="FLYER_NOT_A_PDF",
-        ) from exc
+        raise _not_a_pdf(str(exc)) from exc
 
     # Before the record, and inside the SAME transaction: the ids the banners
     # come back with are serialised INTO ``reading_json`` below, so an asset
@@ -339,6 +411,127 @@ def create_reading(
     db.commit()
     db.refresh(record)
     return record
+
+
+def create_reading_from_attachment(
+    db: Session,
+    *,
+    attachment_id: str,
+    user_id: Optional[str],
+) -> FlyerReadingRecord:
+    """Read a flyer the file library is already holding.
+
+    Marketing files the season's flyer in Resource Management as a matter of
+    course, long before anybody thinks about the Kit, so without this the
+    designer downloads a 20 MB PDF out of the CRM and uploads it straight back
+    in. Nothing is asked for except which file: the name, the size and the type
+    are all already known.
+
+    **The order of these steps is the design.**
+
+    1. Load the row through the ordinary ORM path, so the global company-scope
+       listener does the filtering rather than a check written here. An
+       attachment OWNED by another company is therefore simply not there and
+       ``get_attachment`` raises its 404 - never a 403, which would confirm the
+       id exists, the one thing the other company must not learn (the same
+       reasoning as ``get_reading``). An attachment with a NULL ``company_id`` is
+       shared on purpose, platform-wide, and stays readable here exactly as it is
+       everywhere else.
+    2. Refuse a TRASHED row the same way, and this one has to be written here:
+       ``get_attachment`` is ``_get_attachment_any``, "active or archived" by its
+       own docstring, so a trashed id would otherwise read perfectly well. The
+       picker only ever offers live files, so nothing in the UI can reach this -
+       which is exactly why the route has to say no on its own. Also a 404 and
+       not a 403, for the same reason as above.
+    3. Refuse a file the library already says is not a PDF, on metadata, before
+       any storage call.
+    4. Refuse an oversized file from its RECORDED size, also before any storage
+       call. Downloading 200 MB in order to then refuse it is the version of
+       this that costs money.
+    5. Only now fetch the bytes, through ``get_file_content_for``, which takes
+       the row we are already holding (so this does not re-SELECT it) and
+       dispatches S3 or R2 from it. A row that names no object at all is a
+       BROKEN ROW, not a storage outage, and gets its own answer - telling
+       somebody to "try again" for a file that has no bytes anywhere is advice
+       that can never come true.
+    6. Re-assert the ceiling on what actually arrived. The recorded size is
+       metadata, and metadata drifts; the upload path measures the real bytes,
+       so this path has to as well or the two limits are not the same limit.
+
+    Then ``create_reading``, unchanged, which is what makes the two sources
+    indistinguishable from the reading onwards. The row lands in the caller's
+    company scope by the same stamping the upload gets.
+    """
+    # Imported here rather than at module scope: this is the dealer kit reaching
+    # into resources for one call, and a top-level import would drag the whole
+    # attachments service into every module that touches a flyer.
+    from app.services.resources_service import AttachmentService
+    from app.services.storage_router import extract_key
+
+    service = AttachmentService(db)
+    attachment = service.get_attachment(attachment_id)
+    if getattr(attachment, "is_deleted", False):
+        # The SAME 404 the loader raises for a row that is not there, built by
+        # the same helper: a trashed file and an out-of-scope one must be one
+        # answer, or the difference between them is readable from outside.
+        raise handle_not_found("Attachment", attachment_id)
+
+    assert_pdf_mime(getattr(attachment, "mime_type", None))
+    recorded_size = getattr(attachment, "file_size_bytes", None)
+    if recorded_size:
+        assert_within_limit(int(recorded_size))
+
+    # A row with no ``file_path``, or one no storage key can be recovered from,
+    # is a broken record rather than a bucket having a bad day. Checked here so
+    # the two land on different answers: ``get_file_content_for`` raises a bare
+    # ``Exception`` for both, and swept into the arm below they would tell a
+    # designer to retry something that will fail identically forever.
+    if not extract_key(getattr(attachment, "file_path", None)):
+        raise AppException(
+            status_code=422,
+            message=(
+                "That file has no stored copy the system can read, so it cannot "
+                "be read as a flyer. Upload the flyer from your computer instead."
+            ),
+            code="FLYER_SOURCE_MISSING",
+        )
+
+    try:
+        data = service.get_file_content_for(attachment)
+    except AppException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - the bucket's problem, said in words
+        logger.warning(
+            "Flyer attachment %s could not be fetched from storage: %s",
+            attachment_id,
+            exc,
+        )
+        # Not a bare 500: the global handler answers those with "Internal server
+        # error" and nothing else, which tells a designer to raise a ticket for
+        # something they can work around in ten seconds by uploading the file.
+        raise AppException(
+            status_code=502,
+            message=(
+                "That file could not be fetched from storage. "
+                "Try again, or upload the flyer from your computer."
+            ),
+            code="FLYER_SOURCE_UNREADABLE",
+        ) from exc
+
+    assert_within_limit(len(data))
+
+    return create_reading(
+        db,
+        # The name the picker showed them, so the reading is recognisable as the
+        # file they chose. ``stored_filename`` is the display name in the library
+        # and ``original_filename`` is the fallback for rows without one.
+        filename=(
+            getattr(attachment, "stored_filename", None)
+            or getattr(attachment, "original_filename", None)
+        ),
+        data=data,
+        user_id=user_id,
+    )
 
 
 def _store_banners(
