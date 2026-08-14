@@ -6,32 +6,92 @@ no sqlite anywhere in the suite. This file now holds only real cross-test
 hygiene: sweeping/dropping the scratch schema, restoring any in-place model
 metadata edits, and resetting leak-prone process globals between tests.
 """
+import os
+
 import pytest
 
 
+def _owner_pid(schema_name: str):
+    """The PID embedded in a scratch schema name, if it carries one.
+
+    ``zzs_blank_<pid>_<rand>`` (see tests/_pg_fixture.py). A hand made schema
+    under the same prefix has no PID and reads as ownerless.
+    """
+    parts = schema_name.split("_")
+    for part in parts:
+        if part.isdigit():
+            return int(part)
+    return None
+
+
+def _process_is_alive(pid: int) -> bool:
+    import os
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Somebody else's process, but a RUNNING one. Not ours to drop.
+        return True
+    return True
+
+
 def _sweep_orphan_scratch_schemas():
-    """Drop every ``zzt_*`` scratch schema left by a prior run.
+    """Drop scratch schemas left behind by a run that is no longer alive.
 
     The end-of-session drop below only fires if the process exits cleanly. A
     killed run -- a timeout, an interrupted agent, a crash -- leaves its ~199
     table schema behind, and those pile up (105 had accumulated across this
-    migration's many interrupted runs). Sweeping at session START, before any
-    test builds a new one, keeps the shared database from filling with them
-    regardless of how the previous run died.
+    migration's many interrupted runs). Sweeping at session START keeps the
+    shared database from filling with them regardless of how the previous run
+    died.
+
+    ORPHAN IS THE OPERATIVE WORD, and it did not used to be. This dropped every
+    ``zzt_%`` schema it could see, which is correct exactly when no other pytest
+    is running and destructive whenever one is: the newcomer deleted the tables
+    out from under a live run in another checkout of this repository, and the
+    victim reported dozens of "relation ... does not exist" errors at fixture
+    setup that belonged to no change anybody had made. Postgres words a dropped
+    SCHEMA identically to a missing TABLE, so it does not even read as deletion.
+    That has cost hours of bisecting an innocent diff, and it is the worst kind
+    of noise: a false failure is indistinguishable from a real one until
+    somebody re-runs the suite and happens to see it pass.
+
+    Two guards now, because they cover different attackers:
+
+    * this sweep only ever considers schemas under ``SCRATCH_SCHEMA_PREFIX``,
+      which is this checkout's own namespace. A ``zzt_`` schema belongs to a
+      checkout still running the older code and is none of our business -- we
+      cannot prove it is dead, so we do not touch it;
+    * within our own namespace, a schema whose owning PID is still running is
+      left alone, which covers two runs of THIS checkout.
+
+    Two pytest runs on one database remain a bad idea -- they share the real
+    tables -- but they no longer sabotage each other's scratch schema, and the
+    failures a developer sees are their own.
     """
     try:
         from sqlalchemy import text
         from app.database import engine
+        from tests._pg_fixture import SCRATCH_SCHEMA_PREFIX
 
         admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
         try:
             names = [
                 r[0]
                 for r in admin.execute(
-                    text("SELECT nspname FROM pg_namespace WHERE nspname LIKE 'zzt_%'")
+                    text("SELECT nspname FROM pg_namespace WHERE nspname LIKE :pattern"),
+                    {"pattern": f"{SCRATCH_SCHEMA_PREFIX}\\_%"},
                 )
             ]
             for name in names:
+                pid = _owner_pid(name)
+                # Never our own, whatever the ordering: this runs at session
+                # start, but a module-scoped fixture that builds the schema
+                # first would otherwise have it swept from under itself.
+                if pid is not None and (pid == os.getpid() or _process_is_alive(pid)):
+                    continue
                 admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')
         finally:
             admin.close()
@@ -240,6 +300,18 @@ def _reset_global_state():
             _keys = list(_r.scan_iter(match="idemp:*", count=500))
             if _keys:
                 _r.delete(*_keys)
+    except Exception:
+        pass
+    try:
+        # `app.services.storage_router` memoises signed URLs (including signing
+        # FAILURES, cached as None) in a process-global `_signed_cache` keyed by
+        # (provider, key, expires_in). Without a reset, an earlier test's cached
+        # failure for the same key silently short-circuits a later test's
+        # working backend and it gets the stale `None` back instead of a real
+        # signature. Clear per test so ordering can't leak a cached result.
+        from app.services.storage_router import clear_signed_url_cache
+
+        clear_signed_url_cache()
     except Exception:
         pass
 
