@@ -54,7 +54,10 @@ export const MODULE_REGISTRY: ModuleAsset[] = [
   // `projects` ships purge tables only: its menu and routes are still declared the legacy
   // way in `menu.config.tsx`, and only the uninstall dialog needs the table list. The
   // backend half is `app/modules/projects/purge.py` (ADR-0009), whose PURGE_ORDER this
-  // mirrors table for table; the pytest invariants there are what keep the two in step.
+  // mirrors table for table, in order. Nothing in the frontend build can notice drift, so
+  // the pin is a backend test that reads THIS json:
+  // sorento_crm_backend/tests/test_projects_module_purge_invariants.py
+  // (test_the_frontend_purge_manifest_matches_purge_order_exactly). Edit both together.
   { key: 'projects', purgeTables: projectsPurgeTables },
 ];
 

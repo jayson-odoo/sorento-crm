@@ -48,7 +48,20 @@ That is the deliberate price of a reportable link instead of a typed-in project 
 - Purge removes rows in module-owned tables only. It never removes core rows the module
   wrote: the `sales_orders` created by the demand feed stay, and the two FK columns above go
   NULL through the foreign key, not through purge.
-- "Is this a project table" is answered by the `project_*` prefix, not by a schema name. New
-  tables in this module keep the prefix for exactly that reason.
+- "Is this a project table" is answered by the module's model files (`app/models/projects.py`
+  and `app/models/project_so.py`), and the `project_*` prefix is the naming convention for NEW
+  tables. 35 of the 47 carry it; 12 predate it and are no less owned: `so_amendments`,
+  `order_change_notices`, `so_draft_findings`, `so_line_allocations`, `allocation_claims`,
+  `delivery_schedules`, `delivery_schedule_versions`, `delivery_schedule_cells`,
+  `customer_item_code_map`, `quotation_templates`, `quotation_signatures`, `price_floor_rules`.
+  Reading the prefix as the membership test would leave all 12 out of an uninstall, which is
+  why `tests/test_projects_module_purge_invariants.py` derives the purge list from the model
+  files instead.
+- **Purge deletes across ALL companies.** The company-scope filter is injected into SELECTs
+  only, so the `DELETE FROM <table>` each purge step issues is not partitioned by company.
+  That is correct for what uninstall means today - a tenant-wide removal of the module - and
+  it is named here so nobody discovers it while looking for a per-company purge that does not
+  exist. Making uninstall per-company would mean adding an explicit company predicate to every
+  statement in the handler, and deciding what to do with rows shared across companies.
 - Reopening the schema question later means a data migration on live rows, and it has to be
   argued as one.

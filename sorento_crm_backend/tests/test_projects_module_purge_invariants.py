@@ -26,6 +26,8 @@ actually has.
 from __future__ import annotations
 
 import inspect
+import json
+from pathlib import Path
 
 import pytest
 
@@ -45,6 +47,13 @@ MODEL_MODULES = (projects_models, project_so_models)
 #: Foreign keys the database resolves without help, so the delete ORDER cannot break on them.
 #: CASCADE takes the child with the parent; SET NULL leaves it behind, detached.
 SELF_RESOLVING = frozenset({"CASCADE", "SET NULL"})
+
+#: The frontend's copy of the same list, read by the uninstall dialog. `tests/` sits at
+#: <repo>/sorento_crm_backend/tests, so the repo root is two levels up.
+FE_PURGE_MANIFEST = (
+    Path(__file__).resolve().parents[2]
+    / "sorento_crm_frontend" / "modules" / "projects" / "purge_tables.json"
+)
 
 
 @pytest.fixture
@@ -111,6 +120,36 @@ def test_no_model_is_listed_twice():
 
     # And the count the handler's docstring quotes stays honest.
     assert len(PURGE_ORDER) == len(_declared_models())
+
+
+# --------------------------------------------------------------------------- #
+# the frontend's copy of the list
+# --------------------------------------------------------------------------- #
+
+def test_the_frontend_purge_manifest_matches_purge_order_exactly():
+    """`modules/projects/purge_tables.json` is what the uninstall dialog SHOWS an operator.
+
+    It is a hand-maintained mirror of `PURGE_ORDER`, and nothing in the frontend build can
+    notice when it drifts: the dialog would list a table purge no longer touches, or omit one
+    it does, and the operator's consent would be for the wrong set of rows. Order is asserted
+    too, because the dialog presents the list as the order of deletion.
+
+    A missing file FAILS rather than skips. "The manifest is gone" is precisely the state this
+    test exists to report, and a skip in CI reads as a pass.
+    """
+    from app.modules.projects.purge import PURGE_ORDER
+
+    assert FE_PURGE_MANIFEST.exists(), (
+        f"the frontend purge manifest is missing at {FE_PURGE_MANIFEST}. The uninstall "
+        "dialog reads it, so it is part of this feature, not an optional asset."
+    )
+    manifest = json.loads(FE_PURGE_MANIFEST.read_text())
+
+    assert manifest["moduleKey"] == "projects"
+    assert manifest["tables"] == [model.__tablename__ for model in PURGE_ORDER], (
+        "the frontend purge manifest and PURGE_ORDER have drifted. Update "
+        f"{FE_PURGE_MANIFEST.name} to match app/modules/projects/purge.py, in order."
+    )
 
 
 # --------------------------------------------------------------------------- #

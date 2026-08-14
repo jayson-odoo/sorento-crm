@@ -71,3 +71,16 @@ the projects namespace is a recorded follow-up, not part of the move.
   reasoning as ADR 0009's purge rule.
 - The ownership table in `PLAN-scm-order-inquiry-as-demand.md` gains no project-publish row,
   because publish never writes.
+- NOTE: a retired provisional row is stamped `internal_note = "... | Retired: superseded by
+  <doc no>"`, and `internal_note` is the column SCM's demand-source surface falls back to as
+  the customer/project label (`COALESCE(customers.customer_name, sales_orders.internal_note)`
+  in `demand_source_service`, and the raw value in the SO list). A retired row is filtered out
+  of the demand surfaces by its closed status, so nothing reads the stamp as a project name
+  today, but the two uses of that one column are worth knowing about before anything starts
+  surfacing closed rows.
+- The reconciliation's existence checks run UNSCOPED and then compare companies explicitly,
+  because `sales_orders.so_number` is globally unique while the company-scope filter is
+  SELECT-only. A number held by ANOTHER company's row is reported and skipped, never merged:
+  a double count is a reporting error, a cross-company link is a breach. Pairs already double
+  counted before this shipped are merged by
+  `scripts/backfill_retire_superseded_order_inquiry_rows.py`.

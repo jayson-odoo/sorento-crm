@@ -8,12 +8,16 @@ module carries its own uninstall story.
 
 Two rules govern what is in here, both from ADR-0009:
 
-* **Module-owned tables only.** The ``project_*`` prefix answers "is this a project table",
-  plus the phase-2 tables in ``app.models.project_so`` that predate the prefix
-  (``delivery_schedules``, ``so_amendments``, ``allocation_claims`` and friends) and the two
-  quotation-side tables the module alone writes (``quotation_templates``,
-  ``quotation_signatures``). Every one of them is defined in a module model file and nothing
-  outside the module reads them.
+* **Module-owned tables only, and the model file is what says so.** 35 of the 47 tables carry
+  the ``project_`` prefix; the other 12 predate the convention and are just as owned:
+  ``so_amendments``, ``order_change_notices``, ``so_draft_findings``, ``so_line_allocations``,
+  ``allocation_claims``, ``delivery_schedules``, ``delivery_schedule_versions``,
+  ``delivery_schedule_cells``, ``customer_item_code_map``, ``quotation_templates``,
+  ``quotation_signatures`` and ``price_floor_rules``. Ownership is therefore "declared in
+  ``app/models/projects.py`` or ``app/models/project_so.py``" - which is exactly what
+  ``tests/test_projects_module_purge_invariants.py`` asserts - and the prefix is the naming
+  convention for NEW tables, not the membership test. Nothing outside the module reads any
+  of them.
 * **Core rows are never touched.** The ``sales_orders`` the demand feed created stay, and so
   do complaints, purchase requests, customers, attachments and statuses. The two core-to-module
   foreign keys (``complaints.project_id``, ``purchase_requests.project_id``) go NULL through

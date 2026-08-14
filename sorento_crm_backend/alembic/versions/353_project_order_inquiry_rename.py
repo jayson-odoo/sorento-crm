@@ -1,8 +1,11 @@
 """Give the two order-inquiry tables the module's `project_` prefix.
 
-45 of the projects module's 47 tables are already named `project_*`; `order_inquiries`
-and `order_inquiry_rows` were the stragglers, and SCM ships its own order-inquiry
-concept, so an unprefixed name in the shared schema reads as the wrong one.
+35 of the projects module's 47 tables are already named `project_*`, and SCM ships its
+own order-inquiry concept, so `order_inquiries` / `order_inquiry_rows` in the shared
+schema read as the wrong one. The other 12 unprefixed tables (`so_amendments`,
+`delivery_schedules` and friends) predate the convention and are not renamed here:
+ownership is defined by the module's model files, and the prefix is the convention for
+NEW tables. These two are renamed because their names actively collide.
 
 Both tables are branch-only and unreleased, but the shared development database
 already holds them under the old names, so this is a rename rather than a re-create.
