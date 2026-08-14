@@ -38,6 +38,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence
 
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Session
 
 from app.models.order import Customer, SalesOrder, SalesOrderLine
@@ -54,7 +55,12 @@ from app.models.project_so import (
     ProjectSODivergenceLine,
 )
 from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
+from app.models.scm import OrderLinkClaim
+from app.services.company_scope import company_scope
 from app.services.error_handler import AppException
+from app.services.project_order_inquiry_import_service import (
+    SOURCE as CLAIM_SOURCE_ORDER_INQUIRY,
+)
 from app.services.project_order_inquiry_import_service import SOURCE_SYSTEM
 from app.services.project_so_divergence_engine import (
     OurHeader,
@@ -137,6 +143,21 @@ def _norm(value: Optional[str]) -> Optional[str]:
     return cleaned.upper() or None
 
 
+def _same_company(row: SalesOrder, order: ProjectSalesOrder) -> bool:
+    """Whether a core row found by an UNSCOPED lookup belongs to this project's company.
+
+    A missing `company_id` on either side counts as a match rather than as a foreign row.
+    Postgres has `sales_orders.company_id` NOT NULL since migration 305, so a null here is
+    a pre-isolation row or a fixture that never went through the insert auto-stamp, and
+    neither is evidence that somebody else owns it.
+    """
+    theirs = getattr(row, "company_id", None)
+    ours = order.company_id
+    if theirs is None or ours is None:
+        return True
+    return str(theirs) == str(ours)
+
+
 class ProjectSOIngestService:
     def __init__(self, db: Session):
         self.db = db
@@ -209,7 +230,7 @@ class ProjectSOIngestService:
     def _reconcile_core_order(self, order: ProjectSalesOrder, doc_no: str) -> None:
         """Make the real number and the provisional one name ONE piece of demand.
 
-        Three outcomes, and the third is the one that has to be written down (AC-F5):
+        Four outcomes, and the last two are the ones that have to be written down (AC-F5):
 
         * nothing holds the real number and the sheet made a provisional row -> RENUMBER it
           in place. No second row is created, so nothing has to be merged afterwards.
@@ -218,30 +239,63 @@ class ProjectSOIngestService:
         * the row at the provisional number is not the sheet's -> nothing at all. Its number
           colliding with ours is an accident, and renaming or closing somebody else's order
           on the strength of a coincidence is the worst thing this function could do.
+        * the real number is held by ANOTHER COMPANY's row -> nothing at all, and a warning
+          naming both numbers and both companies. Isolation is fail-closed: a link across
+          companies is never made, not even to stop a double count, because the double
+          count is a reporting error and a cross-company link is a data breach.
 
-        `sales_orders.so_number` is UNIQUE, so the rename is only ever attempted after a
-        FLUSHED lookup has shown the number free. Flushing first is what makes that check
-        honest: a row inserted earlier in this same transaction is otherwise still pending
-        and invisible to the query, and the collision would surface as an IntegrityError
-        several statements later, with the whole transaction lost.
+        Both existence checks run UNSCOPED, and that is load bearing. `sales_orders.so_number`
+        is unique across the WHOLE table, but `company_scope` injects its predicate into
+        SELECTs only. A scoped lookup therefore reports "the number is free" about our
+        company rather than about the unique index, and the rename that follows dies on the
+        index instead - an IntegrityError several statements later, with the entire ingest
+        transaction lost. Reading unscoped and comparing the company in the open is the only
+        version of this check that can be honest; the comparison is right below.
+
+        Flushing first matters for the same reason: a row inserted earlier in this same
+        transaction is otherwise still pending and invisible to the query.
         """
         # Pending inserts made earlier in this transaction must be visible to both lookups
         # below, or "the number is free" is a statement about the database as it was.
         self.db.flush()
 
-        real = (
-            self.db.query(SalesOrder).filter(SalesOrder.so_number == doc_no).first()
-        )
-        provisional = None
-        if order.provisional_ref:
-            provisional = (
-                self.db.query(SalesOrder)
-                .filter(
-                    SalesOrder.so_number == order.provisional_ref,
-                    SalesOrder.demand_origin == DEMAND_ORIGIN_ORDER_INQUIRY,
-                )
-                .first()
+        # `None` is the sanctioned all-companies scope (app.models.base.company_scope); the
+        # previous scope is restored on exit, so nothing later in the ingest reads unscoped.
+        with company_scope(self.db, None):
+            real = (
+                self.db.query(SalesOrder).filter(SalesOrder.so_number == doc_no).first()
             )
+            provisional = None
+            if order.provisional_ref:
+                provisional = (
+                    self.db.query(SalesOrder)
+                    .filter(
+                        SalesOrder.so_number == order.provisional_ref,
+                        SalesOrder.demand_origin == DEMAND_ORIGIN_ORDER_INQUIRY,
+                    )
+                    .first()
+                )
+
+        if real is not None and not _same_company(real, order):
+            logger.warning(
+                "project SO %s (company %s): AutoCount number %s is held by sales order %s "
+                "in company %s, so nothing was reconciled. The provisional row %s stays open "
+                "and so_id is unchanged.",
+                order.id, order.company_id, doc_no, real.id, real.company_id,
+                order.provisional_ref,
+            )
+            return
+
+        if provisional is not None and not _same_company(provisional, order):
+            # Same accident as a foreign `demand_origin`, one company further out: the sheet
+            # stamp matches but the row is not ours to rename, retire or adopt.
+            logger.warning(
+                "project SO %s (company %s): provisional number %s is held by sales order %s "
+                "in company %s, which this reconciliation leaves alone.",
+                order.id, order.company_id, order.provisional_ref, provisional.id,
+                provisional.company_id,
+            )
+            provisional = None
 
         if real is None:
             if provisional is None:
@@ -249,7 +303,13 @@ class ProjectSOIngestService:
             # AC-F2. The row IS this order; only its number was a placeholder.
             provisional.so_number = doc_no
             self.db.flush()
-            order.so_id = provisional.id
+            # Every claim naming the placeholder now names a number that no longer exists,
+            # resolved ones included: the row moved, so the claim has to move with it.
+            self._repoint_claims(order, doc_no, unresolved_only=False)
+            # Same narrowness as the merge branch below (AC-F5): a link a person put on some
+            # other row is not this function's to overwrite.
+            if order.so_id is None or order.so_id == provisional.id:
+                order.so_id = provisional.id
             logger.info(
                 "project SO %s: renumbered sheet-created sales order %s to %s",
                 order.id, provisional.id, doc_no,
@@ -263,6 +323,76 @@ class ProjectSOIngestService:
             order.so_id = real.id
         if provisional is not None and provisional.id != real.id:
             self._retire(provisional, doc_no)
+            # The provisional row keeps its number here, so an UNRESOLVED claim would still
+            # find it - and resolve onto a line that has just been closed. Resolved claims
+            # are left where they are: they are a pairing somebody already made, and the
+            # line they name still exists.
+            self._repoint_claims(order, doc_no, unresolved_only=True)
+
+    def _repoint_claims(
+        self, order: ProjectSalesOrder, doc_no: str, *, unresolved_only: bool
+    ) -> int:
+        """Move this project's SO<->PO claims off the provisional number onto the real one.
+
+        `order_link_claim` holds the numbers as TEXT precisely so a claim can outlive the
+        absence of either document (`order_link_service`), which also means nothing in the
+        database follows a renumber for us. A claim left on the old number resolves against
+        a row that has been renamed away or closed, and the resolver reports it as still
+        waiting for a sales order we are in fact holding.
+
+        Only claims this feed wrote are touched. The source vocabulary is CHECK-constrained
+        and a project's `provisional_ref` is a number only the Order Inquiry sheet emits, so
+        anything else naming it is the same coincidence the caller refuses to act on.
+        """
+        if not order.provisional_ref:
+            return 0
+
+        query = self.db.query(OrderLinkClaim).filter(
+            OrderLinkClaim.so_number == order.provisional_ref,
+            OrderLinkClaim.source == CLAIM_SOURCE_ORDER_INQUIRY,
+        )
+        # `provisional_ref` is unique per COMPANY (uq_project_so_provisional_ref), not
+        # globally, so two companies can legitimately hold claims on the same string. The
+        # scope filter is SELECT-only and this is an UPDATE, so the company is stated here.
+        if order.company_id is not None:
+            query = query.filter(OrderLinkClaim.company_id == order.company_id)
+        if unresolved_only:
+            query = query.filter(OrderLinkClaim.so_line_id.is_(None))
+
+        old_number = order.provisional_ref
+        moved = query.update({"so_number": doc_no}, synchronize_session=False)
+        # The statement above did not reach objects this Session already holds; see
+        # `_expire_loaded`. Matched on the OLD number, which is still what a cached copy says.
+        self._expire_loaded(OrderLinkClaim, "so_number", old_number)
+        if moved:
+            logger.info(
+                "project SO %s: moved %s order-link claim(s) from %s to %s",
+                order.id, moved, old_number, doc_no,
+            )
+        return moved
+
+    def _expire_loaded(self, model, attribute: str, value) -> None:
+        """Drop this Session's cached copy of the rows a bulk UPDATE just changed.
+
+        `synchronize_session=False` is the right setting for those statements - the criteria
+        are cheap in SQL and awkward in the ORM - but it leaves an object already loaded here
+        reporting the value it held BEFORE the update, and the caller has no way to tell.
+        Expiring only the matched rows makes the next attribute read re-fetch them.
+        `expire_all()` would do it too, and would also throw away every other object loaded
+        in this transaction, including the half-built ones the ingest is still writing.
+
+        Matching reads the in-memory state directly rather than the attribute, so scanning
+        the identity map never triggers a lazy refresh of its own.
+        """
+        wanted = str(value)
+        for obj in list(self.db.identity_map.values()):
+            if not isinstance(obj, model):
+                continue
+            state = sa_inspect(obj)
+            if attribute in state.unloaded:
+                continue  # already expired: the next read re-fetches it anyway
+            if str(state.dict.get(attribute)) == wanted:
+                self.db.expire(obj)
 
     def _retire(self, provisional: SalesOrder, doc_no: str) -> None:
         """Close the sheet's row so the demand is counted under the real number only.
@@ -278,6 +408,9 @@ class ProjectSOIngestService:
             SalesOrderLine.sales_order_id == str(provisional.id),
             SalesOrderLine.line_status != RETIRED_LINE_STATUS,
         ).update({"line_status": RETIRED_LINE_STATUS}, synchronize_session=False)
+        # `synchronize_session=False`: a line object already loaded here still says `open`
+        # until it is expired. See `_expire_loaded`.
+        self._expire_loaded(SalesOrderLine, "sales_order_id", provisional.id)
 
         # The row survives, so it has to be able to say why it stopped counting. Nothing
         # else on the table carries that: `demand_origin` is history and stays as it is,
