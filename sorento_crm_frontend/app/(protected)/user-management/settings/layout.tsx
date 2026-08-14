@@ -227,6 +227,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         title: 'Portal Revisions',
         path: '/user-management/settings/portal-revisions',
       },
+      'chatbot-media': {
+        title: 'Chatbot Media',
+        path: '/user-management/settings/chatbot-media',
+      },
       'system-health': {
         title: 'System Health',
         path: '/user-management/settings/system-health',
