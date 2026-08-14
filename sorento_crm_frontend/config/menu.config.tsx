@@ -818,6 +818,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'system.respond_workspaces.view',
       },
       {
+        title: 'Respond.io Contacts',
+        path: '/system-management/respond-contacts',
+        permission: 'system.respond_workspaces.view',
+      },
+      {
         title: 'AI Assistant',
         children: [
           {
@@ -1685,6 +1690,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Respond.io Workspaces',
         path: '/system-management/respond-workspaces',
+        permission: 'system.respond_workspaces.view',
+      },
+      {
+        title: 'Respond.io Contacts',
+        path: '/system-management/respond-contacts',
         permission: 'system.respond_workspaces.view',
       },
     ],
