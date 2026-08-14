@@ -37,6 +37,7 @@ from app.services.media_extract.schema import (
     MediaAttribute,
     MediaConflict,
     MediaEntity,
+    norm_code,
 )
 
 # How an attribute kind is said out loud. The customer never sees `box_dimension`.
@@ -46,6 +47,8 @@ ATTRIBUTE_LABELS: dict[str, str] = {
     "box_dimension": "box dimension",
     "product_size": "size",
     "quantity": "quantity",
+    "document_number": "document number",
+    "document_date": "document date",
 }
 
 _ESCAPE_HATCH = "Type the codes and I will look them up straight away."
@@ -140,12 +143,39 @@ def _conflict_sentence(conflict: MediaConflict) -> str:
         f"{value.value} ({value.source})" if value.source else value.value
         for value in conflict.values
     ]
+    # `field` is the model's own words, so it is usually already spoken English -
+    # but it lands on the kind token often enough ("document_date") that the
+    # customer would otherwise be shown an underscore.
+    field = ATTRIBUTE_LABELS.get(conflict.field.strip().casefold(), conflict.field)
     if not rendered:
-        return f"I am not sure about the {conflict.field}. Which one should I use?"
+        return f"I am not sure about the {field}. Which one should I use?"
     return (
-        f"On the {conflict.field} I can see {join_phrase(rendered)}. Which one "
+        f"On the {field} I can see {join_phrase(rendered)}. Which one "
         "should I use?"
     )
+
+
+def _covered_by_conflict(
+    attribute: MediaAttribute, conflicts: Sequence[MediaConflict]
+) -> bool:
+    """Is this exact attribute one of the values a conflict sentence names?
+
+    Scoped by `entity_raw` for the same reason `schema._apply_conflicts` is: one
+    line's disputed quantity must not silence the four correct quantities on the
+    other lines, or the message stops naming values the dealer can see on the
+    photo in front of them.
+    """
+    kind = attribute.kind.strip().casefold()
+    raw = norm_code(attribute.raw)
+    for conflict in conflicts:
+        target = norm_code(conflict.entity_raw)
+        if target and raw == target:
+            return True
+        if conflict.field.strip().casefold() != kind:
+            continue
+        if not target or norm_code(attribute.entity_raw) == target:
+            return True
+    return False
 
 
 def nothing_read() -> str:
@@ -171,18 +201,15 @@ def confirmation(
     # nor as "not certain" - the conflict sentence names both of its values, so
     # repeating one of them reads as two separate problems.
     conflicted_raws = {
-        (conflict.entity_raw or "").strip().casefold()
-        for conflict in conflicts
-        if conflict.entity_raw
+        norm_code(conflict.entity_raw) for conflict in conflicts if conflict.entity_raw
     }
-    conflicted_fields = {conflict.field.strip().casefold() for conflict in conflicts}
 
     phrases = _read_phrases(
         entities,
         [
             attribute
             for attribute in attributes
-            if attribute.kind.casefold() not in conflicted_fields
+            if not _covered_by_conflict(attribute, conflicts)
         ],
     )
     # ... unless that leaves nothing to name, in which case name it all.
@@ -192,14 +219,12 @@ def confirmation(
     unsure = [
         entity.raw
         for entity in entities
-        if not entity.confident and entity.raw.strip().casefold() not in conflicted_raws
+        if not entity.confident and norm_code(entity.raw) not in conflicted_raws
     ]
     unsure += [
         f"{ATTRIBUTE_LABELS.get(attribute.kind, attribute.kind)} {attribute.raw}"
         for attribute in attributes
-        if not attribute.confident
-        and attribute.kind.casefold() not in conflicted_fields
-        and attribute.raw.strip().casefold() not in conflicted_raws
+        if not attribute.confident and not _covered_by_conflict(attribute, conflicts)
     ]
     if unsure:
         parts.append(f"I am not certain about {join_phrase(unsure)}.")
