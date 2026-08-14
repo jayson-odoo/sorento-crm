@@ -43,15 +43,23 @@ ENTITY_HINTS: tuple[str, ...] = (
     "spo",
 )
 
-# Values a carton label yields that the enum above cannot express. They ride in
-# `attributes[]` with their own kind instead - never as an entity under an
-# approximate hint.
+# Values a carton label or a document header yields that the enum above cannot
+# express. They ride in `attributes[]` with their own kind instead - never as an
+# entity under an approximate hint.
+#
+# `document_number` and `document_date` were added after the first corpus run
+# (PLAN section 13, defects 2 and 3): a return-authorisation number fits no hint
+# and a bare date fits neither a hint nor any of the five label kinds, so both
+# were silently dropped even when perfectly legible - which also made prompt
+# rule 3, the ambiguous-date rule, unreachable.
 ATTRIBUTE_KINDS: tuple[str, ...] = (
     "batch_number",
     "barcode",
     "box_dimension",
     "product_size",
     "quantity",
+    "document_number",
+    "document_date",
 )
 
 # The model classifies the image and extracts in the SAME pass. One call, not
@@ -90,12 +98,22 @@ An ENTITY is a value someone could look a record up by. Each entity is:
 
 An ATTRIBUTE is a value that describes a thing but is not something you look a record up by.
 Each attribute is:
-  {{"kind": "<one of: batch_number, barcode, box_dimension, product_size, quantity>",
+  {{"kind": "<one of: batch_number, barcode, box_dimension, product_size, quantity,
+             document_number, document_date>",
     "raw": "<the string exactly as printed>",
+    "entity_raw": "<the code or line this value belongs to, or null if it describes the whole
+                    document>",
     "confident": true or false}}
 
 Never put an attribute in `entities` under an approximate hint. If a value does not fit a hint
 in the list, it is an attribute or it is left out.
+
+Never emit an attribute whose `raw` is a value you have already emitted as an entity. A product
+code repeated inside a description line is the SAME entity, not a new attribute, and it is never
+a batch number.
+
+Always set `entity_raw` on an attribute that belongs to one line of a multi-line document, so a
+quantity on one line is not confused with a quantity on another.
 
 RULES THAT APPLY TO EVERY IMAGE
 
@@ -138,27 +156,39 @@ IF THE IMAGE IS A DOCUMENT (delivery order, return authorisation, invoice, sprea
 10. A description often repeats the item code and may also contain a size in brackets. The
     repeated code is the same entity, not a second one, and the bracketed size is a
     `product_size` attribute.
+11. READ THE HEADER BLOCK BEFORE THE TABLE, and read it even when the page is skewed, stamped or
+    written on. The header is the top area carrying the customer or debtor name, the debtor code,
+    the document's own reference number, the date it was issued, and who issued it. These are as
+    important as the line items, and on a photographed page they are the fields most often
+    skipped. Emit the customer as an entity with hint `customer`; emit a delivery-order number as
+    an entity with hint `order`; emit any other document reference, such as a return
+    authorisation number, as a `document_number` attribute; emit the issue date as a
+    `document_date` attribute. If you can see one of these and cannot read it confidently, emit
+    it with `confident: false` rather than leaving it out.
 
 IF THE IMAGE IS A LABEL (a carton, a shelf label, a box in someone's hand)
 
-11. Read every labelled field present. These labels are usually a plain list of
+12. Read every labelled field present. These labels are usually a plain list of
     "KEY : VALUE" lines. Expect and look for: MODEL, SIZE, QTY, BOX DIMENSION, BATCH NO, and a
     barcode.
-12. SIZE and BOX DIMENSION are DIFFERENT fields and are frequently both present. SIZE is the
+13. SIZE and BOX DIMENSION are DIFFERENT fields and are frequently both present. SIZE is the
     product; BOX DIMENSION is the carton it ships in. Never report one as the other, and never
     merge them. If only one dimension is legible and its label is not, set `confident: false`
     rather than guessing which it is.
-13. Report a barcode only from digits printed beside or beneath the bars. Do not attempt to
-    decode the bars themselves, and do not read a QR code.
-14. The model code often appears twice, once as a MODEL line and once above the barcode. That is
+14. A barcode is a REQUIRED field to look for on a label, not an optional extra. Read it from the
+    digits printed beside or beneath the bars, which are usually in a corner and in a smaller
+    font than the KEY : VALUE lines. Do not attempt to decode the bars themselves, and do not
+    read a QR code. If the digits are present but you cannot read them all, emit what you can see
+    with `confident: false` rather than omitting the field.
+15. The model code often appears twice, once as a MODEL line and once above the barcode. That is
     one entity, not two.
 
 THE CAPTION
 
-15. The caption is the strongest signal for what each value means. "check stock for these" over a
+16. The caption is the strongest signal for what each value means. "check stock for these" over a
     carton makes the model code a product. "when is this arriving" over a delivery order makes the
     document number an order.
-16. If there is NO caption, or the caption's intent is unclear, still extract everything you can,
+17. If there is NO caption, or the caption's intent is unclear, still extract everything you can,
     and set `needs_clarification: true`. Do not guess what the customer wants done with the photo.
     Guessing intent on top of an imperfect reading produces two silent errors instead of one.
 

@@ -12,17 +12,23 @@ Two halves, deliberately opposite in temperament:
   costs the dealer their whole turn; a dropped field costs one line of the
   confirmation.
 
-Three rules are enforced HERE rather than trusted to the prompt, because a rule
+Four rules are enforced HERE rather than trusted to the prompt, because a rule
 that only exists in a prompt is a rule the model may quietly stop following:
 
 1. **The entity/attribute split.** An entity whose `hint` is actually an
    attribute kind is MOVED to `attributes[]`, never emitted under an approximate
    hint (UAC S4-02). An entity whose hint is neither is dropped - inventing a
    home for it is the failure mode rule 4 of the prompt exists to prevent.
-2. **Conflicts propagate to confidence.** Anything a conflict names is forced
-   `confident: false` (UAC S4-03), so "the model reported a disagreement but
-   still said it was sure" cannot reach the customer.
-3. **The cap is real.** Entities past `max_entities` are cut, and attributes
+2. **No attribute duplicates an entity.** An attribute whose `raw` is a value
+   already emitted as an entity is dropped: a product code repeated inside a
+   description line is the same entity, and on the first corpus run it came
+   back a second time as a `batch_number` (PLAN section 13, defect 4).
+3. **Conflicts propagate to confidence, and only as far as they reach.**
+   Anything a conflict names is forced `confident: false` (UAC S4-03), so "the
+   model reported a disagreement but still said it was sure" cannot reach the
+   customer - but a conflict naming one line touches that line only, because a
+   flag that fires on correct lines is a flag nobody can act on.
+4. **The cap is real.** Entities past `max_entities` are cut, and attributes
    past the same cap separately, with `truncated` set whether or not the model
    admitted it (UAC S4-10).
 
@@ -34,6 +40,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field
@@ -59,10 +66,19 @@ class MediaEntity(BaseModel):
 
 
 class MediaAttribute(BaseModel):
-    """A value with no hint in the enum - carried as context, not as an entity."""
+    """A value with no hint in the enum - carried as context, not as an entity.
+
+    `entity_raw` is which line the value belongs to, and it exists because the
+    first corpus run proved a conflict cannot be scoped without it: one genuine
+    quantity disagreement on one line marked four unrelated, correct quantities
+    `confident: false` (PLAN section 13, defect 1). It is optional because a
+    value that describes the whole document - a document number, an issue date -
+    genuinely belongs to no line.
+    """
 
     kind: str
     raw: str
+    entity_raw: Optional[str] = None
     confident: bool = True
 
 
@@ -162,13 +178,23 @@ def _norm(value: Optional[str]) -> str:
     return (value or "").strip().casefold()
 
 
+# Dash/whitespace stripper, the same shape `variant_link_service.normalize_code`
+# uses so a code compares here the way it compares everywhere else in this repo.
+_CODE_STRIP_RE = re.compile(r"[-\s]")
+
+
+def norm_code(value: Optional[str]) -> str:
+    """A code compared the repo's way: casefolded, dashes and spaces removed."""
+    return _CODE_STRIP_RE.sub("", (value or "")).casefold()
+
+
 def _parse_entities(
     raw_entities: Any,
 ) -> tuple[list[MediaEntity], list[MediaAttribute]]:
     """Split the model's `entities` into real entities and rescued attributes.
 
-    An entity whose `hint` is one of the five attribute kinds is the model
-    ignoring "never put an attribute in `entities` under an approximate hint".
+    An entity whose `hint` is one of the attribute kinds is the model ignoring
+    "never put an attribute in `entities` under an approximate hint".
     It is moved rather than dropped, because the VALUE was read correctly - only
     its home was wrong, and the confirmation message still wants to name it.
     """
@@ -199,7 +225,14 @@ def _parse_entities(
                 raw,
                 hint,
             )
-            rescued.append(MediaAttribute(kind=hint, raw=raw, confident=confident))
+            # No `entity_raw`: an entity carries no line of its own, so the
+            # rescued value is scoped document-wide rather than invented onto a
+            # line it may not belong to.
+            rescued.append(
+                MediaAttribute(
+                    kind=hint, raw=raw, entity_raw=None, confident=confident
+                )
+            )
         else:
             # Neither an accepted hint nor a known attribute: `resolve-entity`
             # would reject it, so passing it on fails downstream instead of
@@ -224,9 +257,44 @@ def _parse_attributes(raw_attributes: Any) -> list[MediaAttribute]:
                 )
             continue
         out.append(
-            MediaAttribute(kind=kind, raw=raw, confident=_bool(item.get("confident"), True))
+            MediaAttribute(
+                kind=kind,
+                raw=raw,
+                # Which line this value belongs to. Absent means "the whole
+                # document", which is the honest reading of a model that did not
+                # say - never a line guessed on its behalf.
+                entity_raw=_text(item.get("entity_raw")) or None,
+                confident=_bool(item.get("confident"), True),
+            )
         )
     return out
+
+
+def _drop_entity_duplicates(
+    entities: list[MediaEntity], attributes: list[MediaAttribute]
+) -> list[MediaAttribute]:
+    """Drop an attribute whose `raw` is already out as an entity (PLAN 13.4).
+
+    A product code repeated inside a description line came back a second time as
+    a `batch_number` on the corpus run. The prompt now forbids it, and this
+    enforces it, because a rule that only exists in a prompt is a rule the model
+    may quietly stop following. The entity is kept - it is the correct home -
+    and the duplicate attribute is dropped rather than relabelled, because there
+    is no way to know what kind it should have been.
+    """
+    emitted = {norm_code(entity.raw) for entity in entities if norm_code(entity.raw)}
+    kept: list[MediaAttribute] = []
+    for attribute in attributes:
+        code = norm_code(attribute.raw)
+        if code and code in emitted:
+            logger.info(
+                "media extract: dropped attribute %r (kind %r) - already an entity",
+                attribute.raw,
+                attribute.kind,
+            )
+            continue
+        kept.append(attribute)
+    return kept
 
 
 def _parse_conflicts(raw_conflicts: Any) -> list[MediaConflict]:
@@ -269,20 +337,34 @@ def _apply_conflicts(
 ) -> None:
     """Force `confident: false` on everything a conflict names (UAC S4-03).
 
-    Matching is by the raw string for entities and by kind for attributes: a
-    quantity disagreement makes the quantity attribute untrustworthy whether or
-    not the model bothered to say which line it belonged to.
+    Scoped by `entity_raw`, which is the whole point of the flag: a conflict
+    that names a line touches ONLY that line, and a conflict that names no line
+    applies document-wide. Matching by `kind` alone is what made one genuine
+    quantity disagreement mark four unrelated, correct quantities untrustworthy
+    on the corpus run (PLAN section 13, defect 1), and a `confident: false` that
+    cries wolf on correct lines is worth nothing to the dealer reading it.
+
+    So, per conflict:
+
+    * an entity whose `raw` is the named one is unconfident;
+    * an attribute whose own `raw` is the named value is unconfident - it IS the
+      thing being disputed, whatever its kind;
+    * an attribute of the conflicted `kind` is unconfident when it sits on the
+      named line, or when the conflict names no line at all.
     """
     for conflict in conflicts:
-        target = _norm(conflict.entity_raw)
+        target = norm_code(conflict.entity_raw)
         field_name = _norm(conflict.field)
         for entity in entities:
-            if target and _norm(entity.raw) == target:
+            if target and norm_code(entity.raw) == target:
                 entity.confident = False
         for attribute in attributes:
-            if _norm(attribute.kind) == field_name or (
-                target and _norm(attribute.raw) == target
-            ):
+            if target and norm_code(attribute.raw) == target:
+                attribute.confident = False
+                continue
+            if _norm(attribute.kind) != field_name:
+                continue
+            if not target or norm_code(attribute.entity_raw) == target:
                 attribute.confident = False
 
 
@@ -290,6 +372,10 @@ def parse_extraction(payload: dict[str, Any], *, max_entities: int) -> MediaExtr
     """The provider's JSON, made safe. Never raises on a well-formed object."""
     entities, rescued = _parse_entities(payload.get("entities"))
     attributes = _parse_attributes(payload.get("attributes")) + rescued
+    # Before the conflicts, so a dropped duplicate cannot drag a confidence flag
+    # around with it, and before the cap, so a duplicate cannot take a real
+    # value's place in the truncated list.
+    attributes = _drop_entity_duplicates(entities, attributes)
     conflicts = _parse_conflicts(payload.get("conflicts"))
     _apply_conflicts(entities, attributes, conflicts)
 

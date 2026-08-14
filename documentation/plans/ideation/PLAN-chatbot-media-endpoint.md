@@ -461,7 +461,7 @@ to `callback_url` with `callback_headers` applied verbatim:
       {"raw": "SRTKS6647", "hint": "product", "current_message": true, "confident": true}
     ],
     "attributes": [
-      {"kind": "batch_number", "raw": "YG2539", "confident": true}
+      {"kind": "batch_number", "raw": "YG2539", "entity_raw": null, "confident": true}
     ],
     "conflicts": [
       {"field": "quantity", "entity_raw": "SRTBF31610",
@@ -630,9 +630,14 @@ involved: `{raw, hint, current_message, confident}`, with `hint` drawn only from
 `attachment_type`, `goods_receive`, `spo`. `current_message` is always `true` for an extraction.
 
 `attributes[]` carries values that have **no hint in that enum** - batch number, barcode, box
-dimension, product size, quantity - as `{kind, raw, confident}`. This is the captain's decision of
-2026-08-14; section 9 records it and the reasoning. An attribute must never be emitted as an
-entity with an approximate hint.
+dimension, product size, quantity, and (added after the first corpus run, section 13) document
+number and document date - as `{kind, raw, entity_raw, confident}`. This is the captain's decision
+of 2026-08-14; section 9 records it and the reasoning. An attribute must never be emitted as an
+entity with an approximate hint, and must never duplicate a value already emitted as an entity.
+
+`entity_raw` names the line an attribute belongs to, or is null when it describes the whole
+document. It exists because without it a per-line conflict cannot be scoped, and one disputed
+quantity marked every other quantity on the page untrustworthy - see section 13 defect 1.
 
 `conflicts[]` is a first-class output, not an afterthought, per the captain's instruction.
 
@@ -891,6 +896,14 @@ silently omitted a legible barcode. Those are model-tier failures, not prompt fa
 `gpt-4o-mini` as `media_image_degraded_model`.** That makes the degraded tier meaningful rather
 than inert, gives the quota somewhere real to degrade to, and closes the section 12.1 item 2 gap
 without inventing a default nobody chose. It is a settings change, not a deploy.
+
+**A fifth defect, found while fixing the fourth.** `wording._conflict_sentence` discards
+`conflict.note`. For a printed-versus-handwritten conflict that is survivable, because both
+competing values are in `values[]` and the sentence can show them. For an **ambiguous date** it is
+fatal to the point of the rule: rule 3 deliberately puts one printed string in `values` and both
+readings in `note`, so dropping the note leaves the customer reading "I can see 11/08/2026, which
+one should I use?" - a question naming one value and offering no alternatives. The note must be
+rendered. This was unreachable before `document_date` existed, which is why it surfaced only now.
 
 **What is still not verified.** Because image 02's header was never attempted, the two specific
 baseline defects the plan names for that image - `J&Y` read as `JAY`, and `11/08/2026` read as
