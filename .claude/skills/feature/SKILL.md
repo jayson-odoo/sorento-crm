@@ -190,11 +190,13 @@ never a dev server.
 | 8 review | `/code-review` (this repo's), then optional `/codex-review` | `reviewer` agent + main session |
 | bugs | `/triage` then `/diagnosing-bugs` | main session |
 | periodic | `/improve-codebase-architecture`, `/codebase-design` | main session |
-| context | `/handoff`, `/research` | main session |
+| context full mid-slice | `/handoff` then `/clear` then `/resume-handoff` | main session (user types `/clear`) |
+| context research | `/research` | main session |
 
 ## Related
 
 - `PRINCIPLES.md` — the binding contract this skill executes
 - `CLAUDE.md` — repo conventions, dev sessions, lessons learned
 - `CONTEXT-MAP.md` — glossaries
-- `documentation/agents/` — issue tracker, triage labels, domain doc rules
+- `documentation/agents/` — issue tracker, triage labels, domain doc rules,
+  session handoff (`/handoff` + `/resume-handoff`, the autocompact replacement)

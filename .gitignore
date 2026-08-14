@@ -46,6 +46,11 @@ private_key.pem
 # lavish artifact output (local only)
 .lavish/
 
+# Session resume documents written by /handoff. Transit, not artifacts - they must
+# never land in a feature PR diff. The README documents the convention and stays.
+.claude/handoffs/*
+!.claude/handoffs/README.md
+
 # Pre-trial snapshot written by scripts/container_status_trial.py - holds live
 # clearance data, and is per-environment. Keep it on the box, out of the repo.
 sorento_crm_backend/scripts/container_status_trial_snapshot.json
