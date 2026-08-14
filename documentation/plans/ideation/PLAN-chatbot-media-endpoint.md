@@ -993,6 +993,75 @@ override only inside a probe and the five real calls silently ran on `gpt-4o-min
 by asserting the model on each returned row, discarded the run, fixed it, and re-ran. The numbers
 above are from the corrected run.
 
+## 16. Review findings and how each was resolved
+
+Phase 3 review of the branch. The spine passed - the async wait, the ledger, the idempotency key,
+the migration chain, the permission grant path and the settings dict-builder discipline were all
+checked and clean. What follows is what did not pass.
+
+### 16.1 The voice quota was not enforced at all (blocker)
+
+`media_access_service` degrades **both** modalities on `media_image_degraded_model`, but no
+`media_voice_degraded_model` exists and `_extract_voice` never reads `job.tier`. Since migration
+358 seeds the image degraded model, this is live behaviour: **every over-quota voice note is
+accepted and transcribed at the full standard model, forever.** `media_voice_monthly_limit` is
+decorative, and the contact is told "I am reading this one with a simpler model and may get it
+wrong" about a transcription that used exactly the same model as always.
+
+That last part is the one that decides the fix. Section 12.1 already named it as the outcome to
+avoid: telling a contact their accuracy has dropped when nothing changed. It is the same failure
+as a silent wrong answer, wearing a warning label.
+
+**Resolution: give voice its own `media_voice_degraded_model`, defaulting to NULL, and wire
+`job.tier` into `_extract_voice`.** NULL means the quota is a hard refusal, which is the behaviour
+section 3.2 already specifies for an unconfigured degraded tier, and it is honest: no cheaper
+transcription model has been measured, so none is claimed. Image ships seeded because its tiers
+were measured (section 14.1); voice ships unseeded because they were not. The captain's
+degrade-not-refuse decision is honoured by the mechanism existing and being one setting away, not
+by pretending a degradation happened.
+
+`wording.degraded()` and the quota-exhausted wording become **modality-aware** at the same time.
+
+### 16.2 The wording claimed a shared allowance that does not exist
+
+The quotas are per-modality - separate limits, separate ledger counts, separate `warned_period`
+stamps - but the text read "you have used all 50 of this month's photo and voice reads". A dealer
+told that still has 100 voice reads. UAC S6-04 asks for a true X-of-Y and this was not one.
+
+### 16.3 The settings page could never show its error state
+
+`isLoading || !draft` was checked before `isError`, and on a failed load `draft` stays null, so the
+first branch always won. The operator saw loading skeletons forever and the error `Alert` was
+unreachable. Swapping the checks fixes it - and it is exactly the class of defect the missing
+frontend tests would have caught, which is 16.4.
+
+### 16.4 No frontend tests, on a slice with four [FE] acceptance criteria
+
+`PRINCIPLES.md` step 4 is explicit that vitest and one Playwright E2E land in Phase 2 and are
+never deferred. The backend suite is thorough; the frontend has none. Vitest coverage is added.
+
+**The Playwright E2E cannot be run here and is not claimed.** It needs a CRM login, and the
+credentials the e2e specs read (`*_E2E_EMAIL` / `*_E2E_PASSWORD`) are in no `.env` in this
+environment; the local database is a copy of production, so resetting a real user's password to
+manufacture one is not acceptable. This is recorded as an explicit gap rather than quietly
+skipped, and it is the same reason browser verification of the two operator surfaces is
+outstanding.
+
+### 16.5 Accepted as-is, with reasons
+
+- **Two blocking Redis calls in the async handler** (`enqueue_job`, `rate_limit.hit`). Measured p50
+  is ~9ms so this is tail risk, not routine - but the whole point of section 3.3b is that nothing
+  multi-second blocks the loop, and `queue_service`'s shared connection sets no socket timeout, so
+  a Redis stall would block the process. Wrapped, and the static guard that missed it is widened.
+- **A timed-out extraction keeps running and still stamps the ledger.** The orphaned thread later
+  completes its provider call and writes token counts onto a row already marked `failed`. Not
+  corruption - the snapshot reasoning holds - but the spend is invisible and the row is annotated
+  as a success it was not. The orphan now checks job status before stamping.
+- **`build_callback_body` hardcoded `notices: []`**, so the one-shape-three-transports guarantee
+  held only because nothing populated it.
+- **A replayed refusal returned no customer text**, so if n8n's retry is the response that reaches
+  the dealer, a `denied_gate` arrives with no message at all.
+
 ## Appendix A - the extraction system prompt
 
 This is the design, not a sketch. Transcribe it into `app/services/media_extract/prompts.py` as a
@@ -1283,9 +1352,13 @@ re-derive the reasoning.
    message is suppressed for the rest of the window (in the service, because it is a Redis
    decision), and `not_enabled` has an image variant mirroring the voice sentence in shape.
 
-**Still owed on this slice:** the pytest suite for S4/S5/S6 (S4-12, S5-06, S6-07) and the corpus
-run (S4-11). No real photo has been through the shipped prompt yet, so nothing here may be
-described as verified extraction quality.
+**Since settled:** the pytest suite for S4/S5/S6 landed and the corpus run (S4-11) was executed
+twice against the three real photos - results in `chatbot-media-endpoint-corpus-results.md`, and
+the Trap C regression it exposed in `chatbot-media-endpoint-trapc-reliability.md`. Extraction
+quality is measured, not asserted, and section 13 states plainly what it still gets wrong.
+
+**Still owed:** the Playwright E2E and browser sign-off of the two operator surfaces, both blocked
+on a CRM login this environment does not have (section 16.4).
 
 ---
 
