@@ -910,6 +910,43 @@ baseline defects the plan names for that image - `J&Y` read as `JAY`, and `11/08
 November - remain **unverified rather than fixed**. Rules 1 and 3 could not be scored on a field
 the model did not attempt. The re-run after these fixes is what tests them.
 
+## 14. The Trap C regression, and the decision rule for it
+
+Full data: `documentation/plans/ideation/chatbot-media-endpoint-trapc-reliability.md`.
+
+The second corpus run lost Trap C: the handwritten-over-printed quantity came back with no
+conflict and `confident: true`, where run 1 had flagged it. n=1 cannot separate a prompt regression
+from vision-model variance, so it was measured: image 02, N=5 per arm, temperature 0.
+
+| arm | prompt | conflict fired | entity confidence | header block |
+|---|---|---|---|---|
+| A | current (rules 11 and 14 added) | **0/5** | always `true` | present 5/5 |
+| B | run-1 prompt | **5/5** | always `false` | absent 5/5 |
+
+A clean 0/5 versus 5/5 at temperature 0 is a **prompt regression, not variance**.
+
+**The hypothesis I offered was wrong, and the data says so.** I guessed rule 2 had been buried by
+the new rules. It is byte-identical between arms and moved from 29.0% to 27.8% through the prompt -
+the new content sits almost entirely *after* it. So "the conflict rule got pushed later" is not the
+mechanism. What the data supports is an attention-budget effect: the same call reliably performs
+the *new* extraction ask and reliably drops the *pre-existing* vigilance ask.
+
+Also worth recording: the misread printed value (`16` for `6`) was identical across all ten calls
+in both arms. That vision error is stable and completely orthogonal to the prompt - it is a model
+tier problem, not a prompt problem, and no prompt wording will fix it.
+
+**The decision rule, written before the next measurement so it cannot be rationalised afterwards:**
+
+1. Add a closing vigilance step (rule 18 in Appendix A) placed **last**, so recency works for the
+   safety property rather than against it, and measure again at N=5.
+2. **If conflict detection does not return to at least 4/5, delete rules 11 and 14 and accept the
+   missing header block.** Conflict detection is the safety property this feature exists to
+   provide; header coverage is a convenience. A system that reads the customer name but silently
+   reports a wrong quantity is worse than one that reads neither, because the wrong quantity is
+   acted on.
+3. Either way, the standard tier must not be `gpt-4o-mini`. Arm B shows the *behaviour* is
+   achievable, and the stable misread shows the *accuracy* is not, at this tier.
+
 ## Appendix A - the extraction system prompt
 
 This is the design, not a sketch. Transcribe it into `app/services/media_extract/prompts.py` as a
@@ -1034,6 +1071,16 @@ THE CAPTION
 17. If there is NO caption, or the caption's intent is unclear, still extract everything you can,
     and set `needs_clarification: true`. Do not guess what the customer wants done with the photo.
     Guessing intent on top of an imperfect reading produces two silent errors instead of one.
+
+BEFORE YOU RETURN
+
+18. Look once more at every value you are about to report. Is any printed value struck through,
+    written over, circled, crossed out, or contradicted by handwriting, a stamp, or a correction?
+    If so it belongs in `conflicts` with both readings, and whatever carries it is
+    `confident: false`. Do this check even when the page was easy to read, and even when you have
+    already found everything else you were asked for. A missed amendment is the worst outcome of
+    this task: it produces a number that looks right, reads confidently, and is wrong, and someone
+    acts on it.
 
 {caption_block}
 ```
