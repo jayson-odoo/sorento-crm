@@ -160,6 +160,13 @@ register_lookup_write_listeners()
 from app.services.company_scope import register_company_scope_listeners
 register_company_scope_listeners()
 
+# Dealer Kit collection rules are evaluated by the SAME rule engine as automation
+# triggers, so its `product` fact source has to be on the registry before the
+# first /rule-facts request - otherwise the RuleBuilder renders an empty field
+# list and a Designer cannot author a collection at all.
+from app.services.dealer_kit.product_facts import register_product_facts
+register_product_facts()
+
 
 def _register_activities_adapters() -> None:
     """Register per-entity Activities & Notes adapters at process boot.

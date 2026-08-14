@@ -48,14 +48,30 @@ def _require_db_url() -> str:
 
 
 def create_schema() -> None:
-    """Create every table declared by the ORM models, plus the `scm` schema."""
+    """Create every table declared by the ORM models, plus the named schemas."""
     import app.models  # noqa: F401  — registers every model on Base.metadata
     from sqlalchemy import text
 
     from app.database import Base, engine
 
     with engine.begin() as conn:
-        conn.execute(text("CREATE SCHEMA IF NOT EXISTS scm"))
+        # Every Postgres schema any model declares, READ OFF THE MODELS.
+        #
+        # `create_all` creates TABLES, never the schema that holds them, so a
+        # model naming one Postgres has never heard of aborts the whole
+        # bootstrap with "schema does not exist" - and bootstrap is the ONLY way
+        # this database is built from zero, in CI and anywhere else. That is how
+        # `dealer_kit` broke it: the list here said `scm` and nobody remembered
+        # to add the second one.
+        #
+        # Derived rather than listed for exactly that reason. A hand-maintained
+        # list is a step somebody has to remember at the moment they are thinking
+        # about something else, and it fails in the one environment nobody runs
+        # by hand. Base.metadata already knows the answer.
+        for schema in sorted(
+            {table.schema for table in Base.metadata.tables.values() if table.schema}
+        ):
+            conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
         # pgvector / trigram are used by the embedding + entity-resolver paths.
         for ext in ("vector", "pg_trgm"):
             try:

@@ -37,11 +37,22 @@ a Project of a different type, and the UI renames it via terminology. This modul
 so EMS and Sorento can share it.
 
 ### Project Task
-A unit of work on one Project, carrying an assignee and a due date. Two categories:
-**pursuit** (the sales actions needed to win — visit the architect, submit the quotation,
-deliver the sample, chase the PO) and **delivery** (post-win execution). A Project Template
-ships a default checklist of them, so registering a development lays out the work rather than
-leaving a blank page.
+A unit of work on one Project, carrying an assignee and a due date. A Project Template ships a
+default checklist of them, so registering a development lays out the work rather than leaving a
+blank page.
+
+Two **independent** axes, which must not be collapsed into one field:
+
+- **Task phase** — `pursuit` (the sales actions needed to win: visit the architect, submit the
+  quotation, deliver the sample, chase the PO) or `delivery` (post-win execution).
+- **Task category** — the work-stream a task belongs to (Spec-in, Sampling, Commercial,
+  Logistics), supplied by the template. This is what the Tasks board **groups by**, in
+  collapsible sections, with each task showing its own status. Same meaning as ecohub's
+  `category`.
+
+**Escalate** and **Stuck** are statuses that cannot be set without their context: escalating
+requires naming the person escalated to, and going stuck requires a reason. Both then render on
+the task itself — a status without its reason is useless to whoever reads it next.
 
 A Project's **next action** is the due date of its earliest open Task — derived, never stored.
 There is no separate committed-follow-up field; two records of the same promise would drift.
@@ -224,3 +235,288 @@ Always present, never toggleable.
 A capability a tenant installs and can turn off — an `app_modules_catalog` entry, a
 `tenant_modules` enablement row, and a route guard. Enablement is the entire definition;
 schema location is a separate decision.
+
+---
+
+## Dealer Sales Kit
+
+### Dealer Sales Kit (the Kit)
+The set of capabilities Sorento sells to its dealers. Nine **Packages** in the
+vision: Brochure Generator, Stock Check, AI Design, Order Management, Warranty,
+Display Rack, Product Knowledge, Extra Discount, Exhibition Request. The Kit is
+one installable capability, not nine.
+
+### Package
+One sellable capability inside the Kit. A **Dealer** may hold some Packages and
+not others. Distinct from a *module* (what a tenant installs) — the Kit is one
+module; Packages are what a Dealer is entitled to within it.
+
+### Dealer
+A business that buys from Sorento and sells on to Consumers. A Dealer is a
+**Customer** of Sorento — it is **not** a Company. Dealer staff reach the Kit as
+Contacts, not as Users.
+
+### Consumer (end user)
+The Dealer's customer. Never buys from Sorento directly. Distinct from
+**Customer**, which in this system always means Sorento's counterparty.
+
+### Company
+An operating entity Sorento runs (Sorento, Mocha) — an isolated data partition
+with its own products, stock and customers. **A Dealer is never a Company.**
+See ADR-0007.
+
+### Designer
+Whoever may build and publish **Pages**, **Tile Templates** and library
+**Collections**. A capability, not a job title or an account type — grantable to
+Sorento marketing staff today and to a Dealer later.
+
+### Approver
+Whoever may accept or reject a finished **Edition** before it goes live. Held by
+someone other than the **Designer** who built it — an Edition nobody else has
+looked at cannot go live. Approval is about the offer (products, combinations,
+prices), not the layout.
+
+### Assembler
+Whoever may produce a **Brochure** from an existing Page without touching its
+layout. The Dealer's normal role.
+
+---
+
+## Authoring
+
+### Page
+One publishable document: an ordered list of **Sections** plus a layout for each
+breakpoint. A Page is *viewer-agnostic* — what a given reader sees (which
+prices, which products) is resolved when it is read, not when it is written.
+The same Page serves staff, Dealers and Consumers.
+
+### Section
+A full-width horizontal band of a Page, with its own background and padding, and
+a grid inside it. Called a **zone** in earlier meeting notes — "Section" is the
+term.
+
+### Block
+One placed thing inside a Section's grid: text, image, artboard, or a bound
+product grid. Blocks occupy grid cells; they are never positioned in absolute
+pixels.
+
+### Tile Template
+The design of a single product's card — image, name, code, price, badges,
+certification icons, call to action. Authored once, reused by every bound
+product grid. Called an **item** in earlier meeting notes.
+
+### Artboard
+A fixed-aspect Block inside which things *may* be freely positioned. The one
+exception to grid placement, for hero and feature imagery.
+
+### Asset
+A reusable piece of artwork — logo, icon, decorative element — uploaded for use
+in designs. Belongs to no product. Referenced by identity, never by filename, so
+renaming a file cannot break a published Page.
+
+### Badge
+A mark rendered on a Tile from the **product's own data** — never placed by
+hand. A product carries a certification because it holds a document of that
+type; the artwork comes from the type. A Badge is therefore a claim about the
+product, and showing the wrong one is a compliance failure, not a layout bug.
+
+### Print Preview
+The Page rendered at true paper geometry, showing where each page begins. It is
+the same render that becomes the PDF — which is what makes its page breaks
+trustworthy. The editing canvas never shows page breaks, because it is not at
+paper width and would be guessing.
+
+### Edition
+The catalogue as published for a period — "2024", "2026 bathroom". An Edition is
+produced by duplicating the previous one and revising it, so it accumulates
+**Versions** as it is worked on, and goes live once. Editions succeed each other;
+Versions accumulate inside one.
+
+### Proposal
+A change generated by the system that a person must accept before it takes
+effect. AI re-spacing produces a Proposal; wall detection produces a Trace to
+confirm. The system never rearranges a Designer's work silently — **the system
+suggests, a person decides**, everywhere.
+
+### Version / Label
+A published Page is an immutable **Version**; going live moves a **Label** to
+point at one. Same pattern as AI prompt versions and labels. Publishing moves a
+pointer; it never edits a Version.
+
+---
+
+## Products and selling
+
+### Collection
+A curated, ordered set of products, defined by a rule plus manual pins and
+exclusions. **Library** Collections are named and reusable; **page-scoped**
+Collections are the ad-hoc set someone picked inside one editor session. A
+page-scoped Collection can be promoted to a library one.
+
+### Selection
+The running list of products a person has chosen, carried across the whole
+journey — browsing, designing, summarising, ordering. One Selection spans
+brochure, design and checkout; it is never re-picked per step. An abandoned
+Selection is a lead with a product list attached.
+
+### Bundle
+A named set of products sold together at its own price — "buy this set for RM X".
+A Bundle is part of the catalogue, chosen like a product, but it **is not a
+product**: it is never stocked, never costed and never sent to accounting. What
+is ordered is always its components; the Bundle is the price and the name they
+are shown under. It is available only while every component is, so losing one
+component ends the Bundle rather than shrinking it.
+
+A Bundle is **not** a **Discount Rule**: it has no code to enter, no usage limit
+and no validity window. Where a Discount Rule reduces a price at checkout, a
+Bundle *is* a price.
+
+### Brochure
+One Assembler-produced instance: a Page, a page-scoped Collection, and cover
+details. Shareable and exportable. Renders against the Page Version it was made
+from, so a Brochure sent last month still looks the way it did.
+
+### Quote
+The priced document between a Dealer and a Consumer. Owned by the Dealer.
+Carries the Dealer's own retail pricing — which is the Dealer's commercial
+information, not Sorento's.
+
+### Draft Order
+A Dealer-to-Sorento order awaiting the Dealer's submission. This — not the
+Quote — is what enters Sorento's order pipeline.
+
+---
+
+### Discount Rule (voucher)
+A configured rule that reduces a price when its conditions hold — percentage,
+fixed amount, or percentage with a cap — bounded by a validity window and a
+usage limit. Distinct from a **Promotion**, which in this system means marketing
+collateral and carries no pricing maths. Every redemption is recorded, never
+counted.
+
+### Warranty Registration
+A Consumer's record that they bought a specific product on a specific date. Its
+expiry is fixed when it is created — a later change to a product's warranty
+period must never shorten a warranty someone already holds. A claim against it
+becomes a **Complaint**; warranty does not run a parallel service pipeline.
+
+Registering is never a precondition of being covered. Cover runs from the date of
+purchase whether or not anyone registered, so lodging a Complaint creates the
+Registration if it is missing. Registering early is worth doing because it is
+proof and because a few products grant longer cover to those who do — not because
+the unregistered are turned away.
+
+### Warranty Term
+**One promise Sorento makes about one part of one kind of product** — how long it
+lasts, which defects it covers, and whether labour is included.
+
+Cover attaches to the **part**, never the whole product: a water closet's ceramic
+body, its flushing fittings and its seat-cover mechanism carry three different
+promises that expire on three different dates. A term may run for a period or for
+the product's lifetime, and may cover only certain defects (a lifetime ceramic
+body covers cracking and leaking, nothing else).
+
+Terms name a **kind** of product — a category, a named series, or a specific list
+of models — never one product at a time.
+
+Whether **installation is included** is part of the promise, and it is what
+decides who pays for the visit. A part still under cover whose term excludes
+installation means the part is free and the callout is not.
+
+Replacing a part under warranty transfers the **remaining** cover to the new part.
+It never starts a fresh one.
+
+Terms are **versioned and dated**. A Complaint is always judged against the terms
+in force on its date of purchase, so republishing the policy never changes what
+someone already bought.
+
+### Request
+A dealer-submitted ask that a person decides on — an exhibition, a display rack,
+support. Requests are **configured, not built**: they share one submission,
+approval and SLA pipeline, and differ only by definition.
+
+---
+
+## After-sales
+
+### Complaint
+**One customer issue, start to finish** — the after-sales case. Raised once, no
+matter how many visits, collections or replacements it takes to settle. It owns
+the SLA clock, the conversation thread, the notifications and the one
+satisfaction survey.
+
+A Complaint is never subdivided into more Complaints. Work done to settle it
+lives in its children (product lines, **Service Jobs**, linked delivery orders) —
+so one issue is always one row, one clock, one card on the submitter's portal,
+one survey. A **Warranty Registration** claimed against becomes a Complaint; it
+does not start a parallel pipeline.
+
+Broader than the English word: a Complaint covers a chargeable out-of-warranty
+service call and a dealer's wrong-model delivery just as much as a genuine
+grievance.
+
+### Submitter
+**Whoever lodged the Complaint** — and the only party the system converses with
+about it. Usually a salesperson or Customer Service transcribing what someone
+else reported; sometimes the Dealer; sometimes the Consumer. The Submitter owns
+the portal thread and receives every status update.
+
+Distinct from the parties the Complaint is *about*. A Consumer is notified only
+when they are themselves the Submitter.
+
+### Service Job
+**One scheduled attendance on one Complaint** — a technician, a time window, a
+site, and photographic proof of what was done. A Complaint needing two visits has
+two Service Jobs; a Complaint settled by shipping a replacement has none.
+
+Deliberately free of after-sales vocabulary so it can be attached to whatever
+requested it — a Complaint here, something else in another system.
+
+### Site
+**Where the work physically happens** — an address, and the person to call on
+arrival. Belongs to the Complaint, not to a party: one Consumer may have several,
+and the Dealer's shop is a Site as readily as a home.
+
+### Technician
+**Whoever attends a Service Job.** Not a system user and never given one — a
+technician holds no CRM account, sees no listings, and reaches their own work
+through the portal on their phone like any other outside party. Identified by the
+phone they already message from.
+
+### Warranty Product Kind
+**The kind of thing the warranty policy talks about** — a water closet, a wash
+basin, a sensor tap — which is not the same as the category a product is filed
+under for selling. Selling categories split by brand and by buying pattern; the
+policy splits by what the thing is and what can go wrong with it. **Warranty Terms
+scope to a Kind**, so the same promise covers every model of that kind without
+being restated per product.
+
+A Kind is what a Consumer recognises. It is the level at which cover can be
+decided even when the exact model is still unknown — which is why a claim can be
+answered from a photograph before anyone has pinned down the variant.
+
+---
+
+## Space and design
+
+### Space
+The Consumer's actual room, as captured in the system. Arrives as a floor plan
+image, a photo, or a drawn outline.
+
+### Trace
+The editable outline of walls, doors and windows over a Space. Automatic
+detection *seeds* a Trace; a person always confirms it. Detection is never the
+final word.
+
+### Scale calibration
+Binding pixels to real-world millimetres. Mandatory before a Space can be used —
+without it every downstream dimension, and therefore every Quote, is fiction.
+
+### Proxy model
+A dimensionally-correct box standing in for a product that has no 3D model,
+sized from the product's real dimensions. Not a placeholder to be tolerated —
+the accurate thing, until a real model exists.
+
+### Render
+The saleable image. Produced by AI from the scene, not by the 3D engine. The 3D
+scene carries *layout truth*; the Render carries *beauty*.

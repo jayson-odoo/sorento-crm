@@ -1,5 +1,5 @@
 """Product schemas."""
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional, List
 from datetime import date, datetime
 from decimal import Decimal
@@ -370,6 +370,92 @@ class ProductAttachmentUpdate(BaseModel):
     is_primary: Optional[bool] = None
     sort_order: Optional[int] = None
     access_levels: Optional[list[str]] = None
+
+
+# --- Brochure image: which photo of a product a catalogue tile shows (S7.0) ---
+#
+# camelCase on the wire, because the picker screen reads these keys directly and
+# a snake_case response is a blank screen rather than an error. The field alias
+# covers both directions, so the service's already-camelCase dicts validate
+# straight into these models.
+
+
+class BrochureImageCandidate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    attachment_id: str = Field(alias="attachmentId")
+    # The only thing telling two thumbnails apart when one of them turns out to
+    # be a different product entirely.
+    filename: Optional[str] = None
+    url: Optional[str] = None
+    access_levels: Optional[List[str]] = Field(default=None, alias="accessLevels")
+
+
+class BrochureImageRow(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    product_id: str = Field(alias="productId")
+    product_code: Optional[str] = Field(default=None, alias="productCode")
+    product_name: Optional[str] = Field(default=None, alias="productName")
+    chosen_attachment_id: Optional[str] = Field(default=None, alias="chosenAttachmentId")
+    candidates: List[BrochureImageCandidate] = Field(default_factory=list)
+
+
+class BrochureImageList(BaseModel):
+    items: List[BrochureImageRow] = Field(default_factory=list)
+    total: int = 0
+    # Products in this filter still without a chosen image. The number the screen
+    # leads with, so it is counted over the whole filter and not the page.
+    remaining: int = 0
+    shown: int = 0
+    # Products in this filter with at least one image somebody could pick,
+    # chosen or not. Zero means the screen has nothing to offer at all, which is
+    # a different answer from "you have finished" and needs a different empty
+    # state. Counted over the filter, never over the page.
+    choosable: int = 0
+
+
+class BrochureImageSet(BaseModel):
+    """The body of a choose-this-photo call.
+
+    Requests are snake_case and responses are camelCase, which reads as
+    inconsistent but matches the rest of this API: bodies go in as the database
+    spells them and come out as the screen needs them.
+
+    One spelling only, deliberately. Accepting ``attachmentId`` as well was
+    tried and removed: nothing sent it, so it was a second code path kept alive
+    on speculation, and an untested alias is how a real casing mismatch passes
+    unnoticed. A client using the wrong key gets a 422 naming the field.
+    """
+
+    attachment_id: str
+
+
+class BrochureImageChoice(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    product_id: str = Field(alias="productId")
+    chosen_attachment_id: Optional[str] = Field(default=None, alias="chosenAttachmentId")
+
+
+class BrochureImageAdoptSingle(BaseModel):
+    """Which products to answer, where the answer is not in doubt.
+
+    A list rather than "everything matching the filter": the screen knows which
+    products it is showing, and a filter re-evaluated on the server could take
+    in rows the user never saw.
+    """
+
+    product_ids: List[str]
+
+
+class BrochureImageAdopted(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    # The ones actually answered. Products with no candidate, or with a choice
+    # to make, are absent - so the screen can say what it did rather than what
+    # it tried.
+    product_ids: List[str] = Field(default_factory=list, alias="productIds")
 
 
 # Max rows per product import (queued job); kept reasonable to avoid huge request payloads
