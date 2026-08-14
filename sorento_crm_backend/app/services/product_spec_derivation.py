@@ -1081,7 +1081,7 @@ def derive(
     return out
 
 
-def _apply_scope(out: "DerivedSpec", applies_when: dict[str, dict]) -> None:
+def _apply_scope(out: "_Derivation", applies_when: dict[str, dict]) -> None:
     """Remove derived keys whose `applies_when` the product does not satisfy.
 
     Gate values are compared case-insensitively against what THIS derivation produced,
