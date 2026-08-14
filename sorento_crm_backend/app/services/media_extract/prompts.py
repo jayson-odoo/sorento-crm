@@ -13,6 +13,13 @@ read as November); the label-lane rules are a coverage fix for fields the old
 `portal.complaint` schema had no home for. **A rule that looks removable is
 almost certainly load-bearing - check 4.3 before touching it.**
 
+Rule 18's POSITION is load-bearing too. Adding the extraction rules 11 and 14
+measurably destroyed conflict detection - 0/5 against 5/5 at temperature 0 on
+the same image (PLAN section 14) - because the call reliably performs the new
+extraction ask and reliably drops the pre-existing vigilance ask. The closing
+`BEFORE YOU RETURN` step is placed LAST so recency works for the safety
+property. Do not move it earlier, and do not fold it back into rule 2.
+
 `{max_entities}`, `{hint_enum}` and `{caption_block}` are formatted in at call
 time, which is why every literal JSON brace in the text is doubled.
 """
@@ -191,6 +198,16 @@ THE CAPTION
 17. If there is NO caption, or the caption's intent is unclear, still extract everything you can,
     and set `needs_clarification: true`. Do not guess what the customer wants done with the photo.
     Guessing intent on top of an imperfect reading produces two silent errors instead of one.
+
+BEFORE YOU RETURN
+
+18. Look once more at every value you are about to report. Is any printed value struck through,
+    written over, circled, crossed out, or contradicted by handwriting, a stamp, or a correction?
+    If so it belongs in `conflicts` with both readings, and whatever carries it is
+    `confident: false`. Do this check even when the page was easy to read, and even when you have
+    already found everything else you were asked for. A missed amendment is the worst outcome of
+    this task: it produces a number that looks right, reads confidently, and is wrong, and someone
+    acts on it.
 
 {caption_block}
 """
