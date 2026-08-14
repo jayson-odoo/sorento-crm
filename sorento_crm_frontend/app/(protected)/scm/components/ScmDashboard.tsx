@@ -26,7 +26,7 @@ export function ScmDashboard() {
   const [filters, setFilters] = useState<ScmFilters>({ ...EMPTY_SCM_FILTERS });
 
   // `overstock` (days-of-cover over the ceiling) is now computed + filtered
-  // server-side, so filters flow straight through — no client-side stripping.
+  // server-side, so filters flow straight through - no client-side stripping.
   // (`low` / below reorder point is DEFERRED to M3 and can never be set here.)
   const rollups = useScmRollups(filters);
   const warehouses = useWarehouseHealth(filters);
@@ -43,7 +43,7 @@ export function ScmDashboard() {
     setPerspective('product');
   };
 
-  /** Legend chip / stat-card toggle — filters the current perspective to a
+  /** Legend chip / stat-card toggle - filters the current perspective to a
    *  status (or clears). Shared state, so legend chips + stat cards agree. */
   const toggleHealth = (state: HealthState) => {
     setFilters((f) => ({ ...f, healthStatus: f.healthStatus === state ? null : state }));
@@ -65,7 +65,7 @@ export function ScmDashboard() {
 
   return (
     <div className="space-y-5">
-      {/* Scope transparency — the focused default silently narrows the tiles
+      {/* Scope transparency - the focused default silently narrows the tiles
           below, so surface the active lifecycle scope + a one-click "Show all". */}
       <ScmScopeChip filters={filters} onChange={setFilters} />
 
@@ -73,7 +73,7 @@ export function ScmDashboard() {
         data={rollups.data}
         isLoading={rollups.isLoading}
         isError={rollups.isError}
-        // Drill-down popup base scope — health (incl. overstock) + ABC/XYZ are all
+        // Drill-down popup base scope - health (incl. overstock) + ABC/XYZ are all
         // filtered server-side, so pass the live filters straight through.
         filters={filters}
         onViewInList={(status) => viewProducts({ status })}

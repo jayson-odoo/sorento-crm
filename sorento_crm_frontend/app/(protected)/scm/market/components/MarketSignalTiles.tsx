@@ -43,7 +43,7 @@ function Tile({
 }
 
 /** Roll-up tiles above the signals panel: active topics, signals captured, last
- *  captured time. Non-interactive (unlike the reorder tiles) — pure summary. */
+ *  captured time. Non-interactive (unlike the reorder tiles) - pure summary. */
 export function MarketSignalTiles({
   activeTopicCount,
   signalCount,

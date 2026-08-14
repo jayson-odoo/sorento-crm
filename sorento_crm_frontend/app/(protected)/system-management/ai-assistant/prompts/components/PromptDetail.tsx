@@ -31,6 +31,7 @@ import {
 } from '../../hooks/useAIAssistantPrompts';
 import { validateVars } from '../../lib/promptVars';
 import type { SaveVersionError } from '../../services/aiPromptsService';
+import { AgentModelCard } from './AgentModelCard';
 import { DiffView } from './DiffView';
 import { DryRunBox } from './DryRunBox';
 import { PublishDialog } from './PublishDialog';
@@ -215,6 +216,9 @@ export function PromptDetail({ name }: { name: string }) {
       ) : null}
 
       <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
+        <div className="flex flex-col gap-4">
+        <AgentModelCard name={name} canEdit={canEdit} />
+
         {/* Version history */}
         <Card className="h-fit">
           <CardHeader>
@@ -299,6 +303,7 @@ export function PromptDetail({ name }: { name: string }) {
             })}
           </CardContent>
         </Card>
+        </div>
 
         {/* Editor + tools */}
         <div className="space-y-4">

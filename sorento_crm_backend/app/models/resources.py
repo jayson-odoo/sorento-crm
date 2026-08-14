@@ -52,6 +52,22 @@ class AttachmentType(Base):
     certification_logo_attachment_id = Column(
         UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True
     )
+    # When false, an upload of this type does NOT call the n8n intake webhook, and
+    # the upload-activity drawer skips it. Without this the row waits forever on a
+    # reply that is never coming, and shows "Processing" while it waits. Default
+    # true: every type n8n already handles keeps behaving as it does today.
+    triggers_n8n_webhook = Column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
+    # When true, an upload of this type can mint a certificate register row. The
+    # gate is on the TYPE, not the type's name, so a new cert kind is a checkbox
+    # rather than a code change - and a Technical Specifications sheet quoting
+    # "cert PPS 0119" can never mint one.
+    is_certificate = Column(Boolean, default=False, nullable=False, server_default="false")
+    # Longest plausible validity span, in months, for a certificate of this type.
+    # NULL = unlimited. Backs the plausibility check that flags a hallucinated
+    # extraction date instead of swallowing it.
+    max_validity_months = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     # Two FK paths now link these tables: attachments.attachment_type_id (a file

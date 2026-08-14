@@ -302,6 +302,18 @@ def _reset_global_state():
                 _r.delete(*_keys)
     except Exception:
         pass
+    try:
+        # `app.services.storage_router` memoises signed URLs (including signing
+        # FAILURES, cached as None) in a process-global `_signed_cache` keyed by
+        # (provider, key, expires_in). Without a reset, an earlier test's cached
+        # failure for the same key silently short-circuits a later test's
+        # working backend and it gets the stale `None` back instead of a real
+        # signature. Clear per test so ordering can't leak a cached result.
+        from app.services.storage_router import clear_signed_url_cache
+
+        clear_signed_url_cache()
+    except Exception:
+        pass
 
 
 # The sqlite type-affinity shims (`@compiles(JSONB|ARRAY, "sqlite")`) and the

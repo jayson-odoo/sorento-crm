@@ -87,6 +87,10 @@ export interface TriggerSpec {
    * form renders the RuleBuilder so matches can be filtered. Absent/empty on
    * triggers that can't be filtered (backend may omit until wired). */
   fact_sources?: string[];
+  /** True ⇒ several matches from one run can be folded into a single email per
+   * recipient, so the form offers the "Combine into one email" switch and sends
+   * group_matches. Absent/false on triggers where grouping means nothing. */
+  supports_grouping?: boolean;
 }
 
 export interface ListResponse<T> {

@@ -75,13 +75,14 @@ def resolve_recipients(
 
     if config.get("include_assigned_cs_pic") and source_id:
         from app.models.sla import ConversationSLATracking
+        from app.services.sla_scope import open_tracker_scope
 
         tracker = (
             db.query(ConversationSLATracking)
             .filter(
                 ConversationSLATracking.source_entity_id == str(source_id),
                 ConversationSLATracking.team_set_code == "customer_service",
-                ConversationSLATracking.is_resolved.is_(False),
+                *open_tracker_scope(),
             )
             .order_by(ConversationSLATracking.initiated_at.desc())
             .first()

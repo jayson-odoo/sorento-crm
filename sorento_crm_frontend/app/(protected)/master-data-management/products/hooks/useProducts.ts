@@ -23,6 +23,7 @@ import {
   bulkUpdateProducts,
   bulkDeleteProducts,
   getPriceHistory,
+  getProductPurchaseHistory,
   setVariantParent,
   unlinkVariant,
   resetVariantAuto,
@@ -105,6 +106,24 @@ export function useProduct(id: string | null) {
     },
     enabled: !!id,
     staleTime: 1000 * 60 * 5, // 5 minutes
+    retry: 1,
+  });
+}
+
+/**
+ * Every purchase order that bought this product, plus the cost summary the Overview
+ * leads with. Loaded on the detail page rather than on the tab, because the Overview
+ * shows the cost too and both must agree.
+ */
+export function useProductPurchaseHistory(id: string | null) {
+  return useQuery({
+    queryKey: ['product-purchase-history', id],
+    queryFn: () => {
+      if (!id) throw new Error('Product ID is required');
+      return getProductPurchaseHistory(id);
+    },
+    enabled: !!id,
+    staleTime: 1000 * 60 * 5,
     retry: 1,
   });
 }

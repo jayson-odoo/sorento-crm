@@ -1,11 +1,11 @@
 /**
  * ============================================================================
- * SCM M5 Part A — SEMANTIC EXPLANATION / Q&A / MARKET-ADVISORY feature service
+ * SCM M5 Part A - SEMANTIC EXPLANATION / Q&A / MARKET-ADVISORY feature service
  * ============================================================================
  * Layering: hooks (useExplainer) → THIS service → lib/api-client → backend.
  *
  * `USE_M5_MOCKS` (in `lib/explainerMockStore.ts`) toggles the in-memory mocks;
- * shipped false — calls hit the endpoints below, all mounted under
+ * shipped false - calls hit the endpoints below, all mounted under
  * `require_module_enabled_with_api_key("scm")` and gated on `scm.dashboard.view`.
  *
  * The M5 layer is a LANGUAGE surface only: it speaks the recommendation's
@@ -15,27 +15,27 @@
  *
  * ── PHASE-2 BACKEND CONTRACT (NEW) ──────────────────────────────────────────
  *
- *  1) Explanation — one plain sentence from the rec's frozen numbers
+ *  1) Explanation - one plain sentence from the rec's frozen numbers
  *     GET /api/v1/scm/recommendations/{id}/explanation
  *       → 200 { explanation: string }
  *     Lazy-generated the first time it's requested, then CACHED server-side
- *     (keyed by recommendation id) — the frozen inputs never change, so the
+ *     (keyed by recommendation id) - the frozen inputs never change, so the
  *     sentence is stable. One sentence, no fabricated figures.
  *
- *  2) Ask — a question bounded to THIS recommendation's numbers
+ *  2) Ask - a question bounded to THIS recommendation's numbers
  *     POST /api/v1/scm/recommendations/{id}/ask   body { question: string }
  *       → 200 { answer: string }
  *     The answer is grounded strictly in the rec's frozen fields. If the
  *     question needs a number the recommendation does NOT carry, the answer is
- *     EXACTLY "I can't compute that from this recommendation's data." — never a
+ *     EXACTLY "I can't compute that from this recommendation's data." - never a
  *     fabricated figure. (Shared as `REFUSAL` in `lib/explainerMockStore.ts`.)
  *
- *  3) Market advisory — an optional external market signal
+ *  3) Market advisory - an optional external market signal
  *     GET /api/v1/scm/recommendations/{id}/advisory
  *       → 200 { advisory: string | null }
  *     A short market-research sentence when a signal matches the SKU's category
  *     (e.g. "prices trending +8%; consider ordering sooner"); null when no
- *     signal matches. Advisory is DECISION-SUPPORT prose only — it never changes
+ *     signal matches. Advisory is DECISION-SUPPORT prose only - it never changes
  *     the frozen buy quantity.
  * ============================================================================
  */
@@ -59,7 +59,7 @@ import type {
   RunOverviewResult,
 } from '../types/explainer.types';
 
-/** Lazy, cached run-level AI overview — a short brief over the whole run's frozen
+/** Lazy, cached run-level AI overview - a short brief over the whole run's frozen
  *  aggregates. Real endpoint only (no mock). */
 export async function getRunOverview(runId: string): Promise<RunOverviewResult> {
   const res = await apiFetch(
@@ -157,7 +157,7 @@ export async function askRecommendation(
   return (await res.json()) as AskResult;
 }
 
-/** Optional market advisory for a recommendation — null when no signal (M5-A3). */
+/** Optional market advisory for a recommendation - null when no signal (M5-A3). */
 export async function getRecommendationAdvisory(
   rec: ReorderRecommendation,
 ): Promise<AdvisoryResult> {

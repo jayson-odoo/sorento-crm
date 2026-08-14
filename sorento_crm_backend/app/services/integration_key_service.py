@@ -26,7 +26,9 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.models.integration import Integration, IntegrationApiKey
 from app.services.integration_key_crypto import (
@@ -119,12 +121,115 @@ class IntegrationKeyService:
         # Stamped only on success. A failed attempt must not make a dead key
         # look live on the integrations screen -- that reading is what an admin
         # uses to decide whether closing a grace window is safe.
-        now = datetime.utcnow()
-        row.last_used_at = now
-        integration.last_used_at = now
-        self.db.flush()
+        self._stamp_usage(row, integration)
 
         return integration, None
+
+    # ------------------------------------------------------------ usage stamp
+
+    # How stale ``last_used_at`` may get before it is rewritten. It answers "is
+    # this key still live?", which does not need second precision -- and writing
+    # it on every request is precisely what made it a contention point.
+    USAGE_STAMP_INTERVAL = timedelta(minutes=1)
+
+    @classmethod
+    def _stamp_is_stale(cls, value: Optional[datetime], now: datetime) -> bool:
+        """True when the stamp needs rewriting.
+
+        ``abs`` deliberately: the column is naive and everything here writes
+        ``utcnow()``, but a value that ends up in the FUTURE -- clock skew, or a
+        backfill run through a session on a non-UTC server timezone -- would make
+        ``now - value`` negative and never reach the interval, silently disabling
+        the stamp forever. Treating a far-future value as stale lets the next
+        request correct it, while ordinary small skew still reads as fresh.
+        """
+        if value is None:
+            return True
+        return abs(now - value) >= cls.USAGE_STAMP_INTERVAL
+
+    def _stamp_usage(self, key_row: IntegrationApiKey, integration: Integration) -> None:
+        """Refresh ``last_used_at`` on the key and its integration, best-effort.
+
+        This was ``key_row.last_used_at = now; integration.last_used_at = now;
+        self.db.flush()``. Three things were wrong with it:
+
+        1. The UPDATE took a row-exclusive lock on the SAME ``integrations`` row
+           for EVERY api-key request, and a lock is held until the transaction
+           ends -- which here is the end of the request. So the concurrency
+           ceiling for all integration traffic was one request at a time, and a
+           single slow request froze every other caller behind it. On 2026-08-10
+           that produced 13 minutes of 504s with individual waits up to 155s.
+        2. It was taken at the FIRST dependency and released at the LAST, so the
+           lock spanned the caller's entire workload -- the worst possible hold.
+        3. ``flush()`` never commits, and ``get_db`` only closes (which rolls
+           back), so on read-only requests the write was discarded anyway. The
+           timestamps admins were reading were wrong: a live read-only
+           integration showed NULL forever.
+
+        Now: skipped entirely unless the stamp is genuinely stale, and otherwise
+        written on its own connection that commits immediately -- so the lock is
+        held for microseconds and never spans the caller's work.
+
+        Never raises. A stale timestamp is bookkeeping; failing an otherwise
+        valid authentication over it would be far worse. That also covers the
+        rare case where the extra connection cannot be checked out under pool
+        pressure: we skip the stamp rather than make the shortage worse.
+        """
+        now = datetime.utcnow()
+        if not self._stamp_is_stale(key_row.last_used_at, now) and not self._stamp_is_stale(
+            integration.last_used_at, now
+        ):
+            return
+
+        cutoff = now - self.USAGE_STAMP_INTERVAL
+        # `get_bind()` is an Engine in production but a Connection under the
+        # rolled-back-transaction test fixture; `.engine` normalises both.
+        bind = self.db.get_bind()
+        engine = getattr(bind, "engine", bind)
+        try:
+            with engine.connect() as conn:
+                # Far below the connection-wide lock_timeout. If someone else is
+                # mid-write on this row the stamp is already being refreshed, or
+                # something is wrong -- either way waiting seconds to record a
+                # timestamp is not worth a caller's latency. Give up almost at
+                # once and let the next request try.
+                conn.execute(text("SET LOCAL lock_timeout = '250ms'"))
+                # The WHERE guard makes concurrent stampers idempotent: whoever
+                # gets there first wins and the rest are no-ops, so a burst of
+                # requests still produces one write per interval.
+                conn.execute(
+                    text(
+                        "UPDATE integration_api_keys SET last_used_at = :now "
+                        "WHERE id = :id "
+                        "AND (last_used_at IS NULL OR last_used_at < :cutoff)"
+                    ),
+                    {"now": now, "id": key_row.id, "cutoff": cutoff},
+                )
+                conn.execute(
+                    text(
+                        "UPDATE integrations SET last_used_at = :now, updated_at = now() "
+                        "WHERE id = :id "
+                        "AND (last_used_at IS NULL OR last_used_at < :cutoff)"
+                    ),
+                    {"now": now, "id": integration.id, "cutoff": cutoff},
+                )
+                conn.commit()
+        except Exception as exc:  # noqa: BLE001 - bookkeeping never fails auth
+            logger.warning(
+                "integration.usage_stamp_failed integration=%s: %s",
+                integration.name,
+                exc,
+            )
+            return
+
+        # Reflect the stamp on the in-session objects so callers still read a
+        # current value. `set_committed_value` writes the attribute WITHOUT
+        # marking it dirty, so nothing is flushed and no lock is taken in the
+        # caller's transaction -- which is the entire point of this method.
+        # Only after a successful write, so a failed stamp never reads as a
+        # successful one.
+        set_committed_value(key_row, "last_used_at", now)
+        set_committed_value(integration, "last_used_at", now)
 
     # ----------------------------------------------------------------- rotate
 

@@ -54,7 +54,7 @@ function Tile({
 }: TileProps) {
   const router = useRouter();
   const filterable = !!filterStatus && !!onToggleFilter;
-  // A card navigates (href) OR toggles a filter — never both.
+  // A card navigates (href) OR toggles a filter - never both.
   const activate = () => {
     if (href) router.push(href);
     else if (filterStatus) onToggleFilter?.(filterStatus);
@@ -86,7 +86,7 @@ function Tile({
         active && cn('ring-2 ring-inset', activeRingClass ?? 'ring-primary'),
       )}
     >
-      {/* Top row: label (left) + icon (right) — icon no longer shares the
+      {/* Top row: label (left) + icon (right) - icon no longer shares the
           value's row, so a long value can never collide with it. */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 truncate text-xs font-medium text-muted-foreground">{label}</div>
@@ -155,7 +155,7 @@ export function RollupTiles({
   data?: ScmRollups;
   isLoading: boolean;
   isError: boolean;
-  /** Current dashboard filters — scope the drill-down popups. */
+  /** Current dashboard filters - scope the drill-down popups. */
   filters: ScmFilters;
   /** Deep-link into the Product perspective pre-filtered to a health status. */
   onViewInList: (status: HealthState) => void;
@@ -188,7 +188,7 @@ export function RollupTiles({
     );
   }
 
-  // M2 tile — real Σ stock_valuation where days-of-cover > overstock_days. The
+  // M2 tile - real Σ stock_valuation where days-of-cover > overstock_days. The
   // "Low stock" (below reorder point) figure is now live: the backend supplies
   // below_rop_count off the latest completed run's demand-aware ROP (M8-B).
   const overstockValuation = data.overstock_valuation;
@@ -202,7 +202,7 @@ export function RollupTiles({
           icon={Wallet}
           hint={
             data.valuation_missing_cost_count > 0
-              ? `${data.valuation_missing_cost_count} SKU without cost — excluded from valuation`
+              ? `${data.valuation_missing_cost_count} SKU without cost - excluded from valuation`
               : 'On-hand × cost price'
           }
         />
@@ -235,7 +235,7 @@ export function RollupTiles({
         {/* M8-B1: low-stock count = products with on_hand > 0 AND net <=
             reorder_point (demand-aware ROP), with out-of-stock taking precedence
             (M8-B2). The tile renders data.below_rop_count (populated from the latest
-            completed run's frozen ROP); a null value — no run has ever completed —
+            completed run's frozen ROP); a null value - no run has ever completed -
             keeps the greyed em dash. Clicking the number (or the card body) drills/
             filters to those products via the `low` health filter, which getProducts
             now serves (M8-B4). */}

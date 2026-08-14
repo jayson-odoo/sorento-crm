@@ -10,13 +10,18 @@ import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-manage
 import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHandlingLock';
 import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
 import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
+import { useFormAction } from '@/app/(protected)/sla-management/_shared/useFormAction';
+import { FormActionBanner } from '@/app/(protected)/sla-management/_shared/FormActionBanner';
+import { UndoActionDialog } from '@/app/(protected)/sla-management/_shared/UndoActionDialog';
 import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tracking/components/ReassignDialog';
 import { useReassignSLATracking } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
 import ResponseAttachmentDropzone from '@/app/(protected)/complaint-management/complaints/components/ResponseAttachmentDropzone';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
+import { RevisionBanner } from '@/components/common/RevisionBanner';
 import { VoidBanner } from '@/components/common/VoidBanner';
 import { VoidDialog } from '@/components/common/VoidDialog';
 import { useFormVoid } from '@/hooks/useFormVoid';
+import { withRevisionSuffix } from '@/lib/document-number';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { Button } from '@/components/ui/button';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -30,7 +35,12 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { exportStockInquiryToExcel } from '../utils/exportStockInquiryToExcel';
+import {
+  exportStockInquiryToExcel,
+  exportStockInquiryWithRevisionsToExcel,
+} from '../utils/exportStockInquiryToExcel';
+import { ExportWithRevisionsDialog } from '@/components/common/ExportWithRevisionsDialog';
+import { useRevisionEnabledMap } from '@/app/(protected)/sla-management/_shared/useRevisionEnabledMap';
 import { format } from 'date-fns';
 import {
   ProductInquiryFormLayout,
@@ -49,8 +59,12 @@ import {
   useReopenStockInquiry,
   useUploadStockInquiryResponseAttachments,
   useExportStockInquiryPdf,
+  useStockInquiryRevisions,
 } from '../hooks/useStockInquiries';
-import { getOrCreateStockInquiryViewLink } from '../services/stockInquiryService';
+import {
+  getOrCreateStockInquiryViewLink,
+  getStockInquiryRevisions,
+} from '../services/stockInquiryService';
 import { toast } from 'sonner';
 import { formatDate } from '@/lib/helpers';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -120,9 +134,19 @@ export default function StockInquiryDetail({
   });
   // A voided stock inquiry is fully read-only - suppress every business CTA.
   const isVoided = (inquiry?.status ?? '').trim().toLowerCase() === 'voided';
-  const businessCtasEnabled = handlingLock.businessCtasEnabled && !isVoided;
+  // Form-action deferral (PLAN-form-sla-undo.md). While an action is pending its grace
+  // window, EVERY business CTA is suppressed - the form must commit against the state
+  // the action was requested on (AC-D-10), and a second action cannot queue (AC-D-7).
+  const formAction = useFormAction({
+    sourceEntityType: 'stock_inquiry',
+    sourceEntityId: isValidId ? inquiryId : null,
+    entityKey: inquiry?.updated_at,
+  });
+  const businessCtasEnabled =
+    handlingLock.businessCtasEnabled && !isVoided && !formAction.ctasDisabled;
+  const [undoDialogOpen, setUndoDialogOpen] = useState(false);
   const lockedCtaTitle = !businessCtasEnabled
-    ? `Being handled by ${handlingLock.tracker?.handled_by_name ?? 'someone else'} — take over to act`
+    ? `Being handled by ${handlingLock.tracker?.handled_by_name ?? 'someone else'} - take over to act`
     : undefined;
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -142,41 +166,113 @@ export default function StockInquiryDetail({
     queryKeysToInvalidate: [['stock-inquiry', inquiryId]],
   });
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
+  // Denormalized revision counter (UAC H4). Drives the banner, the number
+  // suffix and the revision-lineage refetch.
+  const revisionNo = Number(inquiry?.revision_no ?? 0);
+  const revisionsQuery = useStockInquiryRevisions(
+    isValidId ? inquiryId : null,
+    revisionNo,
+  );
+  // The purchasing response may only be written while the inquiry is still with
+  // purchasing (UAC O1) - the backend returns 422 outside those statuses, so the
+  // affordance is REMOVED rather than left to fail on a toast. Chat Records
+  // stays available at every status (UAC O2).
+  //
+  // The decision is the SERVER's, read straight off the payload. A status list
+  // kept here as well would be a second source for one rule, and the first time
+  // the two drifted this would either hide a working button or show one that
+  // 422s. Absent means not gated, as on the backend.
+  const responseWritable = inquiry?.response_write_allowed !== false;
+  // The newest entry carries the reason and submitter the banner quotes verbatim.
+  const latestRevision = (revisionsQuery.data ?? [])
+    .filter((entry) => (entry.revision_no ?? 0) > 0)
+    .at(-1);
 
-  const handleExportExcel = async () => {
+  /**
+   * "Include revisions?" is only a real question when this record HAS revisions
+   * and the type has them switched on (round 6, 6.4). Anywhere else both exports
+   * behave exactly as they always have, with no dialog in the way. Enablement is
+   * the server's answer (global kill switch + per-type config collapsed into one
+   * boolean); "has any" is the record's own denormalized counter, so deciding
+   * costs no lineage read.
+   */
+  const { data: revisionEnabledMap } = useRevisionEnabledMap();
+  const canOfferRevisionExport =
+    revisionEnabledMap?.stock_inquiry === true && revisionNo > 0;
+  const [exportChoice, setExportChoice] = useState<'excel' | 'pdf' | null>(null);
+
+  const runExcelExport = async (includeRevisions: boolean) => {
     if (!inquiry) return;
     setExporting(true);
     try {
-      await exportStockInquiryToExcel(inquiry);
+      if (includeRevisions) {
+        // The lineage as it stands at export time. The banner query has usually
+        // already cached it (keyed on `revision_no`, so it cannot be stale after
+        // a revision lands); the direct read is the fallback for a first click
+        // before it resolves.
+        const entries = revisionsQuery.data ?? (await getStockInquiryRevisions(inquiryId));
+        await exportStockInquiryWithRevisionsToExcel(inquiry, entries);
+      } else {
+        await exportStockInquiryToExcel(inquiry);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Export failed');
     } finally {
       setExporting(false);
     }
   };
 
+  const handleExportExcel = async () => {
+    if (!inquiry) return;
+    if (canOfferRevisionExport) {
+      setExportChoice('excel');
+      return;
+    }
+    await runExcelExport(false);
+  };
+
+  const handleExportPdf = () => {
+    if (canOfferRevisionExport) {
+      setExportChoice('pdf');
+      return;
+    }
+    exportPdfMutation.mutate(inquiryId);
+  };
+
+  const handleExportConfirmed = (includeRevisions: boolean) => {
+    const choice = exportChoice;
+    setExportChoice(null);
+    if (choice === 'pdf') {
+      // No option chosen, no body: the request stays the one this export has
+      // always sent.
+      exportPdfMutation.mutate(
+        includeRevisions ? { id: inquiryId, options: { include_revisions: true } } : inquiryId,
+      );
+      return;
+    }
+    void runExcelExport(includeRevisions);
+  };
+
+  /**
+   * Only the purchasing wording. The preamble and the contact link are composed
+   * server-side by `StockInquiryService.compose_stock_inquiry_reply_message`, which
+   * resolves the interactive portal link and puts it last on its own line.
+   *
+   * Composing here previously sent the read-only `/view/...?token=` page built on the
+   * staff browser's own origin, with a ':' glued to the URL - WhatsApp pulled the colon
+   * into the href and the contact got an invalid link.
+   */
   const buildPurchasingRespondMessage = useCallback(
-    async (purchasingResponseText: string) => {
-      let viewUrl = '';
-      if (publicViewLinksEnabled) {
-        try {
-          const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-          const res = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
-          viewUrl = res.view_url ?? '';
-        } catch {
-          // continue without view link
-        }
-      }
-      const body = (purchasingResponseText ?? '').trim();
-      const linkPart = viewUrl ? ` ${viewUrl}` : '';
-      const fullMessage = `There is a response to your stock inquiry${linkPart}: ${body}`;
-      return { body, fullMessage };
-    },
-    [inquiryId, publicViewLinksEnabled],
+    async (purchasingResponseText: string) => ({
+      body: (purchasingResponseText ?? '').trim(),
+    }),
+    [],
   );
 
-  /** Persists short purchasing response when `skipSaveShort` is false, then sends the composed message via Respond.io */
+  /** Persists the purchasing response when `skipSaveShort` is false, then sends it via Respond.io */
   const sendPurchasingUpdateAndReplyViaRespond = useCallback(
     async (purchasingResponseText: string, options?: { skipSaveShort?: boolean }) => {
-      const { body, fullMessage } = await buildPurchasingRespondMessage(purchasingResponseText);
+      const { body } = await buildPurchasingRespondMessage(purchasingResponseText);
       if (!body) {
         toast.error('Enter a purchasing response before sending.');
         return;
@@ -189,7 +285,7 @@ export default function StockInquiryDetail({
       }
       await updateAndReplyMutation.mutateAsync({
         id: inquiryId,
-        data: { purchasing_response: fullMessage },
+        data: { purchasing_response: body },
       });
     },
     [
@@ -275,7 +371,9 @@ export default function StockInquiryDetail({
         <div className="space-y-1 min-w-0">
           <h1 className="text-2xl font-bold break-words">
             Stock Inquiry -{' '}
-            {inquiry.inquiry_number || inquiry.product_code || 'Details'}
+            {withRevisionSuffix(inquiry.inquiry_number, revisionNo) ||
+              inquiry.product_code ||
+              'Details'}
           </h1>
           <p className="text-sm text-muted-foreground">
             Created:{' '}
@@ -301,7 +399,7 @@ export default function StockInquiryDetail({
         </div>
         <div className="flex items-center gap-2 flex-wrap sm:justify-end">
           {/* Workflow actions: HIDDEN (not disabled) while the handling lock is held
-              by someone else / unclaimed — keeps the header uncluttered. When the lock
+              by someone else / unclaimed - keeps the header uncluttered. When the lock
               does not bite (tier 1, flag off, or I hold it) businessCtasEnabled is true
               and they render on their normal status+permission gates. */}
           {businessCtasEnabled && inquiry.status === 'new' && canSubmitForProjectSales && (
@@ -347,9 +445,7 @@ export default function StockInquiryDetail({
               )}
             </>
           )}
-          {businessCtasEnabled &&
-            (inquiry.status === 'pending_purchasing' ||
-              inquiry.status === 'responded') && (
+          {businessCtasEnabled && responseWritable && (
             <Button
               // Pending purchasing = the purchasing response is the next action →
               // primary CTA; once responded it's a secondary edit.
@@ -409,7 +505,25 @@ export default function StockInquiryDetail({
             className="h-8 border border-border"
           />
           <DetailActionsMenu ariaLabel="Stock inquiry actions">
-            {!isVoided && (
+            {/* Post-grace Undo. Rendered only when the server says the last committed
+                action is reversible - eligibility is a server read, never a client
+                guess, and it is re-checked at execute time (AC-PG-6/7). */}
+            {formAction.view.kind === 'undoable' && (
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setUndoDialogOpen(true);
+                }}
+                data-testid="undo-action-menu-item"
+              >
+                <RotateCcw className="size-4" />
+                Undo last action
+              </DropdownMenuItem>
+            )}
+            {/* Edit is not lock-gated (deliberate), but a pending form action DOES
+                block it: the action must commit against the state it was requested on
+                (AC-D-10). The backend enforces the same rule; this keeps the UI honest. */}
+            {!isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
                 onClick={() =>
                   router.push(
@@ -494,8 +608,7 @@ export default function StockInquiryDetail({
             )}
             {businessCtasEnabled &&
               inquiry.respond_inbox_url &&
-              (inquiry.status === 'pending_purchasing' ||
-                inquiry.status === 'responded') && (
+              responseWritable && (
                 <DropdownMenuItem
                   disabled={openingReplySheet || updateAndReplyMutation.isPending}
                   onClick={async () => {
@@ -518,7 +631,7 @@ export default function StockInquiryDetail({
               disabled={exportPdfMutation.isPending}
               onSelect={(e) => {
                 e.preventDefault();
-                exportPdfMutation.mutate(inquiryId);
+                handleExportPdf();
               }}
             >
               <Printer className="size-4" />
@@ -531,7 +644,7 @@ export default function StockInquiryDetail({
               <FileDown className="size-4" />
               {exporting ? 'Exporting…' : 'Export to Excel'}
             </DropdownMenuItem>
-            {canVoid && !isVoided && (
+            {canVoid && !isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 onClick={() => setVoidDialogOpen(true)}
@@ -540,7 +653,7 @@ export default function StockInquiryDetail({
                 Void
               </DropdownMenuItem>
             )}
-            {!isVoided && (
+            {!isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 onClick={() => setDeleteDialogOpen(true)}
@@ -554,12 +667,41 @@ export default function StockInquiryDetail({
         </div>
       </div>
 
+      <ExportWithRevisionsDialog
+        open={exportChoice !== null}
+        onOpenChange={(open) => !open && setExportChoice(null)}
+        title={exportChoice === 'pdf' ? 'Print / Download PDF' : 'Export to Excel'}
+        onConfirm={handleExportConfirmed}
+      />
+
       <HandlingLockBanner
         state={handlingLock.state}
         tracker={handlingLock.tracker}
         onClaim={handlingLock.claim}
         onTakeOver={handlingLock.takeOver}
       />
+
+      <FormActionBanner
+        view={formAction.view}
+        onCancel={formAction.cancel}
+        onExpire={formAction.refresh}
+        onDismissOutcome={formAction.refresh}
+        isCancelling={formAction.isMutating}
+      />
+
+      {formAction.view.kind === 'undoable' && (
+        <UndoActionDialog
+          open={undoDialogOpen}
+          onOpenChange={setUndoDialogOpen}
+          eligibility={formAction.view.eligibility}
+          entityLabel={inquiry.inquiry_number || 'this stock inquiry'}
+          onConfirm={(reason) => {
+            formAction.undo(reason);
+            setUndoDialogOpen(false);
+          }}
+          isSubmitting={formAction.isMutating}
+        />
+      )}
 
       {/* Reject dialog */}
       <Dialog
@@ -817,8 +959,7 @@ export default function StockInquiryDetail({
                 ? 'Saving…'
                 : 'Save only'}
             </Button>
-            {inquiry.respond_inbox_url &&
-              (inquiry.status === 'pending_purchasing' || inquiry.status === 'responded') && (
+            {inquiry.respond_inbox_url && responseWritable && (
                 <Button
                   variant="primary"
                   data-guide-target="procurement.stock-inquiries.update-and-reply-button"
@@ -869,6 +1010,16 @@ export default function StockInquiryDetail({
         />
       )}
 
+      {/* Contact revised their submission (UAC H1). Renders nothing at revision 0. */}
+      <RevisionBanner
+        revisionNo={revisionNo}
+        documentNumber={inquiry.inquiry_number}
+        revisedAt={inquiry.last_revised_at}
+        revisedByName={latestRevision?.submitted_by}
+        reason={latestRevision?.reason}
+        restartedAtLabel="Project Sales"
+      />
+
       <VoidBanner
         voided={isVoided}
         voidedByName={inquiry.voided_by_name}
@@ -895,7 +1046,7 @@ export default function StockInquiryDetail({
 
       <ProductInquiryFormLayout>
         <InquiryFormTableRow label="Date">
-          <InquiryReadValue empty="—">
+          <InquiryReadValue empty=" - ">
             {inquiry.created_at
               ? format(new Date(inquiry.created_at), 'dd/MM/yy')
               : ''}
@@ -964,7 +1115,7 @@ export default function StockInquiryDetail({
               <div className="min-w-0 flex-1">
                 <InquiryReadValue>{inquiry.purchasing_response}</InquiryReadValue>
               </div>
-              {!isVoided && (
+              {!isVoided && responseWritable && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -985,12 +1136,12 @@ export default function StockInquiryDetail({
         {(inquiry.last_responded_at || inquiry.last_responded_by) && (
           <>
             <InquiryFormTableRow label="Last responded by">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty=" - ">
                 {inquiry.last_responded_by_name ?? inquiry.last_responded_by}
               </InquiryReadValue>
             </InquiryFormTableRow>
             <InquiryFormTableRow label="Last responded at">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty=" - ">
                 {inquiry.last_responded_at
                   ? formatDate(new Date(inquiry.last_responded_at))
                   : ''}
@@ -1003,12 +1154,12 @@ export default function StockInquiryDetail({
           (inquiry.rejection_reason != null && inquiry.rejection_reason !== '')) && (
           <>
             <InquiryFormTableRow label="Rejected by">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty=" - ">
                 {inquiry.rejected_by_name ?? inquiry.rejected_by}
               </InquiryReadValue>
             </InquiryFormTableRow>
             <InquiryFormTableRow label="Rejected at">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty=" - ">
                 {inquiry.rejected_at ? formatDate(new Date(inquiry.rejected_at)) : ''}
               </InquiryReadValue>
             </InquiryFormTableRow>
@@ -1025,12 +1176,12 @@ export default function StockInquiryDetail({
               <InquiryReadValue>{inquiry.reopen_reason}</InquiryReadValue>
             </InquiryFormTableRow>
             <InquiryFormTableRow label="Reopened by">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty=" - ">
                 {inquiry.reopened_by_name ?? inquiry.reopened_by}
               </InquiryReadValue>
             </InquiryFormTableRow>
             <InquiryFormTableRow label="Reopened at">
-              <InquiryReadValue empty="—">
+              <InquiryReadValue empty=" - ">
                 {inquiry.reopened_at ? formatDate(new Date(inquiry.reopened_at)) : ''}
               </InquiryReadValue>
             </InquiryFormTableRow>
@@ -1079,6 +1230,11 @@ export default function StockInquiryDetail({
         inquiryId={inquiryId}
         attachments={inquiry.attachments ?? []}
       />
+
+      {/* The lineage lives in the page's own "Revisions" TAB (round 6), not in
+          this stack: it is reference material, and burying it under the whole
+          form meant scrolling past everything to read it. The query stays here
+          because the revise banner above quotes the newest entry. */}
 
       <AuditTrail entityType="stock_inquiry" entityId={inquiryId} title="Audit Trail" />
     </div>

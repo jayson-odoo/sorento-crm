@@ -97,30 +97,275 @@ def create_views() -> None:
 
     from app.database import engine
 
-    mig = (
-        Path(__file__).resolve().parent.parent
-        / "alembic"
-        / "versions"
-        / "274_scm_m0_views_reg.py"
-    )
-    spec = importlib.util.spec_from_file_location("_scm_views_mig", mig)
-    module = importlib.util.module_from_spec(spec)
-    # The migration imports `alembic.op` at module scope only inside functions,
-    # so loading it for its constants is safe.
-    spec.loader.exec_module(module)
+    versions = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+
+    def _load(filename: str):
+        spec = importlib.util.spec_from_file_location(
+            f"_scm_views_{filename}", versions / filename
+        )
+        module = importlib.util.module_from_spec(spec)
+        # The migrations import `alembic.op` only inside functions, so loading one
+        # for its module-level constants is safe.
+        spec.loader.exec_module(module)
+        return module
+
+    base = _load("274_scm_m0_views_reg.py")
 
     ordered = [
-        module._ON_ORDER_V,
-        module._COMMITTED_V,
-        module._CONSUMPTION_V,
-        module._RECEIPT_LEAD_V,
-        module._NET_POSITION_V,
+        base._ON_ORDER_V,
+        base._COMMITTED_V,
+        base._CONSUMPTION_V,
+        base._RECEIPT_LEAD_V,
+        base._NET_POSITION_V,
     ]
+
+    # A later revision may redefine a view. Because this function executes DDL instead
+    # of running migration bodies, those redefinitions have to be replayed here too or a
+    # freshly built database silently keeps the original definition while every migrated
+    # database has the new one. Appended in revision order so the last write wins.
+    ordered.extend(_load("311_scm_purchasing_base.py")._REDEFINED_VIEWS)
+    # 327 re-emits scm.on_order_v from 311's own constant (311's DDL was edited in place
+    # after it had already been stamped somewhere, so databases at 311 can hold the old
+    # definition). Replayed here too, in revision order, rather than assumed identical.
+    ordered.extend(_load("327_scm_coverage_config.py")._REDEFINED_VIEWS)
+    # 337 redefines on_order_v to read the SPO allocation (a purchase order is an order
+    # placed, not stock incoming) and adds po_ordered_v under the old body's honest name.
+    _m337 = _load("337_scm_on_order_from_spo.py")
+    ordered.extend([_m337.ON_ORDER_FROM_SPO, _m337.PO_ORDERED_V])
     with engine.begin() as conn:
         for ddl in ordered:
             # The migration's DDL uses bare CREATE VIEW; make re-runs idempotent.
             conn.execute(text(ddl.replace("CREATE VIEW", "CREATE OR REPLACE VIEW", 1)))
     log.info("scm views created (%d)", len(ordered))
+    _fix_committed_v()
+
+
+def _fix_committed_v() -> None:
+    """Bring ``scm.committed_v`` current past migration 337.
+
+    ``create_views()`` above only replays the view DDL embedded in migrations 274, 311,
+    327 and 337 — the ones that ship their body as a module-level constant. Migrations
+    340 and 346 redefine ``scm.committed_v`` again (the ``qty_required`` /
+    ``purchasing_status`` / ``demand_class`` / ``demand_origin`` rules) but inline their
+    ``op.execute(...)`` DDL instead of exporting a constant, so a bootstrapped database
+    silently keeps the 337 body: every committed-demand figure it computes is wrong.
+
+    Rather than add a fifth migration to the replay list (and a sixth, a seventh, every
+    time the view is touched again), this imports the CURRENT view body from
+    ``app.services.scm.demand.COMMITTED_V_SQL`` — the single source of truth the demand
+    service itself relies on — and lays it down with ``CREATE OR REPLACE``. That module
+    is edited whenever the view changes, so this call always reflects the latest rule
+    with no migration bookkeeping required. Verified by asserting ``demand_origin``
+    (the newest rule) actually appears in the resulting view definition.
+    """
+    from sqlalchemy import text
+
+    from app.database import engine
+    from app.services.scm.demand import COMMITTED_V_SQL
+
+    with engine.begin() as conn:
+        conn.execute(text(COMMITTED_V_SQL))
+    with engine.connect() as conn:
+        definition = conn.execute(text(
+            "SELECT definition FROM pg_views WHERE schemaname = 'scm' "
+            "AND viewname = 'committed_v'"
+        )).scalar()
+    if not definition or "demand_origin" not in definition:
+        raise SystemExit(
+            "bootstrap: scm.committed_v fix did not take effect (no demand_origin rule "
+            "in the view definition)."
+        )
+    log.info("scm.committed_v is current (demand_origin rule present)")
+
+
+def apply_migration_only_ddl() -> None:
+    """Lay down schema that only ever existed inside a migration body, never in a model.
+
+    `create_schema()` builds tables from the ORM models via `create_all`, so anything a
+    migration added without a matching model column/table is silently absent on a
+    bootstrapped database, and the affected endpoint 500s at read time. Known cases,
+    found by running the real app against a from-zero database:
+
+    * migration 351 (`scm.reorder_policy.margin_floor_pct`, `.dead_turnover_months`) -
+      no model column for either.
+    * migration 352 (`scm.product_lifecycle_decision`) - the table has no ORM model at
+      all; it is read/written through raw SQL only.
+    * `product_suppliers.min_order_quantity` / `.is_primary` - these predate the
+      migration chain entirely (part of the original hand-built schema, before 273
+      introduced `moq` / `is_primary_supplier` as the modelled successors) and no
+      migration ever creates them either, so there is no revision to replay. They are
+      still read by `app.services.scm.reorder_level_service.supplier_constraints` via
+      `COALESCE(ps.moq, ps.min_order_quantity)` / `ORDER BY ps.is_primary`, so a
+      bootstrapped database needs the columns even though nothing ever writes them.
+    * migration 306 (`ALTER COLUMN company_id SET DEFAULT <Sorento id>` on every owned
+      table) - the model intentionally stays `nullable=True` at the ORM level (see
+      `CompanyScopedMixin`'s docstring), so `create_all` never adds this DEFAULT. Without
+      it, a raw `INSERT` that omits `company_id` (scripts, seeds, and plenty of test
+      fixtures) lands NULL instead of Sorento, and the session-scoped company predicate
+      (`app.services.company_scope_sql.company_sql_predicate`) then filters the row out
+      of every read - silent, empty results rather than an error, which is worse to
+      diagnose than a constraint violation.
+
+    Each step is idempotent (skipped once its marker column/table already exists), so
+    reruns against an already-bootstrapped database are safe.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    from sqlalchemy import text
+
+    import alembic.op as op_module
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    from app.database import engine
+
+    markers = {
+        "351_scm_product_health_thresholds": (
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema = 'scm' AND table_name = 'reorder_policy' "
+            "AND column_name = 'margin_floor_pct'"
+        ),
+        "306_company_id_default_sorento": (
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'products' "
+            "AND column_name = 'company_id' AND column_default IS NOT NULL"
+        ),
+        "352_scm_product_lifecycle_decision": (
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = 'scm' AND table_name = 'product_lifecycle_decision'"
+        ),
+    }
+    versions_dir = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+    for name, marker_sql in markers.items():
+        with engine.connect() as conn:
+            present = conn.execute(text(marker_sql)).scalar()
+        if present:
+            log.info("%s: already applied, skipping", name)
+            continue
+        spec = importlib.util.spec_from_file_location(name, versions_dir / f"{name}.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with engine.begin() as conn:
+            op_module._proxy = Operations(MigrationContext.configure(conn))
+            module.upgrade()
+        log.info("%s: applied", name)
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            'ALTER TABLE product_suppliers ADD COLUMN IF NOT EXISTS '
+            '"min_order_quantity" INTEGER'
+        ))
+        conn.execute(text(
+            'ALTER TABLE product_suppliers ADD COLUMN IF NOT EXISTS '
+            '"is_primary" BOOLEAN'
+        ))
+    log.info("product_suppliers: legacy min_order_quantity/is_primary columns present")
+
+    # scm.order_link_claim's per-company uniqueness (migration 335) is a functional/
+    # expression index (`coalesce(company_id, ...)`, `coalesce(item_code, '')`) with no
+    # `Index(...)` counterpart in the model's `__table_args__`, so `create_all` never lays
+    # it down. Without it two different companies claiming the SAME (so_number, po_number)
+    # pairing silently succeed as one company (no isolation) instead of two independent
+    # rows, AND the same company can claim the same pairing twice (no duplicate guard).
+    # `CREATE UNIQUE INDEX IF NOT EXISTS` is naturally idempotent - no marker needed.
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_scm_order_link_claim_identity "
+            "ON scm.order_link_claim "
+            "(coalesce(company_id, '00000000-0000-0000-0000-000000000000'::uuid), "
+            "so_number, po_number, coalesce(item_code, ''))"
+        ))
+    log.info("scm.order_link_claim: per-company uniqueness index present")
+
+
+def seed_scm_module_data() -> None:
+    """Replay migration 311's DATA seeds, which create_all cannot produce.
+
+    `create_all` builds tables from the ORM and knows nothing about rows, so reference data
+    seeded inside a migration body does not exist on a freshly built database. Two of
+    311's seeds are load-bearing rather than cosmetic:
+
+    * `import_field_alias` - with no aliases the import channel resolves no column headers,
+      so every uploaded file reports every column as unmapped.
+    * `scm.priority_policy` - with no active policy nothing can be ranked for fulfilment.
+
+    Calls the migration's own seeding functions rather than restating the data, so the two
+    paths cannot drift. Both are idempotent.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    from app.database import engine
+
+    versions = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+    spec = importlib.util.spec_from_file_location(
+        "_scm_seed_311", versions / "311_scm_purchasing_base.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    # 338 adds the AutoCount detail-listing wording, including the `qty_delivered` /
+    # `qty_remaining` columns that stop `Qty` being read as the outstanding figure. A later
+    # migration adding aliases has to be replayed here too, or a create_all database resolves
+    # the old wording only and the client's real export is rejected on it.
+    spec_338 = importlib.util.spec_from_file_location(
+        "_scm_seed_338", versions / "338_scm_autocount_so_detail_aliases.py"
+    )
+    module_338 = importlib.util.module_from_spec(spec_338)
+    spec_338.loader.exec_module(module_338)
+
+    # 347 adds the `reorder_level` upload doc-type's header aliases (item_code, location,
+    # reorder_level, reorder_qty). Its `scm.reorder_level.reorder_qty` column is already an
+    # ORM column (create_all produces it), but the alias seed is migration-body-only, same
+    # gap as 311/338 - without it every reorder-level upload reports every column
+    # unmapped. `_ALIASES` is (field, alias) with `doc_type='reorder_level'` fixed, per the
+    # migration's own INSERT; replayed verbatim (`ON CONFLICT ... DO NOTHING`, idempotent).
+    from sqlalchemy import text as _text
+
+    spec_347 = importlib.util.spec_from_file_location(
+        "_scm_seed_347", versions / "347_scm_reorder_level_upload.py"
+    )
+    module_347 = importlib.util.module_from_spec(spec_347)
+    spec_347.loader.exec_module(module_347)
+
+    with engine.begin() as conn:
+        aliases = module.seed_import_field_aliases(conn)
+        policies = module.seed_priority_policy(conn)
+        aliases += module_338.seed(conn)
+        for field, alias in module_347._ALIASES:
+            conn.execute(_text(
+                "INSERT INTO import_field_alias (doc_type, field, alias, locale) "
+                "VALUES ('reorder_level', :f, :a, NULL) "
+                "ON CONFLICT (doc_type, field, alias) DO NOTHING"
+            ), {"f": field, "a": alias})
+            aliases += 1
+    log.info("scm module data seeded -> aliases=%d priority_policy=%d", aliases, policies)
+
+
+def seed_customer_import_aliases() -> None:
+    """Replay migration 353's `customer` header aliases (same create_all gap as 311/338/347).
+
+    The customer importer resolves every column through `import_field_alias`, so on a
+    bootstrapped database with no `customer` rows the first upload reports every column
+    unmapped and reads as a broken importer rather than as missing seed data. The
+    migration's own `seed()` is called so the two paths cannot drift; it is idempotent.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    from app.database import engine
+
+    versions = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+    spec = importlib.util.spec_from_file_location(
+        "_customer_alias_seed_353", versions / "353_customer_import_aliases.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    with engine.begin() as conn:
+        inserted = module.seed(conn)
+    log.info("customer import aliases seeded -> %d", inserted)
 
 
 def _seed_default_company() -> None:
@@ -192,6 +437,44 @@ def seed_reference_data() -> None:
             db.close()
 
 
+# This project names revisions descriptively ("313_purchase_request_pic") rather
+# than with alembic's 12-char hashes, and plenty of them run past alembic's own
+# ``version_num VARCHAR(32)``. The long-lived databases were widened at some point
+# (production is varchar(255)), so nobody noticed - but a FRESH database lets
+# alembic create the table at 32 and the stamp then dies:
+#
+#   StringDataRightTruncation: value too long for type character varying(32)
+#   [SQL: INSERT INTO alembic_version (version_num) VALUES ('...')]
+#
+# Create the table at the real width BEFORE alembic can create it at 32, and widen
+# an existing narrow one. Keeps CI, disaster recovery and a genuine incremental
+# ``upgrade head`` all consistent with production.
+ALEMBIC_VERSION_NUM_WIDTH = 255
+
+
+def ensure_alembic_version_width() -> None:
+    """Make ``alembic_version.version_num`` wide enough for our revision ids."""
+    from sqlalchemy import text
+
+    from app.database import engine
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS alembic_version ("
+                f"version_num VARCHAR({ALEMBIC_VERSION_NUM_WIDTH}) NOT NULL "
+                "CONSTRAINT alembic_version_pkc PRIMARY KEY)"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE alembic_version ALTER COLUMN version_num "
+                f"TYPE VARCHAR({ALEMBIC_VERSION_NUM_WIDTH})"
+            )
+        )
+    log.info("alembic_version.version_num at varchar(%s)", ALEMBIC_VERSION_NUM_WIDTH)
+
+
 def stamp_head() -> None:
     """Mark the database as being at the latest revision.
 
@@ -202,6 +485,8 @@ def stamp_head() -> None:
     from alembic.config import Config
 
     from pathlib import Path
+
+    ensure_alembic_version_width()
 
     cfg = Config(str(Path(__file__).resolve().parent.parent / "alembic.ini"))
     command.stamp(cfg, "head")
@@ -221,9 +506,12 @@ def main() -> int:
     log.info("bootstrapping %s", url.rsplit("@", 1)[-1])
 
     create_schema()
+    apply_migration_only_ddl()
     create_views()
     if not args.skip_seed:
         seed_reference_data()
+        seed_scm_module_data()
+        seed_customer_import_aliases()
     stamp_head()
     log.info("bootstrap complete")
     return 0

@@ -1,20 +1,20 @@
 /**
  * ============================================================================
- * SCM DASHBOARD — real API bindings (Phase 2 / M1 CP2b)
+ * SCM DASHBOARD - real API bindings (Phase 2 / M1 CP2b)
  * ============================================================================
  * All endpoints are mounted under `require_module_enabled_with_api_key("scm")`
  * at `/api/v1/scm/dashboard/*` and gated on `scm.dashboard.view`. Reads M0 views
- * only. No UUIDs reach the UI — SKU / warehouse / supplier by human-readable
+ * only. No UUIDs reach the UI - SKU / warehouse / supplier by human-readable
  * code, product category resolved to a name server-side.
  *
  * Shared filter query params (apply to every endpoint below):
- *   warehouse    — comma-separated warehouse_code list (the BE also accepts a
+ *   warehouse    - comma-separated warehouse_code list (the BE also accepts a
  *                  repeatable `warehouse` and a `warehouses` alias; we send the
  *                  comma-separated `warehouse` form).
- *   category_id  — product_categories.id (UI shows the name, never the UUID).
- *   supplier     — supplier_code.
- *   health       — stockout|dead|healthy|incoming (legend chips + drill-downs).
- *   q            — free-text product search (SKU code / name). On net-position
+ *   category_id  - product_categories.id (UI shows the name, never the UUID).
+ *   supplier     - supplier_code.
+ *   health       - stockout|dead|healthy|incoming (legend chips + drill-downs).
+ *   q            - free-text product search (SKU code / name). On net-position
  *                  the BE collapses `query` → `q`, so we send it via `query`.
  * ============================================================================
  *
@@ -29,16 +29,16 @@
  *                                       //   value location on net-position rows).
  *                                       //   null = unknown (e.g. null cost_price SKU).
  *   xyz_class        : 'X'|'Y'|'Z'|null // item_classification.xyz_class. null = unknown.
- *   reorder_point    : number | null    // M8-B — latest completed run's engine ROP;
+ *   reorder_point    : number | null    // M8-B - latest completed run's engine ROP;
  *                                       //   null when the SKU was never planned.
- *   safety_stock     : number | null    // M8-F10 — ROP input from the SAME rec's frozen
+ *   safety_stock     : number | null    // M8-F10 - ROP input from the SAME rec's frozen
  *                                       //   inputs; buffer for demand/supply variability.
- *   lead_time_days   : number | null    // M8-F10 — ROP input (supplier lead-time days);
+ *   lead_time_days   : number | null    // M8-F10 - ROP input (supplier lead-time days);
  *                                       //   null when un-planned. Shown with a plain
  *                                       //   definition in the Low-stock reorder-point (i).
  *
- * demand trend series (`/demand-series?sku=&warehouse=`) — the expandable Product
- * row's "Demand — last 12 months" sparkline. ~12 MONTHLY buckets of DO outflow
+ * demand trend series (`/demand-series?sku=&warehouse=`) - the expandable Product
+ * row's "Demand - last 12 months" sparkline. ~12 MONTHLY buckets of DO outflow
  * (oldest → newest), distinct from the 90-day weekly analytics rate window:
  *   { sku, product_name, warehouse_code, xyz_class, points: { month, qty }[],
  *     total_qty, peak_qty }
@@ -47,17 +47,17 @@
  *   overstock_valuation : number | null // Σ stock_valuation WHERE days_of_cover
  *                                        //   > reorder_policy.overstock_days.
  *   overstock_count     : number | null // count of the same SKU×warehouse rows.
- *   below_rop_count     : number | null // M8-B — count of on_hand>0 AND
+ *   below_rop_count     : number | null // M8-B - count of on_hand>0 AND
  *                                        //   net<=reorder_point (latest completed
  *                                        //   run's engine ROP); 0 when no run yet.
  *
- * suppliers (`/suppliers`) — a `performance` object per supplier group, or null:
+ * suppliers (`/suppliers`) - a `performance` object per supplier group, or null:
  *   performance: {
- *     on_time_rate      : number | null // 0–1, receipts on/before expected+grace.
+ *     on_time_rate      : number | null // 0-1, receipts on/before expected+grace.
  *     avg_lead_time_days: number | null // completing-receipt clock.
- *     reject_rate       : number | null // 0–1, Σ rejected ÷ Σ received.
- *     fill_rate         : number | null // 0–1, Σ received ÷ Σ ordered.
- *     composite_score   : number | null // 0–100.
+ *     reject_rate       : number | null // 0-1, Σ rejected ÷ Σ received.
+ *     fill_rate         : number | null // 0-1, Σ received ÷ Σ ordered.
+ *     composite_score   : number | null // 0-100.
  *     sample_size       : number        // PO→GR completed lines behind the score.
  *     confidence        : 'high'|'medium'|'low'  // thin sample ⇒ 'low'.
  *   } | null                            // null when the supplier was never scored.
@@ -66,12 +66,12 @@
  * ('A'|'B'|'C'|'unknown' / 'X'|'Y'|'Z'|'unknown') on the product grid + drill-down;
  * the backend filters + paginates authoritatively. The FE relabels the classes to
  * plain language for DISPLAY ONLY (abc_class → "Value": High/Med/Low; xyz_class →
- * "Demand": Steady/Variable/Erratic — see `lib/health` display maps); the wire
+ * "Demand": Steady/Variable/Erratic - see `lib/health` display maps); the wire
  * contract keeps the industry-standard ABC/XYZ names.
  *
  * The `health` param accepts `stockout|dead|low|healthy|incoming|overstock`.
  * Overstock is demand-derived (days-of-cover over the ceiling); `low` (M8-B) is a
- * stocked SKU at/under the demand-aware engine reorder point — both computed +
+ * stocked SKU at/under the demand-aware engine reorder point - both computed +
  * filtered server-side.
  * ============================================================================
  */
@@ -97,7 +97,7 @@ const BASE = '/api/v1/scm/dashboard';
 
 export interface ScmFilters {
   warehouses: string[];
-  /** Product category — bound to `product_categories.id`. */
+  /** Product category - bound to `product_categories.id`. */
   categoryId: string | null;
   supplier: string | null;
   /** Health-status filter set by the interactive legend chips + drill-downs. */
@@ -113,7 +113,7 @@ export interface ScmFilters {
    * The DEFAULT is the FOCUSED view (`active` + `ongoing`), NOT `all`: inactive
    * and discontinued SKUs are excluded from every dashboard read (counts,
    * valuations, grids) unless the user widens the scope. The backend applies the
-   * same focused default when these params are absent — sending them explicitly
+   * same focused default when these params are absent - sending them explicitly
    * keeps FE↔BE in lock-step and makes the active scope visible in the URL.
    */
   activeStatus: ActiveStatusFilter;
@@ -122,7 +122,7 @@ export interface ScmFilters {
 
 /**
  * The default filter state = the FOCUSED view. `activeStatus`/`lifecycle` default
- * to `active`/`ongoing` (NOT `all`), so a fresh dashboard — and every "Clear" —
+ * to `active`/`ongoing` (NOT `all`), so a fresh dashboard - and every "Clear" -
  * resets back to focused, matching the backend default. "Show all" widens both.
  */
 export const EMPTY_SCM_FILTERS: ScmFilters = {
@@ -253,8 +253,8 @@ export async function getProducts(
 }
 
 /**
- * ~12 MONTHLY buckets of DO outflow for one SKU — the expandable Product row's
- * "Demand — last 12 months" trend viz. Optionally scoped to one warehouse; the
+ * ~12 MONTHLY buckets of DO outflow for one SKU - the expandable Product row's
+ * "Demand - last 12 months" trend viz. Optionally scoped to one warehouse; the
  * Product perspective aggregates across warehouses (no `warehouse`). SKU is the
  * human product code (never a UUID).
  */
@@ -270,7 +270,7 @@ export async function getDemandSeries(
 }
 
 /**
- * The demand working behind a SKU's avg-daily-demand — the navigable delivery
+ * The demand working behind a SKU's avg-daily-demand - the navigable delivery
  * orders that drove outflow plus the rate + Coefficient of variation (M8-B9,
  * reusing the Slice A2 explain endpoint). Scoped to one warehouse when the drill
  * cell carries one. Takes the product/warehouse UUIDs (carried on the drill row

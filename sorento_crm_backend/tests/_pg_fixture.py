@@ -93,6 +93,15 @@ def blank_schema_engine():
     if "engine" not in _BLANK:
         from app import models  # noqa: F401  register every model's table
 
+        # `app.models` does not reach the lookup and audit models, and this schema is
+        # emitted ONCE from whatever is registered at that moment. So the table set
+        # depended on which test file ran first: a file importing only app.models built
+        # a schema with no `lookup_bindings`, and a later file importing app.main --
+        # which registers the lookup-validation listener that queries it on every
+        # flush -- then died with UndefinedTable. Every suite passed alone while the
+        # whole run failed, which reads as flakiness rather than as an ordering bug.
+        _globally_required_tables()
+
         # The PID is IN THE NAME so the orphan sweep can tell a schema whose
         # owner is still running from one a killed run abandoned. Belt to the
         # prefix's braces: the prefix hides this schema from a sibling checkout's

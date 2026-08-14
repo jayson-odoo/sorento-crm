@@ -20,11 +20,11 @@ import type { ReorderRecommendation } from '../types/reorder.types';
 
 /** Cache key for the decisions recorded against a run. */
 export const decisionsKey = (runId: string | null) => ['scm', 'reorder', 'decisions', runId];
-/** Prefix key for the Purchase Orders list — invalidated whenever a draft PO changes. */
+/** Prefix key for the Purchase Orders list - invalidated whenever a draft PO changes. */
 const purchaseOrdersKey = ['scm', 'purchase-orders'];
 
 /**
- * Decisions recorded so far for a run, indexed by recommendation id — drives the
+ * Decisions recorded so far for a run, indexed by recommendation id - drives the
  * per-row status badges (proposed / accepted / adjusted / dismissed) in the cash
  * results grids.
  */

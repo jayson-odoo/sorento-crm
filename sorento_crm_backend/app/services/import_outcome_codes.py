@@ -48,8 +48,27 @@ ORDER_NOT_IN_MASTER = "order_not_in_master"
 
 # --- deliberate skips -----------------------------------------------------
 DUPLICATE_LINE = "duplicate_line"
+#: The same key appeared EARLIER IN THE SAME FILE, so this row states nothing the
+#: first one did not. Its own code rather than DUPLICATE_LINE, whose label speaks of
+#: an order line already on the order: on a customer job there is no order, and the
+#: GRN/SPO importers depend on that existing meaning (UAC AC-6.2).
+DUPLICATE_IN_FILE = "duplicate_in_file"
 ALREADY_EXISTS = "already_exists"
 ALREADY_RECEIVED_GUARD = "already_received_guard"
+
+# --- written, but worth a human's eye ------------------------------------
+#: A customer was inserted while a NEAR-identical name already sat on the same
+#: customer code ("CASH (SRT) - AISAH SHAMSUDlN" against "... SHAMSUDIN"). One code
+#: legally carries many names, so this is never a skip: the row IS written and rides
+#: on OUTCOME_CREATED. Distinct from ALREADY_EXISTS / DUPLICATE_LINE, which both
+#: assert the row was NOT written.
+CODE_EXISTS_UNDER_OTHER_NAME = "code_exists_under_other_name"
+#: The row named a market segment no `market_segments.code` matches. The column is a
+#: foreign key, so the value is dropped rather than costing a whole customer - but the
+#: segment decides SCM demand class and fulfilment priority, so the row it happened on
+#: is named here instead of only in a file-level list. Rides on whichever success
+#: outcome the row earned (created / updated / unchanged); never a skip.
+MARKET_SEGMENT_NOT_RECOGNISED = "market_segment_not_recognised"
 
 # --- attachment / file specific ------------------------------------------
 FILENAME_COLLISION = "filename_collision"
@@ -82,8 +101,11 @@ LABELS: dict[str, str] = {
     PACKING_LIST_NOT_FOUND: "Packing list not found for container",
     ORDER_NOT_IN_MASTER: "Order not found in Master sheet",
     DUPLICATE_LINE: "Identical line already exists on this order",
+    DUPLICATE_IN_FILE: "The same row appears earlier in this file",
     ALREADY_EXISTS: "Already exists",
     ALREADY_RECEIVED_GUARD: "Blocked: quantity already received",
+    CODE_EXISTS_UNDER_OTHER_NAME: "Inserted; similar name already on this code",
+    MARKET_SEGMENT_NOT_RECOGNISED: "Imported; market segment not recognised, left unset",
     FILENAME_COLLISION: "Filename already exists in the target folder",
     EXTENSION_NOT_ALLOWED: "File extension not allowed",
     FILE_TOO_LARGE: "File too large",

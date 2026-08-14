@@ -21,6 +21,7 @@ from app.models.procurement import (
     Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation,
     PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine,
     ApprovalToken,
+    PurchaseOrderLine,
     ViewToken,
 )
 from app.models.product import Product
@@ -36,7 +37,19 @@ from app.schemas.procurement import (
     StockInquiryCreate, StockInquiryUpdate,
     PurchaseRequestHeaderCreate, PurchaseRequestHeaderUpdate, PurchaseRequestUpdateAndReply,
 )
-from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
+from app.services.error_handler import (
+    handle_not_found,
+    handle_conflict,
+    handle_unprocessable,
+    handle_validation_error,
+)
+from app.services.scm.money import BASE_CURRENCY as MONEY_BASE_CURRENCY
+from app.services.document_number import display_document_number, strip_revision_suffix
+from app.services.response_gate import (
+    assert_response_write_allowed,
+    is_response_status_allowed,
+    response_text_changed,
+)
 from app.services.banner_person_service import wa_phone_for_user_id
 from app.services.validators import validate_project_value
 from app.services.requestor_options_service import (
@@ -49,6 +62,88 @@ _UNSET_REQUESTOR = object()
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _strip_number_suffix_in_place(payload: dict, key: str) -> None:
+    """Keep a STORED document number bare (UAC N2).
+
+    ``request_number`` is user-assignable and the edit forms post it back, so a
+    surface rendering ``PR-26-0012-R2`` could round-trip the revision suffix into
+    the very column it was derived from - after which every lookup-by-number
+    depends on the caller repeating that suffix. The revision lives in
+    ``revision_no``; the number never carries it.
+    """
+    value = payload.get(key)
+    if isinstance(value, str):
+        payload[key] = strip_revision_suffix(value)
+
+
+def _pop_status_or_refuse_move(
+    payload: dict,
+    *,
+    current: Optional[str],
+    label: str,
+    actions: str,
+    also_allowed: tuple[str, ...] = (),
+) -> None:
+    """Take ``status`` out of an edit payload, and refuse a real lifecycle move.
+
+    The lifecycle belongs to the workflow actions, never to an edit: a contact
+    revision sets the status back to the restart stage, and an office tab holding
+    the superseded value must not be able to stomp it back.
+
+    Dropping the field silently is not enough. Both update schemas still DECLARE
+    ``status`` (and removing it would change nothing, since a Pydantic model
+    ignores undeclared fields by default), so an n8n / MCP caller that had been
+    walking the lifecycle through this endpoint would get ``200`` and no change -
+    the worst failure mode available. So a payload whose ``status`` would actually
+    MOVE the record is refused with one plain sentence.
+
+    A payload echoing the CURRENT status moves nothing and is dropped quietly, so
+    a read-modify-write round trip of the whole entity keeps saving. Same rule the
+    response gate uses just below: only a real change counts as a write.
+
+    ``also_allowed`` is for a path that legitimately moves the status ITSELF: the
+    purchasing reply always lands the inquiry on ``responded``, so a caller asking
+    for exactly the destination the call is about to reach is not refused for it
+    (it is still dropped, since the workflow, not the payload, performs the move).
+    Anything else is refused as usual.
+    """
+    if "status" not in payload:
+        return
+    supplied = payload.pop("status")
+    if supplied is None:
+        return
+    supplied_norm = str(supplied).strip().lower()
+    if not supplied_norm:
+        return
+    accepted = {str(current or "").strip().lower()}
+    accepted.update(str(value).strip().lower() for value in also_allowed)
+    if supplied_norm in accepted:
+        return
+    raise handle_unprocessable(
+        f"The status of this {label} cannot be changed by editing it, so use the "
+        f"{actions} action instead."
+    )
+
+
+def _request_label(header: Any) -> str:
+    """"purchase request" / "sponsorship form" for a message the office reads.
+
+    One table, two document types (``request_type``), so every sentence about a
+    header has to name the right one. Shared by both write paths that guard the
+    status, so the two cannot end up naming it differently.
+    """
+    return (
+        "sponsorship form"
+        if getattr(header, "request_type", None) == "sponsorship_form"
+        else "purchase request"
+    )
+
+
+# The workflow actions that own a purchase request's / sponsorship form's status.
+# Named in the refusal so the caller is told where the move belongs.
+_REQUEST_STATUS_ACTIONS = "approval, process, close or void"
 
 
 class AllocationReceivedGuardError(Exception):
@@ -1382,8 +1477,100 @@ class SPOAllocationService:
         self.db.add(allocation)
         self.db.commit()
         self.db.refresh(allocation)
+        self._capture_incoming_cost(allocation)
         InboundShipmentService(self.db).refresh_shipment_line_statuses(allocation.inbound_shipment_id)
         return allocation
+
+    def _capture_incoming_cost(self, allocation: SPOAllocation) -> None:
+        """Stamp the packing-list cost, in its currency, on the inbound shipment line.
+
+        AC-C3.2. The allocation is the moment the incoming cost becomes a fact about this
+        purchase, so it is captured here rather than left to be reconstructed later.
+
+        The packing-list line IS ``inbound_shipment_lines``, so the cost is already on the
+        row this writes to; the half that is missing is the CURRENCY, which the packing list
+        does not state. It resolves through ``po_line_id`` to the ordered line's currency,
+        and where there is no such source it stays NULL. It is never guessed: a currency
+        invented for a cost silently changes what the variance means.
+
+        The ordered line is only READ (AC-C3.3). Its cost, its currency and its updated_at
+        must come out untouched, because a supplier whose incoming cost drifts above its
+        ordered cost has repriced after we committed, and overwriting the ordered figure
+        destroys the only evidence of that.
+
+        NOTE (external dependency, recorded in PLAN-scm-purchasing-fulfilment): the
+        packing-list ingest cannot supply a cost today -- the extracted product carries
+        product_code and quantity only -- so in production every line takes the uncosted
+        branch below and is logged. The mechanism is correct the day a cost arrives.
+
+        Best-effort: this runs AFTER the allocation has committed, so a failure here must
+        not turn a successful write into a 500 for the caller.
+        """
+        try:
+            line = (
+                self.db.query(InboundShipmentLine)
+                .filter(
+                    InboundShipmentLine.shipment_id == allocation.inbound_shipment_id,
+                    InboundShipmentLine.product_id == allocation.product_id,
+                )
+                .first()
+            )
+            if line is None:
+                # An allocation against a product that is not on the packing list. Real,
+                # and not this function's problem to resolve.
+                return
+
+            if line.unit_cost is None:
+                # Reported, never defaulted. A zero here would read as free goods and would
+                # flow into the variance as a 100% saving.
+                logger.warning(
+                    "SPO allocation %s is written against an uncosted packing-list line "
+                    "(shipment %s, product %s): no incoming cost to capture, so the cost "
+                    "variance against the ordered line is not computable",
+                    allocation.id,
+                    allocation.inbound_shipment_id,
+                    allocation.product_id,
+                )
+                return
+
+            if line.currency:
+                # The packing list stated the unit itself. Nothing to resolve, and the
+                # stated currency is never overwritten by an inferred one.
+                return
+
+            currency = None
+            if allocation.po_line_id:
+                currency = (
+                    self.db.query(PurchaseOrderLine.currency)
+                    .filter(PurchaseOrderLine.id == allocation.po_line_id)
+                    .scalar()
+                )
+
+            if not currency:
+                logger.warning(
+                    "SPO allocation %s captured an incoming cost of %s with no currency "
+                    "(shipment %s, product %s): %s, so the unit stays unknown rather than "
+                    "assumed",
+                    allocation.id,
+                    line.unit_cost,
+                    allocation.inbound_shipment_id,
+                    allocation.product_id,
+                    "the allocation links no PO line"
+                    if not allocation.po_line_id
+                    else "the linked PO line states no currency",
+                )
+                return
+
+            line.currency = currency
+            line.updated_at = datetime.utcnow()
+            self.db.commit()
+        except Exception:  # noqa: BLE001 - best-effort side effect, see docstring
+            logger.warning(
+                "Failed to capture the incoming cost for SPO allocation %s",
+                getattr(allocation, "id", None),
+                exc_info=True,
+            )
+            self.db.rollback()
 
     def upsert_allocation(
         self, allocation_data: SPOAllocationCreate, created_by: str
@@ -1430,6 +1617,10 @@ class SPOAllocationService:
         existing.updated_at = datetime.utcnow()
         self.db.commit()
         self.db.refresh(existing)
+        # The allocation was written, so the incoming cost is re-captured against it
+        # (AC-C3.2). The "unchanged" path above returns before any write and stamps
+        # nothing, because there was no moment of allocation to capture at.
+        self._capture_incoming_cost(existing)
         InboundShipmentService(self.db).refresh_shipment_line_statuses(existing.inbound_shipment_id)
         return ("updated", existing)
 
@@ -1836,22 +2027,74 @@ class PickingHeaderService:
         ).first()
         if not grn:
             raise handle_not_found("GRN", grn_id)
+        self.attach_provenance_labels(grn)
         return grn
-    
-    def create_grn(self, grn_data: PickingHeaderCreate, created_by: str | None = None):
-        """Create a new GRN with lines."""
+
+    def attach_provenance_labels(self, grn: PickingHeader) -> None:
+        """Stamp human-readable provenance onto the instance for the response.
+
+        The UI must never print a UUID, so the stored ``created_by`` /
+        ``import_job_id`` are resolved here to a person and a file name. Attributes
+        are set on the instance (not columns) and Pydantic reads them off the ORM
+        object; they die with the instance, so nothing can accidentally persist.
+
+        Best-effort: a deleted user or a pruned job leaves the label None rather
+        than failing the GRN read.
+        """
+        grn.created_by_label = None  # type: ignore[attr-defined]
+        grn.import_filename = None  # type: ignore[attr-defined]
+        try:
+            if getattr(grn, "created_by", None):
+                from app.models.user import User
+
+                row = (
+                    self.db.query(User.name, User.email)
+                    .filter(User.id == str(grn.created_by))
+                    .first()
+                )
+                if row is not None:
+                    grn.created_by_label = row[0] or row[1]  # type: ignore[attr-defined]
+            if getattr(grn, "import_job_id", None):
+                from app.models.job import ImportJob
+
+                job_row = (
+                    self.db.query(ImportJob.filename)
+                    .filter(ImportJob.id == str(grn.import_job_id))
+                    .first()
+                )
+                if job_row is not None:
+                    grn.import_filename = job_row[0]  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 - a label is not worth failing the read
+            logger.exception("GRN provenance label lookup failed for %s", grn.id)
+
+    def create_grn(
+        self,
+        grn_data: PickingHeaderCreate,
+        created_by: str | None = None,
+        source_system: str = "ui",
+    ):
+        """Create a new GRN with lines.
+
+        ``source_system`` says which surface wrote it - ``'ui'`` for a staff create,
+        ``'external_api'`` for the n8n / AutoCount ingest. Without it the row cannot
+        distinguish a person from an integration, which is the case that made a
+        wrongly-companied GRN untraceable (the external path leaves no import job
+        and no audit row to bracket).
+        """
         existing = self.db.query(PickingHeader).filter(
             PickingHeader.picking_number == grn_data.picking_number
         ).first()
         if existing:
             raise handle_conflict("Picking number already exists.")
-        
+
         # Create GRN header and lines in transaction
         grn_dict = grn_data.model_dump(exclude={"picking_lines"})
         grn_dict["picking_type"] = "goods_received"
         if not grn_dict.get("picked_by_user_id"):
             grn_dict["picked_by_user_id"] = str(created_by) if created_by else None
-        
+        grn_dict["created_by"] = str(created_by) if created_by else None
+        grn_dict["source_system"] = source_system
+
         grn = PickingHeader(**grn_dict)
         self.db.add(grn)
         self.db.flush()
@@ -2008,8 +2251,27 @@ class PickingHeaderService:
             PickingHeader.picking_type == "goods_received",
         ).first()
 
-    def upsert_grn_header_for_import(self, picking_number: str, spo_number: Optional[str], picking_date: date):
-        """Create or update GRN header by picking_number (idempotent). Returns the header."""
+    def upsert_grn_header_for_import(
+        self,
+        picking_number: str,
+        spo_number: Optional[str],
+        picking_date: date,
+        *,
+        created_by: Optional[str] = None,
+        import_job_id: Optional[str] = None,
+    ) -> tuple[PickingHeader, bool]:
+        """Create or update a GRN header by picking_number (idempotent).
+
+        Returns ``(header, created)``. The caller NEEDS that flag: it used to
+        report every success as ``created``, so the last person to re-run a file
+        looked like the author of every GRN in it - which is exactly what made
+        "who created this GRN" unanswerable.
+
+        Provenance (``created_by`` / ``import_job_id`` / ``source_system``) is
+        written ONLY on insert. A re-import overwrites the mutable fields but must
+        not rewrite authorship, or the answer is lost the first time someone
+        re-uploads the same spreadsheet.
+        """
         existing = self.get_grn_by_picking_number(picking_number)
         if existing:
             existing.spo_number = spo_number
@@ -2017,7 +2279,7 @@ class PickingHeaderService:
             existing.picking_status = "approved"
             self.db.commit()
             self.db.refresh(existing)
-            return existing
+            return existing, False
         grn = PickingHeader(
             picking_number=picking_number,
             spo_number=spo_number,
@@ -2025,11 +2287,14 @@ class PickingHeaderService:
             picking_date=picking_date,
             picking_status="approved",
             inspection_status="pending",
+            created_by=created_by,
+            source_system="import",
+            import_job_id=import_job_id,
         )
         self.db.add(grn)
         self.db.commit()
         self.db.refresh(grn)
-        return grn
+        return grn, True
 
     def upsert_grn_line_for_import(
         self,
@@ -2308,7 +2573,23 @@ class StockInquiryService:
         from app.services.entity_attachment_service import EntityAttachmentService
         self.entity_attachment_service = EntityAttachmentService(db)
 
-    def _get_team_user_ids_for_agent_code(self, agent_code: str) -> List[str]:
+    def _company_for_stock_inquiry(self, inquiry_id: str) -> str:
+        """AC-E4: a stock inquiry routes to its contact's company, else the default.
+
+        ``stock_inquiries`` has no company column, so the submitter contact is the
+        only signal.
+        """
+        from app.models.procurement import StockInquiry
+        from app.services.company_routing_service import company_for_contact
+
+        row = (
+            self.db.query(StockInquiry.contact_id)
+            .filter(StockInquiry.id == str(inquiry_id))
+            .first()
+        )
+        return company_for_contact(self.db, contact_id=str(row[0]) if row and row[0] else None)
+
+    def _get_team_user_ids_for_agent_code(self, agent_code: str, *, company_id: str) -> List[str]:
         """Return user IDs of all teams assigned to the access agent with the given code."""
         from app.services.user_service import AccessAgentService
         from app.models.access import AgentTeam, TeamMember
@@ -2328,7 +2609,7 @@ class StockInquiryService:
         return [str(r[0]) for r in rows if r and r[0]]
 
     def _get_team_user_ids_for_agent_team_assignment(
-        self, agent_code: str, team_assignment_code: str
+        self, agent_code: str, team_assignment_code: str, *, company_id: str
     ) -> List[str]:
         """Return user IDs of the team assigned to the agent with the given team assignment code (e.g. project_sales, purchasing)."""
         from app.services.user_service import AccessAgentService
@@ -2339,7 +2620,7 @@ class StockInquiryService:
         if not agent_id:
             logger.debug("No access agent found for code=%s", agent_code)
             return []
-        team_id = agent_svc.get_team_id_by_code(agent_id, team_assignment_code)
+        team_id = agent_svc.get_team_id_by_code(agent_id, team_assignment_code, company_id=company_id)
         if not team_id:
             logger.debug(
                 "No team assignment found for agent %s with code=%s",
@@ -2351,7 +2632,7 @@ class StockInquiryService:
         return [str(r[0]) for r in rows if r and r[0]]
 
     def _get_team_user_ids_for_agent_tier(
-        self, agent_code: str, tier: int
+        self, agent_code: str, tier: int, *, company_id: str
     ) -> List[str]:
         """Return user IDs of the team assigned to the agent with the given tier (1=initial, 2/3=escalation)."""
         from app.services.user_service import AccessAgentService
@@ -2362,7 +2643,7 @@ class StockInquiryService:
         if not agent_id:
             logger.debug("No access agent found for code=%s", agent_code)
             return []
-        team_id = agent_svc.get_team_id_by_tier(agent_id, tier)
+        team_id = agent_svc.get_team_id_by_tier(agent_id, tier, company_id=company_id)
         if not team_id:
             logger.debug(
                 "No team assignment found for agent %s with tier=%s",
@@ -2373,10 +2654,10 @@ class StockInquiryService:
         rows = self.db.query(TeamMember.user_id).filter(TeamMember.team_id == team_id).all()
         return [str(r[0]) for r in rows if r and r[0]]
 
-    def _get_team_user_ids_for_agent_tier_safe(self, agent_code: str, tier: int) -> List[str]:
+    def _get_team_user_ids_for_agent_tier_safe(self, agent_code: str, tier: int, *, company_id: str) -> List[str]:
         """Tier lookup; returns [] if multiple teams share the same tier (ambiguous) or lookup fails."""
         try:
-            return self._get_team_user_ids_for_agent_tier(agent_code, tier)
+            return self._get_team_user_ids_for_agent_tier(agent_code, tier, company_id=company_id)
         except HTTPException:
             logger.warning(
                 "Tier %s for agent %s is ambiguous or invalid (e.g. multiple team sets at tier %s). "
@@ -2455,18 +2736,20 @@ class StockInquiryService:
         from app.services.notification_service import NotificationService
         from datetime import datetime
 
+        company_id = self._company_for_stock_inquiry(inquiry_id)
+
         if team_assignment_code:
             if team_assignment_code == "project_sales":
                 # Prefer explicit team assignment code over tier 1: multiple tier-1 rows (e.g. purchasing +
                 # project_sales + customer_service) make tier lookup raise conflict or pick the wrong team.
                 user_ids = (
-                    self._get_team_user_ids_for_agent_team_assignment(agent_code, "project_sales")
-                    or self._get_team_user_ids_for_agent_tier_safe(agent_code, 1)
+                    self._get_team_user_ids_for_agent_team_assignment(agent_code, "project_sales", company_id=company_id)
+                    or self._get_team_user_ids_for_agent_tier_safe(agent_code, 1, company_id=company_id)
                 )
             else:
-                user_ids = self._get_team_user_ids_for_agent_team_assignment(agent_code, team_assignment_code)
+                user_ids = self._get_team_user_ids_for_agent_team_assignment(agent_code, team_assignment_code, company_id=company_id)
         else:
-            user_ids = self._get_team_user_ids_for_agent_code(agent_code)
+            user_ids = self._get_team_user_ids_for_agent_code(agent_code, company_id=company_id)
         if not user_ids:
             logger.warning(
                 "No team members found for agent code '%s'%s. Assign a team under Team Assignments (Tier 1 or code project_sales).",
@@ -2786,13 +3069,14 @@ class StockInquiryService:
             return
         from app.models.sla import ConversationSLATracking
         from app.models.user import User
+        from app.services.sla_scope import open_tracker_scope
 
         rows = (
             self.db.query(ConversationSLATracking)
             .filter(
                 ConversationSLATracking.source_entity_type == "stock_inquiry",
                 ConversationSLATracking.source_entity_id.in_(ids),
-                ConversationSLATracking.is_resolved.is_(False),
+                *open_tracker_scope(),
             )
             .order_by(
                 ConversationSLATracking.source_entity_id,
@@ -2891,6 +3175,10 @@ class StockInquiryService:
         # `column_attrs` skips python properties, so the derived requestor name
         # has to be copied in explicitly or the response returns null.
         data["salesperson_contact_name"] = inquiry.salesperson_contact_name
+        # Same reason - a python property, skipped by column_attrs. The detail page
+        # gates its response affordances on this rather than mirroring the status
+        # list (UAC O1).
+        data["response_write_allowed"] = inquiry.response_write_allowed
         data["last_responded_by_name"] = (
             self._resolve_user_display_name(inquiry.last_responded_by) if inquiry.last_responded_by else None
         )
@@ -2994,14 +3282,14 @@ class StockInquiryService:
                 self.db,
                 source_entity_type="stock_inquiry",
                 source_entity_id=str(inquiry.id),
-                entity_number=getattr(inquiry, "inquiry_number", None),
+                entity_number=display_document_number(inquiry) or None,
                 actor_user_id=actor_user_id,
             )
         except Exception:
             logger.warning("Void in-app notify failed for inquiry %s", inquiry.id, exc_info=True)
 
         try:
-            number = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
+            number = (display_document_number(inquiry) or str(inquiry.id)).strip()
             reason = (getattr(inquiry, "void_reason", None) or "").strip()
             message_text = (
                 f"Your stock inquiry {number} has been voided. Reason: {reason}"
@@ -3342,7 +3630,13 @@ class StockInquiryService:
 
         full = inquiry_data.model_dump()
         lookup_raw = full.get("inquiry_number")
-        lookup = lookup_raw.strip() if isinstance(lookup_raw, str) else None
+        # Tolerate a revision suffix (UAC N6). The stored number stays bare, but an
+        # external caller echoing back a number it read from one of our payloads
+        # sends "SI-26-0184-R2". Matching that literally finds nothing and this
+        # method then INSERTS a duplicate instead of resubmitting the rejected row -
+        # silent duplication on a live integration path, not a visible 404.
+        lookup = strip_revision_suffix(lookup_raw) if isinstance(lookup_raw, str) else None
+        lookup = lookup.strip() if lookup else None
         if lookup:
             existing = (
                 self.db.query(StockInquiry)
@@ -3627,7 +3921,7 @@ class StockInquiryService:
                 first_name = parts[0] if parts else None
                 last_name = parts[1] if len(parts) > 1 else None
 
-        inquiry_number = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
+        inquiry_number = (display_document_number(inquiry) or str(inquiry.id)).strip()
         now_ms = int(time.time() * 1000)
         now_s = int(time.time())
         payload = [
@@ -3717,8 +4011,26 @@ class StockInquiryService:
         inquiry = self.get_inquiry(inquiry_id)
 
         update_data = inquiry_data.model_dump(exclude_unset=True)
-        update_data.pop("status", None)  # Status only via workflow endpoints
+        # Status only via the workflow endpoints; a payload that would MOVE it is
+        # refused rather than silently dropped.
+        _pop_status_or_refuse_move(
+            update_data,
+            current=inquiry.status,
+            label="stock inquiry",
+            actions="submit, approve, reject or reopen",
+        )
         update_data.pop("inquiry_number", None)  # System-assigned; not editable via update API
+
+        # Response gate (UAC O1): the purchasing response is stage output, so it
+        # may only be REWRITTEN while the inquiry is still with purchasing. Every
+        # other field stays editable at any status, and a save that posts the
+        # response back unchanged (the edit form posts the whole entity) is not a
+        # response write.
+        if "purchasing_response" in update_data and response_text_changed(
+            getattr(inquiry, "purchasing_response", None),
+            update_data.get("purchasing_response"),
+        ):
+            assert_response_write_allowed("stock_inquiry", inquiry.status)
 
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else inquiry.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else inquiry.space_id
@@ -3745,14 +4057,49 @@ class StockInquiryService:
         self.db.refresh(inquiry)
         return inquiry
 
+    STOCK_INQUIRY_REPLY_PREAMBLE = "There is a response to your stock inquiry"
+
+    @classmethod
+    def compose_stock_inquiry_reply_message(cls, bare_body: str, portal_url: str) -> str:
+        """The contact-facing WhatsApp text for a purchasing reply.
+
+        Composed HERE, not in the frontend. The FE used to build
+        ``f"{preamble}{' ' + view_url}: {body}"``, which produced two defects:
+
+        1. The ``:`` landed immediately after the URL, so WhatsApp's autolinker
+           pulled it into the href and the contact got an invalid link.
+        2. It used the read-only ``/view/stock-inquiry?token=`` page, built on
+           ``window.location.origin`` — whatever host the staff browser was on —
+           instead of the interactive portal link the backend already resolves via
+           ``_stock_inquiry_portal_or_view_url`` for the template's ``portal_url``.
+
+        The URL therefore goes LAST, alone on its own line after a blank line, so
+        no punctuation or word can ever be absorbed into it. The colon stays where
+        it reads correctly: after the preamble.
+        """
+        body = (bare_body or "").strip()
+        url = (portal_url or "").strip()
+        text = f"{cls.STOCK_INQUIRY_REPLY_PREAMBLE}:"
+        if body:
+            text = f"{text}\n{body}"
+        return f"{text}\n\n{url}" if url else text
+
     @staticmethod
     def _bare_stock_inquiry_reply(raw: Optional[str]) -> str:
-        """Strip the FE-composed "There is a response to your stock inquiry
-        {link}: " preamble from a purchasing reply, keeping ONLY the
-        technician's wording for the lean ``update`` template var. The FE sends
-        ``f"There is a response to your stock inquiry{linkPart}: {body}"`` as
-        purchasing_response; the link has no ": " (colon-space), so the last
-        ": " is the body separator. Mirrors complaint reply normalization.
+        """Strip a LEGACY "There is a response to your stock inquiry {link}: "
+        preamble, keeping ONLY the purchasing wording for the lean ``update``
+        template var.
+
+        The frontend no longer composes that string — it posts the bare wording and
+        ``compose_stock_inquiry_reply_message`` builds the outgoing text — so for
+        current clients this is a no-op passthrough. It stays for two inputs that
+        still carry the old shape: a stored ``purchasing_response`` written before
+        the change and re-sent, and any client not yet on the new build. Without it
+        those would stack a second preamble and re-send the stale read-only view
+        link.
+
+        The old link had no ": " (colon-space), so the last ": " is the body
+        separator. Mirrors complaint reply normalization.
         """
         s = (raw or "").strip()
         # Both spellings: the module was renamed Stock Inquiry -> Stock Inquiry, and
@@ -3773,8 +4120,13 @@ class StockInquiryService:
         crm_sender_user_id: Optional[str] = None,
     ):
         """
-        Update inquiry, mark SLA as responded (when applicable), set status=responded,
-        and queue the Respond.io message via RQ.
+        Deliver the purchasing response: mark SLA as responded, set status=responded,
+        record ``last_responded_*`` and queue the Respond.io message via RQ.
+
+        This is the RESPONSE path, not the chat path, so it is gated on status
+        (UAC O1): outside the response stage it raises 422. Plain messaging is a
+        different endpoint (``/conversation/send-message``) and stays open at any
+        status, including closed, rejected and voided inquiries (UAC O2).
 
         DB writes commit synchronously; the external Respond.io call is decoupled
         through the ``respond_io`` queue so a downstream 4xx/5xx no longer rolls
@@ -3791,10 +4143,34 @@ class StockInquiryService:
         log_service = IntegrationLogService(self.db)
 
         inquiry = self.get_inquiry(inquiry_id)
-        # Chat can be sent from any status; workflow transition to "responded" only for purchasing/responded stages.
-        transition_to_responded_workflow = inquiry.status in {"pending_purchasing", "responded"}
+        # The whole call is a response write (it stamps last_responded_* and fires
+        # the purchasing_respond SLA event), so refuse it outside the response
+        # stage rather than gating a single field.
+        assert_response_write_allowed("stock_inquiry", inquiry.status)
+        # Now guaranteed true by the gate above; kept as the one name the workflow
+        # steps below read, and sourced from the same tuple as the gate - through
+        # the same normalizer, or the two could disagree. They used to: the gate
+        # matches on a stripped, lower-cased status while this read the raw column,
+        # so a row holding "Responded" passed the gate and then skipped the flip,
+        # which is the one path on which a payload ``status`` reached the entity.
+        transition_to_responded_workflow = is_response_status_allowed(
+            "stock_inquiry", inquiry.status
+        )
 
         update_data = inquiry_data.model_dump(exclude_unset=True)
+        # Belt and braces on top of that. The flip below overwrites whatever a
+        # payload asked for, so a supplied status was inert - but "inert because a
+        # later line happens to overwrite it" is not a guard, and this endpoint
+        # accepts an API key (n8n). Refused the same way as on the plain update
+        # path, with ``responded`` accepted as the echo of where this call lands,
+        # so a caller asking for exactly what the reply does is not turned away.
+        _pop_status_or_refuse_move(
+            update_data,
+            current=inquiry.status,
+            label="stock inquiry",
+            actions="submit, approve, reject or reopen",
+            also_allowed=("responded",) if transition_to_responded_workflow else (),
+        )
         update_data.pop("inquiry_number", None)
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else inquiry.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else inquiry.space_id
@@ -3841,13 +4217,12 @@ class StockInquiryService:
         attachment_sentence = compose_response_attachment_sentence(
             count_staff_attachments(self.db, "stock_inquiry", str(inquiry.id))
         )
+        # The FE now posts only the purchasing wording, so the strip is a no-op;
+        # it still runs so a legacy client (or a re-sent stored row) carrying the old
+        # "{preamble} {view_url}: {body}" shape is normalised instead of stacking a
+        # second preamble and re-sending the stale read-only view link.
         bare_reply = self._bare_stock_inquiry_reply(message_to_send)
-        if attachment_sentence:
-            outgoing_bare = f"{bare_reply}\n{attachment_sentence}"
-            outgoing_text = f"{message_to_send}\n{attachment_sentence}"
-        else:
-            outgoing_bare = bare_reply
-            outgoing_text = message_to_send
+        outgoing_bare = f"{bare_reply}\n{attachment_sentence}" if attachment_sentence else bare_reply
 
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         if transition_to_responded_workflow:
@@ -3903,11 +4278,15 @@ class StockInquiryService:
         # Structured-template vars: bare purchasing_response text (+ attachment
         # sentence, D10) as `update` core + links. Mirrors complaint's bare
         # `stored_body`.
+        # One resolution, shared by the in-window text and the out-of-window
+        # template, so both carry the same interactive portal link.
+        portal_url = self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id))
         reply_extra_vars = {
             "update": outgoing_bare,
-            "portal_url": self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id)),
+            "portal_url": portal_url,
             "view_url": (self._build_stock_inquiry_view_url(str(inquiry.id)) or "").strip(),
         }
+        outgoing_text = self.compose_stock_inquiry_reply_message(outgoing_bare, portal_url)
         self._enqueue_stock_inquiry_respond_message(
             inquiry_id=inquiry_id,
             identifier=identifier,
@@ -3980,7 +4359,7 @@ class StockInquiryService:
         # (template when the 24h window is closed). Best-effort post-commit - a
         # send hiccup must not roll back the approved transition.
         try:
-            inquiry_number = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
+            inquiry_number = (display_document_number(inquiry) or str(inquiry.id)).strip()
             portal_url = self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id))
             approve_extra_vars = {
                 "update": "Approved by project sales manager",
@@ -4043,7 +4422,7 @@ class StockInquiryService:
         if inquiry.status != "pending_project_sales":
             from app.services.error_handler import handle_validation_error
             raise handle_validation_error(f"Cannot reject when status is {inquiry.status}. Expected: pending_project_sales.")
-        inquiry_number = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
+        inquiry_number = (display_document_number(inquiry) or str(inquiry.id)).strip()
         reason_text = (reason or "").strip()
         if not reason_text:
             from app.services.error_handler import handle_validation_error
@@ -4122,7 +4501,7 @@ class StockInquiryService:
         if inquiry.status not in ("pending_purchasing", "responded"):
             from app.services.error_handler import handle_validation_error
             raise handle_validation_error(f"Cannot reject when status is {inquiry.status}. Expected: pending_purchasing or responded.")
-        inquiry_number = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
+        inquiry_number = (display_document_number(inquiry) or str(inquiry.id)).strip()
         reason_text = (reason or "").strip()
         if not reason_text:
             from app.services.error_handler import handle_validation_error
@@ -4267,6 +4646,25 @@ class ProductSupplierService:
             raise handle_not_found("Product Supplier", product_supplier_id)
         return product_supplier
     
+    @staticmethod
+    def _assert_priced_in_a_currency(unit_cost, currency) -> None:
+        """A price with no currency is read as ringgit everywhere downstream.
+
+        `scm.money.normalize_currency` treats a blank code as the base currency, which is
+        right for rows that predate the book having more than one currency. It is wrong
+        for a price somebody types today: a yuan figure saved with no code is silently
+        ranked, summed and budgeted as if it were ringgit, understating the buy. Nothing
+        later can detect that, because the number looks perfectly valid. So the pairing is
+        required at the point of entry, where the person still knows what they meant.
+        """
+        if unit_cost is None:
+            return
+        if not (currency or "").strip():
+            raise handle_validation_error(
+                "Enter the currency this price is in. A price with no currency is read as "
+                f"{MONEY_BASE_CURRENCY}, which would understate the cost if it is not."
+            )
+
     def create_product_supplier(self, product_supplier_data: ProductSupplierCreate):
         """Create a new product supplier relationship."""
         # Check if relationship already exists
@@ -4276,8 +4674,16 @@ class ProductSupplierService:
         ).first()
         if existing:
             raise handle_conflict("Product supplier relationship already exists.")
-        
-        product_supplier = ProductSupplier(**product_supplier_data.model_dump())
+
+        self._assert_priced_in_a_currency(
+            product_supplier_data.unit_cost, product_supplier_data.currency
+        )
+        # exclude_none, not a plain dump: `is_primary_supplier` is NOT NULL with a column
+        # default, so passing the unset field through as an explicit None would insert NULL
+        # and fail. Every other field is nullable, where omitted and null mean the same.
+        product_supplier = ProductSupplier(
+            **product_supplier_data.model_dump(exclude_none=True)
+        )
         self.db.add(product_supplier)
         self.db.commit()
         self.db.refresh(product_supplier)
@@ -4292,11 +4698,21 @@ class ProductSupplierService:
     def update_product_supplier(self, product_supplier_id: str, product_supplier_data: ProductSupplierUpdate):
         """Update a product supplier relationship."""
         product_supplier = self.get_product_supplier(product_supplier_id)
-        
+
         update_data = product_supplier_data.model_dump(exclude_unset=True)
+        # Check the MERGED row, not the patch: setting only a price on a row whose currency
+        # is blank is exactly the case the rule exists for, and the patch alone cannot see it.
+        self._assert_priced_in_a_currency(
+            update_data.get("unit_cost", product_supplier.unit_cost),
+            update_data.get("currency", product_supplier.currency),
+        )
         for key, value in update_data.items():
+            # Same NOT NULL column as on create: an explicit null for the primary flag is
+            # not a value, so leave the row's own.
+            if key == "is_primary_supplier" and value is None:
+                continue
             setattr(product_supplier, key, value)
-        
+
         self.db.commit()
         self.db.refresh(product_supplier)
         
@@ -4605,7 +5021,7 @@ class PurchaseRequestService:
 
     def _notify_contact_on_approval_rejected(self, header: PurchaseRequestHeader) -> None:
         """Notify the linked Respond.io contact when a public approval flow rejects the request."""
-        request_number = (getattr(header, "request_number", None) or str(header.id)).strip()
+        request_number = (display_document_number(header) or str(header.id)).strip()
         reason = (getattr(header, "approval_comments", None) or "").strip() or "no reason provided"
         approver = self._resolve_approver_display_name(header)
         view_url = self._build_request_view_url(str(header.id))
@@ -4642,7 +5058,7 @@ class PurchaseRequestService:
 
     def _notify_contact_on_approval_approved(self, header: PurchaseRequestHeader) -> None:
         """Notify the linked Respond.io contact when a public approval flow approves the request."""
-        request_number = (getattr(header, "request_number", None) or str(header.id)).strip()
+        request_number = (display_document_number(header) or str(header.id)).strip()
         approver = self._resolve_approver_display_name(header)
         note = (getattr(header, "approval_comments", None) or "").strip()
         note_part = f" Note: {note}." if note else ""
@@ -4753,7 +5169,7 @@ class PurchaseRequestService:
                 f"(current status: {current_status or 'unknown'})."
             )
 
-        request_number = (getattr(header, "request_number", None) or str(header.id)).strip()
+        request_number = (display_document_number(header) or str(header.id)).strip()
         rt = getattr(header, "request_type", None) or "purchase_request"
         type_word = "sponsorship form" if rt == "sponsorship_form" else "purchase request"
         status_label = self._CS_FINALIZE_STATUS_LABELS.get(new_status, new_status)
@@ -4910,7 +5326,7 @@ class PurchaseRequestService:
                 self.db,
                 source_entity_type=rt,
                 source_entity_id=str(header.id),
-                entity_number=getattr(header, "request_number", None),
+                entity_number=display_document_number(header) or None,
                 actor_user_id=actor_user_id,
             )
         except Exception:
@@ -4920,7 +5336,7 @@ class PurchaseRequestService:
         # (send_text_or_template + integration_log on success AND failure).
         try:
             type_word = "sponsorship form" if rt == "sponsorship_form" else "purchase request"
-            number = (getattr(header, "request_number", None) or str(header.id)).strip()
+            number = (display_document_number(header) or str(header.id)).strip()
             reason = (getattr(header, "void_reason", None) or "").strip()
             message_text = (
                 f"Your {type_word} {number} has been voided. "
@@ -5019,7 +5435,7 @@ class PurchaseRequestService:
                 first_name = parts[0] if parts else None
                 last_name = parts[1] if len(parts) > 1 else None
 
-        request_number = (getattr(header, "request_number", None) or str(header.id)).strip()
+        request_number = (display_document_number(header) or str(header.id)).strip()
         rt = getattr(header, "request_type", None) or ""
         if rt == "sponsorship_form":
             revise_text = f"I want to edit sponsorship form for {request_number}"
@@ -5272,7 +5688,9 @@ class PurchaseRequestService:
         if rn_raw is None:
             lookup = ""
         else:
-            lookup = str(rn_raw).strip()
+            # Tolerate a revision suffix (UAC N6) - see create_inquiry for why a
+            # miss here duplicates the record instead of failing loudly.
+            lookup = (strip_revision_suffix(str(rn_raw)) or "").strip()
         if lookup:
             existing = (
                 self.db.query(PurchaseRequestHeader)
@@ -5385,10 +5803,13 @@ class PurchaseRequestService:
         space_id = getattr(payload, "space_id", None) or None
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
 
-        # Generate request_number if not provided (strip to match upsert lookup)
+        # Generate request_number if not provided (strip to match upsert lookup).
+        # A revision suffix comes off here too (UAC N2): the STORED number is always
+        # bare, so a caller that echoed back "PR-26-0012-R2" for a number we do not
+        # have does not mint a new row whose number carries a revision it never had.
         request_number = getattr(payload, "request_number", None) or None
         if isinstance(request_number, str):
-            request_number = request_number.strip() or None
+            request_number = (strip_revision_suffix(request_number) or "").strip() or None
         if not request_number:
             from app.services.numbering_service import NumberingService
             ref_date = self._parse_date(getattr(payload, "date", None)) or date.today()
@@ -5412,6 +5833,7 @@ class PurchaseRequestService:
             request_number=request_number,
             request_date=self._parse_date(payload.date),
             customer_name=payload.customer_name,
+            pic=getattr(payload, "pic", None),
             project_title=payload.project_title,
             purpose=payload.purpose,
             delivery_address=getattr(payload, "delivery_address", None),
@@ -5453,7 +5875,7 @@ class PurchaseRequestService:
         # Capture header fields before any further commits (session may expire objects)
         header_id = str(header.id)
         header_request_type = getattr(header, "request_type", None)
-        header_request_number = getattr(header, "request_number", None) or "N/A"
+        header_request_number = display_document_number(header) or "N/A"
         header_project_title = getattr(header, "project_title", None) or "N/A"
         try:
             self.get_or_create_view_token(header_id)
@@ -5529,6 +5951,7 @@ class PurchaseRequestService:
         row.request_type = payload.request_type
         row.request_date = self._parse_date(payload.date)
         row.customer_name = payload.customer_name
+        row.pic = getattr(payload, "pic", None)
         row.project_title = payload.project_title
         row.purpose = payload.purpose
         row.delivery_address = getattr(payload, "delivery_address", None)
@@ -5591,7 +6014,7 @@ class PurchaseRequestService:
 
         header_id = str(row.id)
         header_request_type = getattr(row, "request_type", None)
-        header_request_number = getattr(row, "request_number", None) or "N/A"
+        header_request_number = display_document_number(row) or "N/A"
         header_project_title = getattr(row, "project_title", None) or "N/A"
         try:
             self.get_or_create_view_token(header_id)
@@ -5617,22 +6040,31 @@ class PurchaseRequestService:
             )
         return row
 
-    def _get_purchase_request_project_sales_tier1_user_ids(self) -> List[str]:
-        """Members of Tier 1 under team set code project_sales for access agent purchase_request."""
+    def _get_purchase_request_project_sales_tier1_user_ids(
+        self, *, company_id: Optional[str] = None
+    ) -> List[str]:
+        """Members of Tier 1 under team set code project_sales for access agent purchase_request.
+
+        ``company_id`` defaults to Sorento: some callers are generic team lookups with
+        no purchase request in hand. Where the PR is known, pass its contact's company.
+        """
         from app.services.user_service import AccessAgentService
         from app.models.access import TeamMember
 
+        from app.services.company_routing_service import DEFAULT_COMPANY_ID
+
+        company_id = str(company_id or DEFAULT_COMPANY_ID)
         agent_svc = AccessAgentService(self.db)
         agent_id = agent_svc.get_agent_id_by_code("purchase_request")
         if not agent_id:
             logger.debug("No access agent found for code=purchase_request")
             return []
-        team_id = agent_svc.get_team_id_by_tier(agent_id, 1, team_set_code="project_sales")
+        team_id = agent_svc.get_team_id_by_tier(agent_id, 1, team_set_code="project_sales", company_id=company_id)
         if not team_id:
-            team_id = agent_svc.get_team_id_by_code(agent_id, "project_sales")
+            team_id = agent_svc.get_team_id_by_code(agent_id, "project_sales", company_id=company_id)
         if not team_id:
             try:
-                team_id = agent_svc.get_team_id_by_tier(agent_id, 1)
+                team_id = agent_svc.get_team_id_by_tier(agent_id, 1, company_id=company_id)
             except HTTPException:
                 logger.warning(
                     "Tier 1 for agent 'purchase_request' is ambiguous (multiple team sets). "
@@ -5866,7 +6298,7 @@ class PurchaseRequestService:
         if not requested_by_uid:
             return
         type_label = "Purchase Request" if getattr(header, "request_type", None) == "purchase_request" else "Sponsorship Form"
-        form_number = getattr(header, "request_number", None) or "N/A"
+        form_number = display_document_number(header) or "N/A"
         project = getattr(header, "project_title", None) or "N/A"
         title = f"{type_label} approved"
         body = f"{type_label} {form_number} (Project: {project}) has been approved."
@@ -5903,7 +6335,7 @@ class PurchaseRequestService:
         if not requested_by_uid:
             return
         type_label = "Purchase Request" if getattr(header, "request_type", None) == "purchase_request" else "Sponsorship Form"
-        form_number = getattr(header, "request_number", None) or "N/A"
+        form_number = display_document_number(header) or "N/A"
         project = getattr(header, "project_title", None) or "N/A"
         title = f"{type_label} rejected"
         body = f"{type_label} {form_number} (Project: {project}) has been rejected."
@@ -5970,6 +6402,7 @@ class PurchaseRequestService:
                 "request_number": getattr(header, "request_number", None),
                 "request_date": request_date.isoformat() if request_date else None,
                 "customer_name": getattr(header, "customer_name", None),
+                "pic": getattr(header, "pic", None),
                 "project_title": getattr(header, "project_title", None),
                 "purpose": getattr(header, "purpose", None),
                 "requested_by": getattr(header, "requested_by", None),
@@ -6023,12 +6456,13 @@ class PurchaseRequestService:
             # Filter by the latest unresolved form-SLA assignee (project-sales
             # before approval, customer-service after) - mirrors complaint.
             from app.models.sla import ConversationSLATracking
+            from app.services.sla_scope import open_tracker_scope
 
             base = self.db.query(ConversationSLATracking.source_entity_id).filter(
                 ConversationSLATracking.source_entity_type.in_(
                     ("purchase_request", "sponsorship_form")
                 ),
-                ConversationSLATracking.is_resolved.is_(False),
+                *open_tracker_scope(),
             )
             val = str(assigned_to).strip()
             if val.lower() == "__unassigned__":
@@ -6192,6 +6626,7 @@ class PurchaseRequestService:
             return
         from app.models.sla import ConversationSLATracking
         from app.models.user import User
+        from app.services.sla_scope import open_tracker_scope
 
         rows = (
             self.db.query(ConversationSLATracking)
@@ -6200,7 +6635,7 @@ class PurchaseRequestService:
                     ("purchase_request", "sponsorship_form")
                 ),
                 ConversationSLATracking.source_entity_id.in_(ids),
-                ConversationSLATracking.is_resolved.is_(False),
+                *open_tracker_scope(),
             )
             .order_by(
                 ConversationSLATracking.source_entity_id,
@@ -6289,6 +6724,7 @@ class PurchaseRequestService:
         dump = data.model_dump(exclude={"products"})
         dump["status"] = "draft"
         dump["source"] = "manual"
+        _strip_number_suffix_in_place(dump, "request_number")
         norm_subject, norm_other = self._normalize_sponsor_subject(
             dump.get("request_type"), dump.get("sponsor_subject")
         )
@@ -6342,9 +6778,27 @@ class PurchaseRequestService:
         return header
 
     def update_request(self, request_id: str, data: PurchaseRequestHeaderUpdate):
-        """Update purchase request header and optionally replace lines."""
+        """Update purchase request header and optionally replace lines.
+
+        Status is NOT editable here - it moves only through the workflow actions
+        (set-pending-approval / approval-decision / reject-submitted / process /
+        close / void), exactly as ``StockInquiryService.update_inquiry`` has
+        always done. ``PurchaseRequestHeaderUpdate`` still exposes ``status``, so
+        without this guard a plain PUT could walk the lifecycle sideways - and a
+        contact revision, which sets the status back to the restart stage, could
+        be stomped straight back to `approved` by an office tab that was mid-edit.
+        A payload that would actually MOVE the status is refused (422), never
+        silently dropped: see ``_pop_status_or_refuse_move``.
+        """
         header = self.get_request(request_id)
         payload = data.model_dump(exclude_unset=True, exclude={"products"})
+        _pop_status_or_refuse_move(
+            payload,
+            current=header.status,
+            label=_request_label(header),
+            actions=_REQUEST_STATUS_ACTIONS,
+        )
+        _strip_number_suffix_in_place(payload, "request_number")
         contact_id = payload.get("contact_id") if "contact_id" in payload else header.contact_id
         space_id = payload.get("space_id") if "space_id" in payload else header.space_id
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
@@ -6393,6 +6847,18 @@ class PurchaseRequestService:
         """
         Update purchase request (e.g. request_number), then send a reply to the conversation via Respond.io.
         Message is reply_message if provided, otherwise built from request_number.
+
+        The status guard is the SAME one ``update_request`` applies, deliberately:
+        this endpoint is an office edit plus a chat send, and it moves the lifecycle
+        no more than a plain PUT does. ``PurchaseRequestUpdateAndReply`` inherits
+        ``status`` from the header update schema, so without the guard here the
+        hardening on the PUT path was a fence with a gate left open beside it.
+
+        It matters for revisions specifically: a revision sets the status back to
+        the restart stage, and a stale office tab (or an n8n write) that can set
+        ``status`` freely stomps it straight back to the value the revision
+        superseded - the exact defect the guard exists to prevent. A payload
+        echoing the current status still saves, so read-modify-write keeps working.
         """
         import logging
         from app.services.integration_service import IntegrationLogService
@@ -6404,6 +6870,13 @@ class PurchaseRequestService:
 
         header = self.get_request(request_id)
         payload = data.model_dump(exclude_unset=True, exclude={"products", "reply_message"})
+        _pop_status_or_refuse_move(
+            payload,
+            current=header.status,
+            label=_request_label(header),
+            actions=_REQUEST_STATUS_ACTIONS,
+        )
+        _strip_number_suffix_in_place(payload, "request_number")
         contact_id = payload.get("contact_id") if "contact_id" in payload else header.contact_id
         space_id = payload.get("space_id") if "space_id" in payload else header.space_id
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
@@ -6437,7 +6910,8 @@ class PurchaseRequestService:
         self.db.refresh(header)
 
         reply_message = (getattr(data, "reply_message", None) or "").strip()
-        request_number = getattr(header, "request_number", None) or payload.get("request_number")
+        # The number the CONTACT is told, so it carries the revision (UAC N1/N5).
+        request_number = display_document_number(header) or payload.get("request_number")
         if request_number is not None and isinstance(request_number, str):
             request_number = request_number.strip() or None
         if not reply_message and request_number:
@@ -6630,8 +7104,43 @@ class PurchaseRequestService:
                 )
             except Exception as e:
                 logger.warning("Form SLA emit 'send_for_approval' failed for %s: %s", request_id, e)
+            # Tell the contact their form has entered approval. Every other transition
+            # on this form talks to them (approve, reject, processed, closed); this step
+            # was the one silent one, so from their side the form went quiet between
+            # submitting and hearing a decision. Guarded by `already_pending` so a
+            # redundant call cannot re-send it, and best-effort so a Respond.io failure
+            # never rolls back the committed status.
+            try:
+                self._notify_contact_on_pending_approval(header)
+            except Exception as e:
+                logger.warning(
+                    "Failed to send Respond.io pending-approval message for %s: %s",
+                    request_id,
+                    e,
+                )
         # Re-query with relationships loaded to avoid expired instance issues
         return self.get_request(request_id)
+
+    def _notify_contact_on_pending_approval(self, header) -> None:
+        """Notify the linked Respond.io contact that the form is now awaiting approval."""
+        request_number = (getattr(header, "request_number", None) or str(header.id)).strip()
+        rt = getattr(header, "request_type", None) or ""
+        type_word = "sponsorship form" if rt == "sponsorship_form" else "purchase request"
+        portal_url = self._purchase_request_portal_or_view_url(header, str(header.id))
+        message_text = (
+            f"Your {type_word} {request_number} has been sent for approval. "
+            f"We will let you know as soon as it is decided. "
+            f"You can view your submission here {portal_url}"
+        )
+        self._send_purchase_request_contact_message(
+            header,
+            message_text=message_text,
+            extra_context_vars={
+                "update": "Pending approval",
+                "portal_url": portal_url,
+                "view_url": (self._build_request_view_url(str(header.id)) or "").strip(),
+            },
+        )
 
     def reject_submitted(
         self,
@@ -6835,6 +7344,7 @@ class PurchaseRequestService:
             "request_number": header.request_number,
             "request_type": header.request_type,
             "customer_name": header.customer_name,
+            "pic": header.pic,
             "project_title": header.project_title,
             "purpose": header.purpose,
             "delivery_address": getattr(header, "delivery_address", None),
@@ -6991,6 +7501,7 @@ class PurchaseRequestService:
             "request_number": header.request_number,
             "request_type": header.request_type,
             "customer_name": header.customer_name,
+            "pic": header.pic,
             "project_title": header.project_title,
             "purpose": header.purpose,
             "delivery_address": getattr(header, "delivery_address", None),

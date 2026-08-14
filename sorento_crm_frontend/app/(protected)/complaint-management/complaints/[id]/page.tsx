@@ -1,4 +1,5 @@
 import { Metadata } from 'next';
+import { Truck } from 'lucide-react';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -73,6 +74,7 @@ async function ComplaintDetailWrapper({
         {
           value: 'fulfilment',
           label: 'Fulfilment DOs',
+          icon: <Truck />,
           content: <ComplaintFulfilmentOrdersSection complaintId={id} />,
         },
       ]}

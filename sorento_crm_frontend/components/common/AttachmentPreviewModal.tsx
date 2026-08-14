@@ -12,6 +12,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -185,16 +186,22 @@ export default function AttachmentPreviewModal({
         className="max-w-5xl gap-0 overflow-hidden p-0"
         onKeyDown={onKeyDown}
       >
-        <DialogHeader className="flex-row items-center justify-between gap-3 border-b px-4 py-3 pr-12">
+        {/* Stacks at phone width: title + zoom + Open + Download cannot fit on
+            one 375px row, and a plain flex-row overflows the dialog instead of
+            wrapping. */}
+        <DialogHeader className="flex-col items-stretch gap-2 border-b px-4 py-3 pr-12 text-start sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <div className="min-w-0">
             <DialogTitle className="truncate text-base" title={activeItem?.name}>
               {activeItem?.name}
             </DialogTitle>
-            <p className="text-xs text-muted-foreground">
+            {/* DialogDescription, not a bare <p>: Radix warns (and screen readers
+                get nothing) when DialogContent has no aria-describedby, and the
+                position counter is the description this dialog already had. */}
+            <DialogDescription className="text-xs text-muted-foreground">
               {current + 1} / {items.length}
-            </p>
+            </DialogDescription>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
             {activeIsImage && (
               <div className="flex items-center rounded-md border">
                 <Button
@@ -314,10 +321,11 @@ function PreviewSlide({
 }) {
   const kind = kindOf(item.name);
   // <img>/<video>/<iframe> can't send an auth header, so they can only render a
-  // public CDN url. Without one (e.g. an attachment missing its stored CDN
-  // path), fall back to download rather than a broken element. Excel is exempt
-  // it reads bytes via fetchBytes.
-  const hasCdn = item.url.startsWith('http');
+  // public CDN url - or a local blob:/data: url for bytes the browser already
+  // holds (a file staged before upload). Without one (e.g. an attachment
+  // missing its stored CDN path), fall back to download rather than a broken
+  // element. Excel is exempt - it reads bytes via fetchBytes.
+  const hasCdn = /^(https?:|blob:|data:)/.test(item.url);
 
   if (kind === 'image') {
     return hasCdn ? (
@@ -411,6 +419,21 @@ function SlideSpinner() {
 
 const MAX_ROWS = 200;
 const MAX_COLS = 40;
+/**
+ * Physical rows read before giving up, regardless of what the sheet claims.
+ *
+ * A sheet's declared range is not its content. Excel leaves a used-range high
+ * water mark behind, so the Container Status workbook declares 1,046,173 rows
+ * on `Ceramic` and 1,048,329 on `Arrived` while holding 77 and 747. Converting
+ * the declared range took 18.8 SECONDS of synchronous main-thread work on
+ * Ceramic alone - the tab click froze the whole app, and the 200-row slice
+ * happened long after the damage.
+ *
+ * Generous enough that the 200 displayed rows still fill up after blank rows
+ * are dropped (these sheets are blocks separated by gaps), small enough that
+ * the worst case is milliseconds.
+ */
+const SCAN_ROWS = 2000;
 
 function ExcelSlide({ item, fetchBytes }: { item: AttachmentPreviewItem; fetchBytes: FetchBytes }) {
   const wbRef = useRef<import('xlsx').WorkBook | null>(null);
@@ -427,6 +450,19 @@ function ExcelSlide({ item, fetchBytes }: { item: AttachmentPreviewItem; fetchBy
     const XLSX = xlsxRef.current;
     if (!wb || !XLSX) return;
     const ws = wb.Sheets[name];
+    // Clamp the range BEFORE converting. sheet_to_json walks the whole declared
+    // range, so on a sheet with a stale used-range marker it does millions of
+    // cell lookups and only then hands back the 30 real rows we slice to 200.
+    let range: string | undefined;
+    let colsClamped = false;
+    const ref = ws?.['!ref'];
+    if (ref) {
+      const r = XLSX.utils.decode_range(ref);
+      const endRow = Math.min(r.e.r, r.s.r + SCAN_ROWS - 1);
+      const endCol = Math.min(r.e.c, r.s.c + MAX_COLS - 1);
+      colsClamped = r.e.c > endCol;
+      range = XLSX.utils.encode_range({ s: r.s, e: { r: endRow, c: endCol } });
+    }
     // raw:false → return each cell's FORMATTED text (the `.w` value), so date
     // cells show as "21/04/2026" instead of their serial number (e.g. 46133),
     // and numbers keep their display format.
@@ -435,11 +471,14 @@ function ExcelSlide({ item, fetchBytes }: { item: AttachmentPreviewItem; fetchBy
       blankrows: false,
       defval: '',
       raw: false,
+      ...(range ? { range } : {}),
     });
     const trimmed = aoa
       .slice(0, MAX_ROWS)
       .map((r) => r.slice(0, MAX_COLS).map((c) => (c == null ? '' : String(c))));
-    setTruncated(aoa.length > MAX_ROWS || aoa.some((r) => r.length > MAX_COLS));
+    // Deliberately NOT derived from the declared range: it is the thing that
+    // lies. Claim truncation only for rows we actually saw and dropped.
+    setTruncated(aoa.length > MAX_ROWS || colsClamped);
     setRows(trimmed);
     setActive(name);
   }, []);

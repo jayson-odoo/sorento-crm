@@ -117,24 +117,19 @@ export default function StockInquiryForm({
     setFormInitialized(false);
   }, [inquiryId]);
 
+  /**
+   * The dialog edits the purchasing wording only. The preamble and the contact's
+   * portal link are composed server-side and appended when the message is sent, so
+   * there is no link to fetch here — see
+   * `StockInquiryService.compose_stock_inquiry_reply_message`.
+   */
   const handleUpdateAndReplyClick = async () => {
     const valid = await form.trigger();
     if (!valid || !inquiryId) return;
     setPreviewPreparing(true);
     try {
-      const purchasingResponse = (form.getValues().purchasing_response ?? '').trim();
-      let viewUrl = '';
-      if (publicViewLinksEnabled) {
-        const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-        const { view_url } = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
-        viewUrl = view_url ?? '';
-      }
-      const linkPart = viewUrl ? ` ${viewUrl}` : '';
-      const fullMessage = `There is a response to your stock inquiry${linkPart}: ${purchasingResponse}`;
-      setReplyMessage(fullMessage);
+      setReplyMessage((form.getValues().purchasing_response ?? '').trim());
       setUpdateAndReplyDialogOpen(true);
-    } catch {
-      toast.error('Failed to prepare message preview. Could not get stock inquiry view link.');
     } finally {
       setPreviewPreparing(false);
     }

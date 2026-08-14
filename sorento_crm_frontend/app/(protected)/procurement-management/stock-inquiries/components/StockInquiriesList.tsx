@@ -13,6 +13,7 @@ import {
   getPaginationRowModel,
 } from '@tanstack/react-table';
 import { Plus, Search, X, ChevronRight, Trash2, Check } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -27,6 +28,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import { buildDetailSearch } from '@/lib/listNavQuery';
+import { revisionBadgeLabel, withRevisionSuffix } from '@/lib/document-number';
 import { useStockInquiries } from '../hooks/useStockInquiries';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -91,9 +93,38 @@ export default function StockInquiriesList() {
         header: ({ column }) => (
           <DataGridColumnHeader title="Stock inquiry number" column={column} />
         ),
-        size: 130,
-        cell: ({ row }) => row.original.inquiry_number || '—',
+        size: 150,
+        cell: ({ row }) => {
+          // The `-R{n}` suffix is derived from the denormalized counter, never
+          // stored (UAC N2/N3).
+          const number = withRevisionSuffix(
+            row.original.inquiry_number,
+            row.original.revision_no,
+          );
+          return (
+            <span className="truncate" title={number ?? undefined}>
+              {number || '—'}
+            </span>
+          );
+        },
         meta: { headerTitle: 'Stock inquiry number', skeleton: <Skeleton className="h-4 w-20" /> },
+      },
+      {
+        accessorKey: 'revision_no',
+        header: ({ column }) => <DataGridColumnHeader title="Rev" column={column} />,
+        size: 80,
+        enableSorting: false,
+        // Denormalized on the row - no per-row query (UAC H4).
+        cell: ({ row }) => {
+          const label = revisionBadgeLabel(row.original.revision_no);
+          if (!label) return <span className="text-muted-foreground">—</span>;
+          return (
+            <Badge variant="secondary" title={label}>
+              {label}
+            </Badge>
+          );
+        },
+        meta: { headerTitle: 'Rev', skeleton: <Skeleton className="h-4 w-10" /> },
       },
       {
         accessorKey: 'product_code',

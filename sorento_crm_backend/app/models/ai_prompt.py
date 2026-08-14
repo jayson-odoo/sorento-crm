@@ -66,6 +66,13 @@ class AIPromptLabel(Base):
     version_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False), ForeignKey("ai_prompt_versions.id", ondelete="CASCADE"), nullable=False
     )
+    # Which LLM this agent runs on, in this environment. NULL = the global
+    # `ai_assistant_configs` model, which is what every row meant before these existed.
+    # Per-agent because the jobs are not alike: reading a misspelt customer sentence and
+    # writing an explanatory paragraph do not want the same model, and one global setting
+    # tunes for the hardest of them or for none of them.
+    provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     updated_by: Mapped[str | None] = mapped_column(
         String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

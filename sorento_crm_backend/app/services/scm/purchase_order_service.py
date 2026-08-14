@@ -19,7 +19,7 @@ import uuid
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.procurement import (
@@ -27,15 +27,38 @@ from app.models.procurement import (
     PickingLine,
     PurchaseOrder,
     PurchaseOrderLine,
+    Supplier,
 )
+from app.models.product import Product
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 
 # Mirror of ``scm.on_order_v``'s status filter (M4-D5/D6): a PO counts as incoming
-# supply only in these statuses AND while it still has an unreceived line.
+# supply only in these statuses AND while it still has an unreceived OPEN line.
 _ON_ORDER_STATUSES = {"active", "received", "partial", "closed"}
+# The other half of that view's predicate. A line whose status is not ``open`` has left the
+# order book (cancelled, or dropped from the outstanding extract) and is no longer incoming,
+# so it must not appear in this PO's own totals either - two readers disagreeing about "on
+# order" is what makes a planning report untrustworthy.
+_OPEN_LINE_STATUS = "open"
 _DRAFT_STATUS = "draft_recommendation"
 _REC_SOURCE = "scm_recommendation"
+#: Orders that arrived through the purchase-history upload. Reported as `import` rather than
+#: folded into `manual`: nobody keyed 1,586 orders by hand, and a buyer asking where a 2020
+#: order came from is owed the real answer.
+_IMPORT_SOURCES = ("scm_po_history",)
+
+
+def _source_label(source_system: Optional[str]) -> str:
+    if source_system == _REC_SOURCE:
+        return "recommendation"
+    if source_system in _IMPORT_SOURCES:
+        return "import"
+    return "manual"
+
+
+def _is_open_line(line) -> bool:
+    return (line.line_status or "") == _OPEN_LINE_STATUS
 
 
 class PurchaseOrderService:
@@ -48,7 +71,8 @@ class PurchaseOrderService:
         if po.status not in _ON_ORDER_STATUSES:
             return False
         return any(
-            float(ln.qty_ordered or 0) > float(ln.qty_received or 0) for ln in po.lines
+            _is_open_line(ln) and float(ln.qty_ordered or 0) > float(ln.qty_received or 0)
+            for ln in po.lines
         )
 
     def serialize(self, po: PurchaseOrder, gr_reference: Optional[str] = None) -> dict:
@@ -57,9 +81,26 @@ class PurchaseOrderService:
         wh_code = None
         wh_name = None
         total_qty = 0.0
+        open_qty = 0.0
+        open_lines = 0
         lines = []
         for ln in po.lines:
+            # TWO figures, because there are two questions and one number cannot answer both.
+            #
+            # ``total_qty`` / ``line_count`` are what the ORDER SAYS - every line of it. The
+            # columns are labelled "Total qty" and "Lines", and a 2020 order for 450 units
+            # reading 0 because its lines are closed is the label lying about the row. That
+            # is what the imported purchase history made visible: 1,586 orders, every one of
+            # them showing an empty order.
+            #
+            # ``open_qty`` / ``open_line_count`` are what the PO contributes as SUPPLY, and
+            # count open lines only, exactly as ``scm.on_order_v`` does. Every line is listed
+            # either way, each carrying its ``line_status``, so the screen can show a closed
+            # line as closed instead of rendering it as one still coming.
             total_qty += float(ln.qty_ordered or 0)
+            if _is_open_line(ln):
+                open_qty += float(ln.qty_ordered or 0)
+                open_lines += 1
             if wh_code is None and ln.warehouse is not None:
                 wh_code = ln.warehouse.warehouse_code
                 wh_name = ln.warehouse.warehouse_name or ln.warehouse.warehouse_code
@@ -69,6 +110,7 @@ class PurchaseOrderService:
                 "product_name": ln.product.product_name if ln.product else "",
                 "qty_ordered": float(ln.qty_ordered or 0),
                 "qty_received": float(ln.qty_received or 0),
+                "line_status": ln.line_status,
                 "uom": ln.product.base_uom.uom_code if (ln.product and ln.product.base_uom) else "",
             })
         return {
@@ -85,10 +127,12 @@ class PurchaseOrderService:
             "expected_date": po.expected_date.isoformat() if po.expected_date else None,
             "total_qty": total_qty,
             "line_count": len(po.lines),
+            "open_qty": open_qty,
+            "open_line_count": open_lines,
             "lines": lines,
             "created_at": po.created_at.isoformat() if po.created_at else "",
             "is_on_order": self._is_on_order(po),
-            "source": "recommendation" if po.source_system == _REC_SOURCE else "manual",
+            "source": _source_label(po.source_system),
             "gr_reference": gr_reference,
         }
 
@@ -116,12 +160,24 @@ class PurchaseOrderService:
         )
 
     def list(self, page: int, limit: int, sort: Optional[str], direction: str,
-             query: Optional[str], status: Optional[str], supplier: Optional[str]) -> dict:
-        from app.models.procurement import Supplier
-
+             query: Optional[str], status: Optional[str], supplier: Optional[str],
+             *, product_code: Optional[str] = None) -> dict:
         q = self._base_query()
         if status:
             q = q.filter(PurchaseOrder.status == status)
+        if product_code:
+            # EXISTS, not a join: an order that carries the item on two lines is one order,
+            # and a join would list it twice and count it twice.
+            code = product_code.strip().lower()
+            q = q.filter(
+                self.db.query(PurchaseOrderLine.id)
+                .join(Product, Product.id == PurchaseOrderLine.product_id)
+                .filter(
+                    PurchaseOrderLine.purchase_order_id == PurchaseOrder.id,
+                    func.lower(func.btrim(Product.product_code)) == code,
+                )
+                .exists()
+            )
         if supplier:
             q = q.filter(PurchaseOrder.supplier.has(Supplier.supplier_code == supplier))
         if query:
@@ -147,6 +203,48 @@ class PurchaseOrderService:
             "data": [self.serialize(po, gr_refs.get(po.id)) for po in rows],
             "empty": total == 0,
             "pagination": {"total": total, "page": page},
+            # "which orders" and "what did we pay" are one question. Answered beside the
+            # list rather than left for the reader to work out from the rows, which they
+            # cannot do anyway once the orders spill past the first page.
+            "product_cost": self._last_purchase(product_code) if product_code else None,
+        }
+
+    def _last_purchase(self, product_code: str) -> Optional[dict]:
+        """The most recent priced line for this SKU, from any supplier.
+
+        A recorded 0 is a price and is returned as 0. Only the absence of a line is
+        unknown, and unknown is None - the two are different answers and this screen is
+        where a buyer tells them apart.
+        """
+        row = (
+            self.db.query(
+                PurchaseOrderLine.unit_cost,
+                PurchaseOrderLine.currency,
+                PurchaseOrder.po_number,
+                PurchaseOrder.issue_date,
+                Supplier.supplier_name,
+            )
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .join(Product, Product.id == PurchaseOrderLine.product_id)
+            .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
+            .filter(
+                func.lower(func.btrim(Product.product_code)) == product_code.strip().lower(),
+                PurchaseOrderLine.unit_cost.isnot(None),
+            )
+            .order_by(
+                PurchaseOrder.issue_date.desc().nullslast(),
+                PurchaseOrderLine.created_at.desc(),
+            )
+            .first()
+        )
+        if row is None:
+            return None
+        return {
+            "unit_cost": float(row.unit_cost),
+            "currency": row.currency,
+            "po_number": row.po_number,
+            "issue_date": row.issue_date.isoformat() if row.issue_date else None,
+            "supplier_name": row.supplier_name,
         }
 
     def get_one(self, po_id: str) -> Optional[dict]:
@@ -216,6 +314,13 @@ class PurchaseOrderService:
         self.db.flush()
 
         for ln in po.lines:
+            if ln.line_status == "closed":
+                # Goods that were cancelled never arrive, so receiving them invents inventory
+                # AND hands ``scm.receipt_lead_v`` a fabricated lead-time observation, which
+                # then skews the supplier's measured lead time and every safety stock and
+                # reorder point computed from it. A wrong lead time is worse than none,
+                # because it is trusted.
+                continue
             ordered = float(ln.qty_ordered or 0)
             received = float(ln.qty_received or 0)
             remaining = ordered - received

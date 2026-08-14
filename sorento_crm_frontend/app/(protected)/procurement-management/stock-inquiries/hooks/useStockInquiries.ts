@@ -10,6 +10,7 @@ import { STOCK_INQUIRY_NEIGHBOURS_PATH } from '../services/stockInquiryService';
 import {
   getStockInquiries,
   getStockInquiry,
+  getStockInquiryRevisions,
   createStockInquiry,
   updateStockInquiry,
   updateStockInquiryAndReply,
@@ -29,6 +30,8 @@ import {
   type ResponseAttachmentUploadResult,
 } from '../services/stockInquiryService';
 import type { StockInquiryFormData } from '../types/stockInquiry.types';
+import type { FormPdfExportOptions } from '@/lib/revision-export';
+import { isDeferredFormAction } from '@/app/(protected)/sla-management/_shared/formAction';
 
 export type StockInquiriesListParams = DataGridApiFetchParams & {
   statuses?: string[];
@@ -81,6 +84,26 @@ export function useStockInquiry(id: string | null) {
   });
 }
 
+/**
+ * Revision lineage for the office Revisions panel. Keyed on `revisionNo` so a
+ * revision landing while the page is open refetches the timeline instead of
+ * serving the pre-revision lineage until a manual reload.
+ */
+export function useStockInquiryRevisions(
+  id: string | null,
+  revisionNo?: number | null,
+) {
+  return useQuery({
+    queryKey: ['stock-inquiry-revisions', id, revisionNo ?? 0],
+    queryFn: () => {
+      if (!id) throw new Error('Stock inquiry ID is required');
+      return getStockInquiryRevisions(id);
+    },
+    enabled: !!id,
+    retry: 1,
+  });
+}
+
 export function useCreateStockInquiry() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -124,11 +147,10 @@ export function useUpdateStockInquiryAndReply() {
       id: string;
       data: Partial<StockInquiryFormData>;
     }) => updateStockInquiryAndReply(id, data),
-    onSuccess: (_, { id }) => {
-      queryClient.invalidateQueries({ queryKey: ['stock-inquiries'] });
-      queryClient.invalidateQueries({ queryKey: ['stock-inquiry'] });
+    onSuccess: (result, { id }) => {
+      workflowInvalidate(queryClient);
       queryClient.invalidateQueries({ queryKey: ['stock-inquiry-conversation', id] });
-      toast.success('Reply sent to customer successfully');
+      toastActionResult(result, 'Reply sent to customer successfully');
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to update and reply'),
@@ -245,6 +267,19 @@ export function useDeleteStockInquiryResponseAttachment() {
 function workflowInvalidate(queryClient: ReturnType<typeof useQueryClient>) {
   queryClient.invalidateQueries({ queryKey: ['stock-inquiries'] });
   queryClient.invalidateQueries({ queryKey: ['stock-inquiry'] });
+  // A 202 parks the action instead of moving the inquiry; the countdown banner reads
+  // these two queries, so they must refetch or the deferral is invisible until reload.
+  queryClient.invalidateQueries({ queryKey: ['form-action-current'] });
+  queryClient.invalidateQueries({ queryKey: ['form-action-eligibility'] });
+}
+
+/** Deferred => countdown copy; immediate => the action's own success copy. */
+function toastActionResult(result: unknown, immediateMessage: string) {
+  if (isDeferredFormAction(result)) {
+    toast.success('Action is on hold for a few seconds - you can still undo.');
+  } else {
+    toast.success(immediateMessage);
+  }
 }
 
 export function useSubmitStockInquiryForProjectSales() {
@@ -263,9 +298,9 @@ export function useProjectSalesApproveStockInquiry() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => projectSalesApproveStockInquiry(id),
-    onSuccess: () => {
+    onSuccess: (result) => {
       workflowInvalidate(queryClient);
-      toast.success('Approved; sent to purchasing');
+      toastActionResult(result, 'Approved; sent to purchasing');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to approve'),
   });
@@ -276,9 +311,9 @@ export function useProjectSalesRejectStockInquiry() {
   return useMutation({
     mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
       projectSalesRejectStockInquiry(id, reason),
-    onSuccess: () => {
+    onSuccess: (result) => {
       workflowInvalidate(queryClient);
-      toast.success('Rejected');
+      toastActionResult(result, 'Rejected');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to reject'),
   });
@@ -289,9 +324,9 @@ export function usePurchasingRejectStockInquiry() {
   return useMutation({
     mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
       purchasingRejectStockInquiry(id, reason),
-    onSuccess: () => {
+    onSuccess: (result) => {
       workflowInvalidate(queryClient);
-      toast.success('Rejected');
+      toastActionResult(result, 'Rejected');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to reject'),
   });
@@ -314,12 +349,27 @@ export function useReopenStockInquiry() {
  * Queue the printable Stock Inquiry Form PDF. The render happens on the worker,
  * so success only means "queued" - invalidate the downloads feeds (drawer + the
  * per-entity chip) and the list, whose Print Count column just changed.
+ *
+ * `mutate('si-1')` stays the current-form export. The object form carries the
+ * round-6 options: one stored revision, or the form plus its whole lineage.
  */
+export type ExportStockInquiryPdfVariables =
+  | string
+  | { id: string; options?: FormPdfExportOptions | null };
+
+function exportPdfId(variables: ExportStockInquiryPdfVariables): string {
+  return typeof variables === 'string' ? variables : variables.id;
+}
+
 export function useExportStockInquiryPdf() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => exportStockInquiryPdf(id),
-    onSuccess: (_, id) => {
+    mutationFn: (variables: ExportStockInquiryPdfVariables) =>
+      typeof variables === 'string'
+        ? exportStockInquiryPdf(variables)
+        : exportStockInquiryPdf(variables.id, variables.options),
+    onSuccess: (_, variables) => {
+      const id = exportPdfId(variables);
       queryClient.invalidateQueries({ queryKey: ['my-downloads'] });
       queryClient.invalidateQueries({
         queryKey: ['entity-downloads', 'stock_inquiry', id],

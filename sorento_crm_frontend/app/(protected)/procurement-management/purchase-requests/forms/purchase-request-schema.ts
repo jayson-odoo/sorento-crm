@@ -32,6 +32,8 @@ export const PurchaseRequestSchema = z.object({
   request_number: z.string().max(50).optional().nullable(),
   request_date: z.string().optional().nullable(),
   customer_name: z.string().max(500).optional().nullable(),
+  // Optional by design: many forms have no named site contact.
+  pic: z.string().max(500).optional().nullable(),
   project_title: z.string().max(500).optional().nullable(),
   purpose: z.string().max(500).optional().nullable(),
   delivery_address: z.string().max(2000).optional().nullable(),

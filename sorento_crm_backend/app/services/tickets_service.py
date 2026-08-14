@@ -1069,8 +1069,12 @@ def submit_ticket_draft(
     assignee_id: Optional[str] = None
     team_id: Optional[str] = None
     if agent:
+        # AC-E4: tickets carry no contact column at all, so there is no company
+        # signal to derive from - they route to the incumbent.
+        from app.services.company_routing_service import DEFAULT_COMPANY_ID
+
         team_id = agent_svc.get_team_id_by_tier(
-            str(agent.id), 1, team_set_code="it_admin"
+            str(agent.id), 1, team_set_code="it_admin", company_id=DEFAULT_COMPANY_ID
         )
         if team_id:
             assignee = agent_svc.get_next_assignee(str(agent.id), team_id)

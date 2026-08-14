@@ -69,6 +69,11 @@ describe('NotificationChannelsPreference (TCK-31 UX1)', () => {
     render(<NotificationChannelsPreference />);
 
     const waEscalation = await screen.findByLabelText('WhatsApp on escalation');
+    // Wait for ENABLED, not merely present. Every switch renders `disabled` until
+    // the mount GET settles, React drops clicks on disabled elements entirely, and
+    // findBy* resolves as soon as the node exists - so a click here races the load
+    // and is silently swallowed, taking the PATCH and the assertions with it.
+    await waitFor(() => expect(waEscalation).toBeEnabled());
     fireEvent.click(waEscalation);
 
     await waitFor(() => {
@@ -96,6 +101,8 @@ describe('NotificationChannelsPreference (TCK-31 UX1)', () => {
     render(<NotificationChannelsPreference />);
 
     const summary = await screen.findByLabelText('WhatsApp daily SLA summary');
+    // See above: present != interactive. This is the one that actually broke CI.
+    await waitFor(() => expect(summary).toBeEnabled());
     fireEvent.click(summary);
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());

@@ -138,7 +138,13 @@ def test_empty_batch_is_noop(db):
 
     out = svc.run_product_discontinued_check(db)
 
-    assert out == {"pending": 0, "subscribers": 0, "notified_users": 0, "batch_id": None}
+    # Compared key-by-key rather than whole-dict: the result now also carries a
+    # per-company breakdown under "companies", and pinning the exact dict shape
+    # makes an additive field look like a behaviour change.
+    assert out["pending"] == 0
+    assert out["subscribers"] == 0
+    assert out["notified_users"] == 0
+    assert out["batch_id"] is None
     assert db.query(Notification).count() == 0
 
 

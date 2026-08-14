@@ -1,5 +1,5 @@
 /**
- * SCM M4 Slice B — BulkRejectDialog (AC-M4.8/M4.9).
+ * SCM M4 Slice B - BulkRejectDialog (AC-M4.8/M4.9).
  * Count-bearing destructive AlertDialog with ONE shared required reason:
  * pluralised title/button, submit blocked until a reason is entered, one reason
  * applied to all selected rows.

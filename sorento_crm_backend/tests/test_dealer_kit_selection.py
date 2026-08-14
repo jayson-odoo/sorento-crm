@@ -85,10 +85,23 @@ def _contact(db):
 
 
 def _user_id(db) -> str:
-    from app.models.user import User
+    """Seed a throwaway user rather than borrowing one.
 
-    user = db.query(User).first()
-    assert user is not None, "the dev database always has users"
+    CI's database is empty, so ``db.query(User).first()`` returned None there
+    even though it always found something against the local copy-of-production
+    database. Same rule as ``_product``/``_contact``: this test owns its own
+    row.
+    """
+    from app.models.user import User, UserStatus
+
+    code = unique_code("user")
+    user = User(
+        email=f"{code.lower()}@zzt.invalid",
+        name=f"ZZT user {code}",
+        status=UserStatus.ACTIVE.value,
+    )
+    db.add(user)
+    db.flush()
     return user.id
 
 

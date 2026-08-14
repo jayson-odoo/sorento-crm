@@ -116,6 +116,10 @@ class TriggerSpec(BaseModel):
     # Fact sources this trigger exposes for rule filtering. Non-empty = the FE
     # renders the RuleBuilder and fetches these facts from /rule-facts.
     fact_sources: list[str] = Field(default_factory=list)
+    # True = several matches from one run can be folded into one email per
+    # recipient, so the FE renders the "Combine into one email" switch and sends
+    # group_matches. False = the switch is meaningless for this trigger.
+    supports_grouping: bool = False
 
 
 class TriggerCatalog(BaseModel):

@@ -108,8 +108,8 @@ export function useRunResearch(): RunResearchController {
       const n = result.signal_count;
       toast.success(
         n > 0
-          ? `Research complete — ${n} new market signal${n === 1 ? '' : 's'} captured`
-          : 'Research complete — no new signals this run',
+          ? `Research complete - ${n} new market signal${n === 1 ? '' : 's'} captured`
+          : 'Research complete - no new signals this run',
       );
     },
     onError: (e: Error) => {

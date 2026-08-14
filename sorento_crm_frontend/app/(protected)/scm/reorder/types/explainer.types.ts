@@ -1,10 +1,10 @@
 /**
- * SCM M5 Part A — semantic explanation / Q&A / market-advisory types.
+ * SCM M5 Part A - semantic explanation / Q&A / market-advisory types.
  *
  * These are the FE contract for the Phase-2 endpoints documented at the top of
  * `services/explainerService.ts`. The M5 layer is PURELY a language surface on
  * top of the already-frozen deterministic recommendation (M3/M4): it never
- * recomputes or invents a figure — every number it speaks was frozen at run
+ * recomputes or invents a figure - every number it speaks was frozen at run
  * time. When a question needs a number the recommendation doesn't carry, the
  * answer is the exact refusal string (never a fabricated value).
  */
@@ -24,7 +24,7 @@ export interface AdvisoryResult {
   advisory: string | null;
 }
 
-/** Run-level AI overview — a short brief over the whole planning run. */
+/** Run-level AI overview - a short brief over the whole planning run. */
 export interface RunOverviewResult {
   overview: string;
 }
@@ -33,7 +33,7 @@ export interface RunOverviewResult {
 export interface AskTurn {
   question: string;
   answer: string;
-  /** True when `answer` is the bounded-refusal string — styled distinctly. */
+  /** True when `answer` is the bounded-refusal string - styled distinctly. */
   refused: boolean;
 }
 
@@ -56,7 +56,7 @@ export interface ActionProposalLine {
   reason: string;
 }
 
-/** `action_proposal` on a chat response — a structured accept/reject/adjust card the
+/** `action_proposal` on a chat response - a structured accept/reject/adjust card the
  *  human Applies in one confirm-gated click (M8-F16). Unresolvable references are left
  *  out of `lines` and named in `summary`. */
 export interface ActionProposal {
@@ -70,7 +70,7 @@ export interface ActionProposal {
  *  a plan INSTRUCTION, the backend resolves it into `action_proposal` (M8-F16). Both are
  *  null/absent for a plain grounded question. */
 /** One product's THIS-run vs PRIOR-run figures (M8-F deterministic compare). Every
- *  number is a frozen engine value diffed in Python — the LLM never computes them. */
+ *  number is a frozen engine value diffed in Python - the LLM never computes them. */
 export interface PlanComparisonRow {
   sku: string | null;
   product_name: string | null;
@@ -88,7 +88,7 @@ export interface PlanComparisonRow {
   reason: string;
 }
 
-/** `comparison` on a chat response — a deterministic product-by-product diff of this
+/** `comparison` on a chat response - a deterministic product-by-product diff of this
  *  plan vs each product's most recent prior plan (M8-F). Rendered as a table; the answer
  *  prose never restates the numbers. */
 export interface PlanComparison {
@@ -140,7 +140,7 @@ export interface MarketProposalLine {
   reason: string;
 }
 
-/** One citation backing a market signal (M8-F) — a url + optional page title. */
+/** One citation backing a market signal (M8-F) - a url + optional page title. */
 export interface MarketSource {
   url: string;
   title: string | null;

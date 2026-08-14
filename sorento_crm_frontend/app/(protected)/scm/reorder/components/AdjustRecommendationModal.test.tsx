@@ -1,12 +1,12 @@
 /**
- * SCM M4 Slice B — AdjustRecommendationModal (AC-M4.7).
+ * SCM M4 Slice B - AdjustRecommendationModal (AC-M4.7).
  * Override qty and/or switch supplier from the run's ranked alternatives;
  * switching recomputes the live preview; a reason is REQUIRED (blocks submit
  * when empty); submit emits the override payload. The modal must still render
  * when the rec has NO alternatives (empty-alternatives case).
  *
  * SearchableSelect is mocked to a native <select> (the real one is a Radix
- * popover + cmdk list, non-deterministic in jsdom) — same pattern as the
+ * popover + cmdk list, non-deterministic in jsdom) - same pattern as the
  * policies modal test.
  */
 import React from 'react';

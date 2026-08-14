@@ -116,6 +116,7 @@ class WarehouseService:
             setattr(warehouse, "zones_count", zc or 0)
             setattr(warehouse, "stock_count", sc or 0)
             warehouses.append(warehouse)
+        self._attach_pool_codes(warehouses)
 
         return {
             "data": warehouses,
@@ -123,6 +124,26 @@ class WarehouseService:
             "empty": total == 0,
         }
     
+    def _attach_pool_codes(self, warehouses: list) -> None:
+        """Resolve `pool_warehouse_id` to a readable code for display.
+
+        The UI must never render a bare UUID, and the pool is configuration a person picks
+        by name. Batched into one query rather than a lookup per row.
+        """
+        pool_ids = {str(w.pool_warehouse_id) for w in warehouses
+                    if getattr(w, "pool_warehouse_id", None)}
+        codes: dict[str, str] = {}
+        if pool_ids:
+            codes = {
+                str(wid): code
+                for wid, code in self.db.query(Warehouse.id, Warehouse.warehouse_code)
+                .filter(Warehouse.id.in_(list(pool_ids)))
+                .all()
+            }
+        for w in warehouses:
+            pid = getattr(w, "pool_warehouse_id", None)
+            setattr(w, "pool_warehouse_code", codes.get(str(pid)) if pid else None)
+
     def get_warehouse(self, warehouse_id: str):
         """Get a warehouse by UUID or warehouse_code/name."""
         resolved_ids = resolve_identifier(
@@ -136,6 +157,7 @@ class WarehouseService:
         warehouse = self.db.query(Warehouse).filter(Warehouse.id.in_(resolved_ids)).first()
         if not warehouse:
             raise handle_not_found("Warehouse", warehouse_id)
+        self._attach_pool_codes([warehouse])
         return warehouse
     
     def create_warehouse(self, warehouse_data: WarehouseCreate):
@@ -178,8 +200,20 @@ class WarehouseService:
         for key, value in update_data.items():
             setattr(warehouse, key, value)
 
+        # Stamped here because the column has no ``onupdate``: without this an edit leaves
+        # "Last Updated" showing the creation date forever. Naive UTC, matching how every
+        # other datetime column in this codebase is stored.
+        warehouse.updated_at = datetime.utcnow()
+
         self.db.commit()
         self.db.refresh(warehouse)
+        # Re-resolve after the write. `pool_warehouse_code` is a plain attribute set by
+        # `_attach_pool_codes`, not a mapped column, so neither `commit()` nor `refresh()`
+        # touches it and the value the read at the top of this method attached survives.
+        # Without this, clearing a pool answers `pool_warehouse_id: null` next to the OLD
+        # `pool_warehouse_code`, and setting one answers the new id next to a stale null -
+        # one response contradicting itself in the only half of the pair the screen shows.
+        self._attach_pool_codes([warehouse])
         return warehouse
 
     def delete_warehouse(self, warehouse_id: str) -> dict:
@@ -778,7 +812,14 @@ class StockService:
             elif sort_key == 'status':
                 sort_col = Stock.quantity_available
             if sort_col is not None:
-                q = q.order_by(sort_col.desc() if dir == 'desc' else sort_col.asc())
+                q = q.order_by(sort_col.desc() if dir == 'desc' else sort_col.asc(), Stock.id.asc())
+        if sort_col is None:
+            # No/unknown sort: deterministic default so results (and offset
+            # pagination) are stable — product code, then warehouse name.
+            if not need_product_join:
+                q = q.join(Stock.product)
+            q = q.join(Stock.warehouse)
+            q = q.order_by(Product.product_code.asc(), Warehouse.warehouse_name.asc(), Stock.id.asc())
 
         total = q.count()
         offset = (page - 1) * limit

@@ -32,6 +32,7 @@ from app.models.sla import (
 from app.models.user import SystemSetting, User
 from app.services.error_handler import AppException
 from app.services.form_sla_service import FORM_SLA_TYPES
+from app.services.sla_scope import open_tracker_scope
 
 logger = logging.getLogger(__name__)
 
@@ -79,12 +80,15 @@ def eligible_user_ids(db: Session, tracker: ConversationSLATracking) -> set[str]
         return set()
     from app.services.user_service import AccessAgentService
 
+    from app.services.sla_service import _tracking_company_id
+
     svc = AccessAgentService(db)
     current = int(getattr(tracker, "current_tier", 1) or 1)
+    company_id = _tracking_company_id(tracker)
     team_ids: list[str] = []
     for tier in range(1, current + 1):
         team_id = svc.get_team_id_by_tier(
-            agent_id, tier, team_set_code=tracker.team_set_code
+            agent_id, tier, team_set_code=tracker.team_set_code, company_id=company_id
         )
         if team_id:
             team_ids.append(team_id)
@@ -139,7 +143,9 @@ def _active_form_tracker(
     so conversation-SLA rows can never match."""
     q = db.query(ConversationSLATracking).filter(
         ConversationSLATracking.source_entity_id == str(source_entity_id),
-        ConversationSLATracking.is_resolved.is_(False),
+        # A stage voided by a contact revision is not active - the lock banner must
+        # follow the restarted stage, not the cancelled one.
+        *open_tracker_scope(),
         ConversationSLATracking.source_entity_type.in_(FORM_SLA_TYPES),
     )
     if source_entity_type:

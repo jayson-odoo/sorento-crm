@@ -1,5 +1,5 @@
 /**
- * SCM M4 Slice B — usePurchaseOrderActions hook (bulk-confirm + create-GR).
+ * SCM M4 Slice B - usePurchaseOrderActions hook (bulk-confirm + create-GR).
  * Both mutations must invalidate the PO-list cache (so the status chip +
  * on-order state refresh) and surface the extracted error on failure.
  *   AC-M4.6 (confirm drafts → active; create-GR from an active PO)
@@ -42,7 +42,7 @@ function makeWrapper() {
 
 beforeEach(() => apiFetch.mockReset());
 
-describe('usePurchaseOrderActions — confirm (AC-M4.6)', () => {
+describe('usePurchaseOrderActions - confirm (AC-M4.6)', () => {
   it('confirm returns the count and invalidates the PO list', async () => {
     apiFetch.mockResolvedValue(ok({ confirmed_count: 3 }));
     const { spy, wrapper } = makeWrapper();
@@ -68,7 +68,7 @@ describe('usePurchaseOrderActions — confirm (AC-M4.6)', () => {
   });
 });
 
-describe('usePurchaseOrderActions — create-GR (AC-M4.6)', () => {
+describe('usePurchaseOrderActions - create-GR (AC-M4.6)', () => {
   it('createGr returns the GR reference and invalidates the PO list', async () => {
     apiFetch.mockResolvedValue(ok({ gr_reference: 'GR-2026/07-0001' }));
     const { spy, wrapper } = makeWrapper();

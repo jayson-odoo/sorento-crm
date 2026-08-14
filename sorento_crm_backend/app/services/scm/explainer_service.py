@@ -28,6 +28,7 @@ from app.models.ai_assistant import AIAssistantConfig
 from app.models.scm import MarketSignal, ReorderRecommendation, ReorderRun
 from app.config import settings
 from app.services.ai_prompt_registry import render
+from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.llm_provider import get_provider
 from app.services.scm import cash_ranking, reorder_engine
@@ -680,6 +681,9 @@ def query_past_plans(
     )
     if not product_ids:
         return []
+    # Cross-run by design, so the entry gate on the CURRENT run does not cover it: this
+    # scans every completed run and would otherwise surface another company's past plans.
+    co, co_params = company_sql_predicate(db, "run.company_id", param_prefix="cpp")
     rows = db.execute(
         text(
             "SELECT run.created_at AS run_date, p.product_code AS product_code, "
@@ -697,10 +701,11 @@ def query_past_plans(
             "WHERE run.status = 'completed' "
             "AND r.product_id::text = ANY(:ids) "
             "AND (:exclude IS NULL OR run.id::text <> :exclude) "
+            f"AND {co or 'true'} "
             "ORDER BY run.created_at DESC, p.product_code "
             "LIMIT :lim"
         ),
-        {"ids": product_ids, "exclude": exclude_run_id, "lim": int(limit)},
+        {"ids": product_ids, "exclude": exclude_run_id, "lim": int(limit), **co_params},
     ).mappings().all()
     return [
         {
@@ -797,6 +802,8 @@ def build_plan_comparison(
 
     rows: list[dict] = []
     compared = 0
+    # Reaches BACK past the gated run, so it carries its own predicate (see past-plans).
+    prev_co, prev_co_params = company_sql_predicate(db, "run.company_id", param_prefix="cpv")
     for c in cur_rows:
         prev = db.execute(
             text(
@@ -807,9 +814,10 @@ def build_plan_comparison(
                 "JOIN scm.reorder_run run ON run.id = pr.run_id "
                 "WHERE pr.product_id::text = :pid AND pr.rec_type = 'buy' "
                 "AND run.status = 'completed' AND run.id::text <> :rid "
+                f"AND {prev_co or 'true'} "
                 "ORDER BY run.created_at DESC LIMIT 1"
             ),
-            {"pid": c["pid"], "rid": run_id},
+            {"pid": c["pid"], "rid": run_id, **prev_co_params},
         ).mappings().first()
         c_dict = {"dem": _num(c["dem"]), "net": _num(c["net"]), "doc": _num(c["doc"])}
         p_dict = (

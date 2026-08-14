@@ -88,6 +88,7 @@ function PromptTable({ rows, dormant = false }: { rows: PromptKeySummary[]; dorm
               <tr className="border-b text-xs text-muted-foreground">
                 <th className="p-3 text-left font-medium">Prompt</th>
                 <th className="p-3 text-left font-medium">Role</th>
+                <th className="p-3 text-left font-medium">Runs on</th>
                 <th className="p-3 text-right font-medium">Production</th>
                 <th className="p-3 text-right font-medium">Latest</th>
                 <th className="p-3 text-left font-medium">Last edited</th>
@@ -115,6 +116,13 @@ function PromptTable({ rows, dormant = false }: { rows: PromptKeySummary[]; dorm
                     <span className="line-clamp-2" title={r.role}>
                       {r.role}
                     </span>
+                  </td>
+                  <td className="p-3 text-xs">
+                    {r.model ? (
+                      <span className="font-mono">{r.model}</span>
+                    ) : (
+                      <span className="text-muted-foreground">Default model</span>
+                    )}
                   </td>
                   <td className="p-3 text-right tabular-nums">
                     {r.production_version != null ? `v${r.production_version}` : '—'}

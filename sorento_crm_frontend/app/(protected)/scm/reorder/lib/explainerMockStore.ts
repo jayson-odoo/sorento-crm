@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * SCM M5 Part A — SEMANTIC-LAYER MOCK STORE  (Phase 1 only)
+ * SCM M5 Part A - SEMANTIC-LAYER MOCK STORE  (Phase 1 only)
  * ============================================================================
  * Synthetic-but-realistic mocks for the LLM narrator that sits ON TOP of the
  * frozen deterministic recommendation: a one-sentence explanation, a bounded
@@ -13,10 +13,10 @@
  * is deleted at that point.
  *
  * Two hard rules mirrored from the real contract (they define the feature):
- *   1. Every number spoken here is READ from the frozen recommendation — nothing
+ *   1. Every number spoken here is READ from the frozen recommendation - nothing
  *      is recomputed and no figure is invented.
  *   2. When a question needs a number the recommendation doesn't carry, the
- *      answer is EXACTLY `REFUSAL` — never a fabricated value.
+ *      answer is EXACTLY `REFUSAL` - never a fabricated value.
  *
  * Deterministic by construction: no `Math.random`, no `Date.now`. The advisory
  * fires for ~half the SKUs, chosen by a stable hash of the SKU (so the same row
@@ -26,7 +26,7 @@
 import { EM_DASH, fmtInt, fmtMoney } from '../../lib/format';
 import type { ReorderRecommendation } from '../types/reorder.types';
 
-/** Phase-1 flag — mirrors `USE_SLICE_B_MOCKS`. Phase 2: wired to the real
+/** Phase-1 flag - mirrors `USE_SLICE_B_MOCKS`. Phase 2: wired to the real
  *  explainer endpoints (GET explanation / POST ask / GET advisory). */
 export const USE_M5_MOCKS = false;
 
@@ -35,13 +35,13 @@ export const USE_M5_MOCKS = false;
  *  Phase-2 tests can assert on the exact bytes. */
 export const REFUSAL = "I can't compute that from this recommendation's data.";
 
-/** Compact decimal — trims trailing zeros so 11.0 reads "11" (matches the dialog's `dec`). */
+/** Compact decimal - trims trailing zeros so 11.0 reads "11" (matches the dialog's `dec`). */
 function dec(v: number | null | undefined): string {
   if (v === null || v === undefined) return EM_DASH;
   return Number(v.toFixed(2)).toLocaleString('en-MY', { maximumFractionDigits: 2 });
 }
 
-/** Stable non-negative hash of a string — drives the deterministic advisory gate. */
+/** Stable non-negative hash of a string - drives the deterministic advisory gate. */
 function skuHash(sku: string): number {
   let h = 0;
   for (let i = 0; i < sku.length; i += 1) {
@@ -66,7 +66,7 @@ function triggerContext(rec: ReorderRecommendation): { noun: string; level: numb
 /**
  * One generated-sounding sentence built ENTIRELY from the rec's frozen numbers.
  * Deliberately phrased differently from the deterministic headline (`summaryText`
- * in the dialog) so it reads as narrated prose, not the same asserted line — but
+ * in the dialog) so it reads as narrated prose, not the same asserted line - but
  * it speaks only figures the engine already stored.
  */
 export function mockExplanation(rec: ReorderRecommendation): string {
@@ -75,7 +75,7 @@ export function mockExplanation(rec: ReorderRecommendation): string {
   if (rec.type === 'exception') {
     return `${rec.sku}${name} has crossed its reorder threshold (net position ${dec(
       rec.net_position,
-    )}), but no supplier is linked to source it — link one before this can become a purchase order.`;
+    )}), but no supplier is linked to source it - link one before this can become a purchase order.`;
   }
 
   const { noun, level } = triggerContext(rec);
@@ -112,7 +112,7 @@ const OUT_OF_SCOPE = [
 /**
  * Bounded answerer over the rec's frozen fields. Recognised intents map to the
  * matching stored number; anything out-of-scope, or an intent whose field is
- * null (uncosted / not derivable), returns the exact `REFUSAL` — a mock LLM that
+ * null (uncosted / not derivable), returns the exact `REFUSAL` - a mock LLM that
  * NEVER fabricates a figure it wasn't given.
  */
 export function mockAsk(rec: ReorderRecommendation, question: string): string {
@@ -190,14 +190,14 @@ export function mockAsk(rec: ReorderRecommendation, question: string): string {
  *  lookup keyed to the SKU's category; here we round-robin by SKU hash. */
 const ADVISORY_TEMPLATES = [
   'Ceramic-tile prices are trending +8% on FX moves; consider ordering sooner to lock in current pricing.',
-  'Freight rates on this supplier’s lane have eased ~5% this month — timing favours a larger consolidated order.',
+  'Freight rates on this supplier’s lane have eased ~5% this month - timing favours a larger consolidated order.',
   'Raw-material costs for this category are forecast to rise next quarter; front-loading this buy may hedge the increase.',
-  'Regional demand for this line is picking up ahead of the festive season — a slightly deeper buy lowers stockout risk.',
+  'Regional demand for this line is picking up ahead of the festive season - a slightly deeper buy lowers stockout risk.',
   'A key supplier in this category has flagged capacity constraints; ordering earlier protects the lead time.',
 ];
 
 /**
- * A market advisory for ~half the SKUs (even hash), null for the rest — so the
+ * A market advisory for ~half the SKUs (even hash), null for the rest - so the
  * prototype exercises BOTH the "signal present" callout and the "no signal"
  * (line hidden) state. Deterministic per SKU.
  */

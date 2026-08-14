@@ -1,0 +1,52 @@
+---
+alwaysApply: true
+---
+
+# Delivery pipeline
+
+`PRINCIPLES.md` governs this repo and defines a mandatory order for every non-trivial feature.
+Read it before starting. On conflict with `CLAUDE.md` or `AGENTS.md`, `PRINCIPLES.md` wins.
+
+The order:
+
+0. **Guided journey first.** Write who the actor is, what the first screen shows, what the system
+   already knows, each step and its single decision, what they hold at the end. Optimise for the
+   fewest decisions the user must make. Anything derivable is derived, never asked. A plan whose
+   first section is a schema is rejected.
+1. **Grill, then UAC, then plan.** Resolve the full decision tree first. Write the User Acceptance
+   Criteria to `documentation/plans/<domain>/<slug>-acceptance-criteria.md` BEFORE the plan — it is
+   the contract. Then the plan at `documentation/plans/<domain>/PLAN-<slug>.md`. No plan ships
+   without its UAC file.
+2. **Reuse before inventing.** A new variant is a prop on the shared component, never a parallel
+   one-off. `extractApiError`, `buildDataGridParams`, `userSelectService`, `ConfirmDeleteDialog`,
+   `DataGrid`, the mutation-hook factories.
+3. **Phase 1 — frontend first, mocked.** UI to hook to service to mock. Every state tuned
+   (loading / empty / error / partial / success) with no backend running. No tests yet, no backend
+   code. Document the expected API contract.
+4. **Phase 2 — backend wiring, test FIRST.** Red, green, refactor — the failing test is written
+   before the implementation, and watched failing for the right reason. Every route gets happy
+   path, auth denial and validation tests. Tests land here, never deferred.
+5. **Phase 3 — code review**, then the Definition of Done gate in `PRINCIPLES.md`.
+
+Skipping or reordering a step is a process violation. If a step genuinely cannot be done, say so
+explicitly rather than dropping it silently.
+
+## Paths
+
+This repo uses `documentation/`, not `docs/`. Anything referring to `docs/adr/` means
+`documentation/adr/`; `docs/plans/` means `documentation/plans/`.
+
+- `CONTEXT-MAP.md` — indexes the two domain glossaries. Use their vocabulary in code and copy.
+- `documentation/adr/` — architecture decisions. Flag conflicts, never silently override.
+- `documentation/reference/ADR-PRODUCT-STANDARDS.md` — CRUD UX standard.
+- `documentation/reference/PR-CHECKLIST.md` — reviewer checklist.
+- `documentation/agents/` — issue tracker, triage labels, domain doc rules.
+
+## Non-negotiables
+
+- Backend tests run on Postgres only, never sqlite.
+- Delete is a hard delete behind an `AlertDialog` — never the browser `confirm()`.
+- No UUIDs in the frontend UI; resolve to human-readable identifiers.
+- No feature explanations inside the UI itself — those live in docs and the FAQ.
+- Verify from the user's perspective at 375px AND 1280px before calling anything done.
+- Never use em-dashes or en-dashes in any writing, including code comments and commit messages.

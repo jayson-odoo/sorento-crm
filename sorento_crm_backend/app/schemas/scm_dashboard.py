@@ -9,7 +9,7 @@ serialized as ``null`` until M2/M3.
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -215,3 +215,14 @@ class DeadStockDays(BaseModel):
 
 class DeadStockDaysUpdate(BaseModel):
     dead_stock_days: int
+
+
+# --- planning mode quick setting (global reorder_policy.policy_type) ---------
+
+class PlanningMode(BaseModel):
+    #: 'auto' = engine-computed reorder point; 'manual' = someone-set reorder level.
+    mode: Literal["auto", "manual"]
+
+
+class PlanningModeUpdate(BaseModel):
+    mode: Literal["auto", "manual"]

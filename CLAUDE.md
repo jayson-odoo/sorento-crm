@@ -144,6 +144,33 @@ Mutation hooks: shared `useCreateMutation` / `useUpdateMutation` / `useDeleteMut
 - **Delete = hard delete + confirmation dialog**. Never use the browser's `confirm()`. Use `AlertDialog` from `@/components/ui/alert-dialog` (destructive button: `className="bg-destructive text-destructive-foreground hover:bg-destructive/90"`) or shared `ConfirmDeleteDialog` from `@/components/common/ConfirmDeleteDialog`. Bulk delete copy must include the count. Standard copy: "Confirm delete" / "This action cannot be undone".
 - If retention is needed, add a **separate Archive** action with its own confirmation. Backend `DELETE` must be hard delete; do not name a soft-delete endpoint "delete".
 
+#### View and Edit are the same layout (binding)
+
+A record's **read view and its edit view must present the same structure**. Same tabs, in the
+same order; same fields, in the same order, within each tab. Editing swaps a read-only value
+for an input **in place** - nothing moves, appears, or disappears.
+
+The reason is that the read view is what teaches the user where things are. If Edit reshuffles
+them into a different arrangement, every edit starts with the user re-finding the field they
+came to change, and a value they expected to see missing reads as data loss.
+
+Concretely:
+
+- **Group into tabs once**, and use the same tab set on both views. A record with more than one
+  concern (identity vs configuration, say) gets a tab per concern rather than a long scroll.
+- **Read-only metadata** (Created, Last Updated, ids) lives in the page header or a meta strip,
+  **never inside a tab body**, because it has no edit counterpart and would otherwise make the
+  two views differ.
+- **Detail pages carry prev/next record navigation** via `components/common/RecordNavigation`.
+  Reviewing a list of records one by one is the common case; making the user go back to the list
+  between each is the thing that makes it feel unfinished. See `user-management/users/[id]` and
+  `order-management/customers` for the established usage.
+- **No explanatory prose in the UI.** A field gets a label, and at most a short hint of the form
+  "what happens if I set this". Multi-sentence teaching text belongs in the user guide. This is
+  the existing cursor rule ("No feature explanations inside the UI itself") applied to forms.
+- **An optional select must be clearable.** `SearchableSelect` takes `clearable` - set it on
+  every non-required select, or the user can change the value but never unset it.
+
 ### Cursor rules (apply to all `.ts`/`.tsx`)
 
 - **No UUIDs in the frontend UI.** Resolve to human-readable identifiers.
@@ -318,3 +345,25 @@ If unable to reach a browser (server down, sandboxed, etc.), state that explicit
 - **Prompt-registry save-validation returns a TOP-LEVEL body, not the `AppException` envelope.** `POST .../prompts/{name}/versions` on an unknown `{{token}}` returns `422 {error, unknown_tokens, missing_vars}` via raw `JSONResponse` (bypasses `response_model`) — unknown token = hard block, missing declared var = 201 + soft warn. FE reads those fields directly (can't use `extractApiError`, which is string-only). Declared vars are a fixed property of the KEY in `PROMPT_KEYS`, not free-form.
 - **Form handling-lock "escalated" = `escalated_at` stamped, NOT `current_tier > 1`.** Some form-SLA configs START above tier 1: `project_sales` begins at tier 2 (no tier-1 team); PR/SF approval routes to the configured default approver at THEIR tier (2/3) via `_start_for_config`. So a fresh, never-escalated tracker sits at tier 2/3 with `escalated_at IS NULL`. Keying the lock on `current_tier > 1` falsely showed the "Escalated to Tier N — claim it" banner + disabled CTAs on an approver-assigned form. `escalated_at` is set ONLY by `_escalate_tracker` (alongside `escalation_reason` — always in lockstep), never on initial assignment. Gate both sides on it: FE `resolveHandlingLockState` (`!activeTracker.escalated_at`), BE `handling_lock_service._is_escalated()` (used by `assert_can_act_on_form` + `_assert_claimable`). Type-agnostic across all `FORM_SLA_TYPES`. Assignment to a high tier ≠ escalated; only a real SLA breach that escalates locks the form.
 - **The in-form lock banner and SLA-escalation banner are TWO separate queries** — a manual "Escalate" must invalidate BOTH or the lock banner lags a reload. Lock banner ← `useHandlingLock` → `form-sla-tracking` (key `form-handling-tracker`); SLA banner ← `SlaActiveTrackerControls` → `conversation-sla-tracking/by-source` (key `form-sla-trackers`). The gear-menu escalate handlers invalidated only `form-sla-trackers`, so the SLA banner updated live but the lock banner stayed stale. Fix: `useHandlingLock()` exposes `refresh()`; call it after `escalateFormTracking` in every form detail page (stock-inquiry / complaint / PR-SF). Verify via `browser_network_requests` that the `form-sla-tracking` GET refetches right after the escalate POST.
+
+## Agent skills
+
+### Delivery pipeline
+
+Non-trivial feature work runs through **`/feature`** (`.claude/skills/feature/SKILL.md`), which
+executes the mandatory order in `PRINCIPLES.md` and calls the `mattpocock-skills` plugin at each
+slot. Two overrides: UAC + PLAN **files** under `documentation/plans/` are the contract (tickets
+are only the queue), and the frontend mock is built before any backend code (so `/implement` is
+scoped to Phase 2). See the skill map at the bottom of that file.
+
+### Issue tracker
+
+GitHub Issues on `jayson-odoo/sorento-crm`, via the `gh` CLI. See `documentation/agents/issue-tracker.md`.
+
+### Triage labels
+
+Canonical five-label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `documentation/agents/triage-labels.md`.
+
+### Domain docs
+
+Multi-context: `CONTEXT-MAP.md` at the root points at two glossaries; ADRs in `documentation/adr/`. See `documentation/agents/domain.md`.

@@ -18,7 +18,7 @@ import { PurchaseOrderDetail } from './components/PurchaseOrderDetail';
 
 export const metadata: Metadata = {
   title: 'Purchase Order',
-  description: 'Purchase order detail — header, lines and goods receipt.',
+  description: 'Purchase order detail - header, lines and goods receipt.',
 };
 
 export default async function PurchaseOrderDetailPage({

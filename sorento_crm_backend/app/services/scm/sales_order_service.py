@@ -19,11 +19,54 @@ from app.models.inventory import Stock, Warehouse
 from app.models.lookup import LookupOption
 from app.models.order import Customer, Order, OrderLine, SalesOrder, SalesOrderLine
 from app.models.product import Product, UnitOfMeasure
+from app.models.scm import OrderLinkClaim
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
+from app.services.scm.demand import is_open_demand
 
 # Upper bound on suffix retries when reserving a unique DO number under contention.
 _DO_NUMBER_MAX_TRIES = 50
+
+
+#: Where a sales order came from, as one word a buyer can filter on. `inquiry` is separate
+#: from `upload` because an order the Order Inquiry sheet created is one CS has never seen.
+#: Filter value -> the `source_system` values it selects. `manual` is everything NOT here,
+#: so a source added to `_source_label` and forgotten here would silently fall into Manual -
+#: which is the one label that must never be wrong, since it claims a person keyed the order.
+_SOURCE_SYSTEMS = {
+    "inquiry": ("scm_order_inquiry",),
+    "upload": ("scm_upload",),
+    "history": ("scm_so_history",),
+}
+
+
+def _source_label(source_system: Optional[str]) -> str:
+    if source_system == "scm_order_inquiry":
+        return "inquiry"
+    if source_system == "scm_upload":
+        return "upload"
+    # Absorbed sales history gets its own answer rather than "Manual", which would claim
+    # somebody keyed a 2020 order by hand. Mirrors the purchase-order side's `import`.
+    if source_system == "scm_so_history":
+        return "history"
+    return "manual"
+
+
+def _order_by(sort_cols: dict, sort: Optional[str], direction: str) -> list:
+    """The sort, always made total by `id`.
+
+    11,006 of the orders in this book share ONE `created_at`: they were absorbed in a single
+    import. Ordering on that column alone leaves their relative order up to the planner, so
+    "the 26th record" is a different row from one query to the next - which is how a detail
+    pager steps to a correct neighbour and then reports a position taken from a different
+    shuffle of the same rows, and how a row can appear on two pages or neither.
+
+    `id` is arbitrary but it is STABLE, which is the whole requirement.
+    """
+    col = sort_cols.get(sort or "", SalesOrder.created_at)
+    if direction == "asc":
+        return [col.asc(), SalesOrder.id.asc()]
+    return [col.desc(), SalesOrder.id.desc()]
 
 
 class SalesOrderService:
@@ -94,11 +137,15 @@ class SalesOrderService:
         total_qty = 0.0
         committed = 0.0
         lines = []
+        open_lines = 0
         for ln in so.lines:
             qo = float(ln.qty_ordered or 0)
             qd = float(ln.qty_delivered or 0)
+            outstanding = max(qo - qd, 0.0)
             total_qty += qo
-            committed += max(qo - qd, 0.0)
+            committed += outstanding
+            if ln.line_status == "open" and outstanding > 0:
+                open_lines += 1
             lines.append({
                 "id": ln.id,
                 "sku": ln.product.product_code if ln.product else "",
@@ -106,6 +153,16 @@ class SalesOrderService:
                 "qty_ordered": qo,
                 "qty_delivered": qd,
                 "uom": self._uom_for(ln.product) if ln.product else "",
+                # The three the detail page needs and the list does not. Per line, not per
+                # header: one order routinely ships from two locations on two dates, and
+                # folding either onto the header states something the order never said.
+                "warehouse_code": (
+                    ln.warehouse.warehouse_code if ln.warehouse is not None else ""
+                ),
+                "line_status": ln.line_status or "open",
+                "required_date": (
+                    ln.required_date.isoformat() if ln.required_date else None
+                ),
             })
         order_dt = so.order_date or (so.created_at.date() if so.created_at else date.today())
         return {
@@ -124,9 +181,59 @@ class SalesOrderService:
             ),
             "total_qty": total_qty,
             "committed_qty": committed,
+            # What the order SAYS versus what is still owed. Both, because a "Total qty"
+            # reading 0 on a fully delivered order is the label lying - the same rule the
+            # purchase-order detail already follows with `open_qty` / `total_qty`.
+            "line_count": len(lines),
+            "open_line_count": open_lines,
             "lines": lines,
+            # Where the order came from. `inquiry` is its own answer because an order Joey's
+            # sheet created is one CS has never seen, and a buyer looking at the list is
+            # entitled to know which of the two he is reading.
+            "source": _source_label(so.source_system),
+            # The project the sheet named when no customer of that name existed. Kept so the
+            # order is not anonymous just because it could not be linked.
+            "internal_note": so.internal_note or None,
+            # Every distinct stock location its lines ship from. Plural because one order can
+            # land in two, and collapsing that to the first would be a quiet lie.
+            "stock_locations": sorted({
+                ln.warehouse.warehouse_code
+                for ln in so.lines
+                if ln.warehouse is not None and ln.warehouse.warehouse_code
+            }),
             "created_at": so.created_at.isoformat() if so.created_at else "",
         }
+
+    def with_links(self, rows: list[dict]) -> list[dict]:
+        """Attach each order's purchase-order claims, in ONE query for the whole page.
+
+        Per-row would be an N+1 across a 15,000-order list. The claim carries whether it has
+        been resolved, which is the difference between "waiting on PO 202605-S0042" and
+        "matched to it" - and the waiting ones are the reason this column exists at all.
+        """
+        numbers = [r["so_number"] for r in rows]
+        if not numbers:
+            return rows
+        claims = (
+            self.db.query(OrderLinkClaim)
+            .filter(OrderLinkClaim.so_number.in_(numbers))
+            .all()
+        )
+        by_number: dict[str, list[dict]] = {}
+        for c in claims:
+            by_number.setdefault(str(c.so_number), []).append({
+                "po_number": c.po_number,
+                "item_code": c.item_code,
+                "resolved": c.resolved_at is not None,
+            })
+        for row in rows:
+            linked = sorted(
+                by_number.get(row["so_number"], []),
+                key=lambda l: (l["po_number"], l["item_code"] or ""),
+            )
+            row["linked_purchase_orders"] = linked
+            row["awaiting_purchase_orders"] = sum(1 for l in linked if not l["resolved"])
+        return rows
 
     def _get_or_404(self, so_id: str) -> SalesOrder:
         so = (
@@ -146,15 +253,66 @@ class SalesOrderService:
         return self.serialize(self._get_or_404(so_id))
 
     def list(self, page: int, limit: int, sort: Optional[str], direction: str,
-             query: Optional[str], status: Optional[str], priority: Optional[str]) -> dict:
+             query: Optional[str], status: Optional[str], priority: Optional[str],
+             source: Optional[str] = None, *,
+             date_from: Optional[date] = None, date_to: Optional[date] = None,
+             customer_code: Optional[str] = None, outstanding: bool = False) -> dict:
         q = self.db.query(SalesOrder).options(
             joinedload(SalesOrder.lines).joinedload(SalesOrderLine.product),
+            joinedload(SalesOrder.lines).joinedload(SalesOrderLine.warehouse),
             joinedload(SalesOrder.customer),
         )
+        # "Show me the orders the Order Inquiry sheet created" is a filter on this list, not a
+        # second screen: a separate list of the same entity is how two screens start
+        # disagreeing about the same order.
+        if source:
+            if source == "manual":
+                # Everything neither feed wrote: keyed in, or from a system we have no name
+                # for. NULL has to be spelled out because `NOT IN` never matches it.
+                known = [v for vs in _SOURCE_SYSTEMS.values() for v in vs]
+                q = q.filter(
+                    (SalesOrder.source_system.is_(None))
+                    | (~SalesOrder.source_system.in_(known))
+                )
+            else:
+                # An unrecognised value matches NOTHING rather than being ignored. A filter
+                # that quietly drops the value it did not understand shows the whole book
+                # under a heading claiming it is narrowed - the worst of the three options.
+                q = q.filter(SalesOrder.source_system.in_(_SOURCE_SYSTEMS.get(source, ())))
         if status:
             q = q.filter(SalesOrder.status == status)
         if priority:
             q = q.filter(SalesOrder.priority == priority)
+        # Inclusive of both ends, because a person asking for "March" means the 1st and the
+        # 31st. An undated order is excluded from a range rather than swept into one: absorbed
+        # rows can arrive with no date, and putting one in January states a fact we do not have.
+        if date_from:
+            q = q.filter(SalesOrder.order_date >= date_from)
+        if date_to:
+            q = q.filter(SalesOrder.order_date <= date_to)
+        if customer_code:
+            # By CODE, not id. `customer_code` is not unique in this dataset - several legal
+            # entities share a debtor code - so a person picking "Acme" from the dropdown
+            # means every one of them, and filtering by a single id would show part of their
+            # book. Trimmed and case-folded to match `_customer`.
+            q = q.filter(
+                SalesOrder.customer.has(
+                    func.lower(func.btrim(Customer.customer_code))
+                    == customer_code.strip().lower()
+                )
+            )
+        if outstanding:
+            # The SAME rule the netting reads, so "still owed" cannot mean one thing on this
+            # screen and another in the plan. Only when asked for: an unticked box must not
+            # narrow anything, or clearing a filter looks like data appearing on its own.
+            q = q.filter(
+                self.db.query(SalesOrderLine.id)
+                .filter(
+                    SalesOrderLine.sales_order_id == SalesOrder.id,
+                    is_open_demand(),
+                )
+                .exists()
+            )
         if query:
             like = f"%{query}%"
             q = q.filter(
@@ -168,8 +326,7 @@ class SalesOrderService:
             "priority": SalesOrder.priority,
             "created_at": SalesOrder.created_at,
         }
-        col = sort_cols.get(sort or "", SalesOrder.created_at)
-        q = q.order_by(col.desc() if direction != "asc" else col.asc())
+        q = q.order_by(*_order_by(sort_cols, sort, direction))
         total = q.count()
         rows = q.offset((page - 1) * limit).limit(limit).all()
         return {

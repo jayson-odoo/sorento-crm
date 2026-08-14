@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -281,19 +282,35 @@ def update_resolution(
 def update_resolution_and_reply(
     ticket_id: str,
     body: TicketResolutionAndReply,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("tickets.tickets.resolve")),
 ):
     """Save the resolution, flip the ticket to ``resolved``, and notify the
     submitter via their channel."""
-    from app.services.tickets_service import update_resolution_and_reply as _impl
-    return _impl(
+    from app.services.form_action_dispatch import dispatch_or_defer
+
+    outcome = dispatch_or_defer(
         db,
-        ticket_id=ticket_id,
-        resolution_html=body.resolution_html,
-        resolution_text=body.resolution_text,
-        current_user=current_user,
+        current_user,
+        request,
+        action_key="tk.resolve",
+        entity_type="ticket",
+        entity_id=ticket_id,
+        payload={
+            "ticket_id": ticket_id,
+            "resolution_html": body.resolution_html,
+            "resolution_text": body.resolution_text,
+            # JSONB-parked, so only the JSON-safe claims the runner actually needs.
+            "current_user": {
+                "id": (current_user or {}).get("id"),
+                "email": (current_user or {}).get("email"),
+                "name": (current_user or {}).get("name"),
+            },
+        },
+        event_name="resolved",
     )
+    return outcome
 
 
 @router.post("/tickets/{ticket_id}/watchers", response_model=TicketResponse)

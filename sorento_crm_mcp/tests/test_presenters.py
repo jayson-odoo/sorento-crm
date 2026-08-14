@@ -309,6 +309,63 @@ def test_resource_attachments_no_type_label():
     assert out["attachments"][0]["attachmentType"] is None  # type stripped from the file too
 
 
+def test_resource_attachments_carry_the_upload_date_when_present():
+    """Re-uploaded documents keep one name, so the date is what tells them apart.
+
+    Six revisions of the Container Status workbook are six items reading
+    "Container Status 2026.xlsx". Without a date the agent cannot say which one
+    it is handing over, and rows arrive newest-first for nothing.
+    """
+    out = env("crm_resource_attachments_list", {
+        "data": [
+            {"original_filename": "Container Status 2026.xlsx", "file_path": "http://x/a.xlsx",
+             "uploaded_at": "2026-08-07T03:09:33"},
+            {"original_filename": "Container Status 2026.xlsx", "file_path": "http://x/b.xlsx",
+             "uploaded_at": "2026-08-01T09:00:00"},
+        ],
+    })
+    assert [f["value"] for f in out["items"][0]["fields"]] == [
+        "Container Status 2026.xlsx", "2026-08-07",
+    ]
+    assert out["items"][1]["fields"][1]["value"] == "2026-08-01"
+
+
+def test_resource_attachments_do_not_expose_the_row_id():
+    """Reversed deliberately. The id was added so a human could trace which of
+    several identically-named files the agent sent - but `render` is the
+    CUSTOMER view, and the uuid went out on WhatsApp under every document. The
+    id is still on the raw (non-render) response, which is where someone
+    debugging is looking anyway.
+    """
+    out = env("crm_resource_attachments_list", {
+        "data": [{
+            "id": "df853300-0000-0000-0000-000000000001",
+            "original_filename": "Container Status 2026.xlsx",
+            "file_path": "http://x/a.xlsx",
+        }],
+    })
+    labels = {f["label"] for f in out["items"][0]["fields"]}
+    assert "File ID" not in labels
+    assert "df853300-0000-0000-0000-000000000001" not in json.dumps(out["items"])
+
+
+def test_uploaded_at_becomes_last_updated_at():
+    """An attachment is never edited in place, so the upload IS its freshness.
+
+    Without this every document answer reported `last_updated_at: null` and the
+    agent could not say how current the file it handed over was.
+    """
+    out = env("crm_resource_attachments_list", {
+        "data": [
+            {"original_filename": "a.xlsx", "file_path": "http://x/a.xlsx",
+             "uploaded_at": "2026-08-01T09:00:00"},
+            {"original_filename": "b.xlsx", "file_path": "http://x/b.xlsx",
+             "uploaded_at": "2026-08-07T03:09:33"},
+        ],
+    })
+    assert out["last_updated_at"] == "2026-08-07T03:09:33"
+
+
 def test_portal_link_becomes_action_link():
     out = env("crm_portal_link_get", {"portal_link": "https://portal/x", "label": "Complaint Portal"})
     assert out["action_links"] == [{"label": "Complaint Portal", "url": "https://portal/x", "type": "portal_link"}]
@@ -325,3 +382,323 @@ def test_empty_result_envelope():
 
 def test_invalid_json_returns_raw_unchanged():
     assert present_response("crm_master_products_list", "not json") == "not json"
+
+
+# ---------------------------------------------------------------- field access
+
+
+def _incoming_row(**clearance):
+    """One shipment row as `/incoming-stock/list` returns it, plus whatever
+    clearance fields this caller was permitted."""
+    return {
+        "shipment_number": "SHP-1",
+        "shipping_container_number": "SEGU4008631",
+        "estimated_arrival_date": "2026-07-08",
+        "lines": [
+            {
+                "product_code": "SRTWB7109",
+                "product_name": "Basin Mixer",
+                "batch_number": "B-1",
+                "remaining_incoming_quantity": 12,
+                "warehouse_allocations": [
+                    {"warehouse_code": "BRW", "allocated_quantity": 12}
+                ],
+            }
+        ],
+        **clearance,
+    }
+
+
+def test_render_shows_the_clearance_fields_a_caller_may_see():
+    """The render view had a hardcoded field list that never included any of them,
+    so an entitled contact still got nothing."""
+    out = env("crm_incoming_stock_list", {
+        "data": [_incoming_row(eta_delay_date="2026-07-12", liner_code="CMA")],
+    })
+
+    fields = {f["label"]: f["value"] for f in out["items"][0]["fields"]}
+    assert fields["ETA"] == "2026-07-08"
+    assert fields["ETA Delay"] == "2026-07-12"
+    assert fields["Liner"] == "CMA"
+
+
+def test_render_omits_a_field_the_caller_may_not_see():
+    """The backend strips denied keys, so they simply are not in the row. Render
+    must not invent a blank line for them - a labelled empty value reads as "not
+    reached yet"."""
+    out = env("crm_incoming_stock_list", {"data": [_incoming_row()]})
+
+    labels = {f["label"] for f in out["items"][0]["fields"]}
+    assert "ETA" in labels, "ships allowed, so the backend sent it"
+    assert "Gatepass" not in labels
+    assert "ETA Delay" not in labels
+
+
+def test_render_never_gates_the_answer_itself():
+    """Product, container, shipment and quantity are what the contact asked about.
+    A contact who may not see a gatepass date must still be told what is arriving,
+    so none of these may ever be stripped.
+
+    ETA is NOT among them: it is gateable (revocable by an admin) though it ships
+    allowed, so it renders as a clearance pair rather than as identity."""
+    out = env("crm_incoming_stock_list", {"data": [_incoming_row()]})
+
+    fields = {f["label"]: f["value"] for f in out["items"][0]["fields"]}
+    assert fields["Product Code"] == "SRTWB7109"
+    assert fields["Product Name"] == "Basin Mixer"
+    assert fields["Shipment"] == "SHP-1"
+    assert fields["Container"] == "SEGU4008631"
+    assert fields["Incoming Quantity"] == 12
+    assert "BRW" in str(fields["Warehouse Allocations"])
+    assert out["has_result"] is True
+
+
+def test_render_carries_the_denial_reason_through():
+    """Without it the agent cannot tell "you may not see this" from "it has not
+    happened yet", so it guesses - and it guesses the second one out loud."""
+    out = env("crm_incoming_stock_list", {
+        "data": [_incoming_row()],
+        "field_access": {
+            "denied": [
+                {
+                    "field": "gatepass_date",
+                    "agent_code": "incoming_stock_enquiries",
+                    "outcome": "field_not_allowed",
+                    "reason": "This contact holds the agent, but this field is not allowed on it.",
+                }
+            ],
+            "note": "Absent does NOT mean the value is unknown or not yet reached.",
+        },
+    })
+
+    assert out["field_access"]["denied"][0]["outcome"] == "field_not_allowed"
+    assert "not yet reached" in out["field_access"]["note"]
+
+
+def test_render_omits_field_access_when_nothing_was_denied():
+    out = env("crm_incoming_stock_list", {"data": [_incoming_row()]})
+    assert "field_access" not in out
+
+
+def test_render_fields_carry_the_crm_field_key():
+    """A consumer must project on the key, not on the label.
+
+    Two label vocabularies for the same field already disagree - render says
+    "ETC", `field_access.FIELD_LABELS` says "ETC (estimated time of container
+    closing)" - so label matching means picking one and being unable to
+    cross-check the other. The key is stable under any label rename.
+    """
+    out = env("crm_incoming_stock_list", {
+        "data": [_incoming_row(etc_date="2026-06-30", coa_permit_no="COA-9")],
+    })
+
+    by_key = {f["key"]: f for f in out["items"][0]["fields"] if "key" in f}
+    assert by_key["estimated_arrival_date"]["value"] == "2026-07-08"
+    assert by_key["etc_date"]["label"] == "ETC"
+    assert by_key["coa_permit_no"]["value"] == "COA-9"
+    # Identity fields are keyed too - they are just as answerable.
+    assert by_key["product_code"]["value"] == "SRTWB7109"
+    assert by_key["shipping_container_number"]["value"] == "SEGU4008631"
+    assert by_key["remaining_incoming_quantity"]["value"] == 12
+    # Every field of this result type carries one; none is null.
+    assert all(f.get("key") for f in out["items"][0]["fields"])
+
+
+def test_render_key_matches_the_denied_vocabulary():
+    """Absent-and-denied vs absent-and-not-reached is decided by comparing the
+    same token on both sides, so the two must be the same token.
+    """
+    out = env("crm_incoming_stock_list", {
+        "data": [_incoming_row()],
+        "field_access": {
+            "denied": [
+                {"field": "gatepass_date", "agent_code": "a", "outcome": "field_not_allowed"}
+            ],
+            "note": "Absent does NOT mean the value is unknown or not yet reached.",
+        },
+    })
+
+    keys = {f.get("key") for f in out["items"][0]["fields"]}
+    denied = {d["field"] for d in out["field_access"]["denied"]}
+    assert "gatepass_date" in denied
+    assert "gatepass_date" not in keys, "denied is absent from fields, by design"
+    # ...and a field that is simply not reached is in neither set, which is the
+    # third branch: "not recorded", never "I can't share that".
+    assert "collection_date" not in keys and "collection_date" not in denied
+
+
+def test_render_stock_fields_carry_the_key():
+    """A cross-domain stock/incoming block is sorted by quantity and ETA. Both
+    branches matched on display text, and both were dead: `estimated_arrival_date`
+    was relabelled `ETA`, and an incoming row labels its quantity `Incoming
+    Quantity`, not `Quantity On Hand`. Sorting on the key survives both.
+    """
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [{"product_code": "SRTWT107", "product_name": "Basin",
+                  "system_location": "BRW", "system_location_description": "BUKIT RAJA",
+                  "quantity_on_hand": 36}],
+    })
+    by_key = {f["key"]: f["value"] for f in out["items"][0]["fields"] if "key" in f}
+    assert by_key["quantity_on_hand"] == 36
+    assert by_key["product_code"] == "SRTWT107"
+    assert by_key["warehouse"] == "BUKIT RAJA"
+    assert by_key["system_location"] == "BRW"
+
+
+def test_render_stock_keeps_the_key_on_the_placeholder_value():
+    """Warehouse / location / quantity always render, "—" when absent, so the row
+    shape never varies. The key rides along, so a consumer that projects on key
+    still has to expect a non-numeric value there.
+    """
+    out = env("crm_inventory_stock_balance_list", {"data": [{"product_code": "X"}]})
+    by_key = {f["key"]: f["value"] for f in out["items"][0]["fields"] if "key" in f}
+    assert by_key["quantity_on_hand"] == "—"
+    assert by_key["warehouse"] == "—"
+
+
+def test_render_by_product_fields_carry_the_key():
+    out = env("crm_incoming_stock_by_product", {
+        "data": [{
+            "product_code": "SRTWB7109",
+            "product_name": "Basin Mixer",
+            "shipments": [{
+                "shipping_container_number": "SEGU4008631",
+                "estimated_arrival_date": "2026-07-08",
+                "remaining_incoming_quantity": 12,
+                "warehouse_allocations": [{"warehouse_code": "BRW", "allocated_quantity": 12}],
+            }],
+        }],
+    })
+    by_key = {f["key"]: f["value"] for f in out["items"][0]["fields"] if "key" in f}
+    assert by_key["product_code"] == "SRTWB7109"
+    assert by_key["estimated_arrival_date"] == "2026-07-08"
+
+
+def test_render_omits_key_where_the_presenter_has_no_source_key():
+    """`key` is omitted, not emitted as null, so a consumer can test for it."""
+    out = env("crm_order_management_orders_list", {
+        "data": [{"order_number": "202606-1622", "debtor_name": "HANLIM"}],
+    })
+    assert out["items"][0]["fields"][0] == {"label": "Order Number", "value": "202606-1622"}
+
+
+# ------------------------------------------------ absent-field vocabulary
+
+
+def test_denied_entries_gain_the_customer_facing_label():
+    """A denial has to be said out loud: "I can't share the ...". The backend
+    sends the field key and an admin-register label lives elsewhere, so the
+    envelope supplies the CUSTOMER register here.
+    """
+    out = env("crm_incoming_stock_list", {
+        "data": [_incoming_row()],
+        "field_access": {
+            "denied": [
+                {"field": "etc_date", "agent_code": "a", "outcome": "field_not_allowed"},
+                {"field": "gatepass_date", "agent_code": "a", "outcome": "field_not_allowed"},
+            ],
+            "note": "Absent does NOT mean the value is unknown or not yet reached.",
+        },
+    })
+    by_field = {d["field"]: d for d in out["field_access"]["denied"]}
+    # Customer register: "ETC", not FIELD_LABELS' "ETC (estimated time of
+    # container closing)" - this string ends up in a WhatsApp message.
+    assert by_field["etc_date"]["label"] == "ETC"
+    assert by_field["gatepass_date"]["label"] == "Gatepass"
+
+
+def test_denied_entry_keeps_a_label_the_backend_already_sent():
+    out = env("crm_incoming_stock_list", {
+        "data": [_incoming_row()],
+        "field_access": {
+            "denied": [{"field": "etc_date", "label": "Backend Wins", "outcome": "x"}],
+            "note": "n",
+        },
+    })
+    assert out["field_access"]["denied"][0]["label"] == "Backend Wins"
+
+
+def test_incoming_envelope_carries_the_field_vocabulary():
+    """The case that needs it has NO denial: several containers, one carries
+    `eta_delay_date` and the others do not. Nothing was withheld, so there is no
+    `field_access` block to hang a label off, and the absent rows still have to
+    be named. Humanising the key gives "Eta delay" and "Etd"; this gives the
+    labels a present field would have rendered with.
+    """
+    out = env("crm_incoming_stock_list", {"data": [_incoming_row()]})
+    assert "field_access" not in out, "nothing denied, so no denial block"
+    vocab = out["field_vocabulary"]
+    assert vocab["eta_delay_date"] == "ETA Delay"
+    assert vocab["etd_date"] == "ETD"
+    assert vocab["inspection_date"] == "CIDB Inspection"
+
+
+def test_field_vocabulary_matches_what_a_present_field_renders_as():
+    """Derived from `_CLEARANCE_PAIRS`, so the absent wording and the present
+    wording cannot drift into two vocabularies - the exact failure that made
+    label-matching untenable in the first place.
+    """
+    out = env("crm_incoming_stock_list", {
+        "data": [_incoming_row(etc_date="2026-06-30", eta_delay_date="2026-07-12")],
+    })
+    rendered = {f["key"]: f["label"] for f in out["items"][0]["fields"] if "key" in f}
+    vocab = out["field_vocabulary"]
+    for key, label in rendered.items():
+        if key in vocab:
+            assert vocab[key] == label, f"{key} renders as {label!r} but vocabulary says {vocab[key]!r}"
+
+
+def test_vocabulary_is_not_emitted_for_unrelated_result_types():
+    """It is the clearance vocabulary, not a general one. Shipping it on orders
+    or stock would imply those fields exist there.
+    """
+    out = env("crm_inventory_stock_balance_list", {"data": [{"product_code": "X"}]})
+    assert "field_vocabulary" not in out
+
+
+def test_document_answers_do_not_expose_the_file_uuid():
+    """`render` is the CUSTOMER view and goes out on WhatsApp. The File ID row
+    put an internal uuid under every document, next to the file itself.
+    """
+    out = env("crm_resource_attachments_list", {
+        "data": [{
+            "id": "1e900020-dba5-4e34-ae1c-5e0f90380095",
+            "original_filename": "Container Status 2026.xlsx",
+            "uploaded_at": "2026-08-08T06:31:13",
+            "file_path": "https://cdn/x.xlsx",
+            "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }],
+    })
+    fields = out["items"][0]["fields"]
+    labels = [f["label"] for f in fields]
+    assert labels == ["File Name", "Uploaded"]
+    assert "1e900020-dba5-4e34-ae1c-5e0f90380095" not in json.dumps(fields)
+    # The file itself still ships - that is the answer.
+    assert out["attachments"][0]["filename"] == "Container Status 2026.xlsx"
+
+
+def test_each_attachment_carries_its_own_upload_time():
+    """A document class is re-uploaded under the same name, so several entries
+    look identical. The envelope-level `last_updated_at` is the newest across the
+    whole answer and says nothing about an individual file.
+    """
+    out = env("crm_resource_attachments_list", {
+        "data": [
+            {"original_filename": "Container Status 2026.xlsx", "file_path": "https://cdn/new.xlsx",
+             "mime_type": "application/vnd.ms-excel", "uploaded_at": "2026-08-08T11:54:05"},
+            {"original_filename": "Container Status 2026.xlsx", "file_path": "https://cdn/old.xlsx",
+             "mime_type": "application/vnd.ms-excel", "uploaded_at": "2026-07-01T09:00:00"},
+        ],
+    })
+    assert [a["uploadedAt"] for a in out["attachments"]] == [
+        "2026-08-08T11:54:05", "2026-07-01T09:00:00",
+    ]
+    # Envelope keeps the newest of them, which is a different question.
+    assert out["last_updated_at"] == "2026-08-08T11:54:05"
+
+
+def test_attachment_without_an_upload_time_omits_the_key():
+    out = env("crm_resource_attachments_list", {
+        "data": [{"original_filename": "a.pdf", "file_path": "https://cdn/a.pdf"}],
+    })
+    assert "uploadedAt" not in out["attachments"][0]

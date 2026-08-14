@@ -1,6 +1,7 @@
 'use client';
 
 import type { UseFormReturn, FieldArrayWithId } from 'react-hook-form';
+import { withRevisionSuffix } from '@/lib/document-number';
 import { formatDate, formatCurrency } from '@/lib/helpers';
 import { useCurrencyFormat } from '@/hooks/useCurrencyFormat';
 import { Plus, Trash2 } from 'lucide-react';
@@ -154,10 +155,22 @@ export function PurchaseRequestDocumentEditCard({
                 render={({ field }) => (
                   <FormItem>
                     <FormControl>
+                      {/*
+                        Display suffixed, submit bare (UAC N1 against N2).
+
+                        `request_number` is user-assignable and this form posts it
+                        back, so the derived `-R{n}` must never enter the form
+                        state: it would be written into the very column it was
+                        derived from, and every lookup-by-number, index and
+                        integration would then miss the row. The field stays bound
+                        to the bare value - only what is painted carries the
+                        suffix, and the input is read-only so no keystroke can
+                        promote the painted value into the stored one.
+                      */}
                       <Input
                         placeholder="e.g. PR26-0303"
                         {...field}
-                        value={field.value ?? ''}
+                        value={withRevisionSuffix(field.value, request.revision_no) ?? ''}
                         readOnly
                         className="font-medium tabular-nums"
                       />
@@ -183,6 +196,25 @@ export function PurchaseRequestDocumentEditCard({
                   <FormItem>
                     <FormControl>
                       <Input placeholder="Customer name" {...field} value={field.value ?? ''} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </DocField>
+
+            <DocField label="PIC" className="sm:col-span-2">
+              <FormField
+                control={control}
+                name="pic"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormControl>
+                      <Input
+                        placeholder="Name and contact number"
+                        {...field}
+                        value={field.value ?? ''}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

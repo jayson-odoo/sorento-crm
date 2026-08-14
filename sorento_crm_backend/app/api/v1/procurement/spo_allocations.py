@@ -98,6 +98,7 @@ async def import_spo_allocations(
     from fastapi.responses import JSONResponse
     from app.services.job_service import JobService
     from app.services.queue_service import enqueue_job
+    from app.models.base import get_company_scope
     from app.tasks.import_tasks import process_spo_import, validate_spo_import
 
     if not files:
@@ -123,7 +124,9 @@ async def import_spo_allocations(
         for upload in files:
             file_data = await upload.read()
             file_data, cleaned_name = maybe_strip(file_data, upload.filename or "unknown.xlsx")
-            result = validate_spo_import(file_data, cleaned_name)
+            result = validate_spo_import(
+                file_data, cleaned_name, company_scope=get_company_scope(db)
+            )
             # Prefix messages with the filename when validating more than one file
             # so the user can tell which file each error/warning came from.
             prefix = f"{cleaned_name}: " if multi else ""

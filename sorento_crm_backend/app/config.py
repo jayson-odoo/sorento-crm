@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     # e.g. "1,2" (Tier 1 + Tier 2) or "1" (Tier 1 only). COMPLAINT_DO_DELIVERED_NOTIFY_TIERS
     complaint_do_delivered_notify_tiers: str = "1,2"
 
+    # Which spreadsheet extensions the SCM upload channels accept. Comma list, no dots.
+    # SCM_UPLOAD_EXTENSIONS. Configurable because the format is the CUSTOMER's, not ours:
+    # AutoCount's own "Purchase Order Listing With Detail" export is legacy BIFF `.xls`,
+    # and refusing it means asking somebody to re-save 13 MB of history by hand before
+    # they can load it. One list, read by the route that rejects and by the reader that
+    # dispatches, so the two can never disagree about what is accepted.
+    scm_upload_extensions: str = "xlsx,xlsm,xls"
+
     # Respond.io
     respond_api_key: str | None = None
     respond_base_url: str = "https://api.respond.io"

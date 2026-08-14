@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * SCM M5 Part B — MARKET ADVISORY DETERMINISTIC MOCK STORE  (Phase 1 only)
+ * SCM M5 Part B - MARKET ADVISORY DETERMINISTIC MOCK STORE  (Phase 1 only)
  * ============================================================================
  * Backs the market-signals viz + topic CRUD + "Run research" button with NO
  * backend, so the whole UX (signals panel, stat tiles, run feedback, topic
@@ -12,7 +12,7 @@
  *
  * State persists in `sessionStorage` (client only) so a topic added / a run
  * fired on the page survives a full reload; a fresh browser session starts from
- * the seed. Deterministic by construction: NO `Math.random`, NO `Date.now` —
+ * the seed. Deterministic by construction: NO `Math.random`, NO `Date.now` -
  * ids come from monotonic counters and every timestamp is stamped from a fixed
  * base (`RUN_BASE` / seed literals), never the wall clock.
  * ============================================================================
@@ -24,13 +24,13 @@ import type {
   MarketSignal,
 } from '../types/market.types';
 
-/** Phase-1 flag — flipped to false in Phase 2 (real endpoints now serve these). */
+/** Phase-1 flag - flipped to false in Phase 2 (real endpoints now serve these). */
 export const USE_M5_MARKET_MOCKS = false;
 
-// v1 storage — bumping the key abandons any stale persisted shape.
+// v1 storage - bumping the key abandons any stale persisted shape.
 const STORAGE_KEY = 'scm_market_mock_v1';
 
-/** Fixed base time for signals a "Run research" produces — advances by counter,
+/** Fixed base time for signals a "Run research" produces - advances by counter,
  *  never by the clock, so repeated runs stay deterministic. */
 const RUN_BASE_DATE = '2026-07-17';
 
@@ -67,7 +67,7 @@ function seedTopics(): MarketResearchTopic[] {
     },
     {
       id: 'topic-seed-3',
-      label: 'Container freight rates (Asia–EU)',
+      label: 'Container freight rates (Asia-EU)',
       category_ref: 'freight',
       currency: 'USD',
       search_prompt:
@@ -99,7 +99,7 @@ function seedSignals(): MarketSignal[] {
       value: 4.72,
       trend: 'up',
       summary:
-        'USD/MYR firmed to ~4.72, up ~2.1% over the month — imported tile landed cost rising; consider bringing forward USD-priced buys.',
+        'USD/MYR firmed to ~4.72, up ~2.1% over the month - imported tile landed cost rising; consider bringing forward USD-priced buys.',
       source_url: 'https://www.bnm.gov.my/exchange-rates',
       captured_at: '2026-07-16T01:15:00',
     },
@@ -111,19 +111,19 @@ function seedSignals(): MarketSignal[] {
       value: 3180,
       trend: 'down',
       summary:
-        'Domestic rebar eased to ~RM3,180/t, down ~1.6% MoM on softer regional demand — cost tailwind for steel-heavy SKUs.',
+        'Domestic rebar eased to ~RM3,180/t, down ~1.6% MoM on softer regional demand - cost tailwind for steel-heavy SKUs.',
       source_url: 'https://www.meps.co.uk/gb/en/products/asian-steel-prices',
       captured_at: '2026-07-16T01:16:00',
     },
     {
       id: 'signal-seed-3',
-      topic_label: 'Container freight rates (Asia–EU)',
+      topic_label: 'Container freight rates (Asia-EU)',
       category_ref: 'freight',
       currency: 'USD',
       value: 3420,
       trend: 'up',
       summary:
-        'SCFI Asia–EU leg climbed to ~USD3,420/FEU, up ~6% on Red Sea rerouting — inbound logistics cost pressure persists.',
+        'SCFI Asia-EU leg climbed to ~USD3,420/FEU, up ~6% on Red Sea rerouting - inbound logistics cost pressure persists.',
       source_url: 'https://en.sse.net.cn/indices/scfinew.jsp',
       captured_at: '2026-07-15T01:20:00',
     },
@@ -147,19 +147,19 @@ function seedSignals(): MarketSignal[] {
       value: 2960,
       trend: 'down',
       summary:
-        'Hot-rolled sheet indications near RM2,960/t, down ~2.3% MoM — supports deferring price-protected steel purchases.',
+        'Hot-rolled sheet indications near RM2,960/t, down ~2.3% MoM - supports deferring price-protected steel purchases.',
       source_url: 'https://www.steelorbis.com',
       captured_at: '2026-07-13T01:18:00',
     },
     {
       id: 'signal-seed-6',
-      topic_label: 'Container freight rates (Asia–EU)',
+      topic_label: 'Container freight rates (Asia-EU)',
       category_ref: 'freight',
       currency: 'USD',
       value: null,
       trend: 'flat',
       summary:
-        'Intra-Asia short-haul rates stable week on week; capacity adequate on regional lanes — no near-term freight shock expected.',
+        'Intra-Asia short-haul rates stable week on week; capacity adequate on regional lanes - no near-term freight shock expected.',
       source_url: 'https://www.freightos.com/freight-index',
       captured_at: '2026-07-12T01:22:00',
     },
@@ -197,7 +197,7 @@ function persist() {
   try {
     window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
-    /* sessionStorage unavailable — in-memory state still works for the session */
+    /* sessionStorage unavailable - in-memory state still works for the session */
   }
 }
 
@@ -282,14 +282,14 @@ export function mockRunResearch(): MarketResearchRun {
       value: 4.75,
       trend: 'up',
       summary:
-        'Latest fixing nudged USD/MYR to ~4.75 — mild further upside; keep USD-priced tile buys under review.',
+        'Latest fixing nudged USD/MYR to ~4.75 - mild further upside; keep USD-priced tile buys under review.',
       source_url: 'https://www.bnm.gov.my/exchange-rates',
     },
     {
       value: 3150,
       trend: 'down',
       summary:
-        'Rebar indications eased another ~1% to ~RM3,150/t — continued cost relief for steel-linked SKUs.',
+        'Rebar indications eased another ~1% to ~RM3,150/t - continued cost relief for steel-linked SKUs.',
       source_url: 'https://www.meps.co.uk/gb/en/products/asian-steel-prices',
     },
   ];
@@ -325,7 +325,7 @@ export function mockRunResearch(): MarketResearchRun {
   };
 }
 
-/** TEST/DEV ONLY — reset the store to its seed. */
+/** TEST/DEV ONLY - reset the store to its seed. */
 export function __resetMarketMockStore() {
   state = freshState();
   persist();
