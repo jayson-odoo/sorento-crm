@@ -656,7 +656,7 @@ class SyncRespondRequest(BaseModel):
 async def sync_respond_user(
     user_id: str,
     request_data: Optional[SyncRespondRequest] = Body(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.users.edit")),
     db: Session = Depends(get_db)
 ):
     """Sync a user with Respond.io."""
