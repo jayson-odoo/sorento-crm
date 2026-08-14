@@ -45,7 +45,31 @@ PLAN section 16.7 records a self-correction worth keeping: 16.1 justified the NU
 "one setting away", but at the time no UI control existed, so the claim was false when written. A
 control was added (`446b9c36`) to make it true.
 
-## The open item: regression attribution
+## Regression attribution: SETTLED, zero regressions
+
+**Result: 119 failures are pre-existing, 4 are branch-only and none of them can be this branch's
+doing, 0 are baseline-only.** The 35 files that own the 123 branch failures were run on branch
+(`123 failed, 355 passed`) and on `db607931` (`119 failed, 359 passed`), same database, same
+invocation, collected 478 on both sides.
+
+Each of the 4 branch-only failures was run down to cause. All four exercise code that is
+byte-identical between the two commits (`git diff db607931..HEAD` empty for `app/services/scm/`,
+`audit_service.py` and the audit route, `ticket_intake_service.py`, and for the four test files
+themselves), so causation is impossible except through shared state. Two are golden-set SCM tests
+where 4 of the same 6 SKUs already fail at the merge base; one reads its own row back from an audit
+endpoint that pages at 50 while every other lane writes to the same table; one expects a raise in a
+file whose sibling tests already fail identically on both sides.
+
+They are flaky tests inside already-failing suites, not clean passes. The supportable claim is the
+narrow one: this branch did not cause them.
+
+The baseline had to be chunked into 6 runs to survive machine memory pressure while the branch ran
+as one invocation. That asymmetry only inflates the branch-only count (more isolation makes baseline
+tests more likely to pass), so it cannot hide a real regression.
+
+The full write-up is in `documentation/plans/ideation/PR-BODY-chatbot-media-endpoint.md`.
+
+## How that attribution was reached (method, kept for the next person)
 
 The branch full-suite number is `123 failed, 6038 passed, 9 skipped, 13 xfailed` and it has been
 reproduced twice independently. The question that remains is how many of those 123 this branch caused.
@@ -71,7 +95,8 @@ What is already established:
 - The failure texts read like the documented "CI database has no data" class in CLAUDE.md
   (`assert 4 == 1`, `assert 0 == 1`, SCM golden sets), which points at pre-existing data dependence.
 
-The remaining run is the same 35 files, same invocation, same database, in the baseline worktree:
+The baseline run that closed this out was the same 35 files, same invocation, same database, in the
+baseline worktree:
 
 ```
 cd <scratchpad>/baseline_worktree/sorento_crm_backend    # already checked out at db607931
@@ -146,13 +171,17 @@ stamped `885010d94677`, all four run forward, DDL and seeds and grants checked b
 four downgraded, then re-upgraded and re-verified. 193 media tests then passed against
 migration-produced DDL rather than `create_all` DDL.
 
-## What is left after attribution
+## What is left
 
-1. Write the PR description. The definition of done requires it to state the measured
-   `lock:{contact}` decision and its evidence, whether spine resume was confirmed, the corpus
-   results, and the entity-hint question if it is still unanswered.
+1. ~~Write the PR description.~~ Done: `documentation/plans/ideation/PR-BODY-chatbot-media-endpoint.md`,
+   covering all four things the definition of done requires it to state - the measured
+   `lock:{contact}` decision and its evidence, spine resume (checked, and the answer is no), the
+   corpus results, and the entity-hint question (answered, Option A, not outstanding).
 2. Append `done: {summary}` to the status file.
 3. Run `/no-mistakes`. Avoid `--yes`, which would bypass firstmate's authority check.
 4. Do not merge.
+
+Opening the PR itself is left to firstmate rather than done here: it is outward-facing, and the body
+is ready to paste. `gh-axi` is the tool if firstmate wants this seat to do it.
 
 An ask-user finding is never this seat's to answer. Escalate to firstmate and stop.
