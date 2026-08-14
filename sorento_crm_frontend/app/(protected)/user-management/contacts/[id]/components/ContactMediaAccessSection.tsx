@@ -238,9 +238,11 @@ function ModalityPanel({
           <div className="flex items-baseline justify-between gap-3">
             <dt className="text-muted-foreground">Maximum clip</dt>
             <dd className="font-medium">
-              {item.max_clip_seconds === null
-                ? `Default (${item.effective_max_clip_seconds ?? 0}s)`
-                : `Override (${item.max_clip_seconds}s)`}
+              {item.max_clip_seconds !== null
+                ? `Override (${item.max_clip_seconds}s)`
+                : item.effective_max_clip_seconds === null
+                  ? 'Default'
+                  : `Default (${item.effective_max_clip_seconds}s)`}
             </dd>
           </div>
         ) : null}
@@ -255,6 +257,20 @@ function ModalityPanel({
       </p>
     </div>
   );
+}
+
+/**
+ * Blank is always valid here - it clears the override and inherits the default.
+ * Anything else is held to the bounds the PUT already enforces, so an out-of-range
+ * override is refused inline instead of coming back as a 422 to interpret.
+ */
+function boundedError(raw: string, min: number, max: number): string | undefined {
+  const trimmed = raw.trim();
+  if (trimmed === '') return undefined;
+  const message = `Enter a whole number between ${min} and ${max}, or leave it blank.`;
+  if (!/^\d+$/.test(trimmed)) return message;
+  const value = Number(trimmed);
+  return value < min || value > max ? message : undefined;
 }
 
 function MediaLimitsDialog({
@@ -281,9 +297,17 @@ function MediaLimitsDialog({
     setClipSeconds(item.max_clip_seconds === null ? '' : String(item.max_clip_seconds));
   }, [item]);
 
-  const limitInvalid = limit.trim() !== '' && !/^[1-9]\d*$/.test(limit.trim());
-  const clipInvalid = clipSeconds.trim() !== '' && !/^[1-9]\d*$/.test(clipSeconds.trim());
+  const limitError = boundedError(limit, 0, 100000);
+  const clipError = boundedError(clipSeconds, 1, 3600);
   const label = item ? MEDIA_MODALITY_LABELS[item.modality] : '';
+
+  // The default is the effective limit, and only while no override is set - once
+  // one is, the effective number IS the override and the API does not carry the
+  // default alongside it. Naming a number the operator can change on the settings
+  // page would go stale the moment they did, so it is named only when it is known.
+  const defaultLimit = item && item.monthly_limit === null ? item.effective_monthly_limit : null;
+  const defaultClipSeconds =
+    item && item.max_clip_seconds === null ? item.effective_max_clip_seconds : null;
 
   return (
     <Dialog open={item !== null} onOpenChange={onOpenChange}>
@@ -299,12 +323,18 @@ function MediaLimitsDialog({
               inputMode="numeric"
               value={limit}
               onChange={(e) => setLimit(e.target.value)}
-              aria-invalid={limitInvalid}
-              placeholder={item ? String(item.effective_monthly_limit) : ''}
+              aria-invalid={Boolean(limitError)}
+              aria-describedby="media-monthly-limit-hint"
+              placeholder={defaultLimit === null ? '' : String(defaultLimit)}
             />
-            <p className="text-xs text-muted-foreground">
-              Blank uses the system default
-              {item ? ` (${item.modality === 'image' ? 50 : 100})` : ''}.
+            <p
+              id="media-monthly-limit-hint"
+              className={`text-xs ${limitError ? 'text-destructive' : 'text-muted-foreground'}`}
+            >
+              {limitError ??
+                `Blank uses the system default${
+                  defaultLimit === null ? '' : ` (${defaultLimit})`
+                }.`}
             </p>
           </div>
           {item?.modality === 'voice' ? (
@@ -315,12 +345,18 @@ function MediaLimitsDialog({
                 inputMode="numeric"
                 value={clipSeconds}
                 onChange={(e) => setClipSeconds(e.target.value)}
-                aria-invalid={clipInvalid}
-                placeholder={String(item.effective_max_clip_seconds ?? '')}
+                aria-invalid={Boolean(clipError)}
+                aria-describedby="media-clip-seconds-hint"
+                placeholder={defaultClipSeconds === null ? '' : String(defaultClipSeconds)}
               />
-              <p className="text-xs text-muted-foreground">
-                Blank uses the system default. A longer clip is refused before anything is
-                spent.
+              <p
+                id="media-clip-seconds-hint"
+                className={`text-xs ${clipError ? 'text-destructive' : 'text-muted-foreground'}`}
+              >
+                {clipError ??
+                  `Blank uses the system default${
+                    defaultClipSeconds === null ? '' : ` (${defaultClipSeconds}s)`
+                  }. A longer clip is refused before anything is spent.`}
               </p>
             </div>
           ) : null}
@@ -330,7 +366,7 @@ function MediaLimitsDialog({
             Cancel
           </Button>
           <Button
-            disabled={isSaving || limitInvalid || clipInvalid}
+            disabled={isSaving || Boolean(limitError) || Boolean(clipError)}
             onClick={() => {
               if (!item) return;
               void onSave({
