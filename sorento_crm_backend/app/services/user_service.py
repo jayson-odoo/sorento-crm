@@ -1313,10 +1313,18 @@ class AccessAgentService:
         sort_dir: str = "asc"
     ):
         """List all contact access entries with filtering."""
+        from sqlalchemy.orm import joinedload
+
         from app.schemas.common import ListResponse, PaginationResponse
         from app.schemas.user import ContactAgentAccessResponse
-        
-        q = self.db.query(ContactAgentAccess).join(AccessAgent)
+
+        # The contact is eager-loaded because every row reports its outbound
+        # switch; lazy loading would be one extra SELECT per grant.
+        q = (
+            self.db.query(ContactAgentAccess)
+            .join(AccessAgent)
+            .options(joinedload(ContactAgentAccess.contact))
+        )
         
         # Filter by respond_contact_id if provided
         if respond_contact_id:
@@ -1380,6 +1388,13 @@ class AccessAgentService:
                 'updated_at': access.updated_at,
                 'agent_code': access.agent.code if access.agent else None,
                 'agent_name': access.agent.name if access.agent else None,
+                # The CONTACT's kill switch, repeated on each of that contact's
+                # grant rows. None when the row predates the respond_contacts FK.
+                'outbound_enabled': (
+                    bool(access.contact.outbound_enabled)
+                    if access.contact is not None
+                    else None
+                ),
             }
             result_data.append(ContactAgentAccessResponse.model_validate(access_dict))
         

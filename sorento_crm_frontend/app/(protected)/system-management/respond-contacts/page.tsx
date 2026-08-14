@@ -1,4 +1,5 @@
 import { Metadata } from 'next';
+import Link from 'next/link';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -40,7 +41,16 @@ export default function RespondContactsPage() {
               </BreadcrumbList>
             </Breadcrumb>
           </ToolbarHeading>
-          <ToolbarActions />
+          <ToolbarActions>
+            {/* The two surfaces are not duplicates: this one reaches EVERY contact
+                (including those with no agent grant) and holds the kill switch. */}
+            <Link
+              href="/user-management/contact-access-agents"
+              className="text-sm text-muted-foreground hover:text-primary underline underline-offset-4"
+            >
+              Per-contact switches are also on Internal Users
+            </Link>
+          </ToolbarActions>
         </Toolbar>
       </Container>
       <Container>
