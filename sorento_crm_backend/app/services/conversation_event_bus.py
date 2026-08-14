@@ -126,21 +126,25 @@ class _RedisSubscription:
         return self
 
     async def __aexit__(self, *_exc) -> bool:
-        # Every step guarded: a client that disconnected mid-stream must still
-        # release the rest, and teardown must not raise into the ASGI server.
+        # Each step is guarded separately: a client that dropped mid-stream must
+        # still release the rest, and teardown must never raise into the ASGI
+        # server (it runs while the connection is already going away).
         pubsub, client = self._pubsub, self._client
         self._pubsub = self._client = None
-        for close in (
-            lambda: pubsub.unsubscribe(self._channel),
-            lambda: pubsub.aclose(),
-            lambda: client.aclose(),
-        ):
+        if pubsub is not None:
             try:
-                if pubsub is None or client is None:
-                    continue
-                await close()
+                await pubsub.unsubscribe(self._channel)
             except Exception:  # noqa: BLE001 - teardown is best-effort
-                logger.debug("conversation event subscription teardown failed", exc_info=True)
+                logger.debug("conversation event unsubscribe failed", exc_info=True)
+            try:
+                await pubsub.aclose()
+            except Exception:  # noqa: BLE001
+                logger.debug("conversation event pubsub close failed", exc_info=True)
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception:  # noqa: BLE001
+                logger.debug("conversation event client close failed", exc_info=True)
         return False
 
     async def next_event(self, timeout: float) -> Optional[str]:
@@ -188,11 +192,11 @@ class RedisEventTransport:
             self._conn = redis_sync.from_url(settings.redis_url, decode_responses=True)
         return self._conn
 
-    def publish(self, channel_name: str, payload: str) -> None:
-        self._connection().publish(channel_name, payload)
+    def publish(self, channel: str, payload: str) -> None:
+        self._connection().publish(channel, payload)
 
-    def subscribe(self, channel_name: str) -> EventSubscription:
-        return _RedisSubscription(channel_name)
+    def subscribe(self, channel: str) -> EventSubscription:
+        return _RedisSubscription(channel)
 
 
 _transport: Optional[EventTransport] = None
@@ -200,9 +204,11 @@ _transport: Optional[EventTransport] = None
 
 def get_transport() -> EventTransport:
     global _transport
-    if _transport is None:
-        _transport = RedisEventTransport()
-    return _transport
+    transport = _transport
+    if transport is None:
+        transport = RedisEventTransport()
+        _transport = transport
+    return transport
 
 
 def set_transport(transport: Optional[EventTransport]) -> None:
