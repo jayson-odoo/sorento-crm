@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """RQ worker + APScheduler combined.
 
-Single process owns both queue draining (`imports`, `respond_io`) and cron ticks
+Single process owns both queue draining (`imports`, `respond_io`, `media`) and cron ticks
 fired by `app.scheduler.task_scheduler`. Compose runs exactly one `worker` service
 so jobs and ticks are never duplicated across blue/green API containers.
 
@@ -109,6 +109,11 @@ if __name__ == '__main__':
     # memory-hungry, and sharing the imports queue means one catalogue PDF
     # blocks every Excel upload behind it.
     #
+    # 'media' drains the chatbot media extraction jobs. The /external/media
+    # endpoint enqueues and then AWAITS the job, so a worker that is not draining
+    # this queue does not merely delay the work - every media turn waits out
+    # media_sync_wait_seconds and returns `pending`.
+    #
     # WORKER_QUEUES makes the list overridable, matching the project-sales
     # checkout. Every worktree on this machine points at the SAME Redis db 0, so
     # a hardcoded list means whichever worker happens to be running drains
@@ -117,7 +122,7 @@ if __name__ == '__main__':
     queues = [
         q.strip()
         for q in os.getenv(
-            'WORKER_QUEUES', 'imports,respond_io,catalogue_render'
+            'WORKER_QUEUES', 'imports,respond_io,catalogue_render,media'
         ).split(',')
         if q.strip()
     ]

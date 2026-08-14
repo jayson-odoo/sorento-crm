@@ -63,6 +63,7 @@ type Draft = {
   languageMode: MediaLanguageMode;
   languagePinned: string;
   languageHints: string[];
+  syncWaitSeconds: string;
   extractionTimeoutSeconds: string;
   maxEntities: string;
 };
@@ -82,6 +83,7 @@ function toDraft(settings: ChatbotMediaSettings): Draft {
     languageMode: settings.media_language_mode,
     languagePinned: settings.media_language_pinned,
     languageHints: parseCsv(settings.media_language_hints),
+    syncWaitSeconds: String(settings.media_sync_wait_seconds),
     extractionTimeoutSeconds: String(settings.media_extraction_timeout_seconds),
     maxEntities: String(settings.media_max_entities),
   };
@@ -102,12 +104,43 @@ function fromDraft(draft: Draft): ChatbotMediaSettings {
     media_language_mode: draft.languageMode,
     media_language_pinned: draft.languagePinned.trim(),
     media_language_hints: toCsv(draft.languageHints),
+    media_sync_wait_seconds: Number(draft.syncWaitSeconds.trim()),
     media_extraction_timeout_seconds: Number(draft.extractionTimeoutSeconds.trim()),
     media_max_entities: Number(draft.maxEntities.trim()),
   };
 }
 
 const isPositiveInt = (raw: string) => /^[1-9]\d*$/.test(raw.trim());
+
+const isWithin = (raw: string, min: number, max: number) => {
+  const trimmed = raw.trim();
+  if (!isPositiveInt(trimmed)) return false;
+  const value = Number(trimmed);
+  return value >= min && value <= max;
+};
+
+/**
+ * The two waits are validated together because the backend rejects the pair, not
+ * either number on its own: an extraction ceiling below the synchronous wait kills a
+ * job at exactly the moment the endpoint degrades to `pending`. Saying so here means
+ * the operator reads a sentence rather than decoding a 400 after pressing Save.
+ */
+function timingErrors(draft: Draft): { wait?: string; ceiling?: string } {
+  const wait = draft.syncWaitSeconds.trim();
+  const ceiling = draft.extractionTimeoutSeconds.trim();
+  const waitError = isWithin(wait, 5, 90)
+    ? undefined
+    : 'Enter a whole number of seconds between 5 and 90.';
+  const ceilingError = isWithin(ceiling, 5, 110)
+    ? undefined
+    : 'Enter a whole number of seconds between 5 and 110.';
+  if (!waitError && !ceilingError && Number(ceiling) < Number(wait)) {
+    return {
+      ceiling: `Must be at least the synchronous wait of ${wait} seconds, or a job that outlives the wait is killed instead of finishing.`,
+    };
+  }
+  return { wait: waitError, ceiling: ceilingError };
+}
 
 export default function ChatbotMediaSettingsPage() {
   const settingsQuery = useChatbotMediaSettings();
@@ -117,6 +150,11 @@ export default function ChatbotMediaSettingsPage() {
   useEffect(() => {
     if (settingsQuery.data && draft === null) setDraft(toDraft(settingsQuery.data));
   }, [settingsQuery.data, draft]);
+
+  const timing: { wait?: string; ceiling?: string } = useMemo(
+    () => (draft ? timingErrors(draft) : {}),
+    [draft],
+  );
 
   const invalid = useMemo(() => {
     if (!draft) return {} as Record<string, boolean>;
@@ -131,12 +169,11 @@ export default function ChatbotMediaSettingsPage() {
       transcribeModel: draft.transcribeModel.trim() === '',
       languagePinned: draft.languageMode === 'pinned' && draft.languagePinned.trim() === '',
       languageHints: draft.languageMode === 'hints' && draft.languageHints.length === 0,
-      extractionTimeoutSeconds:
-        !isPositiveInt(draft.extractionTimeoutSeconds) ||
-        Number(draft.extractionTimeoutSeconds.trim()) > 110,
+      syncWaitSeconds: Boolean(timing.wait),
+      extractionTimeoutSeconds: Boolean(timing.ceiling),
       maxEntities: !isPositiveInt(draft.maxEntities),
     };
-  }, [draft]);
+  }, [draft, timing]);
 
   const anyInvalid = Object.values(invalid).some(Boolean);
 
@@ -277,11 +314,21 @@ export default function ChatbotMediaSettingsPage() {
               onChange={(v) => set('maxEntities', v)}
             />
             <NumberField
+              id="media-sync-wait"
+              label="Synchronous wait seconds"
+              hint="How long a reply waits for extraction before it returns pending, which is what bounds the per-contact lock."
+              value={draft.syncWaitSeconds}
+              invalid={invalid.syncWaitSeconds}
+              error={timing.wait}
+              onChange={(v) => set('syncWaitSeconds', v)}
+            />
+            <NumberField
               id="media-extraction-timeout"
               label="Extraction timeout seconds"
               hint="Must stay under 120 so a paused turn cannot outlive its lock."
               value={draft.extractionTimeoutSeconds}
               invalid={invalid.extractionTimeoutSeconds}
+              error={timing.ceiling}
               onChange={(v) => set('extractionTimeoutSeconds', v)}
             />
           </div>
@@ -381,6 +428,7 @@ function NumberField({
   hint,
   value,
   invalid,
+  error,
   onChange,
 }: {
   id: string;
@@ -388,6 +436,8 @@ function NumberField({
   hint?: string;
   value: string;
   invalid?: boolean;
+  /** Shown in place of the hint, so a rejected number says why before it is saved. */
+  error?: string;
   onChange: (value: string) => void;
 }) {
   return (
@@ -398,9 +448,16 @@ function NumberField({
         inputMode="numeric"
         value={value}
         aria-invalid={invalid}
+        aria-describedby={error ? `${id}-error` : undefined}
         onChange={(e) => onChange(e.target.value)}
       />
-      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+      {error ? (
+        <p id={`${id}-error`} className="text-xs text-destructive">
+          {error}
+        </p>
+      ) : hint ? (
+        <p className="text-xs text-muted-foreground">{hint}</p>
+      ) : null}
     </div>
   );
 }

@@ -69,6 +69,11 @@ from app.models.portal import (
     PortalFormRevision,
     PortalRevisionConfig,
 )
+from app.models.media import (
+    ContactMediaLimit,
+    ContactMediaUsage,
+    MediaExtractionJob,
+)
 from app.models.user_session import UserSession
 from app.models.activities import ActivityEvent, InternalNote, ActivityMention
 from app.models.tickets import Ticket, TicketWatcher, TicketRespondContactLink
@@ -244,6 +249,9 @@ __all__ = [
     "PortalOtpCode",
     "PortalFormRevision",
     "PortalRevisionConfig",
+    "ContactMediaLimit",
+    "ContactMediaUsage",
+    "MediaExtractionJob",
     "UserSession",
     "ActivityEvent",
     "InternalNote",

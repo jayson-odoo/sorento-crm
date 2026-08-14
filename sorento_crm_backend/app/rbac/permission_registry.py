@@ -46,6 +46,16 @@ PERMISSION_REGISTRY.append({
     "name": "Get contact portal link",
     "description": "Generate or send a user-submission portal link for a respond contact.",
 })
+# Contact editing had no slug at all - every contact write is `get_current_user`
+# only, so today any authenticated user may change one. This names that authority
+# so the media gate can be enforced against something, and migration 357 grants it
+# to every existing role, which reproduces today's reach exactly rather than
+# silently narrowing it. Revoking it per role is now possible; it was not before.
+PERMISSION_REGISTRY.append({
+    "slug": "user_management.contacts.edit",
+    "name": "Edit Contacts",
+    "description": "Edit a respond contact, including its chatbot media access and monthly limits.",
+})
 
 # Delivery Order Management
 PERMISSION_REGISTRY.extend(_crud("order_management", "orders", "Delivery Orders"))
@@ -264,6 +274,11 @@ PERMISSION_REGISTRY.extend([
     {"slug": "integration.contacts.sync", "name": "Sync contacts", "description": "Create or update Respond.io contact records from an external system."},
     {"slug": "integration.semantic_search.use", "name": "Use semantic search", "description": "Run embedding and tool retrieval searches."},
     {"slug": "integration.ideation.submit", "name": "Submit ideation turns", "description": "Post ideation capture turns from an external channel."},
+    # Chatbot media (PLAN-chatbot-media-endpoint). Its own slug because this one
+    # spends extraction budget: an integration allowed to sync contacts is not
+    # automatically allowed to charge a photo read to a dealer's allowance.
+    # Granted to already-provisioned roles by migration 357.
+    {"slug": "integration.chatbot_media.process", "name": "Process chatbot media", "description": "Submit an inbound WhatsApp photo or voice note for gating, metering and extraction."},
 ])
 
 # System

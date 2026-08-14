@@ -55,6 +55,22 @@ _ALLOWLIST_REGEXES = (
     re.compile(r"/api/v1/notifications/.+/(send|resend)$"),
 )
 
+# Endpoints that own a STRONGER, stateful idempotency of their own, and whose
+# correct replay is NOT a byte copy of the first response. This backstop caches a
+# 2xx body for `result_ttl` seconds and returns it verbatim; that is right for a
+# transition whose replay is a no-op, and wrong for one whose replay must report
+# what has happened SINCE. `/api/v1/external/media/process` is the second kind: it
+# keys idempotency on the respond.io message id in the `contact_media_usage`
+# ledger (durable, not a 10 second window), and its replay must carry
+# `idempotent_replay: true` plus the job's CURRENT status - a cached `pending`
+# would tell n8n the extraction is still running long after it finished.
+#
+# Checked before the allowlist because it collides with it by name: the suffix
+# `/process` was added for the form-action endpoints, not for this one.
+_SELF_IDEMPOTENT_REGEXES = (
+    re.compile(r"^/api/v1/external/media/process$"),
+)
+
 _MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
 
 _KEY_PREFIX = "idemp:"
@@ -62,6 +78,8 @@ _KEY_PREFIX = "idemp:"
 
 def _is_allowlisted(method: str, path: str) -> bool:
     if method not in _MUTATING:
+        return False
+    if any(rx.search(path) for rx in _SELF_IDEMPOTENT_REGEXES):
         return False
     if path.endswith(_ALLOWLIST_SUFFIXES):
         return True
