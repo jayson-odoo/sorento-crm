@@ -288,6 +288,92 @@ def test_a_foreign_row_at_the_provisional_number_is_never_retired(world):
     assert _committed(world) == BOOK_QTY + SHEET_QTY
 
 
+def test_another_feeds_row_at_the_provisional_number_is_left_alone(world):
+    """`demand_origin` must be MATCHED, not merely present.
+
+    The two tests above use a NULL origin, which a test for "did this row come from the
+    sheet" could pass by checking `demand_origin IS NOT NULL`. The next feed to write a
+    `demand_origin` would then be adopted, renumbered and its number handed to a project
+    that never created it. So the guard is asserted against a row that HAS an origin and
+    a different one.
+    """
+    pso = world["pso"]
+    other_feed = _core_order(world, pso.provisional_ref, demand_origin=None, qty=BOOK_QTY)
+    other_feed.demand_origin = "some_future_feed"
+    world["db"].flush()
+
+    _ingest(world)
+
+    assert other_feed.so_number == pso.provisional_ref, "another feed's row was renumbered"
+    assert other_feed.status == "open"
+    assert other_feed.demand_origin == "some_future_feed"
+    assert other_feed.internal_note is None
+    assert _by_number(world, DOC_NO) == []
+    assert pso.so_id is None, "so_id adopted a row from a feed this project does not own"
+    # Deliberately no `_committed` assertion: whether a `project`-class row with some OTHER
+    # `demand_origin` reaches `scm.committed_v` is that view's filtering decision, not this
+    # guard's. Asserting it here would make the test fail whenever the view's demand-source
+    # clause is retuned, for a reason that has nothing to do with reconciliation.
+
+
+def test_another_feeds_row_is_not_retired_when_the_book_row_exists(world):
+    """The merge branch is just as blind: only the sheet's own row may be closed."""
+    pso = world["pso"]
+    book = _core_order(world, DOC_NO, demand_origin=None, qty=BOOK_QTY)
+    other_feed = _core_order(world, pso.provisional_ref, demand_origin=None, qty=SHEET_QTY)
+    other_feed.demand_origin = "some_future_feed"
+    world["db"].flush()
+
+    _ingest(world)
+
+    assert other_feed.status == "open"
+    assert _line_statuses(world, str(other_feed.id)) == {"open"}
+    assert other_feed.internal_note is None
+    assert other_feed.so_number == pso.provisional_ref
+    assert pso.so_id == str(book.id)
+
+
+# --------------------------------------------------------------------------- #
+# a link somebody put there by hand
+# --------------------------------------------------------------------------- #
+
+def test_a_human_set_so_id_pointing_elsewhere_is_not_repointed(world):
+    """The merge branch is deliberately narrow (see `_reconcile_core_order`).
+
+    `so_id` is repointed only when it is unset or still on the row about to be retired.
+    A link a person put on a THIRD row is left exactly where they put it: they know
+    something the matcher does not, and silently moving it would undo their correction
+    with no record that it happened.
+
+    The provisional row is still retired in the same pass, which is the point of pinning
+    this: the two halves of the merge are independent, and a future tidy-up that fuses
+    them would either start overwriting the human's link or stop stopping the double
+    count. Both are regressions, and neither is visible from the other test.
+    """
+    pso = world["pso"]
+    book = _core_order(world, DOC_NO, demand_origin=None, qty=BOOK_QTY)
+    sheet = _core_order(world, pso.provisional_ref, demand_origin=SOURCE_SYSTEM, qty=SHEET_QTY)
+    third = _core_order(world, f"{DOC_NO}-HAND", demand_origin=None, qty=BOOK_QTY)
+
+    # What a person decided, before the ingest runs.
+    pso.so_id = str(third.id)
+    world["db"].flush()
+
+    _ingest(world)
+
+    assert pso.so_id == str(third.id), "the hand-made link was overwritten by the matcher"
+    assert third.so_number == f"{DOC_NO}-HAND"
+    assert third.status == "open"
+    assert third.internal_note is None
+
+    # The retire half still runs: the sheet's row stops counting regardless of where the
+    # link points, because the demand behind it is the demand the book row already holds.
+    assert sheet.status == RETIRED_ORDER_STATUS
+    assert _line_statuses(world, str(sheet.id)) == {"closed"}
+    assert DOC_NO in (sheet.internal_note or "")
+    assert book.status == "open"
+
+
 # --------------------------------------------------------------------------- #
 # the second upload of the same document
 # --------------------------------------------------------------------------- #
