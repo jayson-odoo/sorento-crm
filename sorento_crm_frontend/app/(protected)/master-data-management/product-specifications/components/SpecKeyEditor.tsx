@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { updateSpecKey } from '../services/productSpecService';
 import SpecRuleEditor from './SpecRuleEditor';
 import TokenInput from './TokenInput';
-import { readable } from '../lib/readable';
+import { readable } from '@/lib/spec-readable';
 import { ruleSentence } from '../lib/ruleSentence';
 import { seedValuesFor, seedWordsFor, valuePayload, wordPayload } from '../lib/vocabularyEdit';
 import type { SpecDerivationRule, SpecRegistryKey } from '../types/productSpec.types';

@@ -21,7 +21,7 @@ import {
   rederiveProduct,
   setFlyerText,
 } from '../../../product-specifications/services/productSpecService';
-import { readable, readableValue } from '../../../product-specifications/lib/readable';
+import { readable, readableValue } from '@/lib/spec-readable';
 import AddSpecByHand from './AddSpecByHand';
 import type {
   ProductSpecDetail,

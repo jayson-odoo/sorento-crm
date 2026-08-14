@@ -9,7 +9,7 @@ import {
   getSpecRegistry,
   setSpecValueByHand,
 } from '../../../product-specifications/services/productSpecService';
-import { readable } from '../../../product-specifications/lib/readable';
+import { readable } from '@/lib/spec-readable';
 import type { SpecRegistryKey } from '../../../product-specifications/types/productSpec.types';
 
 /**
