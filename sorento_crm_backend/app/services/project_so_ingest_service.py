@@ -18,6 +18,17 @@ slice exists to find. Keying on the fingerprint would report every divergence as
 
 The transport is deliberately not this file's business. An upload of AutoCount's export
 and a stage 2 ESB push both arrive here as an ``IngestDocument``.
+
+## The two numbers (ADR 0010, AC-F2/F3/F5)
+
+The Order Inquiry sheet is exported BEFORE AutoCount has issued the SO number, so the core
+`sales_orders` row the sheet creates carries the project's `provisional_ref`. CS's outstanding
+book matches on `so_number` alone and inserts on a miss, so the same demand would land twice
+under two numbers and `scm.committed_v` would count it twice.
+
+This file is the one place both references are known at once, which is why the reconciliation
+lives here rather than in `outstanding_import_service` - that importer stays ignorant of the
+module and is unchanged.
 """
 from __future__ import annotations
 
@@ -29,7 +40,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy.orm import Session
 
-from app.models.order import Customer, SalesOrder
+from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product
 from app.models.project_so import (
     DIVERGENCE_OPEN,
@@ -44,6 +55,7 @@ from app.models.project_so import (
 )
 from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
 from app.services.error_handler import AppException
+from app.services.project_order_inquiry_import_service import SOURCE_SYSTEM
 from app.services.project_so_divergence_engine import (
     OurHeader,
     OurLine,
@@ -59,6 +71,24 @@ OUTCOME_MATCHED = "matched"
 OUTCOME_DIVERGENT = "divergent"
 OUTCOME_AMBIGUOUS = "ambiguous"
 OUTCOME_UNMATCHED = "unmatched"
+
+#: What a retired provisional row is left as. A STATUS, never a delete, and the word is the
+#: one the rest of the codebase already uses for a sales order that is no longer live:
+#: `so_history_service` writes `closed` on both the header and its lines, and
+#: `outstanding_import_service` states the doctrine outright ("closing is `line_status =
+#: 'closed'`, not a delete ... erasing it would make last week's plan unexplainable").
+#:
+#: It is also the mechanism `scm.committed_v` already honours: the view's WHERE requires
+#: `so.status = 'open'` AND `sol.line_status = 'open'`, so closing the header is what removes
+#: the double count. The lines are closed with it because several readers in this codebase
+#: filter on the line alone, and a retirement that half the readers cannot see is worse than
+#: no retirement at all.
+RETIRED_ORDER_STATUS = "closed"
+RETIRED_LINE_STATUS = "closed"
+
+#: Only rows the Order Inquiry sheet created may be renumbered or retired (AC-F5). The
+#: literal is the importer's own stamp, imported rather than repeated so the two cannot drift.
+DEMAND_ORIGIN_ORDER_INQUIRY = SOURCE_SYSTEM
 
 
 @dataclass
@@ -147,14 +177,7 @@ class ProjectSOIngestService:
         # document that agrees still has to leave our record able to name its counterpart.
         if document.doc_no:
             order.autocount_doc_no = document.doc_no
-            if order.so_id is None:
-                mirror = (
-                    self.db.query(SalesOrder)
-                    .filter(SalesOrder.so_number == document.doc_no)
-                    .first()
-                )
-                if mirror is not None:
-                    order.so_id = mirror.id
+            self._reconcile_core_order(order, document.doc_no)
             self.db.flush()
 
         report = compare(*self._ours(order), *self._theirs(document))
@@ -179,6 +202,94 @@ class ProjectSOIngestService:
             project_sales_order_id=order.id,
             divergence_id=divergence.id,
             differing_count=report.differing_count,
+        )
+
+    # ------------------------------------------------------- the two numbers
+
+    def _reconcile_core_order(self, order: ProjectSalesOrder, doc_no: str) -> None:
+        """Make the real number and the provisional one name ONE piece of demand.
+
+        Three outcomes, and the third is the one that has to be written down (AC-F5):
+
+        * nothing holds the real number and the sheet made a provisional row -> RENUMBER it
+          in place. No second row is created, so nothing has to be merged afterwards.
+        * the outstanding book already created the real-numbered row -> LINK `so_id` to it
+          and RETIRE the provisional one, so `scm.committed_v` stops counting both.
+        * the row at the provisional number is not the sheet's -> nothing at all. Its number
+          colliding with ours is an accident, and renaming or closing somebody else's order
+          on the strength of a coincidence is the worst thing this function could do.
+
+        `sales_orders.so_number` is UNIQUE, so the rename is only ever attempted after a
+        FLUSHED lookup has shown the number free. Flushing first is what makes that check
+        honest: a row inserted earlier in this same transaction is otherwise still pending
+        and invisible to the query, and the collision would surface as an IntegrityError
+        several statements later, with the whole transaction lost.
+        """
+        # Pending inserts made earlier in this transaction must be visible to both lookups
+        # below, or "the number is free" is a statement about the database as it was.
+        self.db.flush()
+
+        real = (
+            self.db.query(SalesOrder).filter(SalesOrder.so_number == doc_no).first()
+        )
+        provisional = None
+        if order.provisional_ref:
+            provisional = (
+                self.db.query(SalesOrder)
+                .filter(
+                    SalesOrder.so_number == order.provisional_ref,
+                    SalesOrder.demand_origin == DEMAND_ORIGIN_ORDER_INQUIRY,
+                )
+                .first()
+            )
+
+        if real is None:
+            if provisional is None:
+                return
+            # AC-F2. The row IS this order; only its number was a placeholder.
+            provisional.so_number = doc_no
+            self.db.flush()
+            order.so_id = provisional.id
+            logger.info(
+                "project SO %s: renumbered sheet-created sales order %s to %s",
+                order.id, provisional.id, doc_no,
+            )
+            return
+
+        # AC-F3. CS got there first, so their row is the one that counts. `so_id` is
+        # repointed only when it is unset or still on the row about to be retired: a link a
+        # person put somewhere else is not this function's to overwrite.
+        if order.so_id is None or (provisional is not None and order.so_id == provisional.id):
+            order.so_id = real.id
+        if provisional is not None and provisional.id != real.id:
+            self._retire(provisional, doc_no)
+
+    def _retire(self, provisional: SalesOrder, doc_no: str) -> None:
+        """Close the sheet's row so the demand is counted under the real number only.
+
+        Idempotent by the status check: a second upload of the same document finds the row
+        already closed and writes nothing, so the note below is stamped exactly once.
+        """
+        if provisional.status == RETIRED_ORDER_STATUS:
+            return
+
+        provisional.status = RETIRED_ORDER_STATUS
+        self.db.query(SalesOrderLine).filter(
+            SalesOrderLine.sales_order_id == str(provisional.id),
+            SalesOrderLine.line_status != RETIRED_LINE_STATUS,
+        ).update({"line_status": RETIRED_LINE_STATUS}, synchronize_session=False)
+
+        # The row survives, so it has to be able to say why it stopped counting. Nothing
+        # else on the table carries that: `demand_origin` is history and stays as it is,
+        # and `source_doc_no` belongs to `so_history_service` (ADR 0010).
+        note = f"Retired: superseded by {doc_no}"
+        provisional.internal_note = (
+            f"{provisional.internal_note} | {note}" if provisional.internal_note else note
+        )
+        self.db.flush()
+        logger.info(
+            "project SO: retired provisional sales order %s, superseded by %s",
+            provisional.id, doc_no,
         )
 
     # ------------------------------------------------------------- match back
