@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     respond_app_base_url: str = "https://app.respond.io"  # Base URL for inbox links (e.g. /space/{id}/inbox/{contact_id})
     respond_space_id: str | None = None
     
+    # Shared secret the CRM puts on its DIRECT n8n webhook calls (respond-send-user,
+    # respond-close-convo) as X-CRM-Webhook-Secret. N8N_CRM_WEBHOOK_SECRET. Unset =
+    # the header is omitted, the send still goes out, and the n8n gate stays closed:
+    # a misconfigured deploy degrades to "bot-pause inert", never to a blocked send
+    # (UAC AC-J6).
+    n8n_crm_webhook_secret: str | None = None
+
     # External API Access
     external_api_key: str | None = None  # API key for external parties to access endpoints
     # When set, X-API-Key auth resolves RBAC as this users row (required for MCP/n8n read tools).

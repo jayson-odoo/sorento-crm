@@ -5756,6 +5756,7 @@ class ConversationSLATrackingService:
         delivered files as sent and the failed one with a retry affordance
         (not implemented yet - tracked separately from this fix).
         """
+        from app.services.crm_chat_outbound_webhook import notify_human_ticket_send
         from app.services.error_handler import AppException
         from app.services.form_sla_service import FORM_SLA_TYPES
         from app.services.respond_chat_template_service import (
@@ -5792,6 +5793,10 @@ class ConversationSLATrackingService:
 
         attachments_result: Optional[dict] = None
         anything_delivered = False
+        # Respond's acknowledgement for the FIRST message that actually landed.
+        # The human-send webhook carries its messageId so the direct lane and
+        # Respond's own outgoing-message trigger mirror the same id (AC-J5).
+        first_respond_response: Optional[dict] = None
         if files:
             # FINDING 3: resolve the window ONCE for the whole send (each
             # resolution is a live Respond HTTP call, 15s timeout) instead of
@@ -5805,7 +5810,7 @@ class ConversationSLATrackingService:
             # supported caption param (R1) - so it is never lost to a LATER
             # attachment failing.
             if clean_text:
-                send_chat_message_for(
+                caption_result = send_chat_message_for(
                     self.db,
                     identifier=identifier,
                     respond_contact_id=respond_contact_id,
@@ -5816,6 +5821,7 @@ class ConversationSLATrackingService:
                     sender_name=sender_name,
                     created_by=sender_user_id,
                 )
+                first_respond_response = caption_result.get("response")
                 anything_delivered = True
 
             # Sequential, never all-or-nothing: a failure on file N must not
@@ -5834,7 +5840,7 @@ class ConversationSLATrackingService:
                         filename=filename,
                         mime=mime,
                     )
-                    send_chat_attachment_for(
+                    sent = send_chat_attachment_for(
                         self.db,
                         identifier=identifier,
                         respond_contact_id=respond_contact_id,
@@ -5845,6 +5851,11 @@ class ConversationSLATrackingService:
                         created_by=sender_user_id,
                         window=window,
                     )
+                    if first_respond_response is None:
+                        response = sent.get("response")
+                        first_respond_response = (
+                            response if isinstance(response, dict) else None
+                        )
                 except AppException as e:
                     # AppException.detail is always the {message, detail, code}
                     # dict (see error_handler.AppException.__init__) - prefer
@@ -5894,6 +5905,7 @@ class ConversationSLATrackingService:
             rendered_text = result["rendered_text"]
             flattened = result["flattened"]
             window_state = result["window_state"]
+            first_respond_response = result.get("response")
             anything_delivered = True
 
         # AC-E1: stamp THIS ticket's response clock only, and only if
@@ -5919,6 +5931,19 @@ class ConversationSLATrackingService:
                     tracking_id,
                     exc_info=True,
                 )
+
+            # AC-J1: tell n8n a HUMAN answered, so the bot stops replying to this
+            # contact (is_human_intervened + ht timeout lane), exactly as a manual
+            # reply from the Respond app does. Once per drawer send, whatever it
+            # carried; itself best-effort (notify_human_ticket_send never raises).
+            notify_human_ticket_send(
+                self.db,
+                tracking_id=business_id,
+                contact_respond_io_id=identifier,
+                message_text=rendered_text,
+                respond_api_response=first_respond_response,
+                sender_user_id=sender_user_id,
+            )
 
         return {
             "sent_as": sent_as,

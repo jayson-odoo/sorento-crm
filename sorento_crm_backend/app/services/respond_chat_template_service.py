@@ -344,7 +344,8 @@ def send_chat_message_for(
 
     NEVER mutates the entity. Writes an integration_log outbox on success AND
     failure (best-effort - a logging failure never 500s a delivered send).
-    Returns ``{sent_as, rendered_text, flattened, window_state}``.
+    Returns ``{sent_as, rendered_text, flattened, window_state, response}``
+    (``response`` = Respond's raw acknowledgement, carrying the messageId).
 
     Raises ``AppException`` 422 (``no_chat_template``) when the window is closed
     and no valid chat template default is configured, and 502
@@ -432,6 +433,10 @@ def send_chat_message_for(
             "rendered_text": stripped,
             "flattened": False,  # raw text sent unaltered - no flatten in-window.
             "window_state": _window_state_out(),
+            # Respond's raw acknowledgement. The ticket drawer needs the real
+            # messageId for the human-send webhook so both mirror lanes dedupe
+            # on the same id (AC-J1/AC-J5); every other caller ignores it.
+            "response": response,
         }
 
     # ---- Out-of-window: a template is the only deliverable channel. ----
@@ -527,6 +532,7 @@ def send_chat_message_for(
         "rendered_text": rendered_text,
         "flattened": flattened,
         "window_state": _window_state_out(),
+        "response": result.get("response"),
     }
 
 

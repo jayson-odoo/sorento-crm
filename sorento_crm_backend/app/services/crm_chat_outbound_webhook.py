@@ -4,6 +4,7 @@ POST a Respond.io-shaped payload to a configurable webhook so workflows can run 
 """
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -16,9 +17,16 @@ from app.models.access import RespondContact
 from app.models.user import User
 from app.schemas.integration import IntegrationLogCreate
 from app.services.integration_service import IntegrationLogService
-from app.services.n8n_webhook_settings import get_n8n_crm_chat_outbound_webhook_url
+from app.services.n8n_webhook_settings import (
+    crm_webhook_auth_headers,
+    get_n8n_crm_chat_outbound_webhook_url,
+)
 
 logger = logging.getLogger(__name__)
+
+# Every human ticket-drawer send is logged and mirrored against the ticket itself,
+# never the form entity that happens to host the chat panel.
+HUMAN_TICKET_BUSINESS_TABLE = "conversation_sla_tracking"
 
 
 def send_crm_chat_outbound_webhook_for_log(log_id: str) -> None:
@@ -262,6 +270,11 @@ def enqueue_crm_chat_outbound_webhook(
         assignee_respond_user_id=assignee_respond_user_id,
     )
 
+    # AC-J6: the shared secret rides on the log row because that is what the
+    # sender (initial POST and any manual resubmit alike) reads its headers
+    # from, so every caller of this function emits it uniformly.
+    auth_headers = crm_webhook_auth_headers()
+
     log_service = IntegrationLogService(db)
     integration_log = log_service.create_integration_log(
         IntegrationLogCreate(
@@ -273,6 +286,7 @@ def enqueue_crm_chat_outbound_webhook(
             endpoint=url,
             http_method="POST",
             status="pending",
+            request_headers=json.dumps(auth_headers) if auth_headers else None,
             created_by=str(crm_sender_user_id).strip() if crm_sender_user_id else None,
         ),
         request_payload_dict=payload_list,
@@ -283,3 +297,84 @@ def enqueue_crm_chat_outbound_webhook(
         send_crm_chat_outbound_webhook_for_log(log_id)
 
     threading.Thread(target=send_async, daemon=True).start()
+
+
+def resolve_sender_respond_user_id(
+    db: Session, crm_sender_user_id: Optional[str]
+) -> Optional[str]:
+    """Respond user id mapped to the CRM staff member who pressed Send.
+
+    None when the staff member has no mapping, or when the mapping was filled
+    with a CRM ``users.id`` UUID - which is not a Respond user id and must never
+    reach n8n (it evaluates ``user.id.toString()`` against Respond's own users).
+    """
+    if not crm_sender_user_id or not str(crm_sender_user_id).strip():
+        return None
+    user = db.query(User).filter(User.id == str(crm_sender_user_id).strip()).first()
+    respond_id = str(getattr(user, "respond_user_id", None) or "").strip() if user else ""
+    if not respond_id or _is_crm_user_uuid(respond_id):
+        return None
+    return respond_id
+
+
+def notify_human_ticket_send(
+    db: Session,
+    *,
+    tracking_id: str,
+    contact_respond_io_id: str,
+    message_text: str,
+    respond_api_response: Optional[dict],
+    sender_user_id: Optional[str],
+) -> bool:
+    """Signal n8n that a HUMAN replied from a ticket drawer (UAC AC-J1/J2/J3).
+
+    A CRM API send and a bot send are indistinguishable in Respond's own webhook
+    payload (both ``source: "Developer API"``, ``user: null``), so the
+    Respond-trigger route can never carry this signal. ``respond-send-user``
+    already has a second, plain-webhook trigger with a ``source == "User"`` gate;
+    this is the CRM half of it - the drawer send path just never wired in. n8n
+    uses it to set ``is_human_intervened`` and arm the ht timeout lane, exactly
+    as a manual reply from the Respond app does.
+
+    Called ONCE per drawer send (one staff action = one intervention signal),
+    only from the human ticket paths - never from bot flows, notification tasks
+    or the shared chat-panel send, which carry no human-reply meaning.
+
+    Best-effort post-commit: the message has ALREADY reached the contact, so
+    every failure here is caught and warned. Returns True when the webhook was
+    handed off, False when it was skipped (AC-J3: an unmapped sender is skipped
+    rather than sent with a null/fake ``user.id``, which throws inside n8n).
+    """
+    try:
+        respond_user_id = resolve_sender_respond_user_id(db, sender_user_id)
+        if not respond_user_id:
+            logger.warning(
+                "respond-send-user webhook skipped for ticket %s: sender %s has no "
+                "mapped Respond user id",
+                tracking_id,
+                sender_user_id,
+            )
+            return False
+        enqueue_crm_chat_outbound_webhook(
+            db,
+            business_table=HUMAN_TICKET_BUSINESS_TABLE,
+            business_id=str(tracking_id),
+            contact_respond_io_id=str(contact_respond_io_id),
+            message_text=message_text or "",
+            respond_api_response=(
+                respond_api_response if isinstance(respond_api_response, dict) else None
+            ),
+            space_id=None,
+            crm_sender_user_id=str(sender_user_id) if sender_user_id else None,
+            # The acting agent on a drawer send is the SENDER, not necessarily the
+            # ticket's assignee (a colleague can answer). Pin it on both inputs so
+            # the payload cannot fall back to anything else.
+            respond_user_id_fallback=respond_user_id,
+            assignee_respond_user_id=respond_user_id,
+        )
+        return True
+    except Exception:  # noqa: BLE001 - the contact already has the message
+        logger.warning(
+            "respond-send-user webhook failed for ticket %s", tracking_id, exc_info=True
+        )
+        return False

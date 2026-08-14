@@ -78,7 +78,7 @@ def _send_ticket_template_now(
     from app.services.respond_chat_template_service import send_manual_template_for
 
     try:
-        send_manual_template_for(
+        sent = send_manual_template_for(
             db,
             identifier=identifier,
             template_id=body.template_id,
@@ -115,6 +115,19 @@ def _send_ticket_template_now(
             body.tracking_id,
             exc_info=True,
         )
+
+    # AC-J1: a template sent from the drawer is a human reply too, so it pauses
+    # the bot exactly like an in-window text send. Best-effort by construction.
+    from app.services.crm_chat_outbound_webhook import notify_human_ticket_send
+
+    notify_human_ticket_send(
+        db,
+        tracking_id=str(body.tracking_id),
+        contact_respond_io_id=identifier,
+        message_text=pre.get("rendered_body") or "",
+        respond_api_response=sent.get("response") if isinstance(sent, dict) else None,
+        sender_user_id=sender_user_id,
+    )
 
     return {
         "ok": True,
