@@ -163,6 +163,12 @@ def create_grn(
                 quantity_picked=line.quantity,
                 uom_id=line.uom_id,
                 destination_warehouse_id=alloc.warehouse_id if alloc else None,
+                # What the SENDER said this line was received against (AC-FM-9c).
+                # `create_grn` drops `spo_allocation_id` - a GRN links on approval,
+                # not on create - so without this the line would be neither linked
+                # nor stated, and unmatchable forever on the one path where the
+                # SPO text is right there in the payload.
+                spo_number_raw=line.spo_allocation,
             )
         )
 

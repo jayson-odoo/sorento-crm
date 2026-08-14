@@ -5,6 +5,14 @@ import type {
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
 
+/**
+ * `PickingLineResponse` carries `spo_number_raw: string | null` - the SPO number
+ * the imported sheet stated for that line, unnormalised, null when the sheet
+ * named no single SPO. Sent by GET /api/v1/procurement/grn/{id} and by
+ * GET /api/v1/procurement/picking-lines, whose `query` also matches on it.
+ * See `documentation/plans/purchasing/PLAN-grn-spo-forward-matching.md`.
+ */
+
 export type GRNListParams = DataGridApiFetchParams & {
   picking_status?: string;
   inspection_status?: string;

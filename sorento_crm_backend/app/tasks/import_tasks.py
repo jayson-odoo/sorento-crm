@@ -26,7 +26,11 @@ from app.services.procurement_service import (
     SPOAllocationService,
     PickingHeaderService,
     AllocationReceivedGuardError,
-    _spo_match_key,
+)
+from app.services.grn_spo_matching import (
+    build_allocation_pool,
+    draw_fifo,
+    forward_match_grn_lines_for_spo_best_effort,
 )
 from app.services.resources_service import (
     AttachmentDirectoryService,
@@ -44,7 +48,6 @@ from app.models.job import ImportJob, JobStatus
 from app.services import import_outcome_codes as oc
 from app.services.import_outcome import ImportOutcome
 from app.services.company_scope import set_company_scope
-from app.models.procurement import SPOAllocation
 from app.models.order import Order, OrderLine
 from app.schemas.resources import AttachmentCreate
 from app.schemas.procurement import SPOAllocationCreate
@@ -1298,6 +1301,13 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
         processed = 0
         errors: List[str] = []
         proc_service = SPOAllocationService(db)
+        # (spo_number, company_id) pairs to forward match once the WHOLE file has
+        # landed. The file is upserted one (product, warehouse) group at a time, so
+        # a hook fired per allocation row runs while the rest of the file does not
+        # exist yet and places a waiting GRN line against whichever allocation
+        # happened to be written first rather than the one covering its warehouse -
+        # which is upload-order dependence, the exact thing this feature removes.
+        forward_match_targets: set[tuple[str, Optional[str]]] = set()
 
         for (product_id, warehouse_id), (total_qty, shipment_id) in groups.items():
             processed += 1
@@ -1312,7 +1322,13 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
                     quantity_received=0,
                     quantity_rejected=0,
                 )
-                action, _allocation = proc_service.upsert_allocation(allocation_data, user_id)
+                action, _allocation = proc_service.upsert_allocation(
+                    allocation_data, user_id, forward_match=False
+                )
+                if action in ("created", "updated") and _allocation.spo_number:
+                    forward_match_targets.add(
+                        (_allocation.spo_number, _allocation.company_id)
+                    )
                 group_key = (product_id, warehouse_id)
                 identity = spo_row_identity.get(group_key) or {}
                 if action == "created":
@@ -1367,6 +1383,16 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
                 job_id_str,
                 result={"errors": errors[-50:], "skipped_rows_detail": skipped_rows_detail[-200:]},
                 **progress,
+            )
+
+        # The whole file has landed, so the pool is now complete: any GRN line that
+        # stated one of these SPOs and could not be placed when it was imported is
+        # placeable, against the allocation that actually covers its warehouse.
+        # Post-commit and best-effort - a side effect must not fail an import whose
+        # allocations are already written.
+        for target_spo, target_company in forward_match_targets:
+            forward_match_grn_lines_for_spo_best_effort(
+                db, target_spo, company_id=target_company
             )
 
         total_skipped = row_level_skipped + guarded_skipped
@@ -2298,6 +2324,8 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
             source_warehouse_id: str,
             quantity: int,
             spo_allocation_id: Optional[str],
+            spo_number_raw: Optional[str] = None,
+            company_id: Optional[str] = None,
             group_key: Optional[tuple] = None,
         ) -> bool:
             """Upsert one GRN line inside a SAVEPOINT.
@@ -2317,6 +2345,8 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                         source_warehouse_id=source_warehouse_id,
                         quantity=quantity,
                         spo_allocation_id=spo_allocation_id,
+                        spo_number_raw=spo_number_raw,
+                        company_id=company_id,
                     )
                 return True
             except Exception as e:
@@ -2362,6 +2392,14 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                     group_line_error[gk] = f"GRN header not found: {doc_no}"
                 continue
 
+            # Every row this group writes carries the GRN's OWN company, and every
+            # pool it builds is confined to it. Both halves or neither (AC-FM-27):
+            # a job with no company snapshot runs system-scoped, where the insert
+            # hook would stamp the incumbent instead.
+            header_company_id = (
+                str(header.company_id) if header.company_id is not None else None
+            )
+
             spo_number: Optional[str] = effective_spo
             if not spo_number:
                 # No SPO number, create all lines without spo_allocation_id
@@ -2372,6 +2410,8 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                         source_warehouse_id=warehouse_id,
                         quantity=qty,
                         spo_allocation_id=None,
+                        spo_number_raw=None,
+                        company_id=header_company_id,
                         group_key=(doc_no, product_id, warehouse_id, effective_spo),
                     ):
                         successful += 1
@@ -2380,87 +2420,46 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                         failed += 1
                 continue
 
-            # Get all SPO allocations for this product, then filter by SPO match key.
-            # _spo_match_key strips ALL non-alphanumerics (not just / -> .), so
-            # SPO-2026/06-0095 matches SPO-202606-0095 — the same tolerant key the
-            # rest of the system (linked-GRN display, service FIFO) uses. A weaker
-            # separator-only normalizer silently left picking lines unlinked.
-            spo_normalized = _spo_match_key(spo_number)
-            all_allocations = (
-                db.query(SPOAllocation)
-                .filter(SPOAllocation.product_id == product_id)
-                .order_by(SPOAllocation.created_at.asc())
-                .all()
+            # The pool and the draw are `app.services.grn_spo_matching`'s, not this
+            # loop's. Forward matching runs the SAME two functions over the lines a
+            # previous import stated but could not place, and a second copy of the
+            # two-pass rule here is exactly how the two directions would come to
+            # disagree about which allocation a line belongs to.
+            #
+            # The pool is built ONCE per (doc_no, product, SPO) group so its lines
+            # share it, and this GRN is excluded from its own consumption - a
+            # re-import must not see the rows it is about to rewrite as capacity
+            # somebody else already took.
+            pool = build_allocation_pool(
+                db,
+                product_id=product_id,
+                spo_number=spo_number,
+                exclude_header_ids={str(hdr.id) for _wh, _q, hdr in gr_line_list},
+                # An import job with no company snapshot runs system-scoped (all
+                # companies), where the scope layer constrains nothing - so the
+                # GRN's own company is stated rather than assumed.
+                company_id=header_company_id,
             )
-            def _alloc_spo_val(a: Any) -> str:
-                v = a.spo_number
-                return str(v) if v is not None else ""
-            spo_allocations = [a for a in all_allocations if _spo_match_key(_alloc_spo_val(a)) == spo_normalized]
-
-            # Build pool: (alloc_id, alloc_warehouse_id, available) FIFO by created_at.
-            # FIFO from SPO allocation: prefer allocation whose warehouse matches GR line location.
-            spo_pool: List[List[Any]] = []
-            for alloc in spo_allocations:
-                available_val = int(cast(int, alloc.allocated_quantity or 0)) - int(cast(int, alloc.quantity_received or 0))
-                if available_val > 0:
-                    spo_pool.append([str(alloc.id), str(alloc.warehouse_id), available_val])  # mutable for in-place update
 
             for warehouse_id, gr_qty, hdr in gr_line_list:
-                remaining_qty = gr_qty
-
-                # First pass: consume from allocations with same warehouse (location match) FIFO
-                for entry in spo_pool:
-                    alloc_id, alloc_wh, avail = entry
-                    if alloc_wh != warehouse_id or avail <= 0 or remaining_qty <= 0:
-                        continue
-                    take_qty = min(remaining_qty, avail)
+                for draw in draw_fifo(pool, warehouse_id=warehouse_id, quantity=gr_qty):
                     if _safe_upsert_line(
                         picking_header_id=hdr.id,
                         product_id=product_id,
                         source_warehouse_id=warehouse_id,
-                        quantity=take_qty,
-                        spo_allocation_id=alloc_id,
+                        quantity=draw.quantity,
+                        spo_allocation_id=draw.allocation_id,
+                        spo_number_raw=spo_number,
+                        # The pool above is already confined to this header's
+                        # company, so the row it produces has to carry that company
+                        # too - otherwise the GRN draws correctly and shows none of
+                        # what it drew, and the mis-stamped row never counts as
+                        # consumption either, so a re-import over-draws.
+                        company_id=header_company_id,
                         group_key=(doc_no, product_id, warehouse_id, effective_spo),
                     ):
                         successful += 1
-                        _record_success(doc_no, product_id, warehouse_id, take_qty)
-                        remaining_qty -= take_qty
-                        entry[2] = avail - take_qty
-                    else:
-                        failed += 1
-
-                # Second pass: consume from other allocations FIFO
-                for entry in spo_pool:
-                    alloc_id, alloc_wh, avail = entry
-                    if alloc_wh == warehouse_id or avail <= 0 or remaining_qty <= 0:
-                        continue
-                    take_qty = min(remaining_qty, avail)
-                    if _safe_upsert_line(
-                        picking_header_id=hdr.id,
-                        product_id=product_id,
-                        source_warehouse_id=warehouse_id,
-                        quantity=take_qty,
-                        spo_allocation_id=alloc_id,
-                        group_key=(doc_no, product_id, warehouse_id, effective_spo),
-                    ):
-                        successful += 1
-                        _record_success(doc_no, product_id, warehouse_id, take_qty)
-                        remaining_qty -= take_qty
-                        entry[2] = avail - take_qty
-                    else:
-                        failed += 1
-
-                if remaining_qty > 0:
-                    if _safe_upsert_line(
-                        picking_header_id=hdr.id,
-                        product_id=product_id,
-                        source_warehouse_id=warehouse_id,
-                        quantity=remaining_qty,
-                        spo_allocation_id=None,
-                        group_key=(doc_no, product_id, warehouse_id, effective_spo),
-                    ):
-                        successful += 1
-                        _record_success(doc_no, product_id, warehouse_id, remaining_qty)
+                        _record_success(doc_no, product_id, warehouse_id, draw.quantity)
                     else:
                         failed += 1
 
