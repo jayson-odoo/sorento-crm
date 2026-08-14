@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
-import { MoreVertical, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { MoreVertical, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -12,45 +12,42 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
+import { AddSpecificationDialog, SpecTable } from '@/components/spec-table';
+import { useProductSpecTable } from '../../hooks/useProductSpecTable';
 import {
-  clearSpecValueByHand,
-  getProductSpecDetail,
   rederiveProduct,
   setFlyerText,
 } from '../../../product-specifications/services/productSpecService';
-import { readable, readableValue } from '@/lib/spec-readable';
-import AddSpecByHand from './AddSpecByHand';
 import type {
   ProductSpecDetail,
   SpecDiagnosisReason,
 } from '../../../product-specifications/types/productSpec.types';
 
 /**
- * What the machine read out of THIS product, and what search will do with it.
+ * What this product's specifications are, and where each one came from.
  *
- * Opened while looking at one product, so it answers the question asked there: can a
- * customer find this by describing it, and if not, what is stopping it. Every value
- * carries the exact substring it came from, because the only way to trust a derived
- * spec is to see the words it was derived from sitting next to it.
+ * Opened while looking at one product, so it answers the question asked there: is this
+ * what the product actually is, and if not, put it right. Every value carries the
+ * source it came from with the words behind it, because the only way to trust a
+ * derived spec is to be able to see what it was derived from.
+ *
+ * The table itself is `components/spec-table`, props-driven and shared: the same
+ * component renders here and, in milestone 2, inside the supplier portal. Everything
+ * it needs comes from `useProductSpecTable`, so this file holds no fetching of its own
+ * and the two surfaces cannot drift apart.
  */
-
-/** Where a value came from, named the way the person reading it would name it. */
-const SOURCE_LABEL: Record<string, string> = {
-  derived: 'Description',
-  flyer: 'Flyer',
-  code: 'Product code',
-  category: 'Category',
-  human: 'Set by hand',
-};
 
 const EXCEPTION_LABELS: Record<string, string> = {
   shape_mismatch: 'Stored dimensions describe a round or square product',
   column_conflict: 'Description disagrees with the stored dimensions',
   implausible_dimension: 'Dimension too large to be real',
   low_confidence: 'Derived below the review threshold',
+  // An authored value the rules now disagree with. Setting the right value is what
+  // answers it - there is deliberately no resolve action anywhere on this page (D9).
+  human_override_conflict: 'The rules read something else than the value set by hand',
 };
 
 /** Each silence gets its own sentence and its own fix. */
@@ -207,32 +204,18 @@ function FlyerCard({
 }
 
 export default function ProductSpecificationsTab({ productId }: { productId: string }) {
-  const [detail, setDetail] = useState<ProductSpecDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
-
-  const load = useCallback(async () => {
-    try {
-      setDetail(await getProductSpecDetail(productId));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load');
-    } finally {
-      setLoading(false);
-    }
-  }, [productId]);
-
-  useEffect(() => {
-    setLoading(true);
-    load();
-  }, [load]);
+  /** A key just picked from the dialog, so the table opens its editor on that row. */
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
+  const spec = useProductSpecTable(productId);
+  const { detail, rows, registry, applicableKeys, otherKeys, isLoading, error } = spec;
 
   const rederive = async () => {
     setBusy(true);
     try {
       await rederiveProduct(productId);
-      await load();
+      spec.refetch();
       toast.success('Read again with the current rules');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not read this product again', {
@@ -243,17 +226,7 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
     }
   };
 
-  const clearByHand = async (key: string) => {
-    try {
-      await clearSpecValueByHand(productId, key);
-      await load();
-      toast.success(`${readable(key)} is back to what the rules read`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not clear the value');
-    }
-  };
-
-  if (loading) {
+  if (isLoading) {
     return (
       <Card>
         <CardContent className="flex flex-col gap-2 pt-6">
@@ -276,31 +249,34 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
 
   if (!detail) return null;
 
-  const values = detail.spec?.values ?? {};
-  const provenance = detail.spec?.provenance ?? {};
-  const entries = Object.entries(values).sort(([a], [b]) => a.localeCompare(b));
   const copy = detail.searchable ? null : diagnosisCopy(detail);
+  // The row's own status, which the backend already computes with the same
+  // precedence (needs_review > authored > derived). Read rather than recomputed.
+  const specStatus = detail.spec?.status ?? 'derived';
 
   return (
     <div className="flex flex-col gap-5">
       <Card>
-        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-          <CardTitle>Derived specifications</CardTitle>
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <CardTitle className="min-w-0 break-words">Specifications</CardTitle>
           <div className="flex flex-wrap items-center gap-2">
-            {detail.searchable ? (
-              <Badge variant="success" size="sm">
-                Findable by description
-              </Badge>
-            ) : (
-              <Badge variant="secondary" size="sm">
-                Not findable by description
-              </Badge>
-            )}
-            {detail.spec?.status && (
-              <Badge variant="outline" size="sm">
-                {detail.spec.status.replace(/_/g, ' ')}
-              </Badge>
-            )}
+            {/* The shared pill, not a Badge variant: "findable" and "authored" are
+                statuses, and a status that renders differently here than on every
+                other screen is a second vocabulary to learn (AC-C.1). */}
+            <span
+              className={`${STATUS_PILL_BASE} ${statusPillClass(
+                detail.searchable ? 'findable' : 'not_findable',
+              )}`}
+              data-spec-findability
+            >
+              {detail.searchable ? 'Findable by description' : 'Not findable by description'}
+            </span>
+            <span
+              className={`${STATUS_PILL_BASE} ${statusPillClass(specStatus)}`}
+              data-spec-status
+            >
+              {specStatus.replace(/_/g, ' ')}
+            </span>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" aria-label="Specification actions">
@@ -312,26 +288,11 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
                   <RefreshCw className="size-4" />
                   Read this product again
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setAdding(true)}>
-                  <Plus className="size-4" />
-                  Set a value by hand
-                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
-          {adding && (
-            <AddSpecByHand
-              productId={productId}
-              onCancel={() => setAdding(false)}
-              onSaved={() => {
-                setAdding(false);
-                load();
-              }}
-            />
-          )}
-
           {copy && (
             <Alert variant={copy.tone}>
               <AlertIcon />
@@ -359,7 +320,7 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
           <FlyerCard
             productId={productId}
             text={detail.flyer_text}
-            onSaved={load}
+            onSaved={spec.refetch}
           />
 
 
@@ -374,101 +335,88 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
             </div>
           )}
 
-          {entries.length > 0 && (
-            <div className="flex flex-col gap-1.5">
-              <div className="text-xs uppercase tracking-wide text-muted-foreground">
-                Every value, and the text it was read from
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                      <th className="pb-2 pr-4">Spec</th>
-                      <th className="pb-2 pr-4">Value</th>
-                      <th className="pb-2 pr-4">Read from</th>
-                      <th className="pb-2">Words it was read from</th>
-                      <th className="pb-2" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {entries.map(([key, value]) => (
-                      <tr key={key} className="border-b last:border-0">
-                        <td className="py-2 pr-4 whitespace-nowrap">{readable(key)}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">
-                          {readableValue(value.value, value.unit)}
-                        </td>
-                        <td className="py-2 pr-4 whitespace-nowrap">
-                          {provenance[key]?.source ? (
-                            <Badge
-                              variant={provenance[key]?.source === 'flyer' ? 'info' : 'secondary'}
-                              size="sm"
-                              appearance="light"
-                              shape="circle"
-                            >
-                              {SOURCE_LABEL[provenance[key]!.source] ?? provenance[key]!.source}
-                            </Badge>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
-                        </td>
-                        <td className="py-2 font-mono text-xs text-muted-foreground break-all">
-                          {provenance[key]?.evidence ?? '-'}
-                        </td>
-                        <td className="py-2 text-right">
-                          {provenance[key]?.source === 'human' && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label={`Clear ${readable(key)}`}
-                              onClick={() => clearByHand(key)}
-                            >
-                              <Trash2 className="size-4 text-muted-foreground" />
-                            </Button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+          {/* Rendered unconditionally, empty or not (AC-A.14). Hiding the block on a
+              product with no specs is what made "this product has none" and "this
+              screen is broken" look identical, and it is the one thing a person
+              arriving to ADD a specification most needs to see. */}
+          <div className="flex flex-col gap-1.5">
+            <div className="text-xs uppercase tracking-wide text-muted-foreground">
+              Every value, and where it came from
+            </div>
+            <SpecTable
+              rows={rows}
+              registry={registry}
+              openEditorFor={pendingKey}
+              onEditorOpened={() => setPendingKey(null)}
+              callbacks={{
+                onSetValue: spec.setValue,
+                onTombstone: spec.tombstone,
+                onRevert: spec.revert,
+                onAddValueToKey: spec.addValue,
+                onAddSpecification: () => setAdding(true),
+              }}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <AddSpecificationDialog
+        open={adding}
+        onOpenChange={setAdding}
+        applicableKeys={applicableKeys}
+        otherKeys={otherKeys}
+        canCreateKey
+        // Picking a key opens its editor on the row rather than writing a blank value:
+        // an empty value is not a value, and the API refuses one for the same reason -
+        // stored, it would raise the same conflict on every derivation run forever.
+        onPick={setPendingKey}
+        onCreateKey={spec.createKey}
+        onCheckSimilar={spec.checkSimilarKey}
+      />
+
+      {/* Rendered whether or not there are any, per the never-hide-a-section mandate -
+          "nothing disagrees" is the answer a reviewer came for. */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Needs a human ({detail.exceptions.length})</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {detail.exceptions.length === 0 ? (
+            <p className="py-4 text-center text-sm text-muted-foreground">
+              Nothing on this product disagrees with itself.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {detail.exceptions.map((row) => (
+                <div
+                  key={row.id}
+                  className="flex flex-col gap-1 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium">
+                      {registry.find((key) => key.spec_key === row.spec_key)?.label ??
+                        row.spec_key}
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      {EXCEPTION_LABELS[row.reason] ?? row.reason}
+                    </div>
+                  </div>
+                  {/* No resolve button anywhere here, on purpose (D9). Correcting the
+                      value in the table above is what answers it, and a button that
+                      only marked it read would be a second source of truth about
+                      whether the catalogue is right. */}
+                  <div className="text-sm text-muted-foreground">
+                    The rules read{' '}
+                    <span className="font-medium text-foreground">
+                      {String((row.proposed as { value?: unknown })?.value ?? '')}
+                    </span>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </CardContent>
       </Card>
-
-      {detail.exceptions.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Needs a human ({detail.exceptions.length})</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="pb-2 pr-4">Spec</th>
-                    <th className="pb-2 pr-4">Why</th>
-                    <th className="pb-2">Stored</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {detail.exceptions.map((row) => (
-                    <tr key={row.id} className="border-b last:border-0">
-                      <td className="py-2 pr-4">{row.spec_key}</td>
-                      <td className="py-2 pr-4">
-                        {EXCEPTION_LABELS[row.reason] ?? row.reason}
-                      </td>
-                      <td className="py-2 font-mono text-xs text-muted-foreground">
-                        {row.stored ? JSON.stringify(row.stored) : '-'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       <p className="text-sm text-muted-foreground">
         To try a customer phrase against the whole catalog, use{' '}
