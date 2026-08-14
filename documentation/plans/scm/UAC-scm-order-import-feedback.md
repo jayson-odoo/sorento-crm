@@ -133,7 +133,7 @@ messaging counterparties, and ADR 0007's keep-entities-in-their-right-table reas
 - **AC-6.6** The two annotation columns are editable by an admin: a list of `sales_agents`
   and an edit of `person_label` + `demand_class`, writing through
   `sales_agent_service.set_demand_class` so the closed vocabulary is enforced on that path
-  too. **S6, planned, captain's go pending.** Without it AC-3 is a mechanism with no way to
+  too. **S6, BUILT** (branch `feat/scm-agent-master-ui`). Without it AC-3 is a mechanism with no way to
   feed it: the 38 classes can only be set from a Python shell. Scoped as list + edit only -
   no create (codes are learned from uploads) and no delete (orders name the row).
 
