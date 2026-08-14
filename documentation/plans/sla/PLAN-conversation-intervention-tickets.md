@@ -176,6 +176,41 @@ existing UAC.
 - Idempotent by construction: events carry ids; FE refetches rather than appending
   pushed payloads (AC-K4).
 
+**Shipped BE contract (2026-08-15, backend half; the FE subscriber slice builds
+against this).**
+
+- Channel: `sorento:conversation-events:v1`, one Redis pub/sub channel, override per
+  environment with `CONVERSATION_EVENTS_CHANNEL` (settings
+  `conversation_events_channel`). Namespaced because one broker is shared with RQ and
+  with every local worktree.
+- Endpoint: `GET /api/v1/sla-management/conversation-events/stream?contacts=<id>[,<id>]`
+  (JWT, same principal as the sibling sla-management routes; 401 without one; max 25
+  contacts). `text/event-stream`, chunked, `X-Accel-Buffering: no`.
+- Frames: `event: ready` on connect (the FE's cue to refetch), then
+  `event: <type>` with a JSON `data:` line, plus a `: keep-alive` comment every 25s.
+  Types: `message`, `ticket_created`, `ticket_updated`.
+- Payload, exactly five keys, no content ever:
+  `{"type","contact_id","user_id","entity_id","ts"}`.
+  - `contact_id` = the **Respond.io contact id** (`respond_contacts.respond_io_id`),
+    NOT the internal `respond_contacts.id` UUID. DEVIATION from the bullet above,
+    deliberate: the chat ingest receives that id verbatim (so nothing is resolved on
+    the hot path) and the drawer already holds it as `respond_io_id` from
+    `GET .../{tracking_id}/ticket`, so the FE has the key it must pass in `?contacts=`
+    without a new field and without a UUID in a query string.
+  - `user_id` = `users.id` whose worklist changed. `entity_id` = the tracking id for
+    ticket events, null for `message`. `ts` = UTC ISO-8601 with `Z` (transport clock,
+    not a domain datetime).
+- Filtering is server-side: a client receives events where `user_id` is its own OR
+  `contact_id` is in its `?contacts=` list. Nothing else leaves the process.
+- Stateless: no Last-Event-ID, no replay. A reconnect resubscribes; the gap is
+  covered by the refetch on `ready` plus the drawer's 10-15s poll fallback.
+- Publishers wired: chat ingest (new row only, never the AC-J5 dedupe path), ticket
+  create (not the idempotent retry), the shared update path (resolve / respond /
+  assignment), first-response stamp, reassign, escalate, extend. Reassign and escalate
+  poke BOTH the old and the new owner; the update path snapshots the assignee before
+  applying, because resolving a conversation ticket unsets `assigned_to_id`. Form-SLA
+  rows never reach the channel (AC-F3).
+
 ### S4.3 Internal comments with @mention (UAC L1-L3) [BE coder + FE coder]
 
 - Model: `conversation_ticket_comments` (id, tracking_id FK, author_id, body,
