@@ -70,6 +70,12 @@ class Settings(BaseSettings):
     # Redis Queue (must match everywhere: API, workers, seed scripts; use same host:port/db)
     redis_url: str = "redis://localhost:6379/0"
 
+    # Redis pub/sub channel for the conversation ticket server-push (UAC K, S4.2).
+    # Namespaced because one Redis instance is shared with RQ and with every local
+    # worktree; override per environment (CONVERSATION_EVENTS_CHANNEL) when two
+    # stacks on one broker must not hear each other.
+    conversation_events_channel: str = "sorento:conversation-events:v1"
+
     # Request idempotency (duplicate-submit / network-slowness backstop) — see
     # documentation/plans/PLAN-uniform-idempotency.md. Scoped to an allowlist of action endpoints
     # in app/middleware/idempotency_middleware.py.
