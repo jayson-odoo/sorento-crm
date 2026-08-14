@@ -119,6 +119,9 @@ CLAUDE.md "Lessons learned" in the same pass - the handoff dies, CLAUDE.md does 
 3. Write the file. `mkdir -p .claude/handoffs` first - the directory is committed via
    its README, but a fresh worktree may not have it yet.
 4. Print the absolute path back to the user, and tell them the next two moves are
-   `/clear` then `/resume-handoff`.
+   `/clear` then `/resume-handoff`. If there is no human at the keyboard (a firstmate
+   lane, `--bg`, cron), report `blocked:` with that absolute path instead - the
+   supervisor resumes a fresh session from it.
 
-Then stop.
+Then stop. **Never run `/compact`** - not before writing the document, not instead of
+it, and not to buy room to keep going afterwards.

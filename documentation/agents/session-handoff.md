@@ -39,8 +39,22 @@ this is a ritual rather than a feature - see the open decision below.
 | Forking a side task while keeping this session alive | either; write the doc, hand the path to the second agent |
 | Short session, work is finished | nothing - just stop |
 
-`/compact` is still the right move when the session is nearly done and only needs a
-little more room. The handoff ritual is for sessions that have hours left in them.
+**Never run `/compact`.** It is not an alternative to any row above. Compaction is the
+lossy summary this whole document exists to replace, and "the session is nearly done"
+is a judgement that is wrong often enough to be worth removing as an option. When
+context gets tight, write the handoff.
+
+### Unattended agents (firstmate lanes, `--bg`, cron)
+
+An agent with no human at the keyboard cannot do the `/clear` step, so its ritual is
+two moves rather than three:
+
+1. `/handoff` - write the document.
+2. Report `blocked:` with the document's absolute path.
+
+The supervisor resumes a fresh session from that path, which does the `/resume-handoff`
+half. Do not keep working past the handoff hoping to finish: the document was written
+against the state at that moment, and every further edit makes it a little more wrong.
 
 ## Relationship to `mattpocock-skills:handoff`
 

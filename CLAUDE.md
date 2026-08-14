@@ -362,7 +362,9 @@ Long sessions take a deliberate cut rather than letting autocompact pick one: **
 writes a resume document to `.claude/handoffs/<UTC ts>-<slug>.md` (gitignored, worktree-local),
 the user runs `/clear`, then **`/resume-handoff`** restores from it - re-reading the artifacts
 the document points at and re-checking its "Assumed, not verified" section before acting. An
-agent cannot clear its own conversation, so the middle step is the user's. Upstream
+agent cannot clear its own conversation, so the middle step is the user's; an unattended agent
+instead reports `blocked:` with the document path and its supervisor resumes from it. **Never run
+`/compact`** - it is the lossy summary this replaces, not a lighter alternative to it. Upstream
 `/mattpocock-skills:handoff` stays available for work that leaves this checkout (it writes to
 the OS temp dir and has no resume half). See `documentation/agents/session-handoff.md`.
 
