@@ -1,8 +1,9 @@
 # UAC - the Order Inquiry sheet as a source of sales orders
 
 **Status:** written 5 Aug 2026. Groups A to E have SHIPPED on `main`; Group F was added
-2026-08-13 per [ADR 0010](../../adr/0010-order-inquiry-loop-owned-by-project-sales.md) and is
-pre-code. Plan: `PLAN-scm-order-inquiry-as-demand.md`.
+2026-08-13 per [ADR 0010](../../adr/0010-order-inquiry-loop-owned-by-project-sales.md) and has
+SHIPPED on `feat/project-lead-to-so` (a267eed23, the provisional-to-AutoCount reconciliation on
+ingest). Plan: `PLAN-scm-order-inquiry-as-demand.md`.
 
 > "order inquiry is essentially SO, so it needs to be a list of SO created from order inquiry.
 > Previously I needed someone to upload the outstanding SO, but now, maybe, to not involve the

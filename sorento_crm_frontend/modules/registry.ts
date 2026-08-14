@@ -12,6 +12,8 @@
 
 import type { LucideIcon } from 'lucide-react';
 
+import projectsPurgeTables from './projects/purge_tables.json';
+
 export interface ModuleMenuChildJson {
   title: string;
   path?: string;
@@ -47,7 +49,13 @@ export interface ModuleAsset {
 }
 
 export const MODULE_REGISTRY: ModuleAsset[] = [
-  // Migrated modules append here. Empty by default (Phase 1-3 are infra-only).
+  // Migrated modules append here.
+  //
+  // `projects` ships purge tables only: its menu and routes are still declared the legacy
+  // way in `menu.config.tsx`, and only the uninstall dialog needs the table list. The
+  // backend half is `app/modules/projects/purge.py` (ADR-0009), whose PURGE_ORDER this
+  // mirrors table for table; the pytest invariants there are what keep the two in step.
+  { key: 'projects', purgeTables: projectsPurgeTables },
 ];
 
 export function moduleRoutePrefixes(): { prefix: string; moduleKey: string }[] {
