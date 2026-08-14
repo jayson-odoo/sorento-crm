@@ -533,9 +533,40 @@ class Edition(Base, CompanyScopedMixin):
     same and are stored separately anyway, because the deferred price-drift work
     (AC-L4 to AC-L6) has nothing to compare without them - see
     ``PLAN-edition-approval.md``.
+
+    **Every transition is audited (AC-L11).** ``__tablename__`` is schema-local
+    (``dealer_kit.edition``) - the default ``__audit_entity_type__`` (the bare
+    tablename) would land as the ambiguous ``"edition"`` in a table shared by
+    every audited entity across the whole app, so it is set explicitly here
+    instead, matching no other row.
     """
 
     __tablename__ = "edition"
+    __audit_track__ = True
+    __audit_entity_type__ = "dealer_kit_edition"
+    # Everything a transition can move, minus pure bookkeeping. Excluded:
+    # `id` (the row itself, not a fact about it), `company_id` (mixin, never
+    # reassigned), `created_by`/`created_at`/`updated_at` (who/when the row was
+    # FIRST written - `AuditLog.changed_at`/the CREATE row already say that,
+    # and `updated_at` churns on every save with nothing of its own to add).
+    # `previous_edition_id` is set once at INSERT by `create_edition` and never
+    # reassigned after, so it never appears in a diff either way - listed
+    # anyway because "what this Edition succeeded" is exactly the kind of fact
+    # a reviewer reading the trail wants without a second lookup.
+    __audit_columns__ = [
+        "page_id",
+        "name",
+        "status_id",
+        "status_key",
+        "approved_version_id",
+        "done_version_id",
+        "previous_edition_id",
+        "submitted_by",
+        "submitted_at",
+        "approved_by",
+        "approved_at",
+        "rejection_reason",
+    ]
     __table_args__ = (
         # One OPEN Edition per page. Two people revising one catalogue against
         # each other has no story: whichever published second would silently

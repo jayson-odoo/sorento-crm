@@ -4,6 +4,7 @@ import weakref
 from sqlalchemy.orm import Session
 from sqlalchemy import inspect
 from sqlalchemy.orm.attributes import get_history
+from sqlalchemy.orm.base import PASSIVE_NO_FETCH
 from typing import Optional, Any
 from datetime import datetime, date
 from decimal import Decimal
@@ -60,6 +61,41 @@ def _entity_id_str(obj: Any) -> str:
         return str(v) if v is not None else ""
     parts = [str(getattr(obj, c.key, None) or "") for c in pk_cols]
     return "_".join(parts) if all(p for p in parts) else ""
+
+
+def _dirty_has_real_changes(obj: Any, columns: Optional[list[str]] = None) -> bool:
+    """Whether at least one audited column of a `session.dirty` object actually
+    changed value - the noise guard for UPDATE rows.
+
+    Deliberately NOT ``old_values == new_values`` off ``_old_new_from_dirty``'s
+    output: those dicts fall back to the CURRENT (new) value for "old" whenever
+    SQLAlchemy's default ``active_history=False`` didn't capture the prior
+    value (e.g. the attribute was expired - the common case right after an
+    earlier commit in the same session, before anything re-reads it). In that
+    case old_values and new_values come back identical FOR A COLUMN THAT DID
+    CHANGE, so comparing the dicts would wrongly treat a real change as a
+    no-op and drop its audit row. ``History.has_changes()`` does not have that
+    blind spot: it is True whenever SQLAlchemy recorded an add/delete for the
+    key at all, regardless of whether the pre-image value was ever loaded.
+
+    ``passive=PASSIVE_NO_FETCH`` matters here for a second, sharper reason: we
+    are inside ``before_flush``. Reading history for an EXPIRED column with
+    the default passive setting makes SQLAlchemy fetch it - and that fetch
+    autoflushes this object's own pending change first, which (observed
+    directly building this guard) silently persists the very edit we are
+    trying to detect before we ever get to check it, so every column checked
+    AFTER the changed one sees no history left to report. `PASSIVE_NO_FETCH`
+    never issues SQL: an untouched expired column just reports no history
+    (correctly - nothing was assigned to it), and a genuinely assigned column
+    still reports its `added` entry regardless, because SQLAlchemy records
+    that at SET time without needing a fetch.
+    """
+    insp = inspect(obj)
+    mapper = insp.mapper
+    keys = columns if columns is not None else [c.key for c in mapper.column_attrs]
+    return any(
+        get_history(obj, key, passive=PASSIVE_NO_FETCH).has_changes() for key in keys
+    )
 
 
 def _old_new_from_dirty(obj: Any, columns: Optional[list[str]] = None) -> tuple[dict, dict]:
@@ -335,9 +371,18 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
         if _should_skip(entity_type, entity_id):
             continue
         cols = getattr(cls, "__audit_columns__", None)
-        old_values, new_values = _old_new_from_dirty(obj, columns=cols)
-        if not old_values and not new_values:
+        # Noise guard: SQLAlchemy's default `session.dirty` membership does NOT
+        # imply an AUDITED column actually changed value - reassigning a
+        # column to the value it already holds, or a flush triggered by a
+        # dirty column outside `__audit_columns__`, still lands the object
+        # here. Checked via real per-column history (see
+        # `_dirty_has_real_changes`), not by comparing `_old_new_from_dirty`'s
+        # output dicts - those can read as equal for a column that DID change
+        # (the `active_history=False` blind spot documented there), and a
+        # dict-equality guard would wrongly drop that row.
+        if not _dirty_has_real_changes(obj, columns=cols):
             continue
+        old_values, new_values = _old_new_from_dirty(obj, columns=cols)
         pending.append((entity_type, entity_id, "UPDATE", old_values, new_values, getattr(obj, "company_id", None)))
     for obj in session.deleted:
         if not _is_audited(obj):
@@ -398,8 +443,29 @@ def _session_after_flush(session: Session, _flush_context: Any) -> None:
     session.info.pop("audit_pending", None)
 
 
+_listeners_registered = False
+
+
 def register_audit_listeners() -> None:
-    """Register SQLAlchemy session listeners for automatic audit logging. Call once at app startup."""
+    """Register SQLAlchemy session listeners for automatic audit logging.
+
+    Idempotent. ``app.main``'s startup event calls this unconditionally on
+    every app startup, and a TestClient used as a context manager (the
+    dominant pattern across this suite - see ``test_dealer_kit_edition_routes.py``)
+    re-runs that startup event on every ``with TestClient(app) as client:``.
+    ``Session`` is a process-global class, so without this guard each of those
+    entries stacks ANOTHER ``before_flush``/``after_flush`` listener onto it,
+    and every flush for the rest of the pytest process fires once per
+    accumulated registration - N audit rows for one real change, growing with
+    every test that has already opened a TestClient. Harmless where nothing
+    counts audit rows; silently multiplies them where something does (see
+    ``test_dealer_kit_edition_audit.py``, written against a real Edition
+    workflow specifically to catch it).
+    """
+    global _listeners_registered
+    if _listeners_registered:
+        return
+
     from sqlalchemy import event
 
     @event.listens_for(Session, "before_flush")
@@ -409,3 +475,5 @@ def register_audit_listeners() -> None:
     @event.listens_for(Session, "after_flush")
     def after_flush(session, flush_context):
         _session_after_flush(session, flush_context)
+
+    _listeners_registered = True
