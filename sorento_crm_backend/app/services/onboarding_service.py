@@ -482,8 +482,18 @@ def replace_people(
     return list(request.people)
 
 
-def submit(db: Session, request: OnboardingRequest) -> OnboardingRequest:
-    """sent -> submitted. The link becomes the read-only status page."""
+def submit(
+    db: Session, request: OnboardingRequest, *, requester_note: Optional[str] = None
+) -> OnboardingRequest:
+    """sent -> submitted. The link becomes the read-only status page.
+
+    The note is stamped HERE rather than set by the caller before calling. It has
+    to be, and the reason is not obvious: ``_move`` opens with
+    ``db.refresh(request, with_for_update=True)``, and a refresh discards pending
+    unflushed attribute changes. A caller that set ``request.requester_note`` and
+    then called ``submit`` lost it silently - the submission succeeded, the note
+    vanished, and nothing anywhere reported a problem.
+    """
     if not request.people:
         raise AppException(
             status_code=422,
@@ -492,6 +502,8 @@ def submit(db: Session, request: OnboardingRequest) -> OnboardingRequest:
 
     def _stamp() -> None:
         request.submitted_at = _utcnow()
+        if requester_note is not None:
+            request.requester_note = requester_note.strip() or None
 
     return _move(db, request, SUBMITTED, apply=_stamp)
 

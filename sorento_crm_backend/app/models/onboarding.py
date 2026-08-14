@@ -89,8 +89,9 @@ class OnboardingTemplate(Base, CompanyScopedMixin):
 
     #: Which user this template was captured from, kept so "why does this
     #: template grant that" has an answer a year later.
-    captured_from_user_id = Column(UUID(as_uuid=False), nullable=True)
-    created_by_user_id = Column(UUID(as_uuid=False), nullable=True)
+    # `users.id` is a String column, not UUID, so every user-id here is String too.
+    captured_from_user_id = Column(String(64), nullable=True)
+    created_by_user_id = Column(String(64), nullable=True)
 
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
@@ -99,6 +100,17 @@ class OnboardingTemplate(Base, CompanyScopedMixin):
 
     __table_args__ = (
         Index("ix_onboarding_templates_company_active", "company_id", "is_active"),
+        # One label per company, declared HERE as well as in the migration so a
+        # schema built by `create_all` (which is what the test suite runs on)
+        # carries the same guarantee the migrated database does. Without it the
+        # duplicate-name 409 is untestable, and an untestable constraint is one
+        # that quietly stops holding.
+        Index(
+            "uq_onboarding_templates_company_name",
+            "company_id",
+            text("lower(btrim(name))"),
+            unique=True,
+        ),
     )
 
 
@@ -140,10 +152,10 @@ class OnboardingRequest(Base, CompanyScopedMixin):
     requester_note = Column(Text, nullable=True)
     reviewer_note = Column(Text, nullable=True)
 
-    created_by_user_id = Column(UUID(as_uuid=False), nullable=True)
+    created_by_user_id = Column(String(64), nullable=True)
     sent_at = Column(DateTime(timezone=False), nullable=True)
     submitted_at = Column(DateTime(timezone=False), nullable=True)
-    reviewed_by_user_id = Column(UUID(as_uuid=False), nullable=True)
+    reviewed_by_user_id = Column(String(64), nullable=True)
     reviewed_at = Column(DateTime(timezone=False), nullable=True)
     provisioned_at = Column(DateTime(timezone=False), nullable=True)
 
@@ -221,7 +233,7 @@ class OnboardingPerson(Base, CompanyScopedMixin):
     rejection_reason = Column(Text, nullable=True)
 
     # --- lane 1: the CRM user (this slice) ---
-    user_id = Column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    user_id = Column(String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     user_step = Column(String(20), nullable=False, server_default=text("'pending'"))
     user_error = Column(Text, nullable=True)
 

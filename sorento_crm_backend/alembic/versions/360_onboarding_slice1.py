@@ -182,8 +182,8 @@ def upgrade() -> None:
                 nullable=False,
                 server_default=sa.text("false"),
             ),
-            sa.Column("captured_from_user_id", UUID(as_uuid=False), nullable=True),
-            sa.Column("created_by_user_id", UUID(as_uuid=False), nullable=True),
+            sa.Column("captured_from_user_id", sa.String(64), nullable=True),
+            sa.Column("created_by_user_id", sa.String(64), nullable=True),
             sa.Column(
                 "company_id",
                 UUID(as_uuid=False),
@@ -222,10 +222,10 @@ def upgrade() -> None:
             sa.Column("status_key", sa.String(64), nullable=False),
             sa.Column("requester_note", sa.Text(), nullable=True),
             sa.Column("reviewer_note", sa.Text(), nullable=True),
-            sa.Column("created_by_user_id", UUID(as_uuid=False), nullable=True),
+            sa.Column("created_by_user_id", sa.String(64), nullable=True),
             sa.Column("sent_at", sa.DateTime(timezone=False), nullable=True),
             sa.Column("submitted_at", sa.DateTime(timezone=False), nullable=True),
-            sa.Column("reviewed_by_user_id", UUID(as_uuid=False), nullable=True),
+            sa.Column("reviewed_by_user_id", sa.String(64), nullable=True),
             sa.Column("reviewed_at", sa.DateTime(timezone=False), nullable=True),
             sa.Column("provisioned_at", sa.DateTime(timezone=False), nullable=True),
             sa.Column("source_file_name", sa.String(255), nullable=True),
@@ -293,9 +293,11 @@ def upgrade() -> None:
                 "review_status", sa.String(20), nullable=False, server_default=sa.text("'proposed'")
             ),
             sa.Column("rejection_reason", sa.Text(), nullable=True),
+            # `users.id` is a String column, not UUID: a UUID FK here fails to
+            # create with "incompatible types: uuid and character varying".
             sa.Column(
                 "user_id",
-                UUID(as_uuid=False),
+                sa.String(64),
                 sa.ForeignKey("users.id", ondelete="SET NULL"),
                 nullable=True,
             ),

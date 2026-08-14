@@ -239,9 +239,10 @@ def onboarding_submit(
 ):
     """Send the batch for review. The same link becomes the status page."""
     with company_scope(db, frozenset({str(request.company_id)})):
-        if payload.requester_note is not None:
-            request.requester_note = payload.requester_note.strip() or None
-        onboarding_service.submit(db, request)
+        # The note goes THROUGH submit, never set on the row beforehand: the
+        # transition re-reads the row under a lock and a refresh discards pending
+        # unflushed changes. See `onboarding_service.submit`.
+        onboarding_service.submit(db, request, requester_note=payload.requester_note)
 
         # Post-commit and therefore best-effort on BOTH sides: the submission has
         # already landed, and a failed notification must not report a failure for
