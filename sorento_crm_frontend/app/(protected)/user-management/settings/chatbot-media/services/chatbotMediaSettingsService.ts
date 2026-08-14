@@ -37,6 +37,11 @@ import { extractApiError } from '@/lib/api-client';
  *   media_image_degraded_model                NULL -> degradation is impossible, so the
  *                                             monthly quota becomes a hard refusal instead
  *                                             of an accepted-but-degraded extraction
+ *   media_voice_degraded_model                NULL -> the same hard refusal for voice, and
+ *                                             this one ships NULL on purpose (plan section
+ *                                             16.1): the image tiers were measured, no
+ *                                             cheaper transcription model has been, so none
+ *                                             is seeded and none is suggested here
  */
 
 export type MediaLanguageMode = 'pinned' | 'hints' | 'auto';
@@ -60,6 +65,12 @@ export interface ChatbotMediaSettings {
   /** null = no degradation possible; the monthly quota becomes a hard stop. */
   media_image_degraded_model: string | null;
   media_transcribe_model: string;
+  /**
+   * null = no degradation possible for voice; the monthly quota becomes a hard stop.
+   * Unlike the image tier this is NOT seeded, so null is the shipped state rather
+   * than a value someone cleared.
+   */
+  media_voice_degraded_model: string | null;
   media_language_mode: MediaLanguageMode;
   /** Used in `pinned` mode. */
   media_language_pinned: string;
@@ -91,6 +102,7 @@ const MEDIA_KEYS: (keyof ChatbotMediaSettings)[] = [
   'media_image_model',
   'media_image_degraded_model',
   'media_transcribe_model',
+  'media_voice_degraded_model',
   'media_language_mode',
   'media_language_pinned',
   'media_language_hints',
@@ -111,6 +123,10 @@ const FALLBACKS: ChatbotMediaSettings = {
   media_image_model: null,
   media_image_degraded_model: null,
   media_transcribe_model: 'whisper-1',
+  // Deliberately null, and deliberately not the image tier's seeded model: no cheaper
+  // transcription model has been measured, so naming one here would claim a
+  // degradation nobody has evidence for.
+  media_voice_degraded_model: null,
   media_language_mode: 'pinned',
   media_language_pinned: 'en',
   media_language_hints: 'en,ms,zh',
@@ -124,7 +140,7 @@ function pickMediaSettings(row: Record<string, unknown> | null | undefined): Cha
   if (row) {
     for (const key of MEDIA_KEYS) {
       // Only a missing key falls back. An explicit null is a real value on the
-      // three model columns, where null means "inherit" / "no degraded tier".
+      // four model columns, where null means "inherit" / "no degraded tier".
       if (row[key] !== undefined) picked[key] = row[key];
     }
   }

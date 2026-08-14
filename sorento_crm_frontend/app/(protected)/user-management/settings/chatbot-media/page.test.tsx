@@ -56,6 +56,7 @@ function settings(overrides: Partial<ChatbotMediaSettings> = {}): ChatbotMediaSe
     media_image_model: null,
     media_image_degraded_model: null,
     media_transcribe_model: 'whisper-1',
+    media_voice_degraded_model: null,
     media_language_mode: 'pinned',
     media_language_pinned: 'en',
     media_language_hints: 'en,ms,zh',
@@ -80,6 +81,24 @@ function skeletonCount() {
 }
 
 const saveButton = () => screen.getByRole('button', { name: /save settings/i });
+
+/**
+ * A ModelField is a select plus a free-text box, and the page carries four of them,
+ * so both halves are looked up inside the one field's own container rather than by
+ * a placeholder that four fields share.
+ */
+function modelField(id: string) {
+  const trigger = document.getElementById(id);
+  if (!trigger) throw new Error(`no model field ${id}`);
+  const container = trigger.closest('.space-y-2');
+  if (!container) throw new Error(`model field ${id} has no container`);
+  return {
+    trigger,
+    text: container.querySelector(
+      'input[placeholder="or type a model name"]',
+    ) as HTMLInputElement,
+  };
+}
 
 beforeEach(() => {
   mockQuery.mockReset();
@@ -207,6 +226,117 @@ describe('ChatbotMediaSettingsPage cross-field rule', () => {
     // The sync-wait field itself carries no error - the message names the timeout.
     expect(document.getElementById('media-sync-wait-error')).not.toBeInTheDocument();
     expect(saveButton()).toBeDisabled();
+  });
+});
+
+/**
+ * The voice degraded model (plan section 16.1). Blank is the shipped state and it
+ * means the voice quota is a hard refusal, so these pin three things: blank is not
+ * an error, blank is not quietly filled from the image tier, and a value the
+ * operator sets survives a save and can be taken back off again.
+ */
+describe('ChatbotMediaSettingsPage voice degraded model', () => {
+  function mutationSpy() {
+    const mutate = vi.fn();
+    mockMutation.mockReturnValue({ isPending: false, mutate });
+    return mutate;
+  }
+
+  it('ships blank, and blank is a valid state rather than an error', () => {
+    mockQuery.mockReturnValue({ data: settings(), isLoading: false, isError: false });
+    renderWithClient();
+
+    const field = modelField('media-voice-degraded-model');
+    expect(field.text).toHaveValue('');
+    expect(field.trigger).toHaveTextContent('Not set');
+    expect(saveButton()).toBeEnabled();
+  });
+
+  it('says what blank does, and does not raise the image field warning a second time', () => {
+    mockQuery.mockReturnValue({ data: settings(), isLoading: false, isError: false });
+    renderWithClient();
+
+    expect(
+      screen.getByText(
+        'Set a cheaper model to keep transcribing past the monthly allowance; blank refuses instead.',
+      ),
+    ).toBeInTheDocument();
+    // Both degraded fields are blank here. Only the image one carries the inline
+    // warning; a blank voice tier is the shipped default, not a misconfiguration.
+    expect(screen.getAllByText(/no degraded model set/i)).toHaveLength(1);
+  });
+
+  it('stays blank when the image tier has a model, so nothing is seeded across modalities', () => {
+    mockQuery.mockReturnValue({
+      data: settings({ media_image_degraded_model: 'gpt-4o-mini' }),
+      isLoading: false,
+      isError: false,
+    });
+    renderWithClient();
+
+    expect(modelField('media-image-degraded-model').text).toHaveValue('gpt-4o-mini');
+    expect(modelField('media-voice-degraded-model').text).toHaveValue('');
+    expect(screen.queryByText(/no degraded model set/i)).not.toBeInTheDocument();
+  });
+
+  it('round-trips a saved value: it seeds the field and is sent back unchanged', () => {
+    const mutate = mutationSpy();
+    mockQuery.mockReturnValue({
+      data: settings({ media_voice_degraded_model: 'gpt-4o-mini-transcribe' }),
+      isLoading: false,
+      isError: false,
+    });
+    renderWithClient();
+
+    const field = modelField('media-voice-degraded-model');
+    expect(field.text).toHaveValue('gpt-4o-mini-transcribe');
+    expect(field.trigger).toHaveTextContent('GPT-4o mini transcribe');
+
+    fireEvent.click(saveButton());
+
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ media_voice_degraded_model: 'gpt-4o-mini-transcribe' }),
+      expect.anything(),
+    );
+  });
+
+  it('sends a newly typed model, and blank as null rather than an empty string', () => {
+    const mutate = mutationSpy();
+    mockQuery.mockReturnValue({ data: settings(), isLoading: false, isError: false });
+    renderWithClient();
+
+    const field = modelField('media-voice-degraded-model');
+    fireEvent.change(field.text, { target: { value: '  whisper-cheap  ' } });
+    fireEvent.click(saveButton());
+    expect(mutate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ media_voice_degraded_model: 'whisper-cheap' }),
+      expect.anything(),
+    );
+
+    fireEvent.change(field.text, { target: { value: '' } });
+    fireEvent.click(saveButton());
+    expect(mutate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ media_voice_degraded_model: null }),
+      expect.anything(),
+    );
+  });
+
+  it('can be unset from the select itself, not only from the text box', () => {
+    mockQuery.mockReturnValue({
+      data: settings({ media_voice_degraded_model: 'gpt-4o-transcribe' }),
+      isLoading: false,
+      isError: false,
+    });
+    renderWithClient();
+
+    const field = modelField('media-voice-degraded-model');
+    const clear = field.trigger.querySelector('[aria-label="Clear selection"]');
+    expect(clear).toBeTruthy();
+
+    fireEvent.pointerDown(clear as Element);
+
+    expect(modelField('media-voice-degraded-model').text).toHaveValue('');
+    expect(field.trigger).toHaveTextContent('Not set');
   });
 });
 

@@ -60,6 +60,7 @@ type Draft = {
   imageModel: string;
   imageDegradedModel: string;
   transcribeModel: string;
+  voiceDegradedModel: string;
   languageMode: MediaLanguageMode;
   languagePinned: string;
   languageHints: string[];
@@ -80,6 +81,7 @@ function toDraft(settings: ChatbotMediaSettings): Draft {
     imageModel: settings.media_image_model ?? '',
     imageDegradedModel: settings.media_image_degraded_model ?? '',
     transcribeModel: settings.media_transcribe_model,
+    voiceDegradedModel: settings.media_voice_degraded_model ?? '',
     languageMode: settings.media_language_mode,
     languagePinned: settings.media_language_pinned,
     languageHints: parseCsv(settings.media_language_hints),
@@ -101,6 +103,7 @@ function fromDraft(draft: Draft): ChatbotMediaSettings {
     media_image_model: draft.imageModel.trim() || null,
     media_image_degraded_model: draft.imageDegradedModel.trim() || null,
     media_transcribe_model: draft.transcribeModel.trim(),
+    media_voice_degraded_model: draft.voiceDegradedModel.trim() || null,
     media_language_mode: draft.languageMode,
     media_language_pinned: draft.languagePinned.trim(),
     media_language_hints: toCsv(draft.languageHints),
@@ -373,6 +376,23 @@ export default function ChatbotMediaSettingsPage() {
             invalid={invalid.transcribeModel}
             required
           />
+          {/*
+            Voice has its own degraded tier because the image one is a vision model
+            and cannot transcribe anything (plan section 16.1). It ships blank and
+            stays blank until someone names a cheaper transcription model, so unlike
+            the image field there is no inline warning under it: blank here is the
+            shipped state, not a misconfiguration, and no model is offered as the
+            one to pick because none has been measured.
+          */}
+          <ModelField
+            id="media-voice-degraded-model"
+            label="Degraded model"
+            value={draft.voiceDegradedModel}
+            options={TRANSCRIBE_MODEL_OPTIONS}
+            onChange={(v) => set('voiceDegradedModel', v)}
+            emptyLabel="Not set"
+            hint="Set a cheaper model to keep transcribing past the monthly allowance; blank refuses instead."
+          />
           <div className="space-y-2">
             <Label htmlFor="media-language-mode">Language strategy</Label>
             <SearchableSelect
@@ -494,6 +514,7 @@ function ModelField({
   options,
   invalid,
   required,
+  emptyLabel,
   onChange,
 }: {
   id: string;
@@ -503,6 +524,12 @@ function ModelField({
   options: SearchableSelectOption[];
   invalid?: boolean;
   required?: boolean;
+  /**
+   * What the trigger reads while the value is empty. Defaults to "Inherit", which is
+   * what an empty provider/model column does; a field where empty means something
+   * else says so instead.
+   */
+  emptyLabel?: string;
   onChange: (value: string) => void;
 }) {
   const known = options.some((opt) => opt.value === value);
@@ -518,7 +545,7 @@ function ModelField({
         onChange={onChange}
         options={merged}
         clearable={!required}
-        placeholder={required ? 'Select a model' : 'Inherit'}
+        placeholder={required ? 'Select a model' : (emptyLabel ?? 'Inherit')}
       />
       <Input
         className="font-mono text-xs"
