@@ -24,8 +24,8 @@ able to vouch for it.
 - **C** - spec statuses render as pills, matching the existing `lib/status-pill.ts` vocabulary
   the rest of the system already uses.
 - **D** - a verification workflow: a **product list** built for reviewing many at once, with
-  bulk verify, a Verify stamp recording who and when, and an automatic reset when the values
-  change.
+  per-row and bulk Verify/Unverify, a stamp recording who and when, an automatic reset when the
+  values change, and a manual withdrawal when a person changes their mind.
 
 **Not in scope:** the supplier portal (milestone 2). Its seams are requirements here (M2-S1 to
 M2-S8) but no supplier-facing surface is built in this milestone.
@@ -73,8 +73,7 @@ Consequences carried into the ACs: M1 makes a grant sweep mandatory in-milestone
 means there is no drift to reconcile, so the fan-out is purely forward-looking (AC-F.4). M5
 invalidates the design's coverage source (AC-D.7). M6 cuts the worklist 24% (AC-D.6). M7 means
 the exceptions-block-verify rule is a dead end unless a person's correction stops the flag
-re-raising (AC-D.17). M8 names the
-hash canonicalisation traps (AC-F.10).
+re-raising (AC-D.17). M8 names the hash canonicalisation traps (AC-F.10).
 
 ---
 
