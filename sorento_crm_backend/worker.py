@@ -73,6 +73,15 @@ if __name__ == '__main__':
     from app.services.company_scope import register_company_scope_listeners
     register_company_scope_listeners()
 
+    # The spec listeners were registered in the API's startup_event only, so a Product
+    # written inside an RQ job (an import, chiefly) never re-derived its specs - a
+    # pre-existing hole, not something this slice introduced. The write backstop would
+    # be blind on the same path, which is what surfaced it.
+    from app.services.product_spec_change_listener import register_product_spec_listeners
+    from app.services.product_spec_write import register_spec_write_backstop
+    register_product_spec_listeners()
+    register_spec_write_backstop()
+
     _maybe_start_scheduler()
     worker = ForkSafeWorker(['imports', 'respond_io'], connection=redis_conn)
     logger.info("Starting RQ worker for 'imports' and 'respond_io' queues...")

@@ -33,6 +33,7 @@ from app.models.product import Product, ProductCategory
 from app.models.product_spec import ProductSpecifications
 from app.services.product_class_signal import resolve_classes_for_term
 from app.services.product_spec_registry import active_registry, merged_synonyms, search_policy
+from app.services.product_spec_write import AUTHORED_SOURCES
 
 # These are now DEFAULTS, not the settings. The live numbers come from
 # `product_spec_search_policy` (see product_spec_registry.search_policy), because
@@ -494,8 +495,15 @@ def search_specs(
     numeric_boost = policy["numeric_boost"]
     mismatch_penalty = policy["mismatch_penalty"]
     discontinued_penalty = policy["discontinued_penalty"]
-    # How much more a flyer-sourced spec is worth than a description-sourced one.
-    flyer_source_boost = policy.get("flyer_source_boost", 1.0)
+    # How much more a spec is worth for WHERE IT CAME FROM, keyed by source rather than
+    # branched on one of them: the flyer is not the only source better than a parsed
+    # description, and a hardcoded flyer test would turn PR 4's promotion of flyer
+    # values to authored ones into a silent demotion. An unlisted source multiplies by
+    # 1, so `derived` and `category` are untouched.
+    source_boosts = {"flyer": policy.get("flyer_source_boost", 1.0)}
+    human_source_boost = policy.get("human_source_boost", 1.0)
+    for authored_source in AUTHORED_SOURCES:
+        source_boosts[authored_source] = human_source_boost
     if floor is None:
         floor = policy["relevance_floor"]
     if limit is None:
@@ -617,8 +625,10 @@ def search_specs(
             # FRAMELESS where 2 descriptions do, 9 say MASSAGE JET where none do. Without
             # this, a product whose flyer card names the exact spec tied with one whose
             # description happens to contain the word, and lost on alphabetical order.
-            if (provenance.get(key) or {}).get("source") == "flyer":
-                weight *= flyer_source_boost
+            # A spec a person set outranks both, on its own knob.
+            source = (provenance.get(key) or {}).get("source")
+            if source:
+                weight *= source_boosts.get(source, 1.0)
             if key == "class":
                 if _states(actual, target):
                     score += class_boost
