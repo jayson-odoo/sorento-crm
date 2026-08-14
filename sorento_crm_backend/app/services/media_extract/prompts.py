@@ -113,13 +113,16 @@ RULES THAT APPLY TO EVERY IMAGE
                   {{"value": "4", "source": "handwritten"}}],
        "note": "<one clause>"}}
 3. Dates on these documents are day first. If the day and the month are both 12 or less the date
-   is genuinely ambiguous: return it exactly as printed and add a conflict describing the
-   ambiguity. Never emit a reformatted or resolved date.
+   is genuinely ambiguous. Return it exactly as printed, and add a conflict whose `values` holds
+   the ONE printed string with source "printed", and whose `note` names both readings in words,
+   for example "could be 11 August 2026 or 8 November 2026". Never put a reformatted or resolved
+   date in a `value`.
 4. Never invent. If you cannot read something, leave it out. A missing value costs one extra
    message; a confident wrong product code or quantity costs a wrong business decision.
 5. Prefer `confident: false` over omission when you can see a value but cannot fully trust your
    reading, and prefer omission over a guess.
-6. Stop at {max_entities} entities and set `truncated: true` if there were more.
+6. Stop at {max_entities} entities, and separately at {max_entities} attributes. Set
+   `truncated: true` if you stopped early in either list.
 
 IF THE IMAGE IS A DOCUMENT (delivery order, return authorisation, invoice, spreadsheet screenshot)
 

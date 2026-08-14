@@ -177,6 +177,12 @@ def build_image_result_body(
             ],
             "conflicts": [conflict.model_dump() for conflict in extraction.conflicts],
             "image_kind": extraction.image_kind,
+            # Both are read by the model and both are carried through rather
+            # than dropped at the parse: `caption_intent` is what makes rule 15
+            # behave, and `notes` ("blurred lower half") is what a support
+            # person needs when a dealer asks why their photo did not work.
+            "caption_intent": extraction.caption_intent,
+            "notes": extraction.notes,
             "needs_clarification": needs_clarification,
             "truncated": extraction.truncated,
         }

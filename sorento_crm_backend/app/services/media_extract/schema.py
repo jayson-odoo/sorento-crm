@@ -22,8 +22,9 @@ that only exists in a prompt is a rule the model may quietly stop following:
 2. **Conflicts propagate to confidence.** Anything a conflict names is forced
    `confident: false` (UAC S4-03), so "the model reported a disagreement but
    still said it was sure" cannot reach the customer.
-3. **The cap is real.** Entities past `max_entities` are cut and `truncated` is
-   set whether or not the model admitted it (UAC S4-10).
+3. **The cap is real.** Entities past `max_entities` are cut, and attributes
+   past the same cap separately, with `truncated` set whether or not the model
+   admitted it (UAC S4-10).
 
 Product codes are NOT matched, snapped or canonicalized here. `raw` is the
 literal string as printed and `resolve-entity` adjudicates - it already runs a
@@ -299,6 +300,12 @@ def parse_extraction(payload: dict[str, Any], *, max_entities: int) -> MediaExtr
         # list they are confirming is not the whole photo.
         truncated = True
         entities = entities[:cap]
+    if len(attributes) > cap:
+        # The same cap, applied separately (prompt rule 6): a price-list
+        # screenshot carries a size and a quantity on every row, so an uncapped
+        # `attributes[]` is unbounded even when the entity list is short.
+        truncated = True
+        attributes = attributes[:cap]
 
     image_kind = _text(payload.get("image_kind")).lower() or None
     if image_kind is not None and image_kind not in IMAGE_KINDS:
@@ -328,6 +335,8 @@ def empty_result_body(caption: Optional[str] = None) -> dict[str, Any]:
         "attributes": [],
         "conflicts": [],
         "image_kind": None,
+        "caption_intent": None,
+        "notes": None,
         "needs_clarification": False,
         "truncated": False,
         "rendered_text": caption,
