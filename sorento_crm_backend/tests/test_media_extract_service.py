@@ -629,3 +629,192 @@ def test_lane_dispatch_is_by_modality_alone_and_rejects_anything_else(monkeypatc
         )
         with pytest.raises(MediaExtractionError):
             MediaExtractService(db).extract(job)
+
+
+# --------------------------------------------------------------------------- #
+# The degraded tier reaches the voice lane (PLAN 16.1)                        #
+# --------------------------------------------------------------------------- #
+
+
+def _voice_settings(**overrides):
+    """The resolved-settings shape the voice lane reads, as a plain stub.
+
+    Only the four fields `_extract_voice` touches, so this test cannot pass by
+    accidentally depending on the whole `MediaSettings` dataclass.
+    """
+    from types import SimpleNamespace
+
+    base = dict(
+        transcribe_model="whisper-1",
+        voice_degraded_model=None,
+        extraction_timeout_seconds=45,
+    )
+    base.update(overrides)
+    base.setdefault("language_strategy", lambda: {"mode": "pinned", "language": "en"})
+    return SimpleNamespace(**base)
+
+
+def test_resolve_voice_model_uses_the_degraded_model_only_at_the_degraded_tier():
+    """S2-06 for voice. `job.tier` was ignored here, so an over-quota voice note
+    was transcribed on the standard model while the contact was told accuracy
+    had dropped - a warning label on a change that never happened."""
+    resolve = MediaExtractService._resolve_voice_model
+    settings = _voice_settings(voice_degraded_model="whisper-cheap")
+
+    assert resolve("standard", settings) == "whisper-1"
+    assert resolve(None, settings) == "whisper-1"
+    assert resolve("degraded", settings) == "whisper-cheap"
+
+
+def test_resolve_voice_model_never_borrows_the_image_degraded_model():
+    """The blocker: one shared column degraded voice onto whatever the IMAGE
+    tier named, which is not a transcription model at all."""
+    resolve = MediaExtractService._resolve_voice_model
+    settings = _voice_settings(voice_degraded_model=None)
+    settings.image_degraded_model = "gpt-4o-mini"
+
+    assert resolve("degraded", settings) == "whisper-1"
+
+
+def test_voice_lane_sends_the_degraded_model_in_the_transcription_request(
+    monkeypatch,
+):
+    """End to end through the real lane: the tier on the job row has to reach
+    the multipart `model` field, not just the resolver."""
+    with blank_session() as db:
+        usage = _seed_usage(db, "voice")
+
+        job = MediaJobInput(
+            job_id=str(uuid.uuid4()),
+            modality="voice",
+            tier="degraded",
+            media_url="https://cdn.respond.io/x.ogg",
+            mime_type="audio/ogg",
+            caption=None,
+            usage_id=usage.id,
+        )
+
+        monkeypatch.setattr(
+            "app.services.media_extract.service.fetch_media_bytes",
+            lambda url: (b"fake-audio-bytes", "audio/ogg"),
+        )
+        monkeypatch.setattr(
+            MediaExtractService, "_api_key", staticmethod(lambda cfg, provider_name: "test-key")
+        )
+        monkeypatch.setattr(
+            "app.services.media_access_service.resolve_media_settings",
+            lambda session: _voice_settings(voice_degraded_model="whisper-cheap"),
+        )
+
+        captured = {}
+
+        def fake_post(data, *, filename, mime_type, fields, api_key, timeout):
+            captured["fields"] = fields
+            return {"text": "check stock please", "language": "en"}
+
+        monkeypatch.setattr(
+            "app.services.media_extract.transcribe._post_transcription", fake_post
+        )
+
+        outcome = MediaExtractService(db).extract(job)
+
+        assert captured["fields"]["model"] == "whisper-cheap"
+        # And the ledger records what was actually used, not what was configured
+        # as standard - the cost attribution is the whole point of the column.
+        assert outcome.model == "whisper-cheap"
+        db.refresh(usage)
+        assert usage.model == "whisper-cheap"
+
+
+# --------------------------------------------------------------------------- #
+# An abandoned extraction does not annotate the ledger (PLAN 16.5)            #
+# --------------------------------------------------------------------------- #
+
+
+def test_spend_after_a_timeout_is_logged_and_not_stamped_on_a_failed_row(caplog):
+    """The orphaned thread outlives `_run_bounded`'s join, finishes its provider
+    call, and used to write token counts onto a row the task had already marked
+    `failed` - annotating it as a success it was not, while the spend itself was
+    invisible."""
+    import logging
+
+    from app.services.media_extract.service import MediaExtractionOutcome
+
+    with blank_session() as db:
+        usage = _seed_usage(db, "image")
+        from app.models.media import MediaExtractionJob
+
+        job_row = MediaExtractionJob(
+            id=str(uuid.uuid4()),
+            usage_id=usage.id,
+            status="failed",  # the task gave up on the wait
+            modality="image",
+            tier="standard",
+            error="Extraction timed out after 45s",
+        )
+        db.add(job_row)
+        db.commit()
+
+        job = MediaJobInput(
+            job_id=job_row.id,
+            modality="image",
+            tier="standard",
+            media_url=None,
+            mime_type=None,
+            caption=None,
+            usage_id=usage.id,
+        )
+        outcome = MediaExtractionOutcome(
+            result={}, provider="openai", model="gpt-4o",
+            prompt_tokens=2963, completion_tokens=180,
+        )
+
+        with caplog.at_level(logging.WARNING):
+            MediaExtractService(db)._stamp_usage_cost(job, outcome)
+
+        db.refresh(usage)
+        assert usage.model is None, "a row the task failed must not read as a success"
+        assert usage.prompt_tokens is None
+        # The spend still happened, so it must be visible somewhere.
+        assert any("2963" in record.getMessage() for record in caplog.records)
+        assert any("gpt-4o" in record.getMessage() for record in caplog.records)
+
+
+def test_a_still_running_job_stamps_normally(caplog):
+    """The normal path: `_stamp_usage_cost` runs BEFORE the task writes
+    `completed`, so the status it sees is `running` and nothing is skipped."""
+    from app.services.media_extract.service import MediaExtractionOutcome
+
+    with blank_session() as db:
+        usage = _seed_usage(db, "image")
+        from app.models.media import MediaExtractionJob
+
+        job_row = MediaExtractionJob(
+            id=str(uuid.uuid4()),
+            usage_id=usage.id,
+            status="running",
+            modality="image",
+            tier="standard",
+        )
+        db.add(job_row)
+        db.commit()
+
+        MediaExtractService(db)._stamp_usage_cost(
+            MediaJobInput(
+                job_id=job_row.id,
+                modality="image",
+                tier="standard",
+                media_url=None,
+                mime_type=None,
+                caption=None,
+                usage_id=usage.id,
+            ),
+            MediaExtractionOutcome(
+                result={}, provider="openai", model="gpt-4o",
+                prompt_tokens=2963, completion_tokens=180,
+            ),
+        )
+
+        db.refresh(usage)
+        assert usage.model == "gpt-4o"
+        assert usage.prompt_tokens == 2963

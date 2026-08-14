@@ -14,7 +14,8 @@ behaviour rather than as convention:
    degradation first happens in a period.
 3. Notices carry `append: true` and are never returned instead of the answer.
 4. Dates render as "1 September". Counts render as "X of Y left", never a
-   percentage.
+   percentage, and always for **one modality** - the allowances are separate
+   per modality, so a dealer over the photo limit is told about photos only.
 
 Two deliberate changes from the drafts, flagged because the brief requires it:
 
@@ -52,6 +53,25 @@ ATTRIBUTE_LABELS: dict[str, str] = {
 }
 
 _ESCAPE_HATCH = "Type the codes and I will look them up straight away."
+
+# The quotas are per modality - separate limits, separate ledger counts, separate
+# `warned_period` stamps - so every allowance sentence names ONE of them. Saying
+# "photo and voice reads" described an allowance that does not exist and told a
+# dealer who had run out of photo reads that they had run out of voice notes too
+# (UAC S6-04: a true X of Y).
+_MODALITY_NOUNS = {"image": "photo reads", "voice": "voice notes"}
+_MODALITY_ESCAPE_HATCHES = {
+    "image": _ESCAPE_HATCH,
+    "voice": "Type your message and I will help straight away.",
+}
+
+
+def _noun(modality: str) -> str:
+    return _MODALITY_NOUNS.get(modality, _MODALITY_NOUNS["image"])
+
+
+def _escape_hatch(modality: str) -> str:
+    return _MODALITY_ESCAPE_HATCHES.get(modality, _ESCAPE_HATCH)
 
 
 def join_phrase(items: Sequence[str]) -> str:
@@ -96,27 +116,55 @@ def burst() -> str:
     )
 
 
-def quota_exhausted(limit: int, resets_on: str) -> str:
+def quota_exhausted(limit: int, resets_on: str, modality: str = "image") -> str:
+    """The hard refusal: no degraded model is configured for this modality.
+
+    It must say the read **did not happen**. `degraded()` is the message for
+    "it happened, worse"; confusing the two would leave a dealer waiting for an
+    answer to a photo nobody looked at.
+    """
+    not_done = (
+        "I have not listened to this one"
+        if modality == "voice"
+        else "I have not read this one"
+    )
     return (
-        f"You have used all {limit} of this month's photo and voice reads. The "
-        f"allowance resets on {resets_on}. {_ESCAPE_HATCH}"
+        f"You have used all {limit} of this month's {_noun(modality)}, so "
+        f"{not_done}. The allowance resets on {resets_on}. "
+        f"{_escape_hatch(modality)}"
     )
 
 
-def warn_threshold(remaining: int, limit: int, resets_on: str) -> str:
-    """X of Y left, never a percentage (UAC S6-04)."""
+def warn_threshold(
+    remaining: int, limit: int, resets_on: str, modality: str = "image"
+) -> str:
+    """X of Y left, never a percentage, and for one modality (UAC S6-04)."""
     return (
-        f"You have {remaining} of {limit} photo and voice reads left this month. "
+        f"You have {remaining} of {limit} {_noun(modality)} left this month. "
         f"The allowance resets on {resets_on}."
     )
 
 
-def degraded(resets_on: str) -> str:
-    """Accuracy first, allowance second - the accuracy line prevents the harm."""
+def degraded(resets_on: str, modality: str = "image") -> str:
+    """Accuracy first, allowance second - the accuracy line prevents the harm.
+
+    The captain's constraint, kept intact for both modalities: the contact is
+    told accuracy has dropped AND that typing is exact. Only the nouns change,
+    because a dealer over the photo limit still has their voice allowance.
+    """
+    if modality == "voice":
+        opening = (
+            "I am listening to this one with a simpler model and may get it "
+            "wrong, so typing your message is exact."
+        )
+    else:
+        opening = (
+            "I am reading this one with a simpler model and may get it wrong, "
+            "so typing the codes is exact."
+        )
     return (
-        "I am reading this one with a simpler model and may get it wrong, so "
-        "typing the codes is exact. This month's full-accuracy reads are used "
-        f"up and the allowance resets on {resets_on}."
+        f"{opening} This month's full-accuracy {_noun(modality)} are used up "
+        f"and the allowance resets on {resets_on}."
     )
 
 

@@ -383,6 +383,13 @@ class SystemSetting(Base):
     # feature gets to make on an operator's behalf.
     media_image_degraded_model = Column(Text, nullable=True)
     media_transcribe_model = Column(Text, nullable=False, server_default="whisper-1", default="whisper-1")
+    # Voice's own degraded tier, and it ships NULL and UNSEEDED on purpose. The
+    # image tiers were measured (PLAN section 14.1) so migration 358 seeds them;
+    # no cheaper transcription model has been measured, so none is claimed here.
+    # A NULL degraded model means the monthly voice quota is a hard refusal -
+    # which is honest, where degrading to the same model and then telling the
+    # contact their accuracy has dropped would not be.
+    media_voice_degraded_model = Column(Text, nullable=True)
     # pinned | hints | auto. `pinned`/`en` reproduces today's behaviour exactly.
     media_language_mode = Column(String(16), nullable=False, server_default="pinned", default="pinned")
     media_language_pinned = Column(String(16), nullable=False, server_default="en", default="en")

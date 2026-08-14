@@ -115,7 +115,13 @@ class SystemSettingUpdate(BaseModel):
     media_image_model: Optional[str] = None
     media_image_degraded_model: Optional[str] = None
     media_transcribe_model: Optional[str] = None
-    media_language_mode: Optional[str] = None
+    # Voice's own degraded tier. NULL means the voice quota is a hard refusal
+    # rather than a degrade - image was measured and is seeded, voice was not.
+    media_voice_degraded_model: Optional[str] = None
+    # Three modes and no others: `language_strategy()` builds a different request
+    # shape per mode and silently treats anything unrecognised as `pinned`, so a
+    # typo would look like the setting had been ignored rather than refused.
+    media_language_mode: Optional[str] = Field(None, pattern="^(pinned|hints|auto)$")
     media_language_pinned: Optional[str] = None
     media_language_hints: Optional[str] = None
     media_sync_wait_seconds: Optional[int] = Field(None, ge=5, le=90)
@@ -245,6 +251,7 @@ async def get_settings(
                 "media_image_model": getattr(settings, "media_image_model", None) if settings else None,
                 "media_image_degraded_model": getattr(settings, "media_image_degraded_model", None) if settings else None,
                 "media_transcribe_model": getattr(settings, "media_transcribe_model", "whisper-1") if settings else None,
+                "media_voice_degraded_model": getattr(settings, "media_voice_degraded_model", None) if settings else None,
                 "media_language_mode": getattr(settings, "media_language_mode", "pinned") if settings else None,
                 "media_language_pinned": getattr(settings, "media_language_pinned", "en") if settings else None,
                 "media_language_hints": getattr(settings, "media_language_hints", "en,ms,zh") if settings else None,

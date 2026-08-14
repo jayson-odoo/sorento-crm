@@ -168,6 +168,26 @@ def _usage_rows(db, respond_io_id):
     )
 
 
+def _usage_row(db, respond_io_id, message_id):
+    """THE ledger row for one message, looked up by its idempotency key.
+
+    Never `rows[-1]`: an unordered SELECT returns heap order, and every row here
+    shares a `created_at` (the savepoint commits all sit inside one outer
+    transaction, and `now()` is the transaction timestamp), so there is no
+    "last" row to take. Ask for the one the assertion is actually about.
+    """
+    from app.models.media import ContactMediaUsage
+
+    return (
+        db.query(ContactMediaUsage)
+        .filter(
+            ContactMediaUsage.respond_io_id == respond_io_id,
+            ContactMediaUsage.message_id == message_id,
+        )
+        .one()
+    )
+
+
 # --------------------------------------------------------------------------- #
 # S1-05 / S2-03 -- the gate fails closed, no row means denied                 #
 # --------------------------------------------------------------------------- #
@@ -402,8 +422,7 @@ def test_at_quota_limit_refuses_when_no_degraded_model_is_configured(monkeypatch
         assert second.json()["decision"] == "denied_quota"
         assert second.json()["job_id"] is None
 
-        rows = _usage_rows(db, contact.respond_io_id)
-        assert rows[-1].outcome == "refused_quota"
+        assert _usage_row(db, contact.respond_io_id, "q-2").outcome == "refused_quota"
 
 
 # --------------------------------------------------------------------------- #
@@ -627,3 +646,184 @@ def test_the_permission_slug_is_registered():
 
     slugs = {entry["slug"] for entry in PERMISSION_REGISTRY}
     assert "integration.chatbot_media.process" in slugs
+
+
+# --------------------------------------------------------------------------- #
+# S2-06 for VOICE -- the quota is enforced per modality (PLAN 16.1)           #
+# --------------------------------------------------------------------------- #
+
+
+def _voice_body(*, respond_io_id, message_id, **extra):
+    payload = _body(
+        respond_io_id=respond_io_id, message_id=message_id, modality="voice"
+    )
+    payload.update(
+        {
+            "media_url": "https://cdn.respond.io/x.ogg",
+            "mime_type": "audio/ogg",
+            "caption": None,
+            "duration_ms": 8000,
+        }
+    )
+    payload.update(extra)
+    return payload
+
+
+def test_over_quota_voice_refuses_when_only_the_image_degraded_model_is_set(
+    monkeypatch,
+):
+    """The blocker from PLAN 16.1. The quota decision read
+    `media_image_degraded_model` for BOTH modalities, and migration 358 seeds
+    that column - so every over-quota voice note was accepted, transcribed on
+    the standard model, and the contact was told their accuracy had dropped
+    about a transcription that had not changed at all."""
+    with blank_session() as db, external_permissions_granted():
+        client = _client(db, monkeypatch=monkeypatch, api_user={"id": "ext"})
+        contact = _contact(db, "voicequota1")
+        _allow(db, contact, "voice", monthly_limit=1)
+        _settings_row(
+            db,
+            media_image_degraded_model="gpt-4o-mini",  # seeded, as it ships
+            media_voice_degraded_model=None,  # unseeded, as it ships
+        )
+
+        client.post(
+            ENDPOINT,
+            json=_voice_body(respond_io_id=contact.respond_io_id, message_id="vq-1"),
+            headers={"X-API-Key": "k"},
+        )
+        second = client.post(
+            ENDPOINT,
+            json=_voice_body(respond_io_id=contact.respond_io_id, message_id="vq-2"),
+            headers={"X-API-Key": "k"},
+        )
+
+        body = second.json()
+        assert body["decision"] == "denied_quota"
+        assert body["job_id"] is None
+        assert _usage_row(db, contact.respond_io_id, "vq-2").outcome == "refused_quota"
+
+        # And the refusal says the voice note was NOT listened to, naming the
+        # voice allowance only - a dealer over the voice limit still has every
+        # photo read.
+        texts = [notice["text"] for notice in body["notices"]]
+        assert any("voice notes" in text for text in texts)
+        assert any("have not listened to this one" in text for text in texts)
+        assert not any("photo" in text for text in texts)
+
+
+def test_over_quota_voice_degrades_once_a_voice_degraded_model_is_named(monkeypatch):
+    """S2-06 for voice: the captain's degrade-not-refuse decision, honoured by
+    the mechanism existing and being one setting away."""
+    with blank_session() as db, external_permissions_granted():
+        client = _client(db, monkeypatch=monkeypatch, api_user={"id": "ext"})
+        contact = _contact(db, "voicequota2")
+        _allow(db, contact, "voice", monthly_limit=1)
+        _settings_row(db, media_voice_degraded_model="whisper-cheap")
+
+        client.post(
+            ENDPOINT,
+            json=_voice_body(respond_io_id=contact.respond_io_id, message_id="vd-1"),
+            headers={"X-API-Key": "k"},
+        )
+        second = client.post(
+            ENDPOINT,
+            json=_voice_body(respond_io_id=contact.respond_io_id, message_id="vd-2"),
+            headers={"X-API-Key": "k"},
+        )
+
+        body = second.json()
+        assert body["decision"] == "accepted"
+        assert body["tier"] == "degraded"
+
+        # The job the worker will read carries the tier, which is what makes
+        # `_extract_voice` pick the degraded model.
+        from app.models.media import MediaExtractionJob
+
+        job = (
+            db.query(MediaExtractionJob)
+            .filter(MediaExtractionJob.id == body["job_id"])
+            .first()
+        )
+        assert job.tier == "degraded"
+
+        degraded = [n for n in body["notices"] if n["kind"] == "degraded"]
+        assert len(degraded) == 1
+        text = degraded[0]["text"]
+        # The captain's constraint, both halves: accuracy dropped AND typing is
+        # exact. Said about voice, not photos.
+        assert "simpler model" in text
+        assert "typing your message is exact" in text
+        assert "voice notes" in text
+        assert "photo" not in text
+
+
+def test_over_quota_image_is_unaffected_by_the_voice_degraded_model(monkeypatch):
+    """The other direction of the same separation: image keeps degrading on its
+    own measured tier."""
+    with blank_session() as db, external_permissions_granted():
+        client = _client(db, monkeypatch=monkeypatch, api_user={"id": "ext"})
+        contact = _contact(db, "imgquota1")
+        _allow(db, contact, "image", monthly_limit=1)
+        _settings_row(
+            db,
+            media_image_degraded_model="gpt-4o-mini",
+            media_voice_degraded_model=None,
+        )
+
+        client.post(
+            ENDPOINT,
+            json=_body(respond_io_id=contact.respond_io_id, message_id="iq-1"),
+            headers={"X-API-Key": "k"},
+        )
+        second = client.post(
+            ENDPOINT,
+            json=_body(respond_io_id=contact.respond_io_id, message_id="iq-2"),
+            headers={"X-API-Key": "k"},
+        )
+
+        assert second.json()["tier"] == "degraded"
+
+
+# --------------------------------------------------------------------------- #
+# A replay carries the notices the original did (PLAN 16.5)                   #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_replayed_refusal_carries_the_same_customer_text(monkeypatch):
+    """n8n's `retryOnFail` means the replay is the response that actually
+    reaches the dealer. It used to carry an empty notice list, so a retried
+    `denied_gate` arrived with no message at all - and a refusal has no
+    extraction result to speak for itself."""
+    with blank_session() as db, external_permissions_granted():
+        client = _client(db, monkeypatch=monkeypatch, api_user={"id": "ext"})
+        contact = _contact(db, "replaygate")
+        payload = _body(respond_io_id=contact.respond_io_id, message_id="rg-1")
+
+        first = client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+        second = client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+
+        assert first.json()["decision"] == "denied_gate"
+        assert second.json()["idempotent_replay"] is True
+        assert second.json()["notices"] == first.json()["notices"]
+        assert second.json()["notices"], "a refusal replay must still say something"
+
+        # Stored on the metered fact, which is what lets the callback and the
+        # polling endpoint carry the same text.
+        assert _usage_row(db, contact.respond_io_id, "rg-1").notices
+
+
+def test_a_replayed_acceptance_carries_the_warning_it_first_issued(monkeypatch):
+    with blank_session() as db, external_permissions_granted():
+        client = _client(db, monkeypatch=monkeypatch, api_user={"id": "ext"})
+        contact = _contact(db, "replaywarn")
+        _allow(db, contact, "image", monthly_limit=1)
+        _settings_row(db, media_warn_threshold_percent=80)
+
+        payload = _body(respond_io_id=contact.respond_io_id, message_id="rw-1")
+        first = client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+        second = client.post(ENDPOINT, json=payload, headers={"X-API-Key": "k"})
+
+        kinds = {n["kind"] for n in first.json()["notices"]}
+        assert "warn_80" in kinds
+        assert second.json()["notices"] == first.json()["notices"]

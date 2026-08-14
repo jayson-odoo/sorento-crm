@@ -139,6 +139,12 @@ class ContactMediaUsage(Base):
     bytes = Column(Integer, nullable=True)
     duration_ms = Column(Integer, nullable=True)  # voice
 
+    # The customer-facing notices this decision produced, stored so a replay and
+    # a callback carry the same text the original response did. Without it an
+    # n8n retry of a refusal reaches the dealer with no message at all, and
+    # `build_callback_body` can only ever hand back an empty list.
+    notices = Column(JSONB, nullable=True)
+
     # Stamped after extraction, for cost attribution.
     model = Column(Text, nullable=True)
     provider = Column(Text, nullable=True)
