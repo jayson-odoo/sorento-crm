@@ -49,6 +49,7 @@ from app.models.projects import (
     ProjectParty,
     ProjectPurchaseOrder,
     ProjectQuotation,
+    ProjectQuotationDocument,
     ProjectQuotationLine,
     ProjectQuotationVersion,
 )
@@ -162,11 +163,24 @@ def _party(db, company_id: str, *, customer: Customer | None = None) -> ProjectP
 
 
 def _quotation(db, project, *, lines, total: str | None = None):
-    """A quotation version with `lines` as (product, qty, unit_price) in printed order."""
+    """A quotation version with `lines` as (product, qty, unit_price) in printed order.
+
+    The scope hangs off a DOCUMENT - `project_quotations.document_id` is NOT NULL - so the
+    letterhead is seeded here rather than left to a nullable that the database does not have.
+    """
+    document = ProjectQuotationDocument(
+        id=_uid(),
+        company_id=project.company_id,
+        project_id=project.id,
+        document_no=f"{MARKER}-Q-{_uid()[:8]}",
+    )
+    db.add(document)
+    db.flush()
     quotation = ProjectQuotation(
         id=_uid(),
         company_id=project.company_id,
         project_id=project.id,
+        document_id=document.id,
         scope_label=f"{MARKER} Tower and common area",
     )
     db.add(quotation)
