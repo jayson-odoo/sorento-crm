@@ -17,7 +17,7 @@ import pytest
 from app.models.base import company_scope
 from app.models.company import Company
 from app.services.dealer_kit import bundle_service, collection_service
-from app.services.dealer_kit.viewer import ViewerContext
+from app.services.dealer_kit.viewer import ANONYMOUS, ViewerContext
 from tests._pg_fixture import pg_session, unique_code
 
 pytestmark = pytest.mark.skipif(
@@ -59,6 +59,25 @@ def _collection(db, **overrides):
     return collection_service.create_collection(
         db, scope="library", name=f"ZZT {unique_code('col')}", **overrides
     )
+
+
+def _brand(db, access_levels=None):
+    """A brand, company-scoped like the fixture's other rows.
+
+    ``access_levels`` left ``None`` means "never assigned" - the ORM then omits
+    the column from the INSERT and Postgres applies its server default
+    (``["dealer","end_user"]``), which is the overwhelming real-world case.
+    """
+    from app.models.product import Brand
+
+    code = unique_code("ZZTB")
+    fields = dict(brand_code=code[:50], brand_name=f"ZZT brand {code}")
+    if access_levels is not None:
+        fields["access_levels"] = access_levels
+    brand = Brand(**fields)
+    db.add(brand)
+    db.flush()
+    return brand
 
 
 def _rule(fact: str, operator: str, value=None):
@@ -203,6 +222,103 @@ def test_list_price_is_shown_to_everyone_including_an_anonymous_reader():
 
         tile = collection_service.resolve_tiles(db, collection)[0]
         assert tile["price"] == "MYR 1,290.00"
+
+
+# --------------------------------------------------------------------------
+# Brand-gated visibility (AC-G3)
+# --------------------------------------------------------------------------
+
+
+def test_a_dealer_only_brand_product_is_absent_for_anonymous_and_end_user_readers():
+    """Presence, not just price. A brand nobody authorised this viewer for must
+    not put a tile on the page at all - not hidden, ABSENT (AC-G3)."""
+    with pg_session() as db:
+        brand = _brand(db, access_levels=["dealer"])
+        product = _product(db, brand_id=brand.id)
+        collection = _collection(db, pinned_product_ids=[product.id])
+
+        anon_ids = {
+            tile["product_id"] for tile in collection_service.resolve_tiles(db, collection, ANONYMOUS)
+        }
+        end_user_ids = {
+            tile["product_id"]
+            for tile in collection_service.resolve_tiles(
+                db, collection, ViewerContext(access_codes=frozenset({"end_user"}))
+            )
+        }
+        assert product.id not in anon_ids
+        assert product.id not in end_user_ids
+
+
+def test_a_dealer_only_brand_product_is_present_for_a_dealer_viewer():
+    with pg_session() as db:
+        brand = _brand(db, access_levels=["dealer"])
+        product = _product(db, brand_id=brand.id)
+        collection = _collection(db, pinned_product_ids=[product.id])
+
+        dealer_ids = {
+            tile["product_id"]
+            for tile in collection_service.resolve_tiles(
+                db, collection, ViewerContext(access_codes=frozenset({"dealer"}))
+            )
+        }
+        assert product.id in dealer_ids
+
+
+def test_a_dealer_only_brand_product_is_present_for_staff_with_no_codes():
+    """Staff - the internal builder and the office copy - see everything,
+    mirroring how staff see trade imagery (product_images._may_see)."""
+    with pg_session() as db:
+        brand = _brand(db, access_levels=["dealer"])
+        product = _product(db, brand_id=brand.id)
+        collection = _collection(db, pinned_product_ids=[product.id])
+
+        staff_ids = {
+            tile["product_id"]
+            for tile in collection_service.resolve_tiles(db, collection, ViewerContext(is_staff=True))
+        }
+        assert product.id in staff_ids
+
+
+def test_a_brandless_product_is_visible_to_everyone():
+    """Nothing restricts a product with no brand at all."""
+    with pg_session() as db:
+        product = _product(db, brand_id=None)
+        collection = _collection(db, pinned_product_ids=[product.id])
+
+        anon_ids = {
+            tile["product_id"] for tile in collection_service.resolve_tiles(db, collection, ANONYMOUS)
+        }
+        assert product.id in anon_ids
+
+
+def test_the_default_brand_access_levels_stay_visible_to_everyone():
+    """The overwhelming real-world case: a brand's default `access_levels` is
+    `["dealer","end_user"]`, and a filter that hid it would blank the
+    catalogue."""
+    with pg_session() as db:
+        brand = _brand(db)  # server default: ["dealer", "end_user"]
+        product = _product(db, brand_id=brand.id)
+        collection = _collection(db, pinned_product_ids=[product.id])
+
+        anon_ids = {
+            tile["product_id"] for tile in collection_service.resolve_tiles(db, collection, ANONYMOUS)
+        }
+        dealer_ids = {
+            tile["product_id"]
+            for tile in collection_service.resolve_tiles(
+                db, collection, ViewerContext(access_codes=frozenset({"dealer"}))
+            )
+        }
+        end_user_ids = {
+            tile["product_id"]
+            for tile in collection_service.resolve_tiles(
+                db, collection, ViewerContext(access_codes=frozenset({"end_user"}))
+            )
+        }
+        assert product.id in anon_ids
+        assert product.id in dealer_ids
+        assert product.id in end_user_ids
 
 
 # --------------------------------------------------------------------------

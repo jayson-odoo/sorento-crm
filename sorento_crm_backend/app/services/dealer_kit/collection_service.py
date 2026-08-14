@@ -20,14 +20,18 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Iterable, Optional, Sequence
 
+from sqlalchemy import String as _String
+from sqlalchemy import cast as _cast
+from sqlalchemy.dialects.postgresql import ARRAY as _ARRAY
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.dealer_kit import Collection
-from app.models.product import Product
+from app.models.product import Brand, Product
 from app.rule_engine.evaluator import collect_fact_keys, evaluate
 from app.services.dealer_kit.collection_membership import assemble_members
 from app.services.dealer_kit.product_facts import product_facts
 from app.services.dealer_kit import pricing, product_images
+from app.services.dealer_kit.product_images import PUBLIC_ACCESS_CODE
 from app.services.dealer_kit.viewer import ANONYMOUS, ViewerContext
 from app.services.error_handler import AppException
 
@@ -295,8 +299,9 @@ def resolve_tiles_bulk(
 
     Members are decided per collection (pure Python once the candidate set is
     loaded), then the UNION of every member is priced and photographed ONCE and
-    the tiles are assembled from those two maps. Three queries for the whole
-    document, whether it holds one row or four hundred.
+    the tiles are assembled from those two maps. Four queries for the whole
+    document, whether it holds one row or four hundred - the fourth is the
+    brand-access check below, skipped entirely for a staff viewer.
     """
     if not collections:
         return {}
@@ -317,6 +322,18 @@ def resolve_tiles_bulk(
             if product.id not in seen:
                 seen.add(product.id)
                 union.append(product)
+
+    # Brand access is presence, not price (AC-G3): a brand this viewer is not
+    # entitled to must not put a tile on the page at all, so this runs BEFORE
+    # the union is priced and photographed and drops the product everywhere it
+    # was a member, not just off one collection's list.
+    visible_ids = _visible_product_ids(db, union, viewer)
+    if len(visible_ids) < len(union):
+        union = [product for product in union if product.id in visible_ids]
+        members_by_collection = {
+            collection_id: [product for product in members if product.id in visible_ids]
+            for collection_id, members in members_by_collection.items()
+        }
 
     images = product_images.primary_image_urls(db, union, viewer)
     prices = pricing.resolve_prices(db, union, viewer, promotion_id)
@@ -355,6 +372,49 @@ def _shared_candidates(db: Session, collections: Sequence[Collection]) -> list[P
                 pinned.append(product_id)
 
     return _sellable_by_ids(db, pinned) if pinned else []
+
+
+def _visible_product_ids(
+    db: Session, products: Sequence[Product], viewer: ViewerContext
+) -> set[str]:
+    """Which of these products this viewer's BRAND access permits (AC-G3).
+
+    ``Product`` itself carries no access level - the repo's visibility contract
+    is on ``Brand.access_levels`` (see the ``?|`` overlap pattern in
+    ``references.py``'s promotion-domain product search). A product with no
+    brand at all is unrestricted and always visible; a brand whose levels do
+    not intersect the viewer's codes makes every one of its products ABSENT
+    from the tile list, not merely hidden.
+
+    Staff - the internal builder and the office copy - see everything, exactly
+    as staff see trade imagery in ``product_images._may_see``. Everyone else
+    falls back to ``PUBLIC_ACCESS_CODE`` when they carry no codes at all, the
+    same fallback that module uses.
+
+    ONE flat query for the whole document, keyed on the union's distinct brand
+    ids, whatever the collection count.
+    """
+    if viewer.is_staff:
+        return {product.id for product in products}
+
+    codes = set(viewer.access_codes) or {PUBLIC_ACCESS_CODE}
+    brand_ids = {product.brand_id for product in products if product.brand_id}
+
+    visible_brand_ids: set[str] = set()
+    if brand_ids:
+        visible_brand_ids = {
+            row[0]
+            for row in db.query(Brand.id)
+            .filter(Brand.id.in_(brand_ids))
+            .filter(Brand.access_levels.op("?|")(_cast(list(codes), _ARRAY(_String))))
+            .all()
+        }
+
+    return {
+        product.id
+        for product in products
+        if product.brand_id is None or product.brand_id in visible_brand_ids
+    }
 
 
 def _tile(product: Product, price, image_url: Optional[str]) -> dict:
