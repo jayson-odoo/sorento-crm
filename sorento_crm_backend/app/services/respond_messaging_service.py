@@ -65,6 +65,31 @@ def _button_url_suffix(base: str, full_url: str) -> str:
 WINDOW_HOURS = 23
 PARAM_MAX_LEN = 900
 
+# How long a resolved "last incoming message" is reused before Respond.io is
+# asked again. Every window lookup is a live 15s-timeout HTTP call, and a
+# single drawer open resolves it more than once (header, then the send). The
+# answer moves on a DAY scale, so a sub-minute reuse cannot hide a transition:
+# the cache holds the FACT (when the contact last wrote), never the verdict -
+# openness is recomputed against the current clock on every call.
+WINDOW_CACHE_TTL_SECONDS = 45
+
+# identifier -> (resolved_at_monotonic, last_incoming, source). Process-local
+# and deliberately unsynchronised: a race only costs a duplicate upstream call,
+# which is the thing we were already doing.
+_window_cache: Dict[str, tuple] = {}
+
+
+def _monotonic() -> float:
+    """Indirection point so tests can advance the cache clock."""
+    import time
+
+    return time.monotonic()
+
+
+def reset_window_cache() -> None:
+    """Drop every cached window fact (tests; also safe at runtime)."""
+    _window_cache.clear()
+
 _URL_RE = re.compile(r"https?://\S+")
 _WS_RUN_RE = re.compile(r"[ \t]{2,}")
 
@@ -248,6 +273,36 @@ def _last_incoming_from_chat_history(
     )
 
 
+def _resolve_last_incoming(
+    db: Session,
+    identifier: str,
+    respond_contact_id: Optional[str],
+) -> tuple:
+    """(last incoming datetime | None, source) straight from upstream.
+
+    Respond.io's message list is the source of truth; on API error we degrade
+    to local chat_history, and with no data at all the window is treated as
+    closed (the template branch is the safe one). Uncached - the caller decides.
+    """
+    try:
+        return _last_incoming_from_respond(identifier), "respond_api"
+    except Exception as e:
+        logger.warning(
+            "Window check: Respond.io list_messages failed for %s (%s); "
+            "falling back to chat_history",
+            identifier,
+            e,
+        )
+    try:
+        last_incoming = _last_incoming_from_chat_history(
+            db, identifier, respond_contact_id
+        )
+    except Exception:
+        logger.exception("Window check: chat_history fallback failed")
+        return None, "none"
+    return (last_incoming, "chat_history") if last_incoming is not None else (None, "none")
+
+
 def get_window_state(
     db: Session,
     identifier: str,
@@ -259,30 +314,20 @@ def get_window_state(
     ``identifier`` is the Respond.io send identifier (same value the existing
     send paths use). ``respond_contact_id`` (internal ``respond_contacts.id``)
     enables the chat_history fallback when the Respond API errors.
+
+    The upstream lookup is cached per identifier for ``WINDOW_CACHE_TTL_SECONDS``
+    (see that constant). No cache busting on send: an OUTGOING message never
+    opens the window - only the contact writing to us does - so nothing we do
+    can invalidate the cached fact early.
     """
     now = datetime.utcnow()
-    last_incoming: Optional[datetime] = None
-    source = "respond_api"
-    try:
-        last_incoming = _last_incoming_from_respond(identifier)
-    except Exception as e:
-        logger.warning(
-            "Window check: Respond.io list_messages failed for %s (%s); "
-            "falling back to chat_history",
-            identifier,
-            e,
-        )
-        source = "chat_history"
-        try:
-            last_incoming = _last_incoming_from_chat_history(
-                db, identifier, respond_contact_id
-            )
-        except Exception:
-            logger.exception("Window check: chat_history fallback failed")
-            last_incoming = None
-            source = "none"
-        if last_incoming is None and source == "chat_history":
-            source = "none"
+    cache_key = str(identifier or "")
+    cached = _window_cache.get(cache_key)
+    if cached is not None and (_monotonic() - cached[0]) < WINDOW_CACHE_TTL_SECONDS:
+        last_incoming, source = cached[1], cached[2]
+    else:
+        last_incoming, source = _resolve_last_incoming(db, identifier, respond_contact_id)
+        _window_cache[cache_key] = (_monotonic(), last_incoming, source)
 
     is_open = bool(last_incoming and last_incoming >= now - timedelta(hours=WINDOW_HOURS))
     return {
