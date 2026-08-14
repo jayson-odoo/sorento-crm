@@ -607,9 +607,12 @@ export default function MyPendingSLAWidget() {
               </div>
             )}
 
-            {/* Intervention tickets carry no inline actions: the row opens the
-                ticket drawer, where replying and resolving live (journey steps
-                5-7). Everything else keeps its inline action set. */}
+            {/* An intervention ticket is answered and resolved in its drawer, so
+                the row offers no Escalate/Resolve. Reassign and Extend are a
+                different matter: they are worklist decisions ("this is not mine"
+                / "this needs longer"), and making someone open a chat drawer to
+                hand a ticket over is the wrong place to ask. Both endpoints are
+                already entity-agnostic. */}
             <div className="flex flex-wrap items-center gap-2">
               {ticket ? null : isTeam ? (
                 !tk && canTakeover && (
@@ -671,7 +674,7 @@ export default function MyPendingSLAWidget() {
                   viewer owns them → assignee gate satisfied). /my-pending now emits
                   due_at_resolution, so gate strictly: hidden when there is no
                   resolution deadline. The dialog shows it as "Current due". */}
-              {!isTeam && !ticket && canExtend && (
+              {!isTeam && canExtend && (
                 <ExtendDueButton
                   trackingId={item.id}
                   isResolved={false}
@@ -684,7 +687,7 @@ export default function MyPendingSLAWidget() {
                 />
               )}
               {/* Reassign is locked while a takeover is pending (soft lock). */}
-              {!tk && !ticket && canReassign && (
+              {!tk && canReassign && (
                 <Button
                   size="sm"
                   variant="ghost"

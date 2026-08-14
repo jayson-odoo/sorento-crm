@@ -637,6 +637,48 @@ describe('MyPendingSLAWidget clickable rows', () => {
     expect(hasActionButton(/Resolve/i)).toBe(false);
   });
 
+  it('a ticket row offers Reassign and Extend - handing work over is a worklist decision', async () => {
+    getMyPendingSLA.mockResolvedValue([ticketOne]);
+    renderWidget();
+
+    await waitFor(() =>
+      expect(screen.getByText('Yes, please connect me to a person.')).toBeInTheDocument(),
+    );
+    expect(getActionButton(/Reassign/i)).toBeInTheDocument();
+    expect(getActionButton(/Extend/i)).toBeInTheDocument();
+  });
+
+  it('Extend stays hidden on a ticket with no resolution deadline', async () => {
+    getMyPendingSLA.mockResolvedValue([{ ...ticketOne, due_at_resolution: null }]);
+    renderWidget();
+
+    await waitFor(() => expect(getActionButton(/Reassign/i)).toBeInTheDocument());
+    expect(hasActionButton(/Extend/i)).toBe(false);
+  });
+
+  it('Reassign on a ticket row opens the picker, NOT the chat drawer', async () => {
+    getMyPendingSLA.mockResolvedValue([ticketOne]);
+    getVisibleUsers.mockResolvedValue([{ id: 'u-tay', name: 'Tay', email: 'tay@example.com' }]);
+    renderWidget();
+
+    await waitFor(() => expect(getActionButton(/Reassign/i)).toBeInTheDocument());
+    fireEvent.click(getActionButton(/Reassign/i));
+
+    await waitFor(() => expect(screen.getByText('Reassign task')).toBeInTheDocument());
+    expect(screen.queryByTestId('ticket-drawer')).not.toBeInTheDocument();
+  });
+
+  it('a ticket row loses Reassign without the reassign slug', async () => {
+    deniedSlugs = new Set(['sla_management.conversation_sla_tracking.reassign']);
+    getMyPendingSLA.mockResolvedValue([ticketOne]);
+    renderWidget();
+
+    await waitFor(() =>
+      expect(screen.getByText('Yes, please connect me to a person.')).toBeInTheDocument(),
+    );
+    expect(hasActionButton(/Reassign/i)).toBe(false);
+  });
+
   it('AC-B2: clicking a ticket row opens the drawer in place - no navigation, no Respond', async () => {
     getMyPendingSLA.mockResolvedValue([ticketOne]);
     const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
