@@ -171,6 +171,41 @@ class RespondClient:
             return identifier or ""
         return f"id:{identifier}"
 
+    def _post_contact_message(
+        self, identifier: str, payload: dict, *, timeout: float = 15
+    ) -> dict:
+        """The ONE place a message to a contact leaves this process.
+
+        Every outbound send - text, attachment, WhatsApp template, and anything
+        added later - builds only its payload and delegates here, so the
+        per-contact outbound switch cannot be forgotten by the next method
+        somebody writes. `tests/test_respond_outbound_switch.py` fails if a
+        second method ever POSTs to a `/message` URL.
+
+        Deliberately NOT gated here: `/conversation/status` (close) and
+        `/conversation/assignee`. Those are not messages to the contact - the
+        switch governs what we SAY to a customer, not our own housekeeping on
+        the conversation, so a muted contact's thread can still be closed and
+        reassigned.
+
+        The failing response is attached to the raised `HTTPStatusError` so
+        callers (the Respond outbox in particular) can log what Respond
+        actually said, not just the status code.
+        """
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        assert_outbound_enabled(identifier)
+        api_id = self._contact_api_identifier(identifier)
+        url = f"{self.base_url}/v2/contact/{api_id}/message"
+        with httpx.Client(timeout=timeout) as client:
+            response = client.post(url, headers=self._headers(), json=payload)
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                e.response = response
+                raise
+            return response.json() if response.content else {}
+
     def get_user_by_id(self, user_id: str) -> dict:
         if not self.api_key:
             raise ValueError("Respond API key is not configured.")
@@ -223,16 +258,8 @@ class RespondClient:
 
     def send_message(self, identifier: str, text: str) -> dict:
         """Send a text message to a contact. identifier = last segment of respond inbox URL (e.g. contact_id). Uses id: prefix for API."""
-        if not self.api_key:
-            raise ValueError("Respond API key is not configured.")
-        assert_outbound_enabled(identifier)
-        api_id = self._contact_api_identifier(identifier)
-        url = f"{self.base_url}/v2/contact/{api_id}/message"
         payload = {"message": {"type": "text", "text": text}}
-        with httpx.Client(timeout=15) as client:
-            response = client.post(url, headers=self._headers(), json=payload)
-            response.raise_for_status()
-            return response.json() if response.content else {}
+        return self._post_contact_message(identifier, payload, timeout=15)
 
     def send_attachment(
         self,
@@ -249,27 +276,15 @@ class RespondClient:
         one (R2), or a long-lived signed URL otherwise - never a short presign
         (see ``respond_chat_template_service.upload_chat_attachment``).
         """
-        if not self.api_key:
-            raise ValueError("Respond API key is not configured.")
-        assert_outbound_enabled(identifier)
         if attachment_type not in ("image", "video", "audio", "file"):
             raise ValueError(f"Unsupported Respond.io attachment type: {attachment_type}")
-        api_id = self._contact_api_identifier(identifier)
-        url_endpoint = f"{self.base_url}/v2/contact/{api_id}/message"
         attachment_payload: dict = {"type": attachment_type, "url": url}
         if caption:
             attachment_payload["caption"] = caption
         payload = {"message": {"type": "attachment", "attachment": attachment_payload}}
-        # Larger timeout than send_message: Respond fetches the media itself
+        # Larger timeout than a text send: Respond fetches the media itself
         # before it can hand back a response.
-        with httpx.Client(timeout=30) as client:
-            response = client.post(url_endpoint, headers=self._headers(), json=payload)
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as e:
-                e.response = response
-                raise
-            return response.json() if response.content else {}
+        return self._post_contact_message(identifier, payload, timeout=30)
 
     def close_conversation(
         self,
@@ -499,11 +514,6 @@ class RespondClient:
         2026-06-22): ``{"type":"buttons","buttons":[{"type":"url","text":...,
         "url":"https://x/{{1}}","parameters":[{"type":"text","text":<suffix>}]}]}``.
         """
-        if not self.api_key:
-            raise ValueError("Respond API key is not configured.")
-        assert_outbound_enabled(identifier)
-        api_id = self._contact_api_identifier(identifier)
-        url = f"{self.base_url}/v2/contact/{api_id}/message"
         body_component: dict = {"type": "body", "text": body_text}
         if parameters:
             body_component["parameters"] = [{"type": "text", "text": p} for p in parameters]
@@ -535,10 +545,7 @@ class RespondClient:
                 },
             },
         }
-        with httpx.Client(timeout=15) as client:
-            response = client.post(url, headers=self._headers(), json=payload)
-            response.raise_for_status()
-            return response.json() if response.content else {}
+        return self._post_contact_message(identifier, payload, timeout=15)
 
     def update_contact(self, identifier: str, payload: dict) -> dict:
         """Update contact via PUT /v2/contact/{identifier}. payload can include customFields."""

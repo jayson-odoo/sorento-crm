@@ -7,8 +7,13 @@ enforces.
 
 Scope: OUTBOUND ONLY. Reads (fetching a contact, listing messages, closing a
 conversation) are never gated - the switch governs what we say, not what we can
-see. The three gated paths are `RespondClient.send_message`,
-`.send_attachment` and `.send_template_message`.
+see.
+
+The guard is asserted in exactly ONE place: `RespondClient._post_contact_message`,
+the single method through which every contact-message POST passes (text,
+attachment, WhatsApp template, and whatever is added next). Guarding each public
+sender individually was fragile - the next sender somebody wrote would have
+silently bypassed it.
 """
 from __future__ import annotations
 

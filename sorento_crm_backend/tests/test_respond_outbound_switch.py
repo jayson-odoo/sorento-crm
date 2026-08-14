@@ -261,6 +261,235 @@ def test_the_env_var_allowlist_hack_is_gone():
 
 
 # --------------------------------------------------------------------------
+# The chokepoint: exactly ONE method may POST a message to a contact
+# --------------------------------------------------------------------------
+
+
+def _respond_client_methods() -> dict:
+    """Every function defined in the body of `class RespondClient`, by name."""
+    import ast
+    import inspect
+
+    from app.services import integration_service as mod
+
+    tree = ast.parse(inspect.getsource(mod))
+    cls = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef) and node.name == "RespondClient"
+    )
+    return {
+        node.name: node
+        for node in cls.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+
+def _string_literals(node) -> list[str]:
+    """Every plain and f-string literal fragment inside `node`."""
+    import ast
+
+    out: list[str] = []
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+            out.append(sub.value)
+    return out
+
+
+def _posts(node) -> bool:
+    import ast
+
+    return any(
+        isinstance(sub, ast.Call)
+        and isinstance(sub.func, ast.Attribute)
+        and sub.func.attr == "post"
+        for sub in ast.walk(node)
+    )
+
+
+def test_only_the_chokepoint_posts_to_a_message_url():
+    """A future send method cannot quietly grow its own unguarded POST.
+
+    Structural, not behavioural: any RespondClient method that both builds a
+    `/message` URL and POSTs to it is a contact-message send, and the only one
+    allowed to exist is the guarded chokepoint.
+    """
+    offenders = [
+        name
+        for name, node in _respond_client_methods().items()
+        if name != "_post_contact_message"
+        and _posts(node)
+        and any("/message" in s for s in _string_literals(node))
+    ]
+
+    assert offenders == [], (
+        "these RespondClient methods POST to a message URL without going through "
+        f"_post_contact_message, so they bypass the outbound switch: {offenders}"
+    )
+
+
+def test_the_chokepoint_is_the_only_caller_of_the_guard():
+    """The guard is asserted in one place, so adding a sender cannot forget it."""
+    import ast
+
+    callers = [
+        name
+        for name, node in _respond_client_methods().items()
+        if any(
+            isinstance(sub, ast.Call)
+            and isinstance(sub.func, ast.Name)
+            and sub.func.id == "assert_outbound_enabled"
+            for sub in ast.walk(node)
+        )
+    ]
+
+    assert callers == ["_post_contact_message"], (
+        "assert_outbound_enabled must be called exactly once, inside the "
+        f"chokepoint; found it in {callers}"
+    )
+
+
+@pytest.mark.parametrize(
+    "path", ["send_message", "send_attachment", "send_template_message"]
+)
+def test_every_public_sender_delegates_to_the_chokepoint(path):
+    client = _respond_client()
+
+    with patch.object(
+        type(client), "_post_contact_message", return_value={"messageId": 1}
+    ) as chokepoint:
+        _send_calls(client, "437264483")[path]()
+
+    assert chokepoint.call_count == 1, f"{path} did not delegate to the chokepoint"
+    assert chokepoint.call_args.args[0] == "437264483", (
+        f"{path} must hand the identifier to the chokepoint, or the guard "
+        "checks the wrong contact"
+    )
+
+
+@pytest.mark.parametrize(
+    "path", ["send_message", "send_attachment", "send_template_message"]
+)
+def test_no_public_sender_reaches_httpx_on_its_own(path):
+    """With the chokepoint stubbed out, nothing else may open an HTTP client."""
+    from app.services import integration_service as mod
+
+    client = _respond_client()
+    http = MagicMock()
+
+    with patch.object(
+        type(client), "_post_contact_message", return_value={}
+    ), patch.object(mod.httpx, "Client", return_value=http):
+        _send_calls(client, "437264483")[path]()
+
+    assert not http.__enter__.called, (
+        f"{path} opened its own httpx client instead of delegating the POST"
+    )
+
+
+@pytest.mark.parametrize(
+    "path,expected_timeout",
+    [("send_message", 15), ("send_attachment", 30), ("send_template_message", 15)],
+)
+def test_each_sender_keeps_its_own_timeout(path, expected_timeout):
+    """Attachments give Respond longer, because Respond fetches the media itself."""
+    client = _respond_client()
+
+    with patch.object(
+        type(client), "_post_contact_message", return_value={}
+    ) as chokepoint:
+        _send_calls(client, "437264483")[path]()
+
+    assert chokepoint.call_args.kwargs["timeout"] == expected_timeout
+
+
+def test_the_chokepoint_posts_to_the_message_endpoint(db):
+    from app.services import integration_service as mod
+
+    contact = _seed_contact(db, enabled=True)
+    client = _respond_client()
+
+    response = MagicMock(content=b"{}", status_code=200)
+    response.json.return_value = {"messageId": 7}
+    http = MagicMock()
+    http.__enter__.return_value.post.return_value = response
+
+    with patch("app.database.SessionLocal", return_value=_NoClose(db)), patch.object(
+        mod.httpx, "Client", return_value=http
+    ) as client_factory:
+        result = client._post_contact_message(
+            contact["respond_io_id"], {"message": {"type": "text", "text": "hi"}}, timeout=15
+        )
+
+    assert result == {"messageId": 7}
+    posted_url = http.__enter__.return_value.post.call_args.args[0]
+    assert posted_url == f"https://api.test/v2/contact/id:{contact['respond_io_id']}/message"
+    assert client_factory.call_args.kwargs["timeout"] == 15
+
+
+def test_the_chokepoint_attaches_the_response_to_a_failure(db):
+    """`send_attachment`'s error context, now shared by every sender."""
+    import httpx
+
+    from app.services import integration_service as mod
+
+    contact = _seed_contact(db, enabled=True)
+    client = _respond_client()
+
+    response = MagicMock(content=b'{"message":"bad media"}', status_code=400)
+    response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "400", request=MagicMock(), response=None
+    )
+    http = MagicMock()
+    http.__enter__.return_value.post.return_value = response
+
+    with patch("app.database.SessionLocal", return_value=_NoClose(db)), patch.object(
+        mod.httpx, "Client", return_value=http
+    ):
+        with pytest.raises(httpx.HTTPStatusError) as excinfo:
+            client.send_attachment(
+                contact["respond_io_id"], "image", "https://cdn.test/a.png"
+            )
+
+    assert excinfo.value.response is response, "the failing response was not attached"
+
+
+def test_the_chokepoint_requires_an_api_key(db):
+    from app.services.integration_service import RespondClient
+
+    client = RespondClient(api_key="", base_url="https://api.test")
+    client.api_key = None
+
+    with pytest.raises(ValueError):
+        client.send_message("437264483", "hello")
+
+
+def test_non_message_endpoints_stay_ungated(db):
+    """Conversation status/assignee are not messages to the contact.
+
+    Deliberate boundary: a muted contact's conversation can still be closed and
+    reassigned, because those say nothing to the customer.
+    """
+    from app.services import integration_service as mod
+
+    contact = _seed_contact(db, enabled=False)
+    client = _respond_client()
+
+    response = MagicMock(content=b"{}", status_code=200)
+    response.json.return_value = {}
+    http = MagicMock()
+    http.__enter__.return_value.post.return_value = response
+
+    with patch("app.database.SessionLocal", return_value=_NoClose(db)), patch.object(
+        mod.httpx, "Client", return_value=http
+    ):
+        client.close_conversation(contact["respond_io_id"], category="resolved")
+        client.set_conversation_assignee(contact["respond_io_id"], "user-1")
+
+    assert http.__enter__.return_value.post.call_count == 2
+
+
+# --------------------------------------------------------------------------
 # Bulk control (what the CLI drives)
 # --------------------------------------------------------------------------
 
