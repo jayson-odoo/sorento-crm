@@ -110,36 +110,55 @@ function fromDraft(draft: Draft): ChatbotMediaSettings {
   };
 }
 
-const isPositiveInt = (raw: string) => /^[1-9]\d*$/.test(raw.trim());
+/**
+ * The bounds the backend already enforces on `SystemSettingUpdate`, mirrored per
+ * field so every number is refused inline with a sentence rather than coming back
+ * as a 422 the operator has to decode. A field validated only for positivity was
+ * the odd one out, not the norm.
+ */
+const NUMBER_BOUNDS = {
+  imageMonthlyLimit: [0, 100000],
+  voiceMonthlyLimit: [0, 100000],
+  voiceMaxSeconds: [1, 3600],
+  burstLimit: [0, 1000],
+  burstWindowSeconds: [1, 3600],
+  warnThresholdPercent: [1, 100],
+  syncWaitSeconds: [5, 90],
+  extractionTimeoutSeconds: [5, 110],
+  maxEntities: [1, 100],
+} as const satisfies Record<string, readonly [number, number]>;
 
-const isWithin = (raw: string, min: number, max: number) => {
+type NumberKey = keyof typeof NUMBER_BOUNDS;
+
+function rangeError(raw: string, min: number, max: number): string | undefined {
   const trimmed = raw.trim();
-  if (!isPositiveInt(trimmed)) return false;
+  const message = `Enter a whole number between ${min} and ${max}.`;
+  if (!/^\d+$/.test(trimmed)) return message;
   const value = Number(trimmed);
-  return value >= min && value <= max;
-};
+  return value < min || value > max ? message : undefined;
+}
 
 /**
- * The two waits are validated together because the backend rejects the pair, not
- * either number on its own: an extraction ceiling below the synchronous wait kills a
- * job at exactly the moment the endpoint degrades to `pending`. Saying so here means
+ * Every numeric field is bounded, and the two waits are additionally validated
+ * against each other because the backend rejects the pair rather than either
+ * number on its own: an extraction ceiling below the synchronous wait kills a job
+ * at exactly the moment the endpoint degrades to `pending`. Saying so here means
  * the operator reads a sentence rather than decoding a 400 after pressing Save.
  */
-function timingErrors(draft: Draft): { wait?: string; ceiling?: string } {
-  const wait = draft.syncWaitSeconds.trim();
-  const ceiling = draft.extractionTimeoutSeconds.trim();
-  const waitError = isWithin(wait, 5, 90)
-    ? undefined
-    : 'Enter a whole number of seconds between 5 and 90.';
-  const ceilingError = isWithin(ceiling, 5, 110)
-    ? undefined
-    : 'Enter a whole number of seconds between 5 and 110.';
-  if (!waitError && !ceilingError && Number(ceiling) < Number(wait)) {
-    return {
-      ceiling: `Must be at least the synchronous wait of ${wait} seconds, or a job that outlives the wait is killed instead of finishing.`,
-    };
+function numberErrors(draft: Draft): Partial<Record<NumberKey, string>> {
+  const errors: Partial<Record<NumberKey, string>> = {};
+  for (const key of Object.keys(NUMBER_BOUNDS) as NumberKey[]) {
+    const [min, max] = NUMBER_BOUNDS[key];
+    const error = rangeError(draft[key], min, max);
+    if (error) errors[key] = error;
   }
-  return { wait: waitError, ceiling: ceilingError };
+  if (!errors.syncWaitSeconds && !errors.extractionTimeoutSeconds) {
+    const wait = Number(draft.syncWaitSeconds.trim());
+    if (Number(draft.extractionTimeoutSeconds.trim()) < wait) {
+      errors.extractionTimeoutSeconds = `Must be at least the synchronous wait of ${wait} seconds, or a job that outlives the wait is killed instead of finishing.`;
+    }
+  }
+  return errors;
 }
 
 export default function ChatbotMediaSettingsPage() {
@@ -151,42 +170,28 @@ export default function ChatbotMediaSettingsPage() {
     if (settingsQuery.data && draft === null) setDraft(toDraft(settingsQuery.data));
   }, [settingsQuery.data, draft]);
 
-  const timing: { wait?: string; ceiling?: string } = useMemo(
-    () => (draft ? timingErrors(draft) : {}),
+  const numberError = useMemo(
+    () => (draft ? numberErrors(draft) : ({} as Partial<Record<NumberKey, string>>)),
     [draft],
   );
 
   const invalid = useMemo(() => {
     if (!draft) return {} as Record<string, boolean>;
-    const percent = draft.warnThresholdPercent.trim();
     return {
-      imageMonthlyLimit: !isPositiveInt(draft.imageMonthlyLimit),
-      voiceMonthlyLimit: !isPositiveInt(draft.voiceMonthlyLimit),
-      voiceMaxSeconds: !isPositiveInt(draft.voiceMaxSeconds),
-      burstLimit: !isPositiveInt(draft.burstLimit),
-      burstWindowSeconds: !isPositiveInt(draft.burstWindowSeconds),
-      warnThresholdPercent: !isPositiveInt(percent) || Number(percent) > 100,
       transcribeModel: draft.transcribeModel.trim() === '',
       languagePinned: draft.languageMode === 'pinned' && draft.languagePinned.trim() === '',
       languageHints: draft.languageMode === 'hints' && draft.languageHints.length === 0,
-      syncWaitSeconds: Boolean(timing.wait),
-      extractionTimeoutSeconds: Boolean(timing.ceiling),
-      maxEntities: !isPositiveInt(draft.maxEntities),
     };
-  }, [draft, timing]);
+  }, [draft]);
 
-  const anyInvalid = Object.values(invalid).some(Boolean);
+  const anyInvalid =
+    Object.keys(numberError).length > 0 || Object.values(invalid).some(Boolean);
 
-  if (settingsQuery.isLoading || !draft) {
-    return (
-      <div className="space-y-5">
-        <Skeleton className="h-64 w-full" />
-        <Skeleton className="h-64 w-full" />
-      </div>
-    );
-  }
-
-  if (settingsQuery.isError) {
+  // The failed load is checked FIRST. A load that fails leaves `draft` null, so a
+  // loading check that also covers `!draft` wins every time and the operator waits
+  // on skeletons that never resolve. The `!draft` guard here keeps a failed
+  // background refetch from throwing away edits the operator has already made.
+  if (settingsQuery.isError && !draft) {
     return (
       <Alert variant="mono" icon="destructive">
         <AlertIcon>
@@ -196,6 +201,15 @@ export default function ChatbotMediaSettingsPage() {
           Chatbot media settings could not be loaded. Reload the page to try again.
         </AlertTitle>
       </Alert>
+    );
+  }
+
+  if (settingsQuery.isLoading || !draft) {
+    return (
+      <div className="space-y-5">
+        <Skeleton className="h-64 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
     );
   }
 
@@ -215,14 +229,14 @@ export default function ChatbotMediaSettingsPage() {
             id="media-image-monthly-limit"
             label="Photos per contact per month"
             value={draft.imageMonthlyLimit}
-            invalid={invalid.imageMonthlyLimit}
+            error={numberError.imageMonthlyLimit}
             onChange={(v) => set('imageMonthlyLimit', v)}
           />
           <NumberField
             id="media-voice-monthly-limit"
             label="Voice notes per contact per month"
             value={draft.voiceMonthlyLimit}
-            invalid={invalid.voiceMonthlyLimit}
+            error={numberError.voiceMonthlyLimit}
             onChange={(v) => set('voiceMonthlyLimit', v)}
           />
           <NumberField
@@ -230,7 +244,7 @@ export default function ChatbotMediaSettingsPage() {
             label="Maximum clip seconds"
             hint="A longer voice note is refused before anything is spent."
             value={draft.voiceMaxSeconds}
-            invalid={invalid.voiceMaxSeconds}
+            error={numberError.voiceMaxSeconds}
             onChange={(v) => set('voiceMaxSeconds', v)}
           />
           <NumberField
@@ -238,7 +252,7 @@ export default function ChatbotMediaSettingsPage() {
             label="Warn at percent of allowance"
             hint="The contact is told once per month, per media type."
             value={draft.warnThresholdPercent}
-            invalid={invalid.warnThresholdPercent}
+            error={numberError.warnThresholdPercent}
             onChange={(v) => set('warnThresholdPercent', v)}
           />
         </CardContent>
@@ -252,15 +266,16 @@ export default function ChatbotMediaSettingsPage() {
           <NumberField
             id="media-burst-limit"
             label="Items per burst window"
+            hint="0 turns pacing off, so no contact is ever asked to slow down."
             value={draft.burstLimit}
-            invalid={invalid.burstLimit}
+            error={numberError.burstLimit}
             onChange={(v) => set('burstLimit', v)}
           />
           <NumberField
             id="media-burst-window"
             label="Burst window seconds"
             value={draft.burstWindowSeconds}
-            invalid={invalid.burstWindowSeconds}
+            error={numberError.burstWindowSeconds}
             onChange={(v) => set('burstWindowSeconds', v)}
           />
         </CardContent>
@@ -310,7 +325,7 @@ export default function ChatbotMediaSettingsPage() {
               label="Maximum entities per image"
               hint="Beyond this the result is truncated and says so."
               value={draft.maxEntities}
-              invalid={invalid.maxEntities}
+              error={numberError.maxEntities}
               onChange={(v) => set('maxEntities', v)}
             />
             <NumberField
@@ -318,8 +333,7 @@ export default function ChatbotMediaSettingsPage() {
               label="Synchronous wait seconds"
               hint="How long a reply waits for extraction before it returns pending, which is what bounds the per-contact lock."
               value={draft.syncWaitSeconds}
-              invalid={invalid.syncWaitSeconds}
-              error={timing.wait}
+              error={numberError.syncWaitSeconds}
               onChange={(v) => set('syncWaitSeconds', v)}
             />
             <NumberField
@@ -327,8 +341,7 @@ export default function ChatbotMediaSettingsPage() {
               label="Extraction timeout seconds"
               hint="Must stay under 120 so a paused turn cannot outlive its lock."
               value={draft.extractionTimeoutSeconds}
-              invalid={invalid.extractionTimeoutSeconds}
-              error={timing.ceiling}
+              error={numberError.extractionTimeoutSeconds}
               onChange={(v) => set('extractionTimeoutSeconds', v)}
             />
           </div>
@@ -412,7 +425,15 @@ export default function ChatbotMediaSettingsPage() {
         <Button
           type="button"
           disabled={save.isPending || anyInvalid}
-          onClick={() => save.mutate(fromDraft(draft))}
+          onClick={() =>
+            save.mutate(fromDraft(draft), {
+              // Re-seed from what came back, not from what was typed: the row the
+              // backend returns is what was actually persisted, so a coerced or
+              // rejected-and-left-alone value shows immediately instead of the
+              // form drifting away from the database until the next reload.
+              onSuccess: (saved) => setDraft(toDraft(saved)),
+            })
+          }
         >
           {save.isPending ? <LoaderCircleIcon className="animate-spin" /> : null}
           Save Settings
@@ -427,7 +448,6 @@ function NumberField({
   label,
   hint,
   value,
-  invalid,
   error,
   onChange,
 }: {
@@ -435,7 +455,6 @@ function NumberField({
   label: string;
   hint?: string;
   value: string;
-  invalid?: boolean;
   /** Shown in place of the hint, so a rejected number says why before it is saved. */
   error?: string;
   onChange: (value: string) => void;
@@ -447,7 +466,7 @@ function NumberField({
         id={id}
         inputMode="numeric"
         value={value}
-        aria-invalid={invalid}
+        aria-invalid={Boolean(error)}
         aria-describedby={error ? `${id}-error` : undefined}
         onChange={(e) => onChange(e.target.value)}
       />
