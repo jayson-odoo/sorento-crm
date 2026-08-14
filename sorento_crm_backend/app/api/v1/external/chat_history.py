@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_external_api_user
+from app.models.chat_history import CHAT_HISTORY_DEDUPE_PREDICATE
 from app.schemas.external.chat_history import (
     ChatHistoryMessageIngestRequest,
     ChatHistoryMessageIngestResponse,
@@ -49,15 +50,33 @@ def ingest_chat_message(
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
 ):
-    """Ingest one chat message from n8n into local storage."""
+    """Ingest one chat message from n8n into local storage.
+
+    Idempotent on the Respond ``message_id`` for a given contact (AC-J5): a
+    message mirrored twice resolves to the one row and answers with the same id
+    and ``status: "duplicate"``. A payload with no ``message_id`` has nothing to
+    dedupe on and always inserts, as it always did.
+    """
     _ = current_user
     try:
         sent_at = _safe_utc_datetime_from_epoch_ms(payload.sent_at)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
+    # AC-J5: a CRM drawer send reaches this endpoint TWICE - once from the direct
+    # respond-send-user webhook lane, once from Respond's own outgoing-message
+    # trigger - so the same WhatsApp message must resolve to one row whichever
+    # lane wins the race. The conflict target is the partial unique index from
+    # migration 326; its predicate is repeated verbatim because Postgres infers
+    # the arbiter index from it (see CHAT_HISTORY_DEDUPE_PREDICATE). Rows with no
+    # message_id are outside the index and keep inserting exactly as before.
+    #
+    # DO UPDATE, not DO NOTHING: DO NOTHING returns no row (so the caller could
+    # not be told which row its message is), and the losing lane often carries
+    # context the winner lacked (turn_id, the quoted message). Fill-if-null only:
+    # a mirror re-states a message, it never edits it.
     insert_query = text(
-        """
+        f"""
         INSERT INTO chat_histories (
             channel, contact_id, phone_number, message, sent_at, first_name, last_name, type,
             message_id, result, reply_to_message_id, reply_to_message, turn_id, ingest_at,
@@ -67,11 +86,26 @@ def ingest_chat_message(
             :message_id, :result, :reply_to_message_id, :reply_to_message, :turn_id, :ingest_at,
             :respond_ts, :state_trace
         )
-        RETURNING id
+        ON CONFLICT (contact_id, message_id) WHERE {CHAT_HISTORY_DEDUPE_PREDICATE}
+        DO UPDATE SET
+            first_name = COALESCE(chat_histories.first_name, EXCLUDED.first_name),
+            last_name = COALESCE(chat_histories.last_name, EXCLUDED.last_name),
+            result = COALESCE(chat_histories.result, EXCLUDED.result),
+            reply_to_message_id = COALESCE(
+                chat_histories.reply_to_message_id, EXCLUDED.reply_to_message_id
+            ),
+            reply_to_message = COALESCE(
+                chat_histories.reply_to_message, EXCLUDED.reply_to_message
+            ),
+            turn_id = COALESCE(chat_histories.turn_id, EXCLUDED.turn_id),
+            respond_ts = COALESCE(chat_histories.respond_ts, EXCLUDED.respond_ts),
+            state_trace = COALESCE(chat_histories.state_trace, EXCLUDED.state_trace)
+        RETURNING id, (xmax <> 0) AS already_existed
         """
     )
 
     message_id: int | None = None
+    already_existed = False
     status_code = status.HTTP_201_CREATED
     error_message: str | None = None
 
@@ -110,7 +144,9 @@ def ingest_chat_message(
                 else None,
             },
         )
-        message_id = result.scalar_one()
+        row = result.one()
+        message_id = row.id
+        already_existed = bool(row.already_existed)
         db.commit()
     except Exception as e:
         db.rollback()
@@ -152,7 +188,13 @@ def ingest_chat_message(
             detail="Failed to ingest chat history message.",
         )
 
-    return ChatHistoryMessageIngestResponse(id=message_id)
+    # 201 either way: the caller (n8n) treats anything else as a lane failure and
+    # retries, which is exactly the loop this endpoint exists to end. "duplicate"
+    # names the outcome in the body instead, mirroring the conversation-SLA
+    # create's `already_active` marker.
+    return ChatHistoryMessageIngestResponse(
+        id=message_id, status="duplicate" if already_existed else "created"
+    )
 
 
 @router.post("", response_model=ChatHistoryMessagesResponse, status_code=status.HTTP_200_OK)
