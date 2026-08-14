@@ -4,7 +4,6 @@ POST a Respond.io-shaped payload to a configurable webhook so workflows can run 
 """
 from __future__ import annotations
 
-import json
 import logging
 import threading
 import time
@@ -30,14 +29,23 @@ HUMAN_TICKET_BUSINESS_TABLE = "conversation_sla_tracking"
 
 
 def send_crm_chat_outbound_webhook_for_log(log_id: str) -> None:
-    """POST the integration log payload to the configured webhook (own DB session)."""
+    """POST the integration log payload to the configured webhook (own DB session).
+
+    The AC-J6 shared secret is resolved HERE, per send, and travels on the HTTP
+    request only - it is never written to the log row, so no one with log-view
+    permission can read it and a rotation leaves no readable history. A manual
+    resubmit comes back through this same function and therefore sends the
+    CURRENT secret, not the one that was in force when the row was written.
+    """
     try:
         from app.database import SessionLocal
 
         bg_db = SessionLocal()
         try:
             bg_service = IntegrationLogService(bg_db)
-            bg_service.send_webhook_for_log(log_id)
+            bg_service.send_webhook_for_log(
+                log_id, extra_headers=crm_webhook_auth_headers() or None
+            )
         finally:
             bg_db.close()
     except Exception as e:
@@ -270,11 +278,6 @@ def enqueue_crm_chat_outbound_webhook(
         assignee_respond_user_id=assignee_respond_user_id,
     )
 
-    # AC-J6: the shared secret rides on the log row because that is what the
-    # sender (initial POST and any manual resubmit alike) reads its headers
-    # from, so every caller of this function emits it uniformly.
-    auth_headers = crm_webhook_auth_headers()
-
     log_service = IntegrationLogService(db)
     integration_log = log_service.create_integration_log(
         IntegrationLogCreate(
@@ -286,7 +289,9 @@ def enqueue_crm_chat_outbound_webhook(
             endpoint=url,
             http_method="POST",
             status="pending",
-            request_headers=json.dumps(auth_headers) if auth_headers else None,
+            # No auth header here on purpose: the AC-J6 secret is resolved at send
+            # time (see send_crm_chat_outbound_webhook_for_log) so it never sits at
+            # rest in a table operators can read.
             created_by=str(crm_sender_user_id).strip() if crm_sender_user_id else None,
         ),
         request_payload_dict=payload_list,

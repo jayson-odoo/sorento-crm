@@ -10,9 +10,10 @@ UAC: documentation/plans/sla/conversation-intervention-tickets-acceptance-criter
      AC-J3 (a sender with no mapped Respond user id: the send still
             succeeds and the webhook is SKIPPED, never sent with a CRM
             users.id UUID as the Respond user id)
-     AC-J6 (the call carries the X-CRM-Webhook-Secret shared-secret header;
-            an unset secret degrades to "sent without the header + warning",
-            never to a blocked send)
+     AC-J6 (the call carries the X-CRM-Webhook-Secret shared-secret header on
+            the HTTP request and NEVER in the persisted log row; an unset
+            secret degrades to "sent without the header + warning", never to a
+            blocked send)
 PLAN: documentation/plans/sla/PLAN-conversation-intervention-tickets.md (S4.1)
 
 The webhook is asserted at its real seam - the ``n8n_crm_chat_outbound``
@@ -240,11 +241,49 @@ def _webhook_payloads(db):
     return [json.loads(row.request_payload) for row in _webhook_logs(db)]
 
 
-def _webhook_headers(db):
+def _persisted_headers(db):
+    """What the log row STORES. The shared secret must never appear here."""
     return [
         json.loads(row.request_headers) if row.request_headers else {}
         for row in _webhook_logs(db)
     ]
+
+
+class _NoCloseSession:
+    def __init__(self, inner):
+        self._inner = inner
+
+    def close(self):  # noqa: D401 - deliberate no-op
+        return None
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def _run_pending_webhook_sends(db, monkeypatch):
+    """Run the daemon-thread body inline with the HTTP boundary mocked.
+
+    Returns the list of {url, payload, headers} the webhook service was asked to
+    POST - the only place the AC-J6 secret is allowed to exist.
+    """
+    import app.database as database_module
+    from app.services.crm_chat_outbound_webhook import (
+        send_crm_chat_outbound_webhook_for_log,
+    )
+    from app.services.webhook_service import WebhookService
+
+    calls: list[dict] = []
+
+    def _fake_send(_self, url, payload, headers=None):
+        calls.append({"url": url, "payload": payload, "headers": dict(headers or {})})
+        return True, 200, {"ok": True}, None, None
+
+    monkeypatch.setattr(WebhookService, "send_webhook", _fake_send)
+    monkeypatch.setattr(database_module, "SessionLocal", lambda: _NoCloseSession(db))
+
+    for log in _webhook_logs(db):
+        send_crm_chat_outbound_webhook_for_log(str(log.id))
+    return calls
 
 
 def _template_message_endpoint():
@@ -300,9 +339,6 @@ def test_drawer_text_send_fires_the_respond_send_user_webhook_once(db):
         "the mirror lanes dedupe on the Respond messageId (AC-J5)"
     )
     assert envelope["message"]["message"]["text"] == "hello there"
-    assert _webhook_headers(db)[0][SECRET_HEADER] == WEBHOOK_SECRET, (
-        "AC-J6: the n8n branch gates on the shared secret, fail-closed"
-    )
 
 
 def test_drawer_attachment_send_fires_the_webhook_once(db):
@@ -525,9 +561,10 @@ def _send_text(db, seed, tracking_id):
         )
 
 
-def test_every_webhook_caller_carries_the_shared_secret_header(db):
+def test_every_webhook_caller_carries_the_shared_secret_header(db, monkeypatch):
     """Uniform emission: the PR-notification callers of the same enqueue path
-    gain the header too, so n8n can eventually gate the whole webhook."""
+    gain the header too, so n8n can eventually gate the whole webhook. Asserted
+    on the HTTP request, which is the only place the secret exists."""
     seed = _seed(db)
     t1 = _create_ticket(db, seed)
 
@@ -545,7 +582,55 @@ def test_every_webhook_caller_carries_the_shared_secret_header(db):
         respond_user_id_fallback=SENDER_RESPOND_ID,
     )
 
-    assert _webhook_headers(db) == [{SECRET_HEADER: WEBHOOK_SECRET}]
+    calls = _run_pending_webhook_sends(db, monkeypatch)
+    assert len(calls) == 1
+    assert calls[0]["headers"][SECRET_HEADER] == WEBHOOK_SECRET, (
+        "AC-J6: the n8n branch gates on the shared secret, fail-closed"
+    )
+
+
+def test_the_shared_secret_never_sits_at_rest_in_the_log_row(db, monkeypatch):
+    """A credential written to integration_log.request_headers is readable by
+    anyone with log-view permission, and stays readable in history after a
+    rotation. It belongs on the request and nowhere else."""
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed)
+    _send_text(db, seed, str(t1.id))
+
+    persisted = _persisted_headers(db)
+    assert len(persisted) == 1
+    assert SECRET_HEADER not in persisted[0]
+    assert WEBHOOK_SECRET not in json.dumps(persisted[0])
+    row = _webhook_logs(db)[0]
+    assert WEBHOOK_SECRET not in (row.request_headers or ""), (
+        "the secret must be absent from the stored row, however it is shaped"
+    )
+
+    calls = _run_pending_webhook_sends(db, monkeypatch)
+    assert calls[0]["headers"][SECRET_HEADER] == WEBHOOK_SECRET, (
+        "and yet the request that leaves the CRM carries it"
+    )
+    row = _webhook_logs(db)[0]
+    assert WEBHOOK_SECRET not in (row.request_headers or ""), (
+        "sending must not write it back either"
+    )
+
+
+def test_a_resend_resolves_the_current_secret_not_the_one_in_force_at_write_time(
+    db, monkeypatch
+):
+    """The rotation case, which is exactly why the header is not persisted."""
+    from app.config import settings
+
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed)
+    _send_text(db, seed, str(t1.id))
+
+    monkeypatch.setattr(settings, "n8n_crm_webhook_secret", "zzt-rotated", raising=False)
+    monkeypatch.setenv("N8N_CRM_WEBHOOK_SECRET", "zzt-rotated")
+
+    calls = _run_pending_webhook_sends(db, monkeypatch)
+    assert calls[0]["headers"][SECRET_HEADER] == "zzt-rotated"
 
 
 def test_an_unset_secret_still_sends_the_webhook_and_warns(db, monkeypatch, caplog):
@@ -559,12 +644,14 @@ def test_an_unset_secret_still_sends_the_webhook_and_warns(db, monkeypatch, capl
     seed = _seed(db)
     t1 = _create_ticket(db, seed)
 
-    with caplog.at_level(logging.WARNING):
-        result = _send_text(db, seed, str(t1.id))
-
+    result = _send_text(db, seed, str(t1.id))
     assert result["sent_as"] == "text"
     assert len(_webhook_payloads(db)) == 1, "the webhook still goes out"
-    assert _webhook_headers(db)[0].get(SECRET_HEADER) is None
+
+    with caplog.at_level(logging.WARNING):
+        calls = _run_pending_webhook_sends(db, monkeypatch)
+
+    assert calls[0]["headers"].get(SECRET_HEADER) is None
     assert any(
         "N8N_CRM_WEBHOOK_SECRET" in record.getMessage() for record in caplog.records
     ), "an unset secret must be visible in the log"
@@ -573,17 +660,6 @@ def test_an_unset_secret_still_sends_the_webhook_and_warns(db, monkeypatch, capl
 # --------------------------------------------------------------------------- #
 # AC-J2 - no other send path fires it                                          #
 # --------------------------------------------------------------------------- #
-
-
-class _NoCloseSession:
-    def __init__(self, inner):
-        self._inner = inner
-
-    def close(self):  # noqa: D401 - deliberate no-op
-        return None
-
-    def __getattr__(self, name):
-        return getattr(self._inner, name)
 
 
 def test_the_shared_chat_panel_send_never_fires_the_webhook(db, monkeypatch):

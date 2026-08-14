@@ -1,6 +1,6 @@
 """Integration logging service for business logic."""
 from sqlalchemy.orm import Session
-from typing import Optional, List
+from typing import Dict, List, Optional
 from datetime import datetime
 import json
 import logging
@@ -770,6 +770,7 @@ class IntegrationLogService:
         log_id: str,
         *,
         force_resend: bool = False,
+        extra_headers: Optional[Dict[str, str]] = None,
     ) -> tuple[bool, Optional[str]]:
         """
         Send webhook request for a specific integration log.
@@ -778,6 +779,12 @@ class IntegrationLogService:
             log_id: Integration log ID
             force_resend: If True, send even when status is success/sent and skip max-retry guard
                 (used for manual attachment "Resubmit" with a refreshed payload).
+            extra_headers: Headers merged over the log's stored ones for THIS request only.
+                They are never persisted, which is what credentials need: a shared secret
+                written to `request_headers` would be readable by anyone who can view
+                integration logs, and would stay readable in history after a rotation.
+                Resolving it per send also means a resubmit uses the CURRENT secret
+                rather than replaying a stale one.
 
         Returns:
             Tuple of (success: bool, error_message: Optional[str])
@@ -819,7 +826,9 @@ class IntegrationLogService:
                 headers = json.loads(log.request_headers)
             except (json.JSONDecodeError, TypeError):
                 headers = None
-        
+        if extra_headers:
+            headers = {**(headers or {}), **extra_headers}
+
         # Send webhook
         success, status_code, response_data, error_code, error_message = self.webhook_service.send_webhook(
             url=log.endpoint,
