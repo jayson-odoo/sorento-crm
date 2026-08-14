@@ -4,8 +4,9 @@
 **UAC:** `spec-authoring-verification-acceptance-criteria.md` (the contract - this plan fulfils it)
 **Classification:** CORE, schema `public`, normal FKs
 **Status:** DRAFT - pre-code. Section D revised 2026-08-14: the captain settled the verification
-screen as a standard product list with per-row and bulk Verify/Unverify, and required that a
-verification be manually reversible. Three decisions still open (see "Decisions").
+screen as a standard product list with per-row and bulk Verify/Unverify, required that a
+verification be manually reversible, and settled that an exception is answered by correcting the
+value rather than by a resolve workflow. Two decisions still open (see "Decisions").
 
 ## Goal
 
@@ -112,22 +113,52 @@ demotion for 695 codes, and PR 4 gets blamed for a PR 1 omission.
 the promote migration rather than assuming it. `flyer_source_boost` stays a separate knob so the
 two can be retuned apart.
 
-### C4 - nothing in the system can resolve a `ProductSpecException` (load-bearing, PR 3)
+### C4 - an exception is answered by fixing the value, not by a resolve workflow (settled by the captain, 2026-08-14)
 
-The captain settled that a product with open exceptions cannot be verified. Correct rule - but
-there is no `resolved_at` writer anywhere in the backend outside the models module, and
-`derive_for_code` deletes open rows and re-inserts whatever it currently flags. Measured: **258
-codes carry open exceptions**, 237 of them `shape_mismatch`, which is raised deterministically
-from stored dimension columns a merchandiser cannot change by editing specs.
+The captain settled that a product with open exceptions cannot be verified. That rule stands. The
+question was what "resolving" one means, and the answer changed after the 258 blocked codes were
+actually inspected rather than counted.
 
-Shipped as designed, those 258 codes are permanently unverifiable and the screen offers no way
-out - the worst possible outcome for a screen whose promise is "the next thing to do is on top".
+**What they are.** All 258 were pulled and read:
 
-**Correction:** PR 3 ships a resolve action **and** changes the exception rebuild from
-delete-and-reinsert to an upsert carrying `resolved_at` forward when the reason and payload are
-unchanged (a changed payload is a new fact and correctly re-opens). If the captain will not fund
-this, the only honest alternative is to downgrade the block to a prominent warning with a second
-confirm. **Do not ship the hard block without the escape.**
+| Reason | Codes | What it really is |
+|---|---|---|
+| `shape_mismatch` | 237 | **Not a defect.** 212 come from the `length == width` rule (`product_spec_derivation.py:1043-1050`): "the fingerprint of a round or square product forced into rectangular columns". A 1500x1500 tray gets flagged, correctly, and it is *permanently* true. Clustered: 27 codes at 1500x1500, 21 at 415x415, 19 at 460x460. The other 25 are the sibling case where the description says round, so the stored L/W/H are mis-keyed. |
+| `column_conflict` | 13 | Description reads `13X8X12`, columns hold 130/80/120 - centimetres against millimetres. The engine already resolves it correctly ("curated data outranks parsed text"); the flag just records that the description disagreed. |
+| `company_copies_disagree` | 5 | `brand` differs across the two company copies: `"SORENTO"` vs `"SORENTO, TP ENTERPRISE"`. |
+| `implausible_dimension` | 3 | Real description typos: `1300750X620MM` is a missing separator, `1800X1200X7400MM` claims a 7.4-metre height. |
+
+**An intermediate proposal was considered and rejected by the captain:** making the block
+reason-specific, so only "genuine" reasons block. Rejected as an unnecessary taxonomy. The people
+doing this work are the authority on the catalogue, and the simpler answer is that they correct
+the value and the system accepts it.
+
+**The correction, therefore, is the opposite of what this plan first said.** There is **no resolve
+action, no dismissal, no reason field and no `resolved_at` carry-forward.** Setting the right
+value *is* the resolution, and no justification is asked for.
+
+Two consequences, both of which make this slice smaller:
+
+1. **The existing delete-and-reinsert rebuild is correct and stays.** This plan previously called
+   it a defect to fix. It is the mechanism: correct the underlying fact and the flag simply is not
+   re-raised, with nothing to carry forward and no second source of truth about what is resolved.
+2. **One small code change is required**, without which the model does not actually work:
+   `flag()` appends unconditionally (`product_spec_derivation.py:646-649`) and never checks
+   whether a human already answered that key, so setting `shape` to square would see
+   `round_or_square` return on the very next run. Fix at the rebuild in `derive_for_code`, where
+   `spec.provenance` is already in hand: **drop any flag whose `spec_key` carries a value from
+   `AUTHORED_SOURCES`**. PR 1 is already restructuring that exact loop, so it lands with work
+   that is happening anyway.
+
+**This covers all 258**, because every flagged key is a spec key the editable table can set:
+`shape` (212), `diameter` (25), `dim_*` (16), `brand` (5). Nothing is left permanently stuck.
+
+**One limitation to state rather than discover.** Authoring `dim_length` or `brand` as a *spec*
+value does not rewrite the `products` column of the same name, so other consumers reading that
+column still see the old number. That is consistent with the premise of this milestone - the spec
+table is the source of truth for specs - but it means these exceptions are answered rather than
+their root cause repaired. Fixing the master column is a separate edit on the product, and for
+the 3 typo'd descriptions it is the better fix.
 
 ### C5 - the verification screen is a standard list, not a split-pane workbench (settled by the captain)
 
@@ -303,21 +334,22 @@ and the UAC; the files stay the contract and an issue that contradicts the UAC l
 |---|---|---|---|---|
 | 1 | Foundations: `product_spec_write` with `write_spec_row` + `merge_authored_over`, canonical hash, tombstone + merge change, fan-out, `human_override_conflict`, `AUTHORED_SOURCES`, `status` fix, `human_source_boost` row **and the source-keyed boost branch**, listener backstop | boost decision (settled) | 3-5 d | **5-7 d** |
 | 2 | Editable table (A) + pills (C) + inline add-value + add-key picker + `applicable_keys_for_code` + permission relaxation and grant sweep | PR 1 | 5-8 d | **9-13 d** |
-| 3 | Verification model + **standard list with bulk verify** (D) + exception resolve action | PR 1; PR 2 for the tab's editable table | 8-12 d | **10-15 d** |
+| 3 | Verification model + **standard list with per-row and bulk Verify/Unverify** (D) | PR 1; PR 2 for the tab's editable table | 8-12 d | **9-13 d** |
 | 4 | Prompt box + extraction proposals (B), batch apply, then promote migration + retirements + full re-derive | PR 1 (incl. the boost branch) | 6-10 d | **9-12 d** |
-| | **Milestone 1 total** | | **22-35 d** | **33-47 d** |
+| | **Milestone 1 total** | | **22-35 d** | **32-45 d** |
 
 ### On the estimate difference - reported, not hidden
 
-My total is **33-47 engineer-days against the design's 22-35**: roughly **+11 to +12 days**, or
-+40% at the midpoint. That is not a rounding error and it is not padding. Every PR came in above
+My total is **32-45 engineer-days against the design's 22-35**: roughly **+10 days**, or
++35% at the midpoint. That is not a rounding error and it is not padding. Every PR came in above
 the design's number, and each one for the same reason: the design priced the diff, not the slice.
 
-(The original figure was 35-49. The captain's decision to use a standard list rather than the
-split-pane workbench took **2 days off PR 3**: the split pane, the prefetch orchestration, the
-keyboard map and the cross-page cursor traversal all go, and the one-by-one review reuses the
-product detail page rather than a new route. Bulk verify adds back roughly a day for the
-endpoint, the per-code outcome reporting and its tests.)
+(The original figure was 35-49. Two captain decisions took it down. The standard list rather than
+the split-pane workbench took **2 days off PR 3** - no split pane, no prefetch orchestration, no
+keyboard map, no cross-page cursor traversal, and the one-by-one review reuses the product detail
+page rather than a new route - with row actions, bulk verify and unverify adding back about
+1.5 days. Dropping the resolve workflow in favour of "fix the value" (C4) took off another
+**1.5 days**, leaving a few hours for the authored-key flag filter.)
 
 The gap is almost entirely **unpriced items**, not resizing:
 
@@ -332,11 +364,12 @@ The gap is almost entirely **unpriced items**, not resizing:
   calls services directly from `useState` today; the tombstone rendering contract; a shared
   `SearchableSelect` change with cross-product blast radius; and 375px, where a five-column
   editable table does not survive.
-- **PR 3 (+2-3):** the exception resolve action (C4, ~1.5 d and without it the feature has a
-  visible dead end on day one); hash canonicalisation against 18,403 numeric and 408 array values,
-  each of which would otherwise produce phantom invalidations that look like a broken feature;
-  the bulk verify endpoint with per-code outcome reporting rather than all-or-nothing; stamping
-  `verified_by_name`; and the `spec_registry` grant hole it inherits from PR 2.
+- **PR 3 (+1-2):** hash canonicalisation against 18,403 numeric and 408 array values, each of
+  which would otherwise produce phantom invalidations that look like a broken feature; the bulk
+  verify and unverify endpoints with per-code outcome reporting rather than all-or-nothing;
+  stamping `verified_by_name` and `invalidated_by_name`; and the `spec_registry` grant hole it
+  inherits from PR 2. The exception dead end the design left open costs almost nothing to close
+  under C4 - a flag filter, not a workflow.
 - **PR 4 (+2):** the full-catalogue re-derive (removing the flyer from the input fingerprint
   invalidates all 11,415 codes and rewrites all 22,805 rows - an ops task with verification, not a
   side effect to discover when the nightly job runs long); the findability timing correction
@@ -412,7 +445,7 @@ No UI, so there is no UX to settle against a mock. Phase 2 only, test-first.
   locking, same-transaction hash compare and a distinguishable 409 taxonomy; the **bulk verify
   endpoint applying the same guards per code and returning per-code outcomes**; the **unverify
   endpoint** (single and bulk) stamping `manual_unverify` plus the actor, idempotent on a code
-  with no history; the exception resolve action and the rebuild carry-forward; the verification
+  with no history; the authored-key flag filter at the exception rebuild (C4); the verification
   block, row actions and single-product Verify/Unverify folded into the existing
   `by-product/{id}` response and the Specifications tab.
 - **No new detail route.** Row click goes to `products/{id}` on the Specifications tab, which
@@ -459,8 +492,10 @@ supplier acceptance).
 
 ## Risks
 
-- **The exception dead end (C4)** is the one that would embarrass us on day one: 258 codes
-  unverifiable with no way out. Mitigated by shipping the resolve action in the same PR.
+- **The exception dead end (C4)** would have embarrassed us on day one: 258 codes unverifiable
+  with no way out. Closed by the authored-key flag filter, so setting the right value answers the
+  flag. The residual risk is shipping the filter late: without it, every one of those 258 rows
+  shows a Verify button that always fails.
 - **The migration ordering window (C8)** is the one that loses data rather than time. Mitigated by
   shipping steps 2 and 3 together and by an exact, written downgrade.
 - **The boost branch omission (C3)** is a cross-PR dependency that fails silently and gets blamed
@@ -515,6 +550,8 @@ creation from the product page; an authored value always wins a conflict.
   actions, and row click into the existing product detail page's Specifications tab. This closes
   the one deviation that needed a sign-off, and it closes it by removing the deviation rather than
   approving it.
+- **An exception is answered by fixing the value** (C4), with no resolve action, no dismissal and
+  no reason field. Derivation stops flagging a key a person has answered.
 - **Bulk verify is required, and Verify/Unverify are row buttons.** The design's blanket "no bulk
   verify" is overruled; it only ever had force against blind whole-catalogue stamping, and it
   survives as the two narrow guards in C5 (page-scoped selection, and bulk applying the same
@@ -529,11 +566,7 @@ creation from the product page; an authored value always wins a conflict.
    one record's field list with inline editing, planned as a CSS grid. Worth settling before
    Phase 1 - if a reviewer rejects it late, the slice grows 1-2 days and the inline-edit UX
    degrades.
-2. **Funding the exception resolve action in PR 3 (C4).** If it is cut, the block must downgrade
-   to a warning with a second confirm. Do not ship the hard block without the escape. This one
-   matters more now: with bulk verify, 258 codes that can never be verified become 258 codes that
-   silently report as "skipped" in every batch a user runs.
-3. **Whether value near-duplicate checking must also be enforced server-side.** It is client-side
+2. **Whether value near-duplicate checking must also be enforced server-side.** It is client-side
    as planned, which protects the UI and nothing else. Key creation is guarded server-side because
    keys are catalogue-wide and milestone 2 needs it. +0.5 d if wanted for values too.
 4. **Whether to enable cross-page `selectAllMatching` later** (C5). Not wired now, so bulk covers

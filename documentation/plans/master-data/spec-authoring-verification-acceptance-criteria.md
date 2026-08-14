@@ -50,6 +50,7 @@ factual premises wrong, this UAC follows the code and the PLAN records the corre
 | D6 | **Provenance evidence is kept**, as a source badge with the evidence behind hover/expand, rather than a permanent column of text. |
 | D7 | **Creating a spec key from the product page requires `master_data.spec_registry.add`** - the same grant as the master screen, no new permission. Duplicate prevention is a UX obligation: match against existing keys and synonyms and offer the match before allowing a create. |
 | D8 | **An authored value always wins a conflict.** When derivation later disagrees with a hand-set value, the authored value stays in force and the disagreement is raised as `ProductSpecException(reason='human_override_conflict', ...)` on the existing "Needs a human" card until a person resolves it. **A product with open exceptions cannot be verified.** |
+| D9 | **An exception is answered by setting the correct value, and nothing else.** No resolve action, no dismissal, no reason field, no justification. The people doing this work are the authority on the catalogue; asking them to explain themselves to the system is bureaucracy, not control. Derivation therefore stops flagging a key once a person has answered it (AC-D.17). |
 
 ## Measured baseline (fresh, 2026-08-13, local DB = a copy of prod)
 
@@ -71,7 +72,8 @@ before this UAC was written, plus further measurements during sub-plan investiga
 Consequences carried into the ACs: M1 makes a grant sweep mandatory in-milestone (AC-A.11). M3
 means there is no drift to reconcile, so the fan-out is purely forward-looking (AC-F.4). M5
 invalidates the design's coverage source (AC-D.7). M6 cuts the worklist 24% (AC-D.6). M7 means
-the exceptions-block-verify rule is a dead end without a resolve action (AC-D.17). M8 names the
+the exceptions-block-verify rule is a dead end unless a person's correction stops the flag
+re-raising (AC-D.17). M8 names the
 hash canonicalisation traps (AC-F.10).
 
 ---
@@ -385,14 +387,23 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   (`exceptions_open`). A concurrent double-verify yields exactly one row.
 - **AC-D.5** `[BE]` GIVEN a code with open `ProductSpecException` rows WHEN verify is attempted
   THEN it is refused and the pane surfaces the exceptions inline (D8).
-- **AC-D.17** `[BE][FE]` GIVEN the exceptions-block-verify rule WHEN this slice ships THEN it
-  ships **with a way out**, because nothing in the system can resolve a `ProductSpecException`
-  today and 258 codes would otherwise be permanently unverifiable (M7) - 237 of them
-  `shape_mismatch`, which a merchandiser cannot clear by editing specs at all. Two parts: a
-  resolve route stamping `resolved_at`/`resolved_by`, rendered inline in the review pane; **and**
-  `derive_for_code`'s exception rebuild changes from delete-and-reinsert to an upsert that carries
-  `resolved_at` forward when the reason and payload are unchanged, so a resolution survives the
-  next derivation. A changed payload is a new fact and correctly re-opens.
+- **AC-D.17** `[BE]` GIVEN a flagged spec key WHEN a user sets that key's value by hand THEN the
+  exception is **answered and does not come back** on the next derivation. There is **no resolve
+  action, no dismissal, and no reason field**: the user is the authority on their own catalogue,
+  so correcting the value IS the resolution and no justification is required of them.
+  Implemented by filtering `result.exceptions` at the rebuild in `derive_for_code` - where
+  provenance is already in hand - to drop any flag whose `spec_key` carries a value from
+  `AUTHORED_SOURCES`. The existing delete-and-reinsert rebuild is **kept**: it is what makes a
+  corrected fact stop being flagged, with nothing to carry forward.
+- **AC-D.17b** `[BE]` GIVEN a key a user has answered WHEN the underlying data later changes so
+  the rules disagree with the authored value THEN the disagreement surfaces as
+  `human_override_conflict` (D8, AC-F.5), not as the original flag. An answered question does not
+  re-ask itself; a new question gets asked once.
+- **AC-D.17c** `[FE]` GIVEN an open exception WHEN it renders THEN it names the key it is about
+  and offers the edit for that key **in place**, so answering it is one action on the row rather
+  than a trip to another screen. GIVEN the measured baseline (M7) THEN every one of the 258
+  blocked codes is answerable this way, because every flagged key is a spec key: `shape` (212),
+  `diameter` (25), `dim_*` (16) and `brand` (5).
 - **AC-D.6** `[BE]` GIVEN the worklist WHEN it is served THEN discontinued codes are **excluded by
   default** with an include toggle, cutting the list from 11,415 to **8,812** (M6), and the
   progress line counts the same set it lists. Default order is needs-re-verify first, then
