@@ -4,7 +4,7 @@ import re
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func, update
 from sqlalchemy.exc import IntegrityError
-from typing import Optional
+from typing import Iterable, Optional
 from datetime import date, datetime, timezone, timedelta
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog, FormSLAConfig
 from app.models.access import RespondContact
@@ -13,6 +13,7 @@ from app.schemas.sla import (
     ConversationSLATrackingCreate, ConversationSLATrackingUpdate, ConversationSLAEventLogCreate
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
+from app.services import conversation_event_bus
 
 _module_logger = logging.getLogger(__name__)
 
@@ -1890,6 +1891,13 @@ class ConversationSLATrackingService:
         # Owner reassigned their own task away -> void the pending takeover (best-effort).
         if _pending is not None:
             _tk.void_for_tracking(tracking_id, "reassigned")
+        # Two worklists changed: the task left one pending list and joined
+        # another, so both owners are poked (AC-K3).
+        self._publish_conversation_event(
+            tracking,
+            conversation_event_bus.EVENT_TICKET_UPDATED,
+            user_ids=[old_assignee_id, target_user_id],
+        )
         return tracking
 
     def _write_reassignment_log(
@@ -2537,6 +2545,13 @@ class ConversationSLATrackingService:
         from app.services.sla_takeover_service import SlaTakeoverService
 
         SlaTakeoverService(self.db).void_for_tracking(str(tracking.id), "escalated")
+        # Both tiers refetch: the task left the breaching owner's list and
+        # landed on the next tier's (AC-K3).
+        self._publish_conversation_event(
+            tracking,
+            conversation_event_bus.EVENT_TICKET_UPDATED,
+            user_ids=[prev_assigned_to_id, getattr(tracking, "assigned_to_id", None)],
+        )
         return tracking
 
     # ---- Extend resolution deadline (PLAN-sla-extend-deadline) ---------------
@@ -2821,6 +2836,13 @@ class ConversationSLATrackingService:
         # Best-effort: notify the NEXT escalation tier only (notify-only - no tier /
         # clock mutation). Never raise (must not 500 a successful extend).
         self._notify_next_tier_deadline_extended(tracking, reason=reason)
+        # The resolve-by countdown on the widget row just moved (AC-K3). Form
+        # rows share this method and are filtered out by the publisher.
+        self._publish_conversation_event(
+            tracking,
+            conversation_event_bus.EVENT_TICKET_UPDATED,
+            user_ids=[getattr(tracking, "assigned_to_id", None)],
+        )
         return tracking
 
     def _notify_next_tier_deadline_extended(
@@ -3890,6 +3912,11 @@ class ConversationSLATrackingService:
                 self._write_assign_event_log(existing, covered_for_id=coverage_covered_for_id)
                 self._notify_assignment_on_create(existing)
                 self._fan_out_assignment_coverage(existing)
+                self._publish_conversation_event(
+                    existing,
+                    conversation_event_bus.EVENT_TICKET_CREATED,
+                    user_ids=[getattr(existing, "assigned_to_id", None)],
+                )
                 setattr(existing, "_overwrote_resolved", True)
                 setattr(existing, "_in_working_hours", in_working_hours)
                 return existing
@@ -3929,6 +3956,14 @@ class ConversationSLATrackingService:
         self._write_assign_event_log(tracking, covered_for_id=coverage_covered_for_id)
         self._notify_assignment_on_create(tracking)
         self._fan_out_assignment_coverage(tracking)
+        # AC-K3: the assignee's pending-tasks widget shows this ticket now, not
+        # at the next poll. The idempotent-retry returns above deliberately do
+        # NOT reach here - nothing changed, so nothing needs refetching.
+        self._publish_conversation_event(
+            tracking,
+            conversation_event_bus.EVENT_TICKET_CREATED,
+            user_ids=[getattr(tracking, "assigned_to_id", None)],
+        )
         setattr(tracking, "_in_working_hours", in_working_hours)
         return tracking
 
@@ -4155,6 +4190,12 @@ class ConversationSLATrackingService:
         from app.models.user import User
 
         tracking = self.get_tracking(tracking_id)
+
+        # Snapshot the owner BEFORE anything is applied: resolving a
+        # conversation ticket deliberately UNSETS assigned_to_id (so n8n stops
+        # looking at the row), and the person whose pending list the ticket is
+        # leaving is exactly who needs to be told it left (S4.2, AC-K3).
+        assignee_before_update = getattr(tracking, "assigned_to_id", None)
 
         update_data = tracking_data.model_dump(exclude_unset=True)
 
@@ -4464,6 +4505,15 @@ class ConversationSLATrackingService:
         if already_responded_skipped:
             setattr(tracking, "_already_responded", True)
 
+        # AC-K3: the shared write path for resolve, respond and assignment
+        # changes - one poke covers every route that funnels through here.
+        # Both owners: a resolve clears the assignee, an assignment change
+        # replaces them, and either way two pending lists can be stale.
+        self._publish_conversation_event(
+            tracking,
+            conversation_event_bus.EVENT_TICKET_UPDATED,
+            user_ids=[assignee_before_update, getattr(tracking, "assigned_to_id", None)],
+        )
         return tracking
 
     def _has_other_open_conversation_siblings(
@@ -5215,6 +5265,52 @@ class ConversationSLATrackingService:
             "responded_resolution_overdue_breakdown": responded_resolution_overdue_breakdown,
         }
 
+    def _publish_conversation_event(
+        self,
+        tracking: ConversationSLATracking,
+        event_type: str,
+        *,
+        user_ids: Iterable[Optional[str]] = (),
+    ) -> None:
+        """Poke the live-thread stream about this ticket (UAC AC-K3, slice S4.2).
+
+        Conversation scope ONLY: form-SLA stage rows share this table and belong
+        to the form detail pages, not to the ticket drawer or the conversation
+        worklist, so they never reach this channel (same discrimination as
+        ``conversation_tracking_scope``, applied on the row in hand).
+
+        One event per distinct user whose worklist changed - a reassign or an
+        escalation changes TWO pending lists, and poking only the new owner
+        leaves the old one showing a task they no longer hold. Each event also
+        carries the contact so an open drawer refetches.
+
+        Post-commit and best-effort in every direction: the row is already
+        saved, so a broker outage may cost liveness (the FE's slow poll takes
+        over) but must never surface as a failure for work that succeeded.
+        """
+        from app.services.form_sla_service import FORM_SLA_TYPES
+
+        try:
+            if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+                return
+            contact_id = self._respond_io_identifier_for_tracking(tracking)
+            entity_id = str(getattr(tracking, "id", "") or "") or None
+            recipients = {str(u) for u in user_ids if u}
+            for user_id in sorted(recipients) or [None]:
+                conversation_event_bus.publish(
+                    event_type,
+                    contact_id=contact_id,
+                    user_id=user_id,
+                    entity_id=entity_id,
+                )
+        except Exception:  # noqa: BLE001 - the mutation already committed
+            _module_logger.warning(
+                "conversation event publish failed for tracking %s (%s).",
+                getattr(tracking, "id", "?"),
+                event_type,
+                exc_info=True,
+            )
+
     def _respond_io_identifier_for_tracking(self, tracking: ConversationSLATracking) -> Optional[str]:
         if tracking.contact and getattr(tracking.contact, "respond_io_id", None):
             s = str(tracking.contact.respond_io_id).strip()
@@ -5379,6 +5475,14 @@ class ConversationSLATrackingService:
                 assigned_to_id=aid,
                 reason=reason,
             )
+        )
+        # Only the request that actually stopped the clock pokes (the early
+        # return above covers the loser of the race and every later send): the
+        # response chip changed for this ticket, nothing else did.
+        self._publish_conversation_event(
+            tracking,
+            conversation_event_bus.EVENT_TICKET_UPDATED,
+            user_ids=[getattr(tracking, "assigned_to_id", None)],
         )
         return tracking
 

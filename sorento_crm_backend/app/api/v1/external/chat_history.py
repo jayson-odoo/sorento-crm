@@ -19,6 +19,7 @@ from app.schemas.external.chat_history import (
     ChatHistoryMessagesResponse,
 )
 from app.schemas.integration import IntegrationLogCreate
+from app.services import conversation_event_bus
 from app.services.chat_message_resolver import respond_ts_from_message_id
 from app.services.integration_service import IntegrationLogService
 
@@ -186,6 +187,17 @@ def ingest_chat_message(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to ingest chat history message.",
+        )
+
+    # AC-K1: poke every drawer open on this contact so the thread refetches
+    # within seconds instead of waiting for its slow poll. NOT on the dedupe
+    # path (AC-K4/AC-J5): the second mirror lane resolves the row the first one
+    # already announced, so a second poke would be a wasted refetch on every
+    # open drawer. `payload.contact_id` IS the Respond.io contact id the bus
+    # keys on, so nothing is resolved here.
+    if not already_existed:
+        conversation_event_bus.publish(
+            conversation_event_bus.EVENT_MESSAGE, contact_id=payload.contact_id
         )
 
     # 201 either way: the caller (n8n) treats anything else as a lane failure and
