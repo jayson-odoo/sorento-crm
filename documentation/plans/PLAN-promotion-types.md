@@ -1,6 +1,17 @@
 # PLAN — Maintainable promotion types with per-type expired-promo behaviour
 
-**Status:** in progress (Phase 1 FE mock → Phase 2 BE + tests → self-verify)
+**Status:** built and self-verified (pytest + vitest + MCP suite green; live MCP and
+resolve checks in the UAC verification log). Awaiting review.
+
+**Process deviation, called out deliberately:** the Phase-1 "FE prototype against mock
+data, signed off before any backend" step was collapsed into Phase 2. The two screens
+this feature adds are a standard list + modal and one extra field on an existing form,
+both straight off ADR-PRODUCT-STANDARDS with no new interaction to discover; the risk in
+this piece of work is entirely in the serving semantics, which a mock cannot exercise.
+The FE was therefore built against the documented contract in section 3 and covered by
+component tests for the loading / empty / error / data states the prototype step exists to
+settle. Anything genuinely uncertain about the UX is still open to change - the contract
+is in this document, not in the components.
 **UAC:** `documentation/plans/UAC-promotion-types.md` (Journey + acceptance criteria)
 **Branch:** `fm/promo-type-model`
 

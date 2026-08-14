@@ -227,3 +227,93 @@ def test_list_reports_how_many_promotions_use_each_type():
 
         listed = _service(db).list_promotion_types()
         assert [(row.type_code, row.promotions_count) for row in listed] == [("clearance", 1)]
+
+
+# --- retyping a promotion (UAC V3, V4, C5) ---------------------------------
+
+
+def test_update_stamps_manual_and_survives_the_schema():
+    """The edit form's field has to reach the service, not be dropped in the schema.
+
+    `PromotionUpdate` does not inherit `PromotionBase`, so this is the failure that
+    would otherwise look like "the select saves but the value never changes".
+    """
+    from app.schemas.marketing import PromotionUpdate
+    from app.services.marketing_service import PromotionService
+
+    module = _load_migration()
+    with blank_session() as db:
+        _run_seed(db, module)
+        standard = db.query(PromotionType).filter(PromotionType.type_code == "standard").one()
+        special = db.query(PromotionType).filter(PromotionType.type_code == "special").one()
+
+        promo = Promotion(
+            id=str(uuid.uuid4()),
+            description="ZZT SORENTO SPECIAL PROMO",
+            access_levels=["dealer"],
+            promotion_type_id=special.id,
+            promotion_type_source="auto",
+        )
+        db.add(promo)
+        db.commit()
+
+        payload = PromotionUpdate.model_validate({"promotion_type_id": str(standard.id)})
+        assert payload.promotion_type_id == str(standard.id)
+
+        updated = PromotionService(db).update_promotion(str(promo.id), payload)
+
+        assert updated.promotion_type_id == str(standard.id)
+        assert updated.promotion_type_source == "manual"
+        assert updated.promotion_type_code == "standard"
+
+
+def test_update_can_clear_the_type_back_to_unclassified():
+    from app.schemas.marketing import PromotionUpdate
+    from app.services.marketing_service import PromotionService
+
+    module = _load_migration()
+    with blank_session() as db:
+        _run_seed(db, module)
+        special = db.query(PromotionType).filter(PromotionType.type_code == "special").one()
+        promo = Promotion(
+            id=str(uuid.uuid4()),
+            description="ZZT SPECIAL",
+            access_levels=["dealer"],
+            promotion_type_id=special.id,
+            promotion_type_source="auto",
+        )
+        db.add(promo)
+        db.commit()
+
+        updated = PromotionService(db).update_promotion(
+            str(promo.id), PromotionUpdate.model_validate({"promotion_type_id": None})
+        )
+
+        assert updated.promotion_type_id is None
+        assert updated.promotion_type_source == "manual"
+
+
+def test_update_leaves_the_type_alone_when_the_field_is_omitted():
+    from app.schemas.marketing import PromotionUpdate
+    from app.services.marketing_service import PromotionService
+
+    module = _load_migration()
+    with blank_session() as db:
+        _run_seed(db, module)
+        special = db.query(PromotionType).filter(PromotionType.type_code == "special").one()
+        promo = Promotion(
+            id=str(uuid.uuid4()),
+            description="ZZT SPECIAL",
+            access_levels=["dealer"],
+            promotion_type_id=special.id,
+            promotion_type_source="auto",
+        )
+        db.add(promo)
+        db.commit()
+
+        updated = PromotionService(db).update_promotion(
+            str(promo.id), PromotionUpdate.model_validate({"description": "ZZT SPECIAL renamed"})
+        )
+
+        assert updated.promotion_type_id == str(special.id)
+        assert updated.promotion_type_source == "auto"

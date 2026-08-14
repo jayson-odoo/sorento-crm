@@ -93,16 +93,35 @@ def _promotion_is_expired(promotion, today: date) -> bool:
     )
 
 
-def _stamp_promotion_type_fields(promotions, verdict=None) -> None:
+def _promotion_type_labels(db: Session, type_ids) -> dict[str, tuple]:
+    """`{type_id: (type_code, type_name)}` for the ids on one page, in one query.
+
+    The relationship would answer this too, but lazily and once per row: a 50-row
+    page of promotions is 50 extra round trips to fetch at most five distinct
+    types. Same batching the attachments and product counts already do.
+    """
+    ids = [str(i) for i in dict.fromkeys(i for i in type_ids if i)]
+    if not ids:
+        return {}
+    rows = (
+        db.query(PromotionType.id, PromotionType.type_code, PromotionType.type_name)
+        .filter(PromotionType.id.in_(ids))
+        .all()
+    )
+    return {str(type_id): (code, name) for type_id, code, name in rows}
+
+
+def _stamp_promotion_type_fields(db: Session, promotions, verdict=None) -> None:
     """Copy the type's code/name onto each row, and the expired-but-usable flag.
 
     The API never returns a bare `promotion_type_id` for display -- the UI rule is
     no UUIDs on screen, and the bot needs the code to phrase the answer.
     """
+    labels = _promotion_type_labels(db, [p.promotion_type_id for p in promotions])
     for promotion in promotions:
-        promo_type = getattr(promotion, "promotion_type", None)
-        promotion.promotion_type_code = getattr(promo_type, "type_code", None)
-        promotion.promotion_type_name = getattr(promo_type, "type_name", None)
+        code, name = labels.get(str(promotion.promotion_type_id), (None, None))
+        promotion.promotion_type_code = code
+        promotion.promotion_type_name = name
         if verdict is not None:
             promotion.expired_but_usable = verdict.is_expired_but_usable(promotion.id)
 
@@ -676,7 +695,7 @@ class PromotionService:
             )
             # Python mirror of active_clause — see `_promotion_is_expired`.
             promotion.is_expired = _promotion_is_expired(promotion, today)
-        _stamp_promotion_type_fields(promotions, verdict)
+        _stamp_promotion_type_fields(self.db, promotions, verdict)
 
         payload = {
             "data": promotions,
@@ -893,7 +912,7 @@ class PromotionService:
                 self._load_attachments_for_promotion_ids([resolved_pid]).get(resolved_pid, []),
                 contact_access_codes,
             )
-            _stamp_promotion_type_fields([promotion])
+            _stamp_promotion_type_fields(self.db, [promotion])
             return promotion
 
         promotion = (
@@ -923,7 +942,7 @@ class PromotionService:
             self._load_attachments_for_promotion_ids([resolved_pid]).get(resolved_pid, []),
             contact_access_codes,
         )
-        _stamp_promotion_type_fields([promotion])
+        _stamp_promotion_type_fields(self.db, [promotion])
 
         return promotion
 
@@ -981,7 +1000,7 @@ class PromotionService:
 
         self.db.commit()
         self.db.refresh(promotion)
-        _stamp_promotion_type_fields([promotion])
+        _stamp_promotion_type_fields(self.db, [promotion])
         publish_embedding_event(
             self.db,
             source_type="promotion",
@@ -1508,15 +1527,20 @@ class PromotionProductService:
         # document for the SKU they just asked about.
         parent_pids = list({p.promotion_id for p in products})
         attachments_map = _load_attachments_by_promotion_ids(self.db, parent_pids)
+        parent_type_labels = _promotion_type_labels(
+            self.db, [getattr(p.promotion, "promotion_type_id", None) for p in products]
+        )
         for line in products:
             line.promotion_attachments = attachments_map.get(line.promotion_id, [])
             # Row-level expiry of the PARENT promotion, mirroring the promotions
             # list — lets MCP/n8n say "found but expired" for fallback/historical
             # lines instead of presenting them as live.
             line.is_expired = _promotion_is_expired(line.promotion, today)
-            parent_type = getattr(line.promotion, "promotion_type", None)
-            line.promotion_type_code = getattr(parent_type, "type_code", None)
-            line.promotion_type_name = getattr(parent_type, "type_name", None)
+            code, name = parent_type_labels.get(
+                str(getattr(line.promotion, "promotion_type_id", None)), (None, None)
+            )
+            line.promotion_type_code = code
+            line.promotion_type_name = name
             if serving_verdict is not None:
                 line.expired_but_usable = serving_verdict.is_expired_but_usable(line.promotion_id)
 
@@ -2206,13 +2230,19 @@ class PromotionAttachmentService:
         offset = (page - 1) * limit
         promotion_attachments = q_final.offset(offset).limit(limit).all()
 
+        attachment_type_labels = _promotion_type_labels(
+            self.db,
+            [getattr(pa.promotion, "promotion_type_id", None) for pa in promotion_attachments],
+        )
         for pa in promotion_attachments:
             # Row-level expiry of the parent promotion — mirrors the promotions /
             # promotion-products lists so MCP/n8n can say "found but expired".
             pa.is_expired = _promotion_is_expired(pa.promotion, today)
-            parent_type = getattr(pa.promotion, "promotion_type", None)
-            pa.promotion_type_code = getattr(parent_type, "type_code", None)
-            pa.promotion_type_name = getattr(parent_type, "type_name", None)
+            code, name = attachment_type_labels.get(
+                str(getattr(pa.promotion, "promotion_type_id", None)), (None, None)
+            )
+            pa.promotion_type_code = code
+            pa.promotion_type_name = name
             if serving_verdict is not None:
                 pa.expired_but_usable = serving_verdict.is_expired_but_usable(pa.promotion_id)
 

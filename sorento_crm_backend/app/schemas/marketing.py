@@ -134,6 +134,13 @@ class PromotionUpdate(BaseModel):
     end_date: Optional[date] = None
     is_active: Optional[bool] = None
     access_levels: Optional[list[str]] = None
+    # Retyping a promotion is the one-click fix for a misclassified upload, and
+    # the service stamps `promotion_type_source = "manual"` when it arrives. This
+    # class does NOT inherit PromotionBase, so a field added there alone would be
+    # dropped here and the edit would silently do nothing. Explicit null clears
+    # the type (the service reads `model_dump(exclude_unset=True)`, so an omitted
+    # key still means "leave it alone").
+    promotion_type_id: Optional[str] = None
 
     @field_validator("start_date", "end_date", mode="before")
     @classmethod
