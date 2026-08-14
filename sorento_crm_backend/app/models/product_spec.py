@@ -201,8 +201,12 @@ class ProductSpecifications(Base):
     )
     # {"diameter": {"value": 407, "unit": "mm"}, "material": {"value": "ceramic"}}
     values = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
-    # Same keys as `values`: {"source", "confidence", "evidence"}. `source='human'`
-    # marks a reviewer-confirmed value, which re-derivation must never overwrite.
+    # Same keys as `values`: {"source", "confidence", "evidence"}. A source in
+    # `product_spec_write.AUTHORED_SOURCES` marks a value a person set, which
+    # re-derivation must never overwrite - test membership in that set, never `==
+    # 'human'`. An authored entry may also carry `absent: true`, a tombstone saying this
+    # product does not have this spec, in which case the key is deliberately NOT in
+    # `values`. All three columns are written in `product_spec_write` and nowhere else.
     provenance = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     # The code-free spec sentence that gets embedded. Populated in T0d, not here.
     rendered_text = Column(Text, nullable=True)

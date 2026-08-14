@@ -10,13 +10,21 @@ Seeded at 1.5, matching `flyer_source_boost`, so the later migration that promot
 values to authored ones is ranking-neutral on the day it runs rather than a 1.5x to 1.0x
 demotion for 695 codes.
 
-Written as INSERT ... WHERE NOT EXISTS rather than by calling the seeder, so it is
-self-contained and cannot drift when the seed list changes. Idempotent: a second run
-inserts nothing.
+Written as a plain INSERT rather than by calling the seeder, so it is self-contained and
+cannot drift when the seed list changes. Idempotent through the unique constraint on
+`policy_key` (`uq_product_spec_search_policy_key`, from 311m): a second run conflicts and
+does nothing, with no read-then-write window for a concurrent run to slip through.
+
+On a FRESH database `311m`'s `seed_search_policy` has already inserted this row by the
+time this revision runs, so `upgrade()` no-ops there and `downgrade()` deletes a row that
+`311m` created rather than one this revision did. That asymmetry is inherent to seeding
+reference data idempotently from two places; it is stated here so nobody reads the
+downgrade as removing something it did not add.
 
 Revision ID: 356_human_source_boost_seed
 Revises: 885010d94677
 """
+import sqlalchemy as sa
 from alembic import op
 
 revision = "356_human_source_boost_seed"
@@ -36,17 +44,19 @@ HELP_TEXT = (
 
 def upgrade() -> None:
     op.execute(
-        f"""
-        INSERT INTO product_spec_search_policy (id, policy_key, label, value, help_text)
-        SELECT gen_random_uuid(), '{POLICY_KEY}', '{LABEL}', 1.5, '{HELP_TEXT}'
-        WHERE NOT EXISTS (
-            SELECT 1 FROM product_spec_search_policy WHERE policy_key = '{POLICY_KEY}'
-        )
-        """
+        sa.text(
+            """
+            INSERT INTO product_spec_search_policy (id, policy_key, label, value, help_text)
+            VALUES (gen_random_uuid(), :policy_key, :label, 1.5, :help_text)
+            ON CONFLICT (policy_key) DO NOTHING
+            """
+        ).bindparams(policy_key=POLICY_KEY, label=LABEL, help_text=HELP_TEXT)
     )
 
 
 def downgrade() -> None:
     op.execute(
-        f"DELETE FROM product_spec_search_policy WHERE policy_key = '{POLICY_KEY}'"
+        sa.text(
+            "DELETE FROM product_spec_search_policy WHERE policy_key = :policy_key"
+        ).bindparams(policy_key=POLICY_KEY)
     )

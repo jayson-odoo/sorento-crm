@@ -199,7 +199,9 @@ Raw SQL / DB query in a router · a React component calling axios/fetch directly
 soft-delete named "delete" · a hidden empty section on a detail page · a hand-rolled
 `<table className="table-fixed">` (use shared `DataGrid`) · a "done" slice still serving a mock ·
 a new column/engine with no backfill for existing rows · a new permission with no existing-role
-grant path · a new DB column missing from a manual dict builder · a non-searchable dropdown —
+grant path · a new DB column missing from a manual dict builder · a write to `spec.values` /
+`spec.provenance` / `spec.rendered_text` outside `app/services/product_spec_write.py` · a
+non-searchable dropdown —
 `@/components/ui/select`, raw `<select>`, or a hand-rolled `CommandInput` picker (every
 dropdown-select MUST use `SearchableSelect`/`SearchableMultiSelect` from `@/components/common`; see
 `ADR-PRODUCT-STANDARDS.md`).

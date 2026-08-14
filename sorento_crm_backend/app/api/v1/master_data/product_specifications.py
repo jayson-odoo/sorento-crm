@@ -350,6 +350,15 @@ async def set_spec_value_by_hand(
         value = int(number) if number.is_integer() else number
     else:
         value = str(value).strip()
+        if not value:
+            # An empty string is not a value, it is a removal wearing one. Stored, it
+            # canonicalises to nothing while derivation keeps producing something, so
+            # the merge would raise the same conflict on every run forever - in a table
+            # whose contract is exceptions only.
+            raise _spec_reject(
+                f"{row.label} cannot be blank. To take the value away, remove the "
+                f"specification instead."
+            )
         allowed = merged_allowed_values(row)
         if allowed and value not in allowed:
             raise _spec_reject(
@@ -411,6 +420,15 @@ async def clear_hand_set_spec_value(
     product = db.query(Product).filter(Product.id == product_id).first()
     if product is None:
         raise handle_not_found("Product", product_id)
+
+    if mode == "absent":
+        # A tombstone pins `status='authored'` on every copy of the code for good, so
+        # the key it names has to be one the registry knows - otherwise a typo writes a
+        # permanent provenance entry no registry-driven screen will ever show.
+        # `revert` is deliberately NOT checked: a key the registry has since dropped is
+        # still stored on rows, and handing it back to derivation must stay possible.
+        if db.query(ProductSpecRegistry).filter_by(spec_key=spec_key).first() is None:
+            raise handle_not_found("Spec key", spec_key)
 
     apply_spec_values(
         db,

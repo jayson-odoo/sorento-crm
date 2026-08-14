@@ -239,7 +239,7 @@ def write_spec_row(
     if derived_hash is not _UNCHANGED:
         spec.derived_hash = derived_hash
 
-    setattr(spec, _SANCTIONED_ATTR, True)
+    _mark_sanctioned(spec, values, provenance, spec.rendered_text)
 
 
 # --------------------------------------------------------------------------- #
@@ -332,8 +332,6 @@ def apply_spec_values(
     then left with the cleared hash this call gave it.
     """
     prepared = [_prepare(entry, actor) for entry in entries]
-    if not prepared:
-        return {"product_code": product_code, "rows_written": 0, "spec_keys": []}
 
     # Imported at call time: derivation imports this module, and this is the one edge
     # that would close the cycle.
@@ -342,16 +340,29 @@ def apply_spec_values(
     with company_scope(db, None):
         products = db.query(Product).filter(Product.product_code == product_code).all()
         if not products:
+            # Unconditional, and BEFORE the empty-batch return: an unknown code is an
+            # unknown code whether or not the caller had anything to write, and a
+            # 404-or-200 that turns on the length of the batch is a contract nobody can
+            # code against.
             raise AppException(
                 status_code=404,
                 message=f"No product carries the code {product_code}.",
                 code="product_not_found",
             )
 
+        if not prepared:
+            return {"product_code": product_code, "rows_written": 0, "spec_keys": []}
+
         existing = {
             spec.product_id: spec
             for spec in db.query(ProductSpecifications)
             .filter(ProductSpecifications.product_id.in_([p.id for p in products]))
+            # Locked for the duration: two people editing different keys on one code
+            # would otherwise both read the row, both write their whole `values` dict
+            # back, and the second commit would erase the first with nothing recording
+            # that it happened. PR 3's verify guard reads the same rows in the same
+            # transaction and needs the same lock.
+            .with_for_update()
             .all()
         }
         # Only the interim status until the re-derive below recomputes it, but an
@@ -407,6 +418,40 @@ def apply_spec_values(
 # --------------------------------------------------------------------------- #
 # the bypass backstop
 # --------------------------------------------------------------------------- #
+def _mark_sanctioned(spec, values, provenance, rendered_text) -> None:
+    """Record WHAT this write put on the row, not merely that a write happened.
+
+    The mark holds the objects themselves rather than their `id()`s. A dict that has
+    been replaced can be freed and its address handed straight to its replacement, so an
+    id comparison would occasionally sanction the very hand assignment this exists to
+    catch.
+    """
+    setattr(spec, _SANCTIONED_ATTR, (values, provenance, rendered_text))
+
+
+def _is_sanctioned(spec) -> bool:
+    """True only while the row still carries exactly what `write_spec_row` put there.
+
+    Per write, not per flush. `write_spec_row(...)` followed by a hand assignment and a
+    commit is the shape a future contributor writes, and clearing a boolean at the next
+    flush would let that through unreported: the hand assignment inherits the mark the
+    sanctioned write left behind.
+
+    An in-place mutation of the same dict is invisible here, but it is equally invisible
+    to SQLAlchemy - a plain JSONB column has no change tracking - so there is nothing to
+    report either way.
+    """
+    mark = getattr(spec, _SANCTIONED_ATTR, None)
+    if mark is None:
+        return False
+    values, provenance, rendered_text = mark
+    return (
+        spec.values is values
+        and spec.provenance is provenance
+        and spec.rendered_text == rendered_text
+    )
+
+
 def _bypassed_columns(spec: ProductSpecifications, *, pending: bool) -> list[str]:
     state = inspect(spec)
     names: list[str] = []
@@ -436,25 +481,33 @@ def register_spec_write_backstop() -> None:
 
     @event.listens_for(Session, "before_flush")
     def _collect(session, flush_context, instances):  # noqa: ANN001
-        pending = set(session.new)
-        for obj in list(session.new) + list(session.dirty):
-            if not isinstance(obj, ProductSpecifications):
-                continue
-            # The mark is per write, not per instance: a sanctioned write followed by a
-            # hand assignment on the same row must still be caught.
-            if getattr(obj, _SANCTIONED_ATTR, False):
-                setattr(obj, _SANCTIONED_ATTR, False)
-                continue
-            columns = _bypassed_columns(obj, pending=obj in pending)
-            if columns:
-                session.info.setdefault(_BYPASS_KEY, []).append(
-                    (str(getattr(obj, "product_id", "") or ""), columns)
-                )
+        # Best-effort, like the report below. Reading attribute history can emit a lazy
+        # load on an expired attribute or raise `ObjectDeletedError` on a row someone
+        # else removed, and a diagnostic that 500s the write it only meant to observe
+        # inverts its own purpose.
+        try:
+            pending = set(session.new)
+            for obj in list(session.new) + list(session.dirty):
+                if not isinstance(obj, ProductSpecifications):
+                    continue
+                if _is_sanctioned(obj):
+                    continue
+                columns = _bypassed_columns(obj, pending=obj in pending)
+                if columns:
+                    session.info.setdefault(_BYPASS_KEY, []).append(
+                        (str(getattr(obj, "product_id", "") or ""), columns)
+                    )
+        except Exception:  # pragma: no cover - a backstop never blocks a write
+            logger.warning("spec write backstop could not inspect the flush", exc_info=True)
 
     @event.listens_for(Session, "after_soft_rollback")
     def _discard(session, previous_transaction):  # noqa: ANN001
         # A write that was rolled back never happened, and reporting it against the
-        # next commit would name the wrong caller.
+        # next commit would name the wrong caller. The limit: this drops EVERY pending
+        # report on the session, so a rolled-back savepoint also discards bypasses
+        # collected against the transaction around it. A missed warning is the cheap
+        # side of that trade; tracking per-savepoint state is not worth it in a
+        # diagnostic.
         session.info.pop(_BYPASS_KEY, None)
 
     @event.listens_for(Session, "after_commit")
