@@ -1821,7 +1821,14 @@ def _emit_spec_matches(
                 "product_name": candidate["summary"],
                 "via_token": token,
                 "class": candidate.get("class"),
+                # What this product IS, as `{key: value}`. Without it the caller
+                # can rank rows it cannot describe: "here are five sinks" with no
+                # way to say which one is the 1.2mm one the customer asked for.
+                "specifications": candidate.get("specifications", {}),
                 "matched_specs": candidate.get("matched_specs", []),
+                # Keys a standing house preference added, kept apart from the ones
+                # the customer's own words earned - two different sentences.
+                "preferred_specs": candidate.get("preferred_specs", []),
                 "is_discontinued": candidate.get("is_discontinued", False),
             },
         }
@@ -2013,6 +2020,11 @@ def resolve_reference_post(
         # What the customer asked for that nothing offered can satisfy. The caller says
         # "no Cabana one, here are Sorento" rather than silently substituting.
         result["spec_unmet"] = found["unmet"]
+        # What the sentence was READ as asking for, as the ranker resolved it and
+        # AFTER free terms bound. The caller can then say "you asked for 1.2mm"
+        # without re-parsing the customer's words with a second, different reader.
+        # House preferences are absent by construction: they are not asks.
+        result["spec_asked"] = found["asked_for"]
         # The other half of the same honesty, and a different sentence: `spec_unmet`
         # is a KNOWN key the catalogue is silent on ("thickness isn't recorded for
         # these"), this is a word that bound to nothing at all ("I don't know what

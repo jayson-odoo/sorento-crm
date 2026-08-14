@@ -131,6 +131,21 @@ def _summarise(values: dict, rendered: str | None) -> str:
     return rendered or ""
 
 
+def values_only(values: dict | None) -> dict:
+    """The stored spec block as `{key: value}`, wire-lean.
+
+    Storage keeps each value in its own envelope (`{"value": 1.2, "unit": "mm"}`)
+    because derivation needs somewhere to put the unit. A renderer needs the
+    number. A list stays a list - two finishes on one product is one value, not
+    two keys - and a key holding no value is simply not offered.
+    """
+    return {
+        key: entry["value"]
+        for key, entry in (values or {}).items()
+        if isinstance(entry, dict) and entry.get("value") is not None
+    }
+
+
 # Customers do not write in one unit. The catalog is millimetres throughout, so every
 # quantity is normalised to mm through this table before it is compared. Adding a unit
 # is a row here, not a new code path.
@@ -776,6 +791,12 @@ def search_specs(
         # match anything at all" stays answerable after they are applied.
         penalty = 0.0
         matched: list[str] = []
+        # Keys the HOUSE put there, kept apart from the ones the customer earned.
+        # Reported separately for the same reason the score is split: a renderer
+        # reading "matched: brand" could not tell "you asked for Sorento" from "we
+        # like Sorento", and told the customer they had asked for something they
+        # never said.
+        preferred: list[str] = []
 
         for entry in specs:
             key, target = entry.get("key"), entry.get("value")
@@ -869,14 +890,14 @@ def search_specs(
         # that outranked their own words would be a bug wearing a boost's clothes.
         # It is a tie-breaker by design - it lands on top of whatever the specs scored,
         # so it reorders equally-good answers without promoting a worse one.
-        for key, preferred in house_preferences.items():
+        for key, weighted in house_preferences.items():
             if key in stated:
                 continue
             held = str((values.get(key) or {}).get("value") or "").lower()
-            bonus = preferred.get(held)
+            bonus = weighted.get(held)
             if bonus:
                 score += bonus
-                matched.append(key)
+                preferred.append(key)
 
         # Discontinued still sells - it is ranked below a live equivalent, not hidden.
         # Applied as a PENALTY rather than a filter for the same reason as everything
@@ -906,7 +927,16 @@ def search_specs(
                 "product_code": product.product_code,
                 "summary": _summarise(values, spec_row.rendered_text),
                 "class": (values.get("class") or {}).get("value"),
+                # What this product IS, values only. The shortlist has to be able to
+                # say "this one is 1.2mm, that one 1.0mm" or the customer cannot tell
+                # the rows apart, and a code is not an answer to a description.
+                # Evidence, provenance and unit stay behind: they are review data,
+                # and this rides a reply path.
+                "specifications": values_only(values),
+                # What the customer's OWN WORDS earned. A house preference is
+                # reported next door, never here (see `preferred`).
                 "matched_specs": sorted(set(matched)),
+                "preferred_specs": sorted(set(preferred)),
                 "score": round(score, 4),
                 # Kept only to test the floor, then dropped before the caller sees it.
                 "_evidence": round(evidence - penalty, 4),
