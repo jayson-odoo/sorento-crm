@@ -844,6 +844,59 @@ Each slice is a vertical tracer through model, migration, service, route and tes
 
 ---
 
+## 13. What the first corpus run changed
+
+Full results: `documentation/plans/ideation/chatbot-media-endpoint-corpus-results.md`. Run on
+`openai` / `gpt-4o-mini`, the model the live `AIAssistantConfig` resolves to.
+
+**What held up.** Trap A (five codes on one line, one subject) and Trap B (`#N/A` is not a line
+item) both passed on the real document. Trap E passed cleanly - product size and box dimension
+both captured under distinct kinds on an angled warehouse photo - which confirms the section 4.1
+diagnosis that the carton failure was schema coverage rather than vision, and it is the strongest
+result of the run. Trap C's core mechanism held too: the printed-versus-handwritten disagreement
+was detected, both sources named, and the entity marked `confident: false` rather than silently
+picking one.
+
+**Four defects it exposed, all mine rather than the model's, all fixed in the prompt and schema
+above.**
+
+1. **Conflict confidence leaked across lines.** `_apply_conflicts` matched attributes to a
+   conflict by `kind` alone, so one genuine quantity conflict marked four unrelated and correct
+   quantities `confident: false` on the same document. `MediaAttribute` now carries `entity_raw`
+   and the prompt requires it on any per-line value. This one matters more than its size suggests:
+   S4-03's entire value is that `confident: false` means something, and a flag that cries wolf on
+   correct lines destroys exactly that.
+2. **Dates had nowhere to go.** No entity hint fits a bare date and there was no attribute kind
+   for one, so a perfectly legible `13/08/2026` was dropped - and rule 3, the ambiguous-date rule,
+   was therefore unreachable. A `document_date` attribute kind now exists. Without it S4-04 could
+   never have been satisfied, and the drop looked identical to a misread from the output side.
+3. **Form reference numbers had nowhere to go either.** A delivery-order number fits hint `order`,
+   but a return-authorisation number fits nothing, so it was dropped on one image and stretched
+   into hint `attachment` on another. A `document_number` attribute kind now exists.
+4. **An entity could reappear as a spurious attribute.** A product code repeated inside a
+   description came back a second time as `batch_number`. The prompt now forbids it and the schema
+   drops an attribute whose `raw` duplicates an emitted entity.
+
+**One prompt gap it exposed.** On the skewed, stamped, written-on photo the model returned the
+whole line-item table and *nothing at all* from the header block - customer, debtor code, RMA
+number, issue date, issuer, agent. Not degraded, absent. New rule 11 makes the header an explicit,
+named target and says to read it even when the page is skewed or stamped. A feature whose
+confirmation message exists so the dealer can say "is that what I meant?" cannot ask about fields
+it never attempted.
+
+**A recommendation that follows from the evidence, and it resolves the degraded-model gap.**
+On `gpt-4o-mini` the run misread a printed `6` as `16` inside an otherwise correct conflict, and
+silently omitted a legible barcode. Those are model-tier failures, not prompt failures. So:
+**set `media_image_model` to a stronger vision model as the standard tier and leave
+`gpt-4o-mini` as `media_image_degraded_model`.** That makes the degraded tier meaningful rather
+than inert, gives the quota somewhere real to degrade to, and closes the section 12.1 item 2 gap
+without inventing a default nobody chose. It is a settings change, not a deploy.
+
+**What is still not verified.** Because image 02's header was never attempted, the two specific
+baseline defects the plan names for that image - `J&Y` read as `JAY`, and `11/08/2026` read as
+November - remain **unverified rather than fixed**. Rules 1 and 3 could not be scored on a field
+the model did not attempt. The re-run after these fixes is what tests them.
+
 ## Appendix A - the extraction system prompt
 
 This is the design, not a sketch. Transcribe it into `app/services/media_extract/prompts.py` as a
@@ -875,12 +928,22 @@ An ENTITY is a value someone could look a record up by. Each entity is:
 
 An ATTRIBUTE is a value that describes a thing but is not something you look a record up by.
 Each attribute is:
-  {{"kind": "<one of: batch_number, barcode, box_dimension, product_size, quantity>",
+  {{"kind": "<one of: batch_number, barcode, box_dimension, product_size, quantity,
+             document_number, document_date>",
     "raw": "<the string exactly as printed>",
+    "entity_raw": "<the code or line this value belongs to, or null if it describes the whole
+                    document>",
     "confident": true or false}}
 
 Never put an attribute in `entities` under an approximate hint. If a value does not fit a hint
 in the list, it is an attribute or it is left out.
+
+Never emit an attribute whose `raw` is a value you have already emitted as an entity. A product
+code repeated inside a description line is the SAME entity, not a new attribute, and it is never
+a batch number.
+
+Always set `entity_raw` on an attribute that belongs to one line of a multi-line document, so a
+quantity on one line is not confused with a quantity on another.
 
 RULES THAT APPLY TO EVERY IMAGE
 
@@ -923,27 +986,39 @@ IF THE IMAGE IS A DOCUMENT (delivery order, return authorisation, invoice, sprea
 10. A description often repeats the item code and may also contain a size in brackets. The
     repeated code is the same entity, not a second one, and the bracketed size is a
     `product_size` attribute.
+11. READ THE HEADER BLOCK BEFORE THE TABLE, and read it even when the page is skewed, stamped or
+    written on. The header is the top area carrying the customer or debtor name, the debtor code,
+    the document's own reference number, the date it was issued, and who issued it. These are as
+    important as the line items, and on a photographed page they are the fields most often
+    skipped. Emit the customer as an entity with hint `customer`; emit a delivery-order number as
+    an entity with hint `order`; emit any other document reference, such as a return
+    authorisation number, as a `document_number` attribute; emit the issue date as a
+    `document_date` attribute. If you can see one of these and cannot read it confidently, emit
+    it with `confident: false` rather than leaving it out.
 
 IF THE IMAGE IS A LABEL (a carton, a shelf label, a box in someone's hand)
 
-11. Read every labelled field present. These labels are usually a plain list of
+12. Read every labelled field present. These labels are usually a plain list of
     "KEY : VALUE" lines. Expect and look for: MODEL, SIZE, QTY, BOX DIMENSION, BATCH NO, and a
     barcode.
-12. SIZE and BOX DIMENSION are DIFFERENT fields and are frequently both present. SIZE is the
+13. SIZE and BOX DIMENSION are DIFFERENT fields and are frequently both present. SIZE is the
     product; BOX DIMENSION is the carton it ships in. Never report one as the other, and never
     merge them. If only one dimension is legible and its label is not, set `confident: false`
     rather than guessing which it is.
-13. Report a barcode only from digits printed beside or beneath the bars. Do not attempt to
-    decode the bars themselves, and do not read a QR code.
-14. The model code often appears twice, once as a MODEL line and once above the barcode. That is
+14. A barcode is a REQUIRED field to look for on a label, not an optional extra. Read it from the
+    digits printed beside or beneath the bars, which are usually in a corner and in a smaller
+    font than the KEY : VALUE lines. Do not attempt to decode the bars themselves, and do not
+    read a QR code. If the digits are present but you cannot read them all, emit what you can see
+    with `confident: false` rather than omitting the field.
+15. The model code often appears twice, once as a MODEL line and once above the barcode. That is
     one entity, not two.
 
 THE CAPTION
 
-15. The caption is the strongest signal for what each value means. "check stock for these" over a
+16. The caption is the strongest signal for what each value means. "check stock for these" over a
     carton makes the model code a product. "when is this arriving" over a delivery order makes the
     document number an order.
-16. If there is NO caption, or the caption's intent is unclear, still extract everything you can,
+17. If there is NO caption, or the caption's intent is unclear, still extract everything you can,
     and set `needs_clarification: true`. Do not guess what the customer wants done with the photo.
     Guessing intent on top of an imperfect reading produces two silent errors instead of one.
 
