@@ -34,13 +34,94 @@ class TemplateMessageSendRequest(BaseModel):
     params: dict[str, str] = Field(default_factory=dict)
     # Optional intervention-ticket id: a template sent from the ticket drawer is
     # a real reply and must stop THAT ticket's response clock (finding 4). Every
-    # other chat surface omits it and behaves exactly as before. The worker only
-    # honours it when the ticket's contact is the one that received the template.
+    # other chat surface omits it and behaves exactly as before. Its presence
+    # ALSO selects the synchronous send path (see _send_ticket_template_now):
+    # the drawer needs a truthful outcome, not a queued receipt. The stamp is
+    # only honoured when the ticket's contact is the one that received the
+    # template.
     tracking_id: Optional[str] = None
 
 
 class ChatMessageSendRequest(BaseModel):
     text: str = Field(..., min_length=1)
+
+
+def _send_ticket_template_now(
+    db: Session,
+    *,
+    identifier: str,
+    body: "TemplateMessageSendRequest",
+    business_table: str,
+    entity_id: str,
+    sender_user_id: Optional[str],
+    pre: dict,
+) -> dict:
+    """Deliver a ticket-drawer template send IN-REQUEST and answer the truth.
+
+    The queued path answers ``{ok: true, queued: true}`` the moment the job is
+    in Redis: with no worker draining ``respond_io`` the operator sees a
+    success toast, the ticket's response clock never stamps, and NO
+    ``integration_log`` row exists until something drains the queue (observed:
+    a template sat queued for four hours). That breaks the invariant that every
+    Respond send writes an outbox row on success AND failure, and the drawer is
+    the one caller that needs the outcome to render its own state - so a send
+    naming a ``tracking_id`` runs here instead.
+
+    This route is a plain ``def``, which FastAPI already runs in its external
+    threadpool, so the blocking Respond call never touches the event loop.
+    ``send_manual_template_for`` writes the outbox itself on both outcomes and
+    re-raises on failure; we translate that into a 502 the composer can show.
+    The response-clock stamp is a post-send side effect: best-effort, never
+    fatal (the contact already has the message).
+    """
+    from app.services.error_handler import AppException
+    from app.services.respond_chat_template_service import send_manual_template_for
+
+    try:
+        send_manual_template_for(
+            db,
+            identifier=identifier,
+            template_id=body.template_id,
+            params=body.params,
+            business_table=business_table,
+            business_id=entity_id,
+            created_by=sender_user_id,
+        )
+    except AppException:
+        raise
+    except Exception as e:  # noqa: BLE001 - the outbox row is already written
+        logger.exception(
+            "Manual template send failed for %s %s", business_table, entity_id
+        )
+        raise AppException(
+            status_code=502,
+            message="Failed to send the template. Please try again.",
+            detail=str(e),
+            code="respond_send_failed",
+        )
+
+    try:
+        from app.services.sla_service import ConversationSLATrackingService
+
+        ConversationSLATrackingService(db).mark_ticket_responded_by_id(
+            str(body.tracking_id),
+            responded_by_user_id=sender_user_id,
+            reason="CRM reply (sent_as=template)",
+            expect_respond_io_id=identifier,
+        )
+    except Exception:  # noqa: BLE001 - the message is already delivered
+        logger.warning(
+            "template send: response-clock stamp failed for %s",
+            body.tracking_id,
+            exc_info=True,
+        )
+
+    return {
+        "ok": True,
+        "queued": False,
+        "template_name": pre["template_name"],
+        "rendered_body": pre["rendered_body"],
+    }
 
 
 def build_chat_template_router(
@@ -96,6 +177,17 @@ def build_chat_template_router(
         pre = precheck_manual_template(
             db, template_id=body.template_id, params=body.params
         )
+
+        if body.tracking_id:
+            return _send_ticket_template_now(
+                db,
+                identifier=identifier,
+                body=body,
+                business_table=business_table,
+                entity_id=str(entity_id),
+                sender_user_id=str(current_user.get("id") or "") or None,
+                pre=pre,
+            )
 
         from app.services.queue_service import enqueue_job
         from app.tasks.respond_io_tasks import deliver_manual_template

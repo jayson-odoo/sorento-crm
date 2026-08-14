@@ -1012,8 +1012,9 @@ def test_manual_template_stamp_refuses_a_ticket_belonging_to_another_contact(db,
     assert t1.is_responded is False
 
 
-def test_template_message_route_passes_tracking_id_to_the_worker(monkeypatch):
-    """The route wiring: tracking_id on the body reaches deliver_manual_template."""
+def test_template_message_route_without_a_tracking_id_still_enqueues(monkeypatch):
+    """Every chat panel except the ticket drawer omits tracking_id: those keep
+    the fire-and-forget worker path, unchanged."""
     from app.api.v1 import _respond_chat_template_routes as routes_module
 
     captured: dict = {}
@@ -1032,7 +1033,7 @@ def test_template_message_route_passes_tracking_id_to_the_worker(monkeypatch):
     )
 
     router = routes_module.build_chat_template_router(
-        business_table="conversation_sla_tracking",
+        business_table="complaints",
         resolver=lambda _db, _eid: ("10025531", "contact-1"),
     )
     endpoint = next(
@@ -1041,14 +1042,128 @@ def test_template_message_route_passes_tracking_id_to_the_worker(monkeypatch):
         if getattr(r, "path", "") == "/{entity_id}/conversation/template-message"
     )
 
-    tracking_id = str(uuid.uuid4())
-    endpoint(
+    result = endpoint(
         "entity-1",
-        routes_module.TemplateMessageSendRequest(
-            template_id="tpl-1", params={}, tracking_id=tracking_id
-        ),
+        routes_module.TemplateMessageSendRequest(template_id="tpl-1", params={}),
         db=MagicMock(),
         current_user={"id": "user-1", "name": "Agent One"},
     )
 
-    assert captured["args"][-1] == tracking_id
+    assert result["queued"] is True
+    assert captured["func"].__name__ == "deliver_manual_template"
+    assert captured["args"][-1] is None
+
+
+# --------------------------------------------------------------------------- #
+# The drawer's "Send template" was fire-and-forget: it enqueued on the         #
+# respond_io queue and answered {ok: true, queued: true} whether or not a      #
+# worker existed. With no worker listening the FE toasted success, the ticket  #
+# clock never stamped, and NO outbox row was written for hours - breaking the  #
+# "every Respond send writes an integration_log on success AND failure"        #
+# invariant (AC-D3). A send named by a tracking_id now happens in-request and  #
+# reports what actually happened.                                             #
+# --------------------------------------------------------------------------- #
+
+
+class _FakeTemplateClient:
+    """Stand-in for RespondClient on the manual-template path."""
+
+    def __init__(self, raises=None):
+        self.calls = []
+        self.raises = raises
+
+    def send_template_message(self, identifier, **kwargs):
+        self.calls.append((identifier, kwargs))
+        if self.raises is not None:
+            raise self.raises
+        return {"id": "m-template"}
+
+
+def _template_message_endpoint():
+    from app.api.v1 import _respond_chat_template_routes as routes_module
+
+    router = routes_module.build_chat_template_router(
+        business_table="conversation_sla_tracking",
+        resolver=lambda _db, _eid: ("10025531", None),
+        chat_use_case="conversation_chat",
+    )
+    return routes_module, next(
+        r.endpoint
+        for r in router.routes
+        if getattr(r, "path", "") == "/{entity_id}/conversation/template-message"
+    )
+
+
+def test_template_send_from_a_ticket_is_synchronous_and_writes_the_outbox(db, monkeypatch):
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed, source_message_id="wamid.msg-1")
+    tpl = _seed_chat_default(db)
+
+    def _never(*_a, **_k):  # pragma: no cover - asserted by the test
+        raise AssertionError("a ticket template send must NOT be enqueued")
+
+    monkeypatch.setattr("app.services.queue_service.enqueue_job", _never)
+    client = _FakeTemplateClient()
+    routes_module, endpoint = _template_message_endpoint()
+
+    with patch("app.services.integration_service.RespondClient", return_value=client):
+        result = endpoint(
+            str(t1.id),
+            routes_module.TemplateMessageSendRequest(
+                template_id=str(tpl.id),
+                params={"1": "Agent One", "2": "hello there"},
+                tracking_id=str(t1.id),
+            ),
+            db=db,
+            current_user={"id": seed["assignee_id"], "name": "Agent One"},
+        )
+
+    assert result["ok"] is True
+    assert result["queued"] is False
+    assert result["template_name"] == "chat_reply"
+    assert len(client.calls) == 1
+
+    rows = _outbox_rows(db, t1.id)
+    assert len(rows) == 1
+    assert rows[0].status == "success"
+    assert "whatsapp_template" in rows[0].request_payload
+
+    db.refresh(t1)
+    assert t1.is_responded is True, "a template reply stops the response clock too"
+    assert str(t1.responded_by) == seed["assignee_id"]
+
+
+def test_template_send_failure_is_reported_and_still_writes_a_failed_outbox_row(db, monkeypatch):
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed, source_message_id="wamid.msg-1")
+    tpl = _seed_chat_default(db)
+
+    monkeypatch.setattr(
+        "app.services.queue_service.enqueue_job",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not enqueue")),
+    )
+    client = _FakeTemplateClient(raises=RuntimeError("Respond 401 unauthorized"))
+    routes_module, endpoint = _template_message_endpoint()
+
+    with patch("app.services.integration_service.RespondClient", return_value=client):
+        with pytest.raises(AppException) as ei:
+            endpoint(
+                str(t1.id),
+                routes_module.TemplateMessageSendRequest(
+                    template_id=str(tpl.id),
+                    params={"1": "Agent One", "2": "hello there"},
+                    tracking_id=str(t1.id),
+                ),
+                db=db,
+                current_user={"id": seed["assignee_id"], "name": "Agent One"},
+            )
+
+    assert ei.value.status_code == 502
+    assert ei.value.detail["code"] == "respond_send_failed"
+
+    rows = _outbox_rows(db, t1.id)
+    assert len(rows) == 1
+    assert rows[0].status == "failed"
+
+    db.refresh(t1)
+    assert t1.is_responded is False, "a template that never landed must not stop the clock"
