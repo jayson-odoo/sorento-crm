@@ -1,7 +1,7 @@
 # PLAN — Conversation Intervention Tickets
 
-Status: Phase 1 DONE (e91b225ce, browser-verified); Phase 2 S2a-S2c DONE (722e281f9, 498ec3e21, 3143155e0, 00a4e0f1c); S2d in progress
-UAC: conversation-intervention-tickets-acceptance-criteria.md
+Status: Phases 1-3 DONE (PR #137 open); defect batch D1-D6 in flight; Phase 4 (parity + liveness) PLANNED 2026-08-14, awaiting user review
+UAC: conversation-intervention-tickets-acceptance-criteria.md (sections J/K/L/M + B3/B4 added 2026-08-14)
 
 ## Decision summary
 
@@ -138,6 +138,85 @@ UAC: conversation-intervention-tickets-acceptance-criteria.md
   USER DECISION AT FLIP APPROVAL: keep or kill the contact-facing "conversation closed
   and resolved" auto-message (currently kept, gated).
   resolved_by pollution check: clean (zero non-UUID / orphan values on dev DB).
+
+## Phase 4 — Omnichannel parity + liveness (planned 2026-08-14, dogfooding feedback)
+
+Grounded on three read-only investigations (send-path diagnosis, n8n trigger trace with
+live execution payloads, Respond API v2 capability inventory). Defect batch D1-D6
+(attachment isinstance, /conversation threadpool, template sync-for-drawer, duplicate
+refetch + poll fallback + silent-degrade guard, window-state TTL cache, widget
+Reassign/Extend on ticket rows) runs ahead of this phase as straight fixes against the
+existing UAC.
+
+### S4.1 Human-send signal (UAC J) [BE coder + n8n peer]
+
+- CRM side: call `enqueue_crm_chat_outbound_webhook(...)` from the human ticket-drawer
+  send path (`send_chat_message_for` return / `send_ticket_message`), best-effort
+  post-commit, payload per the established `crm_chat_outbound_webhook.py` builder
+  (single-element array, `source: "User"`, real Respond user id via
+  `_webhook_agent_respond_id`, `crm.business_id` = tracking id). Covers text, attachment,
+  template sends. Never from bot paths.
+- Ingest idempotency (AC-J5): `POST /api/v1/external/chat_history/messages` upserts on
+  Respond `messageId` - kills the double-mirror (webhook lane + Respond trigger lane)
+  at our boundary. Check existing PR-notification sends for historical duplicates.
+- n8n peer edit (AC-J4): wire the webhook lane into the `If source == "User"` branch so
+  `Update a Contact` (is_human_intervened) + ht lane arm for CRM sends. Safe: the
+  webhook carries only CRM human traffic. Also fixes what a manual Respond reply already
+  gets. Peer session owns the edit; verify with a pin-data run before publish.
+
+### S4.2 Live thread via server push (UAC K) [BE coder + FE coder]
+
+- Transport: SSE endpoint on FastAPI (`/api/v1/sla-management/conversation-events/stream`),
+  Redis pub/sub bridge so API + worker processes can publish. No websocket infra.
+- Publishers: chat ingest (inbound message -> event keyed by respond_contact_id),
+  ticket create/clock mutations (-> event keyed by assignee user id).
+- Subscribers: drawer (refetch thread on contact event; open drawers only - AC-K2),
+  pending-tasks widget (refetch on assignee event - AC-K3). 10-15s poll stays as
+  fallback (already added in D4b) and is suppressed while the stream is healthy.
+- Idempotent by construction: events carry ids; FE refetches rather than appending
+  pushed payloads (AC-K4).
+
+### S4.3 Internal comments with @mention (UAC L1-L3) [BE coder + FE coder]
+
+- Model: `conversation_ticket_comments` (id, tracking_id FK, author_id, body,
+  mentioned_user_ids uuid[], respond_comment_mirrored bool, created_at). CRM DB is the
+  source of truth (Respond has no comment read-back API - verified).
+- FE: comment mode toggle in the drawer composer (visually distinct, yellow-note style),
+  @ typeahead over CRM users, inline render in the thread. In-app notification + deep
+  link for mentioned users (existing notification service).
+- Mirror OUT (L2): best-effort `POST /v2/contact/{id}/comment` with `{{@user.<id>}}` for
+  mentioned users that map to Respond users. Mirror IN (L3): n8n forwards
+  `comment.created` webhooks to a new ingest route; dedupe by (contact, created_at,
+  text) since Respond gives no comment id in the webhook (verify payload at build time).
+
+### S4.4 Snippets + variables + emoji + AI assist (UAC L4-L5) [FE coder + BE coder]
+
+- `message_snippets` table + admin CRUD (UI-visible, workspace-global v1), "/" picker in
+  the composer, `$` variables resolved from ticket context at insert time.
+- Emoji picker: client-side component, insert at cursor.
+- AI assist: existing CRM AI assistant drafts into the composer input, grounded on the
+  visible thread; no new AI surface.
+
+### S4.5 Post-resolve reassurance + close semantics (UAC M) [FE coder + n8n peer]
+
+- Drawer stays open post-resolve in a Resolved state (badge, composer disabled, thread
+  readable); "recently resolved" affordance links to the SLA tracking listing filtered
+  to the contact.
+- n8n peer edits at flip: null-guard `resolved_by` in respond-close-convo (API closes
+  have `closedBy: null` - would write the literal string "undefined"); AC-M4 decision on
+  the contact-facing close message (default: keep, gated on no-open-tickets).
+
+### S4.6 Inbound quote rendering (UAC L6) [FE coder]
+
+- `message.received` webhook `replyTo` object -> ingest stores quoted context -> thread
+  renders "replying to" block above the message body. Outbound quoting stays the
+  existing prefix emulation (no API support - verified).
+
+### Phase 4 execution order
+
+S4.1 and S4.2 first (they close the two live operational gaps: bot does not pause, thread
+does not update). S4.3-S4.4 next (parity). S4.5-S4.6 last (polish). n8n edits batch into
+the existing flip window with the peer session; nothing publishes without the user's go.
 
 ## Execution model (per PRINCIPLES.md - named executor per step)
 

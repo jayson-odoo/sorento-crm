@@ -1,5 +1,6 @@
 """SLA tracking API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Response
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
@@ -1374,7 +1375,12 @@ async def send_intervention_ticket_message(
         reply_to_message_id = form.get("reply_to_message_id") or None
         reply_to_excerpt = form.get("reply_to_excerpt") or None
         for item in form.getlist("files"):
-            if isinstance(item, UploadFile) and item.filename:
+            # StarletteUploadFile, NOT fastapi.UploadFile: request.form() yields
+            # the starlette class, and fastapi.UploadFile is a strict SUBCLASS
+            # of it - so an isinstance check against the FastAPI class NEVER
+            # matched, files stayed empty, and every attachment send silently
+            # degraded to a text-only send (the outbox logged {"type": "text"}).
+            if isinstance(item, StarletteUploadFile) and item.filename:
                 content = await item.read()
                 files.append((content, item.filename, item.content_type or ""))
     else:

@@ -47,6 +47,21 @@ sees the comment, and the enquiry dies silently.
 8. **On breach**, existing escalation machinery fires per ticket.
 9. **Manager** sees all open tickets in the existing SLA tracking listing.
 
+Extended journey (Phase 4, added 2026-08-14 from live dogfooding feedback):
+
+5b. **Staff reply pauses the bot.** The moment a human sends from the drawer, the AI
+    assistant stops answering that contact (same behavior as a manual Respond-app reply
+    today: `is_human_intervened` set, "you're now chatting with our team" notice, ht
+    timeout lane armed). The staff member does nothing extra to make this happen.
+5c. **Assignee leaves an internal comment** on the ticket ("@Fanny can you check stock?").
+    The tagged colleague gets an in-app notification with a deep link. The contact never
+    sees comments.
+6b. **The thread updates itself.** When the contact replies, the open drawer and the
+    pending-tasks widget refresh within seconds - no tab refocus, no manual reload.
+7b. **Resolve leaves a reassurance trail.** After resolving, the assignee still sees the
+    just-resolved ticket (marked Resolved) instead of it vanishing mid-thought; the full
+    history remains one click away in the SLA tracking listing.
+
 ## Acceptance criteria
 
 Format: per-AC id, Given/When/Then, tagged [BE] / [FE] / [E2E] / [T] (T = has automated test).
@@ -208,6 +223,121 @@ Format: per-AC id, Given/When/Then, tagged [BE] / [FE] / [E2E] / [T] (T = has au
 - **AC-G1 [BE][T]** Given ticket creation, When the assignee has notify toggles on, Then
   in-app (always) + email/WhatsApp (per toggle) notifications fire with a deep link that
   survives the login redirect.
+
+### J. Human-send signal to n8n (Journey step 5b) - added 2026-08-14
+
+Grounding (verified from live n8n executions 2026-08-14): a CRM API send and a
+sorento-consume-main bot send are INDISTINGUISHABLE in Respond's webhook payload (both
+`source: "Developer API"`, `user: null`), so the Respond-trigger route can never carry
+this signal. `respond-send-user` already has a second, plain-webhook trigger that the CRM
+already calls for other notification sends (`crm_chat_outbound_webhook.py`,
+`source: "User"` with a real Respond user id) - the drawer send path just never wired
+into it.
+
+- **AC-J1 [BE][T]** Given a staff member sends any message (text, attachment, template)
+  from a ticket drawer, When the Respond send succeeds, Then the CRM calls the
+  `respond-send-user` direct webhook with the established payload shape (single-element
+  array, `user.id` = the staff member's mapped Respond user id, `source: "User"`,
+  `crm.business_id` = tracking id). Best-effort post-commit: a webhook failure logs and
+  never fails the send.
+- **AC-J2 [BE][T]** Given a bot message sent by sorento-consume-main, When it flows through
+  Respond, Then the direct webhook is NOT called by the CRM (the CRM never sends bot
+  traffic) and the Respond trigger's `source == "User"` gate keeps discarding it -
+  automated messages can never arm the human-intervened lane.
+- **AC-J3 [BE][T]** Given a staff member without a mapped Respond user id sends from the
+  drawer, When the webhook payload is built, Then the send still succeeds and the webhook
+  is either skipped or sent with a documented fallback id - never a CRM users.id UUID
+  leaked as a Respond user id (existing `_webhook_agent_respond_id` guard).
+- **AC-J4 [BE][E2E]** Given the webhook fires for a drawer send, When n8n processes it,
+  Then `is_human_intervened` is set on the Respond contact and the ht timeout lane arms,
+  identical to a manual Respond-app reply (n8n edit: the webhook lane joins the existing
+  `If source == "User"` branch; safe because the webhook carries only CRM traffic).
+- **AC-J5 [BE][T]** Given a drawer send that fires BOTH the direct webhook and Respond's
+  own outgoing-message trigger, When both lanes mirror the message to `chat_histories`,
+  Then exactly ONE row exists per Respond `messageId` - the ingest endpoint upserts
+  idempotently on message id instead of blind-inserting (fix at our boundary; no n8n
+  ordering assumptions).
+
+### K. Live thread - refresh on incoming, not polling (Journey step 6b) - added 2026-08-14
+
+- **AC-K1 [BE][FE][T]** Given an open drawer, When the contact sends an inbound WhatsApp
+  message, Then the thread shows it within a few seconds without tab refocus. Mechanism:
+  Respond `message.received` -> n8n (already wired) -> CRM ingest -> server push to the FE
+  (SSE), with the drawer's slow poll (10-15s) kept as fallback when the stream is down.
+- **AC-K2 [FE][T]** Given the drawer is closed, When events arrive for that contact, Then
+  the FE holds no open stream for it and schedules no polling - liveness costs nothing
+  when nothing is open.
+- **AC-K3 [BE][T]** Given the pending-tasks widget is visible, When a new ticket is created
+  or an open ticket's clocks change, Then the widget reflects it within the same few
+  seconds (same event channel, not a separate poller).
+- **AC-K4 [BE][T]** Given Respond or n8n replays/duplicates an event, When it reaches the
+  ingest, Then downstream pushes are idempotent - the drawer never renders a duplicate
+  message (pairs with AC-J5).
+
+### L. Composer parity - what Respond's own inbox offers (Journey steps 5, 5c) - added 2026-08-14
+
+Feasibility grounding (Respond API v2 inventory, 2026-08-14): comments ARE supported
+(create-only, `{{@user.<id>}}` mention syntax, `comment.created` webhook; NO read-back
+endpoint) - so the CRM DB is the comment source of truth. Snippets, variables, emoji,
+AI assist have NO Respond API (client-side features of their app) - ours are self-hosted
+equivalents. NOT buildable and explicitly out of scope: reactions (Respond itself has
+none), true outbound reply-to (no context param on the send API; quote-prefix emulation
+stays), sticker sends.
+
+- **AC-L1 [BE][FE][T]** Given a ticket drawer, When the assignee writes an internal comment
+  with an @mention (typeahead over CRM users), Then the comment persists in the CRM
+  (source of truth), renders inline in the thread visually distinct from messages, is
+  never sent to the contact, and the mentioned user gets an in-app notification with a
+  deep link to the ticket.
+- **AC-L2 [BE][T]** Given a comment is created in the CRM, When the contact is linked to a
+  Respond contact, Then the comment is best-effort mirrored to Respond's comment endpoint
+  (with `{{@user.<id>}}` for mentioned users that have a Respond mapping) so staff still
+  living in the Respond inbox see it; mirror failure logs and never fails the save.
+- **AC-L3 [BE][FE][T]** Given comments were made in Respond's own inbox, When n8n forwards
+  `comment.created` events to the CRM ingest, Then they appear in the ticket thread too -
+  both surfaces converge going forward (no backfill: Respond has no comment list API).
+- **AC-L4 [FE][T]** Given the composer, When the assignee types "/", Then a snippet picker
+  searches CRM-stored snippets (admin-managed CRUD, UI-visible per product standard);
+  picking one inserts its text with `$` variables already resolved from the ticket context
+  (contact name, assignee name, ticket reference). Snippets are workspace-global in v1.
+- **AC-L5 [FE]** Given the composer, When the assignee opens the emoji picker (":") or
+  uses AI assist, Then emoji insert inline and AI assist drafts a reply into the input
+  using the EXISTING CRM AI assistant grounded on the visible thread - no new AI surface.
+- **AC-L6 [FE][T]** Given inbound messages that quote an earlier message (webhook
+  `replyTo`), When rendered, Then the quoted context shows above the message body
+  (read-side parity even though outbound quoting stays emulation).
+
+### M. Post-resolve reassurance + Respond close semantics (Journey step 7b) - added 2026-08-14
+
+Grounding: CRM resolve already closes the Respond conversation (best-effort RQ job, gated
+on "no other open sibling ticket"), and `respond-close-convo` subscribes to api-sourced
+closes, so it WILL fire on our close once live. Two consequences need explicit handling.
+
+- **AC-M1 [FE][T]** Given the assignee resolves from the drawer, When the resolve succeeds,
+  Then the drawer stays open showing a Resolved state (badge, disabled composer, thread
+  still readable) until the user closes it - it never vanishes mid-thought.
+- **AC-M2 [FE][T]** Given a just-resolved ticket, When the pending-tasks widget refreshes,
+  Then the row leaves the pending list but a "recently resolved" affordance (drawer link
+  to the SLA tracking listing filtered to this contact) gives the one-click history path.
+- **AC-M3 [BE][T]** Given the CRM closes the Respond conversation on resolve, When
+  `respond-close-convo` fires with `closedBy: null` (API close has no acting user), Then
+  the n8n flow does not write the literal string "undefined" into `resolved_by` (n8n edit:
+  null-guard the expression; CRM-side: the idempotent resolve path ignores a stale PUT).
+- **AC-M4 [decision]** The contact-facing "your conversation is marked as closed and
+  resolved" message that respond-close-convo sends will now also fire for CRM resolves.
+  DECISION NEEDED at flip approval: keep (contact gets closure) or kill (silent close).
+  Default if unanswered: keep, gated on "contact has no open tickets" (already the CRM
+  close gate).
+
+### B-additions (widget actions on ticket rows) - added 2026-08-14
+
+- **AC-B3 [FE][T]** Given an Enquiry (intervention ticket) row in the pending-tasks widget,
+  When the user has the reassign permission, Then a Reassign action renders on the row
+  (backend endpoint is already entity-agnostic); clicking it opens the reassign flow, not
+  the drawer.
+- **AC-B4 [FE][T]** Given a ticket row with a resolution deadline (`due_at_resolution`
+  set), When the user has the extend permission, Then Extend renders and works exactly as
+  on Ticket/Complaint rows.
 
 ## No-regression strategy
 
