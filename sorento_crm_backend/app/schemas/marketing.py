@@ -13,12 +13,112 @@ from decimal import Decimal
 import uuid
 
 
+def _normalize_promotion_markers(v) -> list[str]:
+    """Markers are compared case-insensitively; store them lowercase and unique."""
+    if v is None:
+        return []
+    if isinstance(v, str):
+        v = v.split(",")
+    out: list[str] = []
+    for marker in v:
+        text = str(marker).strip().lower()
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
+class PromotionTypeBase(BaseModel):
+    type_code: str
+    type_name: str
+    description: Optional[str] = None
+    show_expired: bool = False
+    expired_valid_until_year_end: bool = False
+    expired_max_age_days: Optional[int] = Field(default=None, ge=0)
+    match_markers: list[str] = []
+    match_priority: int = 100
+    is_default: bool = False
+    sort_order: int = 0
+
+    @field_validator("match_markers", mode="before")
+    @classmethod
+    def _normalize_markers(cls, v):
+        return _normalize_promotion_markers(v)
+
+    @field_validator("type_code", mode="before")
+    @classmethod
+    def _normalize_code(cls, v):
+        return str(v).strip().lower() if v is not None else v
+
+
+class PromotionTypeCreate(PromotionTypeBase):
+    pass
+
+
+class PromotionTypeUpdate(BaseModel):
+    type_code: Optional[str] = None
+    type_name: Optional[str] = None
+    description: Optional[str] = None
+    show_expired: Optional[bool] = None
+    expired_valid_until_year_end: Optional[bool] = None
+    expired_max_age_days: Optional[int] = Field(default=None, ge=0)
+    match_markers: Optional[list[str]] = None
+    match_priority: Optional[int] = None
+    is_default: Optional[bool] = None
+    sort_order: Optional[int] = None
+
+    @field_validator("match_markers", mode="before")
+    @classmethod
+    def _normalize_markers_optional(cls, v):
+        if v is None:
+            return None
+        return _normalize_promotion_markers(v)
+
+    @field_validator("type_code", mode="before")
+    @classmethod
+    def _normalize_code_optional(cls, v):
+        return str(v).strip().lower() if v is not None else v
+
+
+class PromotionTypeResponse(PromotionTypeBase):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+    # How many promotions currently point at this type (list view only).
+    promotions_count: Optional[int] = 0
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        if v is None:
+            return None
+        return str(v)
+
+    class Config:
+        from_attributes = True
+
+
+class PromotionTypeSimple(BaseModel):
+    id: str
+    type_code: str
+    type_name: str
+    show_expired: bool = False
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        return str(v) if v is not None else None
+
+    class Config:
+        from_attributes = True
+
+
 class PromotionBase(BaseModel):
     description: Optional[str] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     is_active: bool = True
     access_levels: Optional[list[str]] = None
+    promotion_type_id: Optional[str] = None
 
 
 class PromotionCreate(PromotionBase):
@@ -109,6 +209,10 @@ class PromotionResponse(PromotionBase):
     created_by: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    # "auto" (classified from the file name) or "manual" (a human corrected it).
+    promotion_type_source: Optional[str] = None
+    promotion_type_code: Optional[str] = None
+    promotion_type_name: Optional[str] = None
     products_count: Optional[int] = 0
     products: Optional[list["PromotionProductResponse"]] = None
     promotion_groups: Optional[list["PromotionGroupResponse"]] = None
@@ -143,6 +247,15 @@ class PromotionListItemResponse(PromotionBase):
     # outside [start_date, end_date]. Lets callers (n8n) answer "found but
     # expired" instead of presenting fallback rows as live promotions.
     is_expired: bool = False
+    promotion_type_source: Optional[str] = None
+    promotion_type_code: Optional[str] = None
+    promotion_type_name: Optional[str] = None
+    # Only ever true alongside `is_expired`: the promotion has ended, and its
+    # TYPE says a salesman can still honour it (PP / focus item / standard until
+    # the end of the year, an A3 flyer for 180 days). Say it has expired but
+    # still applies. A `special` is never flagged this way -- it is not served at
+    # all once it ends.
+    expired_but_usable: bool = False
 
     @field_serializer("start_date", "end_date")
     def _serialize_promotion_boundary_dates_list(self, v: Optional[date]) -> Optional[str]:
@@ -289,6 +402,10 @@ class PromotionProductResponse(BaseModel):
     # today outside [start_date, end_date]. Mirrors the promotions list so
     # callers (n8n) can answer "found but expired" for fallback / historical rows.
     is_expired: bool = False
+    promotion_type_code: Optional[str] = None
+    promotion_type_name: Optional[str] = None
+    # The parent promotion has ended and its TYPE says it still applies.
+    expired_but_usable: bool = False
 
     @field_validator("id", "promotion_id", "promotion_group_id", "product_id", mode="before")
     @classmethod
@@ -310,6 +427,7 @@ class PromotionProductResponse(BaseModel):
                 'id', 'promotion_id', 'promotion_group_id', 'product_id', 'discount_amount', 'discount_percent',
                 'dealer_discount_percent', 'dealer_cost', 'list_to_dealer_margin_amount',
                 'created_at', 'updated_at', 'promotion', 'promotion_attachments', 'is_expired',
+                'promotion_type_code', 'promotion_type_name', 'expired_but_usable',
             ]:
                 if hasattr(obj, key):
                     value = getattr(obj, key)
@@ -494,6 +612,10 @@ class PromotionAttachmentResponse(PromotionAttachmentBase):
     # today outside [start_date, end_date]. Mirrors the promotions / promotion-
     # products lists so callers (n8n) can answer "found but expired".
     is_expired: bool = False
+    promotion_type_code: Optional[str] = None
+    promotion_type_name: Optional[str] = None
+    # The parent promotion has ended and its TYPE says it still applies.
+    expired_but_usable: bool = False
 
     @field_validator('id', 'promotion_id', 'attachment_id', 'created_by', mode='before')
     @classmethod

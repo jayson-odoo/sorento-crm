@@ -17,6 +17,15 @@ export interface PromotionListAttachment {
 export interface Promotion {
   id: string;
   description?: string | null;
+  /** The kind of promotion, which decides what happens after end_date. */
+  promotion_type_id?: string | null;
+  promotion_type_code?: string | null;
+  promotion_type_name?: string | null;
+  /** "auto" (classified from the file name) or "manual" (a human corrected it). */
+  promotion_type_source?: string | null;
+  /** Ended, but its type says a salesman can still honour it. */
+  expired_but_usable?: boolean;
+  is_expired?: boolean;
   start_date: Date | null;
   end_date: Date | null;
   is_active: boolean;
@@ -30,6 +39,7 @@ export interface Promotion {
 
 export interface PromotionFormData {
   description?: string;
+  promotion_type_id?: string | null;
   /** Malaysia civil YYYY-MM-DD (matches API / backend promotion_dates). */
   start_date: string;
   end_date: string;

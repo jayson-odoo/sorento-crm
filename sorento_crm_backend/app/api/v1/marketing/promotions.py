@@ -121,6 +121,17 @@ async def get_promotions(
     ),
     sort: Optional[str] = Query(None, description="Sort field e.g. created_at, name, products_count"),
     dir: Optional[str] = Query("desc", description="asc or desc"),
+    serving_policy: bool = Query(
+        False,
+        description=(
+            "Answer as the chatbot: replace the active gate and its inactive "
+            "fallback with the per-type promotion policy. Live promotions win; a "
+            "promotion type with no live row contributes its latest expired row "
+            "when the type allows it (`expired_but_usable: true`), and a type "
+            "that cannot be honoured after expiry (special) contributes nothing. "
+            "Rows carry `promotion_type_code` / `promotion_type_name`."
+        ),
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -184,6 +195,7 @@ async def get_promotions(
             product_ids=parsed_product_ids,
             attachment_state=attachment_state,
             expiry_notify_batch_id=(expiry_notify_batch_id or None),
+            serving_policy=serving_policy,
         )
         # Data-miss path (§3.3): when the service attached `alternatives` /
         # `relaxed_axis` (empty result only), bypass the strict `ListResponse`

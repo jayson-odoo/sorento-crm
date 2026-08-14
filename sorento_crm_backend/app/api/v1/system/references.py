@@ -6,6 +6,7 @@ external caller) can disambiguate codes mid-turn. The resolver itself lives in
 """
 import logging
 import re
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -23,6 +24,7 @@ from app.dependencies import get_external_api_user
 from app.models.access import ContactAccessType
 from app.models.company import Company
 from app.models.marketing import Promotion, PromotionProduct
+from app.services import promotion_serving, promotion_window
 from app.models.product import Brand, Product
 from app.models.resources import Attachment, AttachmentType
 from app.services.entity_resolver import (
@@ -555,10 +557,18 @@ def _build_promotions_for_products(
     the token already resolved to product(s), this walks `promotion_products`
     backward so `domain_hint=promotion` can still answer "the promo for X".
 
-    Surfaces INACTIVE promos too, flagged `display.is_active`, so an expired promo
-    reads as "exists but expired" instead of a blank. When `allowed_access_codes`
-    is non-empty, filters by `Promotion.access_levels` intersection (mirrors the
-    description probe's gating).
+    Surfaces expired promos too when their TYPE still honours them, flagged
+    `display.expired_but_usable`, so the answer can read "found, ended on 31/07,
+    still applies" instead of a blank. The per-type serving policy
+    (`app/services/promotion_serving.py`) decides, so this resolver and the
+    promotions list cannot disagree about which promotion answers the question:
+    a live promotion always wins, a type with no live promotion may contribute
+    its latest expired one, and an expired `special` is never returned.
+
+    When `allowed_access_codes` is non-empty, filters by
+    `Promotion.access_levels` intersection (mirrors the description probe's
+    gating) BEFORE the policy runs, so a contact's own candidate set is what gets
+    ranked.
     """
     if not product_uuids:
         return []
@@ -568,6 +578,8 @@ def _build_promotions_for_products(
             Promotion.description,
             Promotion.is_active,
             Promotion.access_levels,
+            Promotion.start_date,
+            Promotion.end_date,
             Product.product_code,
         )
         .join(PromotionProduct, PromotionProduct.promotion_id == Promotion.id)
@@ -576,7 +588,7 @@ def _build_promotions_for_products(
         .all()
     )
     by_promo: dict[str, dict[str, Any]] = {}
-    for pid, desc, is_active, levels, code in rows:
+    for pid, desc, is_active, levels, start_date, end_date, code in rows:
         if allowed_access_codes:
             if not isinstance(levels, list) or not allowed_access_codes.intersection(levels):
                 continue
@@ -592,14 +604,41 @@ def _build_promotions_for_products(
                 "similarity": None,
                 "display": {
                     "description": desc,
-                    "is_active": bool(is_active),
+                    # The LIVE definition, not the raw column: the daily sync job
+                    # papers over a window that lapsed today, and until it ticks
+                    # the flag says active for a promotion that ended yesterday.
+                    "is_active": promotion_window.is_live(
+                        is_active, start_date, end_date, _today()
+                    ),
+                    "start_date": start_date.isoformat() if start_date else None,
+                    "end_date": end_date.isoformat() if end_date else None,
                     "products": [],
                 },
             },
         )
         if code not in entry["display"]["products"]:
             entry["display"]["products"].append(code)
-    return list(by_promo.values())
+
+    if not by_promo:
+        return []
+
+    today = _today()
+    verdict = promotion_serving.evaluate_candidates(db, list(by_promo.keys()), today)
+    served: list[dict[str, Any]] = []
+    for key, entry in by_promo.items():
+        if not verdict.is_served(key):
+            continue
+        promo_type = verdict.type_by_promotion.get(key)
+        entry["display"]["promotion_type_code"] = getattr(promo_type, "type_code", None)
+        entry["display"]["promotion_type_name"] = getattr(promo_type, "type_name", None)
+        entry["display"]["is_expired"] = not entry["display"]["is_active"]
+        entry["display"]["expired_but_usable"] = verdict.is_expired_but_usable(key)
+        served.append(entry)
+    return served
+
+
+def _today() -> date:
+    return datetime.utcnow().date()
 
 
 def _translate_access_names_to_codes(

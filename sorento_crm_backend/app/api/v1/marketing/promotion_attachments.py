@@ -58,6 +58,16 @@ async def get_promotion_attachments(
             "matches. false: inactive-promotion attachments only."
         ),
     ),
+    serving_policy: bool = Query(
+        False,
+        description=(
+            "Answer as the chatbot: gate attachments on the per-type promotion "
+            "policy of their PARENT promotion instead of the plain active gate. "
+            "Documents of an expired promotion whose type still honours it come "
+            "back with `expired_but_usable: true`; documents of an expired "
+            "special do not come back at all."
+        ),
+    ),
     access_levels: Optional[list[str]] = Query(
         None,
         description=(
@@ -122,6 +132,7 @@ async def get_promotion_attachments(
             contact_access_codes=contact_codes,
             entities=normalize_entities_query_param(entities),
             active=active,
+            serving_policy=serving_policy,
         )
         result["data"] = [_promotion_attachment_to_response(pa) for pa in result["data"]]
         return result

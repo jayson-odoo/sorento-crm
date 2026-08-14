@@ -26,6 +26,7 @@ from app.services.marketing_service import (
     raise_promotion_product_unique_violation,
 )
 from app.services.attachment_notification_helper import notify_after_external_promotion_created
+from app.services.promotion_classifier import classify_promotion_type
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -230,6 +231,26 @@ def create_promotion(
             .order_by(Promotion.created_at.desc())
             .first()
         )
+    # The kind of promotion is READ from the file we were handed, never asked for:
+    # n8n posts the PDF's filename as the description, and the wording in it
+    # ("SPECIAL", "PP", "FOCUS ITEM", "A3 FLYER") is how marketing has always
+    # named the kind. The attachment's original filename wins when we have one -
+    # the upload path strips `@ ( ) , &` out of stored names.
+    classifier_filename = None
+    if _attachment_ids:
+        _first_attachment = (
+            db.query(Attachment.original_filename)
+            .filter(Attachment.id.in_(_attachment_ids))
+            .first()
+        )
+        if _first_attachment:
+            classifier_filename = _first_attachment[0]
+    classified_type = classify_promotion_type(
+        db,
+        description=payload.promotions.description,
+        filename=classifier_filename,
+    )
+
     if existing_promotion is not None:
         # If the promotion's window has ended, reject — it's locked.
         if existing_promotion.end_date is not None and existing_promotion.end_date < today:
@@ -245,6 +266,11 @@ def create_promotion(
                 continue
             if value is not None:
                 setattr(existing_promotion, key, value)
+        # A human who retyped this promotion outranks the classifier: re-sending
+        # the file must not quietly undo their correction.
+        if classified_type is not None and existing_promotion.promotion_type_source != "manual":
+            existing_promotion.promotion_type_id = classified_type.id
+            existing_promotion.promotion_type_source = "auto"
         # Drop existing groups + lines so we can rebuild from the payload.
         for g in list(getattr(existing_promotion, "promotion_groups", []) or []):
             db.delete(g)
@@ -254,6 +280,9 @@ def create_promotion(
         promotion = existing_promotion
         already_existed_flag = True
     else:
+        if classified_type is not None:
+            promotion_kw["promotion_type_id"] = classified_type.id
+            promotion_kw["promotion_type_source"] = "auto"
         promotion = Promotion(**promotion_kw)
         db.add(promotion)
         db.flush()
@@ -393,6 +422,11 @@ def create_promotion(
         raise_promotion_product_unique_violation(db, e)
 
     db.refresh(promotion)
+    # Echo the classification back so n8n can log which kind of promotion it just
+    # created (and so a wrong verdict is visible without opening the CRM).
+    promo_type = getattr(promotion, "promotion_type", None)
+    promotion.promotion_type_code = getattr(promo_type, "type_code", None)
+    promotion.promotion_type_name = getattr(promo_type, "type_name", None)
 
     # Notify: attachment uploaders (if linked + uploaded_by) and/or notify_user_id (system API key has no created_by).
     try:

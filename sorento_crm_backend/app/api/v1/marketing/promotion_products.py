@@ -267,6 +267,16 @@ async def list_all_promotion_products(
             "contact_access_types.name; intersection with promotion.access_levels)."
         ),
     ),
+    serving_policy: bool = Query(
+        False,
+        description=(
+            "Answer as the chatbot: gate lines on the per-type promotion policy "
+            "of their PARENT promotion instead of the plain active gate. Lines "
+            "whose parent has expired and whose type still honours it come back "
+            "with `expired_but_usable: true`; lines under an expired special do "
+            "not come back at all."
+        ),
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -395,6 +405,7 @@ async def list_all_promotion_products(
             any_dimension_min=filter_state["any_dimension_min"],
             any_dimension_max=filter_state["any_dimension_max"],
             contact_access_codes=contact_codes,
+            serving_policy=serving_policy,
         )
         # Map promo_selling_price to promotion_price for each product
         products = result.get("data", [])

@@ -244,4 +244,68 @@ tests pass unchanged. *BE + MCP.*
 
 ## Verification log
 
-(filled during self-verify — pytest output, vitest output, live MCP transcript)
+### Automated suites
+
+```
+pytest tests/test_external_promotion_type_classification.py \
+       tests/test_promotion_classifier.py \
+       tests/test_promotion_serving_policy.py \
+       tests/test_promotion_types_crud.py \
+       tests/test_references_promotion_serving.py
+46 passed
+
+sorento_crm_mcp: pytest tests/            243 passed  (incl. test_promotion_serving_policy_pin.py)
+
+vitest: PromotionTypesList.test.tsx        6 passed
+        PromotionTypeFormModal.test.tsx    4 passed
+        PromotionsList.typeColumn.test.tsx 3 passed
+```
+
+### Live check (E5) — MCP :8747 → API :8047 → local prod-copy DB
+
+Fixtures are this feature's own rows (`ZZT-PROMOTYPE` prefix) on one product: a live
+A3 flyer, an expired PP promo, an expired special.
+
+`crm_marketing_promotions_list(product_ids=<SRTWC INLET>)` — the tool pins
+`serving_policy=true`, the agent cannot switch it off:
+
+```
+MCP tools registered: 36
+serving_policy_applied: True
+rows returned: 2
+ - ZZT-PROMOTYPE SORENTO A3 FLYER 2026 | type: A3 Flyer | is_expired: False | expired_but_usable: False | end_date: 2026-10-13
+ - ZZT-PROMOTYPE SORENTO PP PROMO 2026 | type: PP Promo | is_expired: True  | expired_but_usable: True  | end_date: 2026-07-25
+PASS: expired-but-usable served, expired special withheld
+```
+
+**The config actually drives it.** Flipping `special.show_expired` to true (no
+restart of the MCP or the API) and re-running the same call:
+
+```
+rows returned: 3
+ - ZZT-PROMOTYPE SORENTO SPECIAL PROMO 2026 | type: Special Promo | is_expired: True | expired_but_usable: True | end_date: 2026-08-04
+ - ZZT-PROMOTYPE SORENTO A3 FLYER 2026      | type: A3 Flyer      | is_expired: False
+ - ZZT-PROMOTYPE SORENTO PP PROMO 2026      | type: PP Promo      | is_expired: True | expired_but_usable: True
+```
+
+Reverting the toggle returns the 2-row answer above. That round trip is the END
+GOAL: the MCP reacts to the promotion-type configuration, live.
+
+### Live check (E3) — `POST /api/v1/system/references/resolve`
+
+Same product, `domain=promotion`, dealer access:
+
+```
+- ZZT-PROMOTYPE SORENTO A3 FLYER 2026 | type: A3 Flyer | is_expired: False | expired_but_usable: False | end: 2026-10-13
+- ZZT-PROMOTYPE SORENTO PP PROMO 2026 | type: PP Promo | is_expired: True  | expired_but_usable: True  | end: 2026-07-25
+```
+
+Byte-for-byte the same verdict as the MCP surface (E4), and the expired special is
+absent from both.
+
+### Migration / seed state
+
+`alembic heads` → single head `361_promotion_types` (a merge revision rejoins the
+container-status and human-source-boost heads first). Applied to the local DB: the
+five types seeded, and all 29 existing promotions classified from their file names
+(28 standard, 1 A3 flyer, 0 unclassified).

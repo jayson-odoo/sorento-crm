@@ -134,6 +134,15 @@ TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
     # its own schedule, for every row, whether or not the file is ever sent.
     # A caller that wants a ready-to-open link passes resolve_signed_urls=true.
     "crm_resource_attachments_list": {"direct_access_only": "true"},
+    # Promo serving: the backend owns which promotions answer a customer's
+    # question, per promotion TYPE (a PP or focus item is still usable after it
+    # ends, a special is not). Hard-pinned rather than exposed as a tool param so
+    # the agent cannot switch the policy off and re-introduce an expired special.
+    # Each row comes back with promotion_type_code / promotion_type_name and
+    # `expired_but_usable`.
+    "crm_marketing_promotions_list": {"serving_policy": "true"},
+    "crm_marketing_promotion_products_list": {"serving_policy": "true"},
+    "crm_marketing_promotion_attachments_list": {"serving_policy": "true"},
 }
 
 # Tools whose responses are blocked / row-filtered to ACTIVE promotions only.

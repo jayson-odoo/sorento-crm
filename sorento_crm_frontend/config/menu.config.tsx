@@ -699,6 +699,10 @@ export const MENU_SIDEBAR: MenuConfig = [
             title: 'Promotion Attachments',
             path: '/marketing-management/promotion-attachments',
           },
+          {
+            title: 'Promotion Types',
+            path: '/marketing-management/promotion-types',
+          },
         ],
       },
       {
@@ -1573,6 +1577,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
           {
             title: 'Promotion Attachments',
             path: '/marketing-management/promotion-attachments',
+          },
+          {
+            title: 'Promotion Types',
+            path: '/marketing-management/promotion-types',
           },
         ],
       },

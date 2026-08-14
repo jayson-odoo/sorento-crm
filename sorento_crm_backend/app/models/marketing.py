@@ -1,6 +1,6 @@
 """Marketing management models."""
 import enum
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -23,12 +23,89 @@ class CampaignStatus(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
+class PromotionType(Base, CompanyScopedMixin):
+    """A kind of promotion, with the rule for what happens after its end date.
+
+    Types are DATA, not an enum: the five Sorento knows about (PP, focus item,
+    standard, special, A3 flyer) differ only in what an admin ticks here, and a
+    sixth is a row, not a deploy.
+
+    The two questions this table answers:
+
+    1. **Does an expired promotion of this kind still count?** A PP or focus-item
+       offer a salesman can still honour until the end of the year says yes; a
+       one-month special says no, and saying yes for it would have the bot promise
+       a price nobody will sell at.
+    2. **Which kind is this file?** ``match_markers`` holds the wording that names
+       the type in an uploaded PDF's filename ("special", "PP", "focus"), so
+       classification at upload is a data lookup. ``match_priority`` breaks ties
+       lowest-first, which is why ``special`` sits at 10: a name carrying two
+       markers resolves to the type that CANNOT be used after expiry.
+
+    ``show_expired`` with neither bound set means "always usable once expired".
+    Both bounds set means BOTH must hold.
+    """
+
+    __tablename__ = "promotion_types"
+    __audit_track__ = True
+    # Shared vocabulary, like attachments: the five seeded rows carry no company,
+    # and an owned scope must still see them. Without this, `build_company_predicate`
+    # compiles an owned `company_id IN (...)` that excludes every NULL-company seed,
+    # so a logged-in user's promotion list would find no types at all while an
+    # API-key caller (unscoped) saw all five.
+    __company_shared__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    type_code = Column(String(50), unique=True, nullable=False)
+    type_name = Column(String(150), nullable=False)
+    description = Column(Text, nullable=True)
+    # Whether an expired promotion of this type may still be served (the captain's
+    # "control this promo type if expired still want to show in MCP").
+    show_expired = Column(Boolean, default=False, nullable=False)
+    # Bound A: usable only while the calendar year it ended in is still running.
+    expired_valid_until_year_end = Column(Boolean, default=False, nullable=False)
+    # Bound B: usable only while end_date >= today - N days. NULL = no age cap.
+    expired_max_age_days = Column(Integer, nullable=True)
+    # Lowercase wording markers matched against the uploaded file name.
+    match_markers = Column(JSONB, nullable=False, server_default='[]')
+    # Ascending; the first matching type wins. Lower = more conservative.
+    match_priority = Column(Integer, default=100, nullable=False)
+    # Exactly one row: the policy for a promotion with no type at all.
+    is_default = Column(Boolean, default=False, nullable=False)
+    sort_order = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    promotions = relationship("Promotion", back_populates="promotion_type")
+
+    __table_args__ = (
+        Index("ix_promotion_types_match_priority", "match_priority"),
+        Index(
+            "uq_promotion_types_single_default",
+            "is_default",
+            unique=True,
+            postgresql_where=text("is_default"),
+        ),
+    )
+
+
 class Promotion(Base, CompanyScopedMixin):
     __tablename__ = "promotions"
     __audit_track__ = True  # who changed what (Sub-plan D Tier-2)
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     description = Column(Text, nullable=True)
+    # The kind of promotion, which decides what happens after end_date. Nullable
+    # on purpose: deleting a type leaves its promotions unclassified rather than
+    # orphaned, and an unclassified row is served under the default type's policy.
+    promotion_type_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("promotion_types.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # "auto" = the classifier read it off the uploaded file name; "manual" = a
+    # human corrected it, and a later re-upload must not undo that.
+    promotion_type_source = Column(String(10), nullable=True)
     start_date = Column(Date, nullable=True)
     end_date = Column(Date, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
@@ -43,6 +120,7 @@ class Promotion(Base, CompanyScopedMixin):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     
+    promotion_type = relationship("PromotionType", back_populates="promotions")
     promotion_groups = relationship(
         "PromotionGroup",
         back_populates="promotion",
@@ -64,6 +142,7 @@ class Promotion(Base, CompanyScopedMixin):
         Index("ix_promotions_start_date", "start_date"),
         Index("ix_promotions_end_date", "end_date"),
         Index("ix_promotions_access_levels", "access_levels", postgresql_using="gin"),
+        Index("ix_promotions_promotion_type_id", "promotion_type_id"),
     )
 
 
