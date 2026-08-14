@@ -392,11 +392,24 @@ def test_a_batch_call_applies_every_entry(db):
 
 def test_a_batch_call_re_derives_exactly_once(db, monkeypatch):
     """AC-B.9's rationale, exercised at PR1's ground floor: N calls would cost N
-    re-derives; one batch call must cost exactly one."""
+    re-derives; one batch call must cost exactly one.
+
+    The seed is committed BEFORE the spy is installed, on purpose: whenever an
+    earlier test in the process has already called register_product_spec_listeners()
+    (any test that boots the FastAPI app does), a still-pending Product insert is
+    collected by that listener and re-derived again in its own after_commit hook -
+    a second, genuine call that has nothing to do with the batch under test, and
+    would otherwise get counted by the spy below and fail this assertion for the
+    wrong reason (order-dependent: green per file, red in CI's single-process run).
+    Committing here first means nothing is pending on the Product row when
+    apply_spec_values commits, so the spy only ever sees calls apply_spec_values
+    itself made.
+    """
     import app.services.product_spec_derivation as derivation
 
     _product(db, "ZZT-AW-BATCH-2")
     derive_for_code(db, "ZZT-AW-BATCH-2")
+    db.commit()
 
     calls: list[str] = []
     original = derivation.derive_for_code
