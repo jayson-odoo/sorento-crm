@@ -128,8 +128,8 @@ a hidden section.
 **Given** an operator on `user-management/settings/chatbot-media`
 **Then** they can edit, without a deploy: image monthly limit, voice monthly limit, voice
 maximum clip seconds, burst count, burst window seconds, the warning threshold percent, the
-standard and degraded model for image, the transcription model, and the language strategy
-(mode plus pinned language plus hint list)
+standard and degraded model for image, the transcription model, the language strategy (mode plus
+pinned language plus hint list), the synchronous wait seconds and the extraction timeout seconds
 **And** every optional select on that page is clearable.
 
 ### S1-05 [BE] Access is denied by default for every existing contact
@@ -171,10 +171,9 @@ override, and a changed system default taking effect without a restart.
 
 **Given** an enabled contact within quota
 **When** n8n POSTs the media endpoint
-**Then** the response returns within the fast-path budget and carries the decision, the quota
-numbers, the tier and any notices
-**And** a ledger row exists **before** the response is returned
-**And** no provider call has yet been made.
+**Then** the decision, the quota numbers, the tier and any notices are determined and a ledger row
+is committed **before** any provider call is made
+**And** the committed ledger row survives a later failure of the extraction or of the wait.
 
 ### S2-02 [BE] Strict idempotency on message_id
 
@@ -251,21 +250,55 @@ borrows no existing row.
 
 ---
 
-## S3 - The queued extraction and the callback
+## S3 - The awaited extraction, the callback and the fallback
 
-### S3-01 [BE] Only extraction is queued; nothing slow is inside the request
+### S3-01 [BE] One call returns the extraction, and the worker does the work
 
 **Given** an accepted decision
-**Then** the HTTP handler returns without having downloaded media or called a provider
-**And** the extraction runs on the worker.
+**When** the extraction completes inside the configured synchronous wait
+**Then** the same HTTP response carries `status: "completed"` and the full result
+**And** the media download and the provider call happened in the worker process, not in the API
+process.
+
+### S3-01b [BE] The API event loop is never blocked
+
+**Given** a media call whose extraction takes several seconds
+**When** a second, unrelated request is issued to the same API process while it is in flight
+**Then** the second request returns promptly
+**And** no synchronous multi-second call is made from inside the request handler. This AC is the
+regression guard against reproducing the known live defect on the portal extract route.
+
+### S3-01c [BE] Exceeding the synchronous wait degrades, it does not fail
+
+**Given** an extraction that outlives `media_sync_wait_seconds`
+**Then** the response is `status: "pending"` carrying the `job_id`, not an error
+**And** the job keeps running
+**And** the result is subsequently retrievable through the polling endpoint and delivered through
+the callback if one was supplied
+**And** no second ledger row and no second spend occurs when n8n re-calls with the same
+`message_id`.
+
+### S3-01d [BE] The synchronous wait is configurable without a deploy
+
+**And** `media_extraction_timeout_seconds` is greater than or equal to it, so a job that outlives
+the wait still completes rather than being killed mid-flight.
 
 ### S3-02 [BE] The job holds n8n's callback target opaquely
 
 **Given** a request carrying `callback_url` and optional `callback_headers`
 **Then** they are stored against the job and used verbatim when the result is delivered
-**And** the CRM makes no assumption about what mechanism the far end uses to consume it. This AC
-exists because mid-flow resume was **not** confirmed to exist in the spine (see the plan's
-"Resume" section) and the CRM half must not depend on it.
+**And** the CRM makes no assumption about what mechanism the far end uses to consume it
+**And** omitting `callback_url` is valid and disables callback delivery without affecting the
+synchronous response. This AC exists because mid-flow resume was **not** confirmed to exist in the
+spine (see the plan's section 1.3), so switching to async must stay a configuration change rather
+than a rebuild.
+
+### S3-02b [BE] One result shape, three transports
+
+**Given** the same completed job
+**Then** the result body returned inline, the body returned by the polling endpoint, and the body
+delivered by the callback are identical
+**And** a consumer written against one works unchanged against the others.
 
 ### S3-03 [BE] The turn context survives the pause
 
@@ -483,10 +516,13 @@ On top of the repo's standing DoD gate:
 
 1. The three corpus images have been run through the shipped extraction and the results recorded
    honestly, including what it still gets wrong (S4-11).
-2. The fast-path latency has been measured and the `lock:{contact}` recommendation stated with
-   that evidence.
-3. Whether the spine can resume mid-flow has been stated as a finding, not assumed.
-4. The entity-hint question is either answered by the captain or carried in the PR description as
-   an open point with a recommendation.
-5. The new permission slug has a grant migration for already-provisioned roles.
-6. New settings columns are present in both manual dict builders.
+2. The fast-path latency and the worst-case end-to-end call have both been measured, and the
+   `lock:{contact}` choice is stated with that evidence, including why it reversed when the wire
+   became synchronous.
+3. The recommended n8n node timeout is stated with the measured number it has to clear, and its
+   interaction with `retryOnFail` and idempotency is spelled out.
+4. Non-blocking of the API event loop is demonstrated by a test, not asserted (S3-01b).
+5. Whether the spine can resume mid-flow has been stated as a finding, not assumed.
+6. The entity-hint question is recorded as decided (unhinted attributes, enum not extended).
+7. The new permission slug has a grant migration for already-provisioned roles.
+8. New settings columns are present in both manual dict builders.
