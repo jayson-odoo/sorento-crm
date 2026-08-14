@@ -1087,6 +1087,28 @@ once-per-period stamps on the limit row) is known before the insert. There is **
 rows written before this column had their notices delivered on the original response, and inventing
 text for them afterwards would be fabricating a record of something that was never sent.
 
+### 16.7 The "one setting away" claim was not true when it was written
+
+Section 16.1 defended shipping `media_voice_degraded_model` as NULL on the grounds that
+degrade-not-refuse is honoured by the mechanism existing and being one setting away. It was not.
+The settings page exposed no control for the column, so it was reachable only by hand-written SQL,
+and the argument described an intention rather than the product. The control now exists, in the
+Voice transcription card, in the same position its image counterpart occupies.
+
+Two details of it are deliberate and would be wrong to "tidy" later:
+
+- **The empty state reads "Not set", not "Inherit."** Every other model field on the page inherits
+  from the assistant config when blank, so the shared component's default label is "Inherit" - but
+  a blank voice degraded model inherits nothing. It refuses. Labelling it "Inherit" would assert
+  in the UI the precise falsehood this whole section exists to remove: that an unset voice tier
+  quietly falls back to the standard model.
+- **Blank raises no warning**, though the image field's does. Blank is the shipped state and the
+  measured-evidence position; a permanent warning would frame the default as a misconfiguration
+  and press the operator into naming a transcription model nobody has measured.
+
+Nothing seeds the voice field from the image tier at any point in the chain. The image tiers were
+measured (section 14.1). The voice tiers were not, and the UI must not imply otherwise.
+
 ## Appendix A - the extraction system prompt
 
 This is the design, not a sketch. Transcribe it into `app/services/media_extract/prompts.py` as a
