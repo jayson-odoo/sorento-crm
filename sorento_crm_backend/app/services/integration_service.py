@@ -9,6 +9,7 @@ from app.config import settings
 from app.models.integration import IntegrationLog
 from app.schemas.integration import IntegrationLogCreate, IntegrationLogUpdate
 from app.services.error_handler import handle_not_found
+from app.services.respond_outbound_service import assert_outbound_enabled
 from app.services.webhook_service import WebhookService
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ def _resolve_workspace_credentials(
             db = SessionLocal()
             own_session = True
         from app.models.access import RespondContact
+        from app.services.respond_identifier import contact_for_identifier
         from app.services.respond_workspace_service import RespondWorkspaceService
 
         ws_svc = RespondWorkspaceService(db)
@@ -65,19 +67,10 @@ def _resolve_workspace_credentials(
                 .first()
             )
         elif identifier:
-            val = str(identifier)
-            val = val.split(":", 1)[1] if ":" in val else val
-            contact = (
-                db.query(RespondContact)
-                .filter(RespondContact.respond_io_id == val)
-                .first()
-            )
-            if contact is None:
-                contact = (
-                    db.query(RespondContact)
-                    .filter(RespondContact.phone_number == val)
-                    .first()
-                )
+            # Same lookup the outbound kill switch performs, deliberately shared:
+            # the workspace a send uses and the switch that permits it must never
+            # resolve to different contacts.
+            contact = contact_for_identifier(db, identifier)
         if contact is not None and getattr(contact, "workspace_id", None):
             workspace = ws_svc.get(contact.workspace_id)
         if workspace is None:
@@ -232,6 +225,7 @@ class RespondClient:
         """Send a text message to a contact. identifier = last segment of respond inbox URL (e.g. contact_id). Uses id: prefix for API."""
         if not self.api_key:
             raise ValueError("Respond API key is not configured.")
+        assert_outbound_enabled(identifier)
         api_id = self._contact_api_identifier(identifier)
         url = f"{self.base_url}/v2/contact/{api_id}/message"
         payload = {"message": {"type": "text", "text": text}}
@@ -257,6 +251,7 @@ class RespondClient:
         """
         if not self.api_key:
             raise ValueError("Respond API key is not configured.")
+        assert_outbound_enabled(identifier)
         if attachment_type not in ("image", "video", "audio", "file"):
             raise ValueError(f"Unsupported Respond.io attachment type: {attachment_type}")
         api_id = self._contact_api_identifier(identifier)
@@ -506,6 +501,7 @@ class RespondClient:
         """
         if not self.api_key:
             raise ValueError("Respond API key is not configured.")
+        assert_outbound_enabled(identifier)
         api_id = self._contact_api_identifier(identifier)
         url = f"{self.base_url}/v2/contact/{api_id}/message"
         body_component: dict = {"type": "body", "text": body_text}

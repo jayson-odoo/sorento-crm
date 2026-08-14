@@ -157,6 +157,12 @@ class RespondContact(Base):
     # Arbitrary per-contact conversation state. Read/overwritten wholesale by
     # GET|PUT /api/v1/external/conversation-variables/{respond_io_id}.
     session_vars = Column(JSONB(astext_type=Text()), nullable=False, server_default=text("'{}'::jsonb"))
+    # Per-contact outbound kill switch. False silences every outbound Respond.io
+    # send to this contact (text, attachment, template) at the client boundary;
+    # reads are untouched. Defaults ON, so a new or migrated row behaves exactly
+    # as it did before the switch existed. Flipped in bulk or per contact by
+    # scripts/set_contact_outbound.py.
+    outbound_enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(Text, nullable=True)
