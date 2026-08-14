@@ -1337,7 +1337,11 @@ class AccessAgentService:
             q = q.filter(ContactAgentAccess.respond_contact_phone.ilike(f"%{contact_id}%"))
         
         if query:
-            q = q.join(AccessAgent).filter(
+            # The agent is already joined above. Joining it a second time here
+            # emitted the same table twice and Postgres refused the statement
+            # ("table name access_agents specified more than once"), so ANY
+            # search on this list was a 500.
+            q = q.filter(
                 or_(
                     ContactAgentAccess.respond_contact_phone.ilike(f"%{query}%"),
                     ContactAgentAccess.respond_contact_name.ilike(f"%{query}%"),

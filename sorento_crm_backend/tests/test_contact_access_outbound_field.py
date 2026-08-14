@@ -177,6 +177,34 @@ def test_a_grant_with_no_linked_contact_reports_no_switch(client, db):
     assert row["outbound_enabled"] is None
 
 
+def test_the_search_path_still_returns_the_switch(client, db):
+    """Searching this list used to be a 500.
+
+    The search branch joined `access_agents` a second time on a query that had
+    already joined it, and Postgres refuses that ("table name specified more
+    than once"), so every search on the grants grid failed. Found while adding
+    the outbound column; the redundant join is gone.
+    """
+    contact = _contact(db, name="ZZT Searchable", enabled=False)
+    grant = _grant(db, contact, _agent(db, code="ZZT-G"))
+
+    resp = client.get(GRANTS_URL, params={"query": "ZZT Searchable"})
+    assert resp.status_code == 200, resp.text
+    row = _row_for(resp.json(), grant.id)
+    assert row["outbound_enabled"] is False
+
+
+def test_paging_is_not_multiplied_by_the_contact_join(client, db):
+    """A many-to-one eager load must not turn one grant into several rows."""
+    agent = _agent(db, code="ZZT-H")
+    for i in range(3):
+        _grant(db, _contact(db, name=f"ZZT Paged {i}", enabled=True), agent)
+
+    body = client.get(GRANTS_URL, params={"page": 1, "limit": 2}).json()
+    assert len(body["data"]) == 2
+    assert body["pagination"]["total"] == 3
+
+
 # --------------------------------------------------------------------------
 # The contacts grid - one row per contact
 # --------------------------------------------------------------------------
