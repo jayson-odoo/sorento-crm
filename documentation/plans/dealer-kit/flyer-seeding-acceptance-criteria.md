@@ -137,8 +137,14 @@ Stated up front so the gate cannot be met by tightening a metric until it passes
 - **AC-B3** `[BE]` Given an attachment not linked to that product, Then the request 404s.
 - **AC-B4** `[BE]` Given the candidate list, Then it contains images only. `product_attachments`
   links 532 PDFs in the live data and a spec sheet offered as a photo is noise.
-- **AC-B5** `[FE]` Given a product with one candidate, Then it still takes a click. Nothing is
-  chosen on the user's behalf, however obvious it looks.
+- **AC-B5** `[FE]` ~~Given a product with one candidate, Then it still takes a click. Nothing is
+  chosen on the user's behalf, however obvious it looks.~~
+  **SUPERSEDED by AC-I26** of `dealer-kit-reading-and-choosing-acceptance-criteria.md`: the
+  behavior was deliberately reversed - where a product has exactly one candidate, it is taken
+  automatically, and the row shows what was taken and lets it be changed. Reversing test:
+  `BrochureImagePicker.test.tsx` `'takes the only photo a product has, without asking'`, whose
+  docstring records the reversal and the reasoning (509 of the flyer's 535 products sit in that
+  state; asking for confirmation five hundred times is a toll, not a decision).
 - **AC-B6** `[FE]` Given a product with no candidates, Then it says so and offers no control:
   the answer is a photo shoot, not a click.
 - **AC-B7** `[FE]` Given the picker, Then each thumbnail shows its filename, because that is

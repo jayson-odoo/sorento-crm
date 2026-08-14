@@ -102,6 +102,16 @@ Company-scoped via `CompanyScopedMixin`, like every other owned table. Note the
 `test_company_scope` guard asserts the owned-table count and WILL fire - that is
 intended, and the count goes up with the reasoning recorded.
 
+**Known limitation: an approval does not pin what a reader later sees.** An
+approval attests to a `page_version` id, but the live page is that id plus two
+mutable joins - collections resolve at read time, and the promotion lives on
+the page, not on the version. So `PUT /collections/{id}` can still change what
+an already-approved, already-published catalogue shows, with no Edition
+noticing the drift. The re-seed half of this is closed (a re-seed no longer
+re-prices the live brochure). The general case - whether publishing should
+snapshot its bindings - is an open design decision, not yet scheduled. See the
+EXECUTION-LEDGER's "Known, deliberately NOT fixed" B2 entry.
+
 **Statuses seeded for `dealer_kit_edition`:** `draft` (initial),
 `pending_approval`, `approved`, `rejected`, `done` (terminal). Transitions
 manual throughout. AC-L8 needs `done -> draft`, which means `done` cannot

@@ -900,9 +900,13 @@ was a comment asserting a behaviour that nothing implemented.
   `page_service.list_pages` solved the same problem and left the lesson in a
   comment. Fine at current volumes.
 - **S9: no Playwright spec for the approval cycle**, and none for S7's own
-  round trip beyond the one spec fixed above. `DataGridTable` does not mount
-  rows under jsdom, so rows, status pills and empty messages are asserted
-  nowhere on either slice.
+  round trip beyond the one spec fixed above. The excuse that used to sit here -
+  "`DataGridTable` does not mount rows under jsdom" - is dead: rows DO mount if
+  `useListingColumnPreferences` is mocked (`vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', ...)`),
+  proven by `BrochureImagePicker`'s 35 tests, and the technique is recorded in
+  the repo `CLAUDE.md` lessons. The vitest coverage this note used to excuse -
+  Editions rows, status pills, empty messages; the same for `FlyerReadingsList` -
+  is writable today and remains open work, not blocked work.
 - **S7 #5: lost artwork is still invisible.** Both banner-loss paths only warn,
   and nothing on the review screen reports how many pages got a background.
   Migration 317's docstring records what that looked like in the field.

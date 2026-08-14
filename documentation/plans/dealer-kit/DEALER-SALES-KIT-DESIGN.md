@@ -2,9 +2,9 @@
 
 **Audience:** product, commercial, and engineering leadership
 **Status:** S1, S2, S3 delivered and signed off internally. S4 part-delivered. Nothing deployed.
-**Branch:** `feat/promo-expiry-rule-engine` (Dealer Kit worktree) — cannot merge before the
-multi-company work lands. See *Risks*.
-**Last updated:** 2026-07-27
+**Branch:** merged to `main` as PR #57 on 2026-08-14. Follow-up hardening continues on
+`feat/dealer-kit-hardening`.
+**Last updated:** 2026-08-14
 
 ---
 
@@ -131,8 +131,13 @@ price is worked out at that moment, for that viewer.
 That is what lets **one** published document serve staff, dealers and consumers with the price
 each is allowed to see, instead of three copies drifting apart. Two independent gates decide
 whether an internal price appears: the document must be set to show it **and** the viewer must
-be entitled to it. When the answer is no, the number is **absent from the response**, not hidden
-in the page where it can be recovered by inspecting it.
+be entitled to it. When the answer is no, the KEY is present with a null value and the FIGURE is
+unrecoverable, not sent and hidden in the page where it could be recovered by inspecting it. (ADR
+0008 corrected this section's wording on 2026-08-01: it originally said "absent from the
+response", which overstated what the codebase does - a genuinely absent key would mean
+`response_model_exclude_none` and a breaking change for every reader. A null key carries no
+information about the price, so the protection is identical. See
+`documentation/adr/0008-one-viewer-resolved-price.md`.)
 
 A test asserts that a selection line has no `price`, `unit_price`, `list_price`, `invoice_price`
 or `total` column, so the rule cannot be quietly relaxed later.
@@ -243,9 +248,9 @@ to work on a phone and on A4.
 |---|------|-------------|----------------------|
 | 1 | **Quote shape** — numbering, ownership, expiry, approval, conversion to order | Product + commercial | S4 cannot finish; the journey stops one step before the payoff |
 | 2 | **Consumer cannot order directly** — a consumer confirming sends a request to the dealer, never an order. Assumed, needs confirming | Commercial | Rework if wrong |
-| 3 | **Merge is blocked** behind the multi-company work | Engineering | Delivered work sits unmerged and drifts |
-| 4 | **PDF export has never run in a production container** — verified on a developer machine only | Engineering | Export could fail on first real deploy |
-| 5 | **Library collections cannot be edited from the library list** — only created from inside a page, which undercuts the "edit once, every page follows" promise | Product priority call | Feature is weaker than advertised |
+| 3 | ~~Merge is blocked behind the multi-company work~~ **RESOLVED 2026-08-14** (multi-company landed and PR #57 merged the Dealer Kit to `main`) | Engineering | none, closed |
+| 4 | **PDF export has never run in a production container** (verified on a developer machine only) | Engineering | Export could fail on first real deploy |
+| 5 | ~~Library collections cannot be edited from the library list~~ **RESOLVED on `feat/dealer-kit-hardening`** per the 2026-08-14 self-review (only created from inside a page, which undercuts the "edit once, every page follows" promise) | Product priority call | none, closed |
 | 6 | **Photoreal rendering** — boxes today. Is that sellable? | Product + sales | Determines whether a model pipeline gets funded |
 
 ---
