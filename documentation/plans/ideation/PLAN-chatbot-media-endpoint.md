@@ -14,13 +14,23 @@ this. No file outside this repo is touched.
 
 ## 0. What this builds, in one paragraph
 
-One endpoint that n8n calls once per inbound media message. It checks whether the contact is
-allowed the modality, checks burst and monthly quota, writes a ledger row, and returns a decision
-**before any money is spent**. Extraction - transcription or image recognition - is queued and
-runs on the worker; when it finishes the CRM POSTs the result to a callback target n8n supplied
-with the request, and the same result is readable through a polling endpoint. The extraction
+One endpoint that n8n calls once per inbound media message, **and waits for**. It checks whether
+the contact is allowed the modality, checks burst and monthly quota, and writes a ledger row -
+all of that instantly and **before any money is spent** - then hands extraction to the worker and
+awaits the worker's result, returning decision and extraction in one response. The extraction
 emits entities in the chatbot's own entity shape so nothing downstream has to know a photo was
 involved.
+
+**The wire is synchronous; the execution is not.** This distinction is the whole design. n8n makes
+one call and blocks on it, which is what the captain approved and what the spine can actually do
+today. But the CRM never performs the multi-second work inside the request handler: the handler
+enqueues, then awaits the job without holding the event loop. That is deliberately the opposite of
+the live portal defect at `app/api/v1/public/ai_extract.py:116`, where a synchronous multi-second
+`extract` call inside an `async def` route freezes the whole backend for 5.8-9.8 seconds per
+request. That defect is out of scope to fix and is not to be reproduced here.
+
+The transport-agnostic callback and the polling endpoint are built anyway, and the synchronous
+wait falls back to them on timeout. True async is therefore a configuration switch, not a rebuild.
 
 ---
 
@@ -28,13 +38,47 @@ involved.
 
 The captain flagged two things to settle deliberately rather than assume. Both are settled here.
 
-### 1.1 Does the spine hold `lock:{contact}` across the pause?
+### 1.1 Does the spine hold `lock:{contact}` across the wait?
 
-**Recommendation: no. Release it, and have the callback start a fresh turn.**
-This is an n8n-side decision and n8n is a separate task, so what this plan owes it is the
-evidence and a CRM design that works either way.
+**Chosen: HOLD. This reverses the recommendation made against the earlier async design, and the
+reversal is the direct consequence of the captain approving the synchronous wire.**
 
-The evidence, all from the n8n repo read-only:
+The reversal is stated plainly rather than quietly amended, because the reasoning matters more
+than the conclusion.
+
+**Under the synchronous wire, hold-versus-release is no longer a choice.** A spine node that makes
+a blocking HTTP request holds the dispatcher's lock for the duration by construction:
+`call-spine` is `waitForSubWorkflow: true` (`sorento-dispatcher/workflow.json:379`), so the
+dispatcher execution is blocked on the spine, and the spine is blocked on the CRM. There is no
+pause to release across. The earlier release recommendation was answering a different question -
+whether to hold across an **open-ended** suspension in an async/resume design - and that question
+no longer exists.
+
+**So the real question becomes: is holding safe?** It is a budget argument, and the budget now
+closes, where before it did not.
+
+| term | value | source |
+|---|---|---|
+| lock TTL | 120s | `sorento-dispatcher/workflow.json:330` |
+| existing spine turn | 5.0 - 18.4s | `concurrency-plan.md:82,84,143`, `dym-probe-before-offer-plan.md:463` |
+| fast path added by this endpoint | milliseconds | measured in this work, section 8 |
+| extraction, typical | 5.8 - 9.8s | measured, three corpus images |
+| extraction, hard ceiling | `media_sync_wait_seconds`, default 30s | enforced by this endpoint |
+| **worst-case turn** | **~48s** | 18.4 + 30, against a 120s TTL |
+
+That leaves better than 60 percent margin at the worst case and roughly 75 percent at the typical
+one. Crucially the ceiling is **enforced by a CRM setting rather than hoped for**: past
+`media_sync_wait_seconds` the endpoint stops waiting and returns `status: pending` with the
+`job_id`, so the wait cannot run long no matter how badly the provider behaves. That is a strict
+improvement on the status quo, in which nothing bounded a turn at all.
+
+**What does not change, and must still be said in the PR:** spine p99 remains **unmeasured**
+(`concurrency-plan.md:148`), it is already risk #1 in that plan (`:193`, `:222`), and this feature
+makes measuring it more urgent rather than less. The mitigation shipped here is that
+`media_sync_wait_seconds` is an operator setting, so if the lock does prove tight the wait can be
+shortened - and the flow degrades to the callback rather than breaking - without a deploy.
+
+The original evidence, which still stands and is what sized the budget above:
 
 - The dispatcher calls the spine with `waitForSubWorkflow: true`
   (`sorento-dispatcher/workflow.json:379`), so the dispatcher execution is blocked for the whole
@@ -55,27 +99,44 @@ The evidence, all from the n8n repo read-only:
   which is exactly the `save-session-vars` read-modify-write clobber the dispatcher was built to
   eliminate (`concurrency-plan.md:5`).
 
-So holding the lock across a queued extraction spends an unmeasured margin on a turn that already
-costs 5-18 seconds, to buy ordering that the dispatcher provides anyway once the turn is
-re-enqueued. Releasing is cheaper and the failure mode is milder: a second message from the same
-contact interleaves, and the dispatcher serialises both. Ordering within a contact is already
-best-effort, because the queue is a list popped one item at a time.
+Holding is also what the repo's own precedent does for the equivalent work: voice today runs
+`fetch-audio` then `whisper-transcribe` **inline and synchronously** inside the spine
+(`live-spine-sorento-consume-main/workflow.json:5057`, `:5083`), under the same lock, for the same
+class of multi-second provider call. This endpoint is that pattern with a bounded ceiling added,
+not a new risk class.
 
-Releasing also matches the only precedents in that repo. `live-respond-send-user`'s webhook and
-`zz-chat`'s push-queue both **inject and start a fresh turn**; nothing there suspends mid-flow.
+**What is measured in this work:** the fast-path latency and the worst-case end-to-end call, since
+both now sit inside the lock. Method and targets are in section 8.
 
-**What this plan does about it, concretely:** it bounds the CRM side so the recommendation is not
-load-bearing. The extraction job has a configurable hard timeout, default well under 120 seconds,
-and the callback **always** fires - success, failure or timeout. So even if the n8n half chooses
-to hold the lock, the held window has a known ceiling inside the TTL rather than an open one.
+### 1.2 The n8n node timeout
 
-**What must still be measured, and is measured in this work:** the fast-path latency, because with
-extraction queued the fast path is the only thing inside the lock on the synchronous leg. Target
-and method are in section 8.
+The captain asked for this to be settled with evidence, and it interacts with idempotency in a way
+that is easy to get wrong.
 
-### 1.2 Can the spine actually resume mid-flow?
+**Recommendation: set the n8n HTTP node timeout to 60 seconds**, with `retryOnFail: true` and
+`onError: stopWorkflow`.
+
+- 60s is double `media_sync_wait_seconds` (30s) and comfortably above the worst case of roughly
+  40s for the call itself, so a normal slow turn never trips it.
+- It still leaves half the 120s lock budget unspent even if the node runs to its own timeout.
+- **`retryOnFail` is safe precisely because of the idempotency constraint.** If the node times out
+  while the CRM job actually completed, the retry hits the idempotent replay path (section 3.3
+  step 2) and returns the **same** `job_id` and the **completed result**, with no second ledger
+  row and no second extraction spend. Without strict idempotency this configuration would double
+  charge a contact and pay twice for one photo, which is why the constraint is mandatory rather
+  than defensive.
+- **Never configure it as `continueErrorOutput` with the error output unwired.** That combination
+  routes the item to an unconnected output, the branch dead-ends, and the execution still reports
+  `success` - a documented incident class in that repo where a swallowed error produced a
+  confidently wrong customer reply.
+
+### 1.3 Can the spine actually resume mid-flow?
 
 **Finding: not today, and not without new construction. This was checked, not assumed.**
+
+Under the synchronous wire this is no longer on the critical path - it is what the fallback would
+need if async is ever switched on. It is recorded in full because that switch is meant to be a
+configuration change, and this is the fact that decides how much work the switch actually costs.
 
 - Exactly one `n8n-nodes-base.wait` node exists in the whole n8n repo, in `sub-sendmsg`
   (`export/sub-sendmsg/workflow.json:357-367`). It carries no `resume` property, so it is in the
@@ -88,12 +149,14 @@ and method are in section 8.
 - The live instance's n8n version and execution mode are recorded nowhere in that repo; the
   `docker-compose.yml` pin is explicitly disclaimed as the dead local stack (`CLAUDE.md:43`).
 
-**Consequence for this plan: the CRM must not depend on resume existing.** The design is therefore
-transport-agnostic. n8n supplies an opaque `callback_url` plus optional `callback_headers` with
-the request; the CRM POSTs the result there and cares about nothing else. That target can be a
-Wait-node resume URL if the n8n half builds one, or a plain webhook that re-enqueues the turn -
-which is the cheaper option and matches the repo's own precedent. A `GET` polling endpoint covers
-the case where neither is wanted.
+**Consequence for this plan: the CRM must not depend on resume existing** - and under the
+synchronous wire it does not, because the primary path returns the result on the same call. The
+callback stays transport-agnostic for the fallback and the future switch: n8n may supply an opaque
+`callback_url` plus optional `callback_headers`, and the CRM POSTs the result there and cares
+about nothing else. That target can be a Wait-node resume URL if the n8n half ever builds one, or
+a plain webhook that re-enqueues the turn - which is cheaper and matches the repo's own precedent.
+A `GET` polling endpoint covers the case where neither is wanted, and it is also what n8n should
+call after a `status: pending` response.
 
 One structural fact the n8n follow-up must respect, recorded here so it is not rediscovered: the
 extracted text has to land in the queue item **upstream of `tf-message`**
@@ -211,12 +274,13 @@ frontend; this is a documented repeat failure in this repo.
 | `media_burst_window_seconds` | 60 | |
 | `media_warn_threshold_percent` | 80 | |
 | `media_image_provider` / `media_image_model` | NULL / NULL | NULL falls back to the `AIAssistantConfig` row, matching `_resolve_provider` |
-| `media_image_degraded_model` | NULL | the degraded tier; NULL means no degradation is possible and the quota becomes a hard stop, which must be surfaced in the settings UI |
+| `media_image_degraded_model` | `gpt-4o-mini` | the degraded tier; see 2.5 for the branch when it is absent or equal to the standard model |
 | `media_transcribe_model` | `whisper-1` | |
 | `media_language_mode` | `pinned` | `pinned`, `hints`, `auto` |
 | `media_language_pinned` | `en` | |
 | `media_language_hints` | `en,ms,zh` | CSV, only used in `hints` mode |
-| `media_extraction_timeout_seconds` | 45 | the hard ceiling on the queued work |
+| `media_sync_wait_seconds` | 30 | how long the endpoint awaits the worker before returning `pending`; this is the value that bounds the lock |
+| `media_extraction_timeout_seconds` | 45 | the worker's own hard ceiling; must be >= the sync wait so a job that outlives the wait still finishes and is retrievable |
 | `media_max_entities` | 10 | the extraction cap |
 
 `media_transcribe_model` defaulting to `whisper-1` with `media_language_mode` defaulting to
@@ -247,7 +311,7 @@ This is DoD gate item 3 and it is the single most common way a feature like this
 Auth is `X-API-Key` through `get_external_api_user` (`app/dependencies.py:491-521`), the same
 principal every other n8n route uses.
 
-### 3.2 `POST /api/v1/external/media/process` - the fast path
+### 3.2 `POST /api/v1/external/media/process` - one call, awaited
 
 Request:
 
@@ -263,7 +327,7 @@ Request:
   "duration_ms": 18400,               // voice only, used for the clip cap
   "bytes": 284119,                    // optional
   "turn_id": "9240705",
-  "callback_url": "https://automate-sorento.foundryx.my/webhook/...",
+  "callback_url": "https://automate-sorento.foundryx.my/webhook/...",  // optional
   "callback_headers": {"X-Whatever": "..."},   // optional, opaque
   "context": { }                      // optional, opaque, echoed back verbatim
 }
@@ -276,6 +340,7 @@ because n8n branches on it:
 {
   "job_id": "…",                      // null when the decision is a refusal
   "decision": "accepted",             // accepted | denied_gate | denied_burst | denied_quota | denied_duration
+  "status": "completed",              // completed | pending | failed  (accepted decisions only)
   "idempotent_replay": false,
   "tier": "standard",                 // standard | degraded
   "quota": {
@@ -286,9 +351,22 @@ because n8n branches on it:
   "notices": [
     {"kind": "warn_80", "text": "…", "append": true}
   ],
-  "language_strategy": {"mode": "pinned", "language": "en"}   // voice only
+  "language_strategy": {"mode": "pinned", "language": "en"},  // voice only
+  "result": { }                       // the extraction body, section 3.5; null unless status == completed
 }
 ```
+
+**`status` is what n8n branches on for the slow half:**
+
+- `completed` - the normal case. `result` is populated and the turn continues immediately.
+- `pending` - the wait hit `media_sync_wait_seconds` before the worker finished. The job is still
+  running; n8n either polls `GET /media/jobs/{job_id}` or waits for the callback if it supplied
+  one. This is the graceful edge, not an error, and it is what makes async a switch rather than a
+  rebuild.
+- `failed` - extraction failed. `result` is null and `error` carries the reason. The turn should
+  degrade to caption-only, which is today's behaviour.
+
+A refusal (`denied_*`) returns immediately with no job, no `status` and no `result`.
 
 `denied_quota` is only ever returned when degradation is impossible (no degraded model
 configured). The captain's decision is degrade, not refuse, so the normal at-limit path is
@@ -314,7 +392,36 @@ Inside one transaction, in this order:
    precedes spending, so "crashed after spending, before recording" cannot happen.
 8. **Notices.** Stamp `warned_period` / `degraded_notified_period` in the same transaction so each
    notice can only fire once per period per modality.
-9. Create the job row and enqueue it, then return.
+9. Create the job row and enqueue it.
+
+Everything above is milliseconds of ordinary SQLAlchemy work and runs inline, exactly like every
+other route in this repo. The transaction commits here, **before** any waiting begins, so the
+ledger row and the decision are durable even if the wait or the worker later dies.
+
+### 3.3b Awaiting the worker without blocking the event loop
+
+The route is `async def`. After the commit it awaits the job:
+
+```
+await asyncio.wait_for(_await_job(job_id), timeout=media_sync_wait_seconds)
+```
+
+where `_await_job` loops on `await asyncio.sleep(0.25)` and reads the job row through
+`await asyncio.to_thread(...)`, using its **own short-lived session** rather than the request's.
+Two properties matter and both are the point of the exercise:
+
+- **No synchronous multi-second call ever runs in the handler.** The provider call happens in the
+  RQ work-horse process, not in the API process. This is the specific mistake the live portal
+  route makes (`app/api/v1/public/ai_extract.py:116` calling the synchronous
+  `extract_service.py:238`), which freezes the backend for 5.8-9.8 seconds per request. That
+  defect is filed separately and rated low priority; it is not fixed here and it is not copied.
+- **Each poll is a short read moved off the loop.** `asyncio.to_thread` keeps even the millisecond
+  DB read from occupying the loop, so a hundred concurrent media turns cost sleeping coroutines,
+  not blocked workers.
+
+On `TimeoutError` the endpoint returns `status: pending` with the `job_id`. The job keeps running
+and the result stays retrievable through the polling endpoint and the callback. Nothing is lost
+and nothing is double charged, because the ledger row was written in step 7.
 
 The gate fails **closed** and the quota fails **open**. This is a deliberate departure from the
 house style of the existing limiters, which are fail-open by design because they are abuse
@@ -325,9 +432,15 @@ ceilings rather than entitlements. The PR description must say so.
 Returns the job status and, once complete, the identical result body the callback carries. Safe
 to poll, no side effects. This exists because mid-flow resume was not confirmed (section 1.2).
 
-### 3.5 The callback
+### 3.5 The result body, and the callback
 
-The worker POSTs to `callback_url` with `callback_headers` applied verbatim:
+The `result` object below is the single shape returned three ways - inline on the synchronous
+response, from the polling endpoint, and in the callback body. One shape, three transports, so
+switching transport changes nothing downstream.
+
+The callback fires only when `callback_url` was supplied. Under the synchronous wire it is
+optional and most turns will not need it; it is what makes the async switch free. The worker POSTs
+to `callback_url` with `callback_headers` applied verbatim:
 
 ```jsonc
 {
@@ -553,12 +666,24 @@ is used, never hand-rolled. Every optional select is `clearable`. Both surfaces 
 
 Two measurements are owed and both are produced by this work rather than asserted.
 
-**Fast-path latency.** With extraction queued, the fast path is the only thing n8n waits on
-synchronously, so it is the only thing this feature adds inside `lock:{contact}`. Method: a pytest
-benchmark against a seeded contact on local Postgres plus Redis, sampling the endpoint over enough
-iterations to report p50 and p99 separately for the accepted, replayed and refused paths. The
-replay path is the one that matters most, because `retryOnFail` makes it the common case under
-transient failure. Reported in the PR description with the numbers, not a claim.
+**Fast-path latency.** The decide-and-record half, measured on its own, because it is what every
+refusal and every idempotent replay costs and it bounds the floor of the call. Method: a pytest
+benchmark against a seeded contact on local Postgres plus Redis, sampling over enough iterations
+to report p50 and p99 separately for the accepted, replayed and refused paths. The replay path
+matters most, because the recommended `retryOnFail` makes it the common case under transient
+failure.
+
+**Worst-case end-to-end call.** What n8n's node timeout has to clear, and what the lock budget is
+spent on. Reported as the fast path plus measured extraction, plus the enforced
+`media_sync_wait_seconds` ceiling, so the number is a bound rather than an average.
+
+**Event-loop non-blocking, demonstrated not asserted.** A test issues a media call whose extraction
+is stubbed to take several seconds and, while it is in flight, issues a second unrelated request to
+a trivial endpoint on the same API process. The second request must return promptly. This is the
+regression guard for the whole point of section 3.3b, and it is the thing that would silently rot
+if someone later "simplified" the await into a direct call.
+
+All three are reported in the PR description with numbers, not claims.
 
 **Corpus extraction.** The three real Sorento images are run through the shipped extraction and
 scored per field against the written ground truth as exact match, plausible-but-wrong, or refused.
