@@ -23,8 +23,9 @@ able to vouch for it.
   flyer-derived values are promoted to authored and `ProductFlyerText` is discarded.
 - **C** - spec statuses render as pills, matching the existing `lib/status-pill.ts` vocabulary
   the rest of the system already uses.
-- **D** - a verification workflow: a worklist built for going through the catalogue one code at
-  a time, a Verify stamp recording who and when, and an automatic reset when the values change.
+- **D** - a verification workflow: a **product list** built for reviewing many at once, with
+  bulk verify, a Verify stamp recording who and when, and an automatic reset when the values
+  change.
 
 **Not in scope:** the supplier portal (milestone 2). Its seams are requirements here (M2-S1 to
 M2-S8) but no supplier-facing surface is built in this milestone.
@@ -45,7 +46,7 @@ factual premises wrong, this UAC follows the code and the PLAN records the corre
 | D2 | **Flyer-derived VALUES are promoted to authored before the flyer text is dropped** - re-stamped `{"source": "human", "evidence": "flyer: <original>", "migrated_from": "flyer"}` - and only then does `ProductFlyerText` go. The values are not allowed to disappear on the next derivation. |
 | D3 | **Verification resets on VALUE CHANGE, three states** (unverified / verified / needs-re-verify), keyed on a canonical values hash through a single write choke point, with the before/after diff recorded on invalidation. Not "an edit happened", and not human-edits-only. |
 | D4 | **Supplier submissions are staged for review**, never written directly into `product_specifications`. Milestone 2, but the milestone 1 seams must allow it. |
-| D5 | **The verification screen is a split-pane workbench**, a deliberate deviation from the detail-page + `RecordNavigation` standard. Needs the standard-owner's sign-off at PLAN review and an explicit call-out in the PR description. If refused, the fallback is standard list-to-detail plus a next-unverified neighbours endpoint via `useRecordNeighbours`, and **the model must survive that swap unchanged**. |
+| D5 | **The verification screen is a standard list, not a split-pane workbench.** Settled by the captain at plan review, superseding the design's workbench proposal. It uses the shared `DataGrid` list component exactly as the user list does: multi-select with the standard select-all, filters, search, and **bulk actions**. The objective is to see and review many products at once. Clicking a product goes to **the existing product detail page's Specifications tab** - no new detail route. Since this is the repo's standard pattern, the deviation and its sign-off are moot. |
 | D6 | **Provenance evidence is kept**, as a source badge with the evidence behind hover/expand, rather than a permanent column of text. |
 | D7 | **Creating a spec key from the product page requires `master_data.spec_registry.add`** - the same grant as the master screen, no new permission. Duplicate prevention is a UX obligation: match against existing keys and synonyms and offer the match before allowing a create. |
 | D8 | **An authored value always wins a conflict.** When derivation later disagrees with a hand-set value, the authored value stays in force and the disagreement is raised as `ProductSpecException(reason='human_override_conflict', ...)` on the existing "Needs a human" card until a person resolves it. **A product with open exceptions cannot be verified.** |
@@ -147,26 +148,29 @@ Verification. They have no list to prepare, no export, no spreadsheet.
 **What the system already knows:** every spec, its source, what changed since the last verify,
 every open exception, and how complete each code's coverage is.
 
-1. **First screen** - a worklist of product codes and a progress line: **"Verified 0 of 8,812
-   live codes"**. Discontinued products are excluded by default, with a toggle to include them.
-   The order is the work order: needs-re-verify first (ten-second diffs), then never-verified,
-   grouped by class so the reviewer holds one mental model at a time. Filters (class, brand,
-   state, include-discontinued) live in the URL so a person can own a slice and resume tomorrow.
-2. **The loop, one code at a time** - the review pane shows the description, **the same editable
-   table from Journey A** (same component), any open exceptions with a way to resolve them, and
-   for a needs-re-verify code, a highlighted diff of **what changed since the last verify**. They
-   touch a spec only when it is wrong, then make one decision: **Verify**.
-3. **Verify advances automatically** to the next code, which is already rendered because it was
-   prefetched while they read this one. Keyboard all the way: `j`/`k` or arrows move, `Enter`
-   opens the row editor, `v` verifies and advances, `n` jumps to the next unverified. Verify is
-   also a sticky button, so the keyboard is an accelerator and never the only route.
+1. **First screen** - a **list of products**, the same shared `DataGrid` the user list uses, and a
+   progress line: **"Verified 0 of 8,812 live codes"**. Each row carries the code, class, brand,
+   coverage, open-exception count and a verification pill, so **many products are reviewable at a
+   glance without opening any of them**. Discontinued products are excluded by default with a
+   toggle. The order is the work order: needs-re-verify first (ten-second diffs), then
+   never-verified, grouped by class so the reviewer holds one mental model at a time. Filters
+   live in the URL so a person can own a slice and resume tomorrow.
+2. **Reviewing many at once** - the standard select-all sits at the top left of the grid exactly
+   as it does elsewhere. The user scans the page, ticks the rows that are right, and presses
+   **Verify selected**. The confirmation states the count. This is the bulk path, and it is what
+   makes 8,812 codes tractable.
+3. **Reviewing one properly** - clicking a product opens **the existing product detail page on its
+   Specifications tab**, which by then is the editable table from Journey A. Open exceptions and,
+   for a needs-re-verify code, a diff of what changed since the last verify, sit alongside it.
+   They fix what is wrong and press **Verify** there. The page already carries prev/next record
+   navigation, so the next product is one click away without returning to the list.
 4. **End state** - the code carries "Verified - <name>, <date>" as a pill wherever it appears,
-   including the product detail page. Any later change to its values flips it to "Needs
+   in the list and on the product page. Any later change to its values flips it to "Needs
    re-verify" with the diff waiting. Work is never silently discarded; it degrades to a visible
    ten-second re-check.
 
 **Day-one reality, measured:** 0 codes verified and 0 authored values in the entire catalogue.
-The workbench opens on a 100% machine-derived, 0% verified catalogue, and the needs-re-verify
+The screen opens on a 100% machine-derived, 0% verified catalogue, and the needs-re-verify
 path cannot occur naturally until someone makes the first edit. Every AC is written for that
 starting state and its tests must manufacture the changed case.
 
@@ -313,7 +317,7 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
 - **AC-C.4** `[T]` GIVEN each converted call site WHEN vitest runs THEN the pill class for each
   status key is asserted.
 
-### D - Verification workflow and workbench (PR 3)
+### D - Verification workflow and product list (PR 3)
 
 - **AC-D.1** `[BE][M]` GIVEN the verification model WHEN it is created THEN it is a new
   **append-only, party-scoped** `product_spec_verifications` table keyed on **`product_code`**,
@@ -356,42 +360,57 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   sort, **not** the default order: with a median of 4 keys against a denominator of 45-52 (M8),
   "worst coverage first" degenerates to ascending key count and sends the reviewer to the
   emptiest, slowest products first.
-- **AC-D.8** `[FE]` GIVEN the worklist WHEN it renders THEN it is a **server-paginated shared
-  `DataGrid`**, not a client-side virtualized list. The repo has no virtualization library and
-  never loads thousands of rows client-side; page N+1 is prefetched as the cursor approaches the
-  boundary, which also makes cross-page `j`/`k` traversal work.
-- **AC-D.9** `[FE]` GIVEN the review pane WHEN it renders THEN it reuses **PR 2's editable table
-  component unchanged**. A denser presentation is a prop on the shared component, never a fork.
-- **AC-D.10** `[FE]` GIVEN the keyboard WHEN the user works THEN `j`/`k`/arrows navigate, `Enter`
-  edits, `Esc` cancels, `a` adds, `v` verifies and advances, `n` jumps to the next unverified.
-  Bindings are scoped to the workbench container and **no-op while focus is in an input or an open
-  dialog**. Verify is also a sticky button, so the flow is reachable without a keyboard.
-- **AC-D.11** `[FE]` GIVEN a needs-re-verify code WHEN its pane opens THEN the `invalidated_diff`
-  renders as was/now pairs.
-- **AC-D.12** `[FE]` GIVEN the filters WHEN they are set THEN they persist in the URL so a link is
-  a shareable slice and a refresh resumes in place.
-- **AC-D.13** `[FE]` GIVEN the workbench WHEN it is reviewed THEN there is **no bulk verify**, no
-  select-all and no multi-select. A verification nobody looked at is the thing this feature exists
-  to prevent.
+- **AC-D.8** `[FE]` GIVEN the verification screen WHEN it renders THEN it is the **shared
+  `DataGrid` list component used exactly as the user list uses it** (D5): server-paginated,
+  searchable, filterable, with `tableLayout: {width:'fixed', columnsResizable:true}`, explicit
+  `size` per column and truncate + title on long text. No split pane, and no client-side
+  virtualized list - the repo has no virtualization library and never loads thousands of rows
+  client-side.
+- **AC-D.9** `[FE]` GIVEN a row WHEN it renders THEN it carries enough to judge the product
+  without opening it: code, class, brand, coverage, open-exception count and the verification
+  pill. Seeing many products at once is the point of the screen.
+- **AC-D.10** `[FE]` GIVEN the grid WHEN it renders THEN it has the **standard select-all at the
+  top left**, matching every other listing, plus per-row checkboxes. Selection is **page-scoped**,
+  which is what the shared component already does (`toggleAllPageRowsSelected`). The optional
+  cross-page `selectAllMatching` banner is **not** wired: without it a bulk stamp can only cover
+  rows the user actually had on screen. Enabling whole-filter selection is a deliberate decision
+  and would need to be taken explicitly.
+- **AC-D.11** `[FE][BE]` GIVEN selected rows WHEN **Verify selected** is pressed THEN a
+  confirmation states the count (per the bulk-action copy standard) and one bulk call stamps them.
+  The response is **per-code, not all-or-nothing**: codes that cannot be verified are reported
+  with their reason rather than failing the batch, and the result is surfaced as
+  "42 verified, 3 skipped - exceptions open, 1 skipped - changed while you were reviewing".
+  Anything skipped stays selected so it can be dealt with.
+- **AC-D.12** `[FE]` GIVEN a product row WHEN it is clicked THEN it opens **the existing product
+  detail page on its Specifications tab**. There is **no new detail route**: the editable table,
+  the exceptions and the diff all already live there, and that page already carries prev/next
+  record navigation, so reviewing one by one costs no extra build.
+- **AC-D.13** `[FE]` GIVEN the Specifications tab WHEN it renders for a code in the worklist THEN
+  it carries the single-product **Verify** action, the verification pill with who and when, and
+  for a needs-re-verify code the `invalidated_diff` as was/now pairs.
 - **AC-D.14** `[FE][BE]` GIVEN a product detail page WHEN its Specifications tab renders THEN the
   verification block comes from the **existing** `by-product/{id}` response, not a second round
   trip, and both company copies of a code show the identical badge.
 - **AC-D.15** `[BE]` GIVEN the new routes WHEN they are gated THEN they reuse
-  `master_data.products.view` (worklist) and `.edit` (verify, resolve). **No new permission slug
-  is minted**: a dedicated slug would ship the feature 403'd to everyone, which is exactly what
-  happened to the spec registry (M1). Restricting verification to a smaller group is a deliberate
-  decision that must arrive with a seeded grant in the same migration.
-- **AC-D.16** `[FE]` GIVEN the standard-owner refuses the workbench deviation (D5) WHEN the
-  fallback is built instead THEN the model, the table and **every endpoint above are unchanged**;
-  only the presentation swaps to list-to-detail with `RecordNavigation` fed by a neighbours
-  endpoint via `useRecordNeighbours`, where `n` is the same endpoint with `state=unverified`.
+  `master_data.products.view` (worklist) and `.edit` (verify, bulk verify, resolve). **No new
+  permission slug is minted**: a dedicated slug would ship the feature 403'd to everyone, which is
+  exactly what happened to the spec registry (M1). Restricting verification to a smaller group is
+  a deliberate decision that must arrive with a seeded grant in the same migration.
+- **AC-D.16** `[BE]` GIVEN the bulk verify endpoint WHEN it stamps a code THEN it applies the
+  **same guards as the single verify**: the values hash is compared in the same transaction and
+  open exceptions still block. Bulk is a loop over the same rule, never a second, laxer path -
+  otherwise the bulk button quietly becomes the way to stamp what the single button refuses.
+- **AC-D.17b** `[FE]` GIVEN the filters WHEN they are set THEN they persist in the URL so a link
+  is a shareable slice and a refresh resumes in place.
 - **AC-D.18** `[FE]` GIVEN the new screen WHEN it is named THEN it is **not** called
   `SpecWorkbench` - that name is already taken by the master screen's tab shell.
 - **AC-D.19** `[E2E]` GIVEN a user WHEN they navigate **by sidebar clicks from `/`** to Spec
-  Verification THEN they can filter, open a code, edit a spec, verify it, land on the next code,
-  and see the state change; a code with an open exception blocks Verify with the stated reason and
-  unblocks once resolved; an edit to a verified code returns it as needs-re-verify with the diff.
-  Clean console, at **375px and 1280px**.
+  Verification THEN: they can filter, tick several rows, press Verify selected, confirm the count,
+  and see those rows flip state; a selected code with an open exception is reported as skipped
+  with its reason rather than failing the batch; clicking a product lands on its Specifications
+  tab where a single Verify works and prev/next moves to the next product; and an edit to a
+  verified code returns it as needs-re-verify with the diff. Clean console, at **375px and
+  1280px**.
 
 ### B - Prompt box, extraction proposals, and the flyer discard (PR 4)
 
@@ -499,12 +518,15 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   surviving re-derivation (AC-D.17), coverage per gate rule and worklist ordering/filters
   (AC-D.6, D.7), extraction writing nothing and dropping invented vocabulary (AC-B.1, B.4), batch
   apply atomicity (AC-B.9), and the promote migration run twice plus a prior-bad-run repair
-  fixture and an exact downgrade (AC-B.10). Every route: happy + auth denial + validation.
-  **Postgres only** (AC-F.14).
+  fixture and an exact downgrade (AC-B.10). **Bulk verify specifically:** a mixed batch returns
+  per-code outcomes, a code with open exceptions is skipped rather than failing the batch, and a
+  code whose hash moved is skipped with its own reason (AC-D.11, AC-D.16). Every route: happy +
+  auth denial + validation. **Postgres only** (AC-F.14).
 - **vitest:** every component's loading / empty / error / partial / data states; the cell renderer
   per data type; read-to-edit leaving DOM order unchanged (the same-layout mandate as an
   assertion); the tombstone row; the near-duplicate matcher; pill classes; the proposal badges and
-  default-unchecked conflicts; the keyboard hook including the focused-input no-op.
+  default-unchecked conflicts; the selection-to-bulk-action strip including the count in the
+  confirmation copy and the partial-outcome summary.
 - **playwright:** AC-A.16, AC-D.19, AC-B.17 - sidebar navigation only, asserting the expected
   `/api/v1/*` calls, at 375px and 1280px.
 

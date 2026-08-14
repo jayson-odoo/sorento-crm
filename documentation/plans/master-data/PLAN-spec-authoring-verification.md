@@ -3,7 +3,9 @@
 **Slug:** `spec-authoring-verification` · **Domain:** master-data · **Milestone:** 1 of 2
 **UAC:** `spec-authoring-verification-acceptance-criteria.md` (the contract - this plan fulfils it)
 **Classification:** CORE, schema `public`, normal FKs
-**Status:** DRAFT - pre-code, pending captain review. Two sign-offs outstanding (see "Decisions").
+**Status:** DRAFT - pre-code. Section D revised 2026-08-14 after the captain settled the
+verification screen as a standard list with bulk actions. Three decisions still open (see
+"Decisions").
 
 ## Goal
 
@@ -118,7 +120,7 @@ there is no `resolved_at` writer anywhere in the backend outside the models modu
 codes carry open exceptions**, 237 of them `shape_mismatch`, which is raised deterministically
 from stored dimension columns a merchandiser cannot change by editing specs.
 
-Shipped as designed, those 258 codes are permanently unverifiable and the workbench offers no way
+Shipped as designed, those 258 codes are permanently unverifiable and the screen offers no way
 out - the worst possible outcome for a screen whose promise is "the next thing to do is on top".
 
 **Correction:** PR 3 ships a resolve action **and** changes the exception rebuild from
@@ -127,15 +129,51 @@ unchanged (a changed payload is a new fact and correctly re-opens). If the capta
 this, the only honest alternative is to downgrade the block to a prominent warning with a second
 confirm. **Do not ship the hard block without the escape.**
 
-### C5 - do not virtualize the worklist, paginate it
+### C5 - the verification screen is a standard list, not a split-pane workbench (settled by the captain)
 
-The design specifies a virtualized list for "thousands of rows". The repo has no virtualization
-library and never loads thousands of rows client-side; every listing is server-paginated.
+**Superseded by the captain at plan review, and this replaces the design's section D presentation
+entirely.** The design proposed a split-pane workbench and flagged it as a deliberate deviation
+needing sign-off. The answer is no: it is a **list of products**, using the shared `DataGrid`
+exactly as the user list does, because the objective is **to see many products at once and review
+many at once, including bulk actions**.
 
-**Correction:** server-paginated shared `DataGrid`, page size 50, prefetching page N+1 as the
-keyboard cursor nears the boundary. Zero new dependencies, the repo's standard behaviour, and it
-makes cross-page `j`/`k` traversal a solved problem rather than an afterthought - which a
-client-side virtual list would not have been anyway, since it still needs the data.
+What this changes:
+
+- **The screen** is a standard server-paginated `DataGrid` list with search, filters, per-row
+  checkboxes and the **standard select-all at the top left**, matching every other listing.
+- **Bulk verify** is now a requirement, not a prohibition. The design argued against it ("a
+  verification nobody looked at is what this feature exists to prevent"); that argument was
+  aimed at blind whole-catalogue stamping, and it does not apply to ticking rows you are looking
+  at in a grid. It survives only as the narrow guard below.
+- **Clicking a product opens the existing product detail page's Specifications tab.** There is
+  **no new detail route at all**. That tab is already where the editable table (PR 2), the
+  exceptions and the diff live, and `products/[id]` already carries prev/next via
+  `ProductNavigation.tsx` feeding `RecordNavigation` in IDs mode. So reviewing one-by-one comes
+  for free and is the repo's mandated pattern.
+- **The split pane, the prefetch orchestration, the `j`/`k`/`v`/`n` keyboard map and the
+  cross-page cursor traversal are all dropped.** Efficiency is served by bulk action plus the
+  existing prev/next, which is a smaller build than the workbench and needs no sign-off.
+- **The deviation and its outstanding sign-off are moot.** This is now the standard pattern, so
+  `PRINCIPLES.md`'s detail-page + `RecordNavigation` mandate is satisfied rather than deviated
+  from.
+
+Two things carried forward unchanged: the list is server-paginated (the repo has no
+virtualization library and never loads thousands of rows client-side), and **the model, the
+schema and every endpoint are untouched by this swap** - which is exactly the property AC-D.16
+was written to guarantee, now collected.
+
+**The one guard, measured rather than argued.** The shared select-all is **page-scoped**
+(`table.toggleAllPageRowsSelected`, `components/ui/data-grid-select-column.tsx:29-31`). A
+cross-page "select all N matching" exists in the shared toolbar but is an explicit per-listing
+opt-in (`selectAllMatching`, `data-grid-list-toolbar.tsx:300-307`). Plan: wire the standard
+select-all and **do not** opt into `selectAllMatching`, so a bulk stamp can only ever cover rows
+that were on screen. "Just like currently" already means page-scoped, so this needs no argument -
+but enabling whole-filter selection later is a deliberate decision, not a default.
+
+**Bulk must not become a laxer path.** The bulk endpoint applies the *same* guards as the single
+verify - same-transaction hash compare, exceptions still block - and returns **per-code
+outcomes** rather than all-or-nothing, so a batch reports "42 verified, 3 skipped, exceptions
+open" instead of failing whole or, worse, stamping what the single button would have refused.
 
 ### C6 - "worst coverage first" is nearly degenerate
 
@@ -226,15 +264,21 @@ and the UAC; the files stay the contract and an issue that contradicts the UAC l
 |---|---|---|---|---|
 | 1 | Foundations: `product_spec_write` with `write_spec_row` + `merge_authored_over`, canonical hash, tombstone + merge change, fan-out, `human_override_conflict`, `AUTHORED_SOURCES`, `status` fix, `human_source_boost` row **and the source-keyed boost branch**, listener backstop | boost decision (settled) | 3-5 d | **5-7 d** |
 | 2 | Editable table (A) + pills (C) + inline add-value + add-key picker + `applicable_keys_for_code` + permission relaxation and grant sweep | PR 1 | 5-8 d | **9-13 d** |
-| 3 | Verification model + workbench (D) + exception resolve action | PR 1; PR 2 for the shared table | 8-12 d | **12-17 d** |
+| 3 | Verification model + **standard list with bulk verify** (D) + exception resolve action | PR 1; PR 2 for the tab's editable table | 8-12 d | **10-15 d** |
 | 4 | Prompt box + extraction proposals (B), batch apply, then promote migration + retirements + full re-derive | PR 1 (incl. the boost branch) | 6-10 d | **9-12 d** |
-| | **Milestone 1 total** | | **22-35 d** | **35-49 d** |
+| | **Milestone 1 total** | | **22-35 d** | **33-47 d** |
 
 ### On the estimate difference - reported, not hidden
 
-My total is **35-49 engineer-days against the design's 22-35**: roughly **+13 to +14 days**, or
-+50% at the midpoint. That is not a rounding error and it is not padding. Every PR came in above
+My total is **33-47 engineer-days against the design's 22-35**: roughly **+11 to +12 days**, or
++40% at the midpoint. That is not a rounding error and it is not padding. Every PR came in above
 the design's number, and each one for the same reason: the design priced the diff, not the slice.
+
+(The original figure was 35-49. The captain's decision to use a standard list rather than the
+split-pane workbench took **2 days off PR 3**: the split pane, the prefetch orchestration, the
+keyboard map and the cross-page cursor traversal all go, and the one-by-one review reuses the
+product detail page rather than a new route. Bulk verify adds back roughly a day for the
+endpoint, the per-code outcome reporting and its tests.)
 
 The gap is almost entirely **unpriced items**, not resizing:
 
@@ -249,11 +293,11 @@ The gap is almost entirely **unpriced items**, not resizing:
   calls services directly from `useState` today; the tombstone rendering contract; a shared
   `SearchableSelect` change with cross-product blast radius; and 375px, where a five-column
   editable table does not survive.
-- **PR 3 (+4-5):** the exception resolve action (C4, ~1.5 d and without it the feature has a
+- **PR 3 (+2-3):** the exception resolve action (C4, ~1.5 d and without it the feature has a
   visible dead end on day one); hash canonicalisation against 18,403 numeric and 408 array values,
   each of which would otherwise produce phantom invalidations that look like a broken feature;
-  cross-page keyboard traversal; stamping `verified_by_name`; and the `spec_registry` grant hole
-  it inherits from PR 2.
+  the bulk verify endpoint with per-code outcome reporting rather than all-or-nothing; stamping
+  `verified_by_name`; and the `spec_registry` grant hole it inherits from PR 2.
 - **PR 4 (+2):** the full-catalogue re-derive (removing the flyer from the input fingerprint
   invalidates all 11,415 codes and rewrites all 22,805 rows - an ops task with verification, not a
   side effect to discover when the nightly job runs long); the findability timing correction
@@ -316,17 +360,24 @@ No UI, so there is no UX to settle against a mock. Phase 2 only, test-first.
 - **Carry `FlyerCard` across unchanged.** It is the single easiest thing to tidy up by accident,
   and doing so would drag PR 4's decisions into this PR.
 
-### PR 3 - Verification model + workbench (Phase 1 first)
+### PR 3 - Verification model + list with bulk verify (Phase 1 first)
 
-- **Phase 1:** the whole workbench against fixtures - all three states, a code with open
-  exceptions, a code with 0 specs and one with 14, a needs-re-verify with a 3-key diff, an empty
-  result. Two fixtures deserve the captain's attention at prototype review: the progress line
-  reads **"0 of 8,812"** on day one, and the needs-re-verify state is unreachable with real data
-  until someone makes the first edit.
+- **Phase 1:** the list against fixtures - all three states, a code with open exceptions, a code
+  with 0 specs and one with 14, a needs-re-verify with a 3-key diff, an empty result, plus the
+  **selection and bulk strip**: nothing selected, a partial page selected, a whole page selected,
+  and a mixed bulk outcome ("42 verified, 3 skipped"). Two fixtures deserve the captain's
+  attention at prototype review: the progress line reads **"0 of 8,812"** on day one, and the
+  needs-re-verify state is unreachable with real data until someone makes the first edit.
 - **Phase 2 (test-first):** the migration and model; the worklist with inline coverage, ordering,
-  filters, summary and pagination; the verify endpoint with row locking, same-transaction hash
-  compare and a distinguishable 409 taxonomy; the exception resolve action and the rebuild
-  carry-forward; the verification block folded into the existing `by-product/{id}` response.
+  filters, summary and pagination; the single verify endpoint with row locking, same-transaction
+  hash compare and a distinguishable 409 taxonomy; the **bulk verify endpoint applying the same
+  guards per code and returning per-code outcomes**; the exception resolve action and the rebuild
+  carry-forward; the verification block and single-product Verify folded into the existing
+  `by-product/{id}` response and the Specifications tab.
+- **No new detail route.** Row click goes to `products/{id}` on the Specifications tab, which
+  already carries prev/next through `ProductNavigation.tsx`. The worklist is keyed on
+  `product_code` and the page is keyed on `product_id`, so the row resolves to the copy in the
+  caller's company scope - worth an explicit test, since a code can have two copies.
 - **Nav:** a new Master Data leaf. The group already carries the right module key and the backend
   router is already module-guarded, so **no module-guard change is needed**.
 - **Permissions:** reuse `products.view` / `.edit`. Minting `master_data.spec_verification.*`
@@ -356,7 +407,7 @@ No UI, so there is no UX to settle against a mock. Phase 2 only, test-first.
 
 `lib/status-pill.ts`, `SearchableSelect`/`SearchableMultiSelect`, `ConfirmDeleteDialog`,
 `DataGrid` (worklist only), `extractApiError`, `buildDataGridParams`, the mutation-hook factories,
-`RecordNavigation` + `useRecordNeighbours` (fallback path), the existing exception card, the
+`RecordNavigation` via the product page's existing `ProductNavigation`, the existing exception card, the
 prompt registry, and derivation's own `_apply_scope` gate rather than a second copy of it.
 
 Two components are built once and consumed twice by design: the editable spec table (product tab
@@ -416,24 +467,34 @@ creation from the product page; an authored value always wins a conflict.
 - Verification grain is `product_code`; ordering groups by class; discontinued excluded by
   default; server pagination over virtualization; coverage computed inline.
 
-### Outstanding - the captain's call at plan review
+### Settled by the captain at plan review (2026-08-14)
 
-1. **The workbench deviation (UAC D5).** `PRINCIPLES.md` mandates detail pages carry prev/next
-   `RecordNavigation`; the split-pane workbench deviates deliberately. **Sign-off was NOT
-   obtained.** The standard-owner is the captain (traced through git blame on the mandate), and
-   this was planned autonomously with no human in the loop, so no one could give it. The fallback
-   is fully designed and the model is genuinely indifferent: every endpoint, the table and the
-   schema are unchanged, only the presentation swaps. Measured trade: the fallback is 1.5-2 days
-   cheaper to build and costs 2-3 hours of accumulated user waiting across 8,812 live codes.
-   Recommendation: approve the workbench. Either answer can be taken at review without re-planning
-   anything else.
-2. **The no-`DataGrid` spec table (PR 2).** Worth settling before Phase 1 rather than at review -
-   if a reviewer rejects it late, the slice grows 1-2 days and the inline-edit UX degrades.
-3. **Funding the exception resolve action in PR 3 (C4).** If it is cut, the block must downgrade
-   to a warning with a second confirm. Do not ship the hard block without the escape.
-4. **Whether value near-duplicate checking must also be enforced server-side.** It is client-side
+- **The verification screen is a standard list, not a split-pane workbench** (C5). Shared
+  `DataGrid` used as the user list uses it, multi-select with the standard select-all, bulk
+  actions, and row click into the existing product detail page's Specifications tab. This closes
+  the one deviation that needed a sign-off, and it closes it by removing the deviation rather than
+  approving it.
+- **Bulk verify is required.** The design's blanket "no bulk verify" is overruled; it only ever
+  had force against blind whole-catalogue stamping, and it survives as the two narrow guards in
+  C5 (page-scoped selection, and bulk applying the same per-code rules as the single verify).
+
+### Outstanding - still the captain's call
+
+1. **The no-`DataGrid` spec table (PR 2).** Note this is a *different* surface from the
+   verification list settled above: the list is a `DataGrid`, but the per-product spec table is
+   one record's field list with inline editing, planned as a CSS grid. Worth settling before
+   Phase 1 - if a reviewer rejects it late, the slice grows 1-2 days and the inline-edit UX
+   degrades.
+2. **Funding the exception resolve action in PR 3 (C4).** If it is cut, the block must downgrade
+   to a warning with a second confirm. Do not ship the hard block without the escape. This one
+   matters more now: with bulk verify, 258 codes that can never be verified become 258 codes that
+   silently report as "skipped" in every batch a user runs.
+3. **Whether value near-duplicate checking must also be enforced server-side.** It is client-side
    as planned, which protects the UI and nothing else. Key creation is guarded server-side because
    keys are catalogue-wide and milestone 2 needs it. +0.5 d if wanted for values too.
+4. **Whether to enable cross-page `selectAllMatching` later** (C5). Not wired now, so bulk covers
+   only rows that were on screen. Say the word and it becomes a one-prop change plus a confirm
+   that states the full count.
 
 ---
 
