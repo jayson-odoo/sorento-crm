@@ -8,9 +8,16 @@ not workbench, per-row and bulk Verify/Unverify, manual unverify, fix-the-value 
 handling, shared `DataGrid` for the spec table, server-side duplicate guards, cross-page
 select-all off). Amended 2026-08-14: PR 4 lifts the flyer text pass into a pure
 `propose_from_text` instead of deleting it, ahead of a bulk flyer-ingestion slice after PRs 1-4.
-IN PROGRESS: PR 1 (Foundations) implemented on `fm/spec-pr1-foundations`, 2026-08-14 (AC-F.1 to
-AC-F.14 plus the PR-1 half of AC-D.17; backend only, Phase 1 exception per the PR-map note).
-PRs 2-4 pending.
+IN PROGRESS: PR 1 (Foundations) merged as #144, 2026-08-14 (AC-F.1 to AC-F.14 plus the PR-1
+half of AC-D.17; backend only, Phase 1 exception per the PR-map note). PR 2 (Editable table +
+pills) implemented on `fm/spec-pr2-editable-table`, 2026-08-15: AC-A.1 to AC-A.15 and AC-C.1 to
+AC-C.4, Phase 1 then Phase 2, with **AC-A.16 (the Playwright e2e spec) outstanding** - browser
+verification moved to `agent-browser` by captain ruling mid-slice and the ruling on committed
+`e2e/` specs is pending, so no new Playwright spec was written. PRs 3-4 pending.
+
+Also landed out of band: #150, a merge revision joining the `323`/`356` alembic fork that
+PRs #144 and #145 created between them. Not a defect in either; see C8's neighbour note and
+`alembic/versions/360_merge_container_status_and_spec.py`.
 
 ## Goal
 
