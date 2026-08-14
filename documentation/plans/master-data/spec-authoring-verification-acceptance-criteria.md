@@ -155,19 +155,26 @@ every open exception, and how complete each code's coverage is.
    toggle. The order is the work order: needs-re-verify first (ten-second diffs), then
    never-verified, grouped by class so the reviewer holds one mental model at a time. Filters
    live in the URL so a person can own a slice and resume tomorrow.
-2. **Reviewing many at once** - the standard select-all sits at the top left of the grid exactly
-   as it does elsewhere. The user scans the page, ticks the rows that are right, and presses
-   **Verify selected**. The confirmation states the count. This is the bulk path, and it is what
+2. **Acting on one row, without leaving the list** - every row carries its own **Verify** button.
+   A product that reads correctly at a glance is confirmed right there, one click, no navigation.
+   A row already verified shows **Unverify** instead.
+3. **Acting on many at once** - the standard select-all sits at the top left of the grid exactly
+   as it does elsewhere. The user ticks the rows that are right and presses **Verify selected**;
+   the confirmation states the count. **Unverify selected** is offered the same way. This is what
    makes 8,812 codes tractable.
-3. **Reviewing one properly** - clicking a product opens **the existing product detail page on its
+4. **Reviewing one properly** - clicking a product opens **the existing product detail page on its
    Specifications tab**, which by then is the editable table from Journey A. Open exceptions and,
    for a needs-re-verify code, a diff of what changed since the last verify, sit alongside it.
    They fix what is wrong and press **Verify** there. The page already carries prev/next record
    navigation, so the next product is one click away without returning to the list.
-4. **End state** - the code carries "Verified - <name>, <date>" as a pill wherever it appears,
+5. **Changing their mind** - a verification is never a one-way door. **Unverify** withdraws the
+   stamp and the code reads plainly **unverified** again, not "needs re-verify", because nothing
+   changed and there is no diff to show. The history keeps both facts: who vouched for it, and who
+   took it back.
+6. **End state** - the code carries "Verified - <name>, <date>" as a pill wherever it appears,
    in the list and on the product page. Any later change to its values flips it to "Needs
    re-verify" with the diff waiting. Work is never silently discarded; it degrades to a visible
-   ten-second re-check.
+   ten-second re-check, or a person withdraws it deliberately.
 
 **Day-one reality, measured:** 0 codes verified and 0 authored values in the entire catalogue.
 The screen opens on a 100% machine-derived, 0% verified catalogue, and the needs-re-verify
@@ -323,18 +330,55 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   **append-only, party-scoped** `product_spec_verifications` table keyed on **`product_code`**,
   carrying `party`, `supplier_id`, `verified_by_user_id` (text, no FK, so history survives user
   deletion), `verified_by_name`, `verified_at`, `values_hash`, `invalidated_at`,
-  `invalidated_reason` and `invalidated_diff`, with a partial unique index on
+  `invalidated_reason`, `invalidated_diff`, and **`invalidated_by_user_id` / `invalidated_by_name`
+  (both nullable, null meaning the system did it)**, with a partial unique index on
   `(product_code, party) WHERE invalidated_at IS NULL`. There is **never** a `verified_at` column
   pair on `ProductSpecifications` (M2-S2). The table is deliberately **not** company-scoped,
   matching every other spec table.
 - **AC-D.2** `[BE]` GIVEN a code WHEN its state is read THEN it is **derived, never stored**: no
-  rows = unverified; an active row = verified; no active row with history = needs re-verify, and
-  the diff and the original credit come from the latest invalidated row. A read never re-hashes
+  rows = unverified; an active row = verified; no active row whose latest invalidation reason is
+  `manual_unverify` = **unverified**; no active row with any other invalidation = needs re-verify,
+  and the diff and the original credit come from the latest invalidated row. A read never re-hashes
   values to decide the pill.
 - **AC-D.3** `[BE]` GIVEN a verified code WHEN its effective values change THEN **every** active
   row for that code is invalidated regardless of party, with `invalidated_reason` and a
-  before/after `invalidated_diff` (D3, M2-S5). GIVEN derivation's skip path (unchanged derived
-  hash) THEN nothing is invalidated.
+  before/after `invalidated_diff` (D3, M2-S5), and `invalidated_by_*` left null because no person
+  did it. GIVEN derivation's skip path (unchanged derived hash) THEN nothing is invalidated.
+- **AC-D.20** `[BE][FE]` GIVEN a verified code WHEN a user chooses **Unverify** THEN the stamp is
+  withdrawn and the code reads **unverified**, not needs-re-verify: a withdrawal has no diff, and
+  showing a re-verify prompt with an empty diff would misrepresent it. The action stamps
+  `invalidated_reason='manual_unverify'`, `invalidated_by_user_id` / `invalidated_by_name` and a
+  **optional short reason**, leaves `invalidated_diff` null, and **preserves the original
+  `verified_by` / `verified_at` on the row**, so the history still answers "who vouched for this,
+  and who took it back".
+- **AC-D.21** `[BE]` GIVEN a code that is already **needs-re-verify** WHEN the user unverifies it
+  THEN it also becomes unverified: the latest row's invalidation reason is overwritten to
+  `manual_unverify` and its diff cleared. This is the deliberate way to dismiss a pending
+  re-check ("I am not re-confirming this, treat it as never verified"). GIVEN a code with no
+  verification history WHEN unverify is called THEN it is an **idempotent no-op** returning the
+  current state, never an error.
+- **AC-D.22** `[FE]` GIVEN a row in the product list WHEN it renders THEN it carries its own
+  **Verify / Unverify button in an actions column**, so a product can be verified or withdrawn
+  **without leaving the list or opening it**. The button follows the row's state: an unverified or
+  needs-re-verify row offers **Verify**; a verified row offers **Unverify**. Only the row acted on
+  changes; the rest of the grid stays interactive and the list does not re-sort under the user's
+  cursor.
+- **AC-D.23** `[FE]` GIVEN rows are selected WHEN the bulk strip is active THEN **Verify selected**
+  and **Unverify selected** are both offered, under the same page-scoped selection rule, each with
+  a confirmation stating the count. The row buttons and the bulk actions call the same endpoints,
+  so a per-row Verify is a bulk of one.
+- **AC-D.24** `[BE]` GIVEN the worklist response WHEN it is served THEN each row includes its
+  current `values_hash`, so a row-level Verify can echo back the hash it was rendered against and
+  the same-transaction guard in AC-D.4 applies identically from the list. A row whose values moved
+  since the page loaded is refused with `values_changed` and the row refreshes rather than
+  silently stamping something the user never saw.
+- **AC-D.25** `[FE]` GIVEN a single product's Specifications tab WHEN it is verified THEN an
+  Unverify control sits beside the verification pill, behind its own confirmation.
+- **AC-D.26** `[BE]` GIVEN unverify WHEN it is gated THEN it uses `master_data.products.edit`, the
+  same grant as verify, and **a user may withdraw a stamp that is not their own** - the recorded
+  actor is what makes that accountable rather than the permission. GIVEN `party` WHEN unverify
+  runs THEN it targets one party only, so milestone 2's supplier stamp is untouched by an internal
+  withdrawal.
 - **AC-D.4** `[BE]` GIVEN a verify request WHEN it is served THEN the client echoes the hash it
   was shown, the handler locks the code's spec rows and compares in the same transaction, and it
   409s with a distinguishable code when the values moved (`values_changed`) or exceptions are open
@@ -405,12 +449,13 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
 - **AC-D.18** `[FE]` GIVEN the new screen WHEN it is named THEN it is **not** called
   `SpecWorkbench` - that name is already taken by the master screen's tab shell.
 - **AC-D.19** `[E2E]` GIVEN a user WHEN they navigate **by sidebar clicks from `/`** to Spec
-  Verification THEN: they can filter, tick several rows, press Verify selected, confirm the count,
-  and see those rows flip state; a selected code with an open exception is reported as skipped
-  with its reason rather than failing the batch; clicking a product lands on its Specifications
-  tab where a single Verify works and prev/next moves to the next product; and an edit to a
-  verified code returns it as needs-re-verify with the diff. Clean console, at **375px and
-  1280px**.
+  Verification THEN: they can filter, verify a single row **from its own row button**, then
+  **unverify that same row** and see it read unverified again; tick several rows, press Verify
+  selected, confirm the count, and see those rows flip state; a selected code with an open
+  exception is reported as skipped with its reason rather than failing the batch; clicking a
+  product lands on its Specifications tab where a single Verify works and prev/next moves to the
+  next product; and an edit to a verified code returns it as needs-re-verify with the diff. Clean
+  console, at **375px and 1280px**.
 
 ### B - Prompt box, extraction proposals, and the flyer discard (PR 4)
 
@@ -520,8 +565,14 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   apply atomicity (AC-B.9), and the promote migration run twice plus a prior-bad-run repair
   fixture and an exact downgrade (AC-B.10). **Bulk verify specifically:** a mixed batch returns
   per-code outcomes, a code with open exceptions is skipped rather than failing the batch, and a
-  code whose hash moved is skipped with its own reason (AC-D.11, AC-D.16). Every route: happy +
-  auth denial + validation. **Postgres only** (AC-F.14).
+  code whose hash moved is skipped with its own reason (AC-D.11, AC-D.16). **Unverify
+  specifically:** a verified code becomes `unverified` and not `needs_reverify`; the original
+  `verified_by`/`verified_at` survive on the row while `invalidated_by_*` is stamped; a
+  needs-re-verify code unverifies to `unverified` with its diff cleared; unverifying a code with
+  no history is a no-op, not an error; re-verifying after a withdrawal inserts a new row and
+  leaves the withdrawn one intact; and an internal withdrawal leaves a `party='supplier'` row
+  untouched (AC-D.20, D.21, D.26). Every route: happy + auth denial + validation. **Postgres
+  only** (AC-F.14).
 - **vitest:** every component's loading / empty / error / partial / data states; the cell renderer
   per data type; read-to-edit leaving DOM order unchanged (the same-layout mandate as an
   assertion); the tombstone row; the near-duplicate matcher; pill classes; the proposal badges and

@@ -3,9 +3,9 @@
 **Slug:** `spec-authoring-verification` · **Domain:** master-data · **Milestone:** 1 of 2
 **UAC:** `spec-authoring-verification-acceptance-criteria.md` (the contract - this plan fulfils it)
 **Classification:** CORE, schema `public`, normal FKs
-**Status:** DRAFT - pre-code. Section D revised 2026-08-14 after the captain settled the
-verification screen as a standard list with bulk actions. Three decisions still open (see
-"Decisions").
+**Status:** DRAFT - pre-code. Section D revised 2026-08-14: the captain settled the verification
+screen as a standard product list with per-row and bulk Verify/Unverify, and required that a
+verification be manually reversible. Three decisions still open (see "Decisions").
 
 ## Goal
 
@@ -174,6 +174,45 @@ but enabling whole-filter selection later is a deliberate decision, not a defaul
 verify - same-transaction hash compare, exceptions still block - and returns **per-code
 outcomes** rather than all-or-nothing, so a batch reports "42 verified, 3 skipped, exceptions
 open" instead of failing whole or, worse, stamping what the single button would have refused.
+
+**Verify and Unverify are row buttons, not only bulk actions** (captain, 2026-08-14). Each row
+carries its own action in an actions column, so a product can be confirmed or withdrawn without
+opening it or ticking a box; the button follows the row's state. The row action and the bulk
+action call the same endpoints, so a per-row Verify is a bulk of one and there is no second code
+path to keep honest. Consequence for the contract: **the worklist response must carry each row's
+current `values_hash`**, so a row-level Verify can echo back the hash it was rendered against and
+the same-transaction guard applies identically from the list.
+
+### C11 - verification must be manually reversible (captain, 2026-08-14)
+
+Neither the design nor the first draft of this plan let a person withdraw a verification. The only
+way out of `verified` was for the system to invalidate it because values moved. That is a gap: a
+stamp applied by mistake, or to the wrong product, was permanent until someone edited a value to
+force an invalidation.
+
+**Unverify** is now a first-class action, on the row, in bulk, and on the product page.
+
+Two design points it forces, neither of them cosmetic:
+
+1. **A manual withdrawal lands on `unverified`, not `needs_reverify`.** Those states mean
+   different things: needs-re-verify says "values moved under a stamp, here is the diff to
+   re-check", and a withdrawal has no diff. Rendering it as needs-re-verify with an empty diff
+   would misrepresent it and would put the code in the ten-second-recheck queue it does not belong
+   in. So the state derivation gains one branch: latest row invalidated with
+   `reason='manual_unverify'` reads **unverified**. Unverifying a code that is *already*
+   needs-re-verify overwrites that row's reason and clears its diff, which is the deliberate way
+   to dismiss a pending re-check.
+2. **The table needs `invalidated_by_user_id` / `invalidated_by_name`.** Until now every
+   invalidation was automatic, so there was no actor to record and the schema had nowhere to put
+   one. A manual withdrawal has an actor, and an append-only ledger that records who vouched for a
+   product but not who took it back is only half an audit trail. Both nullable; null means the
+   system did it.
+
+The original `verified_by` / `verified_at` stay on the row untouched, so the history answers both
+questions. Unverify has no exception gate and no hash compare - you are removing a claim, not
+making one - and it is idempotent: unverifying something with no verification history is a no-op
+returning current state, not an error. It targets one `party`, so an internal withdrawal cannot
+disturb milestone 2's supplier stamp.
 
 ### C6 - "worst coverage first" is nearly degenerate
 
@@ -369,10 +408,12 @@ No UI, so there is no UX to settle against a mock. Phase 2 only, test-first.
   attention at prototype review: the progress line reads **"0 of 8,812"** on day one, and the
   needs-re-verify state is unreachable with real data until someone makes the first edit.
 - **Phase 2 (test-first):** the migration and model; the worklist with inline coverage, ordering,
-  filters, summary and pagination; the single verify endpoint with row locking, same-transaction
-  hash compare and a distinguishable 409 taxonomy; the **bulk verify endpoint applying the same
-  guards per code and returning per-code outcomes**; the exception resolve action and the rebuild
-  carry-forward; the verification block and single-product Verify folded into the existing
+  filters, summary, pagination and each row's `values_hash`; the single verify endpoint with row
+  locking, same-transaction hash compare and a distinguishable 409 taxonomy; the **bulk verify
+  endpoint applying the same guards per code and returning per-code outcomes**; the **unverify
+  endpoint** (single and bulk) stamping `manual_unverify` plus the actor, idempotent on a code
+  with no history; the exception resolve action and the rebuild carry-forward; the verification
+  block, row actions and single-product Verify/Unverify folded into the existing
   `by-product/{id}` response and the Specifications tab.
 - **No new detail route.** Row click goes to `products/{id}` on the Specifications tab, which
   already carries prev/next through `ProductNavigation.tsx`. The worklist is keyed on
@@ -474,9 +515,12 @@ creation from the product page; an authored value always wins a conflict.
   actions, and row click into the existing product detail page's Specifications tab. This closes
   the one deviation that needed a sign-off, and it closes it by removing the deviation rather than
   approving it.
-- **Bulk verify is required.** The design's blanket "no bulk verify" is overruled; it only ever
-  had force against blind whole-catalogue stamping, and it survives as the two narrow guards in
-  C5 (page-scoped selection, and bulk applying the same per-code rules as the single verify).
+- **Bulk verify is required, and Verify/Unverify are row buttons.** The design's blanket "no bulk
+  verify" is overruled; it only ever had force against blind whole-catalogue stamping, and it
+  survives as the two narrow guards in C5 (page-scoped selection, and bulk applying the same
+  per-code rules as the single verify).
+- **A verification must be manually reversible** (C11). Unverify is a first-class action; it lands
+  on `unverified` rather than needs-re-verify, and it adds `invalidated_by_*` to the ledger.
 
 ### Outstanding - still the captain's call
 
