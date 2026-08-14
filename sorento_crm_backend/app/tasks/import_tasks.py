@@ -11,7 +11,7 @@ from collections import defaultdict
 from datetime import date, datetime, time as dt_time
 from decimal import Decimal
 from io import BytesIO
-from typing import Optional, List, Any, Dict, cast
+from typing import Callable, Optional, List, Any, Dict, cast
 
 from sqlalchemy import func
 
@@ -137,12 +137,21 @@ def _write_import_audit(
     user_id: Optional[str],
     entity_id: Optional[str],
     status: str = "success",
+    details_builder: Optional[Callable[[], Dict[str, Any]]] = None,
 ) -> None:
     """Coarse per-job import audit at the job boundary. Best-effort (post-commit
     side effect): a failure here must NEVER break the import, so we swallow and
     warn. Bulk imports bypass the ORM audit listener, so this is the only audit
     row an import job produces. Commits the audit row on the same session AFTER
-    the import data (and the ImportJob status) have already committed."""
+    the import data (and the ImportJob status) have already committed.
+
+    ``details_builder`` produces the row's ``new_values``: what the run did, plus
+    the import job id that reaches the per-row outcomes in ``import_job_rows``.
+    A CALLABLE, not a dict, so that building it happens INSIDE the guard below.
+    Built at the call site it would run after the import has already committed
+    and outside this try, where a stale attribute read (the job row is expired by
+    that commit) would escape into the task's own except clause and mark a
+    finished import FAILED."""
     try:
         log_import_audit(
             db,
@@ -152,6 +161,7 @@ def _write_import_audit(
             user_id=user_id,
             entity_id=entity_id,
             status=status,
+            details=details_builder() if details_builder is not None else None,
         )
         db.commit()
     except Exception:
@@ -623,7 +633,8 @@ def process_attachment_bulk_import(
     # Attachment is __audit_track__; suppress the per-row ORM audit for this bulk
     # job (no request actor here → would log N rows as "System"). One coarse,
     # correctly-attributed job row is written at completion instead.
-    db.info["skip_audit_entity_types"] = {"attachment"}
+    # setdefault-union, not assignment: two suppressions on one session must coexist.
+    db.info.setdefault("skip_audit_entity_types", set()).add("attachment")
     try:
         dir_service = AttachmentDirectoryService(db)
         attachment_service = AttachmentService(db)
@@ -3186,6 +3197,35 @@ def process_container_status_import(
 # Customers (debtor listing)
 # ---------------------------------------------------------------------------
 
+#: The audit entity type for a customer. MUST equal what the audit listener derives
+#: from the model (`Customer.__audit_entity_type__`), because the per-row suppression
+#: below matches on this exact string and a mismatch fails silently - the import just
+#: writes one audit row per line again, 4,000 of them, all reading "System". Pinned by
+#: tests/test_customer_audit.py.
+_CUSTOMER_ENTITY_TYPE = "customer"
+
+
+def _customer_import_details(
+    job: Any, filename: str, result: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """What the coarse audit row carries: the file, the job, and what changed.
+
+    `import_job_id` is the FK `import_job_rows.import_job_id`, so a reader a year later
+    gets from this one row to every row's outcome and identity.
+    """
+    result = result or {}
+    return {
+        "filename": filename or None,
+        "import_job_id": str(getattr(job, "id", "") or "") or None,
+        "job_id": str(getattr(job, "job_id", "") or "") or None,
+        "total_rows": int(result.get("total_rows", 0)),
+        "created": int(result.get("created", 0)),
+        "updated": int(result.get("updated", 0)),
+        "unchanged": int(result.get("unchanged", 0)),
+        "skipped": int(result.get("skipped", 0)),
+        "failed": int(result.get("failed", 0)),
+    }
+
 
 def _customer_import_shape(result: Dict[str, Any]) -> Dict[str, Any]:
     """Turn the service's outcome into the shape the import dialog renders.
@@ -3309,6 +3349,19 @@ def process_customer_import(db_job_id: str, file_data: bytes, filename: str, use
 
     job_id_str = str(job.job_id)
     outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal)
+    # Customer is __audit_track__; suppress the per-row ORM audit for this bulk job.
+    # In production this is defence-in-depth rather than the thing doing the work:
+    # worker.py registers the company-scope listeners only, never
+    # register_audit_listeners, so no per-row audit fires in an RQ process at all
+    # today. It bites for every OTHER caller of this task - the in-process test suite,
+    # and the worker itself the day it starts registering the audit listeners - where
+    # a 4,000-line debtor listing would otherwise become 4,000 audit rows, every one
+    # of them reading "System" because a worker has no request actor. One coarse,
+    # correctly-attributed job row is written at completion instead, and every row's
+    # own outcome is already in import_job_rows.
+    # setdefault-union, not assignment: a second suppression in the same session
+    # (another audited model written by the same job) must not erase this one.
+    db.info.setdefault("skip_audit_entity_types", set()).add(_CUSTOMER_ENTITY_TYPE)
     try:
         job_service.start_job(job_id_str)
         result = customer_import_service.apply(
@@ -3339,12 +3392,13 @@ def process_customer_import(db_job_id: str, file_data: bytes, filename: str, use
             )
             _write_import_audit(
                 db,
-                entity_type="customer",
+                entity_type=_CUSTOMER_ENTITY_TYPE,
                 label=f"Customer import {filename or ''}".strip(),
                 row_count=0,
                 user_id=user_id,
                 entity_id=job_id_str,
                 status="failed",
+                details_builder=lambda: _customer_import_details(job, filename, result),
             )
             return
 
@@ -3367,12 +3421,13 @@ def process_customer_import(db_job_id: str, file_data: bytes, filename: str, use
         )
         _write_import_audit(
             db,
-            entity_type="customer",
+            entity_type=_CUSTOMER_ENTITY_TYPE,
             label=f"Customer import {filename or ''}".strip(),
             row_count=result["created"] + result["updated"],
             user_id=user_id,
             entity_id=job_id_str,
             status="partial" if (result["failed"] or result["skipped"]) else "success",
+            details_builder=lambda: _customer_import_details(job, filename, result),
         )
     except Exception as exc:  # noqa: BLE001 - the job must record why it died
         logger.exception("Customer import job %s failed", job_id_str)
@@ -3383,12 +3438,13 @@ def process_customer_import(db_job_id: str, file_data: bytes, filename: str, use
         job_service.fail_job(job_id_str, str(exc))
         _write_import_audit(
             db,
-            entity_type="customer",
+            entity_type=_CUSTOMER_ENTITY_TYPE,
             label=f"Customer import {filename or ''}".strip(),
             row_count=0,
             user_id=user_id,
             entity_id=job_id_str,
             status="failed",
+            details_builder=lambda: _customer_import_details(job, filename),
         )
     finally:
         db.close()
