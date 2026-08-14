@@ -137,22 +137,57 @@ def _read_phrases(
     return phrases
 
 
+def _note_clause(note: Optional[str]) -> str:
+    """The model's one-clause note, trimmed to sit mid-sentence.
+
+    The note is written by the model, so it arrives as its own little sentence
+    ("Could be 11 August 2026 or 8 November 2026.") and has to be lowered into
+    the middle of ours. The trailing stop always goes; the leading capital only
+    goes when the word is plainly sentence-cased, so "J&Y", "Nov" and any code
+    the model quotes keep the shape it read off the document (rule 1).
+    """
+    clause = (note or "").strip().rstrip(".;,")
+    if not clause:
+        return ""
+    head = clause.split(" ", 1)[0]
+    if head[1:].islower():
+        clause = clause[0].lower() + clause[1:]
+    return clause
+
+
 def _conflict_sentence(conflict: MediaConflict) -> str:
-    """Both values, both sources, and a question. Never a chosen value."""
+    """Both values, both sources, the note, and a question.
+
+    Never a chosen value, and never a question the customer cannot answer. Two
+    competing values carry their own meaning and the note is context on top of
+    them; an ambiguous date has only ONE printed value, because prompt rule 3
+    puts both readings in the note instead - so dropping the note would ask
+    "I can see 11/08/2026, which one should I use?", which names one value and
+    offers nothing to choose between. The note is what makes it answerable.
+    """
+    # The source tag earns its place only against another source. On a lone
+    # value it implies a counterpart the customer cannot see, and sets them
+    # wondering what the unnamed other one was.
+    with_source = len(conflict.values) > 1
     rendered = [
-        f"{value.value} ({value.source})" if value.source else value.value
+        f"{value.value} ({value.source})"
+        if value.source and with_source
+        else value.value
         for value in conflict.values
     ]
     # `field` is the model's own words, so it is usually already spoken English -
     # but it lands on the kind token often enough ("document_date") that the
     # customer would otherwise be shown an underscore.
     field = ATTRIBUTE_LABELS.get(conflict.field.strip().casefold(), conflict.field)
+    note = _note_clause(conflict.note)
     if not rendered:
-        return f"I am not sure about the {field}. Which one should I use?"
-    return (
-        f"On the {field} I can see {join_phrase(rendered)}. Which one "
-        "should I use?"
-    )
+        if not note:
+            return f"I am not sure about the {field}. Which one should I use?"
+        return f"I am not sure about the {field} - {note}. Which one should I use?"
+    seen = f"On the {field} I can see {join_phrase(rendered)}"
+    if note:
+        seen += f" - {note}"
+    return f"{seen}. Which one should I use?"
 
 
 def _covered_by_conflict(
