@@ -1,12 +1,17 @@
+import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
+
 /**
  * Per-contact chatbot media access (PLAN-chatbot-media-endpoint, slice S1, UAC S1-01..S1-03).
  *
  * ---------------------------------------------------------------------------
- * EXPECTED API CONTRACT - written in Phase 1, built to in Phase 2
+ * API CONTRACT - written in Phase 1, built to in Phase 2
  * ---------------------------------------------------------------------------
  *
  * GET /api/v1/user-management/contacts/{contact_id}/media-access
- *   Permission: the existing contact-edit/view permission. No new admin role (UAC S1-06).
+ *   Permission: `user_management.contacts.edit` - the contact-edit permission, granted
+ *   to every existing role by migration 357 so nobody who could edit a contact before
+ *   loses the ability now. No new admin role (UAC S1-06).
  *   200 ->
  *     {
  *       "period_key": "2026-08",           // YYYY-MM, computed in Asia/Kuala_Lumpur
@@ -42,30 +47,45 @@
  *          `used` / `remaining` / `effective_*` recomputed.
  *   Upserts: a PUT against a contact with no row creates one.
  *   403 when the caller lacks the contact-edit permission (UAC S1-06).
- *
- * ---------------------------------------------------------------------------
- * PHASE 1: both functions below resolve against `../__mocks__/contactMediaAccess`.
- * Phase 2 swaps each body for the `apiFetch` call sketched in its comment and deletes
- * the mock module. Nothing above the service boundary changes.
  */
 
-import type {
-  ContactMediaAccess,
-  ContactMediaAccessInput,
-  ContactMediaAccessItem,
-  MediaModality,
-} from '../__mocks__/contactMediaAccess';
-import {
-  mockGetContactMediaAccess,
-  mockUpdateContactMediaAccess,
-} from '../__mocks__/contactMediaAccess';
+export type MediaModality = 'image' | 'voice';
 
-export type {
-  ContactMediaAccess,
-  ContactMediaAccessInput,
-  ContactMediaAccessItem,
-  MediaModality,
-};
+export interface ContactMediaAccessItem {
+  modality: MediaModality;
+  /** The gate. False (or no row at all) means the bot ignores that media type. */
+  is_allowed: boolean;
+  /** False when no `contact_media_limit` row exists - never configured, not "turned off". */
+  has_row: boolean;
+  /** null = inherit the system default. */
+  monthly_limit: number | null;
+  /** The limit actually in force once inheritance is resolved. */
+  effective_monthly_limit: number;
+  /** Voice only. null = inherit the system default. */
+  max_clip_seconds: number | null;
+  /** Voice only; null for image. */
+  effective_max_clip_seconds: number | null;
+  /** Items counted against this period. Refusals do not count. */
+  used: number;
+  remaining: number;
+  updated_at: string | null;
+  updated_by_name: string | null;
+}
+
+export interface ContactMediaAccess {
+  /** YYYY-MM, computed in Asia/Kuala_Lumpur by the CRM. */
+  period_key: string;
+  /** Already rendered for display, for example "1 September". */
+  resets_on: string;
+  items: ContactMediaAccessItem[];
+}
+
+export interface ContactMediaAccessInput {
+  is_allowed: boolean;
+  monthly_limit: number | null;
+  /** Voice only; ignored for image. */
+  max_clip_seconds: number | null;
+}
 
 export const MEDIA_MODALITY_LABELS: Record<MediaModality, string> = {
   image: 'Photos',
@@ -75,11 +95,13 @@ export const MEDIA_MODALITY_LABELS: Record<MediaModality, string> = {
 export async function getContactMediaAccess(
   contactId: string,
 ): Promise<ContactMediaAccess> {
-  // Phase 2:
-  //   const response = await apiFetch(`/api/user-management/contacts/${contactId}/media-access`);
-  //   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load media access'));
-  //   return response.json();
-  return mockGetContactMediaAccess(contactId);
+  const response = await apiFetch(
+    `/api/user-management/contacts/${contactId}/media-access`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load media access'));
+  }
+  return response.json();
 }
 
 export async function updateContactMediaAccess(
@@ -87,12 +109,16 @@ export async function updateContactMediaAccess(
   modality: MediaModality,
   input: ContactMediaAccessInput,
 ): Promise<ContactMediaAccessItem> {
-  // Phase 2:
-  //   const response = await apiFetch(
-  //     `/api/user-management/contacts/${contactId}/media-access/${modality}`,
-  //     { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) },
-  //   );
-  //   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save media access'));
-  //   return response.json();
-  return mockUpdateContactMediaAccess(contactId, modality, input);
+  const response = await apiFetch(
+    `/api/user-management/contacts/${contactId}/media-access/${modality}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save media access'));
+  }
+  return response.json();
 }

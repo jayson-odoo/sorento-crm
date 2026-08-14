@@ -183,9 +183,12 @@ def _seed_job_row(*, callback_url=None, callback_headers=None, context=None) -> 
     )
     db.add(job)
     db.commit()
+    # Read both ids BEFORE closing: commit expires every instance, so an id read
+    # after close() is a refresh against a detached object, not a cached value.
     job_id = job.id
+    contact_id = contact.id
     db.close()
-    return job_id, contact.id
+    return job_id, contact_id
 
 
 def _cleanup_chain(contact_id: str):

@@ -1,7 +1,10 @@
 # PLAN - Chatbot media endpoint (voice transcription + image recognition)
 
-**Status:** S1 Phase 1 (frontend mock) built - both operator surfaces render against mocks;
-awaiting browser verification, then S1 Phase 2 (backend, test-first)
+**Status:** S1/S2/S3 Phase 2 (backend) built against the RED pytest suite. S4/S5/S6 now fill the
+extraction seam (`app.tasks.media_tasks.run_media_extraction` -> `app/services/media_extract/`);
+tests for them are still owed, and the corpus run (S4-11) has not happened yet - no image has been
+put through the shipped prompt. See section 12 for the deviations each phase made from the design
+below - the design text is left as written so the change is visible rather than quietly rewritten.
 **UAC (the contract):** `documentation/plans/ideation/chatbot-media-endpoint-acceptance-criteria.md`
 **Classification:** **CORE**, `public` schema, normal FKs.
 Rationale: this extends the core chatbot/contact domain and references `respond_contacts` and
@@ -466,6 +469,8 @@ to `callback_url` with `callback_headers` applied verbatim:
        "note": "handwritten amendment over the printed quantity"}
     ],
     "image_kind": "document",
+    "caption_intent": "check stock for these",
+    "notes": "lower right corner blurred",
     "needs_clarification": false,
     "truncated": false,
     "rendered_text": "please check stock for these products: SRTKS6647",
@@ -893,13 +898,16 @@ RULES THAT APPLY TO EVERY IMAGE
                   {{"value": "4", "source": "handwritten"}}],
        "note": "<one clause>"}}
 3. Dates on these documents are day first. If the day and the month are both 12 or less the date
-   is genuinely ambiguous: return it exactly as printed and add a conflict describing the
-   ambiguity. Never emit a reformatted or resolved date.
+   is genuinely ambiguous. Return it exactly as printed, and add a conflict whose `values` holds
+   the ONE printed string with source "printed", and whose `note` names both readings in words,
+   for example "could be 11 August 2026 or 8 November 2026". Never put a reformatted or resolved
+   date in a `value`.
 4. Never invent. If you cannot read something, leave it out. A missing value costs one extra
    message; a confident wrong product code or quantity costs a wrong business decision.
 5. Prefer `confident: false` over omission when you can see a value but cannot fully trust your
    reading, and prefer omission over a guess.
-6. Stop at {max_entities} entities and set `truncated: true` if there were more.
+6. Stop at {max_entities} entities, and separately at {max_entities} attributes. Set
+   `truncated: true` if you stopped early in either list.
 
 IF THE IMAGE IS A DOCUMENT (delivery order, return authorisation, invoice, spreadsheet screenshot)
 
@@ -942,6 +950,151 @@ THE CAPTION
 {caption_block}
 ```
 
+**Three amendments made after the first implementation pass**, recorded because the prompt is
+meant to be transcribed verbatim and a silent edit would defeat that:
+
+1. **Rule 3 now defines the conflict shape for an ambiguous date.** Rule 2's `{value, source}`
+   shape was written for printed-versus-handwritten, where there are two competing strings. An
+   ambiguous date has ONE printed string and two *readings*, so the shape did not fit and models
+   would have filled it inconsistently - some emitting a resolved date into `value`, which rule 3
+   itself forbids. The fix keeps the single printed string in `values` and moves both readings
+   into `note`.
+2. **Rule 6 now caps attributes as well as entities.** The cap was pinned to `entities` only, so a
+   spreadsheet screenshot could return an unbounded `attributes[]` - a real case, since a price
+   list has a size and a quantity on every row.
+3. **`caption_intent` and `notes` are surfaced in the result body** rather than extracted and
+   discarded. `caption_intent` is worth asking for regardless because it makes rule 15 behave, and
+   `notes` ("blurred lower half") is exactly what a support person needs when a dealer asks why
+   their photo did not work.
+
 **Why one call rather than classify-then-extract.** A second round trip doubles both the cost and
 the latency, and the latency now sits inside n8n's lock budget. The model classifies and extracts
 in the same pass, which is also what let the baseline pass the hard subject-code trap unprompted.
+
+---
+
+## 12. Phase 2 deviations (S1 + S2 + S3, backend)
+
+Six places where the shipped backend differs from the design above. The design text is left as
+written so the change is visible; each item says what the constraint was.
+
+1. **`contact_media_limit` has a uuid `id` primary key**, with `(contact_id, modality)` demoted to
+   a UNIQUE constraint. Section 2.2 wrote the pair as the PK. The repo holds every domain table to
+   a uuid `id` (`tests/test_schema_uuid_id_principle.py`), because the polymorphic key columns can
+   only stay uuid-typed if every id they might hold is one, and that test's allowlist is meant to
+   shrink rather than grow. The uniqueness the composite PK was buying is unchanged.
+
+2. **`media_image_degraded_model` ships NULL, with no default**, not `gpt-4o-mini` as section 2.4
+   says. Two reasons, and the second is the hard one. First, the Phase 1 frontend mock already
+   shipped it NULL "on purpose", so the two halves disagreed and the mock is the more recent
+   artifact. Second, SQLAlchemy cannot distinguish "set this column to None" from "did not mention
+   this column" on a column that carries a default - so a defaulted column would be one an
+   operator could never clear back to "no degraded tier". A NULL degraded model means the monthly
+   quota is a hard refusal, which is the behaviour section 3.2 already describes; switching a
+   second paid model on for every contact is left as an operator decision.
+
+3. **Timestamps are naive UTC (`DateTime(timezone=False)`)**, not the TIMESTAMPTZ section 2.1
+   specifies - matching every other table in this repo. The Asia/Kuala_Lumpur period is a separate,
+   explicit concept (`period_key`), so nothing depends on reading a timezone off a raw column.
+
+4. **`/api/v1/external/media/process` is exempted from `IdempotencyMiddleware`.** That middleware
+   allowlists any path ending `/process` (it was written for the form-action endpoints) and caches
+   the first 2xx body for ten seconds, so the second of two identical POSTs never reached the
+   handler at all - n8n's recommended `retryOnFail` would have received a byte copy of the first
+   response, including a stale `status: pending` and `idempotent_replay: false`. This endpoint owns
+   a stronger, durable idempotency keyed on the respond.io message id, and its replay must report
+   what has happened SINCE, so the two mechanisms cannot both be applied. See
+   `_SELF_IDEMPOTENT_REGEXES` in `app/middleware/idempotency_middleware.py`.
+
+5. **A new `user_management.contacts.edit` slug was introduced** for the operator surface.
+   Section 3.6 says "authorisation is the existing contact-edit permission", but there was no such
+   permission: every contact write in `contacts.py` is gated by `get_current_user` alone, so today
+   any authenticated user can edit a contact. Migration 357 therefore grants the new slug to
+   **every** existing role, which reproduces today's reach exactly rather than quietly narrowing
+   it; the point of naming it is that it can now be revoked per role, which was previously
+   impossible. Still no new admin-only role, per UAC S1-06.
+
+6. **`media_sync_wait_seconds` is not on the settings page.** UAC S1-04 requires the operator to
+   edit "the synchronous wait seconds and the extraction timeout seconds"; the Phase 1 page and its
+   `ChatbotMediaSettings` type carry only the latter. The column, the GET dict, `SystemSettingUpdate`
+   and the 5-90 bound all exist on the backend, and the backend also enforces
+   `media_extraction_timeout_seconds >= media_sync_wait_seconds` (a relationship a per-field bound
+   cannot express). The missing control was a Phase 1 gap, not a backend one. **Now fixed** - see
+   12.1. The field sits with the extraction timeout controls and the cross-field rule surfaces as
+   an inline message on the timeout field rather than as a 422 to decode after saving. Fixing it
+   also caught that the timeout field enforced only its upper bound, so a value below 5 was
+   likewise a 422 the operator had to interpret.
+
+### 12.1 Adjudication of the above
+
+Reviewed against the design and the captain's settled decisions.
+
+**Accepted as shipped: 1, 3, 4, 5.** Each is the repo's own invariant beating the plan's text, and
+in three of those cases the plan was simply wrong: the uuid `id` is enforced by
+`tests/test_schema_uuid_id_principle.py`, naive UTC is the documented house rule with `period_key`
+carrying the Malaysia concept explicitly, and there genuinely was no contact-edit permission to
+reuse. On 5 in particular, granting the new slug to every existing role is the right call: contact
+writes are gated by `get_current_user` alone today, so every authenticated user can already edit a
+contact, and reproducing that reach while making it revocable is strictly better than either
+silently narrowing access or leaving it ungovernable.
+
+**Accepted, but it must be stated loudly rather than buried: 2.** Shipping
+`media_image_degraded_model` NULL means that **out of the box, hitting the monthly quota is a hard
+refusal, not a degrade** - and the captain's decision was to degrade. That is not a contradiction
+being smuggled through, for two reasons. The mechanism the decision asked for is built and works
+the moment a model is named; and naming which model is cheaper is operator configuration in
+exactly the sense D3 established for the numbers, not a design choice this work can make. Nobody
+has named a cheaper vision model, and defaulting one that turns out to equal the standard model
+would produce the genuinely bad outcome: telling a contact their accuracy has dropped when nothing
+changed. The safeguards are that the settings page warns inline whenever the field is blank, and
+that the PR says this plainly. **If the captain wants degrade-by-default, he names the model and
+it is a settings change, not a deploy.**
+
+**Not accepted: 6.** This is a real UAC S1-04 gap and it is fixed rather than documented. The one
+control that bounds how long the dispatcher's lock is held is precisely the one an operator must
+be able to reach without a deploy, since that is the stated mitigation for the unmeasured spine
+p99 in section 1.1. A backend bound nobody can adjust is not the mitigation that was promised.
+
+### 12.2 Phase 2 notes (S4 + S5 + S6, backend)
+
+Five places where the shipped extraction resolved something section 4, 5 or 6 left open. None
+contradicts the design; each is recorded because a reader of the code would otherwise have to
+re-derive the reasoning.
+
+1. **The lane dispatch is `job.modality`, and nothing else.** `image` goes to the vision call,
+   `voice` to `transcribe.py`. The document-versus-label split inside the image lane is NOT a
+   second dispatch - the model classifies and extracts in one pass and returns `image_kind`, which
+   is what section 4.3 and the Appendix A note already specify.
+
+2. **The entity/attribute split is enforced in code, not only in the prompt.** An entity whose
+   `hint` is one of the five attribute kinds is MOVED into `attributes[]` rather than dropped: the
+   value was read correctly and only its home was wrong, and the confirmation message still wants
+   to name it. An entity whose hint is neither an accepted hint nor an attribute kind is dropped
+   and logged, because `resolve-entity` would reject it - passing it on fails downstream instead of
+   degrading. A rule that lives only in a prompt is a rule a model can quietly stop following.
+
+3. **Token spend is logged with `feature="ai_extract"` and `form_key="chatbot.media.{image,voice}"`.**
+   Section 4.1 says to reuse `AIExtractService._log_usage`, and that method hardcodes the feature.
+   Keeping it is the better outcome anyway: the usage dashboard's per-contact view
+   (`/ai-assistant/usage/top-contacts`) defaults to `feature=ai_extract` precisely because it is
+   the only writer that populates `contact_id`, so a media read appears there with no frontend
+   change, and the form key separates it from a portal form. The ledger's own `model`, `provider`,
+   `prompt_tokens` and `completion_tokens` columns (section 2.1) are stamped in the same pass,
+   best-effort - failing to annotate a metered fact must never fail an extraction that succeeded.
+
+4. **Transcription sends `response_format: json`,** which both `whisper-1` and the newer
+   `gpt-4o-transcribe` accept, and parses `languages` (list) then `language` (single) off the
+   response. `None` means the model said nothing about the language; `[]` means it said it was
+   unsure. The distinction is kept end to end and the unsure case changes the customer
+   confirmation rather than being swallowed. Switching to a model that reports what it detected
+   stays a settings change, exactly as section 2.4 promised.
+
+5. **Wording is now the single source for every customer string**, including the decision notices
+   the fast path emits - `media_access_service` no longer holds any inline text. The three flagged
+   changes from the drafts are implemented: degradation leads with the accuracy warning, the burst
+   message is suppressed for the rest of the window (in the service, because it is a Redis
+   decision), and `not_enabled` has an image variant mirroring the voice sentence in shape.
+
+**Still owed on this slice:** the pytest suite for S4/S5/S6 (S4-12, S5-06, S6-07) and the corpus
+run (S4-11). No real photo has been through the shipped prompt yet, so nothing here may be
+described as verified extraction quality.

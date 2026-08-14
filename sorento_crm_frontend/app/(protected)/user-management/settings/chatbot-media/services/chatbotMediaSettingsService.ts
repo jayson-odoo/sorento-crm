@@ -1,3 +1,6 @@
+import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
+
 /**
  * Chatbot media settings (PLAN-chatbot-media-endpoint, slice S1, UAC S1-04 / S1-08).
  *
@@ -6,22 +9,25 @@
  * requirement, and it is why this surface exists at all.
  *
  * ---------------------------------------------------------------------------
- * EXPECTED API CONTRACT - written in Phase 1, built to in Phase 2
+ * API CONTRACT - written in Phase 1, built to in Phase 2
  * ---------------------------------------------------------------------------
  *
  * READ   GET /api/v1/user-management/settings
- *   The existing settings endpoint. Phase 2 adds the fifteen `media_*` keys below to
- *   the hand-written response dict in `get_settings`. A column added to the model but
- *   not to that dict never reaches this page (UAC S1-08, and a documented repeat
- *   failure in this repo).
+ *   The existing settings endpoint, whose hand-written response dict now carries the
+ *   `media_*` keys below. A column added to the model but not to that dict never
+ *   reaches this page (UAC S1-08, and a documented repeat failure in this repo).
  *   200 -> { "settings": { ...existing..., "media_image_monthly_limit": 50, ... } }
  *
  * WRITE  POST /api/v1/user-management/settings/general
  *   The existing general-settings setattr path, which applies any provided snake_case
- *   column. Phase 2 adds the same fifteen keys to `SystemSettingUpdate` - BOTH manual
- *   builders, or the value saves and never comes back.
- *   body: the full `ChatbotMediaSettings` object below.
- *   200 -> the updated settings row.
+ *   column. The same keys are declared on `SystemSettingUpdate` - BOTH manual builders,
+ *   or the value saves and never comes back.
+ *   body: the `ChatbotMediaSettings` object below.
+ *   200 -> { "message": ..., "data": <the updated settings row> }
+ *   400 when `media_extraction_timeout_seconds` is below `media_sync_wait_seconds`:
+ *   a job that outlives the synchronous wait would be killed instead of degrading.
+ *   The page refuses that pair inline, so the 400 is the backstop rather than the
+ *   way an operator finds out.
  *
  * `apiFetch('/api/user-management/...')` maps straight to FastAPI `/api/v1/user-management/...`
  * and bypasses any Next.js route.ts proxy, so no proxy route is added for this.
@@ -31,17 +37,7 @@
  *   media_image_degraded_model                NULL -> degradation is impossible, so the
  *                                             monthly quota becomes a hard refusal instead
  *                                             of an accepted-but-degraded extraction
- *
- * ---------------------------------------------------------------------------
- * PHASE 1: both functions below resolve against `../__mocks__/chatbotMediaSettings`.
- * Phase 2 swaps each body for the `apiFetch` call sketched in its comment and deletes
- * the mock module. Nothing above the service boundary changes.
  */
-
-import {
-  mockGetChatbotMediaSettings,
-  mockSaveChatbotMediaSettings,
-} from '../__mocks__/chatbotMediaSettings';
 
 export type MediaLanguageMode = 'pinned' | 'hints' | 'auto';
 
@@ -69,31 +65,92 @@ export interface ChatbotMediaSettings {
   media_language_pinned: string;
   /** CSV, used in `hints` mode. */
   media_language_hints: string;
-  /** Hard ceiling on the queued extraction, well inside the dispatcher's 120s lock TTL. */
+  /**
+   * How long the endpoint awaits the worker before it answers `pending`. This is the
+   * one number that bounds how long the dispatcher holds its per-contact lock, so it
+   * is editable here rather than being a constant only a deploy can move. Range 5-90.
+   */
+  media_sync_wait_seconds: number;
+  /**
+   * Hard ceiling on the queued extraction, well inside the dispatcher's 120s lock TTL.
+   * Must be at least `media_sync_wait_seconds`. Range 5-110.
+   */
   media_extraction_timeout_seconds: number;
   /** Entities emitted per image before the result is truncated and says so. */
   media_max_entities: number;
 }
 
+const MEDIA_KEYS: (keyof ChatbotMediaSettings)[] = [
+  'media_image_monthly_limit',
+  'media_voice_monthly_limit',
+  'media_voice_max_seconds',
+  'media_burst_limit',
+  'media_burst_window_seconds',
+  'media_warn_threshold_percent',
+  'media_image_provider',
+  'media_image_model',
+  'media_image_degraded_model',
+  'media_transcribe_model',
+  'media_language_mode',
+  'media_language_pinned',
+  'media_language_hints',
+  'media_sync_wait_seconds',
+  'media_extraction_timeout_seconds',
+  'media_max_entities',
+];
+
+/** The plan's section 2.4 defaults, used when the settings row predates the columns. */
+const FALLBACKS: ChatbotMediaSettings = {
+  media_image_monthly_limit: 50,
+  media_voice_monthly_limit: 100,
+  media_voice_max_seconds: 120,
+  media_burst_limit: 5,
+  media_burst_window_seconds: 60,
+  media_warn_threshold_percent: 80,
+  media_image_provider: null,
+  media_image_model: null,
+  media_image_degraded_model: null,
+  media_transcribe_model: 'whisper-1',
+  media_language_mode: 'pinned',
+  media_language_pinned: 'en',
+  media_language_hints: 'en,ms,zh',
+  media_sync_wait_seconds: 30,
+  media_extraction_timeout_seconds: 45,
+  media_max_entities: 10,
+};
+
+function pickMediaSettings(row: Record<string, unknown> | null | undefined): ChatbotMediaSettings {
+  const picked = { ...FALLBACKS } as Record<string, unknown>;
+  if (row) {
+    for (const key of MEDIA_KEYS) {
+      // Only a missing key falls back. An explicit null is a real value on the
+      // three model columns, where null means "inherit" / "no degraded tier".
+      if (row[key] !== undefined) picked[key] = row[key];
+    }
+  }
+  return picked as unknown as ChatbotMediaSettings;
+}
+
 export async function getChatbotMediaSettings(): Promise<ChatbotMediaSettings> {
-  // Phase 2:
-  //   const response = await apiFetch('/api/user-management/settings');
-  //   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load settings'));
-  //   const data = await response.json();
-  //   return pickMediaSettings(data.settings);
-  return mockGetChatbotMediaSettings();
+  const response = await apiFetch('/api/user-management/settings');
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load settings'));
+  }
+  const data = await response.json();
+  return pickMediaSettings(data?.settings);
 }
 
 export async function saveChatbotMediaSettings(
   input: ChatbotMediaSettings,
 ): Promise<ChatbotMediaSettings> {
-  // Phase 2:
-  //   const response = await apiFetch('/api/user-management/settings/general', {
-  //     method: 'POST',
-  //     headers: { 'Content-Type': 'application/json' },
-  //     body: JSON.stringify(input),
-  //   });
-  //   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save settings'));
-  //   return pickMediaSettings((await response.json()).settings);
-  return mockSaveChatbotMediaSettings(input);
+  const response = await apiFetch('/api/user-management/settings/general', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save settings'));
+  }
+  const data = await response.json();
+  return pickMediaSettings(data?.data);
 }
