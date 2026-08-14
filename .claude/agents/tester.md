@@ -48,6 +48,10 @@ test seeds its own data chain rather than borrowing existing rows (CI's database
   `open http://localhost:3000`, `snapshot -i`, `click @ref` the group, `click @ref` the leaf, `snapshot`.
 - Check `console` and `errors` after each interaction; `network requests --filter /api/v1/` to confirm
   the call actually fired. `screenshot` for CRUD-flow evidence. `close` when done, never `close --all`.
+- **The daemon's browser is shared across every agent on this machine, one tab list.** Another agent's
+  `open` can navigate your page away and your next `snapshot` then describes their app, which reads as
+  a bug in your feature. `--session-name` is cookie/storage persistence, not isolation. Run `get url`
+  to confirm where you are before trusting any snapshot, console or network read.
 - If no browser reachable, say so explicitly. Never claim a UI change works without browser verification. Component-level vitest is the autonomous fallback — don't claim full UI verification from it.
 
 ## Rules

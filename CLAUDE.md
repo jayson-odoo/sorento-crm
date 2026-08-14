@@ -257,9 +257,10 @@ Two paths, pick one:
 
 ### 1. Interactive verification via agent-browser (preferred during a task)
 
-`npx -y agent-browser@0.27.0 <command>` drives Chrome against the running dev server. Headless is the
-default; `--headed` opts into a visible window. The browser persists between invocations via a
-daemon, so each command is a separate shell call and `&&` chaining works:
+`npx -y agent-browser@0.27.0 <command>` drives a headless Chromium-family browser against the running
+dev server. It picks whatever it finds installed (Chrome, Brave, ...), so do not assume a specific
+one. Headless is the default; `--headed` opts into a visible window. The browser persists between
+invocations via a daemon, so each command is a separate shell call and `&&` chaining works:
 
 ```bash
 npx -y agent-browser@0.27.0 open http://localhost:3000 && npx -y agent-browser@0.27.0 snapshot -i
@@ -293,6 +294,21 @@ Policy, unchanged from the MCP era:
 - Use `network requests --filter /api/v1/` to verify the FE hit the expected endpoint with the right method/payload - confirms the hook → service → api-client chain wired correctly.
 - Test the golden path AND edge cases: empty states (every section per CRUD UX standard), validation errors, delete confirmation copy, RBAC denial.
 - `close` when done. Never `close --all` - it closes every session, including other agents' browsers on the same machine.
+
+**The daemon's browser is SHARED across every agent on this machine, and it is one tab list.**
+Another agent's `open` navigates the page out from under you, and nothing warns you: your next
+`snapshot` / `console` / `network requests` silently describes *their* app. This is the worst
+failure mode available here, because it looks like a bug in your feature rather than a mix-up -
+you read a missing sidebar entry or a stack of console errors off a screen that was never yours.
+Proven the hard way: an `open https://example.com` came back fine, and minutes later `get url`
+reported `http://localhost:3090/signin`, another lane's dev server, in the only tab.
+
+- `--session-name` does NOT isolate you. It is cookie/storage persistence, not a separate browser.
+- **`get url` before you trust any read.** Confirm you are on the page you think you are on, at the
+  start of a verification run and again after any gap between commands.
+- `tab new` gives you your own tab, which helps, but tab focus is still global - re-check with
+  `get url` rather than assuming the tab you made is the tab you are on.
+- Verifying at a non-default port (`PORT=3090 npm run dev`) makes a stray page obvious on sight.
 
 If unable to reach a browser (server down, sandboxed, daemon unresponsive), state that explicitly. Never claim a UI change works without browser verification.
 
