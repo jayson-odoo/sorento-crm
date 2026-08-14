@@ -24,9 +24,8 @@ actually prints - see tests/test_dealer_kit_flyer_readings.py for why.
 """
 from __future__ import annotations
 
-import ast
 import asyncio
-import pathlib
+import inspect
 import uuid
 from pathlib import Path
 
@@ -278,33 +277,45 @@ class TestOffTheLoop:
 # --------------------------------------------------------------------------- #
 # AC-J3: sweep for async def handlers doing heavy sync work
 # --------------------------------------------------------------------------- #
-def test_ac_j3_only_the_upload_route_and_its_read_helper_are_async() -> None:
-    """Every OTHER dealer-kit route stays a plain ``def`` so FastAPI threadpools
-    it automatically - confirmed by walking the actual source, not assumed.
-    """
-    dealer_kit_dir = (
-        pathlib.Path(__file__).resolve().parents[1] / "app" / "api" / "v1" / "dealer_kit"
-    )
-    assert dealer_kit_dir.is_dir(), dealer_kit_dir
+def test_ac_j3_every_dealer_kit_endpoint_is_threadpooled_except_the_upload() -> None:
+    """AC-J3: no dealer-kit handler does heavy synchronous work on the event
+    loop. Proven from FastAPI's own routing metadata: for every mounted
+    dealer-kit route, the registered endpoint must not be a coroutine function,
+    which is exactly the property FastAPI keys threadpool dispatch on.
 
-    allowed = {
-        ("flyer_readings.py", "upload_flyer_reading"),
-        ("flyer_readings.py", "_read_within_limit"),
-    }
+    The single allowed exception is the flyer upload route: it must stay
+    ``async def`` because it needs ``await file.read(...)`` to enforce the size
+    ceiling while the bytes arrive, and it hands its heavy half to
+    ``run_in_threadpool`` (that handoff is pinned behaviourally by the AC-J2
+    spy test above).
+    """
+    from fastapi.routing import APIRoute
+
+    from app.api.v1.dealer_kit import flyer_readings as route_module
+
+    dealer_routes = [
+        route
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path.startswith("/api/v1/dealer-kit/")
+    ]
+    assert dealer_routes, "no dealer-kit routes are mounted on the app"
+
     offenders: list[str] = []
-    # rglob, not glob: there is no subpackage under dealer_kit today, and a
-    # sweep that only ever looks at the top level would stop covering the first
-    # one somebody adds without failing to say so.
-    for path in sorted(dealer_kit_dir.rglob("*.py")):
-        tree = ast.parse(path.read_text(), filename=str(path))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.AsyncFunctionDef):
-                if (path.name, node.name) not in allowed:
-                    offenders.append(f"{path.name}:{node.name}")
+    for route in dealer_routes:
+        if route.endpoint is route_module.upload_flyer_reading:
+            assert inspect.iscoroutinefunction(route.endpoint), (
+                "the upload route must stay async def to enforce the size "
+                "ceiling as bytes arrive"
+            )
+            continue
+        if inspect.iscoroutinefunction(route.endpoint):
+            methods = ",".join(sorted(route.methods or []))
+            offenders.append(f"{methods} {route.path} -> {route.endpoint.__qualname__}")
 
     assert offenders == [], (
-        "unexpected async def in the dealer-kit routers (must be plain def so "
-        f"FastAPI threadpools them, or explicitly added to `allowed`): {offenders}"
+        "coroutine dealer-kit endpoints found; FastAPI runs these ON the event "
+        "loop instead of threadpooling them (make them plain def, or await "
+        f"their heavy work in a threadpool and allowlist them here): {offenders}"
     )
 
 
