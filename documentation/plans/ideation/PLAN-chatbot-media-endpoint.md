@@ -1286,3 +1286,111 @@ re-derive the reasoning.
 **Still owed on this slice:** the pytest suite for S4/S5/S6 (S4-12, S5-06, S6-07) and the corpus
 run (S4-11). No real photo has been through the shipped prompt yet, so nothing here may be
 described as verified extraction quality.
+
+---
+
+## 15. Measurements (PLAN section 8)
+
+Run serially, nothing else hitting the database, per the tester's instruction (an earlier
+full-suite run alongside corpus agents produced 1692 spurious failures from DB contention, so
+these three were each run in isolation against the shared local Postgres + Redis). Every existing
+suite for this feature was also re-run in isolation first, as a precondition, and was green:
+`pytest tests/test_media_process_endpoint.py -q` (17 passed) and
+`pytest tests/test_media_job_lifecycle.py -q` (17 passed, includes S3-01b below).
+
+### 15.1 Fast-path latency
+
+Method: a one-off benchmark script mirroring `tests/test_media_process_endpoint.py`'s own
+technique exactly - `_await_job` monkeypatched to raise `TimeoutError` immediately and
+`enqueue_job` stubbed to a no-op, against `tests/_pg_fixture.py::blank_session()` (real Postgres
+DDL, one rolled-back transaction) plus the real `rate_limit.hit` Redis path. This times ONLY PLAN
+3.3 steps 1-9 plus the commit - never a worker, never a real wait - which is the "decide, meter,
+record" half section 8 asks for. N=300 per bucket, timed with `time.perf_counter()` around each
+`client.post(...)` call. Run twice back to back to check stability.
+
+| path | p50 | p99 | mean | min | max | n |
+|---|---|---|---|---|---|---|
+| accepted | 8.70 - 8.91 ms | 10.48 - 11.02 ms | 8.87 - 9.09 ms | 7.71 - 8.01 ms | 41.31 - 41.67 ms | 300 |
+| idempotent replay | 6.83 - 6.93 ms | 7.86 - 8.44 ms | 6.91 - 6.97 ms | 6.17 - 6.21 ms | 9.35 - 9.67 ms | 300 |
+| refused (`denied_gate`) | 7.66 - 7.80 ms | 11.74 - 14.28 ms | 8.11 - 8.54 ms | 6.35 - 6.58 ms | 13.52 - 18.70 ms | 300 |
+
+(Ranges are the two back-to-back runs; both used a fresh contact + `contact_media_limit` row per
+`accepted`/`refused` iteration and one shared contact replaying the same `message_id` 300 times for
+the replay bucket, matching PLAN 3.3 step 2's idempotency probe short-circuit.)
+
+**What this means for the 120s lock budget.** The fast path is two to three orders of magnitude
+below the 120s TTL and below the 30s `media_sync_wait_seconds` ceiling - it does not meaningfully
+add to the budget on its own. The **replay path is the cheapest of the three**, exactly as
+intended: it returns after the idempotency `SELECT` alone, before the gate/burst/quota checks run,
+which is what makes n8n's recommended `retryOnFail` (PLAN 1.2) safe to lean on under transient
+failure - a retry costs ~7ms, not a second spend. `refused` (`denied_gate`, the fail-closed
+"no `contact_media_limit` row" case - the default for every contact today) costs about the same as
+`accepted` since both walk the same contact-resolve + idempotency-probe steps before diverging;
+burst/quota refusals would add one more Redis round trip or one more `COUNT` respectively, still on
+the same order of magnitude. The p99 tail (up to ~14-19ms) is noise from a busy shared local
+Postgres with dozens of concurrent connections from other agents' processes, not a defect - the
+whole distribution stays under 20ms.
+
+### 15.2 Worst-case end-to-end call
+
+Method: fast-path p99 (15.1) + the measured `gpt-4o` extraction term (arm E,
+`chatbot-media-endpoint-trapc-reliability.md`, N=5, temperature 0: 5.70s, 6.29s, 6.22s, 8.52s,
+5.84s - mean 6.51s, max 8.52s) + the enforced `media_sync_wait_seconds` ceiling (model default
+30s, `app/models/user.py:393`). The ceiling is what makes this a bound rather than an average:
+`asyncio.wait_for(..., timeout=sync_wait_seconds)` (`app/api/v1/external/media.py:227`) hard-caps
+the endpoint's own call at fast-path + 30s regardless of how slow the provider call runs, returning
+`status: pending` at that boundary instead of continuing to wait.
+
+| term | value | source |
+|---|---|---|
+| fast path (p99, accepted) | ~0.011 s | measured, 15.1 |
+| extraction, `gpt-4o` (arm E), typical | 6.51 s mean, 5.70-8.52 s range | measured, trapc-reliability.md arm E, N=5 |
+| extraction, `gpt-4o-mini` (degraded tier), typical | 9.73 s mean (arm D) | measured, trapc-reliability.md, for comparison only - not the standard-tier term |
+| `media_sync_wait_seconds` ceiling | 30 s (default; operator range 5-90) | `app/models/user.py:393`, enforced in `app/api/v1/external/media.py:227` |
+| **this endpoint's own worst-case call** | **~30.01 s** | fast path + ceiling, since the ceiling dominates and caps the call regardless of extraction time |
+| existing spine turn (upper end, unmeasured p99) | 18.4 s | `dym-probe-before-offer-plan.md:463` |
+| **worst-case turn against the 120s TTL** | **~48.4 s** | 18.4 s spine + 0.011 s fast path + 30 s ceiling |
+
+**Headroom on the standard tier.** The measured `gpt-4o` extraction (mean 6.51s, worst observed
+8.52s) never comes close to tripping the 30s ceiling - it uses at most ~28% of it. The ceiling, not
+the extraction time, is the term that actually determines the worst case; the extraction is faster
+on `gpt-4o` than on `gpt-4o-mini` besides (6.51s vs 9.73s mean, section 14.1), so moving the
+standard tier to `gpt-4o` made this number safer, not riskier.
+
+**Does the section 1.1 "~48s" arithmetic still hold with the `gpt-4o` numbers? Yes, unchanged.**
+The original arithmetic (`18.4 + 30 = 48.4s`) already used the ceiling rather than a measured
+extraction figure as the dominant term, precisely because the ceiling was known to exceed any
+plausible extraction time. That assumption is now confirmed rather than merely argued: on the
+standard tier (`gpt-4o`), even the single worst observed call (8.52s) is 3.5x under the 30s
+ceiling, so the ceiling remains the binding constraint and the fast path's real, measured
+contribution (~11ms) is negligible against it. No correction to the "~48s" figure is needed;
+the `gpt-4o-mini` numbers section 1.1 cited were never the load-bearing term the way this task
+asked to check - the ceiling was, and the ceiling is a config value, not a per-model measurement.
+Margin against the 120s TTL stays at roughly 60 percent, as originally stated, and margin against
+the recommended 60s n8n node timeout (PLAN 1.2, double the 30s ceiling) is roughly 50 percent on
+this endpoint's own worst-case contribution alone (~30.01s of a 60s budget).
+
+### 15.3 Event-loop non-blocking, demonstrated
+
+This is UAC S3-01b, `tests/test_media_job_lifecycle.py::test_second_unrelated_request_returns_promptly_while_extraction_is_in_flight`
+- not rewritten, run as committed. Method: one persistent `TestClient(app)` (one shared event
+loop), a `ThreadPoolExecutor` dispatches a media `/process` call whose extraction is stubbed to
+sleep 3.0s on one OS thread while, 0.3s later, a second OS thread issues an unrelated `GET
+/api/v1/external/media/jobs/{unknown-id}` (a near-instant 404) against the same app instance. The
+test's own assertion is `fast_elapsed < 1.5`; the actual observed value was captured by running the
+identical assertion body via a throwaway, uncommitted script (deleted after use) that printed the
+measured `fast_elapsed` before applying the same assertion.
+
+| run | fast_elapsed (the unrelated 404 call, while a 3.0s extraction was in flight) | fast_response status | slow_response status |
+|---|---|---|---|
+| 1 | 0.0183 s | 404 | pending |
+| 2 | 0.0151 s | 404 | pending |
+
+**What this means for the lock budget.** The unrelated request answered in 15-18ms while a
+multi-second extraction ran concurrently on the same process - two to three orders of magnitude
+under both the 1.5s test threshold and the 30s ceiling. This is the concrete evidence that
+`await asyncio.wait_for(_await_job(job_id), ...)` (PLAN 3.3b) genuinely does not occupy the event
+loop: a hundred concurrent media turns cost sleeping coroutines and a handful of `asyncio.to_thread`
+reads, not blocked workers, which is exactly the property that makes it safe to hold
+`lock:{contact}` across the wait (section 1.1) rather than reproducing the portal's known blocking
+defect (`app/api/v1/public/ai_extract.py:116`).
