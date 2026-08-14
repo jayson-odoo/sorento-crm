@@ -271,8 +271,14 @@ into it.
   from backend env `N8N_CRM_WEBHOOK_SECRET` (settings field, same family as the webhook
   URL); if the env is unset the CRM still sends WITHOUT the header and logs a warning -
   so a misconfigured deploy degrades to "bot-pause inert" (the n8n gate stays closed),
-  never to a blocked send. n8n side receives the value as an environment credential at
-  promote time, provisioned with the user.
+  never to a blocked send. n8n-side provisioning (AMENDED 2026-08-14 after fork build:
+  `$env` is unavailable in Code nodes on this n8n instance - measured, not assumed):
+  n8n stores a SHA-256 DIGEST of the secret in redis (`crm:webhook-secret-sha256`),
+  read via the established ht-cfg pattern and compared against the sha256 of the
+  incoming header. The CRM contract is unchanged (plaintext header from
+  `N8N_CRM_WEBHOOK_SECRET`); at promote the user runs one redis SET with the digest
+  (exact command in the promote checklist). The exported workflow never contains even
+  the digest.
 - **AC-J7 [BE][n8n]** (added 2026-08-14, peer review - AC-I4 interaction; AMENDED same
   day after peer recon) Given the n8n SLA-stamp lane still contains the
   no-contact-predicate SELECT (AC-I4), When Change 1 multiplies that lane's firing
