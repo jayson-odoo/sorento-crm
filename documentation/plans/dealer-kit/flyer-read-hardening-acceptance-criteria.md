@@ -159,7 +159,15 @@ place.
 **When** the designer navigates by sidebar clicks to Dealer Kit, Flyer readings,
 opens "Read a flyer", chooses the library source, picks the file and confirms
 **Then** the browser lands on the review screen for a new reading
-**And** the network log shows the from-attachment call, not a multipart upload.
+**And** the backend records the from-attachment call, not a multipart upload.
+
+Verified by an **agent-browser** evidence run, not a committed spec. The standing
+order is that no project carries a playwright trace, and a new spec would be a
+new trace, so this AC is met by a reproducible run whose steps and output are
+recorded in the commit. What that costs is honest to state: this path has no
+committed regression guard, so a later change can break it without a test going
+red. The repo-wide replacement for the 40 existing specs is a separate pending
+decision, and this AC joins that queue rather than pre-empting it.
 
 ### AC-A11 [FE] Both sources work at 375px and 1280px
 **Given** the dialog at both widths

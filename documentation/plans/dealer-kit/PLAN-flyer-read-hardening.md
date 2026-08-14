@@ -251,8 +251,9 @@ mock is recorded here and in the PR description.
 - **S4.** Move the shared picker to `components/common`, add `onConfirm` and the
   type filter prop, update the four import sites. Vitest for the new props.
 - **S5.** The dialog's second tab, service, hook. Vitest for both tabs.
-- **S6.** Playwright E2E for the library path, sidebar clicks, asserting the
-  from-attachment call in the network log.
+- **S6.** Evidence run for the library path, sidebar clicks, confirming the
+  from-attachment call reaches the backend. Originally a Playwright spec; see
+  "The e2e spec, and why it is not here" below.
 
 ## After the fix, measured the same way
 
@@ -277,10 +278,34 @@ the library path reaches the review screen and the backend logs
 `POST /api/v1/dealer-kit/flyer-readings/from-attachment - Status: 201 - Duration: 1.092s`.
 At **375px and 1280px** the list, both dialog tabs and the nested picker have no
 horizontal overflow, the picker's confirm button is reachable, and after the
-nested dialog closes `body` keeps `pointer-events: auto` and a real click (with
-actionability checks, which the E2E spec's `dispatchEvent` bypasses) lands on the
-outer dialog. That last check was the reviewer's specific concern about nesting
-one Radix modal inside another.
+nested dialog closes `body` keeps `pointer-events: auto` and a real click, with
+actionability checks rather than a synthetic event dispatch, lands on the outer
+dialog. That last check was the reviewer's specific concern about nesting one
+Radix modal inside another.
+
+## The e2e spec, and why it is not here
+
+This branch originally added
+`sorento_crm_frontend/e2e/dealer-kit-flyer-library-read.spec.ts` for AC-A10. It
+was removed before merge under a standing order that no project carries a
+playwright trace: a NEW spec is a new trace, so fixing it and shipping it was
+not an option. AC-A10 is met instead by an agent-browser evidence run whose
+steps and output are recorded in the commit.
+
+Two things worth keeping honest about that trade:
+
+- **The library path ships with no committed regression guard.** A later change
+  can break it without a test going red. The behaviour is verified, but only at
+  a point in time.
+- **The spec was also wrong.** Its `waitForURL(/attachments/)` could never
+  match, because the Files entry always lands on
+  `/resource-management/attachment-directories`. It was found by the pipeline's
+  test step, not by review, and it would have failed on first run. That is worth
+  recording because it is an argument on both sides: the spec was load-bearing
+  enough to catch, and shallow enough to be wrong in a way nobody noticed.
+
+The 40 pre-existing specs are untouched, along with `playwright.config.ts` and
+the dependency. What replaces them repo-wide is a separate open decision.
 
 ## Deviations from this plan, recorded during implementation
 
@@ -316,7 +341,9 @@ applicable, nothing gains a column). Gates 1 and 5 apply in full.
   route but not offered by the picker. Closing it properly needs a filename or
   extension filter on the attachments list, not a wider mime filter, which would
   list every binary blob in the library.
-- The E2E spec drives clicks through `dispatchEvent`, following the existing
-  dealer-kit specs, which bypasses Playwright's actionability checks. It
-  therefore cannot catch a swallowed click. Worth revisiting for the whole
-  dealer-kit e2e family rather than this one spec.
+- AC-A10 has no committed regression guard, only a reproducible evidence run.
+  It should get one when the repo-wide replacement for the e2e specs is decided.
+- The existing dealer-kit specs drive clicks through `dispatchEvent`, which
+  bypasses actionability checks and so cannot catch a swallowed click. That is a
+  property of the whole frozen spec family, not of this branch, and belongs with
+  the same decision.
