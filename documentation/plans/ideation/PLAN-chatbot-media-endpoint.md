@@ -1,6 +1,7 @@
 # PLAN - Chatbot media endpoint (voice transcription + image recognition)
 
-**Status:** Phase 1 (frontend mock) in progress
+**Status:** S1 Phase 1 (frontend mock) built - both operator surfaces render against mocks;
+awaiting browser verification, then S1 Phase 2 (backend, test-first)
 **UAC (the contract):** `documentation/plans/ideation/chatbot-media-endpoint-acceptance-criteria.md`
 **Classification:** **CORE**, `public` schema, normal FKs.
 Rationale: this extends the core chatbot/contact domain and references `respond_contacts` and
@@ -279,8 +280,12 @@ frontend; this is a documented repeat failure in this repo.
 | `media_language_mode` | `pinned` | `pinned`, `hints`, `auto` |
 | `media_language_pinned` | `en` | |
 | `media_language_hints` | `en,ms,zh` | CSV, only used in `hints` mode |
-| `media_sync_wait_seconds` | 30 | how long the endpoint awaits the worker before returning `pending`; this is the value that bounds the lock |
-| `media_extraction_timeout_seconds` | 45 | the worker's own hard ceiling; must be >= the sync wait so a job that outlives the wait still finishes and is retrievable |
+| `media_sync_wait_seconds` | 30 | how long the endpoint awaits the worker before returning `pending`; this is the value that bounds the lock. Range 5-90. |
+| `media_extraction_timeout_seconds` | 45 | the worker's own hard ceiling. Range 5-110, and **must be >= `media_sync_wait_seconds`** so a job that outlives the wait still finishes and stays retrievable rather than being killed mid-flight. |
+
+Both bounds are enforced in the backend validator, not only in the settings form - a number that
+only the UI refuses is not a constraint. The 110 ceiling exists so that even a maximally
+misconfigured pair cannot exceed the dispatcher's 120 second lock TTL.
 | `media_max_entities` | 10 | the extraction cap |
 
 `media_transcribe_model` defaulting to `whisper-1` with `media_language_mode` defaulting to
@@ -480,6 +485,39 @@ not get a 500 for work that succeeded.
 
 ---
 
+### 3.6 The operator endpoints
+
+Phase 1 established these and they are now part of the contract. They are ordinary JWT routes
+under `user_management`, not `/external/`, because the caller is the CRM frontend.
+
+`GET /api/v1/user-management/contacts/{contact_id}/media-access`
+→ `{period_key, resets_on, items[]}`. `items[]` **always** carries both modalities in the order
+image, voice, each `{modality, is_allowed, has_row, monthly_limit, effective_monthly_limit,
+max_clip_seconds, effective_max_clip_seconds, used, remaining, updated_at, updated_by_name}`.
+
+`PUT /api/v1/user-management/contacts/{contact_id}/media-access/{modality}`
+body `{is_allowed, monthly_limit, max_clip_seconds}`, upserts, `monthly_limit: null` clears the
+override. Returns the single recomputed item.
+
+Four details that are load-bearing rather than cosmetic:
+
+- **`has_row` is separate from `is_allowed`.** It is what lets the card say "never configured"
+  rather than "someone turned this off". Those are different support conversations and the
+  operator needs to tell them apart.
+- **`resets_on` arrives already rendered** ("1 September"). No caller does date arithmetic, which
+  is the same rule the n8n contract follows and for the same reason.
+- **`updated_by_name`, not `updated_by`.** The column stores an id; the API resolves it, because
+  no UUID reaches the UI.
+- **`used` counts `accepted` and `failed` only**, never refusals, so a contact who was refused
+  fifty times still shows their full allowance. It is displayed even when the modality is off, so
+  an operator turning access on can see what the contact already consumed.
+
+Authorisation is the **existing contact-edit permission**. No new admin role, per the captain.
+
+Settings are read and written through the existing settings dict and `POST /general` - no new
+settings route, because `apiFetch('/api/<domain>/...')` maps straight to the backend and a
+dedicated Next route proxy would never be hit.
+
 ## 4. Extraction
 
 ### 4.1 What is reused, and what is not
@@ -643,8 +681,7 @@ Changes from the drafts, flagged as the brief requires:
 Phase 1 is the frontend against mocks, and it comes before any backend code.
 
 **Contact surface.** `ContactMediaAccessSection.tsx` in
-`sorento_crm_frontend/app/(protected)/user-management/contacts/[id]/components/`, rendered
-alongside the existing `ContactMarketSegmentSection` and `ContactAttachmentTypesSection`. Clone
+`sorento_crm_frontend/app/(protected)/user-management/contacts/[id]/components/`. Clone
 `ContactAttachmentTypesSection.tsx` - it is the right precedent: single `{contactId}` prop, owns
 its react-query keys, invalidate plus toast on success, and an `AlertDialog` in front of the
 destructive edit.
@@ -652,13 +689,36 @@ destructive edit.
 It renders **both** modalities always, each with an explicit empty state, per the standing rule
 that a detail page never hides a section on missing data.
 
+*Amended during Phase 1:* it is rendered as its own **Media Access card** (its own `Container` +
+`Card`, between Contact Information and Access Agents) rather than as a cell inside the Contact
+Information grid beside `ContactMarketSegmentSection` / `ContactAttachmentTypesSection`. The UAC
+calls it "the Media Access card" and it carries two modalities each with a status, a used-of-limit
+line, a reset date, an inherited-or-override line, a switch and an edit action - which does not
+fit a one-line grid cell. Placement is the only change; the precedent it clones is unchanged.
+
 **Settings surface.** `app/(protected)/user-management/settings/chatbot-media/page.tsx`, cloned
 from the `portal-revisions` settings page, which is the most recent and smallest precedent and
-already carries the `components/`, `hooks/`, `lib/`, `services/` layering this repo enforces.
+already carries the `components/`, `hooks/`, `lib/`, `services/` layering this repo enforces. Add
+the tab to the `navRoutes` map in `user-management/settings/layout.tsx`, or the page is
+unreachable by clicking.
 
 Layering is the standing one: UI to hook to feature service to `lib/api-client`. `extractApiError`
 is used, never hand-rolled. Every optional select is `clearable`. Both surfaces are verified at
 375px and 1280px.
+
+**Phase 1 mocks and the swap.** Each surface has one feature service carrying the expected API
+contract in its header docblock, and one `__mocks__/` module the service resolves against until
+Phase 2:
+
+- `contacts/[id]/services/contactMediaAccessService.ts` + `contacts/[id]/__mocks__/contactMediaAccess.ts`
+- `settings/chatbot-media/services/chatbotMediaSettingsService.ts` + `settings/chatbot-media/__mocks__/chatbotMediaSettings.ts`
+
+Phase 2 replaces each function body with the `apiFetch` call written in its comment and deletes
+the two mock modules. Nothing above the service boundary changes.
+
+The media settings read through the existing `GET /settings` response dict and write through the
+existing `POST /settings/general` setattr path, so no new settings route is added - which is why
+section 2.4's "both manual dict builders" item is load-bearing rather than housekeeping.
 
 ---
 

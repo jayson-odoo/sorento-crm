@@ -33,6 +33,7 @@ import ContactAccessAgentsTable from './components/ContactAccessAgentsTable';
 import ContactCsRoutingRules from './components/routing/ContactCsRoutingRules';
 import ContactMarketSegmentSection from './components/ContactMarketSegmentSection';
 import ContactAttachmentTypesSection from './components/ContactAttachmentTypesSection';
+import ContactMediaAccessSection from './components/ContactMediaAccessSection';
 import ContactChatHistorySection from './components/ContactChatHistorySection';
 import ContactEditDialog from './components/ContactEditDialog';
 import ContactDeleteDialog from '../components/ContactDeleteDialog';
@@ -334,6 +335,17 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                 <p className="font-medium">{formatDate(new Date(contact.updated_at))}</p>
               </div>
             </div>
+          </CardContent>
+        </Card>
+      </Container>
+
+      <Container>
+        <Card>
+          <CardHeader>
+            <CardTitle>Media Access</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ContactMediaAccessSection contactId={id} />
           </CardContent>
         </Card>
       </Container>
