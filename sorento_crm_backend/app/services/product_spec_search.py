@@ -500,10 +500,15 @@ def search_specs(
     # description, and a hardcoded flyer test would turn PR 4's promotion of flyer
     # values to authored ones into a silent demotion. An unlisted source multiplies by
     # 1, so `derived` and `category` are untouched.
-    source_boosts = {"flyer": policy.get("flyer_source_boost", 1.0)}
+    # Authored sources take the shared authored knob as their DEFAULT, then any source
+    # with a knob of its own overwrites it. That order is the point: `flyer` joins
+    # `AUTHORED_SOURCES` in the later flyer-ingestion slice (AC-F.7), and building the
+    # authored defaults last would silently collapse `flyer_source_boost` into
+    # `human_source_boost` on that one-line membership change, which AC-F.10 requires to
+    # stay separately tunable. Nothing would fail; the ranking would just move.
     human_source_boost = policy.get("human_source_boost", 1.0)
-    for authored_source in AUTHORED_SOURCES:
-        source_boosts[authored_source] = human_source_boost
+    source_boosts = {authored: human_source_boost for authored in AUTHORED_SOURCES}
+    source_boosts["flyer"] = policy.get("flyer_source_boost", 1.0)
     if floor is None:
         floor = policy["relevance_floor"]
     if limit is None:

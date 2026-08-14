@@ -41,6 +41,10 @@ logger = logging.getLogger(__name__)
 # test in the codebase: a bare equality against the single string below would silently
 # treat a supplier-submitted entry as machine-derived everywhere that test runs.
 # `supplier` has no writer in this milestone; it is reserved for the supplier portal.
+# `flyer` joins this set in the bulk flyer-ingestion slice after PRs 1-4, once the
+# promote migration has re-stamped the legacy entries, and not before (AC-F.7):
+# derivation writes `source='flyer'` itself on every run today, so an early flip would
+# badge a machine read as a person's own work.
 AUTHORED_SOURCES: frozenset[str] = frozenset({"human", "supplier"})
 
 DEFAULT_AUTHORED_SOURCE = "human"

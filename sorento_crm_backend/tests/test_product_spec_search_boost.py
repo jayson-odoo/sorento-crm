@@ -150,6 +150,47 @@ def test_the_two_knobs_are_independently_tunable(db):
     assert human_after > human_before
 
 
+def test_flyer_keeps_its_own_knob_if_it_later_joins_authored_sources(db, monkeypatch):
+    """AC-F.7 / AC-F.10 - simulated future membership change, not today's behaviour.
+
+    AC-F.7 says a later bulk flyer-ingestion slice (after PRs 1-4 and the promote
+    migration) will add `'flyer'` to `AUTHORED_SOURCES` as a distinct member. That flip
+    does NOT happen in PR 1 - the real constant here stays `{"human", "supplier"}` - but
+    the construction in `search_specs` has to survive it unharmed: AC-F.10 requires
+    `flyer_source_boost` and `human_source_boost` to stay independently tunable even
+    once `flyer` is authored. This test monkeypatches `AUTHORED_SOURCES` to include
+    `flyer` to pin that future-safe behaviour now, so a later membership change cannot
+    silently collapse the two knobs into one without a test going red first.
+    """
+    import app.services.product_spec_search as pss
+
+    monkeypatch.setattr(pss, "AUTHORED_SOURCES", frozenset({"human", "supplier", "flyer"}))
+
+    flyer_product = _product(db, "ZZT-SB-FUTURE-FLYER")
+    _stamp_is_frameless(db, flyer_product, "flyer")
+    human_product = _product(db, "ZZT-SB-FUTURE-HUMAN")
+    _stamp_is_frameless(db, human_product, "human")
+    supplier_product = _product(db, "ZZT-SB-FUTURE-SUPPLIER")
+    _stamp_is_frameless(db, supplier_product, "supplier")
+
+    _set_policy(db, "flyer_source_boost", 2.0)
+    _set_policy(db, "human_source_boost", 6.0)
+
+    flyer_score = _score(db, "ZZT-SB-FUTURE-FLYER")
+    human_score = _score(db, "ZZT-SB-FUTURE-HUMAN")
+    supplier_score = _score(db, "ZZT-SB-FUTURE-SUPPLIER")
+
+    # Base score for one matched boolean spec is `weight`, then multiplied by the
+    # source boost. human/supplier take the shared authored knob (6.0); flyer keeps
+    # its own explicit knob (2.0) even though it is now also an AUTHORED_SOURCES
+    # member, so its score must sit apart from - and below - the human/supplier one.
+    assert human_score == supplier_score
+    assert flyer_score != human_score, (
+        "flyer must keep its own knob even after joining AUTHORED_SOURCES, "
+        "not silently inherit human_source_boost"
+    )
+
+
 def test_a_derived_or_unknown_source_is_left_at_a_one_times_multiplier(db):
     derived_product = _product(db, "ZZT-SB-DERIVED-1")
     _stamp_is_frameless(db, derived_product, "derived")
