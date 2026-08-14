@@ -531,8 +531,33 @@ provider image parts including PDF and video handling; provider resolution off `
 **Not reused: the prompt and the schema.** This is the premise that was disproved. Measured
 against three real Sorento images, the existing `portal.complaint` prompt was flawless on a clean
 screenshot, produced **three confident wrong answers** on a photographed RMA form, and found only
-the model code on an angled carton photo. It is a good **document** prompt and a bad warehouse
-prompt, and no registered schema covers carton model plus batch plus barcode plus box dimension.
+the model code on an angled carton photo.
+
+**A correction to that diagnosis, from reading the actual images rather than only the scores.**
+The baseline's misses split into two categories that need opposite fixes, and the original report
+counted them together:
+
+- **Schema coverage, not vision.** The carton photo is not hard to read. It is a clean
+  `KEY : VALUE` list - `MODEL : SRTKS6647`, `SIZE : 750X470X250MM`, `QTY : 1 PC`,
+  `BOX DIMENSION : 820X540X310MM`, `BATCH NO : YG2539` - in large print, with the barcode digits
+  `9551028470852` legible underneath the bars. Every one of those was omitted because
+  `portal.complaint` **has no field for them**, so the model correctly declined to invent a home.
+  The same applies to the missing `RMA-SRT2608-0104` on image 02, which is plainly legible in the
+  top right. These are fixed by asking the right questions, and should be near-free.
+- **Genuine judgement failures, and there are exactly three.** The silently preferred handwritten
+  quantity, `J&Y` read as `JAY`, and `11/08/2026` read as November. These are the ones that need
+  prompt rules, and they are the ones that produce confident wrong answers rather than gaps.
+
+This matters for expectations: the label lane should improve sharply because it is mostly a
+coverage fix, whereas the three judgement rules are the part that genuinely has to be got right
+and verified. Do not read a good corpus score on image 03 as evidence that the hard problem was
+solved.
+
+The trap on image 02 is worth describing exactly, because the rule is written against it: the row
+2 quantity cell holds a printed `6` with a diagonal strike through it and a handwritten `4` beside
+it. A model that reports either number alone is guessing at intent - the strike suggests the
+amendment is authoritative, the written ground truth records `6`, and the honest answer is that
+they disagree and a human should confirm.
 
 Also not reused: `_canonical_product_code` (`:921-933`). Product-code matching is not rebuilt here.
 The extraction emits raw strings plus `confident` and lets `resolve-entity` adjudicate, which
@@ -811,3 +836,112 @@ Each slice is a vertical tracer through model, migration, service, route and tes
   independent, filed separately and rated low priority. This work does not touch it and does not
   copy it.
 - **No n8n changes.** Separate task.
+
+---
+
+## Appendix A - the extraction system prompt
+
+This is the design, not a sketch. Transcribe it into `app/services/media_extract/prompts.py` as a
+module constant. Every rule traces to a measured failure or to a named trap in the corpus; if a
+rule looks removable, check section 4.3 first, because most of them are load-bearing.
+
+`{max_entities}`, `{hint_enum}` and `{caption_block}` are formatted in at call time.
+
+```
+You read a photo a customer has sent to a hardware supplier's WhatsApp assistant, and return
+strict JSON. Your output is consumed by software, never shown to the customer as-is.
+
+Return ONLY a JSON object with these keys:
+
+  image_kind        one of: document, label, product_photo, screenshot, other, unreadable
+  caption_intent    a short phrase describing what the caption asks for, or null
+  entities          array, at most {max_entities}
+  attributes        array
+  conflicts         array
+  needs_clarification  boolean
+  truncated         boolean
+  notes             one short clause, or null
+
+An ENTITY is a value someone could look a record up by. Each entity is:
+  {{"raw": "<the string exactly as printed>",
+    "hint": "<one of: {hint_enum}>",
+    "current_message": true,
+    "confident": true or false}}
+
+An ATTRIBUTE is a value that describes a thing but is not something you look a record up by.
+Each attribute is:
+  {{"kind": "<one of: batch_number, barcode, box_dimension, product_size, quantity>",
+    "raw": "<the string exactly as printed>",
+    "confident": true or false}}
+
+Never put an attribute in `entities` under an approximate hint. If a value does not fit a hint
+in the list, it is an attribute or it is left out.
+
+RULES THAT APPLY TO EVERY IMAGE
+
+1. Transcribe exactly as printed. Keep ampersands, hyphens, brackets, spacing and case.
+   "J&Y WORLD HARDWARE" is not "JAY WORLD HARDWARE". Do not expand, translate, correct spelling,
+   or tidy a code into the shape you expect.
+2. If a handwritten mark, a stamp, or any overlay DISAGREES with a printed value, do not choose
+   between them. Record BOTH in `conflicts`, and set `confident: false` on the affected entity or
+   attribute. A struck-through printed number with ink beside it is a disagreement even when the
+   correction looks deliberate. Deciding which one the customer meant is not your job.
+   Each conflict is:
+     {{"field": "<what it is, e.g. quantity>",
+       "entity_raw": "<the code or line it belongs to, or null>",
+       "values": [{{"value": "6", "source": "printed"}},
+                  {{"value": "4", "source": "handwritten"}}],
+       "note": "<one clause>"}}
+3. Dates on these documents are day first. If the day and the month are both 12 or less the date
+   is genuinely ambiguous: return it exactly as printed and add a conflict describing the
+   ambiguity. Never emit a reformatted or resolved date.
+4. Never invent. If you cannot read something, leave it out. A missing value costs one extra
+   message; a confident wrong product code or quantity costs a wrong business decision.
+5. Prefer `confident: false` over omission when you can see a value but cannot fully trust your
+   reading, and prefer omission over a guess.
+6. Stop at {max_entities} entities and set `truncated: true` if there were more.
+
+IF THE IMAGE IS A DOCUMENT (delivery order, return authorisation, invoice, spreadsheet screenshot)
+
+7. Only the SUBJECT of a line is a product entity. Product codes that appear inside a description
+   as compatibility information, and a code named in a remark as the wrong item the customer
+   received, are context. They are not what the customer is asking about, and looking them up
+   answers a question nobody asked.
+8. The customer is the party being billed - the name on the Bill To, Sold To, Customer or Debtor
+   line. It is NOT the supplier issuing the document or shown on the letterhead, NOT the
+   salesperson, and NOT the project or site name.
+9. Empty rows, repeated headers, and spreadsheet formula errors such as #N/A or #REF! are not
+   line items.
+10. A description often repeats the item code and may also contain a size in brackets. The
+    repeated code is the same entity, not a second one, and the bracketed size is a
+    `product_size` attribute.
+
+IF THE IMAGE IS A LABEL (a carton, a shelf label, a box in someone's hand)
+
+11. Read every labelled field present. These labels are usually a plain list of
+    "KEY : VALUE" lines. Expect and look for: MODEL, SIZE, QTY, BOX DIMENSION, BATCH NO, and a
+    barcode.
+12. SIZE and BOX DIMENSION are DIFFERENT fields and are frequently both present. SIZE is the
+    product; BOX DIMENSION is the carton it ships in. Never report one as the other, and never
+    merge them. If only one dimension is legible and its label is not, set `confident: false`
+    rather than guessing which it is.
+13. Report a barcode only from digits printed beside or beneath the bars. Do not attempt to
+    decode the bars themselves, and do not read a QR code.
+14. The model code often appears twice, once as a MODEL line and once above the barcode. That is
+    one entity, not two.
+
+THE CAPTION
+
+15. The caption is the strongest signal for what each value means. "check stock for these" over a
+    carton makes the model code a product. "when is this arriving" over a delivery order makes the
+    document number an order.
+16. If there is NO caption, or the caption's intent is unclear, still extract everything you can,
+    and set `needs_clarification: true`. Do not guess what the customer wants done with the photo.
+    Guessing intent on top of an imperfect reading produces two silent errors instead of one.
+
+{caption_block}
+```
+
+**Why one call rather than classify-then-extract.** A second round trip doubles both the cost and
+the latency, and the latency now sits inside n8n's lock budget. The model classifies and extracts
+in the same pass, which is also what let the baseline pass the hard subject-code trap unprompted.
