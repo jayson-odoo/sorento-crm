@@ -28,6 +28,7 @@ import { useGRN, useUpdateGRN } from '../hooks/useGRN';
 import { formatDate } from '@/lib/helpers';
 import { formatStatusLabel } from '@/lib/status-badge';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
+import { SpoAllocationCell } from '@/components/common/SpoAllocationCell';
 import GRNDeleteDialog from './grn-delete-dialog';
 import GRNNavigation from './GRNNavigation';
 
@@ -322,16 +323,10 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
                   {filteredLines.map((line) => (
                     <TableRow key={line.id}>
                       <TableCell>
-                        {line.spo_allocation ? (
-                          <Link
-                            href={`/procurement-management/spo-allocations/${line.spo_allocation.id}`}
-                            className="text-primary hover:underline font-medium"
-                          >
-                            {line.spo_allocation.spo_number ?? line.spo_allocation.id}
-                          </Link>
-                        ) : (
-                          '-'
-                        )}
+                        <SpoAllocationCell
+                          allocation={line.spo_allocation}
+                          statedSpoNumber={line.spo_number_raw}
+                        />
                       </TableCell>
                       <TableCell>
                         {line.product?.product_code || '-'}

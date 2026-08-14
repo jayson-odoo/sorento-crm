@@ -31,8 +31,16 @@ import pytest
 
 from app.models.base import set_company_scope
 from app.models.procurement import PickingHeader
-from app.services.procurement_service import _normalize_spo_number, _spo_match_key
-from app.tasks.import_tasks import _SPO_NUMBER_MAX_LEN, _run_grn_listing_import_core
+from app.services.procurement_service import (
+    _normalize_spo_number,
+    _spo_match_key,
+    _stated_spo_for_line,
+)
+from app.tasks.import_tasks import (
+    _SPO_NUMBER_MAX_LEN,
+    _run_grn_listing_import_core,
+    _single_spo_or_none,
+)
 
 from ._pg_fixture import blank_session, unique_code
 
@@ -94,6 +102,23 @@ def test_a_multi_spo_header_matches_no_single_spo(db):
             f"joined header value collided with the single SPO {one}"
         )
         assert _normalize_spo_number(stored) != _normalize_spo_number(one)
+
+
+def test_a_multi_spo_header_is_never_what_a_line_states(db):
+    """AC-FM-25 / AC-FM-8. `picking_lines.spo_number_raw` is fed by the SAME scalar
+    rule as matching, so the joined header value cannot leak into it - a line that
+    displayed "SPO-A, SPO-B" would be making a claim no allocation can ever
+    satisfy, which is worse than the dash it replaced."""
+    grn = unique_code("GR")[:50]
+    _run_grn_listing_import_core(db, _workbook([[grn, "2026-06-25", FOUR_SPOS]]))
+    stored = _header(db, grn).spo_number
+
+    assert _single_spo_or_none(stored) is None
+    assert _stated_spo_for_line(None, stored) is None
+    # And a single-SPO header still states itself.
+    assert _stated_spo_for_line(None, "SPO-2026/06-0020") == "SPO-2026/06-0020"
+    # What the client explicitly sent always wins over the header.
+    assert _stated_spo_for_line("SPO-2026/06-0021", stored) == "SPO-2026/06-0021"
 
 
 def test_a_single_spo_grn_still_stores_it(db):
