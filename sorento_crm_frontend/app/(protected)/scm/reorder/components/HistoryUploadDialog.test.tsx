@@ -362,6 +362,7 @@ describe('HistoryUploadDialog - purchase history', () => {
   it('switches the tiles from "would" to "did" once applied', async () => {
     renderDialog('purchase-history');
     await choose();
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
     fireEvent.click(confirmButton());
 
     expect(await screen.findByText('Orders written')).toBeInTheDocument();
@@ -429,6 +430,7 @@ describe('HistoryUploadDialog - order inquiry', () => {
     // somebody else uploaded weeks ago.
     renderDialog('order-inquiry');
     await choose('inquiry.xlsx');
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
     fireEvent.click(confirmButton());
 
     const section = await screen.findByRole('region', { name: /Order links/i });
@@ -471,6 +473,7 @@ describe('HistoryUploadDialog - one delivery, stated on many sheets', () => {
     // Deleting demand silently is the one thing an import must never do.
     renderDialog('order-inquiry');
     await choose('inquiry.xlsx');
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
     fireEvent.click(confirmButton());
 
     expect(

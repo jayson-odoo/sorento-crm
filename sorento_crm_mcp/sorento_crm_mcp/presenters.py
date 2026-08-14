@@ -727,7 +727,20 @@ def _resource_attachments(rows: list[dict], b: _Builder) -> None:
         # on every resource-attachment answer, next to the file itself. The uuid
         # is still on the raw (non-render) response and in the CRM UI, which is
         # where someone debugging is looking anyway.
-        b.item(name, [("original_filename", "File Name", name), ("uploaded_at", "Uploaded", day)])
+        # Company, because a contact who buys from both Mocha and Sorento gets a
+        # current workbook from EACH, and each company names its sheet the same
+        # thing. This render deliberately withholds the File ID (above), so the
+        # company name is the only handle left to tell the two apart. Absent /
+        # shared files (company_id NULL) render no line at all: `b.item` drops any
+        # pair whose value is not `_filled`, so nothing empty reaches the reader.
+        b.item(
+            name,
+            [
+                ("original_filename", "File Name", name),
+                ("company_name", "Company", att.get("company_name")),
+                ("uploaded_at", "Uploaded", day),
+            ],
+        )
         # Strip the type so the delivered attachment carries no "Direct Access" label.
         no_type = {k: v for k, v in att.items() if k != "attachment_type"} if isinstance(att, dict) else att
         b.attach(no_type)
