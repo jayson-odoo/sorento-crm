@@ -1,0 +1,331 @@
+'use client';
+
+import { useEffect, useMemo, useState } from 'react';
+import {
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+} from '@tanstack/react-table';
+import { MoreVertical, Pencil, Plus, TriangleAlert } from 'lucide-react';
+
+import { Button } from '@/components/ui/button';
+import { Card, CardTable } from '@/components/ui/card';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridTable } from '@/components/ui/data-grid-table';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { readableValue } from '@/lib/spec-readable';
+import { SpecSourceBadge } from './SpecSourceBadge';
+import { SpecValueCell } from './SpecValueCell';
+import type { SpecKeyDefinition, SpecScalar, SpecTableCallbacks, SpecTableRow } from './types';
+
+/**
+ * Every specification this product carries, editable in place.
+ *
+ * **The shared `DataGrid`, like every other table in the system** (D10). The obvious
+ * alternative - a CSS grid, because "a table with an editable cell is a different
+ * kind of table" - is exactly the parallel implementation the component-library rule
+ * exists to stop: it would arrive without column resizing, without saved column
+ * preferences, without the empty state, and it would drift from the rest of the system
+ * the first time any of those changed.
+ *
+ * **Props-driven** (AC-A.12): rows, vocabulary and callbacks in; nothing fetched here.
+ * The product page and milestone 2's supplier portal both render this, against
+ * different APIs and different principals.
+ */
+export function SpecTable({
+  rows,
+  registry,
+  callbacks,
+  isLoading = false,
+  canEdit = true,
+  openEditorFor = null,
+  onEditorOpened,
+  listingKey = 'master_data.products.view::product-specifications',
+}: {
+  rows: SpecTableRow[];
+  /** The registry, for the synonym lookup behind "add this word to the key". */
+  registry: SpecKeyDefinition[];
+  callbacks: SpecTableCallbacks;
+  isLoading?: boolean;
+  /** False renders the table read-only: no edit affordance, no row menu, no CTA. */
+  canEdit?: boolean;
+  /**
+   * Open this key's editor as soon as its row exists.
+   *
+   * The add-a-specification picker names a key; it does not set a value, because an
+   * empty value is not a value - stored, it would raise the same conflict on every
+   * derivation run forever, and the API refuses one for that reason. So the picker
+   * hands the key here and the person types the value on the row, in the same place
+   * they would edit any other.
+   */
+  openEditorFor?: string | null;
+  /** Called once the editor has been opened, so the caller can clear its request. */
+  onEditorOpened?: () => void;
+  listingKey?: string;
+}) {
+  /** Which row is in edit, by key. One at a time: two open editors on one product
+      invite a person to change two things and save one. */
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  /** The row whose removal is being confirmed, and which of the two intents it is. */
+  const [removing, setRemoving] = useState<{ row: SpecTableRow; intent: 'absent' | 'revert' } | null>(
+    null,
+  );
+
+  const synonymsByKey = useMemo(
+    () => new Map(registry.map((key) => [key.spec_key, key.synonyms ?? {}])),
+    [registry],
+  );
+
+  useEffect(() => {
+    if (!openEditorFor) return;
+    setEditingKey(openEditorFor);
+    onEditorOpened?.();
+  }, [openEditorFor, onEditorOpened]);
+
+  const columns = useMemo<ColumnDef<SpecTableRow>[]>(
+    () => [
+      {
+        accessorKey: 'label',
+        header: ({ column }) => <DataGridColumnHeader title="Specification" column={column} />,
+        size: 200,
+        minSize: 130,
+        enableSorting: false,
+        meta: { headerTitle: 'Specification' },
+        cell: ({ row }) => (
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-sm font-medium" title={row.original.label}>
+              {row.original.label}
+            </span>
+            {row.original.conflict && (
+              // Setting the right value IS the resolution (D9), so the hint says what
+              // to do rather than offering an action that would only mark it read.
+              <span
+                role="img"
+                aria-label={`The rules now read ${readableValue(
+                  row.original.conflict.proposed,
+                  row.original.conflict.proposedUnit ?? undefined,
+                )}. Correct the value to settle it.`}
+                title={`The rules now read ${readableValue(
+                  row.original.conflict.proposed,
+                  row.original.conflict.proposedUnit ?? undefined,
+                )}. Correct the value to settle it.`}
+                data-spec-conflict={row.original.specKey}
+                className="shrink-0"
+              >
+                <TriangleAlert className="size-3.5 text-amber-600" />
+              </span>
+            )}
+          </div>
+        ),
+      },
+      {
+        id: 'value',
+        header: ({ column }) => <DataGridColumnHeader title="Value" column={column} />,
+        size: 300,
+        minSize: 180,
+        enableSorting: false,
+        meta: { headerTitle: 'Value' },
+        cell: ({ row }) => (
+          <SpecValueCell
+            row={row.original}
+            editing={canEdit && editingKey === row.original.specKey}
+            busy={busyKey === row.original.specKey}
+            synonyms={synonymsByKey.get(row.original.specKey)}
+            onStartEdit={() => canEdit && setEditingKey(row.original.specKey)}
+            onCancel={() => setEditingKey(null)}
+            onAddValueToKey={
+              callbacks.onAddValueToKey
+                ? (value) => callbacks.onAddValueToKey!(row.original.specKey, value)
+                : undefined
+            }
+            onSave={async (value: SpecScalar) => {
+              setBusyKey(row.original.specKey);
+              try {
+                await callbacks.onSetValue(row.original.specKey, value);
+                setEditingKey(null);
+              } finally {
+                setBusyKey(null);
+              }
+            }}
+          />
+        ),
+      },
+      {
+        id: 'source',
+        header: ({ column }) => <DataGridColumnHeader title="Source" column={column} />,
+        size: 190,
+        minSize: 130,
+        enableSorting: false,
+        meta: { headerTitle: 'Source' },
+        cell: ({ row }) => (
+          <SpecSourceBadge source={row.original.source} evidence={row.original.evidence} />
+        ),
+      },
+      {
+        id: 'actions',
+        header: '',
+        size: 90,
+        enableSorting: false,
+        enableResizing: false,
+        meta: { headerTitle: 'Actions' },
+        cell: ({ row }) => {
+          if (!canEdit || row.original.unknownKey) return null;
+          return (
+            <div className="flex items-center justify-end gap-0.5">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                aria-label={`Edit ${row.original.label}`}
+                onClick={() => setEditingKey(row.original.specKey)}
+              >
+                <Pencil className="size-4" />
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-8"
+                    aria-label={`More actions for ${row.original.label}`}
+                  >
+                    <MoreVertical className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                {/* The two intents by NAME, not "delete" (AC-A.4). They do opposite
+                    things: one is a statement of fact that survives the next
+                    catalogue run, the other hands the key back to the rules. A single
+                    "remove" would pick one of them on the user's behalf. */}
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    onClick={() => setRemoving({ row: row.original, intent: 'absent' })}
+                    disabled={row.original.tombstoned}
+                  >
+                    This product does not have this spec
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => setRemoving({ row: row.original, intent: 'revert' })}
+                  >
+                    Use what the rules read
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        },
+      },
+    ],
+    [canEdit, editingKey, busyKey, callbacks, synonymsByKey],
+  );
+
+  const table = useReactTable({
+    columns,
+    data: rows,
+    getRowId: (row) => row.specKey,
+    getCoreRowModel: getCoreRowModel(),
+    // A product carries a median of 4 spec keys and at most 14. Paging that would be
+    // a control the reader has to operate to see a list that already fits.
+    manualPagination: true,
+    pageCount: 1,
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+  });
+
+  return (
+    <div className="flex flex-col gap-3">
+      {canEdit && callbacks.onAddSpecification && (
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" onClick={callbacks.onAddSpecification}>
+            <Plus className="size-4" />
+            Add a specification
+          </Button>
+        </div>
+      )}
+
+      <DataGrid
+        table={table}
+        recordCount={rows.length}
+        isLoading={isLoading}
+        tableLayout={{ width: 'fixed', columnsResizable: true }}
+        listingKey={listingKey}
+        emptyMessage={
+          <div className="py-10 text-center" data-spec-table-empty>
+            <p className="text-sm font-medium text-foreground">
+              Nothing has been read from this product yet
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Add the first specification, or read the product again with the current rules.
+            </p>
+            {canEdit && callbacks.onAddSpecification && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                onClick={callbacks.onAddSpecification}
+              >
+                <Plus className="size-4" />
+                Add a specification
+              </Button>
+            )}
+          </div>
+        }
+      >
+        <Card>
+          <CardTable>
+            {/* Horizontal scroll INSIDE the table's own container: at 375px four
+                columns cannot fit, and without this the page itself scrolls sideways
+                and takes the rest of the product record with it. */}
+            <ScrollArea>
+              <DataGridTable />
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
+          </CardTable>
+        </Card>
+      </DataGrid>
+
+      <ConfirmDeleteDialog
+        open={removing !== null}
+        onOpenChange={(open) => !open && setRemoving(null)}
+        title={
+          removing?.intent === 'absent'
+            ? 'This product does not have this spec'
+            : 'Use what the rules read'
+        }
+        description={
+          removing?.intent === 'absent' ? (
+            <>
+              <strong>{removing?.row.label}</strong> will be recorded as not applying to this
+              product, and the next catalogue run will not fill it in again. This action cannot be
+              undone.
+            </>
+          ) : (
+            <>
+              <strong>{removing?.row.label}</strong> goes back to whatever the rules read from
+              this product. This action cannot be undone.
+            </>
+          )
+        }
+        successMessage={
+          removing?.intent === 'absent'
+            ? 'Recorded as not on this product'
+            : 'Back to what the rules read'
+        }
+        onDelete={async () => {
+          if (!removing) return;
+          if (removing.intent === 'absent') await callbacks.onTombstone(removing.row.specKey);
+          else await callbacks.onRevert(removing.row.specKey);
+        }}
+        onSuccess={() => setRemoving(null)}
+      />
+    </div>
+  );
+}

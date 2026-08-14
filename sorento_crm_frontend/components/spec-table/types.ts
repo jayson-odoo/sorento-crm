@@ -19,6 +19,12 @@ export interface SpecKeyDefinition {
   unit: string | null;
   /** Seed values plus staff-added ones, minus suppressed. Empty means free text. */
   allowed_values: string[];
+  /**
+   * Merged customer phrasings per value. Read only to answer "is this word already
+   * here under another name" before offering to add it - `matte black` ships as a word
+   * for `black`, so adding it as a value of its own would create one nothing can match.
+   */
+  synonyms?: Record<string, string[]>;
 }
 
 /**
