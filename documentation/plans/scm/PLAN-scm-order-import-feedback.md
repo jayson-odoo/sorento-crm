@@ -1,9 +1,64 @@
 # PLAN - SCM order imports: agents, duplicates, async, standard modal
 
-**Status:** S1 + S2 built (branch `feat/scm-order-import-feedback`, backend only, uncommitted).
-S3, S4, S5 not started. S6 planned, captain's go pending. Contract:
-`UAC-scm-order-import-feedback.md` (same directory). Captain feedback sections 1-6 in
-`firstmate/data/so-import-feedback/captain-feedback.md`.
+**Status:** S1 + S2 built (branch `feat/scm-order-import-feedback`, PR #143). S3 + S4 built
+(branch `feat/scm-import-async`, stacked on that one). S5 not started. S6 planned, captain's
+go pending. Contract: `UAC-scm-order-import-feedback.md` (same directory). Captain feedback
+sections 1-6 in `firstmate/data/so-import-feedback/captain-feedback.md`.
+
+**Amendments made while building S3 + S4** (each one is a place the plan as written could not
+be followed, recorded here so the contract and the code agree):
+
+1. **`unmapped_agents` renders on the TEST result only, not on an apply result.** S4 item 3
+   asked for the field on `OutstandingPreview` AND `OutstandingApplyResult`. S3 deletes the
+   second: apply answers 202 with a job id, so there is no apply result for a dialog to
+   render. The fact still reaches the operator twice - in the Test result (which is what
+   AC-6.4 asks for) and on the job, where the commit's own copy lands in
+   `result.upload.unmapped_agents` and says which agents THIS upload created.
+2. **The channel's answer is nested under `result.upload` on the job**, rather than spread
+   across the result envelope. Its shape is unchanged; nesting is what stops the diff's
+   `counts` (added / closed / unchanged) overwriting the envelope's `counts` (the row totals
+   every job page reads).
+3. **The unreadable-file 400 became a failed JOB.** Reading happens on the worker, so the
+   request cannot answer without parsing the whole book twice. `?validate_only=true` is
+   unchanged and still synchronous, and Test is what tells the operator before they confirm.
+4. **Three shared-hook dialogs outside the five channels changed behaviour**: reorder levels,
+   the packing list and the supplier stock list all use `useTwoStepUpload`, so they stopped
+   reading on file-select too and the reorder-level dialog gained the Test button it lacked.
+   Their applies stay SYNCHRONOUS - they are not order-book feeds, they have no queued task,
+   and inventing one was not in scope.
+5. **The shared warning section is `components/common/ImportFeedbackSections`**, extracted
+   from the customer importer's `TestResultPanel` (see S4 item 2 for why the winner had to be
+   named). The customer dialog now renders through it, which is what proves it is shared.
+6. Two reader/parser additions were needed to account for every source row on the job:
+   `ReadResult.layout_row_numbers` / `settled_row_numbers` (outstanding), and `_instalments`
+   returning the absorbed ROW NUMBERS rather than a count (order inquiry). Without them a
+   4,349-row file finishes reporting 4,290 rows processed and nothing explains the rest.
+
+**Amendments from the S3 + S4 review pass** (same rule: each is a place the built code and
+the contract disagreed, recorded so they agree again).
+
+7. **`total_rows` on a queued SCM job means "everything the job accounted for", not "the
+   rows of the file".** The destructive halves - a line CLOSED by its absence from an
+   outstanding book, an instalment WITHDRAWN because the inquiry sheet stopped stating it -
+   carry an outcome and no source row, so with the file's own count as the total the job page
+   read `6 / 5` and drew a progress bar past 100%. The total is now published a second time
+   once the diff is known and before the write loop (outstanding) or once the withdrawals are
+   known (order inquiry), and the file's own count stays on the result as `file_rows` /
+   `rows`. Invariant, asserted per channel: **processed == total**.
+8. **One definition of that total across all five channels: every non-blank SOURCE ROW.** The
+   two history readers counted only the LINES, so the sales book's 9,144 package captions and
+   the PO listing's headers, `**SO:174830**` notes and spacers were outside the total and
+   carried no outcome at all - the same file reconciled on one channel and not on another.
+   Both readers now carry caption/layout row NUMBERS (as the outstanding reader already did)
+   and both services emit `NOT_A_LINE` per such row.
+9. **The single-company 400 is hoisted onto every READ, not just apply** (AC-4.2's "preview
+   runs at the same company scope the queued job will run at", which was stated and not
+   built). The four preview routes and both `?validate_only=true` branches now refuse with
+   the same message the apply refuses with. Reason: every one of these readers resolves item
+   codes to ids through last-write-wins lookups and 11,390 product codes are held by more
+   than one company, so an all-companies read binds a line to the wrong company's product and
+   shows a diff apply would never make. Precedent: the customer importer refuses both modes
+   for the same reason (`order_management/customers.py`).
 
 **S1 + S2 ship the agent data with NO surface on it.** `unmapped_agents` is on both the
 preview and the apply response, and nothing renders it: the FE `OutstandingPreview` type does
@@ -72,7 +127,7 @@ anyway. AC-1.1 (the outstanding-SO file) is built in full.
    halves; re-import reads unchanged (AC-2.3/2.4); SO-shaped fixture with agent-only
    classification resolves; agent unmapped -> reported not defaulted.
 
-### S3 - Async conversion (backend)
+### S3 - Async conversion (backend). BUILT
 
 1. New task functions in `app/tasks/import_tasks.py` per channel (outstanding SO, outstanding
    PO, purchase history, sales history, order inquiry), each: `_apply_import_job_scope` ->
@@ -89,7 +144,8 @@ anyway. AC-1.1 (the outstanding-SO file) is built in full.
 4. pytest: route 400-without-scope (job table stays empty); 202 + job row + source file;
    task path per-row outcomes land; worker-scope stamping (company snapshot honoured).
 
-### S4 - Standard modal (frontend)
+### S4 - Standard modal (frontend). BUILT, except the Playwright pass (item 5), which
+needs a running stack and the captain's own two files
 
 1. Rework the SCM upload dialogs (outstanding, history, order-inquiry channels) to the
    GRN/SPO behaviour contract: file select does NOTHING; Test button runs preview; Confirm

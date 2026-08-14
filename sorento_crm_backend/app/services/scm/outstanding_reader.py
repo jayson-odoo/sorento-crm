@@ -61,6 +61,12 @@ class ReadResult:
     #: Rows carrying neither an item code nor a quantity. Captions and spacers rather than
     #: failed lines, counted so a big number is visible instead of being silently dropped.
     layout_rows: int = 0
+    #: Which rows those were, and which rows stated nothing still outstanding. Row NUMBERS,
+    #: not just counts, because a queued import records an outcome per source row: without
+    #: them the job would report 4,290 rows processed out of 4,349 and leave the operator to
+    #: guess what happened to the other 59.
+    layout_row_numbers: list[int] = field(default_factory=list)
+    settled_row_numbers: list[int] = field(default_factory=list)
     # Per-row fields the DIFF does not care about but the WRITE does: counterparty code,
     # unit cost, currency. Kept in a side map keyed by `Line.row_ref` rather than added to
     # `Line`, because `outstanding_diff` is deliberately document-agnostic and adding
@@ -237,6 +243,7 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
         # still a problem - that is the totals row, or a genuine gap.
         if not item and (qty is None or qty == 0):
             result.layout_rows += 1
+            result.layout_row_numbers.append(row_number)
             continue
 
         missing = [f for f, v in ((doc_field, doc), (item_key, item)) if not v]
@@ -270,6 +277,7 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
         if qty <= 0:
             # Nothing outstanding is not an error - it is a line that belongs in the
             # "closed" side of the diff, reached by its absence rather than by a zero.
+            result.settled_row_numbers.append(row_number)
             continue
 
         raw_date = rec.get(date_field)

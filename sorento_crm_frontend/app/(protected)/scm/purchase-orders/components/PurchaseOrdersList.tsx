@@ -32,7 +32,6 @@ import { usePurchaseOrderActions } from '../../hooks/usePurchaseOrderActions';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import { BulkActionsMenu } from '../../components/BulkActionsMenu';
 import { OutstandingUploadDialog } from '../../reorder/components/OutstandingUploadDialog';
-import type { OutstandingApplyResult } from '../../reorder/services/outstandingImportService';
 import { buildPoBulkActions } from '../lib/poBulkActions';
 import { fmtDate, fmtInt, fmtMoney, fmtSupplierCost } from '../../lib/format';
 import type { PurchaseOrder, PurchaseOrderStatus } from '../../types/scm.types';
@@ -294,12 +293,14 @@ export default function PurchaseOrdersList() {
     }
   };
 
-  // The upload rewrites the on-order record this list shows, so refresh what feeds it
-  // and say what changed rather than leaving the user to guess and reload.
-  const bookApplied = (result: OutstandingApplyResult) => {
+  /**
+   * The upload was QUEUED, so there is nothing yet to report: it writes on the worker and
+   * the drawer is already following the job. Refetching is still worth doing - the list
+   * re-reads as soon as the job lands rather than showing yesterday's book until a reload -
+   * and the dialog has already told the user it is queued.
+   */
+  const bookQueued = () => {
     void refetch();
-    const changed = result.applied.added + result.applied.updated + result.applied.closed;
-    toast.success(`Order book updated - ${changed} line${changed === 1 ? '' : 's'} changed.`);
   };
 
   const runCreateGr = async () => {
@@ -518,7 +519,7 @@ export default function PurchaseOrdersList() {
         open={uploadOpen}
         onOpenChange={setUploadOpen}
         kind="purchase-orders"
-        onApplied={bookApplied}
+        onQueued={bookQueued}
       />
     </div>
   );

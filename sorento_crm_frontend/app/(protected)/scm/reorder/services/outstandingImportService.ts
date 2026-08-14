@@ -16,11 +16,22 @@
  *     the columns so the export can be fixed, and an error body would lose
  *     them. So a 200 always resolves here, whatever `ok` says.
  *
- *  2) Apply - writes it, returns the applied counts
+ *  2) Apply - QUEUES the write, returns the job to watch
  *     POST /api/v1/scm/outstanding/{kind}/apply
  *     same multipart body (the same file the preview was taken from)
- *     -> 200 OutstandingApplyResult
- *     -> 400 when the file is unusable (missing required columns)
+ *     -> 202 { message, job_id, id }
+ *     -> 400 when the session has no single active company: `sales_orders` /
+ *        `purchase_orders` are owned tables, so "whose book is this?" has no
+ *        answer, and the refusal happens before any job row exists
+ *
+ *     The counts are NOT in this response - the write happens on the worker.
+ *     They land on the job (`/system-management/import-jobs/{job_id}`), under
+ *     `result.upload`, alongside a per-row outcome for every source row. The
+ *     upload drawer follows the job from `notifyImportQueued()`.
+ *
+ *     A file the reader cannot use is no longer a 400 either: reading happens on
+ *     the worker, so an unusable file FAILS THE JOB with its reason on it. Test
+ *     is what tells the operator that before they confirm.
  *
  *  kind = 'sales-orders' | 'purchase-orders'. Auth on both: `scm.reorder.run`.
  *
@@ -35,6 +46,7 @@
  */
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import type { ImportQueuedResult } from '@/components/upload-activity/importQueue';
 
 /** Which order book the file carries. Maps 1:1 to the route's `{kind}` segment. */
 export type OutstandingImportKind = 'sales-orders' | 'purchase-orders';
@@ -84,6 +96,21 @@ export type OutstandingCounts = Partial<Record<OutstandingChangeKind, number>>;
 /** Only the kinds the backend had rows to show appear here. */
 export type OutstandingSamples = Partial<Record<OutstandingChangeKind, OutstandingSampleRow[]>>;
 
+/**
+ * An agent code this file names that can classify nothing yet.
+ *
+ * Its own list, never merged into the rejected rows: the file is fine, the code resolved (or
+ * was created by the upload), and no row is skipped. What it reports is a gap in MASTER data
+ * only the client can close - which of his agent codes still need a demand class - and
+ * putting that among the failures would make a clean file read as a broken one.
+ */
+export interface OutstandingAgentNotice {
+  code: string;
+  /** True when this upload is the first thing that has ever named the code. */
+  is_new: boolean;
+  reason: string;
+}
+
 export interface OutstandingPreview {
   doc_type: string;
   /** false = the header is missing required columns; nothing can be applied. */
@@ -96,23 +123,7 @@ export interface OutstandingPreview {
   row_problems: OutstandingRowProblem[];
   resolution_issues: OutstandingResolutionIssue[];
   samples: OutstandingSamples;
-}
-
-/** What the write actually did, which is not the same shape as the diff. */
-export interface OutstandingAppliedCounts {
-  added: number;
-  updated: number;
-  closed: number;
-  unchanged: number;
-}
-
-export interface OutstandingApplyResult {
-  ok: boolean;
-  counts: OutstandingCounts;
-  applied: OutstandingAppliedCounts;
-  scope_documents: string[];
-  resolution_issues: OutstandingResolutionIssue[];
-  row_problems: OutstandingRowProblem[];
+  unmapped_agents: OutstandingAgentNotice[];
 }
 
 /**
@@ -138,17 +149,22 @@ export async function previewOutstandingImport(
   return (await res.json()) as OutstandingPreview;
 }
 
-/** Write the upload. Send the SAME file the preview was taken from. */
+/**
+ * Queue the upload. Send the SAME file the preview was taken from.
+ *
+ * Returns the job, not the result: what the upload did lands on the job page, and the drawer
+ * follows it there.
+ */
 export async function applyOutstandingImport(
   kind: OutstandingImportKind,
   file: File,
-): Promise<OutstandingApplyResult> {
+): Promise<ImportQueuedResult> {
   const res = await apiFetch(`/api/v1/scm/outstanding/${kind}/apply`, {
     method: 'POST',
     body: fileBody(file),
   });
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to apply the upload'));
-  return (await res.json()) as OutstandingApplyResult;
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to queue the upload'));
+  return (await res.json()) as ImportQueuedResult;
 }
 
 /**

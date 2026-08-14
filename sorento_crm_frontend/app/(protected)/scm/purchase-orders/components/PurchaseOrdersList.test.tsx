@@ -70,11 +70,11 @@ vi.mock('../../hooks/usePurchaseOrderActions', () => ({
 }));
 
 // The upload dialog is exercised by its own suite; here we only care that this screen
-// mounts it for the PURCHASE-ORDER book and refreshes itself when it applies.
+// mounts it for the PURCHASE-ORDER book and refreshes itself once an upload is queued.
 type UploadDialogProps = {
   open: boolean;
   kind: string;
-  onApplied?: (result: OutstandingApplyResult) => void;
+  onQueued?: () => void;
 };
 let uploadProps: UploadDialogProps | null = null;
 vi.mock('../../reorder/components/OutstandingUploadDialog', () => ({
@@ -84,12 +84,13 @@ vi.mock('../../reorder/components/OutstandingUploadDialog', () => ({
   },
 }));
 
-import { toast } from 'sonner';
 import PurchaseOrdersList from './PurchaseOrdersList';
-import type { OutstandingApplyResult } from '../../reorder/services/outstandingImportService';
 import type { PurchaseOrder } from '../../types/scm.types';
 
-function po(over: Partial<PurchaseOrder>): PurchaseOrder {
+// The override is optional: the product-cost tests care about the banner, not about the row,
+// and `po()` reading as "one plain purchase order" is the point. Without the default those
+// six calls are a type error the test runner never sees, because vitest does not type-check.
+function po(over: Partial<PurchaseOrder> = {}): PurchaseOrder {
   return {
     id: 'po-1',
     po_number: 'PO-DRAFT-0001',
@@ -237,29 +238,25 @@ describe('PurchaseOrdersList - upload the order book', () => {
     expect(screen.getByText('outstanding-upload:purchase-orders')).toBeInTheDocument();
   });
 
-  it('refreshes the list and says what changed once the upload is applied', () => {
+  it('refreshes the list once the upload is queued', () => {
+    /**
+     * The upload writes on the worker now, so this screen has no counts to report: what it
+     * CAN do is drop what it holds, so the rows appear as soon as the job lands rather than
+     * after a manual reload. The "queued" message belongs to the dialog, which is the thing
+     * that knows the job id.
+     */
     mockList([po({ id: 'po-draft-1' })]);
     render(<PurchaseOrdersList />);
     fireEvent.click(screen.getByRole('button', { name: /Upload order book/i }));
     refetch.mockClear();
 
-    const onApplied = uploadProps?.onApplied;
-    if (!onApplied) throw new Error('the screen mounted the upload dialog without an onApplied');
+    const onQueued = uploadProps?.onQueued;
+    if (!onQueued) throw new Error('the screen mounted the upload dialog without an onQueued');
     act(() => {
-      onApplied({
-        ok: true,
-        counts: {},
-        applied: { added: 2, updated: 3, closed: 1, unchanged: 9 },
-        scope_documents: ['PO-2026/07-0009'],
-        resolution_issues: [],
-        row_problems: [],
-      });
+      onQueued();
     });
 
-    // Without the refresh the applied rows are invisible until a manual reload.
     expect(refetch).toHaveBeenCalled();
-    // 2 + 3 + 1 changed; `unchanged` is not a change.
-    expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/6 lines changed/i));
   });
 });
 

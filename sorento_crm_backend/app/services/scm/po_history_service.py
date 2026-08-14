@@ -26,13 +26,15 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Product
 from app.models.scm import OrderLinkClaim
+from app.services import import_outcome_codes as oc
+from app.services.import_outcome import ImportOutcome
 from app.services.scm import upload_validation as val
 from app.services.scm.po_listing_reader import PoListingResult, read_po_listing
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
@@ -92,6 +94,10 @@ def _summarise(db: Session, parsed: PoListingResult) -> dict:
         "orders_new": sum(1 for o in parsed.orders if o.po_number not in existing),
         "orders_existing": sum(1 for o in parsed.orders if o.po_number in existing),
         "lines": parsed.line_count,
+        # Every non-blank row the reader read, so the job's denominator and the operator's own
+        # "how big is this file" are the same number. `lines` is the subset that is a purchase
+        # line; the difference is the report's headers, notes and spacers.
+        "total_rows": parsed.total_rows,
         "charge_lines": sum(
             1 for o in parsed.orders for l in o.lines if not l.is_stock_item
         ),
@@ -150,15 +156,28 @@ def validate(db: Session, file_data: bytes) -> dict:
     )
 
 
-def apply(db: Session, file_data: bytes, actor: Optional[str] = None) -> dict:
+def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
+          outcome: Optional[ImportOutcome] = None,
+          on_total_rows: Optional[Callable[[int], None]] = None) -> dict:
     """Write the history. Idempotent on the document number.
 
     Re-uploading is normal - somebody re-exports a wider date range and sends the whole book
     again. Without idempotency the second upload doubles every historical quantity, and
     because the lines are closed nothing downstream would show it until a supplier's cost
     history was read and found twice.
+
+    `outcome` records what happened to each source LINE for the job detail. Optional so a
+    direct caller keeps the old signature; a throwaway non-persisting recorder stands in when
+    it is absent, so there is one code path either way.
     """
+    outcome = outcome or ImportOutcome(None, persist=False)
     parsed = read_po_listing(file_data)
+    if on_total_rows is not None:
+        # Every non-blank row the reader read, order headers and SO notes and spacers
+        # included. They are not lines and nothing is written for them, but they ARE rows
+        # somebody uploaded, so each carries its own `not_a_line` outcome below and the total
+        # stays reachable. One definition of "total" across all five channels: source rows.
+        on_total_rows(parsed.total_rows)
     summary = _summarise(db, parsed)
     if not parsed.ok:
         summary["orders_created"] = 0
@@ -166,6 +185,13 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None) -> dict:
         summary["date_from"] = None
         summary["date_to"] = None
         return summary
+
+    # The band labels, the report preamble, each order's own header row, the `**SO:174830**`
+    # notes and the numbered spacers. Their own code rather than a failure or a silence: this
+    # is a banded report, so most of it was never a line, and a row with no outcome is a row
+    # the job cannot account for.
+    for row_number in parsed.layout_row_numbers:
+        outcome.skip(row=row_number, code=oc.NOT_A_LINE)
 
     stock_codes = {l.item_code for o in parsed.orders for l in o.lines if l.is_stock_item}
     product_by_code = _products_by_code(db, stock_codes)
@@ -232,15 +258,22 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None) -> dict:
         }
 
         for parsed_line in parsed_order.lines:
+            identity = {"doc_no": parsed_order.po_number,
+                        "item_code": parsed_line.item_code,
+                        "line_no": parsed_line.line_no}
             if not parsed_line.is_stock_item:
                 # Real money on the order, no product behind it. Carried by the reader so the
                 # order total reconciles, and NOT written as a stock line: a quantity of 1
                 # "HANDLING CHARGES" is not inventory, and the code would sit in the
                 # unmatched list for ever.
+                outcome.skip(row=parsed_line.source_row, code=oc.CHARGE_LINE,
+                             identity=identity, value=parsed_line.description or None)
                 continue
             product_id = product_by_code.get(parsed_line.item_code)
             if product_id is None:
                 # Counted in the summary and named there. Never created.
+                outcome.skip(row=parsed_line.source_row, code=oc.PRODUCT_NOT_FOUND,
+                             identity=identity, value=parsed_line.item_code)
                 continue
 
             line = existing_lines.get(parsed_line.line_no)
@@ -261,11 +294,19 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None) -> dict:
                 )
                 db.add(line)
                 lines_created += 1
+                outcome.success(row=parsed_line.source_row, code=oc.CREATED,
+                                identity=identity, value=parsed_order.po_number)
             else:
                 line.qty_ordered = parsed_line.qty_ordered
                 line.qty_received = parsed_line.qty_ordered
                 line.unit_cost = parsed_line.unit_price
                 line.line_status = "closed"
+                # Written unconditionally on a re-upload: this feed's rule is that the file is
+                # the record of what was ordered. So it is `updated`, not `unchanged` - the
+                # write happened, whatever the values were.
+                outcome.updated(row=parsed_line.source_row, identity=identity,
+                                value=parsed_order.po_number, entity_type="order_line",
+                                entity_id=line.id)
 
         _claim_so_links(db, parsed_order.po_number, parsed_order.so_numbers, now)
 
