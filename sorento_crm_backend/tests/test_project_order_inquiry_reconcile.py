@@ -121,10 +121,29 @@ def world(db):
 
 
 def _core_order(world, number: str, *, demand_origin: str | None, qty: float) -> SalesOrder:
-    """A core `sales_orders` row carrying open demand for the world's product."""
+    """A core `sales_orders` row carrying open demand for the world's product.
+
+    Each row is seeded as the channel that writes it actually writes it, because
+    `scm.committed_v` reads BOTH demand columns since migration 346: a `project`-class
+    order counts only when the inquiry created it.
+
+    * The sheet's row - `project` class with the `scm_order_inquiry` origin, which is
+      exactly what `project_order_inquiry_import_service` stamps on the header it creates.
+    * Anybody else's row - `demand_class` NULL. No sales export carries an order type
+      today, so `outstanding_import_service._classify_demand` REPORTS the document and
+      leaves the column alone rather than guessing; a row CS's book creates therefore
+      arrives unclassified. Unclassified demand counts straight from the book, which is
+      what makes the double count visible in the view at all.
+
+    Hardcoding `project` on every row instead made the committed-demand assertions read
+    differently per database: the shared development one still carries the pre-346 view
+    body, which has no demand-source clause and counts a project-class row with no origin
+    that the current view deliberately sets aside.
+    """
     db = world["db"]
     order = SalesOrder(
-        id=_u(), so_number=number, status="open", demand_class="project",
+        id=_u(), so_number=number, status="open",
+        demand_class="project" if demand_origin == SOURCE_SYSTEM else None,
         demand_origin=demand_origin,
         source_system=SOURCE_SYSTEM if demand_origin == SOURCE_SYSTEM else "scm_upload",
         internal_note=f"Order Inquiry project: {MARKER}" if demand_origin else None,
@@ -165,7 +184,12 @@ def _ingest(world, *, doc_no: str = DOC_NO):
 
 
 def _committed(world) -> float:
-    """What the plan actually sees for this product, straight out of the view."""
+    """What the plan actually sees for this product, straight out of the view.
+
+    The view is read, never reimplemented here, so its demand-source clause is part of
+    every assertion below. That is why the seeds have to be shaped like the rows their
+    channel really writes - see `_core_order`.
+    """
     value = world["db"].execute(
         text("SELECT COALESCE(SUM(committed), 0) FROM scm.committed_v WHERE product_id = :p"),
         {"p": str(world["product"].id)},
@@ -310,10 +334,11 @@ def test_another_feeds_row_at_the_provisional_number_is_left_alone(world):
     assert other_feed.internal_note is None
     assert _by_number(world, DOC_NO) == []
     assert pso.so_id is None, "so_id adopted a row from a feed this project does not own"
-    # Deliberately no `_committed` assertion: whether a `project`-class row with some OTHER
+    # Deliberately no `_committed` assertion: whether a row carrying some OTHER
     # `demand_origin` reaches `scm.committed_v` is that view's filtering decision, not this
     # guard's. Asserting it here would make the test fail whenever the view's demand-source
-    # clause is retuned, for a reason that has nothing to do with reconciliation.
+    # clause is retuned, for a reason that has nothing to do with reconciliation. The three
+    # assertions above already fail if the row is renumbered, retired or stamped.
 
 
 def test_another_feeds_row_is_not_retired_when_the_book_row_exists(world):
