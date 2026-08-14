@@ -1,7 +1,12 @@
 # PLAN - GRN line raw SPO text and forward matching
 
 Status: Phase 1 done (frontend, mocked); Phase 2 (backend) code + tests landed, mock removed;
-awaiting the full regression suite and live browser re-verification. Phase 3 (review) not started.
+Phase 3 review findings applied (unsplit short-receipt discrepancy preserved; rejected GRNs
+release pool capacity). Browser re-verification at 375px/1280px deliberately NOT performed
+(E2E login is on the Mocha company, the stated-but-unmatched corpus is Sorento's, and a company
+switch writes a user-level row pending a captain decision) - recorded as a known gap in the PR;
+in its place: live API returning `spo_number_raw`, the migration backfill, and the
+`SpoAllocationCell` vitest cases.
 UAC: `documentation/plans/purchasing/grn-spo-forward-matching-acceptance-criteria.md`
 Classification: **CORE**, `public` schema. This extends the procurement base (GRN lines and
 SPO allocations are core entities every install has); no new module key, no route guard change.
