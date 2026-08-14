@@ -89,6 +89,11 @@ from app.models.dealer_kit import (
     Selection,
     SelectionLine,
 )
+from app.models.onboarding import (
+    OnboardingTemplate,
+    OnboardingRequest,
+    OnboardingPerson,
+)
 from app.models.scm import (
     ReorderPolicy,
     ItemClassification,
@@ -288,6 +293,10 @@ __all__ = [
     "SelectionLine",
     "BundleComponent",
     "FlyerReadingRecord",
+    # Onboarding intake / review / provisioning
+    "OnboardingTemplate",
+    "OnboardingRequest",
+    "OnboardingPerson",
 ]
 
 # Auto-discovery: import models.py from each app/modules/<key>/ so Alembic + SQLAlchemy
