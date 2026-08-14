@@ -277,8 +277,8 @@ frontend; this is a documented repeat failure in this repo.
 | `media_burst_limit` | 5 | |
 | `media_burst_window_seconds` | 60 | |
 | `media_warn_threshold_percent` | 80 | |
-| `media_image_provider` / `media_image_model` | NULL / NULL | NULL falls back to the `AIAssistantConfig` row, matching `_resolve_provider` |
-| `media_image_degraded_model` | `gpt-4o-mini` | the degraded tier; see 2.5 for the branch when it is absent or equal to the standard model |
+| `media_image_provider` / `media_image_model` | `openai` / `gpt-4o` | seeded by the migration on the evidence in section 14.1; NULL still falls back to the `AIAssistantConfig` row |
+| `media_image_degraded_model` | `gpt-4o-mini` | the degraded tier, seeded by the migration. Measured as materially worse on the corpus (section 14.1), which is precisely what the degradation notice tells the contact |
 | `media_transcribe_model` | `whisper-1` | |
 | `media_language_mode` | `pinned` | `pinned`, `hints`, `auto` |
 | `media_language_pinned` | `en` | |
@@ -946,6 +946,52 @@ tier problem, not a prompt problem, and no prompt wording will fix it.
    acted on.
 3. Either way, the standard tier must not be `gpt-4o-mini`. Arm B shows the *behaviour* is
    achievable, and the stable misread shows the *accuracy* is not, at this tier.
+
+### 14.1 How that decision rule actually resolved - the action was falsified, the intent was kept
+
+Rule 18 did nothing: **arm C, 0/5**. So clause 2 fired, and its action was to delete rules 11 and
+14. Before executing it, two more arms were run, and they changed the answer.
+
+| arm | prompt | model | conflict fired | header |
+|---|---|---|---|---|
+| A | current | gpt-4o-mini | 0/5 | 5/5 |
+| B | run-1 | gpt-4o-mini | 5/5 | 0/5 |
+| C | current + rule 18 | gpt-4o-mini | 0/5 | 5/5 |
+| **D** | **current minus rules 11 and 14** | **gpt-4o-mini** | **0/5** | customer lost 0/5 |
+| **E** | **current, unchanged** | **gpt-4o** | **5/5** | retained |
+
+**Arm D falsifies the premise clause 2 rested on.** Deleting the two added rules does *not* restore
+conflict detection - it is still 0/5 - and it costs the customer field. So the prescribed action
+would have paid a real price for nothing. Executing it anyway, because it was written down, would
+be following the letter of a rule whose reasoning the evidence had already destroyed.
+
+**Arm E identifies the actual cause.** On `gpt-4o` the unchanged prompt fires the conflict 5/5,
+keeps the header, and - the part no prompt wording ever touched - **the `16`-for-`6` misread does
+not reproduce once**, having been identical in all 20 preceding `gpt-4o-mini` calls. It is also
+*faster* (mean 6.5s versus 9.7s) and uses roughly 13x fewer prompt tokens on the same image
+(2,963 versus 38,437), because the two models tokenize the image differently.
+
+**So the rules stay and the tier changes.** The intent of the decision rule was "do not keep a bad
+trade"; there is no trade to keep, because the thing being traded away was not buying the safety
+property in the first place.
+
+**This settles the degraded-model question from section 12.1 item 2, with evidence rather than a
+guess.** The two tiers are now measured, not assumed:
+
+- **Standard: `gpt-4o`.** Conflicts fire, the header is read, values are not misread.
+- **Degraded: `gpt-4o-mini`.** Cheaper, and demonstrably worse in exactly the way the captain's
+  degradation notice warns about - it silently fails to flag an amendment and it misreads a
+  printed quantity.
+
+That is the strongest possible justification for the captain's instruction to *tell the contact
+accuracy has dropped*. At the degraded tier the failure is measured, not hypothetical: the model
+does not fail visibly, it hands back a confident wrong number. Both values are seeded by the
+migration so degradation works out of the box, and both remain operator-editable.
+
+**One honest note on the arm E measurement:** the tester's first arm E attempt applied the model
+override only inside a probe and the five real calls silently ran on `gpt-4o-mini`. It caught this
+by asserting the model on each returned row, discarded the run, fixed it, and re-ran. The numbers
+above are from the corrected run.
 
 ## Appendix A - the extraction system prompt
 
