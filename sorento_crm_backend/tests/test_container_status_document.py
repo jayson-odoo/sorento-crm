@@ -516,7 +516,13 @@ def test_a9_warns_when_the_jobs_company_snapshot_is_null(db, caplog):
     published = publish_import_source(db, job)
 
     assert published is not None
-    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    # Scoped to the company-snapshot warning: publish also tolerates an
+    # unconfigured CDN with a separate warning (falls back to the raw key),
+    # which fires on hosts without R2/CloudFront env and is not under test.
+    warnings = [
+        r for r in caplog.records
+        if r.levelname == "WARNING" and "carried no company snapshot" in r.getMessage()
+    ]
     assert len(warnings) == 1
     warning_msg = warnings[0].getMessage()
     assert str(job.id) in warning_msg
@@ -541,7 +547,10 @@ def test_a9_no_warning_when_the_job_carries_a_real_company(db, caplog):
     published = publish_import_source(db, job)
 
     assert published is not None
-    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    warnings = [
+        r for r in caplog.records
+        if r.levelname == "WARNING" and "carried no company snapshot" in r.getMessage()
+    ]
     assert warnings == [], "a job with a real company snapshot must not warn"
 
     infos = [
