@@ -3,10 +3,10 @@
 **Slug:** `spec-authoring-verification` · **Domain:** master-data · **Milestone:** 1 of 2
 **UAC:** `spec-authoring-verification-acceptance-criteria.md` (the contract - this plan fulfils it)
 **Classification:** CORE, schema `public`, normal FKs
-**Status:** DRAFT - pre-code. Section D revised 2026-08-14: the captain settled the verification
-screen as a standard product list with per-row and bulk Verify/Unverify, required that a
-verification be manually reversible, and settled that an exception is answered by correcting the
-value rather than by a resolve workflow. Two decisions still open (see "Decisions").
+**Status:** DRAFT - reviewed with the captain 2026-08-14; **all open decisions settled** (list
+not workbench, per-row and bulk Verify/Unverify, manual unverify, fix-the-value exception
+handling, shared `DataGrid` for the spec table, server-side duplicate guards, cross-page
+select-all off). Ready for `/to-tickets` and Phase 1.
 
 ## Goal
 
@@ -333,15 +333,15 @@ and the UAC; the files stay the contract and an issue that contradicts the UAC l
 | PR | Contents | Depends on | Design est. | **Re-estimate** |
 |---|---|---|---|---|
 | 1 | Foundations: `product_spec_write` with `write_spec_row` + `merge_authored_over`, canonical hash, tombstone + merge change, fan-out, `human_override_conflict`, `AUTHORED_SOURCES`, `status` fix, `human_source_boost` row **and the source-keyed boost branch**, listener backstop | boost decision (settled) | 3-5 d | **5-7 d** |
-| 2 | Editable table (A) + pills (C) + inline add-value + add-key picker + `applicable_keys_for_code` + permission relaxation and grant sweep | PR 1 | 5-8 d | **9-13 d** |
+| 2 | Editable table (A) + pills (C) + inline add-value + add-key picker + `applicable_keys_for_code` + permission relaxation and grant sweep | PR 1 | 5-8 d | **10-14 d** |
 | 3 | Verification model + **standard list with per-row and bulk Verify/Unverify** (D) | PR 1; PR 2 for the tab's editable table | 8-12 d | **9-13 d** |
 | 4 | Prompt box + extraction proposals (B), batch apply, then promote migration + retirements + full re-derive | PR 1 (incl. the boost branch) | 6-10 d | **9-12 d** |
-| | **Milestone 1 total** | | **22-35 d** | **32-45 d** |
+| | **Milestone 1 total** | | **22-35 d** | **33-46 d** |
 
 ### On the estimate difference - reported, not hidden
 
-My total is **32-45 engineer-days against the design's 22-35**: roughly **+10 days**, or
-+35% at the midpoint. That is not a rounding error and it is not padding. Every PR came in above
+My total is **33-46 engineer-days against the design's 22-35**: roughly **+11 days**, or
++38% at the midpoint. That is not a rounding error and it is not padding. Every PR came in above
 the design's number, and each one for the same reason: the design priced the diff, not the slice.
 
 (The original figure was 35-49. Two captain decisions took it down. The standard list rather than
@@ -358,12 +358,13 @@ The gap is almost entirely **unpriced items**, not resizing:
   coverage today); the `derived_hash` invalidation and immediate re-derive the design never
   mentions; the RQ worker not registering the spec listeners, which would leave the new backstop
   blind on that path.
-- **PR 2 (+4-5):** the `keys-for-product` correction (C1) turning a "nearly free" picker into a
+- **PR 2 (+5-6):** the `keys-for-product` correction (C1) turning a "nearly free" picker into a
   backend service with tests; the permission work being a migration rather than a line change
   (C2); the Specifications tab being a rewrite onto react-query rather than an edit, since it
   calls services directly from `useState` today; the tombstone rendering contract; a shared
-  `SearchableSelect` change with cross-product blast radius; and 375px, where a five-column
-  editable table does not survive.
+  `SearchableSelect` change with cross-product blast radius; inline editing inside `DataGrid`
+  cells (D10, roughly a day over the CSS-grid shape it replaces); and the server-side value
+  near-duplicate guard (D11, +0.5).
 - **PR 3 (+1-2):** hash canonicalisation against 18,403 numeric and 408 array values, each of
   which would otherwise produce phantom invalidations that look like a broken feature; the bulk
   verify and unverify endpoints with per-code outcome reporting rather than all-or-nothing;
@@ -425,10 +426,14 @@ No UI, so there is no UX to settle against a mock. Phase 2 only, test-first.
   guard, the split-by-field `PATCH` permission for add-a-value, the two relaxations and the grant
   migration; then the frontend off mocks onto react-query hooks. Delete `AddSpecByHand.tsx` rather
   than leaving it beside the new component.
-- **Deliberate deviation:** the spec table is a **CSS grid, not a `<table>` and not `DataGrid`**.
-  `DataGrid` is the listing pattern - this surface has no pagination, sort, search or selection;
-  it is one record's field list, which is what the same-layout mandate governs. It is also the
-  only layout that survives 375px with an editable value cell. Called out in the PR description.
+- **The spec table is the shared `DataGrid`** (D10, captain-settled, overruling this plan's
+  earlier CSS-grid proposal): one table component across the system is a design principle, and a
+  parallel implementation is exactly the drift the component-library rule exists to prevent. The
+  editing concern is solved inside the component, not around it: an edit affordance on the row
+  (click the value, or the row's edit icon) swaps the value cell to the shared `SpecValueCell`
+  input in place. Columns get explicit `size`; at phone width the grid scrolls horizontally
+  inside its own container per the repo's responsive standard. The lifted `AddSpecByHand`
+  renderer becomes the cell editor either way, so nothing else in the slice changes.
 - **Carry `FlyerCard` across unchanged.** It is the single easiest thing to tidy up by accident,
   and doing so would drag PR 4's decisions into this PR.
 
@@ -480,7 +485,7 @@ No UI, so there is no UX to settle against a mock. Phase 2 only, test-first.
 ## Reuse (no new one-offs)
 
 `lib/status-pill.ts`, `SearchableSelect`/`SearchableMultiSelect`, `ConfirmDeleteDialog`,
-`DataGrid` (worklist only), `extractApiError`, `buildDataGridParams`, the mutation-hook factories,
+`DataGrid` (verification list AND the spec table, per D10), `extractApiError`, `buildDataGridParams`, the mutation-hook factories,
 `RecordNavigation` via the product page's existing `ProductNavigation`, the existing exception card, the
 prompt registry, and derivation's own `_apply_scope` gate rather than a second copy of it.
 
@@ -558,20 +563,20 @@ creation from the product page; an authored value always wins a conflict.
   per-code rules as the single verify).
 - **A verification must be manually reversible** (C11). Unverify is a first-class action; it lands
   on `unverified` rather than needs-re-verify, and it adds `invalidated_by_*` to the ledger.
+- **The spec table is the shared `DataGrid`** (D10, 2026-08-14). Design principle: one table
+  component across the system, no parallel implementations. This overrules the plan's earlier
+  CSS-grid proposal; inline editing is solved inside the component via an edit affordance on the
+  row.
+- **Duplicate-prevention checks are enforced server-side** (D11, 2026-08-14). "We should not
+  trust frontend" - the client-side check stays as a latency courtesy, but the `PATCH
+  user_values` route now rejects near-duplicates with a 422 + acknowledge flag, mirroring the
+  key-creation guard.
+- **Cross-page `selectAllMatching` stays off** (D12, 2026-08-14). Bulk covers rows the user had
+  on screen. Enabling it later is a one-prop change plus a confirm stating the full count.
 
 ### Outstanding - still the captain's call
 
-1. **The no-`DataGrid` spec table (PR 2).** Note this is a *different* surface from the
-   verification list settled above: the list is a `DataGrid`, but the per-product spec table is
-   one record's field list with inline editing, planned as a CSS grid. Worth settling before
-   Phase 1 - if a reviewer rejects it late, the slice grows 1-2 days and the inline-edit UX
-   degrades.
-2. **Whether value near-duplicate checking must also be enforced server-side.** It is client-side
-   as planned, which protects the UI and nothing else. Key creation is guarded server-side because
-   keys are catalogue-wide and milestone 2 needs it. +0.5 d if wanted for values too.
-4. **Whether to enable cross-page `selectAllMatching` later** (C5). Not wired now, so bulk covers
-   only rows that were on screen. Say the word and it becomes a one-prop change plus a confirm
-   that states the full count.
+None. Every question raised during planning has been answered.
 
 ---
 

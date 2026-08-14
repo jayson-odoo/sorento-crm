@@ -51,6 +51,9 @@ factual premises wrong, this UAC follows the code and the PLAN records the corre
 | D7 | **Creating a spec key from the product page requires `master_data.spec_registry.add`** - the same grant as the master screen, no new permission. Duplicate prevention is a UX obligation: match against existing keys and synonyms and offer the match before allowing a create. |
 | D8 | **An authored value always wins a conflict.** When derivation later disagrees with a hand-set value, the authored value stays in force and the disagreement is raised as `ProductSpecException(reason='human_override_conflict', ...)` on the existing "Needs a human" card until a person resolves it. **A product with open exceptions cannot be verified.** |
 | D9 | **An exception is answered by setting the correct value, and nothing else.** No resolve action, no dismissal, no reason field, no justification. The people doing this work are the authority on the catalogue; asking them to explain themselves to the system is bureaucracy, not control. Derivation therefore stops flagging a key once a person has answered it (AC-D.17). |
+| D10 | **The spec table uses the shared `DataGrid` component - design principle, no parallel table implementations.** Settled by the captain, overruling the plan's CSS-grid proposal. Inline editing concerns are solved inside the component (edit icon / click swaps the value cell to an input), not by building a different table. |
+| D11 | **Never trust the frontend alone - every duplicate-prevention check is enforced server-side.** The client-side check is a latency courtesy; the API is the guard. Applies to key creation (AC-A.10) and value creation (AC-A.11) alike. |
+| D12 | **Cross-page select-all stays off.** Bulk actions cover rows the user had on screen. |
 
 ## Measured baseline (fresh, 2026-08-13, local DB = a copy of prod)
 
@@ -247,8 +250,14 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
 
 ### A - Editable spec table (PR 2)
 
-- **AC-A.1** `[FE]` GIVEN the Specifications tab WHEN a value is clicked THEN it swaps to an
-  input **in place** - the four cells keep their DOM order and nothing reflows.
+- **AC-A.1** `[FE]` GIVEN the Specifications tab WHEN the spec table renders THEN it is the
+  **shared `DataGrid` component**, the same one every table in the system uses (D10) - with
+  `tableLayout: {width:'fixed', columnsResizable:true}`, explicit `size` per column, and
+  truncate + title on long text. **No parallel table implementation.**
+- **AC-A.1b** `[FE]` GIVEN a row WHEN its edit affordance is used (click the value or the row's
+  edit icon) THEN the value cell swaps to an input **in place** - the cells keep their DOM order
+  and nothing reflows. On a narrow screen the grid scrolls horizontally inside its own container,
+  per the repo's responsive standard; the page never scrolls sideways.
 - **AC-A.2** `[FE]` GIVEN a spec key WHEN its editor renders THEN a boolean gets Yes/No, a key
   with a non-empty merged vocabulary gets a `SearchableSelect`, and anything else gets a typed
   input. The **unit renders as a suffix and can never be typed**. A stored key the registry no
@@ -283,8 +292,11 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   enforced server-side on `POST /spec-registry`, so no other client can bypass it.
 - **AC-A.11** `[FE][BE]` GIVEN a value dropdown with no match WHEN the create row is used THEN
   the value is added to that key's `user_values` after a normalised near-duplicate check against
-  merged values **and** merged synonyms. The check runs client-side against data the FE already
-  holds from one registry call, so it needs no new endpoint.
+  merged values **and** merged synonyms - **enforced on the server** (D11): the `PATCH` route
+  rejects a near-duplicate `user_values` addition with a 422 carrying the match, and accepts it
+  only with an explicit acknowledge flag, mirroring the key-creation guard in AC-A.10. The FE
+  runs the same check client-side first, against data it already holds, so the common case never
+  round-trips - but the frontend check is a courtesy, never the guard.
 - **AC-A.12** `[FE]` GIVEN the spec table component WHEN it is written THEN it is
   **props-driven** - values, vocabulary and callbacks in, **no `apiFetch`, no service import, no
   react-query inside the cells** - and it lives in a folder milestone 2's `(auth)`-group portal
