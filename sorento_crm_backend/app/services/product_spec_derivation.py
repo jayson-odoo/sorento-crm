@@ -9,7 +9,8 @@ substring it came from.
 
 Precedence, highest first:
 
-  1. a `source='human'` value already stored   - a reviewer settled it, never touch it
+  1. a value a person already set              - a reviewer settled it, never touch it
+                                                 (`AUTHORED_SOURCES`, product_spec_write)
   2. the products table's own columns          - curated data outranks parsed text
   3. literal tokens in the description         - shape-gated, see below
   4. a closed code lookup (the finish suffix)
@@ -47,7 +48,11 @@ from app.models.product_spec import (
     ProductSpecException,
     ProductSpecifications,
 )
-from app.services.product_spec_rendering import render_spec_sentence
+from app.services.product_spec_write import (
+    authored_keys,
+    merge_authored_over,
+    write_spec_row,
+)
 
 # --------------------------------------------------------------------------- #
 # vocabulary, mirroring the Spec Registry's allowed_values
@@ -1076,7 +1081,7 @@ def derive(
     return out
 
 
-def _apply_scope(out: "DerivedSpec", applies_when: dict[str, dict]) -> None:
+def _apply_scope(out: "_Derivation", applies_when: dict[str, dict]) -> None:
     """Remove derived keys whose `applies_when` the product does not satisfy.
 
     Gate values are compared case-insensitively against what THIS derivation produced,
@@ -1282,28 +1287,50 @@ def derive_for_code(
             stored=", ".join(sorted(brands)),
         )
 
-    written = 0
+    # Two passes, because `status` depends on the exception set and the exception set
+    # now depends on the merged provenance. A reviewer-confirmed value outranks
+    # anything derivable, and the merge rule for that lives in one place.
+    merged: list[tuple[ProductSpecifications, dict, dict]] = []
+    answered: set[str] = set()
+    conflicts: list[dict] = []
     for row_product, _ in rows:
         spec = existing.get(row_product.id)
         if spec is None:
             spec = ProductSpecifications(product_id=row_product.id)
             db.add(spec)
 
-        # A reviewer-confirmed value outranks anything derivable.
-        kept_values, kept_provenance = {}, {}
-        for key, entry in (spec.provenance or {}).items():
-            if entry.get("source") == "human":
-                kept_provenance[key] = entry
-                if key in (spec.values or {}):
-                    kept_values[key] = spec.values[key]
+        values, provenance, row_conflicts = merge_authored_over(
+            result.values, result.provenance, spec.values, spec.provenance
+        )
+        merged.append((spec, values, provenance))
+        answered |= authored_keys(provenance)
+        conflicts.extend(row_conflicts)
 
-        spec.values = {**result.values, **kept_values}
-        spec.provenance = {**result.provenance, **kept_provenance}
-        # The only text spec search may match. Rendered here so it can never drift
-        # from the values it describes.
-        spec.rendered_text = render_spec_sentence(spec.values)
-        spec.derived_hash = fingerprint
-        spec.status = "needs_review" if result.exceptions else "derived"
+    # A question a person has answered does not re-ask itself. `flag()` appends
+    # unconditionally and knows nothing about what is stored, so without this filter
+    # setting `shape` by hand sees `round_or_square` come back on the very next run and
+    # the 258 flagged codes can never be cleared.
+    exceptions = [f for f in result.exceptions if f["spec_key"] not in answered]
+
+    # A NEW disagreement still gets asked, once. Exceptions are keyed on the code with
+    # no product_id, and every company copy produces the same conflict.
+    seen: set[tuple[str, str]] = set()
+    for conflict in conflicts:
+        identity = (conflict["spec_key"], conflict["reason"])
+        if identity in seen:
+            continue
+        seen.add(identity)
+        exceptions.append(conflict)
+
+    written = 0
+    for spec, values, provenance in merged:
+        write_spec_row(
+            spec,
+            values=values,
+            provenance=provenance,
+            has_exceptions=bool(exceptions),
+            derived_hash=fingerprint,
+        )
         written += 1
 
     # Rebuild this code's open exceptions rather than appending, so a fixed input
@@ -1312,7 +1339,7 @@ def derive_for_code(
         ProductSpecException.product_code == product_code,
         ProductSpecException.resolved_at.is_(None),
     ).delete(synchronize_session=False)
-    for flagged in result.exceptions:
+    for flagged in exceptions:
         db.add(
             ProductSpecException(
                 id=str(uuid.uuid4()),
@@ -1328,7 +1355,7 @@ def derive_for_code(
     if commit:
         db.commit()
 
-    return {"written": written, "skipped": 0, "exceptions": len(result.exceptions)}
+    return {"written": written, "skipped": 0, "exceptions": len(exceptions)}
 
 
 def derive_all(

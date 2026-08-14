@@ -13,6 +13,10 @@ Two deliberate choices:
   * the derive is best-effort and never raises. A post-commit side effect that raises
     would 500 an operation that already succeeded, and the retry would take the
     idempotent path without ever backfilling the missed work.
+  * a small batch is derived here, a large one is handed to the worker. One person
+    editing a product wants the answer in the same click; an import commits per chunk,
+    so deriving thousands of codes inline would run the whole catalogue's derivation
+    inside the import's own commit hook.
 
 Kept out of `embedding_change_listener` on purpose: different concern, and that module
 is under active change on other branches.
@@ -31,6 +35,11 @@ logger = logging.getLogger(__name__)
 
 _REGISTERED = False
 _PENDING_KEY = "_spec_codes_to_rederive"
+
+# One person editing a product is a handful of codes and wants the answer now; an import
+# is thousands and belongs on the worker. The line between the two is arbitrary, which is
+# why it is named rather than inlined.
+INLINE_REDERIVE_LIMIT = 50
 
 # Only these feed derivation, so only these justify the work. A price edit must not
 # re-derive 22,805 rows' worth of specs.
@@ -85,22 +94,72 @@ def enqueue_spec_embedding(db: Session, product_id: str) -> None:
         logger.warning("spec embedding enqueue failed for %s", product_id, exc_info=True)
 
 
-def rederive_codes(codes: set[str]) -> None:
-    """Re-derive in a fresh session, all-companies scope. Never raises."""
-    if not codes:
-        return
+def _rederive_inline(codes: set[str]) -> None:
+    """Derive the codes here and now, in a fresh session. Never raises."""
     try:
         from app.database import SessionLocal
-        from app.services.product_spec_derivation import derive_for_code
+        from app.services.product_spec_derivation import (
+            configured_rules,
+            configured_scopes,
+            derive_for_code,
+        )
 
         with SessionLocal() as db:
             # A code exists once per company; one derivation must reach every copy.
             with company_scope(db, None):
+                # Read ONCE, for the same reason `derive_all` does it: handed nothing,
+                # `derive_for_code` re-reads the whole registry twice per code, and the
+                # answer cannot change part-way through a run.
+                rules_by_key = configured_rules(db)
+                scopes_by_key = configured_scopes(db)
                 for code in codes:
-                    derive_for_code(db, code)
+                    derive_for_code(
+                        db,
+                        code,
+                        rules_by_key=rules_by_key,
+                        scopes_by_key=scopes_by_key,
+                    )
                 db.commit()
     except Exception:  # pragma: no cover - defensive by design
         logger.warning("spec re-derivation failed for %s", sorted(codes), exc_info=True)
+
+
+def _enqueue_rederive(codes: set[str]) -> bool:
+    """Hand the batch to the worker. True when the queue took it."""
+    try:
+        from app.services.queue_service import enqueue_job
+        from app.tasks.product_spec_tasks import derive_product_specs
+
+        enqueue_job(
+            derive_product_specs,
+            sorted(codes),
+            queue_name="imports",
+            run_label="change-listener",
+        )
+        return True
+    except Exception:  # pragma: no cover - Redis down, and the work still has to happen
+        logger.warning(
+            "spec re-derivation could not be queued for %s codes; deriving inline",
+            len(codes),
+            exc_info=True,
+        )
+        return False
+
+
+def rederive_codes(codes: set[str]) -> None:
+    """Re-derive in a fresh session, all-companies scope. Never raises.
+
+    Above `INLINE_REDERIVE_LIMIT` the work goes to the worker instead. A catalogue
+    import commits per chunk, so an 11,415-code import would otherwise run the whole
+    catalogue's derivation inside the import's own commit hook, one code at a time. The
+    queue is best-effort like everything else post-commit: when it cannot be reached the
+    codes are still derived here rather than dropped.
+    """
+    if not codes:
+        return
+    if len(codes) > INLINE_REDERIVE_LIMIT and _enqueue_rederive(codes):
+        return
+    _rederive_inline(codes)
 
 
 def register_product_spec_listeners() -> None:

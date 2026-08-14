@@ -3,12 +3,14 @@
 **Slug:** `spec-authoring-verification` · **Domain:** master-data · **Milestone:** 1 of 2
 **UAC:** `spec-authoring-verification-acceptance-criteria.md` (the contract - this plan fulfils it)
 **Classification:** CORE, schema `public`, normal FKs
-**Status:** DRAFT - reviewed with the captain 2026-08-14; **all open decisions settled** (list
+**Status:** ACTIVE - reviewed with the captain 2026-08-14; **all open decisions settled** (list
 not workbench, per-row and bulk Verify/Unverify, manual unverify, fix-the-value exception
 handling, shared `DataGrid` for the spec table, server-side duplicate guards, cross-page
 select-all off). Amended 2026-08-14: PR 4 lifts the flyer text pass into a pure
 `propose_from_text` instead of deleting it, ahead of a bulk flyer-ingestion slice after PRs 1-4.
-Ready for `/to-tickets` and Phase 1.
+IN PROGRESS: PR 1 (Foundations) implemented on `fm/spec-pr1-foundations`, 2026-08-14 (AC-F.1 to
+AC-F.14 plus the PR-1 half of AC-D.17; backend only, Phase 1 exception per the PR-map note).
+PRs 2-4 pending.
 
 ## Goal
 
