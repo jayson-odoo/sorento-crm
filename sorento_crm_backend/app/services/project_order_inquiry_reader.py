@@ -1,5 +1,13 @@
 """L3 - reading the Order Inquiry sheet.
 
+**Project Sales module code.** Ownership moved here from `app/services/scm/` per ADR 0010,
+alongside the importer it feeds (`project_order_inquiry_import_service.py`). The sheet is a
+Project Sales artefact end to end; SCM stays a reader of core `sales_orders`.
+
+It still reads through `app.services.scm.outstanding_reader.sheet_rows`, which is a generic
+workbook helper rather than SCM domain logic, so the dependency is on a shared reader and not
+on SCM ownership.
+
 This is the file that carries the two things the SO and PO books do not: the **stock
 location** a sales-order line ships from, and the **purchase order** that line is waiting on.
 Both are maintained by the people who own them, so nothing here has to be curated by hand.

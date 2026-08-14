@@ -25,9 +25,14 @@ from app.models.base import set_company_scope
 from app.models.inventory import Warehouse
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.product import Product, ProductCategory, UnitOfMeasure
-from app.services.scm import order_inquiry_service as inquiry
+from app.services import project_order_inquiry_import_service as inquiry
 from tests._pg_fixture import pg_session
-from tests.scm.conftest import requires_pg
+
+# This suite moved out of `tests/scm/` with the importer it covers (ADR 0010), so the SCM
+# conftest is no longer auto-loaded for it. `scm_app` is imported by name rather than copied:
+# the route half of the handover still goes through the SCM upload endpoints, and a second
+# savepoint fixture would be the same thing maintained twice.
+from tests.scm.conftest import requires_pg, scm_app  # noqa: F401
 
 pytestmark = requires_pg
 

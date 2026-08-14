@@ -1,5 +1,18 @@
 """L3 - writing what the Order Inquiry sheet knows.
 
+**Project Sales module code.** Ownership moved here from `app/services/scm/` per ADR 0010:
+the whole Order Inquiry loop - derive, export, human edit, import - belongs to Project Sales,
+and SCM keeps the role it already had, reader of core `sales_orders`. Only the service layer
+moved: the route path `/api/v1/scm/order-inquiry/*` and the permission `scm.reorder.run` are
+deliberately unchanged so the FE upload dialog keeps working (the route file now holds a thin
+shim onto this module).
+
+`SOURCE_SYSTEM` below stays the literal `'scm_order_inquiry'` even though the owning module is
+no longer SCM. The string is baked into raw SQL (`scm/demand.py`), into migration 346's
+backfill and into the `OrderLinkClaim` CHECK constraint, so renaming it would be a data
+migration that buys no correctness. The mismatch between the string and this file's home is a
+decision, not a leftover.
+
 The sheet supplies the two things the sales-order and purchase-order books do not, and this
 service writes each to the place that reads it:
 
@@ -36,8 +49,8 @@ from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product
 from app.models.scm import OrderLinkClaim
+from app.services.project_order_inquiry_reader import OrderInquiryResult, read_order_inquiry
 from app.services.scm import upload_validation as val
-from app.services.scm.order_inquiry_reader import OrderInquiryResult, read_order_inquiry
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 
 logger = logging.getLogger(__name__)

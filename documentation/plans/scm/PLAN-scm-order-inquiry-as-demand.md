@@ -1,11 +1,13 @@
 # PLAN - the Order Inquiry sheet as a source of sales orders
 
 **Status:** written 5 Aug 2026. Slices N1 to N5 have SHIPPED on `main`: the reader
-(`app/services/scm/order_inquiry_reader.py`), the importer
-(`app/services/scm/order_inquiry_service.py`), the `/api/v1/scm/order-inquiry/preview|apply`
-routes, the SCM sales-order list, and their tests (`tests/scm/test_order_inquiry_*.py`,
-`tests/scm/test_order_link_both_ways.py`) all exist. Ownership was then revised with the client
-on 2026-08-13 and recorded in
+(`app/services/project_order_inquiry_reader.py`), the importer
+(`app/services/project_order_inquiry_import_service.py`), the
+`/api/v1/scm/order-inquiry/preview|apply` routes, the SCM sales-order list, and their tests
+(`tests/test_project_order_inquiry_import_*.py`, `tests/scm/test_order_link_both_ways.py`) all
+exist. The two services carry project names because ownership moved to the Project Sales module
+in the relocation pass; the routes and the `scm.reorder.run` permission did not move. Ownership
+was revised with the client on 2026-08-13 and recorded in
 [ADR 0010](../../adr/0010-order-inquiry-loop-owned-by-project-sales.md); read
 "Ownership revision" below before the ownership rule it amends. UAC:
 `scm-order-inquiry-as-demand-acceptance-criteria.md`.

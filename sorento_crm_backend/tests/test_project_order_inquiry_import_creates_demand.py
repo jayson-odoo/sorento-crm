@@ -25,7 +25,7 @@ from app.models.base import set_company_scope
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product, ProductCategory, UnitOfMeasure
-from app.services.scm import order_inquiry_service as svc
+from app.services import project_order_inquiry_import_service as svc
 from tests._pg_fixture import pg_session
 
 MARKER = "ZZTOID"
