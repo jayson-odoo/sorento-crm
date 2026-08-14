@@ -220,7 +220,12 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   unresolvable row in a table whose contract forbids routine successes.
 - **AC-F.7** `[BE]` GIVEN the merge, the search boost branch and the FE source labels WHEN they
   test authorship THEN they test membership in an `AUTHORED_SOURCES` constant, never `== 'human'`.
-  `'supplier'` is reserved now (M2-S1).
+  `'supplier'` is reserved now (M2-S1). A third member is coming: the bulk flyer-ingestion slice
+  after PRs 1-4 stamps accepted proposals **`source='flyer'` as a distinct `AUTHORED_SOURCES`
+  member, never `source='human'`** - a machine read badged as a person's own work is the
+  dishonesty this milestone exists to remove. The membership flip lands **in that slice, after
+  the promote migration has run**, never in PR 1 - flipping it earlier would make legacy
+  machine-derived flyer entries count as authored in the merge.
 - **AC-F.8** `[BE]` GIVEN a spec row that is wholly or partly authored WHEN derivation runs THEN
   `spec.status` becomes `authored`, with precedence `needs_review` > `authored` > `derived`. The
   documented-but-never-written `approved` value is **not** reused; it reads as a verification
@@ -538,10 +543,18 @@ Grouped by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` Playwright, `[T
   exception counts, because the fingerprint of all 11,415 codes changes and the next run rewrites
   all 22,805 rows.
 - **AC-B.14** `[BE][FE]` GIVEN the retirements WHEN they land THEN the flyer-text endpoint and its
-  response field, `FlyerCard`, the flyer service function, the bulk flyer importer, the findability
-  endpoints and panel, derivation's flyer input, the now-dead `source: 'flyer'` seeded rules and
-  the "Flyer only" option in the rule editor all go together, so no screen offers a setting that
-  silently does nothing. The PR description lists the deleted tests explicitly.
+  response field, `FlyerCard`, the flyer service function, the bulk flyer importer, and the
+  findability endpoints and panel go together, so no screen offers a setting that silently does
+  nothing. The PR description lists the deleted tests explicitly.
+- **AC-B.18** `[BE]` GIVEN derivation stops **reading** the flyer WHEN its text pass is retired
+  as an input THEN the pass is **lifted, not deleted** (captain, 2026-08-14): the source-major
+  flyer pass, the `source: 'flyer'` rule scope, and `_DESCRIPTION_FIRST_KEYS` survive inside a
+  pure `propose_from_text(text, code)` that returns candidate key-values **with evidence** and
+  **writes nothing**. `derive_for_code` already takes `flyer_text` as a parameter, so the seam
+  exists. The "Flyer only" scope stays in the rule editor because rules scoped to flyer text now
+  feed the proposal path. This preserves the extraction knowledge tuned to the real flyer for
+  the bulk flyer-ingestion slice that follows PRs 1-4 (its own UAC/plan; evidence:
+  `flyer-spec-ingestion/report.md` sections 5.2-5.3).
 - **AC-B.15** `[FE]` GIVEN a promoted value WHEN it renders THEN it is badged so a user can tell
   why a value they never typed says "Set by hand" - the `migrated_from` marker survives for
   exactly this purpose.

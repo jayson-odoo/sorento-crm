@@ -6,7 +6,9 @@
 **Status:** DRAFT - reviewed with the captain 2026-08-14; **all open decisions settled** (list
 not workbench, per-row and bulk Verify/Unverify, manual unverify, fix-the-value exception
 handling, shared `DataGrid` for the spec table, server-side duplicate guards, cross-page
-select-all off). Ready for `/to-tickets` and Phase 1.
+select-all off). Amended 2026-08-14: PR 4 lifts the flyer text pass into a pure
+`propose_from_text` instead of deleting it, ahead of a bulk flyer-ingestion slice after PRs 1-4.
+Ready for `/to-tickets` and Phase 1.
 
 ## Goal
 
@@ -480,6 +482,29 @@ No UI, so there is no UX to settle against a mock. Phase 2 only, test-first.
   6. A later deploy: drop `ProductFlyerText`, after its own `pg_dump`.
   Steps 1-4 are revertible. Step 6 is not.
 
+**Binding amendment (captain, 2026-08-14): the flyer text pass is lifted, not deleted.** Flyer
+ingestion becomes a **bulk proposals-review-accept feature**, its own slice after PRs 1-4 (own
+UAC and plan; evidence and reasoning: `flyer-spec-ingestion/report.md` sections 5.2-5.3). This
+changes PR 4's retirement list in exactly one way, and it is binding on whoever implements it:
+
+- When derivation stops **reading** the flyer, do **NOT** delete the source-major flyer pass, the
+  `source: 'flyer'` rule scope, or `_DESCRIPTION_FIRST_KEYS`. **Lift them into a pure
+  `propose_from_text(text, code)`** that returns candidate key-values with evidence and writes
+  nothing. The seam already exists: `derive_for_code` takes `flyer_text` as a parameter. Deleting
+  the pass outright would destroy the extraction knowledge tuned to the real flyer document, and
+  the follow-up slice would have to rebuild it from scratch.
+- Consequently the "Flyer only" rule-editor scope **stays** (rules scoped to flyer text feed the
+  proposal path), and the earlier instruction to strip it is withdrawn. `AC-B.18` is the
+  contract.
+- **Accepted proposals in that future slice carry a distinct `AUTHORED_SOURCES` member
+  (`source='flyer'`), never `source='human'`** - a machine read must not be badged as a person's
+  typing. Same conflict-winning, re-derivation-surviving, verification-resetting mechanics as
+  `human`; different badge, and `flyer_source_boost` stays an independently tunable knob (C3).
+  The membership flip lands in that slice, sequenced **after** the promote migration, never in
+  PR 1.
+- Everything else in this PR stands unchanged: promote-then-discard (D2), the migration runbook
+  above, the paste-once prompt box, and the `ProductFlyerText` drop.
+
 ---
 
 ## Reuse (no new one-offs)
@@ -511,10 +536,12 @@ supplier acceptance).
 - **Dealer-kit collision: investigated, low.** PR #57 touches no `product_spec*`, `product_flyer*`
   or findability file, and the bulk flyer importer is **already dead code on main** (zero callers;
   its source table does not exist in main's migrations). One decision to record rather than a code
-  conflict: **flyer readings feed the dealer kit's brochure and no longer feed the spec engine; a
-  flyer reaches specs by a person pasting a card into the prompt box.** Without that written down,
-  a future dealer-kit slice re-wires them and reintroduces the second source of truth this
-  milestone exists to remove.
+  conflict, **revised by the captain 2026-08-14**: flyer readings never re-enter derivation as a
+  live input - **a flyer reaches specs only as reviewed proposals**, either one card pasted into
+  the prompt box (this milestone) or the bulk proposals-review-accept slice that follows PRs 1-4.
+  Both paths propose, a person accepts, and the write goes through `apply_spec_values`. The
+  second-source-of-truth risk this line originally guarded against stays guarded: the flyer is
+  never again something derivation silently reads.
 - **Phantom invalidations** if the canonical hash is wrong - 18,403 numeric and 408 array values
   are live traps, and the symptom (everything permanently needs-re-verify) looks like a broken
   feature rather than a hashing bug.
