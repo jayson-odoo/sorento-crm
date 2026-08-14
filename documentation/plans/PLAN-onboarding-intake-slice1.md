@@ -304,8 +304,15 @@ plus empty/error states.
 - **vitest** - `PeopleGrid` across loading/empty/error/data/submitted, the template picker's
   label-only contract, the collision chips, the reject dialog's required reason. `DataGrid`
   listings mock `useListingColumnPreferences` so rows actually mount.
-- **playwright** - `e2e/onboarding-review.spec.ts`: sidebar -> queue -> detail -> approve, with
-  `browser_network_requests` asserting the `/api/v1/user-management/onboarding/*` calls.
+- **playwright** - `e2e/onboarding-review.spec.ts`: sidebar -> queue -> detail -> approve,
+  asserting the `/api/v1/user-management/onboarding/*` calls the flow makes.
+
+  **Deferred, deliberately.** Playwright drives a system Chrome that is not installed on the
+  machine this slice was built on, so the spec could only be committed unrun - an e2e test
+  nobody has ever seen pass is worse than an absent one, because the first person to run it
+  cannot tell a real regression from a spec that never worked. The same flow IS verified,
+  end to end against the live stack, in the browser log below; the spec goes in as soon as a
+  runnable Chrome exists. Tracked as the one open item against AC-10.
 
 ## 5. Order of work
 
