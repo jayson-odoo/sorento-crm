@@ -250,13 +250,43 @@ into it.
   leaked as a Respond user id (existing `_webhook_agent_respond_id` guard).
 - **AC-J4 [BE][E2E]** Given the webhook fires for a drawer send, When n8n processes it,
   Then `is_human_intervened` is set on the Respond contact and the ht timeout lane arms,
-  identical to a manual Respond-app reply (n8n edit: the webhook lane joins the existing
-  `If source == "User"` branch; safe because the webhook carries only CRM traffic).
+  identical to a manual Respond-app reply. (n8n edit note, peer recon 2026-08-14: wiring
+  the webhook into the If branch is NOT sufficient - `ht-gate` reads
+  `$('Respond.io Trigger')` BY NAME and re-checks the source fail-closed, so a
+  wiring-only change leaves the ht lane inert on webhook invocations. The build widens
+  the envelope source resolution (same isExecuted ternary the SLA nodes already use)
+  while keeping ht-gate's fail-closed semantics byte-intact. Acceptance = the ht lane
+  demonstrably ARMS on a pin-data webhook payload, not merely that edges exist.)
 - **AC-J5 [BE][T]** Given a drawer send that fires BOTH the direct webhook and Respond's
   own outgoing-message trigger, When both lanes mirror the message to `chat_histories`,
   Then exactly ONE row exists per Respond `messageId` - the ingest endpoint upserts
   idempotently on message id instead of blind-inserting (fix at our boundary; no n8n
   ordering assumptions).
+- **AC-J6 [BE][T]** (added 2026-08-14, peer review) Given the direct webhook is
+  reachable-by-obscurity today, When the CRM calls it, Then the request carries a shared
+  secret header, and the NEW n8n branch (the human-intervened wiring) gates on it
+  fail-closed - an unauthenticated call must not arm the bot-pause lane. The n8n gate is
+  shown RED once in fork testing (a guard that cannot fail is not a guard).
+  Contract specifics (frozen 2026-08-14): header name `X-CRM-Webhook-Secret`; CRM value
+  from backend env `N8N_CRM_WEBHOOK_SECRET` (settings field, same family as the webhook
+  URL); if the env is unset the CRM still sends WITHOUT the header and logs a warning -
+  so a misconfigured deploy degrades to "bot-pause inert" (the n8n gate stays closed),
+  never to a blocked send. n8n side receives the value as an environment credential at
+  promote time, provisioned with the user.
+- **AC-J7 [BE][n8n]** (added 2026-08-14, peer review - AC-I4 interaction; AMENDED same
+  day after peer recon) Given the n8n SLA-stamp lane still contains the
+  no-contact-predicate SELECT (AC-I4), When Change 1 multiplies that lane's firing
+  frequency, Then the AC-I4 fix ships IN the same fork build as a separately-reviewable
+  step - and the SLA stamp is retired from the WEBHOOK lane entirely (lane identity is
+  the discriminator, not a payload field): the backend owns first-response stamping for
+  every CRM send (AC-E1); the Respond-trigger lane (with the AC-I4 contact predicate
+  fixed) remains the only n8n stamping path, as the AC-E3 fallback for Respond-app
+  replies. DELIBERATE BEHAVIOR CHANGE this retires: today's webhook-lane callers are
+  automated notification sends (`_send_and_log` tasks - verified the only current
+  callers; manual chat-panel sends never fire the webhook), and their stamping marked
+  conversation SLA "responded" on automated messages - wrong under the old model,
+  false-stamping under multi-open tickets. Nothing in the CRM reads or depends on that
+  accidental stamp.
 
 ### K. Live thread - refresh on incoming, not polling (Journey step 6b) - added 2026-08-14
 
@@ -332,6 +362,14 @@ closes, so it WILL fire on our close once live. Two consequences need explicit h
   unchanged, and a literal-"undefined" `resolved_by` becomes structurally impossible on
   the webhook lane. Best-effort post-commit; a webhook failure logs and never fails the
   resolve.
+  Contract hardening (2026-08-14, peer review): (1) the payload carries an idempotency
+  key (`event_id` derived from tracking id + resolved_at) and the n8n lane is safe to
+  receive the same event twice - retries WILL happen; (2) `closedBySource` is a closed
+  enum ("crm" | "user" | "api") and the Respond-lane gate fails CLOSED on unknown
+  values - a future source must not double-run the flow by default; (3) when
+  `resolved_by.respond_user_id` is null, the contact-facing close message renders a
+  defined neutral fallback (team name), never a blank or "undefined"; (4) the webhook
+  call carries the same shared-secret header as AC-J6.
 - **AC-M4 [DECIDED 2026-08-14: KEEP]** The contact-facing "your conversation is marked as
   closed and resolved" message stays, gated on "contact has no open tickets" (already the
   CRM close gate). It now reaches the contact for CRM resolves too, via the webhook lane.
