@@ -129,12 +129,13 @@ blank Postgres schema, no bugs found (every case confirmed intended behaviour):
   `product_specifications`, mirroring the existing pattern in
   `test_product_attachment_certificate_validity.py`).
 - `_emit_spec_matches`'s code-exemption boundary: a real seeded code that resolves never
-  reaches `unresolved_tokens`; a made-up code with a digit (`_is_code_shaped` requires
-  one) stays; `1.2mm` / `2mm` measurement tokens and an `L750`-style label (1 letter, so
-  `_is_code_shaped` reads it as NOT code-shaped) are all cleared once the sentence around
+  reaches `unresolved_tokens`; a made-up code with a digit stays; `1.2mm` / `2mm`
+  measurement tokens and an `L750`-style label are all cleared once the sentence around
   them is answered - **note:** a made-up code with NO digit at all (e.g. `ZZTKSGHOST`) is
   also read as not-code-shaped and gets cleared, same as a real description word. This is
-  the existing heuristic's designed behaviour, not a gap opened by S1-S4.
+  the existing heuristic's designed behaviour, not a gap opened by S1-S4. (Since F5 below,
+  code-shape is `entity_resolver._CODE_RE` itself with a measurement exemption, so `L750`
+  clears as a labelled dimension rather than as a one-letter word.)
 - Two `CLASS_SYNONYMS` bilingual words (`sinki`, `tandas`) and a mixed sentence of both
   never reach `unrecognized_words`.
 - Both live incident turns, replayed end to end: 12303509 ("sorento double bowl kitchen
@@ -228,3 +229,24 @@ turns.
 **Vocabulary-build timing.** 20 timed calls to `unrecognized_words` against the full
 prod-copy catalogue: **mean 10.2ms, max 14.5ms** - well under the 150ms budget, so it is
 safe to call on every raw-text resolve turn unconditionally.
+
+## Review findings (F1-F10), closed
+
+Code review of 90f922af8..5357442d7 raised ten gaps. All ten are fixed test-first;
+`tests/test_spec_review_findings.py` (32 tests) is the pinned behaviour.
+
+| # | gap | fix |
+|---|-----|-----|
+| F1 | "kitchen sink, not glass" ranked glass first - only the LLM read could hear a refusal | `resolve_terms_to_specs_with_spans` reports WHERE each value was said; `understand_phrase`'s deterministic path moves any binding preceded within 15 chars by a negator (not/no/without/non/bukan/tanpa) into `exclusions`. Spans consumed by a brand phrase are not negators, so "no logo" stays an ask |
+| F2 | the footer strip cleared EVERY descriptive token once any spec row landed | a token clears only when all its content words either earned a binding a SHOWN row matched, or appear in a shown row's own text (values + rendered sentence + class). "bathroom mirror" beside sinks now survives |
+| F3 | `extracted_specs: [{"value": 1.2}]` -> KeyError -> 500 | key-guarded set comprehension |
+| F4 | shape B reported nothing for "sorento grommet": the term bound a brand, so its alien word was never named | `filter_specs` checks every term word-level against the shared vocabulary; an all-alien term is still reported verbatim |
+| F5 | `_is_code_shaped` demanded two letters, so "B2155" / "S7850" were never reported as missing codes | reuse `entity_resolver._CODE_RE`, with a measurement exemption (unit-suffixed numerics, and the flyer's `L750` dimension notation) so a measurement is never reported as a missing code. "10KG" reads as a measurement, not a code: a unit-suffixed number is the reading that cannot invent a failure |
+| F6 | "quotation for Encik Baharudin" answered with `unrecognized_terms: [quotation, encik, baharudin]` | the field speaks only for a product-descriptive turn (candidates found, or something bound); otherwise `[]`, present and empty |
+| F7 | a caller free term that was only PARTLY alien reported nothing | word-level for every caller term; verbatim only when all its content words are alien |
+| F8 | a customer naming an excluded-value brand IN FULL was answered with silence | `NO LOGO` binds on a full-phrase word-boundary match; `OTHERS` stays unbindable (one generic word is never an ask) |
+| F9 | require-only rows carried no spec block at all | one IN-query over `product_specifications` for the shown ids; `specifications` (values only) or **null** when nothing was recorded, plus `preferred_specs: []`. `_emit_spec_matches` copies `None` faithfully rather than defaulting to `{}` |
+| F10 | resolve and preview each carried their own copy of the read-and-merge, and resolve never named the caller | `derive_search_inputs(db, phrase, *, specs, free_terms, allow_model, user_id, registry_rows)` in `product_spec_understanding`, called by both; resolve passes `user_id`. One `active_registry` + one brand read threaded through the spec path per request |
+
+Regression at the time of the fix (the twelve feature files plus the new one):
+**253 passed, 1 skipped, 0 failed.**

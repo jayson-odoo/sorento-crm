@@ -316,13 +316,40 @@ def _resolve_quantities(
     return resolved
 
 
-def _brand_from_haystack(db: Session, haystack: str, registry_rows) -> str | None:
-    """The brand named in the customer's words, in the catalog's own spelling.
+def brand_names(db: Session) -> list[str]:
+    """Every brand name the catalog spells, once. One query, name column only.
 
-    One query, name column only: the brand set is small and the words are already
-    in memory. `excluded_values` on the registry row is how the catalog records the
-    ABSENCE of a brand (OTHERS, NO LOGO) - real values on real rows, but not
-    something a customer ever asks for, so they are never bound.
+    Exposed so a request that consults brands more than once (resolve reads them
+    for binding, for the vocabulary, and for junk suppression) can read them ONCE
+    and hand the same list round.
+    """
+    return [
+        str(name).strip()
+        for (name,) in db.query(Brand.brand_name).all()
+        if str(name or "").strip()
+    ]
+
+
+# A placeholder brand word too generic to ever be an ask. "OTHERS" is how the
+# catalog records the ABSENCE of a brand on 1,956 products, and a customer writing
+# "others" means the English word, never that bucket - so it stays unbindable even
+# though the full name matches. "NO LOGO" is the opposite case: nobody says those
+# two words in that order by accident, so the full phrase IS an ask (F8).
+_UNBINDABLE_BRAND_NAMES: frozenset[str] = frozenset({"others"})
+
+
+def _brand_match_in_haystack(
+    haystack: str, registry_rows, names: list[str]
+) -> tuple[str | None, tuple[int, int] | None]:
+    """The brand named in the customer's words, with the span that named it.
+
+    `excluded_values` on the registry row is how the catalog records the ABSENCE
+    of a brand (OTHERS, NO LOGO). Those values are never OFFERED to the
+    understanding model, but a customer who names one IN FULL is asking a real
+    question - "no logo kitchen sink" is a request for the unbranded range, and
+    answering it with silence was the gap. So an excluded value binds only on a
+    full-phrase, word-boundary match of a MULTI-WORD name; a single generic word
+    (OTHERS) never binds at all.
 
     Longest name wins, for the same reason the synonym loop above prefers the
     longest phrase: a specific reading beats a generic one that is a substring of
@@ -333,19 +360,55 @@ def _brand_from_haystack(db: Session, haystack: str, registry_rows) -> str | Non
         str(value).strip().lower()
         for value in (getattr(brand_row, "excluded_values", None) or [])
     }
-    names = [
-        str(name).strip()
-        for (name,) in db.query(Brand.brand_name).all()
-        if str(name or "").strip() and str(name).strip().lower() not in excluded
-    ]
     for name in sorted(names, key=len, reverse=True):
-        if re.search(rf"(?<!\w){re.escape(name.lower())}(?!\w)", haystack):
-            return name
-    return None
+        lowered = name.lower()
+        if lowered in _UNBINDABLE_BRAND_NAMES:
+            continue
+        if lowered in excluded and " " not in lowered:
+            continue
+        match = re.search(rf"(?<!\w){re.escape(lowered)}(?!\w)", haystack)
+        if match:
+            return name, (match.start(), match.end())
+    return None, None
 
 
-def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
+def resolve_terms_to_specs(
+    db: Session,
+    free_terms: list[str],
+    *,
+    registry_rows=None,
+    brands: list[str] | None = None,
+) -> list[dict]:
     """Turn customer words into registry spec values, longest phrase first.
+
+    Kept as the plain list-returning entry point every existing caller uses;
+    `resolve_terms_to_specs_with_spans` is the same work with the WHERE reported
+    as well (see there).
+    """
+    resolved, _spans, _haystack = resolve_terms_to_specs_with_spans(
+        db, free_terms, registry_rows=registry_rows, brands=brands
+    )
+    return resolved
+
+
+def resolve_terms_to_specs_with_spans(
+    db: Session,
+    free_terms: list[str],
+    *,
+    registry_rows=None,
+    brands: list[str] | None = None,
+) -> tuple[list[dict], dict[str, list[tuple[int, int]]], str]:
+    """The resolved specs, WHERE in the phrase each one was said, and the phrase.
+
+    The spans are what makes a refusal readable without a model: knowing that
+    `material=glass` was earned by the characters at 17..22 lets the caller look
+    at the words just before them and see the "not" (see
+    `product_spec_understanding._split_refusals`). Without them the word-level
+    reader answers "not glass" with material=glass, which is the exact opposite
+    of what was said.
+
+    Spans are reported for values stated in WORDS and for the brand. A number
+    bound by proximity has no phrase of its own to negate.
 
     The registry has carried the synonyms all along and nothing consulted them, so a
     phrase only ever earned a weak substring boost against the rendered sentence. That
@@ -358,9 +421,9 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
     """
     haystack = " ".join(t.lower() for t in free_terms if t)
     if not haystack:
-        return []
+        return [], {}, ""
 
-    rows = active_registry(db)
+    rows = active_registry(db) if registry_rows is None else registry_rows
 
     candidates: list[tuple[int, str, str]] = []
     # Where a spec was stated in words, so a number inside those words is not also
@@ -391,7 +454,13 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
             best[key] = (length, value)
 
     types = {row.spec_key: row.data_type for row in rows}
-    brand_binding = _brand_from_haystack(db, haystack, rows) if "brand" not in best else None
+    brand_binding: str | None = None
+    brand_span: tuple[int, int] | None = None
+    if "brand" not in best:
+        brand_binding, brand_span = _brand_match_in_haystack(
+            haystack, rows, brand_names(db) if brands is None else brands
+        )
+    spans: dict[str, list[tuple[int, int]]] = {}
     resolved: list[dict] = []
     for key, (_, value) in best.items():
         # The synonym map is JSON, so every key arrives as a string. Coerce back to the
@@ -405,6 +474,8 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
             except (TypeError, ValueError):
                 continue
         resolved.append({"key": key, "value": value})
+        # The winning value's own spans: where the customer SAID this.
+        spans[key] = list(spoken_spans.get((key, best[key][1]), []))
 
     # A brand is a brand. The registry's `brand` row ships with an empty synonym map,
     # so "sorento" bound to nothing and the word was left to the code probes, which
@@ -414,6 +485,7 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
     # spells it - which is the spelling the derived `brand` values carry.
     if brand_binding is not None:
         resolved.append({"key": "brand", "value": brand_binding})
+        spans["brand"] = [brand_span] if brand_span else []
 
     # Numbers the customer typed: "trap 200mm", "thickness 1.2mm", 'S trap 8"'.
     # A value stated in WORDS wins over one bound by proximity — "double bowl" is a
@@ -429,7 +501,7 @@ def resolve_terms_to_specs(db: Session, free_terms: list[str]) -> list[dict]:
         if key not in already:
             resolved.append({"key": key, "value": value})
 
-    return resolved
+    return resolved, spans, haystack
 
 
 # Words that name nothing about a product and are never reported. Small and inline
@@ -452,7 +524,9 @@ _PHRASE_STOPWORDS: frozenset[str] = frozenset(
 _MIN_REPORTABLE_WORD = 3
 
 
-def _search_vocabulary(db: Session) -> frozenset[str]:
+def _search_vocabulary(
+    db: Session, *, registry_rows=None, brands: list[str] | None = None
+) -> frozenset[str]:
     """Every WORD the catalogue's own vocabulary contains.
 
     Multi-word phrases are split, so "kitchen sink" whitelists both halves: a
@@ -469,7 +543,7 @@ def _search_vocabulary(db: Session) -> frozenset[str]:
             if word:
                 words.add(word)
 
-    for row in active_registry(db):
+    for row in (active_registry(db) if registry_rows is None else registry_rows):
         absorb(row.spec_key)
         absorb(row.label)
         for value, synonyms in merged_synonyms(row).items():
@@ -492,7 +566,7 @@ def _search_vocabulary(db: Session) -> frozenset[str]:
     for label in stored_class_labels(db):
         absorb(label)
 
-    for (name,) in db.query(Brand.brand_name).all():
+    for name in (brand_names(db) if brands is None else brands):
         absorb(name)
 
     return frozenset(words)
@@ -522,7 +596,12 @@ def _content_words(phrase: str) -> list[str]:
 
 
 def unrecognized_words(
-    db: Session, phrase: str, *, vocabulary: frozenset[str] | None = None
+    db: Session,
+    phrase: str,
+    *,
+    vocabulary: frozenset[str] | None = None,
+    registry_rows=None,
+    brands: list[str] | None = None,
 ) -> list[str]:
     """Words in the sentence that name nothing this catalogue knows.
 
@@ -535,12 +614,21 @@ def unrecognized_words(
     once the CRM reads it itself - checking the term would only ever report the
     customer's entire message back at them.
     """
-    known = _search_vocabulary(db) if vocabulary is None else vocabulary
+    known = (
+        _search_vocabulary(db, registry_rows=registry_rows, brands=brands)
+        if vocabulary is None
+        else vocabulary
+    )
     return [word for word in _content_words(phrase) if word not in known]
 
 
 def unrecognized_terms(
-    db: Session, *, query: str | None = None, free_terms: list[str] | None = None
+    db: Session,
+    *,
+    query: str | None = None,
+    free_terms: list[str] | None = None,
+    registry_rows=None,
+    brands: list[str] | None = None,
 ) -> list[str]:
     """Everything in the request that bound to nothing, ready to be read out.
 
@@ -548,8 +636,13 @@ def unrecognized_terms(
     it is alien: they sent "flurbish grommet" as one thing, so answering with
     two mystery words would misdescribe their own question. Its words are then
     dropped from the word-level list, so each unhonourable thing is named once.
+
+    A term that is only PARTLY alien is reported word by word instead. Skipping
+    it - which is what a term-level check does - meant "sink flurbish" arrived as
+    one caller term and the mystery word inside it was never named at all, so a
+    request that could not be honoured read as a clean success.
     """
-    vocabulary = _search_vocabulary(db)
+    vocabulary = _search_vocabulary(db, registry_rows=registry_rows, brands=brands)
     reported = unrecognized_words(db, query or "", vocabulary=vocabulary)
 
     for term in free_terms or []:
@@ -558,10 +651,15 @@ def unrecognized_terms(
             continue
         content = _content_words(phrase)
         alien = [word for word in content if word not in vocabulary]
-        if not content or len(alien) != len(content):
+        if not alien:
             continue
-        reported = [word for word in reported if word not in content]
-        reported.append(phrase)
+        if len(alien) == len(content):
+            reported = [word for word in reported if word not in content]
+            reported.append(phrase)
+            continue
+        for word in alien:
+            if word not in reported:
+                reported.append(word)
 
     return reported
 
@@ -580,6 +678,13 @@ def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: li
       - names a known spec value -> dropped (recognized, boost-only)
       - names nothing            -> `unrecognized_terms` (clarify, never "none")
 
+    The third verdict is reached WORD by word, not term by term. A term that
+    bound something can still carry an alien word inside it - "sorento grommet"
+    resolves the brand and says nothing about the grommet - and a term-level
+    check called that a success, so the one thing the CRM could not honour was
+    the one thing it never mentioned. A term whose every content word is alien
+    is still reported verbatim: they asked it as one thing.
+
     Returns `{"clause", "class_labels", "unrecognized_terms"}`; `clause` is a
     predicate over `ProductSpecifications.values`, or None when no class was named.
     """
@@ -590,13 +695,21 @@ def filter_specs(db: Session, *, specs: list[dict] | None = None, free_terms: li
         if entry.get("key") == "class" and entry.get("value"):
             labels.add(str(entry["value"]))
 
+    vocabulary = _search_vocabulary(db) if free_terms else frozenset()
     unrecognized: list[str] = []
     for term in free_terms:
         classes = resolve_classes_for_term(db, term)
         if classes:
             labels.update(classes)
-        elif not resolve_terms_to_specs(db, [term]):
-            unrecognized.append(term)
+        content = _content_words(term)
+        alien = [word for word in content if word not in vocabulary]
+        if content and len(alien) == len(content):
+            if term not in unrecognized:
+                unrecognized.append(term)
+            continue
+        for word in alien:
+            if word not in unrecognized:
+                unrecognized.append(word)
 
     clause = None
     if labels:

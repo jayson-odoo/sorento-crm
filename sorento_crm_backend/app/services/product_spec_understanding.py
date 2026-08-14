@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -47,10 +48,20 @@ from app.services.product_spec_registry import (
 from app.services.product_spec_search import (
     SELF_SYNONYM_KEY,
     normalise_quantity,
-    resolve_terms_to_specs,
+    resolve_terms_to_specs_with_spans,
 )
 
 logger = logging.getLogger(__name__)
+
+# Words that turn the thing after them into a refusal, in the two languages the
+# catalogue's customers write in. Word-boundary matched, so "notch" and "nonstick"
+# are not refusals.
+_NEGATORS = re.compile(r"(?<!\w)(not|no|without|non|bukan|tanpa)(?!\w)")
+
+# How far before a value's own words a negator may sit and still refuse it. Wide
+# enough for "kitchen sink, not the glass one", short enough that a "not" about
+# one thing does not reach across the sentence and refuse the next.
+_NEGATION_WINDOW = 15
 
 # Understanding one short sentence. Kept small and cheap: this runs on a customer's
 # message, so it is on the latency path of a WhatsApp reply.
@@ -72,6 +83,14 @@ class Understanding:
     # request for the opposite: "not glass" removes glass, it does not ask for ceramic.
     exclusions: list[dict] = field(default_factory=list)
     free_terms: list[str] = field(default_factory=list)
+    # The customer's OWN words that earned each binding, verbatim, keyed by the
+    # spec key they earned. A caller deciding "was this part of the sentence
+    # answered" needs the words that were heard, not the key they resolved to:
+    # "double bowl" earns `bowl_count=2`, and nobody reading `bowl_count` back
+    # can tell whether "double" was understood. Keyed rather than flat because
+    # binding a word is not the same as ANSWERING it - only the caller knows
+    # which keys the products it is about to show actually matched.
+    bound_phrases: dict[str, list[str]] = field(default_factory=dict)
     notes: str = ""
     # How this was produced, so the preview screen can be honest about it and a
     # reviewer can tell a model result from a fallback.
@@ -308,12 +327,102 @@ def _resolve_provider(db: Session):
         return None, provider_name, model_name
 
 
+def _split_refusals(
+    specs: list[dict],
+    spans: dict[str, list[tuple[int, int]]],
+    haystack: str,
+) -> tuple[list[dict], list[dict]]:
+    """Move every spec the customer said "not" in front of into the refusals.
+
+    The word-level reader has no concept of negation: it sees "kitchen sink, not
+    glass" as the word "glass" and offers glass sinks first, which is the exact
+    opposite of what was asked. Only the model could hear the refusal, so a
+    customer without the LLM flag on was answered backwards.
+
+    Nothing here is inferred. A binding is refused only when a negator word ends
+    within `_NEGATION_WINDOW` characters before the span that EARNED the binding,
+    so "glass kitchen sink" is untouched and a "not" about one value cannot
+    silently refuse another.
+
+    Spans consumed by a brand phrase are not read as negators: "no logo" is the
+    catalogue's own name for the unbranded range, and reading its "no" as a
+    refusal would have turned a real ask into a refusal of the kitchen sink
+    beside it (F8 is why the brand binds at all).
+    """
+    if not specs or not haystack:
+        return specs, []
+
+    brand_spans = spans.get("brand") or []
+    negators = [
+        match
+        for match in _NEGATORS.finditer(haystack)
+        if not any(start <= match.start() and match.end() <= end for start, end in brand_spans)
+    ]
+    if not negators:
+        return specs, []
+
+    kept: list[dict] = []
+    refused: list[dict] = []
+    for entry in specs:
+        own_spans = spans.get(str(entry.get("key"))) or []
+        negated = any(
+            0 <= start - match.end() <= _NEGATION_WINDOW
+            for (start, _end) in own_spans
+            for match in negators
+        )
+        (refused if negated else kept).append(entry)
+    return kept, refused
+
+
+def derive_search_inputs(
+    db: Session,
+    phrase: str | None,
+    *,
+    specs: list[dict] | None = None,
+    free_terms: list[str] | None = None,
+    allow_model: bool = True,
+    user_id: str | None = None,
+    registry_rows=None,
+) -> tuple[list[dict], list[str], list[dict], Understanding | None]:
+    """Read the sentence, then let the caller's own extraction win over it.
+
+    The ONE place a raw customer sentence becomes ranker inputs. Both surfaces
+    that do this - the resolve endpoint n8n calls and the Product Specifications
+    preview page - used to carry their own copy of the same six lines, which is
+    how the two readings drifted apart in the first place (the preview handled
+    raw text; resolve hid the same call behind an LLM flag). One helper, so a
+    fix to how a sentence is read reaches both callers or neither.
+
+    Returns `(specs, free_terms, exclusions, understanding)`. `understanding` is
+    None when there was no phrase to read.
+    """
+    merged_specs = list(specs or [])
+    merged_terms = list(free_terms or [])
+    if not phrase or not phrase.strip():
+        return merged_specs, merged_terms, [], None
+
+    understanding = understand_phrase(
+        db, phrase, user_id=user_id, allow_model=allow_model, registry_rows=registry_rows
+    )
+    # A spec the caller pinned by hand always wins: they saw the whole sentence
+    # (or the screen), this saw one phrase.
+    stated = {str(entry.get("key")) for entry in merged_specs if entry.get("key")}
+    merged_specs = merged_specs + [
+        entry for entry in understanding.specs if entry["key"] not in stated
+    ]
+    merged_terms = merged_terms + [
+        term for term in understanding.free_terms if term not in merged_terms
+    ]
+    return merged_specs, merged_terms, list(understanding.exclusions), understanding
+
+
 def understand_phrase(
     db: Session,
     phrase: str,
     *,
     user_id: str | None = None,
     allow_model: bool = True,
+    registry_rows=None,
 ) -> Understanding:
     """Map a customer's sentence onto registry specs, semantically where possible.
 
@@ -326,8 +435,28 @@ def understand_phrase(
         return Understanding()
 
     # The deterministic reading first — it is free, and it is the floor.
-    baseline = resolve_terms_to_specs(db, [phrase])
-    fallback = Understanding(specs=baseline, free_terms=[phrase], source="deterministic")
+    baseline, spans, haystack = resolve_terms_to_specs_with_spans(
+        db, [phrase], registry_rows=registry_rows
+    )
+    # ...and it now hears a refusal too, so the floor cannot reinstate the thing
+    # the customer ruled out (see _split_refusals).
+    baseline, baseline_refusals = _split_refusals(baseline, spans, haystack)
+    # Every span that bound something, refusals included: "not glass" understood
+    # as a refusal is still the word "glass" heard.
+    bound_phrases = {
+        str(entry.get("key")): [
+            haystack[start:end] for (start, end) in spans.get(str(entry.get("key"))) or []
+        ]
+        for entry in baseline + baseline_refusals
+        if spans.get(str(entry.get("key")))
+    }
+    fallback = Understanding(
+        specs=baseline,
+        exclusions=baseline_refusals,
+        free_terms=[phrase],
+        bound_phrases=bound_phrases,
+        source="deterministic",
+    )
 
     if not allow_model:
         return fallback
@@ -367,6 +496,16 @@ def understand_phrase(
     specs, exclusions, free_terms, notes = _validate(
         payload if isinstance(payload, dict) else {}, index, open_values
     )
+
+    # A refusal the word-level reader heard stands even when the model missed it,
+    # for the same reason the literal spec reading survives: a refusal understood
+    # is not something a model's silence should undo.
+    already_refused = {(e["key"], str(e["value"]).strip().lower()) for e in exclusions}
+    exclusions = exclusions + [
+        entry
+        for entry in baseline_refusals
+        if (entry["key"], str(entry["value"]).strip().lower()) not in already_refused
+    ]
 
     # The model supplements the literal reading, it does not replace it. If a synonym
     # matched outright, that is not something a model should be able to talk us out of.
@@ -409,6 +548,9 @@ def understand_phrase(
         specs=merged,
         exclusions=exclusions,
         free_terms=terms,
+        # The literal reader's spans still hold: the model adds meaning on top of
+        # them, it does not unsay the words that matched outright.
+        bound_phrases=bound_phrases,
         notes=notes,
         source="semantic",
         model=model_name,

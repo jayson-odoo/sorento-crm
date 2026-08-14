@@ -25,6 +25,7 @@ from app.models.marketing import Promotion, PromotionProduct
 from app.models.product import Brand, Product
 from app.models.resources import Attachment, AttachmentType
 from app.services.entity_resolver import (
+    _CODE_RE,
     _canonical_entity_type,
     fetch_product_brands,
     resolve_references,
@@ -1317,7 +1318,9 @@ def _has_unresolved_tokens(result: dict[str, Any]) -> bool:
     return any(not (tr.get("matches") or []) for tr in resolutions)
 
 
-def _suppress_brand_prefix_junk(db: Session, result: dict[str, Any]) -> None:
+def _suppress_brand_prefix_junk(
+    db: Session, result: dict[str, Any], brands: list[str] | None = None
+) -> None:
     """A brand word is answered as a brand, not as whatever codes start with it.
 
     "sorento" prefix-matches SORENTOBAG and SORENTO188 ("NOT USE THIS CODE"), and
@@ -1337,12 +1340,17 @@ def _suppress_brand_prefix_junk(db: Session, result: dict[str, Any]) -> None:
     if not tokens:
         return
 
-    brand_tokens = {
-        str(name).strip().lower()
-        for (name,) in db.query(Brand.brand_name)
-        .filter(func.lower(Brand.brand_name).in_(sorted(tokens)))
-        .all()
-    }
+    # The caller may already hold the brand list for this request; only fetch it
+    # when it does not (every other caller stays untouched).
+    if brands is None:
+        brand_tokens = {
+            str(name).strip().lower()
+            for (name,) in db.query(Brand.brand_name)
+            .filter(func.lower(Brand.brand_name).in_(sorted(tokens)))
+            .all()
+        }
+    else:
+        brand_tokens = {str(name).strip().lower() for name in brands} & tokens
     if not brand_tokens:
         return
 
@@ -1764,28 +1772,67 @@ def resolve_reference(
     )
 
 
-# A token shaped like a product CODE, on the same terms the resolver itself uses
-# (`entity_resolver.extract_candidate_tokens`): letters and digits together, no
-# whitespace, nothing but code punctuation. Two shapes are deliberately outside
-# it - a number in front of letters is a measurement ("2mm"), and ONE letter in
-# front of digits is a dimension label ("L750"). Neither is a code, and reporting
-# either as a missing code would invent a failure.
-_CODE_SHAPED_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*(?:[-_./][A-Za-z0-9]+)*$")
+# A measurement, never a code: a number carrying a unit. This catalogue's own
+# codes look exactly like "B2155", so the code test below cannot also demand two
+# letters - and once it does not, "2mm" and "750MM" would read as codes and be
+# reported as products we could not find. `L750 x W165 x H247mm` is the flyer's
+# own notation for a size and `_labelled_dimensions` binds it as one, so a single
+# L/W/H in front of a number is a measurement too.
+_MEASUREMENT_SHAPED_RE = re.compile(
+    r"^(?:[LWH])?\d+(?:\.\d+)?\s*(?:mm|cm|m|kg|g|l|ml|inch|inches|in|\"|”)?$",
+    re.IGNORECASE,
+)
+
+
+def _searchable_words(candidate: dict[str, Any]) -> set[str]:
+    """Every word a shown candidate can be said to have answered.
+
+    Its own spec VALUES, the sentence it renders as, and its class - the three
+    things a customer reads off the row. A word in here is a word this product
+    genuinely speaks to; a word absent from every shown row was not answered by
+    showing them.
+    """
+    words: set[str] = set()
+
+    def absorb(text: Any) -> None:
+        for word in re.split(r"[^a-z0-9]+", str(text or "").lower()):
+            if word:
+                words.add(word)
+
+    absorb(candidate.get("summary"))
+    absorb(candidate.get("class"))
+    for value in (candidate.get("specifications") or {}).values():
+        if isinstance(value, (list, tuple, set)):
+            for item in value:
+                absorb(item)
+        else:
+            absorb(value)
+    return words
 
 
 def _is_code_shaped(token: str) -> bool:
+    """Is this token shaped like a product CODE the catalogue might hold?
+
+    The resolver's own notion, reused rather than re-guessed: `_CODE_RE` is what
+    `extract_candidate_tokens` runs to decide a token is worth a code probe, so a
+    token it would probe is exactly a token whose absence is worth reporting.
+    The local copy that stood here demanded TWO letters, which quietly exempted
+    every single-letter code in the catalogue ("B2155", "S7850") - a customer
+    naming one we do not stock was told nothing at all.
+    """
     word = str(token or "").strip()
-    if len(word) < 3 or not _CODE_SHAPED_RE.match(word):
+    if len(word) < 3:
         return False
-    letters = sum(1 for character in word if character.isalpha())
-    return letters >= 2 and any(character.isdigit() for character in word)
+    if _MEASUREMENT_SHAPED_RE.match(word):
+        return False
+    return bool(_CODE_RE.fullmatch(word))
 
 
 def _emit_spec_matches(
     result: dict[str, Any],
     candidates: list[dict],
     token: str,
-    free_terms: list[str] | None = None,
+    bound_words: set[str] | None = None,
 ) -> None:
     """Emit ranker candidates as ordinary product matches.
 
@@ -1824,7 +1871,9 @@ def _emit_spec_matches(
                 # What this product IS, as `{key: value}`. Without it the caller
                 # can rank rows it cannot describe: "here are five sinks" with no
                 # way to say which one is the 1.2mm one the customer asked for.
-                "specifications": candidate.get("specifications", {}),
+                # Copied faithfully, `None` included: null means nothing was ever
+                # recorded, where `{}` would claim a block that is merely empty.
+                "specifications": candidate.get("specifications"),
                 "matched_specs": candidate.get("matched_specs", []),
                 # Keys a standing house preference added, kept apart from the ones
                 # the customer's own words earned - two different sentences.
@@ -1867,28 +1916,34 @@ def _emit_spec_matches(
     result.setdefault("resolutions", []).append(spec_resolution)
     # Something was found, so the words it answered are no longer unresolved.
     #
-    # Equality with the emitted token alone was not enough: the caller sends the
-    # sentence as ONE token here and its own per-token split as separate ones, so
-    # "double bowl kitchen sink" stayed in the footer and the customer read
-    # "Couldn't find: double bowl kitchen sink" underneath the sinks that answered
-    # it. A token that appears, whole word, inside a term the ranker searched on
-    # HAS been answered by these rows.
+    # "Answered" means the CANDIDATES answered it, word by word. Membership of
+    # the searched TERM was not enough: the whole sentence is one term, so every
+    # descriptive token in the turn was cleared by any spec row at all - a
+    # customer who asked for a sink AND a bathroom mirror got sinks and was told
+    # nothing about the mirror, and a company name sitting in the sentence was
+    # silently declared found. A token is cleared only when every content word in
+    # it either earned a binding for this query, or appears in the text of a
+    # product actually being shown.
     #
     # Nothing else is touched: `unresolved_tokens` and `alternatives` are what
     # drive "did you mean", and a match is neither.
-    answered_terms = [
-        str(term).strip().lower() for term in (free_terms or []) if str(term or "").strip()
-    ]
-    answered_terms.append(str(spec_resolution["token"]).strip().lower())
+    #
+    # `_content_words` is the honesty channel's own reading of "which words here
+    # could carry product meaning", reused so a token cannot be cleared on words
+    # `unrecognized_terms` would never have checked.
+    from app.services.product_spec_search import _content_words
+
+    answered_words: set[str] = set(bound_words or set())
+    for candidate in candidates:
+        answered_words |= _searchable_words(candidate)
 
     def _answered(candidate_token: str) -> bool:
-        word = str(candidate_token or "").strip().lower()
-        if not word:
-            return False
-        return any(
-            word == term or re.search(rf"(?<!\w){re.escape(word)}(?!\w)", term)
-            for term in answered_terms
-        )
+        words = _content_words(str(candidate_token or ""))
+        if not words:
+            # Nothing reportable in it (a bare measurement, punctuation, a
+            # stopword): there is no claim to keep alive.
+            return True
+        return all(word in answered_words for word in words)
 
     # Spec rows answer DESCRIPTIONS. They never vouch for a CODE the catalogue
     # does not contain, so a code-shaped token keeps its place in the footer even
@@ -1945,12 +2000,7 @@ def resolve_reference_post(
             "truncated": outcome["truncated"],
             "unrecognized_terms": outcome["unrecognized_terms"],
         }
-        _emit_spec_matches(
-            result,
-            outcome["candidates"],
-            payload.query or "",
-            payload.free_terms or [payload.query or ""],
-        )
+        _emit_spec_matches(result, outcome["candidates"], payload.query or "")
         return _stamp_brand_on_products(db, result)
 
     # Spec search is a FALLBACK, never a parallel path. It runs only when the caller
@@ -1967,12 +2017,21 @@ def resolve_reference_post(
     ):
         import time
 
-        from app.services.product_spec_search import search_specs, unrecognized_terms
+        from app.services.product_spec_registry import active_registry
+        from app.services.product_spec_search import (
+            brand_names,
+            search_specs,
+            unrecognized_terms,
+        )
 
-        specs = list(payload.extracted_specs or [])
-        free_terms = list(payload.free_terms or [])
+        # ONE read of each per request. The registry and the brand list are
+        # consulted by the binder, the vocabulary and the junk suppressor, and
+        # each used to fetch its own copy - four round trips for two tables that
+        # cannot change mid-request.
+        registry_rows = active_registry(db)
+        brands = brand_names(db)
 
-        # The sentence is ALWAYS read - this is the same wiring the Product
+        # The sentence is ALWAYS read - through the SAME helper the Product
         # Specifications preview page uses, which is why raw text "just works"
         # there. The word-level read (allow_model=False) is deterministic and
         # free; only the MODEL read costs 2-3 SECONDS on the reply path, so that
@@ -1985,26 +2044,24 @@ def resolve_reference_post(
         # - a lossy hop that dropped "thickness 1.0mm" before the CRM ever saw
         # it (live turn 12303548). Raw text in, CRM derives; explicit
         # extracted_specs/free_terms still win over the derived reading.
-        semantic_used = False
-        semantic_ms = None
-        exclusions: list[dict] = []
-        if payload.query:
-            from app.services.product_spec_understanding import understand_phrase
+        from app.services import product_spec_understanding
 
-            started = time.monotonic()
-            understanding = understand_phrase(
-                db, payload.query, allow_model=payload.understand_phrase
+        started = time.monotonic()
+        specs, free_terms, exclusions, understanding = (
+            product_spec_understanding.derive_search_inputs(
+                db,
+                payload.query,
+                specs=list(payload.extracted_specs or []),
+                free_terms=list(payload.free_terms or []),
+                allow_model=payload.understand_phrase,
+                user_id=current_user.get("id"),
+                registry_rows=registry_rows,
             )
-            semantic_ms = int((time.monotonic() - started) * 1000)
-            semantic_used = understanding.source == "semantic"
-            stated = {entry["key"] for entry in specs}
-            specs = specs + [e for e in understanding.specs if e["key"] not in stated]
-            free_terms = free_terms + [
-                t for t in understanding.free_terms if t not in free_terms
-            ]
-            # Only the semantic read can see a refusal - the word-level resolver has no
-            # concept of "not". Without the model on, "not glass" is simply not heard.
-            exclusions = list(understanding.exclusions)
+        )
+        semantic_used = bool(understanding and understanding.source == "semantic")
+        semantic_ms = (
+            int((time.monotonic() - started) * 1000) if understanding is not None else None
+        )
 
         found = search_specs(db, specs=specs, exclusions=exclusions, free_terms=free_terms)
         result["spec_candidates"] = found["candidates"]
@@ -2013,10 +2070,37 @@ def resolve_reference_post(
         # A brand token's code-prefix junk stops headlining, but only now that the
         # ranker has something to show instead.
         if found["candidates"]:
-            _suppress_brand_prefix_junk(db, result)
+            _suppress_brand_prefix_junk(db, result, brands=brands)
 
+        # Words the shown products ANSWERED through a binding - the customer's
+        # own words where they were heard (`bound_phrases`), plus what they
+        # resolved to. Restricted to keys a shown row actually matched: binding
+        # "bathroom mirror" to `product_type=mirror` and then showing five sinks
+        # has not answered the mirror, and clearing it from the footer would say
+        # it had.
+        satisfied = {
+            key
+            for candidate in found["candidates"]
+            for key in candidate.get("matched_specs") or []
+        }
+        bound_words: set[str] = set()
+        parts = [
+            str(phrase)
+            for key, phrases in (understanding.bound_phrases if understanding else {}).items()
+            if key in satisfied
+            for phrase in phrases
+        ]
+        for entry in found["asked_for"]:
+            if str(entry.get("key")) in satisfied:
+                parts.extend([str(entry.get("key") or ""), str(entry.get("value") or "")])
+        for part in parts:
+            for word in re.split(r"[^a-z0-9]+", part.lower()):
+                if word:
+                    bound_words.add(word)
         # AND emit them as ordinary product matches (see _emit_spec_matches).
-        _emit_spec_matches(result, found["candidates"], payload.query or "", free_terms)
+        _emit_spec_matches(
+            result, found["candidates"], payload.query or "", bound_words=bound_words
+        )
         # What the customer asked for that nothing offered can satisfy. The caller says
         # "no Cabana one, here are Sorento" rather than silently substituting.
         result["spec_unmet"] = found["unmet"]
@@ -2030,8 +2114,24 @@ def resolve_reference_post(
         # these"), this is a word that bound to nothing at all ("I don't know what
         # 'flurbish' means"). Same field name and semantics as shape B's
         # `predicate.unrecognized_terms`, so a caller learns one vocabulary.
-        result["unrecognized_terms"] = unrecognized_terms(
-            db, query=payload.query, free_terms=payload.free_terms
+        #
+        # It speaks ONLY for a turn that was describing a product - candidates
+        # came back, or something in the sentence bound. "Quotation for Encik
+        # Baharudin" is not a product description at all, and answering it with
+        # "I don't know what 'baharudin' means" is the CRM mistaking a person's
+        # name for a spec. The field stays on the wire either way: a caller
+        # reading it must never have to tell absent from empty.
+        descriptive = bool(found["candidates"]) or bool(specs)
+        result["unrecognized_terms"] = (
+            unrecognized_terms(
+                db,
+                query=payload.query,
+                free_terms=payload.free_terms,
+                registry_rows=registry_rows,
+                brands=brands,
+            )
+            if descriptive
+            else []
         )
         result["semantic_used"] = semantic_used
         if semantic_ms is not None:
