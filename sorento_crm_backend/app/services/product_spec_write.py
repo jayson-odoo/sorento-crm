@@ -269,6 +269,20 @@ def _prepare(entry: Mapping, actor: Mapping | None) -> dict:
             code="product_spec_bad_value",
         )
 
+    if op == "set" and _canonical_value(entry.get("value")) is None:
+        # An empty value is not a value, it is a removal wearing one. Stored, it
+        # canonicalises to nothing while derivation keeps producing something, so the
+        # merge would raise the same conflict on every run forever - in a table whose
+        # contract is exceptions only.
+        raise AppException(
+            status_code=400,
+            message=(
+                f"{spec_key} cannot be blank. To take the value away, remove the "
+                f"specification instead."
+            ),
+            code="product_spec_bad_value",
+        )
+
     source = str(entry.get("source") or DEFAULT_AUTHORED_SOURCE).strip().lower()
     if source not in AUTHORED_SOURCES:
         raise AppException(

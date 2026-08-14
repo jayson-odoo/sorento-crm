@@ -84,7 +84,7 @@ async def list_product_specifications(
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None, description="Match a product code or class."),
-    status: Optional[str] = Query(None, description="derived | needs_review | approved"),
+    status: Optional[str] = Query(None, description="derived | needs_review | authored"),
     current_user: dict = Depends(require_permission_with_api_key("master_data.products.view")),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:

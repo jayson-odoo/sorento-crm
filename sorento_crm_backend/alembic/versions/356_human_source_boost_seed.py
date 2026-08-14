@@ -22,13 +22,13 @@ reference data idempotently from two places; it is stated here so nobody reads t
 downgrade as removing something it did not add.
 
 Revision ID: 356_human_source_boost_seed
-Revises: 885010d94677
+Revises: 322_merge_dealer_kit_customers
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "356_human_source_boost_seed"
-down_revision = "885010d94677"
+down_revision = "322_merge_dealer_kit_customers"
 branch_labels = None
 depends_on = None
 

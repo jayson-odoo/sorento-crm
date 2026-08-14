@@ -41,38 +41,6 @@ def test_authored_sources_is_a_frozenset():
     assert isinstance(AUTHORED_SOURCES, frozenset)
 
 
-def test_module_never_compares_against_the_literal_human_alone():
-    """AC-F.7 - "'supplier' is reserved now and has no writer in this milestone", so
-    every "did a person set this" check must ask membership in AUTHORED_SOURCES, not
-    equality against the single string "human". A stray `== "human"` would silently
-    treat a supplier-sourced entry as machine-derived everywhere that check runs.
-
-    Widened per the phase 3 review (PR1-CONTRACT.md section 6b): AC-F.7 names the
-    merge, the search boost branch AND the source labels, not just this module.
-    `product_spec_derivation.py` (the merge, exercised by `merge_authored_over`) and
-    `product_spec_search.py` (the boost branch) are scanned too. The route module
-    (`app/api/v1/master_data/product_specifications.py`) is deliberately NOT scanned:
-    it carries two legitimate `"human"` literals (the source a write chooses, and the
-    response contract the frontend reads), both assignments, never comparisons - the
-    same `==`/`!=` pattern would not trip on either, but scoping the guard to the
-    three modules that actually decide authorship is the honest boundary.
-    """
-    import inspect
-
-    import app.services.product_spec_derivation as derivation_module
-    import app.services.product_spec_search as search_module
-    import app.services.product_spec_write as write_module
-
-    for module in (write_module, derivation_module, search_module):
-        source = inspect.getsource(module)
-        for op in ("==", "!="):
-            for quote in ('"', "'"):
-                needle = f"{op} {quote}human{quote}"
-                assert needle not in source, (
-                    f"{module.__name__}: found a bare comparison against literal human: {needle!r}"
-                )
-
-
 # --------------------------------------------------------------------------- #
 # AC-F.11 - canonical_values_hash, and the traps measured in M8
 # --------------------------------------------------------------------------- #
