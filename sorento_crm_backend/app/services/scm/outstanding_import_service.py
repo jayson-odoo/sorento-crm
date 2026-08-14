@@ -35,6 +35,14 @@ from app.services.scm.outstanding_diff import (
 )
 from app.services.scm import plan_exception_service
 from app.services.scm import reorder_run_service
+from app.services.scm import sales_agent_service
+# Imported rather than defined here, and re-exported under the names this module has always
+# used. The vocabulary moved to `demand_class.py` when the salesperson master gained a
+# `demand_class` column of its own: two modules now WRITE this value and one of them is a
+# check constraint, so a second copy of the word list would be a database that accepts what
+# the importer rejects.
+from app.services.scm.demand_class import DEFAULT_DEMAND_CLASS
+from app.services.scm.demand_class import class_of as _class_of
 from app.services.scm.outstanding_reader import PO, SO, ReadResult, RowProblem, read_workbook
 
 logger = logging.getLogger(__name__)
@@ -42,9 +50,7 @@ logger = logging.getLogger(__name__)
 # Demand class drives fulfilment priority: `scm.priority_policy.demand_class_weights` is
 # keyed on it. A stated split that is not recognisably a project is retail, because that is
 # the only other class the seeded weights carry and a new word would score as nothing.
-# A split nobody states is NOT retail - see `_class_of`.
-_PROJECT_SEGMENTS = {"project", "projects", "contract"}
-DEFAULT_DEMAND_CLASS = "retail"
+# A split nobody states is NOT retail - see `_class_of`, imported above.
 
 # A quantity difference below this is noise between two exports, not a decision. Same figure
 # the diff uses, for the same reason.
@@ -95,6 +101,11 @@ class _Binding:
     # 4 Aug 2026); `demand_class_col` is what the policy reads, stamped from it at import.
     demand_class_col: Optional[str] = None
     demand_split_col: Optional[str] = None
+    # The header column the salesperson master is linked through, and None for purchase
+    # orders, which have no agent at all. Its presence is also what turns the agent half of
+    # the classification and the unmapped-agent report on, so the PO path cannot acquire
+    # either by accident.
+    agent_fk: Optional[str] = None
 
 
 _BINDINGS: dict[str, _Binding] = {
@@ -118,6 +129,7 @@ _BINDINGS: dict[str, _Binding] = {
         # because that is what a person set and the extract is not the record of it.
         header_fill_cols=(("order_type", "order_type"),),
         demand_class_col="demand_class", demand_split_col="order_type",
+        agent_fk="sales_agent_id",
     ),
     PO: _Binding(
         header=PurchaseOrder, line=PurchaseOrderLine,
@@ -160,6 +172,23 @@ class ResolutionIssue:
 
 
 @dataclass
+class AgentNotice:
+    """An agent code in this file that can classify nothing, and why.
+
+    Its own list rather than a row problem or a resolution issue, because it is neither: the
+    file is fine, the code resolved (or was created), and nothing is being skipped. What it
+    reports is a gap in MASTER data that only the client can close - which of his 38 codes
+    still need a demand class - and that is a different question from "which rows of this file
+    could not be read". Kept off the row lists so it cannot bury them.
+    """
+
+    code: str
+    #: True when this upload is the first thing that has ever named the agent.
+    is_new: bool
+    reason: str
+
+
+@dataclass
 class PreviewResult:
     doc_type: str
     scope_documents: tuple[str, ...]
@@ -174,6 +203,9 @@ class PreviewResult:
     # the confirm screen shows the side effect BEFORE it happens and the commit reports the
     # same fact afterwards.
     activated_documents: list[str] = field(default_factory=list)
+    # Agent codes in this file that carry no demand class, so the client can see which of his
+    # master rows still need one. Same key on both responses, same reason as above.
+    unmapped_agents: list[AgentNotice] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -192,6 +224,7 @@ class PreviewResult:
             "resolution_issues": [asdict(i) for i in self.resolution_issues],
             "samples": self.samples,
             "activated_documents": list(self.activated_documents),
+            "unmapped_agents": [asdict(a) for a in self.unmapped_agents],
         }
 
 
@@ -210,6 +243,14 @@ class _Resolved:
     # Header-level values the file states per document (`_Binding.header_cols`), first
     # non-empty wins: the extract repeats them on every row of the document.
     header_by_doc: dict = field(default_factory=dict)
+    # Which agent CODE (normalised) sold each document. Per document and first non-empty
+    # wins, and a document naming two different agents is REPORTED - the same rule as the
+    # counterparty, in both halves, for the same reason: the extract states one value per
+    # document on every row of it, so a second value is a file to fix rather than a shape to
+    # support. Normalised by `sales_agent_service.normalize_code`, the same authority the
+    # master is keyed by, so the class lookup, the row creation and the report all compare
+    # one string.
+    agent_by_doc: dict = field(default_factory=dict)
 
 
 def _norm(code: str) -> str:
@@ -276,6 +317,7 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
     party_by_doc: dict[str, str] = {}
     party_code_by_doc: dict[str, str] = {}
     header_by_doc: dict[str, dict] = {}
+    agent_by_doc: dict[str, str] = {}
 
     kept: list[Line] = []
     for l in read.lines:
@@ -292,6 +334,29 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
                                           "no warehouse with this code"))
             continue
         kept.append(l)
+
+        # Who sold it. Read only where the document type HAS an agent, so the purchase book
+        # cannot pick one up from a stray column, and normalised through
+        # `sales_agent_service.normalize_code` - the ONE authority - so the key this builds is
+        # byte-for-byte the key the master is looked up and created under. A second
+        # normaliser that merely happened to agree would, the day the two drifted, report
+        # every agent as new and create a duplicate master row on every upload.
+        if bind.agent_fk:
+            agent_code = sales_agent_service.normalize_code(extra.get("agent"))
+            if agent_code:
+                seen_agent = agent_by_doc.get(l.doc_number)
+                if seen_agent is not None and seen_agent != agent_code:
+                    # One document is sold by one agent, so a file naming two is a file to
+                    # fix. The first row still wins the write, but SAID OUT LOUD - exactly the
+                    # counterparty rule below. Silent first-wins would attribute half the
+                    # document's demand to a salesperson who never sold it, and where the two
+                    # agents carry different demand classes it would also decide the order's
+                    # fulfilment priority from whichever row the export happened to list first.
+                    issues.append(ResolutionIssue(
+                        row, "agent", agent_code,
+                        f"{l.doc_number} names two different agent values, "
+                        f"{seen_agent} and {agent_code}; the first is being used"))
+                agent_by_doc.setdefault(l.doc_number, agent_code)
 
         # Header-level values the file repeats on every row of the document. First non-empty
         # wins rather than last, so a trailing blank cell cannot erase a stated date.
@@ -341,7 +406,8 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
 
     return _Resolved(lines=kept, issues=issues, product_by_code=products,
                      warehouse_by_code=warehouses, party_by_doc=party_by_doc,
-                     party_code_by_doc=party_code_by_doc, header_by_doc=header_by_doc)
+                     party_code_by_doc=party_code_by_doc, header_by_doc=header_by_doc,
+                     agent_by_doc=agent_by_doc)
 
 
 def _existing_lines(db: Session, docs: set[str], bind: _Binding, *,
@@ -415,19 +481,6 @@ def _header_state(db: Session, docs: tuple[str, ...],
     return {r[0]: (r[1], str(r[2]) if r[2] else None) for r in rows}
 
 
-def _class_of(value: Optional[str]) -> Optional[str]:
-    """The planning class a stated split maps to, or None when it states nothing.
-
-    None is NOT retail, and the difference is the whole point: "this is not a project" and
-    "nobody said" look identical in the column and mean opposite things. Only the second is
-    worth a person's time, and only the first may be written.
-    """
-    stated = (value or "").strip().lower()
-    if not stated:
-        return None
-    return "project" if any(seg in stated for seg in _PROJECT_SEGMENTS) else DEFAULT_DEMAND_CLASS
-
-
 def _segment_of(db: Session, debtor_code: str) -> Optional[str]:
     """This customer's market segment code, or None when there is no customer to read.
 
@@ -480,15 +533,64 @@ def _demand_state(db: Session, docs: tuple[str, ...],
     return {r[0]: (r[1], r[2]) for r in rows}
 
 
+def _agent_state(db: Session, resolved: _Resolved,
+                 bind: _Binding) -> tuple[dict[str, Optional[str]], list[AgentNotice]]:
+    """Every agent code this file names: the class it carries, and what needs saying about it.
+
+    A read, never a write: `preview` runs this too and must create nothing, so an unknown code
+    is REPORTED here and created by `apply` (which is also the only place that should be
+    inventing master data).
+
+    Two kinds of notice, told apart because the answers differ. A code nobody holds is new
+    master data the client has just acquired without asking for it, and it wants a class. A
+    code held with a NULL class is one of the 38 he already has and has not got to yet - which
+    is the state every one of them ships in, since the I/III/IV suffix maps to neither company
+    nor market segment anywhere in this database and guessing it would silently mis-prioritise
+    real orders (UAC AC-3.3). An agent that HAS a class produces no notice at all: a list that
+    names all 38 every week is a list nobody reads.
+    """
+    if not bind.agent_fk:
+        return {}, []
+    codes = sorted(set(resolved.agent_by_doc.values()))
+    if not codes:
+        return {}, []
+    held = sales_agent_service.resolve_many(db, codes)
+    classes: dict[str, Optional[str]] = {}
+    notices: list[AgentNotice] = []
+    for code in codes:
+        agent = held.get(code)
+        if agent is None:
+            notices.append(AgentNotice(
+                code, True,
+                "new agent, unclassified: this upload is the first thing to name this agent "
+                "code, so the master row is being created with no demand class"))
+            continue
+        classes[code] = agent.demand_class
+        if not agent.demand_class:
+            notices.append(AgentNotice(
+                code, False,
+                "this agent carries no demand class, so it cannot classify an order that "
+                "states nothing else"))
+    return classes, notices
+
+
 def _classify_demand(db: Session, diff: Diff, resolved: _Resolved,
                      state: dict[str, tuple[Optional[str], Optional[str]]],
-                     bind: _Binding) -> tuple[dict[str, str], list[RowProblem]]:
+                     bind: _Binding,
+                     agent_classes: dict[str, Optional[str]]) -> tuple[dict[str, str],
+                                                                       list[RowProblem]]:
     """What each in-scope document's demand class should be, and what could not be decided.
 
     Per DOCUMENT, in order: the order type the header already carries, then the one the file
     states (which is also the value that fills an absent header), then the customer's market
-    segment via the debtor code the file names. When none of the three answers, the document
-    is REPORTED and left exactly as it was.
+    segment via the debtor code the file names, and last the demand class held against the
+    agent who sold it. When none of the four answers, the document is REPORTED and left
+    exactly as it was.
+
+    The agent is LAST on purpose. An agent who mostly sells project work will still sell the
+    occasional trade order, so their class is a tendency about the seller while the three
+    ahead of it are statements about this order and this buyer. Reading it earlier would
+    overwrite a fact with a tendency.
 
     Defaulting to retail is the failure this column exists to avoid: it under-prioritises a
     project order invisibly, and the wrong answer is stable, so no later upload surfaces it
@@ -517,8 +619,14 @@ def _classify_demand(db: Session, diff: Diff, resolved: _Resolved,
     for number in diff.scope_documents:
         stored_split, current = state.get(number, (None, None))
         stated_split = resolved.header_by_doc.get(number, {}).get("order_type")
+        agent_code = resolved.agent_by_doc.get(number, "")
         cls = (_class_of(stored_split) or _class_of(stated_split)
-               or _class_of(_segment_of(db, resolved.party_code_by_doc.get(number, ""))))
+               or _class_of(_segment_of(db, resolved.party_code_by_doc.get(number, "")))
+               # Taken as stored, NOT through `_class_of`: the column holds a class already,
+               # constrained to the vocabulary, so passing it through the segment matcher
+               # would turn a value that somehow escaped the constraint into `retail` - a
+               # guess, in the one place this module refuses to guess.
+               or agent_classes.get(agent_code))
         if cls is not None:
             out[number] = cls
             continue
@@ -527,11 +635,17 @@ def _classify_demand(db: Session, diff: Diff, resolved: _Resolved,
             # a project quietly demoted to retail mid-fulfilment shows up only as an order
             # that stopped winning stock, weeks later, with nothing to point at.
             continue
+        # Named specifically, because the four sources have four different fixes: an order
+        # type on the header, an order type in the export, a market segment on the customer,
+        # or a demand class on the agent. "Unclassified" alone tells the operator nothing
+        # about which one to go and set.
+        agent_says = (f"agent {agent_code} carries no demand class" if agent_code
+                      else "it names no agent")
         problems.append(RowProblem(
             first_row.get(number, 0),
-            f"{number} states no order type and its debtor code resolves to no customer "
-            f"market segment, so its fulfilment priority is left unclassified rather than "
-            f"defaulted to {DEFAULT_DEMAND_CLASS}",
+            f"{number} states no order type, its debtor code resolves to no customer "
+            f"market segment, and {agent_says}, so its fulfilment priority is left "
+            f"unclassified rather than defaulted to {DEFAULT_DEMAND_CLASS}",
             value=number))
     return out, problems
 
@@ -640,6 +754,9 @@ class _Plan:
     # Row-scoped complaints this module raises on top of the reader's own, so both entry
     # points hand the operator ONE list of rows to look at.
     problems: list[RowProblem] = field(default_factory=list)
+    # Agent codes in the file that can classify nothing yet. Master-data gaps, not row
+    # failures, so they travel separately.
+    agent_notices: list[AgentNotice] = field(default_factory=list)
 
 
 def _build(db: Session, file_data: bytes, doc_type: str) -> _Plan:
@@ -654,8 +771,10 @@ def _build(db: Session, file_data: bytes, doc_type: str) -> _Plan:
                                fulfilled_into=fulfilled)
     diff = diff_lines(existing, resolved.lines)
     header_state = _header_state(db, diff.scope_documents, bind)
+    agent_classes, agent_notices = _agent_state(db, resolved, bind)
     demand, demand_problems = _classify_demand(
-        db, diff, resolved, _demand_state(db, diff.scope_documents, bind), bind)
+        db, diff, resolved, _demand_state(db, diff.scope_documents, bind), bind,
+        agent_classes)
     return _Plan(
         read=read,
         resolved=resolved,
@@ -665,6 +784,7 @@ def _build(db: Session, file_data: bytes, doc_type: str) -> _Plan:
         activate=_to_activate(diff, header_state, bind),
         demand=demand,
         problems=demand_problems,
+        agent_notices=agent_notices,
     )
 
 
@@ -710,6 +830,7 @@ def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
         resolution_issues=plan.issues,
         samples=_samples(diff),
         activated_documents=plan.activate,
+        unmapped_agents=plan.agent_notices,
     )
 
 
@@ -786,6 +907,17 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
     bind = _binding(doc_type)
     lift = set(plan.activate)
 
+    # The salesperson master, created where this file names a code nobody holds (AC-6.4).
+    # Resolved once per CODE rather than per document: one agent sells many orders, and
+    # creating inside the header loop would issue the same lookup for each of them.
+    # Deliberately before the loop and never inside `preview`, which writes nothing.
+    agent_ids: dict[str, str] = {}
+    if bind.agent_fk:
+        for code in sorted(set(resolved.agent_by_doc.values())):
+            agent = sales_agent_service.resolve_or_create(db, code)
+            if agent is not None:
+                agent_ids[code] = agent.id
+
     # Header per document in scope, created if absent. `write_status` differs per type: an
     # outstanding-PO extract is a book of orders already PLACED, and `scm.on_order_v`
     # deliberately ignores drafts, so writing them as drafts would import supply and hide it.
@@ -841,6 +973,14 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
             value = resolved.header_by_doc.get(number, {}).get(key)
             if value is not None and not getattr(header, col, None):
                 setattr(header, col, value)
+        # Who sold it. Written whenever the file names an agent we could resolve or create,
+        # because the extract is the record of that and a re-upload restating the same code
+        # is a no-op. An absent code never clears an existing link: a file that simply left
+        # the column blank is not evidence that the order changed hands.
+        if bind.agent_fk:
+            agent_id = agent_ids.get(resolved.agent_by_doc.get(number, ""))
+            if agent_id:
+                setattr(header, bind.agent_fk, agent_id)
         # What the fulfilment policy actually weighs, stamped from the split above.
         # Written ONLY when this upload could decide it: a document nothing classified keeps
         # whatever it already had and is reported by name instead (`_classify_demand`).
@@ -965,4 +1105,9 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         "adopted_documents": adopted,
         "resolution_issues": [asdict(i) for i in plan.issues],
         "row_problems": [asdict(p) for p in read.problems + plan.problems],
+        # Reported by the commit as well as by the preview, and stated as it was BEFORE the
+        # creation above: "new agent, unclassified" is exactly the fact the operator needs
+        # after the fact, and re-reading the master here would report every one of them as
+        # merely unclassified, losing which ones this upload invented.
+        "unmapped_agents": [asdict(a) for a in plan.agent_notices],
     }

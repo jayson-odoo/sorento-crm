@@ -111,12 +111,19 @@ def test_a_file_without_a_po_date_column_does_not_blank_the_issue_date(db, seede
     assert header["currency"] == "MYR"
 
 
-def test_the_reader_names_the_row_a_duplicate_collides_with_and_drops_neither(db, seeded):
-    """The report has to be actionable: "row 3 repeats row 2" is a cell someone can go and fix.
+def test_the_reader_carries_a_repeated_row_and_no_longer_calls_it_a_problem(db, seeded):
+    """Both rows are carried, and neither is complained about (AC-2.1).
 
-    Both rows are still carried. Silently dropping the second would leave the file and the
-    import disagreeing about how many lines were read, which is the same class of problem as
-    the duplicate itself.
+    This test used to assert the opposite half - that the second row was REPORTED as "the
+    same line stated twice". It was measured wrong: on the client's real 4,349-row export 605
+    groups share a document, item and location, 567 of them differ in quantity (one order
+    asking for two deliveries) and the other 38 are byte-identical and legitimate. So the
+    complaint fired 605 times on a file with nothing wrong with it, on the same list that
+    carries the rows which really did fail.
+
+    What it was protecting against - the second copy pairing with nothing and doubling the
+    supply - is prevented in `outstanding_diff`, which pairs within the group, so a re-upload
+    reads `unchanged`. Pinned in `test_outstanding_duplicate_lines.py`.
     """
     row = po_minimal_row(seeded.main_po, seeded.creditor_main, seeded.item_rl, 100,
                          date(2026, 7, 1), seeded.loc_project)
@@ -124,9 +131,8 @@ def test_the_reader_names_the_row_a_duplicate_collides_with_and_drops_neither(db
 
     read = read_workbook(po_workbook([row, row], headers=PO_MINIMAL), PO, resolver)
 
-    assert read.ok is True, "a duplicated row does not make the file unreadable"
-    assert len(read.lines) == 2, "a row was dropped rather than reported"
-    assert [p.row_number for p in read.problems] == [3]
-    reason = read.problems[0].reason
-    assert "row 2" in reason, f"the report does not say which row it repeats: {reason}"
-    assert seeded.main_po in reason and seeded.item_rl in reason
+    assert read.ok is True
+    assert len(read.lines) == 2, "a row was dropped"
+    assert read.problems == [], (
+        f"a legitimately repeated line was reported as a problem: "
+        f"{[p.reason for p in read.problems]}")

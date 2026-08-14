@@ -313,10 +313,22 @@ def seed_scm_module_data() -> None:
     module_347 = importlib.util.module_from_spec(spec_347)
     spec_347.loader.exec_module(module_347)
 
+    # 357 adds the last seven columns of the captain's real outstanding-SO export, including
+    # `Agent` - which the demand classification reads. Same create_all gap as 311/338/347:
+    # without the replay a bootstrapped database resolves neither the agent (so every order
+    # it could classify is reported unclassifiable instead) nor the six ignored columns (so
+    # every upload reports them as unrecognised).
+    spec_357 = importlib.util.spec_from_file_location(
+        "_scm_seed_357", versions / "357_scm_so_agent_aliases.py"
+    )
+    module_357 = importlib.util.module_from_spec(spec_357)
+    spec_357.loader.exec_module(module_357)
+
     with engine.begin() as conn:
         aliases = module.seed_import_field_aliases(conn)
         policies = module.seed_priority_policy(conn)
         aliases += module_338.seed(conn)
+        aliases += module_357.seed(conn)
         for field, alias in module_347._ALIASES:
             conn.execute(_text(
                 "INSERT INTO import_field_alias (doc_type, field, alias, locale) "
