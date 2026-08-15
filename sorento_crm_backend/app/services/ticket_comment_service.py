@@ -17,6 +17,7 @@ import logging
 import uuid as uuid_module
 from datetime import datetime, timezone
 from typing import Iterable, Optional
+from urllib.parse import quote
 
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
@@ -280,6 +281,46 @@ class TicketCommentService:
 
     # -- writes -----------------------------------------------------------
 
+    def _validated_mentions(self, mentioned_user_ids: list[str]) -> list[str]:
+        """The mention list, refused whole if it names anyone who is gone.
+
+        A silently-dropped mention is worse than a refusal: the author believes
+        they summoned someone who is never told.
+        """
+        mentions = [str(uid).strip() for uid in (mentioned_user_ids or []) if str(uid).strip()]
+        known = _users_by_id(self.db, mentions)
+        unknown = [uid for uid in mentions if uid not in known]
+        if unknown:
+            raise handle_validation_error(
+                "One or more mentioned users no longer exist. Remove them and try again."
+            )
+        return mentions
+
+    def _persist(
+        self,
+        *,
+        tracking_id: Optional[str],
+        respond_contact_id: Optional[str],
+        author_user_id: str,
+        body: str,
+        mentions: list[str],
+    ) -> ConversationTicketComment:
+        author = self.db.query(User).filter(User.id == str(author_user_id)).first()
+        comment = ConversationTicketComment(
+            id=str(uuid_module.uuid4()),
+            tracking_id=tracking_id,
+            respond_contact_id=respond_contact_id,
+            author_id=str(author_user_id) if author else None,
+            author_name=_display_name(author),
+            body=body.strip(),
+            mentioned_user_ids=mentions,
+            source=COMMENT_SOURCE_CRM,
+        )
+        self.db.add(comment)
+        self.db.commit()
+        self.db.refresh(comment)
+        return comment
+
     def create_comment(
         self,
         tracking_id: str,
@@ -295,38 +336,79 @@ class TicketCommentService:
         which runs post-commit and best-effort.
         """
         tracking = self._tracking_in_scope(tracking_id, author_user_id)
+        mentions = self._validated_mentions(mentioned_user_ids)
+        contact = getattr(tracking, "contact", None)
 
-        mentions = [str(uid).strip() for uid in (mentioned_user_ids or []) if str(uid).strip()]
-        known = _users_by_id(self.db, mentions)
-        unknown = [uid for uid in mentions if uid not in known]
-        if unknown:
-            raise handle_validation_error(
-                "One or more mentioned users no longer exist. Remove them and try again."
-            )
-
-        author = self.db.query(User).filter(User.id == str(author_user_id)).first()
-        comment = ConversationTicketComment(
-            id=str(uuid_module.uuid4()),
+        comment = self._persist(
             tracking_id=str(tracking.id),
             respond_contact_id=(
                 str(tracking.respond_contact_id)
                 if getattr(tracking, "respond_contact_id", None)
                 else None
             ),
-            author_id=str(author_user_id) if author else None,
-            author_name=_display_name(author),
-            body=body.strip(),
-            mentioned_user_ids=mentions,
-            source=COMMENT_SOURCE_CRM,
+            author_user_id=author_user_id,
+            body=body,
+            mentions=mentions,
         )
-        self.db.add(comment)
-        self.db.commit()
-        self.db.refresh(comment)
 
         # Everything below is post-commit: warn and carry on, never raise.
-        self._notify_mentions(comment, tracking, author_user_id=str(author_user_id))
-        self._mirror(comment, tracking)
-        self._publish(tracking)
+        identifier = str(getattr(contact, "respond_io_id", "") or "").strip() or None
+        self._notify_mentions(
+            comment,
+            author_user_id=str(author_user_id),
+            tracking=tracking,
+            contact=contact,
+        )
+        self._mirror(comment, identifier)
+        self._publish(identifier)
+        return self.serialize(comment)
+
+    def create_for_contact(
+        self,
+        contact_ref: str,
+        *,
+        author_user_id: str,
+        body: str,
+        mentioned_user_ids: list[str],
+    ) -> TicketCommentResponse:
+        """Write an internal note on a CONTACT from the Conversations inbox (AC-N3).
+
+        The inbox thread is not looking at one ticket, so the note it writes is
+        contact-scoped: ``tracking_id`` NULL, ``respond_contact_id`` set. That is
+        the same shape a Respond-ingested note has, so it renders in the contact
+        list AND in every open ticket drawer for that contact with no new rule.
+
+        Everything else - mention validation, the in-app mention notification,
+        the best-effort Respond mirror and its outbox row, the live-thread poke -
+        is literally ``create_comment``'s, so the two note lanes cannot drift.
+
+        Read/write access is the caller's ``sla_management.conversations.view``
+        permission, checked at the route: a note is internal staff context, not
+        something an assignment should own. This method authorises nothing -
+        never call it from a surface that has not already required it.
+        """
+        from app.services.sla_service import ConversationSLATrackingService
+
+        contact = ConversationSLATrackingService(self.db).require_contact(contact_ref)
+        mentions = self._validated_mentions(mentioned_user_ids)
+
+        comment = self._persist(
+            tracking_id=None,
+            respond_contact_id=str(contact.id),
+            author_user_id=author_user_id,
+            body=body,
+            mentions=mentions,
+        )
+
+        identifier = str(getattr(contact, "respond_io_id", "") or "").strip() or None
+        self._notify_mentions(
+            comment,
+            author_user_id=str(author_user_id),
+            tracking=None,
+            contact=contact,
+        )
+        self._mirror(comment, identifier)
+        self._publish(identifier)
         return self.serialize(comment)
 
     def _existing_ingested_comment(
@@ -411,9 +493,10 @@ class TicketCommentService:
     def _notify_mentions(
         self,
         comment: ConversationTicketComment,
-        tracking: ConversationSLATracking,
         *,
         author_user_id: str,
+        tracking: Optional[ConversationSLATracking] = None,
+        contact: Optional[RespondContact] = None,
     ) -> None:
         """In-app notification with a deep link, one per mentioned user (AC-L1).
 
@@ -421,6 +504,11 @@ class TicketCommentService:
         service still mirrors in-app to web push for users who subscribed their
         browser, which IS the in-app lane's delivery. Best-effort: the comment
         is committed, so a notification failure must not fail the save.
+
+        Two lanes, one body. A note written in a drawer names its ticket, so the
+        link opens that ticket. A note written in the Conversations inbox is
+        owned by no ticket (AC-N3), so it links to the inbox on that contact -
+        pointing at some ticket the author was not looking at would be a guess.
         """
         try:
             recipients = [
@@ -434,15 +522,33 @@ class TicketCommentService:
             from app.services.notification_service import NotificationService
 
             base_url = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
-            # Same deep link as the assignment notify: the dashboard with this
-            # ticket targeted, which is where the drawer opens.
-            link = f"{base_url}/?ticket={tracking.id}" if base_url else f"/?ticket={tracking.id}"
+            if tracking is not None:
+                # Same deep link as the assignment notify: the dashboard with
+                # this ticket targeted, which is where the drawer opens.
+                path = f"/?ticket={tracking.id}"
+                source_entity_type = "conversation_sla_tracking"
+                source_entity_id = str(tracking.id)
+                data = {"tracking_id": str(tracking.id)}
+                where = "On the enquiry from"
+            else:
+                contact_ref = (
+                    str(getattr(contact, "respond_io_id", "") or "").strip()
+                    or str(getattr(contact, "phone_number", "") or "").strip()
+                )
+                path = f"/sla-management/conversations?contact={quote(contact_ref)}"
+                source_entity_type = "respond_contacts"
+                source_entity_id = str(getattr(contact, "id", "") or "") or None
+                data = {"contact_ref": contact_ref}
+                where = "On the conversation with"
+            link = f"{base_url}{path}" if base_url else path
             author = comment.author_name or "A teammate"
             contact_name = (
-                getattr(getattr(tracking, "contact", None), "name", None) or "a contact"
+                getattr(contact, "name", None)
+                or getattr(getattr(tracking, "contact", None), "name", None)
+                or "a contact"
             )
             title = f"{author} mentioned you in a note"
-            body = f"{comment.body}\n\nOn the enquiry from {contact_name}.\n\nOpen: {link}"
+            body = f"{comment.body}\n\n{where} {contact_name}.\n\nOpen: {link}"
             service = NotificationService(self.db)
             for user_id in recipients:
                 service.create_with_channel_preferences(
@@ -450,13 +556,9 @@ class TicketCommentService:
                     type="conversation_ticket_comment",
                     title=title,
                     body=body,
-                    data={
-                        "tracking_id": str(tracking.id),
-                        "comment_id": str(comment.id),
-                        "url": link,
-                    },
-                    source_entity_type="conversation_sla_tracking",
-                    source_entity_id=str(tracking.id),
+                    data={**data, "comment_id": str(comment.id), "url": link},
+                    source_entity_type=source_entity_type,
+                    source_entity_id=source_entity_id,
                     # Per comment, so a second mention of the same person on the
                     # same ticket is a second notification, not a stale dedupe.
                     event_type=f"comment_mention:{comment.id}",
@@ -473,24 +575,18 @@ class TicketCommentService:
                 "mention notify failed for comment %s: %s", getattr(comment, "id", "?"), exc
             )
 
-    def _mirror(
-        self, comment: ConversationTicketComment, tracking: ConversationSLATracking
-    ) -> None:
-        contact = getattr(tracking, "contact", None)
-        identifier = str(getattr(contact, "respond_io_id", "") or "").strip() or None
+    def _mirror(self, comment: ConversationTicketComment, identifier: Optional[str]) -> None:
         try:
             mirror_comment_to_respond(self.db, comment, identifier=identifier)
         except Exception as exc:  # noqa: BLE001 - belt and braces; it never raises
             logger.warning("Respond comment mirror raised for %s: %s", comment.id, exc)
 
-    def _publish(self, tracking: ConversationSLATracking) -> None:
+    def _publish(self, identifier: Optional[str]) -> None:
         """Poke the live-thread stream so other open drawers on this contact pick
         the note up without waiting for their slow poll (AC-K1 channel)."""
         try:
             from app.services import conversation_event_bus
 
-            contact = getattr(tracking, "contact", None)
-            identifier = str(getattr(contact, "respond_io_id", "") or "").strip()
             if identifier:
                 conversation_event_bus.publish(
                     conversation_event_bus.EVENT_MESSAGE, contact_id=identifier

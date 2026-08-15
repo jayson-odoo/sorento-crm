@@ -21,12 +21,13 @@ helper the rest of the SLA service uses.
 """
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from app.database import get_db
 from app.dependencies import require_permission
+from app.schemas.ticket_comment import TicketCommentCreate, TicketCommentResponse
 from app.services.conversation_inbox_service import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -152,6 +153,36 @@ async def list_contact_comments(
     one ticket.
     """
     return TicketCommentService(db).list_for_contact(contact_ref)
+
+
+@router.post(
+    "/{contact_ref}/comments",
+    response_model=TicketCommentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_contact_comment(
+    contact_ref: str,
+    payload: TicketCommentCreate,
+    current_user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Write an internal note on this CONTACT (AC-N3).
+
+    The view permission is the gate, not a ticket assignment: a note is
+    internal staff context, and the inbox thread is not looking at one ticket.
+    Anyone who may read the conversation may annotate it.
+
+    NEVER reaches the contact - this path touches no Respond send route. The
+    only outbound call is the AC-L2 comment mirror, post-commit and
+    best-effort. Mentioned users get an in-app notification deep-linking back
+    to this conversation.
+    """
+    return TicketCommentService(db).create_for_contact(
+        contact_ref,
+        author_user_id=current_user["id"],
+        body=payload.body,
+        mentioned_user_ids=payload.mentioned_user_ids,
+    )
 
 
 @router.get("/{contact_ref}/media")
