@@ -1,6 +1,7 @@
 # Chatbot media endpoint - User Acceptance Criteria
 
-**Status:** draft, Phase 1 not started
+**Status:** implemented on `fm/multimodal-crm-endpoint`; current progress and remaining unmet
+items are tracked in the plan's Status line and the handoff
 **Plan:** `documentation/plans/ideation/PLAN-chatbot-media-endpoint.md`
 **Domain:** ideation (chatbot) + user-management (operator surfaces)
 **Classification:** CORE, `public` schema (see plan header for the rationale)

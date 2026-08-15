@@ -17,23 +17,14 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
 import { formatDate } from '@/lib/helpers';
 import ContactAgentAccessDialog from '../../../access-agents/components/ContactAgentAccessDialog';
 import ContactAgentAccessDeleteDialog from '../../../access-agents/components/contact-agent-access-delete-dialog';
 import CopyAccessAgentsFromContactDialog from './CopyAccessAgentsFromContactDialog';
 import ContactFieldAccessDialog from '../../../access-agents/components/ContactFieldAccessDialog';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import type { ContactAgentAccess } from '../../../access-agents/types/accessAgent.types';
-import { toast } from 'sonner';
 
 interface ContactAccessAgentsTableProps {
   contactId: string;
