@@ -431,4 +431,63 @@ verified from the user's perspective at 375 and 1280 by sidebar clicks.
 
 ## 6. Evidence run (S4)
 
-_To be filled in when run._
+Run 2026-08-16, agent-browser 0.27.0 headless, private session
+`flyer-read-background-job`, this lane's stack only (backend :8011 single
+uvicorn worker, `flyer_read` RQ worker on Redis db 11, FE `npm run dev` :3011).
+Reached by sidebar clicks from `/`, never a deep URL: Dealer Kit -> Flyers.
+
+What the walk proved:
+
+| Step | Result |
+| --- | --- |
+| Existing rows after migration 359 | all read **Done** (the server-default backfill, seen in the UI) |
+| Dialog description | "You get a report of what was found before anything is created." No waiting copy |
+| `Choose from Files` -> picker -> the real `_SORENTO A3 FLYER 2025-2026_compressed.pdf` (21.1 MB, 36 pages) | selected, dialog shows the filename |
+| `Read the flyer` | dialog **closed at once**; toast "Reading the flyer in the background - it will appear in your uploads"; the row was already listed as **Processing** on the next snapshot (2.77 s later, which is the snapshot round trip, not the request) |
+| `POST /api/v1/dealer-kit/flyer-readings/from-attachment` | **202 in 0.162 s** (backend log). No other request in the walk exceeded a few hundred ms apart from the 3 s polling GETs |
+| Console | no errors |
+
+### The walk also found a real defect, and it is not in this feature
+
+The row then sat at Processing and never flipped, because the RQ work-horse was
+**segfaulting** (`Work-horse terminated unexpectedly; waitpid returned 11`).
+Diagnosed with `PYTHONFAULTHANDLER=1`: the child dies inside
+`psycopg2.connect` -> libpq `PQconnectPoll` -> `pg_GSS_have_cred_cache` ->
+`libkrb5` `api_macos_ptcursor_next` -> `libxpc`. XPC is not fork-safe, so the
+child dies before the task's first line, which is why nothing marked the row
+failed.
+
+- It is **macOS only**. The faulting frames are literally the macOS ccache API;
+  Linux libpq has no XPC path, so the production worker does not take it. No
+  application code changes because of this.
+- It is **not the scheduler's fault either**, though the scheduler is what makes
+  it certain: `ENABLE_SCHEDULER=true` has APScheduler open DB connections in the
+  parent before the first fork, so the child inherits initialised XPC state.
+- `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES` does not cover it. That is the
+  Obj-C abort, signal 6; this is a segv, signal 11.
+
+Measured, same flyer, same worker, scheduler ON both times:
+
+| Worker env | Outcome |
+| --- | --- |
+| as documented before this branch | segfault, 3 of 3 jobs, row stuck `processing` |
+| `ENABLE_SCHEDULER` off | `done`, 36 pages |
+| `PGGSSENCMODE=disable`, scheduler ON | **`done` in 25 s**, 36 pages |
+
+`CLAUDE.md` now carries `PGGSSENCMODE=disable` in the dev-session worker command
+and a lesson explaining the signature, because this kills every queue on a dev
+Mac and the identical stack is in other lanes' crash reports
+(`~/Library/Logs/DiagnosticReports/Python-*.ips`), including one from 2026-08-14.
+
+The stuck row was also a live confirmation of **BL-008**: nothing sweeps a
+reading whose work-horse died, so it stays `processing` forever. The idempotency
+guard then correctly refused to start a second read of the same attachment
+(AC-J2.4 working as designed), which is what made the stuck row visible.
+
+Test rows created by this walk were deleted afterwards.
+
+### Still to record
+
+The final `Processing -> Done` flip and the report opening from the list were
+re-verified at the service level (row `done`, 36 pages, report reachable) but
+the last browser leg is pending a second stack window; see the status file.

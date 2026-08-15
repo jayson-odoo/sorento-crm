@@ -14,11 +14,14 @@
  *          is past the gateway's patience, so the request returns before the
  *          work starts. There is no report on this response - the row is the
  *          receipt, and the report arrives on the GET once the job is done.
- *          400 when the file is not a PDF, 413 over 50 MB, and both say so in
- *          words - a designer who uploaded the wrong file must be told. Those
- *          two are still answered in the request; anything only the bytes can
- *          reveal (password protected, unreadable) lands on the row as
- *          `status: 'failed'` with `errorMessage` in the same words.
+ *          413 over 50 MB is still answered in the request, as the bytes
+ *          arrive, and says so in words - that is the one refusal this route
+ *          still owns. Nothing else reads the bytes in-request any more: a
+ *          non-PDF, password protected, or otherwise unreadable file lands on
+ *          the row as `status: 'failed'` with `errorMessage` in the same
+ *          words. The 400 `FLYER_NOT_A_PDF` mime refusal only exists on the
+ *          from-attachment path below, checked against the attachment's
+ *          recorded mime before any bytes are fetched.
  *          Re-clicking while the same file is already being read returns the
  *          SAME row rather than starting a second read.
  * POST   /flyer-readings/from-attachment  {attachmentId, promotionId?}
