@@ -574,23 +574,13 @@ def test_sync_wait_and_extraction_timeout_are_read_live_from_settings():
 # --------------------------------------------------------------------------- #
 
 
-def test_the_media_route_module_calls_no_known_blocking_primitive():
-    """S3-08 / regression guard against reproducing
-    `app/api/v1/public/ai_extract.py:116`'s defect (a synchronous multi-second
-    call made directly from an `async def` handler). This is a coarse static
-    check; S3-01b below is the dynamic proof."""
-    from app.api.v1.external import media as media_route
-
-    source = inspect.getsource(media_route)
-    for banned in ("time.sleep(", "requests.post(", "requests.get(", ".result()"):
-        assert banned not in source, f"blocking primitive found in the route module: {banned}"
-
-
 # Blocking I/O by the name it is called under in this module. Postgres
 # (`decide_and_record`, `resolve_media_settings`, `commit`, `refresh`, the query
 # builders) and Redis (`enqueue_job`, and `rate_limit.hit` reached through
 # `decide_and_record`) both count: PLAN 3.3b's guarantee is about the event loop,
-# and it does not care which service stalled.
+# and it does not care which service stalled. `sleep` and `result` (a Future's
+# blocking join) plus any `requests.*` call cover the primitives the retired
+# S3-08 substring guard used to grep for.
 _BLOCKING_CALL_NAMES = {
     "decide_and_record",
     "resolve_media_settings",
@@ -601,7 +591,10 @@ _BLOCKING_CALL_NAMES = {
     "execute",
     "flush",
     "sleep",
+    "result",
 }
+
+_BLOCKING_MODULE_NAMES = {"requests"}
 
 
 def _blocking_calls_in_coroutines(module) -> list[str]:
@@ -644,7 +637,12 @@ def _blocking_calls_in_coroutines(module) -> list[str]:
                     if isinstance(func, ast.Attribute)
                     else getattr(func, "id", "")
                 )
-                if name in _BLOCKING_CALL_NAMES:
+                via_blocking_module = (
+                    isinstance(func, ast.Attribute)
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id in _BLOCKING_MODULE_NAMES
+                )
+                if name in _BLOCKING_CALL_NAMES or via_blocking_module:
                     found.append(f"{name}() at line {node.lineno}")
             self.generic_visit(node)
 
@@ -653,13 +651,15 @@ def _blocking_calls_in_coroutines(module) -> list[str]:
 
 
 def test_no_async_handler_in_the_media_route_calls_blocking_io_directly():
-    """PLAN 3.3b, widened after review: the original guard only looked for
-    `time.sleep` / `requests.*` string fragments in the whole module, so it
-    could not see the two synchronous Redis calls (`enqueue_job` and
-    `rate_limit.hit`, the latter reached through `decide_and_record`) that sat
-    inside the `async def` handler for three slices. Anything blocking must be
-    handed to `asyncio.to_thread`, which makes it a bare name here rather than
-    a call."""
+    """S3-08 / PLAN 3.3b, widened after review: the original substring guard
+    only looked for `time.sleep` / `requests.*` string fragments in the whole
+    module, so it could not see the two synchronous Redis calls (`enqueue_job`
+    and `rate_limit.hit`, the latter reached through `decide_and_record`) that
+    sat inside the `async def` handler for three slices - and a fragment match
+    proves nothing about where the call sits. Its names are folded into the
+    blocking sets above and the substring form is retired. Anything blocking
+    must be handed to `asyncio.to_thread`, which makes it a bare name here
+    rather than a call. S3-01b is the dynamic proof."""
     from app.api.v1.external import media as media_route
 
     offenders = _blocking_calls_in_coroutines(media_route)
@@ -924,6 +924,98 @@ def test_second_unrelated_request_returns_promptly_while_extraction_is_in_flight
     )
     # the slow one legitimately took close to the full extraction time.
     assert slow_response.json()["status"] in ("completed", "pending")
+
+
+def test_a_truly_concurrent_duplicate_replays_the_winners_job_not_a_500(
+    real_chain, monkeypatch
+):
+    """Two requests with the SAME idempotency key, genuinely in flight at once,
+    so BOTH pass the probe before either has recorded. The loser of the ledger
+    insert must come back with the winner's decision and job - the same replay
+    a later retry gets - never an `IntegrityError` off a second job insert
+    against `uq_media_extraction_job_usage_id`. Exactly one ledger row, one job
+    row and one enqueue must exist afterwards.
+
+    The rendezvous is the burst check (`rate_limit.hit`): it sits after the
+    idempotency probe and before the record, is called exactly once per
+    non-replayed request here (burst_limit=1000, and a replay never reaches
+    it), so a two-party barrier there guarantees both requests probed an empty
+    ledger - the race is forced, not hoped for. The barrier is scoped to
+    `_BURST_BUCKET` because other subsystems (auth, integration sends) share
+    `rate_limit.hit` and must not consume a slot.
+
+    Two deliberate departures from S3-01b's shape, both required for genuine
+    concurrency: the client is NOT a context manager (each request then gets
+    its own portal/event loop - one shared portal serializes two POSTs to the
+    same async endpoint, and the second would deadlock against the barrier),
+    and the contact's `respond_io_id` is snapshotted before the threads start
+    (both threads reading the expired ORM attribute concurrently is an
+    `InvalidRequestError` on the fixture's session, nothing to do with the
+    route).
+    """
+    from types import SimpleNamespace
+    _spawn_worker_after_enqueue(monkeypatch, extraction_seconds=0.2)
+    from app.api.v1.external import media as media_route
+    from app.services import media_access_service
+
+    enqueues: list = []
+    inner_enqueue = media_route.enqueue_job
+
+    def _counting_enqueue(*args, **kwargs):
+        enqueues.append(args)
+        return inner_enqueue(*args, **kwargs)
+
+    monkeypatch.setattr(media_route, "enqueue_job", _counting_enqueue)
+
+    barrier = threading.Barrier(2)
+    inner_hit = media_access_service.rate_limit.hit
+
+    def _rendezvous_hit(bucket, *args, **kwargs):
+        if bucket == media_access_service._BURST_BUCKET:
+            barrier.wait(timeout=10)
+        return inner_hit(bucket, *args, **kwargs)
+
+    monkeypatch.setattr(media_access_service.rate_limit, "hit", _rendezvous_hit)
+
+    app.dependency_overrides[get_external_api_user] = lambda: {"id": "ext"}
+    frozen_contact = SimpleNamespace(respond_io_id=real_chain.contact.respond_io_id)
+    with external_permissions_granted():
+        client = TestClient(app)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(_post, client, frozen_contact, "race-dup")
+                for _ in range(2)
+            ]
+            responses = [future.result(timeout=20) for future in futures]
+
+    assert [r.status_code for r in responses] == [200, 200]
+    bodies = [r.json() for r in responses]
+    assert sorted(body["idempotent_replay"] for body in bodies) == [False, True]
+    job_ids = {body["job_id"] for body in bodies}
+    assert len(job_ids) == 1 and None not in job_ids, (
+        "the loser must be handed the winner's job id"
+    )
+    assert len(enqueues) == 1, "the replay path must not enqueue a second RQ job"
+
+    from app.models.media import ContactMediaUsage, MediaExtractionJob
+
+    db = SessionLocal()
+    try:
+        usages = (
+            db.query(ContactMediaUsage)
+            .filter(ContactMediaUsage.contact_id == real_chain.contact.id)
+            .all()
+        )
+        assert len(usages) == 1, "one spend, not two"
+        jobs = (
+            db.query(MediaExtractionJob)
+            .filter(MediaExtractionJob.usage_id == usages[0].id)
+            .all()
+        )
+        assert len(jobs) == 1
+        assert str(jobs[0].id) in job_ids
+    finally:
+        db.close()
 
 
 # --------------------------------------------------------------------------- #
