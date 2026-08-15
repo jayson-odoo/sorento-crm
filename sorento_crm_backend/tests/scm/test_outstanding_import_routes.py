@@ -35,6 +35,7 @@ from tests.scm._outstanding_workbooks import (
     week1,
     workbook,
 )
+from tests.scm._queued_import import queued_job_id, run_enqueued, stub_queue
 from tests.scm.conftest import as_user, requires_pg, seed_user
 
 pytestmark = requires_pg
@@ -123,16 +124,32 @@ def test_preview_returns_the_diff_and_writes_nothing(scm_app):
     assert before == after, "preview must not write"
 
 
-def test_apply_writes_the_lines(scm_app):
+def test_apply_queues_a_job_and_the_job_writes_the_lines(scm_app, monkeypatch):
+    """The route hands the book to the queue; the worker writes it.
+
+    Both halves in one test on purpose: a 202 that enqueues nothing is a silent no-op, and a
+    task that writes correctly behind a route nobody can reach is worth nothing either.
+    """
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     codes = _seed(db)
+    captured = stub_queue(monkeypatch)
 
     r = TestClient(app).post("/api/v1/scm/outstanding/sales-orders/apply",
                              files=_upload(week1(codes)))
 
-    assert r.status_code == 200, r.text
-    assert r.json()["applied"]["added"] == 5
+    assert r.status_code == 202, r.text
+    assert r.json()["job_id"], "the response must name the job to watch"
+    assert captured["enqueued"][0]["name"] == "process_outstanding_import"
+    assert captured["enqueued"][0]["kwargs"]["queue_name"] == "imports"
+    assert db.execute(text(
+        "SELECT count(*) FROM sales_order_lines sol "
+        "JOIN sales_orders so ON so.id = sol.sales_order_id "
+        "WHERE so.so_number = :so"
+    ), {"so": codes.project_so}).scalar() == 0, "the request itself must write nothing"
+
+    run_enqueued(captured, db, monkeypatch)
+
     assert db.execute(text(
         "SELECT count(*) FROM sales_order_lines sol "
         "JOIN sales_orders so ON so.id = sol.sales_order_id "
@@ -157,21 +174,23 @@ def test_preview_of_the_purchase_order_book_returns_the_diff(scm_app):
     assert body["resolution_issues"] == []
 
 
-def test_apply_of_the_purchase_order_book_writes_purchase_orders(scm_app):
+def test_apply_of_the_purchase_order_book_writes_purchase_orders(scm_app, monkeypatch):
     """The endpoint that was corrupting: it accepted the supply book and wrote sales demand.
 
     Asserted on the tables rather than on the response, because the broken version answered
-    200 with `applied.added == 5` while every one of those five rows was a sales order line.
+    200 with `applied.added == 5` while every one of those five rows was a sales order line -
+    and now the response carries no counts at all.
     """
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     codes = _seed_po(db)
+    captured = stub_queue(monkeypatch)
 
     r = TestClient(app).post("/api/v1/scm/outstanding/purchase-orders/apply",
                              files=_upload(po_week1(codes), "outstanding_po.xlsx"))
+    assert r.status_code == 202, r.text
+    run_enqueued(captured, db, monkeypatch)
 
-    assert r.status_code == 200, r.text
-    assert r.json()["applied"]["added"] == 5
     assert db.execute(text(
         "SELECT count(*) FROM purchase_order_lines pol "
         "JOIN purchase_orders po ON po.id = pol.purchase_order_id "
@@ -199,17 +218,143 @@ def test_a_file_missing_a_required_column_explains_which_one(scm_app):
     assert "required_date" in r.json()["missing_columns"]
 
 
-def test_apply_refuses_a_file_missing_a_required_column(scm_app):
+def test_a_file_missing_a_required_column_fails_the_job_not_the_request(scm_app, monkeypatch):
+    """The unreadable-file 400 moved onto the job, and had to move somewhere.
+
+    Reading happens on the worker now, so the request cannot say whether the file is usable
+    without parsing the whole book twice. The operator still gets the answer, and gets it
+    where the rest of the outcome lives: the JOB fails, naming the column to add.
+    """
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     codes = _seed(db)
+    captured = stub_queue(monkeypatch)
 
     r = TestClient(app).post(
         "/api/v1/scm/outstanding/sales-orders/apply",
         files=_upload(_missing_column_file(codes), "bad.xlsx"),
     )
-    assert r.status_code == 400
-    assert "required_date" in r.text
+    assert r.status_code == 202, r.text
+
+    run_enqueued(captured, db, monkeypatch)
+
+    job = db.execute(text(
+        "SELECT status, error FROM import_jobs WHERE id = :id"
+    ), {"id": queued_job_id(captured)}).first()
+    assert job.status == "failed"
+    assert "required date" in (job.error or "").lower()
+
+
+#: This channel's own job types, so a count of jobs is a count of THIS channel's jobs. An
+#: unscoped `count(*) FROM import_jobs` also counts whatever another suite is doing on the
+#: same database at the same time.
+_JOB_TYPES = ("outstanding_so_import", "outstanding_po_import")
+
+
+def _jobs(db) -> int:
+    return db.execute(text(
+        "SELECT count(*) FROM import_jobs WHERE job_type = ANY(:t)"
+    ), {"t": list(_JOB_TYPES)}).scalar()
+
+
+def test_no_single_company_is_refused_before_any_job_row(scm_app, monkeypatch):
+    """Owned tables (AC-4.3): with no single company the worker would either fail closed
+    part-way through or write across the partition, and by then the operator has been told
+    the upload was queued. Refused at the route, leaving nothing behind.
+
+    Both kinds, because they are two write paths into two different tables and a guard on
+    one of them is a guard on neither.
+    """
+    from app.models.base import set_company_scope
+    from app.services.company_scope_resolver import apply_company_scope
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    codes = _seed(db)
+    seed_suppliers(db, codes)
+    captured = stub_queue(monkeypatch)
+    before = _jobs(db)
+
+    async def _all_companies():
+        set_company_scope(db, None)
+        return None
+
+    app.dependency_overrides[apply_company_scope] = _all_companies
+    client = TestClient(app)
+
+    for kind, files in (
+        ("sales-orders", _upload(week1(codes))),
+        ("purchase-orders", _upload(po_week1(codes), "outstanding_po.xlsx")),
+    ):
+        r = client.post(f"/api/v1/scm/outstanding/{kind}/apply", files=files)
+        assert r.status_code == 400, f"{kind}: {r.text}"
+        assert "single company" in r.text, kind
+
+    assert captured["enqueued"] == []
+    assert captured["retained"] == []
+    assert _jobs(db) == before
+
+
+def test_preview_is_refused_at_the_same_scope_the_job_would_run_at(scm_app, monkeypatch):
+    """A preview read across every company is a diff about somebody else's rows.
+
+    `_resolve` builds its product lookup last-write-wins over `products.product_code`, and
+    11,390 codes are held by more than one company - so an all-companies read binds a line to
+    whichever company's product came out of the query last, and the counts on screen are not
+    the counts apply would produce. Refused for BOTH steps, exactly as the customer importer
+    refuses both: a preview that cannot be trusted is worse than no preview.
+    """
+    from app.models.base import set_company_scope
+    from app.services.company_scope_resolver import apply_company_scope
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    codes = _seed(db)
+    seed_suppliers(db, codes)
+    captured = stub_queue(monkeypatch)
+    lines_before = db.execute(text("SELECT count(*) FROM sales_order_lines")).scalar()
+    jobs_before = _jobs(db)
+
+    async def _all_companies():
+        set_company_scope(db, None)
+        return None
+
+    app.dependency_overrides[apply_company_scope] = _all_companies
+    client = TestClient(app)
+
+    for kind, files in (
+        ("sales-orders", _upload(week1(codes))),
+        ("purchase-orders", _upload(po_week1(codes), "outstanding_po.xlsx")),
+    ):
+        r = client.post(f"/api/v1/scm/outstanding/{kind}/preview", files=files)
+        assert r.status_code == 400, f"{kind}: {r.text}"
+        assert "single company" in r.text, kind
+
+    assert db.execute(text("SELECT count(*) FROM sales_order_lines")).scalar() == lines_before
+    assert _jobs(db) == jobs_before, "a preview creates no job"
+    assert captured["retained"] == [], "and retains no file"
+
+
+def test_the_job_snapshots_the_company_and_retains_the_operators_own_file(scm_app,
+                                                                         monkeypatch):
+    """The worker re-establishes exactly this company, and the retained bytes are the ones
+    that arrived - not the macro-stripped copy the reader parses."""
+    app, db, gcu, gcuk = scm_app
+    scope = as_company_user(app, db, gcu, gcuk)
+    codes = _seed(db)
+    captured = stub_queue(monkeypatch)
+    payload = week1(codes)
+
+    r = TestClient(app).post("/api/v1/scm/outstanding/sales-orders/apply",
+                             files=_upload(payload, "the operators book.xlsx"))
+
+    assert r.status_code == 202, r.text
+    company_id = db.execute(text(
+        "SELECT company_id FROM import_jobs WHERE id = :id"
+    ), {"id": queued_job_id(captured)}).scalar()
+    assert str(company_id) == next(iter(scope))
+    assert captured["retained"][0]["bytes"] == payload
+    assert captured["retained"][0]["name"] == "the operators book.xlsx"
 
 
 def test_a_non_excel_upload_is_rejected(scm_app):

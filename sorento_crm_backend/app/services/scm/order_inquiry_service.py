@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Optional
+from typing import Callable, Optional
 
 from sqlalchemy.orm import Session
 
@@ -36,6 +36,8 @@ from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product
 from app.models.scm import OrderLinkClaim
+from app.services import import_outcome_codes as oc
+from app.services.import_outcome import ImportOutcome
 from app.services.scm import upload_validation as val
 from app.services.scm.order_inquiry_reader import OrderInquiryResult, read_order_inquiry
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
@@ -90,8 +92,15 @@ def _so_lines(
     return {(str(so), str(code), line.required_date): line for so, code, line in rows}
 
 
-def _summarise(db: Session, parsed: OrderInquiryResult) -> dict:
-    instalments, absorbed = _instalments(parsed)
+def _summarise(db: Session, parsed: OrderInquiryResult, collapsed=None) -> dict:
+    """Counts the uploader is told, before anything is written.
+
+    `collapsed` is the `(instalments, absorbed)` pair when the caller has already computed
+    it. Collapsing a 15,797-row book is not free, and `apply` needs the same pair three times
+    over - here, to write, and to record the restating rows - so it is computed once per call
+    and passed down rather than re-derived per reader.
+    """
+    instalments, absorbed = collapsed if collapsed is not None else _instalments(parsed)
     so_numbers = {r.so_number for r in instalments}
     known_lines = _so_lines(db, so_numbers)
     codes = {r.location for r in instalments if r.location}
@@ -110,7 +119,7 @@ def _summarise(db: Session, parsed: OrderInquiryResult) -> dict:
         # The book states one instalment on several tabs on purpose. Both figures are shown
         # so a drop from 15,797 to 8,272 reads as the collapse it is, not as loss.
         "instalments": len(instalments),
-        "rows_restating_an_instalment": absorbed,
+        "rows_restating_an_instalment": len(absorbed),
         "sheets_read": list(parsed.sheets_read),
         "sheets_skipped": list(parsed.sheets_skipped),
         "lines_matched": matched,
@@ -217,6 +226,14 @@ class _Instalment:
     location: str = ""
     po_numbers: tuple[str, ...] = ()
     not_ordered: bool = False
+    #: The first sheet row that stated this delivery. Carried so a queued import can point an
+    #: outcome at a row somebody can open the workbook to; the other rows that restate it are
+    #: reported separately (see `_instalments`).
+    source_row: Optional[int] = None
+    #: The tab that row is on. Row numbers restart per sheet, so "row 42" alone names four
+    #: different rows in a book of monthly tabs - the identity on the job carries the tab so a
+    #: drill-down can point at one of them.
+    sheet: str = ""
 
 
 def _sheet_rank(parsed) -> dict[str, int]:
@@ -230,23 +247,30 @@ def _sheet_rank(parsed) -> dict[str, int]:
     return {name: i for i, name in enumerate(getattr(parsed, "sheets_read", []) or [])}
 
 
-def _instalments(parsed) -> tuple[list[_Instalment], int]:
+def _instalments(parsed) -> tuple[list[_Instalment], list[int]]:
     """Collapse the sheet's rows to one per instalment. Returns the rows it absorbed too.
 
     Within ONE tab a repeat is a second call-off and the quantities add: `SO324252 /
     BRP60391N` is written as 80 and 40 on the same date inside `JAN 26`, and that is 120 due
     that day. ACROSS tabs a repeat is a restatement and the later tab replaces the earlier
     one outright.
+
+    The absorbed rows come back as ROW NUMBERS rather than a count, because a queued import
+    records an outcome per source row: with a count alone a 15,797-row book would report 8,272
+    rows processed and leave 7,525 unexplained.
     """
     rank = _sheet_rank(parsed)
     # (key, sheet) -> instalment, so a within-tab repeat accumulates and a cross-tab one does
     # not.
     per_sheet: dict[tuple[tuple, str], _Instalment] = {}
     order: dict[tuple, list[str]] = {}
+    #: Every source row that landed in each (key, sheet) bucket, in file order.
+    rows_seen: dict[tuple[tuple, str], list[int]] = {}
 
     for row in parsed.rows:
         key = (row.so_number, row.item_code, row.delivery_date)
         sheet = getattr(row, "sheet", "") or ""
+        rows_seen.setdefault((key, sheet), []).append(getattr(row, "source_row", 0) or 0)
         seen = per_sheet.get((key, sheet))
         if seen is None:
             seen = _Instalment(
@@ -256,6 +280,8 @@ def _instalments(parsed) -> tuple[list[_Instalment], int]:
                 so_date=row.so_date,
                 project=row.project,
                 location=row.location,
+                source_row=getattr(row, "source_row", None),
+                sheet=sheet,
             )
             per_sheet[(key, sheet)] = seen
             order.setdefault(key, []).append(sheet)
@@ -272,18 +298,24 @@ def _instalments(parsed) -> tuple[list[_Instalment], int]:
                 seen.po_numbers = seen.po_numbers + (po,)
 
     winners: list[_Instalment] = []
+    absorbed: list[int] = []
     for key, sheets in order.items():
         best = max(sheets, key=lambda s: rank.get(s, -1))
         winner = per_sheet[(key, best)]
         for sheet in sheets:
+            rows = rows_seen.get((key, sheet), [])
             if sheet == best:
+                # The first row of the winning tab IS the instalment; anything after it in
+                # the same tab added its quantity to it.
+                absorbed.extend(rows[1:])
                 continue
+            absorbed.extend(rows)
             for po in per_sheet[(key, sheet)].po_numbers:
                 if po not in winner.po_numbers:
                     winner.po_numbers = winner.po_numbers + (po,)
         winners.append(winner)
 
-    return winners, len(parsed.rows) - len(winners)
+    return winners, absorbed
 
 
 def _purchasing_status(inst: _Instalment) -> str:
@@ -302,7 +334,23 @@ def _purchasing_status(inst: _Instalment) -> str:
     return "needs_purchase"
 
 
-def _create_orders(db: Session, parsed, now: datetime) -> dict:
+def _row_identity(row) -> dict:
+    """What names a sheet row in the job detail. No ids - the operator reads SO numbers.
+
+    The tab is part of the name. Row numbers restart on every sheet, so `row 42` is four
+    different rows in a book of monthly tabs and an outcome carrying the number alone points
+    at none of them.
+    """
+    return {
+        "doc_no": row.so_number,
+        "item_code": row.item_code,
+        "delivery_date": row.delivery_date.isoformat() if row.delivery_date else "",
+        "sheet": getattr(row, "sheet", "") or "",
+    }
+
+
+def _create_orders(db: Session, parsed, now: datetime,
+                   outcome: Optional[ImportOutcome] = None, collapsed=None) -> dict:
     """Turn the sheet's rows into sales orders, under the ownership rule.
 
     The rule, in one place because it is the whole design:
@@ -314,8 +362,13 @@ def _create_orders(db: Session, parsed, now: datetime) -> dict:
 
     "Last writer wins" across two feeds with different refresh rhythms is how a quantity
     silently reverts, so the owner is recorded rather than inferred.
+
+    `outcome` records what happened to each sheet ROW. Optional so a direct caller keeps the
+    old signature; a throwaway non-persisting recorder stands in when it is absent.
+    `collapsed` is the caller's already-computed `(instalments, absorbed)` pair.
     """
-    instalments, absorbed = _instalments(parsed)
+    outcome = outcome or ImportOutcome(None, persist=False)
+    instalments, absorbed = collapsed if collapsed is not None else _instalments(parsed)
 
     by_number: dict[str, list] = {}
     for row in instalments:
@@ -344,10 +397,26 @@ def _create_orders(db: Session, parsed, now: datetime) -> dict:
             if order.demand_origin != SOURCE_SYSTEM:
                 order.demand_origin = SOURCE_SYSTEM
             orders_owned_elsewhere += 1
+            # Per ROW, so the job's counts are a count of source rows. The row is not a
+            # failure - the sheet still writes its location and its purchase-order claim
+            # afterwards - but no figure on the document was touched, which is the thing
+            # somebody re-reading the job needs to be told.
+            for row in rows:
+                outcome.skip(row=row.source_row, code=oc.DOCUMENT_OWNED_ELSEWHERE,
+                             identity=_row_identity(row), value=number)
             continue
 
         buildable = [r for r in rows if r.item_code and r.item_code in products]
         unmatched_items.update(r.item_code for r in rows if r.item_code not in products)
+        for row in rows:
+            if not row.item_code:
+                outcome.skip(row=row.source_row, code=oc.MISSING_ITEM_CODE,
+                             identity=_row_identity(row))
+            elif row.item_code not in products:
+                # Never created: a product invented from a working spreadsheet is a SKU the
+                # plan then buys. Counted, named in the summary, and now pinned to its row.
+                outcome.skip(row=row.source_row, code=oc.PRODUCT_NOT_FOUND,
+                             identity=_row_identity(row), value=row.item_code)
         if order is None and not buildable:
             # An order with no line we can build is not an order. Creating an empty header
             # would put a phantom sales order in the list that no plan can ever read.
@@ -410,6 +479,8 @@ def _create_orders(db: Session, parsed, now: datetime) -> dict:
                 if (extra.source_system or "") == SOURCE_SYSTEM:
                     db.delete(extra)
                     lines_withdrawn += 1
+                    outcome.updated(code=oc.LINE_WITHDRAWN, identity=_row_identity(row),
+                                    value=row.so_number)
             if held:
                 current[key] = held[:1]
             qty = float(row.qty or 0)
@@ -434,6 +505,8 @@ def _create_orders(db: Session, parsed, now: datetime) -> dict:
                 # again. That omission is the whole duplication bug.
                 current[key] = [line]
                 lines_created += 1
+                outcome.success(row=row.source_row, code=oc.CREATED,
+                                identity=_row_identity(row), value=row.so_number)
             else:
                 # Its own line, so the file is the truth for it: a quantity corrected in the
                 # sheet has to reach the plan, and the alternative is a second line.
@@ -443,6 +516,12 @@ def _create_orders(db: Session, parsed, now: datetime) -> dict:
                 if warehouse_id:
                     line.warehouse_id = warehouse_id
                 lines_refreshed += 1
+                # `updated` whatever the values were: this feed rewrites the line it owns
+                # unconditionally, so claiming "unchanged" would be a guess about a write
+                # that definitely happened.
+                outcome.updated(row=row.source_row, identity=_row_identity(row),
+                                value=row.so_number, entity_type="order_line",
+                                entity_id=line.id)
 
         # Gone: an instalment this feed wrote that the sheet has stopped stating. Scoped
         # twice over - only lines THIS feed owns, and only on documents in this file - so a
@@ -457,6 +536,12 @@ def _create_orders(db: Session, parsed, now: datetime) -> dict:
                     continue
                 db.delete(line)
                 lines_withdrawn += 1
+                # No source row: a withdrawal is reached by the sheet's SILENCE, so there is
+                # no row in this upload to point at. Recorded anyway - it is the destructive
+                # half, and the job detail is where somebody finds out what went away.
+                outcome.updated(code=oc.LINE_WITHDRAWN,
+                                identity={"doc_no": number, "item_code": key[0]},
+                                value=number)
 
     db.flush()
     return {
@@ -470,14 +555,31 @@ def _create_orders(db: Session, parsed, now: datetime) -> dict:
         # Named on the upload screen. A book of 15,797 rows describing 8,272 instalments is
         # not an error, but a reader who is not told will read the smaller number as loss.
         "instalments": len(instalments),
-        "rows_restating_an_instalment": absorbed,
+        "rows_restating_an_instalment": len(absorbed),
     }
 
 
-def apply(db: Session, file_data: bytes, actor: Optional[str] = None) -> dict:
-    """Create the demand the sheet carries, then write locations and claim the PO links."""
+def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
+          outcome: Optional[ImportOutcome] = None,
+          on_total_rows: Optional[Callable[[int], None]] = None) -> dict:
+    """Create the demand the sheet carries, then write locations and claim the PO links.
+
+    `outcome` records what happened to each sheet ROW for the job detail. Optional so a
+    direct caller keeps the old signature; a throwaway non-persisting recorder stands in when
+    it is absent, so there is one code path either way.
+    """
+    outcome = outcome or ImportOutcome(None, persist=False)
     parsed = read_order_inquiry(file_data)
-    summary = _summarise(db, parsed)
+    if on_total_rows is not None:
+        # The sheet's own rows, published the moment it is read so the drawer has a
+        # denominator. It GROWS below once the withdrawals are known.
+        on_total_rows(len(parsed.rows))
+    # Collapsed ONCE per apply and passed down. Three readers need the same pair - the
+    # summary, the write, and the restating rows - and collapsing 15,797 rows three times is
+    # three times the work for an answer that cannot differ.
+    collapsed = _instalments(parsed)
+    summary = _summarise(db, parsed, collapsed)
+    summary["total_rows"] = len(parsed.rows)
     summary["locations_written"] = 0
     summary["claims_written"] = 0
     summary["orders_created"] = 0
@@ -491,10 +593,23 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None) -> dict:
     now = _now()
     # Create first: the annotate loop below reads sales-order lines, and the ones this call
     # just wrote are exactly the ones the sheet has a location for.
-    created = _create_orders(db, parsed, now)
+    created = _create_orders(db, parsed, now, outcome, collapsed)
     summary.update(created)
 
-    instalments, _absorbed = _instalments(parsed)
+    # What this JOB accounts for, which is more than the sheet states. A withdrawal is reached
+    # by the sheet's SILENCE, so it carries an outcome and no source row: with the row count
+    # alone as the total, a book that withdraws one instalment finishes past 100%. Known only
+    # now - a withdrawal is discovered while writing - so the denominator grows here.
+    summary["total_rows"] = len(parsed.rows) + int(created.get("lines_withdrawn", 0))
+    if on_total_rows is not None and created.get("lines_withdrawn"):
+        on_total_rows(summary["total_rows"])
+
+    instalments, absorbed = collapsed
+    # The rows that state a delivery another tab already states. Nothing is skipped - their
+    # quantity is inside the instalment - so they ride on `unchanged`, and every row of the
+    # book is now accounted for exactly once: instalments plus these equals the row count.
+    for row_number in absorbed:
+        outcome.unchanged(row=row_number or None, code=oc.RESTATES_AN_INSTALMENT)
     known_lines = _so_lines(db, {r.so_number for r in instalments})
     warehouses = _warehouses_by_code(
         db, {r.location for r in instalments if r.location}

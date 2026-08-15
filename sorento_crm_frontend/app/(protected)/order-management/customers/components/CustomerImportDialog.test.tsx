@@ -214,10 +214,15 @@ describe('CustomerImportDialog', () => {
 
     fireEvent.click(button(/^Test/));
 
-    await waitFor(() => expect(screen.getByText('Row 2: no customer name')).toBeInTheDocument());
-    expect(screen.queryByText('Row 12: no customer name')).not.toBeInTheDocument();
+    // The rendering is the shared `ImportFeedbackSections`, which puts the row number in
+    // its own element so it can be emphasised - hence the row-scoped assertion rather than
+    // one on a single joined string.
+    await waitFor(() => expect(screen.getByText('Row 2')).toBeInTheDocument());
+    expect(screen.queryByText('Row 12')).not.toBeInTheDocument();
     fireEvent.click(screen.getByText('Show all 11'));
-    expect(screen.getByText('Row 12: no customer name')).toBeInTheDocument();
+    expect(screen.getByText('Row 12')).toBeInTheDocument();
+    // The skip claim is the summary's own count, never the length of the warning list.
+    expect(screen.getByText('11 rows skipped')).toBeInTheDocument();
   });
 
   it('names unrecognised columns', async () => {
@@ -231,9 +236,10 @@ describe('CustomerImportDialog', () => {
 
     fireEvent.click(button(/^Test/));
 
-    await waitFor(() =>
-      expect(screen.getByText('SALESMAN, CREDIT TERM')).toBeInTheDocument(),
-    );
+    // One chip per column in the shared rendering: a joined string cannot be read down.
+    await waitFor(() => expect(screen.getByText('SALESMAN')).toBeInTheDocument());
+    expect(screen.getByText('CREDIT TERM')).toBeInTheDocument();
+    expect(screen.getByText(/Columns we did not recognise \(2\)/)).toBeInTheDocument();
   });
 
   it('a clean file queues straight from Confirm', async () => {

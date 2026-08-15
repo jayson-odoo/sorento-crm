@@ -5,11 +5,17 @@ import { getOutstandingUploadConfig } from '../services/outstandingImportService
 import type { UploadTestResult } from '../components/UploadTestVerdict';
 
 /**
- * SCM - the preview-then-confirm upload flow, shared by every SCM upload dialog.
+ * SCM - the test-then-upload flow, shared by every SCM upload dialog.
  *
- * Two steps, never one click: choosing a file PREVIEWS it (writes nothing) and the user
- * confirms before anything is saved. The whole reorder plan is computed from these files,
- * so a wrong one quietly imported is a week of unpicking.
+ * Three steps, and the first one is deliberately inert: **choosing a file does nothing at
+ * all**. Test is an explicit press that reads the file and writes nothing, and Confirm is
+ * what commits. Previewing on drop was the old behaviour and it is what the captain asked us
+ * to stop: it made every SCM dialog behave unlike the GRN, SPO and customer importers next
+ * door, it spent a long read on a file the operator may only have mis-clicked, and it left
+ * "Test" meaning something different here from everywhere else.
+ *
+ * Nothing is ever saved from a single click either: the whole reorder plan is computed from
+ * these files, so a wrong one quietly imported is a week of unpicking.
  *
  * Extracted the moment there was a SECOND upload channel, because the parts that are easy
  * to get subtly wrong are exactly the parts that would have been copied: the sequence guard
@@ -42,9 +48,14 @@ export interface UseTwoStepUploadOptions<TPreview extends TwoStepPreview, TResul
   /** Dialog visibility. Every open resets the flow, so a second visit never shows the first
       visit's result. */
   open: boolean;
+  /** What Test runs. Reads the file, writes nothing. */
   preview: (file: File) => Promise<TPreview>;
   apply: (file: File) => Promise<TResult>;
-  /** Optional: when given, the dialog offers a Test button. Writes nothing. */
+  /**
+   * Optional second read for the channels whose backend also offers `?validate_only=true`:
+   * the standard `{valid, errors, warnings}` verdict. Run by Test ALONGSIDE the preview, not
+   * instead of it, so one press gives one answer however many endpoints are behind it.
+   */
   test?: (file: File) => Promise<UploadTestResult>;
   onApplied?: (result: TResult) => void;
 }
@@ -60,16 +71,21 @@ export interface TwoStepUpload<TPreview extends TwoStepPreview, TResult> {
   accept: string;
   /** ".xlsx or .xlsm or .xls", for a message a person reads. */
   acceptedFormats: string;
-  choose: (next: File | null) => Promise<void>;
+  /** Take the file. Runs NOTHING - see the note at the top of this file. */
+  choose: (next: File | null) => void;
   reject: (rejected: File, reason: 'type' | 'size' | 'extra') => void;
   confirm: () => Promise<void>;
-  /** True when a file is picked, readable, and no request is in flight. */
+  /**
+   * True when a file is picked, no request is in flight, and nothing already read says the
+   * file is unusable. Testing is never REQUIRED: the operator may confirm a file they have
+   * not tested, exactly as they can in the GRN and customer importers.
+   */
   canConfirm: boolean;
   /** The Test verdict, once run. Null until then; cleared on a new file. */
   testResult: UploadTestResult | null;
   testing: boolean;
-  /** Undefined when this channel has no test, so the dialog can hide the button. */
-  runTest?: () => Promise<void>;
+  /** Read the file and report. Always present: every channel can be tested. */
+  runTest: () => Promise<void>;
 }
 
 function messageOf(error: unknown, fallback: string): string {
@@ -128,8 +144,10 @@ export function useTwoStepUpload<TPreview extends TwoStepPreview, TResult>({
     setError(null);
   }, [open]);
 
-  const choose = async (next: File | null) => {
-    const token = ++seq.current;
+  const choose = (next: File | null) => {
+    // No fetch. Picking a file is not a decision to do anything with it, and a dialog that
+    // starts reading on drop cannot be cancelled by putting the mouse down somewhere else.
+    seq.current += 1;
     setFile(next);
     setPreview(null);
     setResult(null);
@@ -137,19 +155,6 @@ export function useTwoStepUpload<TPreview extends TwoStepPreview, TResult>({
     // how somebody uploads a bad file on the strength of a green tick for a different one.
     setTestResult(null);
     setError(null);
-    if (!next) return;
-
-    setPreviewing(true);
-    try {
-      const previewed = await previewFn(next);
-      if (seq.current !== token) return;
-      setPreview(previewed);
-    } catch (e) {
-      if (seq.current !== token) return;
-      setError(messageOf(e, 'Failed to read the file.'));
-    } finally {
-      if (seq.current === token) setPreviewing(false);
-    }
   };
 
   const reject = (rejected: File, reason: 'type' | 'size' | 'extra') => {
@@ -166,15 +171,30 @@ export function useTwoStepUpload<TPreview extends TwoStepPreview, TResult>({
   };
 
   const runTest = async () => {
-    if (!file || !testFn) return;
+    if (!file) return;
+    const token = ++seq.current;
     setTesting(true);
+    setPreviewing(true);
     setError(null);
     try {
-      setTestResult(await testFn(file));
+      // Both reads on one press. A channel with a `validate_only` endpoint has two things to
+      // say about the same file - what it would change, and whether anything blocks - and
+      // making the operator press twice to hear both is how one of them stops being read.
+      const [previewed, verdict] = await Promise.all([
+        previewFn(file),
+        testFn ? testFn(file) : Promise.resolve(null),
+      ]);
+      if (seq.current !== token) return;
+      setPreview(previewed);
+      if (verdict) setTestResult(verdict);
     } catch (e) {
-      setError(messageOf(e, 'Failed to test the file.'));
+      if (seq.current !== token) return;
+      setError(messageOf(e, 'Failed to read the file.'));
     } finally {
-      setTesting(false);
+      if (seq.current === token) {
+        setTesting(false);
+        setPreviewing(false);
+      }
     }
   };
 
@@ -205,11 +225,11 @@ export function useTwoStepUpload<TPreview extends TwoStepPreview, TResult>({
     choose,
     reject,
     confirm,
-    // Testing is never mandatory - the preview already read the file, and forcing a Test
-    // before every upload would make it ceremony rather than a tool.
-    canConfirm: !!file && !!preview && preview.ok && !previewing && !applying && !testing,
+    // Testing is never mandatory - forcing it before every upload makes it ceremony rather
+    // than a tool - but a file already KNOWN to be unusable is never confirmable.
+    canConfirm: !!file && !applying && !testing && !previewing && (!preview || preview.ok),
     testResult,
     testing,
-    runTest: testFn ? runTest : undefined,
+    runTest,
   };
 }

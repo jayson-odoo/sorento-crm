@@ -61,6 +61,12 @@ class ReadResult:
     #: Rows carrying neither an item code nor a quantity. Captions and spacers rather than
     #: failed lines, counted so a big number is visible instead of being silently dropped.
     layout_rows: int = 0
+    #: Which rows those were, and which rows stated nothing still outstanding. Row NUMBERS,
+    #: not just counts, because a queued import records an outcome per source row: without
+    #: them the job would report 4,290 rows processed out of 4,349 and leave the operator to
+    #: guess what happened to the other 59.
+    layout_row_numbers: list[int] = field(default_factory=list)
+    settled_row_numbers: list[int] = field(default_factory=list)
     # Per-row fields the DIFF does not care about but the WRITE does: counterparty code,
     # unit cost, currency. Kept in a side map keyed by `Line.row_ref` rather than added to
     # `Line`, because `outstanding_diff` is deliberately document-agnostic and adding
@@ -203,14 +209,21 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
     label_field = "customer_name" if doc_type == SO else "supplier_name"
     order_date_field = "so_date" if doc_type == SO else "po_date"
 
-    # (document, item, location, date) -> the row that first stated it. The same line stated
-    # twice in one file is a spreadsheet accident, and it is invisible downstream: the diff
-    # pairs by content, so the first copy reads as `unchanged` and the second as `added`,
-    # doubling the supply and then sitting perfectly stable so no later upload surfaces it.
-    # Both rows are still carried - what the write should do with them is arguable, that a
-    # human is told is not.
-    first_seen: dict[tuple, int] = {}
-
+    # NOTE on duplicated lines. This reader used to complain when two rows shared a document,
+    # item, location and date, on the theory that one line stated twice would double the
+    # supply. Measured against the client's real 4,349-row export that theory was wrong on
+    # both halves: 605 groups share `(doc, item, location)`, 567 of them differ in quantity or
+    # remaining figure (SO339706 asks for 31 and for 20 of one item, which is two deliveries
+    # and is exactly what the plan must see), and the remaining 38 are byte-identical, which
+    # the client calls "totally acceptable in 1 SO". The complaint therefore fired 605 times
+    # on a file with nothing wrong with it, on the same lists that carry the rows which really
+    # did fail.
+    #
+    # Doubling is prevented where identity actually lives, in `outstanding_diff`: lines pair
+    # within their `(doc, item, location)` group, exact dates first and leftovers in date
+    # order, so a second copy meets the second existing line and reads `unchanged`. Between
+    # two byte-identical rows the pairing is arbitrary and harmless for the same reason it is
+    # arbitrary: they differ in nothing, so either assignment leaves the same database state.
     for row_number, row in enumerate(rows, start=2):
         if not any(c is not None and str(c).strip() for c in row):
             continue
@@ -230,6 +243,7 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
         # still a problem - that is the totals row, or a genuine gap.
         if not item and (qty is None or qty == 0):
             result.layout_rows += 1
+            result.layout_row_numbers.append(row_number)
             continue
 
         missing = [f for f, v in ((doc_field, doc), (item_key, item)) if not v]
@@ -263,6 +277,7 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
         if qty <= 0:
             # Nothing outstanding is not an error - it is a line that belongs in the
             # "closed" side of the diff, reached by its absence rather than by a zero.
+            result.settled_row_numbers.append(row_number)
             continue
 
         raw_date = rec.get(date_field)
@@ -273,16 +288,6 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
                 value=_clean(raw_date)))
 
         location = _clean(rec.get("stock_location"))
-        # Codes are compared uppercase because every consumer normalises with `upper()`.
-        dup_key = (doc.upper(), item.upper(), location.upper(), when)
-        if dup_key in first_seen:
-            result.problems.append(RowProblem(
-                row_number,
-                f"the same line is stated twice: {doc} / {item} at the same location and "
-                f"date already appears on row {first_seen[dup_key]}",
-                value=doc))
-        else:
-            first_seen[dup_key] = row_number
 
         result.lines.append(Line(
             doc_number=doc,
@@ -301,6 +306,10 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
         # `order_type` is the same shape and OPTIONAL: no export carries it today, and when
         # one does it is what the sales book's demand class is stamped from, so an order
         # this upload creates can be classified instead of reported as unclassifiable.
+        # `agent` is the salesperson code the sales-order export DOES carry on every row. Like
+        # `order_type` it is a header-level fact repeated per line, and like it, it is spent on
+        # the demand class - it is the fourth and last source, read only when the document
+        # itself says nothing. The write path also stamps it onto the order.
         result.extras[str(row_number)] = {
             "party_code": _clean(rec.get("debtor_code" if doc_type == SO
                                          else "creditor_code")),
@@ -308,6 +317,7 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
             "currency": _clean(rec.get("currency")) or None,
             "order_date": _to_date(rec.get(order_date_field)),
             "order_type": _clean(rec.get("order_type")) or None,
+            "agent": _clean(rec.get("agent")) or None,
         }
 
     return result
