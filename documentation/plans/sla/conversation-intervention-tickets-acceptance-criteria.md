@@ -405,6 +405,74 @@ channel - quote-prefix emulation stays), sticker sends.
 - **AC-L5 [FE]** Given the composer, When the assignee opens the emoji picker (":") or
   uses AI assist, Then emoji insert inline and AI assist drafts a reply into the input
   using the EXISTING CRM AI assistant grounded on the visible thread - no new AI surface.
+
+  **As built (slice S4.4, 2026-08-15) - wire contract for L4/L5.**
+
+  Table `message_snippets` (migration `329_message_snippets`, chained on
+  `328_ticket_comments`): `id`, `name`, nullable `shortcut` (unique on
+  `lower(shortcut)` WHERE not null), `body`, `is_active`, `created_by`,
+  `created_at`, `updated_at`. No owner and no company column: workspace-global
+  per the AC.
+
+  Permissions `sla_management.message_snippets.{view,add,edit,delete}` (added to
+  `PERMISSION_REGISTRY`). Migration 329 seeds the four rows AND copies the grants
+  from every role holding `sla_management.conversation_sla_tracking.view` (the
+  DoD grant sweep: without it the composer picker is silently empty for every
+  provisioned role). `.view` is what the picker reads; add/edit/delete gate the
+  admin page at **SLA Management -> Message Snippets**.
+
+  Endpoints, all under `/api/v1/sla-management/message-snippets`:
+  - `GET  /?page&limit&query&sort&dir&is_active` -> `ListResponse[MessageSnippet]`
+    (admin listing; active and inactive).
+  - `GET  /select?query=&tracking_id=` -> `[{ id, name, shortcut, body,
+    resolved_body }]`. ACTIVE snippets only. `body` is the stored wording with
+    its `$tokens`; `resolved_body` is the same text substituted against the
+    ticket. With a `tracking_id` the caller must pass `can_user_act_on_tracking`
+    or it is a **404, never a 403** (same no-existence-leak rule as the sibling
+    ticket routes). Without one, the neutral fallbacks are used.
+  - `GET /{id}`, `POST /`, `PUT /{id}`, `DELETE /{id}` (hard delete). A duplicate
+    shortcut is a 409; a blank name or body is a 422.
+
+  Variables: `$contact_name`, `$assignee_name`, `$ticket_ref`. **Any other
+  `$token` is left literal** ("$50 deposit" survives an insert), and a token that
+  resolves to nothing stays visible rather than leaving a hole. Fallbacks: a
+  nameless contact reads "there"; an unknown assignee reads "Customer Service".
+
+  AI assist: `POST /api/v1/sla-management/conversation-sla-tracking/{tracking_id}/ai-draft`
+  body `{ instruction?: string, tail?: number }` -> `{ draft, model, grounded_on,
+  elapsed_ms }`. Assignee-or-manager scoped (404 BEFORE any model call). No new
+  AI surface: prompt registry key `conversation_reply_draft` (active, with a
+  hardcoded fallback), per-agent provider/model resolution, and the usage row
+  lands in `ai_assistant_usage_logs` under `feature="ticket_reply_draft"`.
+
+  Deviations from the wording above, and why:
+  1. **Variable resolution is SERVER-side, not client-side.** The picker's
+     `/select` returns `resolved_body` already substituted. One implementation
+     instead of two, and the fallbacks cannot drift between the preview a person
+     reads and the text the contact receives. The FE inserts and the text stays
+     editable, exactly as the AC asks.
+  2. **`$ticket_ref` is `ENQ-<last 6 hex of the tracking id>`.** The conversation
+     SLA table has no reference column; inventing a sequence would need a
+     backfill for every existing row. Short, stable and quotable, so it does not
+     read as a UUID.
+  3. **`$assignee_name` resolves to the person INSERTING**, falling back to the
+     row's assignee. A manager answering on a colleague's behalf signs their own
+     name; signing with the assignee's would be a small lie in every such reply.
+  4. **The picker opens on "/" only at the START of the input** (plus a toolbar
+     button). A slash mid-sentence is a date, a URL or "and/or", and a dropdown
+     fighting the typist over those is worse than no shortcut.
+  5. **Emoji uses `emoji-picker-react`**, which was already in `package.json` -
+     no new dependency. Loaded via `next/dynamic` with `ssr: false` and set to
+     native emoji, so no sprite sheets are fetched from a CDN.
+  6. **The AI draft raises on failure (503 with a readable message) rather than
+     degrading.** Its closest sibling, `product_spec_understanding`, falls back
+     to a deterministic reading because a worse search beats no search; there is
+     no deterministic way to write a sentence to a customer, and a button that
+     quietly does nothing is worse than one that says the assistant is not
+     configured. An empty model answer is a failure too, not a blank draft.
+  7. **The three features are opt-in props on the SHARED composer.** Only the
+     intervention-ticket drawer passes them today; the complaint / stock-inquiry
+     / PR panels are byte-identical until they opt in.
 - **AC-L6 [FE][T]** Given inbound messages that quote an earlier message (webhook
   `replyTo`), When rendered, Then the quoted context shows above the message body
   (read-side parity even though outbound quoting stays emulation).

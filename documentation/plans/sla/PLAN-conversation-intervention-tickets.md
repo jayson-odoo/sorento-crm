@@ -244,6 +244,26 @@ typeahead over `userSelectService`, and amber "Internal" bubbles interleaved by
 - AI assist: existing CRM AI assistant drafts into the composer input, grounded on the
   visible thread; no new AI surface.
 
+BUILT 2026-08-15 (code + tests; awaiting tester/review). The as-built wire contract and
+its seven deviations are written under AC-L5 in the UAC file (that is the contract; this
+bullet is the design note). The three that changed the design rather than filling it in:
+
+- **Variable resolution moved to the BACKEND.** `GET .../message-snippets/select` returns
+  `resolved_body` alongside the stored `body`, so the preview and the delivered text come
+  from one implementation and the fallbacks ("Hi there" for a nameless contact) cannot
+  drift. The FE only inserts.
+- **`$ticket_ref` is derived (`ENQ-<last 6 hex>`), not a new column.** A real reference
+  sequence would need a backfill for every existing tracker to buy nothing a customer can
+  tell apart.
+- **The AI draft raises instead of degrading.** `product_spec_understanding` falls back to
+  a deterministic reading; there is no deterministic way to write a sentence to a customer,
+  so a missing/failing/empty model is a 503 with a readable message.
+
+All three composer features are opt-in props on the SHARED
+`SharedConversationComposer`, so the complaint / stock-inquiry / PR panels inherit them by
+passing a prop and are unchanged until they do. Emoji reuses `emoji-picker-react`, already
+a dependency, behind `next/dynamic` with `ssr: false`.
+
 ### S4.5 Post-resolve reassurance + close semantics (UAC M) [FE coder + BE coder + n8n peer]
 
 - Drawer stays open post-resolve in a Resolved state (badge, composer disabled, thread
