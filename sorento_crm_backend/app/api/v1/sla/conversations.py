@@ -219,8 +219,12 @@ async def reply_to_contact(
     contact still gets the message, the Respond outbox is still written, and the
     AC-J human-intervention signal still fires so the bot stands down.
 
-    Accepts JSON (``{text}``) or ``multipart/form-data``
-    (``text``, ``files[]``), exactly like the ticket drawer's send.
+    Accepts JSON (``{text, reply_to_message_id?, reply_to_excerpt?}``) or
+    ``multipart/form-data`` (``text``, ``reply_to_message_id``,
+    ``reply_to_excerpt``, ``files[]``), exactly like the ticket drawer's send.
+    ``text`` is expected to already carry the composer's ">"-quote prefix when
+    replying to a message and is sent verbatim; the ``reply_to_*`` fields are
+    audit-only and never reach Respond (it has no reply-to parameter).
     """
     from starlette.concurrency import run_in_threadpool
 
@@ -229,6 +233,8 @@ async def reply_to_contact(
     if content_type.startswith("multipart/form-data"):
         form = await request.form()
         text = str(form.get("text") or "")
+        reply_to_message_id = str(form.get("reply_to_message_id") or "") or None
+        reply_to_excerpt = str(form.get("reply_to_excerpt") or "") or None
         for item in form.getlist("files"):
             # StarletteUploadFile, NOT fastapi.UploadFile: request.form() yields
             # the starlette class and the FastAPI one is a strict subclass, so an
@@ -242,6 +248,8 @@ async def reply_to_contact(
         except Exception:  # noqa: BLE001
             raw = {}
         text = str((raw or {}).get("text") or "")
+        reply_to_message_id = (raw or {}).get("reply_to_message_id")
+        reply_to_excerpt = (raw or {}).get("reply_to_excerpt")
 
     sender_name = (current_user.get("name") or "").strip() or "Customer Service"
     service = ConversationSLATrackingService(db)
@@ -250,6 +258,8 @@ async def reply_to_contact(
         contact_ref,
         text=text,
         files=files,
+        reply_to_message_id=reply_to_message_id,
+        reply_to_excerpt=reply_to_excerpt,
         sender_user_id=current_user.get("id"),
         sender_name=sender_name,
     )

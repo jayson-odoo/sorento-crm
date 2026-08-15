@@ -6527,6 +6527,8 @@ class ConversationSLATrackingService:
         *,
         text: str,
         files: list,
+        reply_to_message_id: Optional[str] = None,
+        reply_to_excerpt: Optional[str] = None,
         sender_user_id: Optional[str],
         sender_name: str,
     ) -> dict:
@@ -6547,6 +6549,14 @@ class ConversationSLATrackingService:
 
         Response shape is the ticket send's, plus ``stamped_ticket_id`` (null on
         the unstamped lane) so the caller can tell which one happened.
+
+        ``reply_to_*`` behave exactly as they do on the drawer send: audit-only,
+        never sent to Respond (it has no reply-to parameter - the ">" quote
+        prefix is composed by the caller and ``text`` goes verbatim). On the
+        stamped lane they land on that ticket's response event log; on the
+        unstamped lane there is no ticket to write them onto, so they are
+        accepted and dropped rather than refused - the alternative is a reply
+        the colleague cannot quote.
         """
         from app.services.crm_chat_outbound_webhook import notify_human_contact_send
 
@@ -6563,8 +6573,8 @@ class ConversationSLATrackingService:
                 str(mine[0].id),
                 text=text,
                 files=files,
-                reply_to_message_id=None,
-                reply_to_excerpt=None,
+                reply_to_message_id=reply_to_message_id,
+                reply_to_excerpt=reply_to_excerpt,
                 sender_user_id=sender_user_id,
                 sender_name=sender_name,
             )

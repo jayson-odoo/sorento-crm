@@ -20,6 +20,10 @@ Pinned here:
    ticket's first response. Zero or several -> the message still goes, nothing
    is stamped, and the human-intervention signal still fires so the bot stands
    down either way.
+5. **Quoted replies** carry `reply_to_message_id` / `reply_to_excerpt` exactly
+   like the drawer send: audit-only, recorded on the response event log,
+   NEVER sent to Respond (the ">" quote prefix is composed by the FE and the
+   text goes verbatim). Accepted on both the JSON and the multipart lane.
 
 Run:
     venv/bin/pytest tests/test_conversations_contact_endpoints.py -q
@@ -36,7 +40,7 @@ from sqlalchemy import text
 
 from app.models.access import AccessAgent, AgentTeam, RespondContact, Team
 from app.models.chat_history import ChatHistory
-from app.models.sla import SLAPolicy, SLAPolicyTier
+from app.models.sla import ConversationSLAEventLog, SLAPolicy, SLAPolicyTier
 from app.models.ticket_comment import ConversationTicketComment
 from app.models.user import User
 from app.schemas.sla import ConversationSLATrackingCreate
@@ -459,3 +463,106 @@ def test_reply_needs_the_reply_permission_not_just_view(client, seed, sent):
         client.post(f"{INBOX_BASE}/{RESPOND_IO_ID}/reply", json={"text": "nope"}).status_code == 403
     )
     assert sent == []
+
+
+# --------------------------------------------------------------------------- #
+# Quoted reply (AC-L6 parity with the drawer send)                             #
+# --------------------------------------------------------------------------- #
+
+
+def _response_log(db, tracking_id: str):
+    return (
+        db.query(ConversationSLAEventLog)
+        .filter(
+            ConversationSLAEventLog.sla_tracking_id == str(tracking_id),
+            ConversationSLAEventLog.event_type == "response",
+        )
+        .one()
+    )
+
+
+def test_a_quoted_reply_records_the_quote_on_the_response_event_log(
+    client, db, seed, sent, signals
+):
+    """Same audit trail the drawer's send writes - the quote is the only record
+    of WHICH message this answered, because Respond has no reply-to parameter."""
+    _act_as(seed["assignee_id"])
+    got = client.post(
+        f"{INBOX_BASE}/{RESPOND_IO_ID}/reply",
+        json={
+            "text": "> inbox hello 1\n\nYes, Tuesday works.",
+            "reply_to_message_id": "9001",
+            "reply_to_excerpt": "inbox hello 1",
+        },
+    )
+    assert got.status_code == 200, got.text
+    assert got.json()["stamped_ticket_id"] == seed["tracking_id"]
+
+    reason = _response_log(db, seed["tracking_id"]).reason or ""
+    assert "reply_to_message_id=9001" in reason
+    assert "quoted_reply=true" in reason
+
+
+def test_the_quote_prefix_goes_verbatim_and_the_audit_fields_never_reach_respond(
+    client, db, seed, sent, signals
+):
+    _act_as(seed["assignee_id"])
+    client.post(
+        f"{INBOX_BASE}/{RESPOND_IO_ID}/reply",
+        json={
+            "text": "> inbox hello 1\n\nYes, Tuesday works.",
+            "reply_to_message_id": "9001",
+            "reply_to_excerpt": "inbox hello 1",
+        },
+    )
+    assert [c["text"] for c in sent] == ["> inbox hello 1\n\nYes, Tuesday works."]
+    for call in sent:
+        assert "reply_to_message_id" not in call
+        assert "reply_to_excerpt" not in call
+
+
+def test_a_plain_reply_records_no_quote(client, db, seed, sent, signals):
+    _act_as(seed["assignee_id"])
+    client.post(f"{INBOX_BASE}/{RESPOND_IO_ID}/reply", json={"text": "no quote here"})
+    reason = _response_log(db, seed["tracking_id"]).reason or ""
+    assert "reply_to_message_id" not in reason
+    assert "quoted_reply" not in reason
+
+
+def test_the_multipart_lane_reads_the_quote_fields_too(client, db, seed, sent, signals):
+    """The attachment lane is multipart, so the two fields have to be parsed
+    from the form as well as from JSON. The empty-filename part is what a
+    browser sends for an untouched file input - the route skips it, so this
+    stays a text send while still being a real multipart request."""
+    _act_as(seed["assignee_id"])
+    got = client.post(
+        f"{INBOX_BASE}/{RESPOND_IO_ID}/reply",
+        data={
+            "text": "> inbox hello 0\n\nOn it.",
+            "reply_to_message_id": "9000",
+            "reply_to_excerpt": "inbox hello 0",
+        },
+        files=[("files", ("", b"", "application/octet-stream"))],
+    )
+    assert got.status_code == 200, got.text
+    reason = _response_log(db, seed["tracking_id"]).reason or ""
+    assert "reply_to_message_id=9000" in reason
+    assert "quoted_reply=true" in reason
+    assert [c["text"] for c in sent] == ["> inbox hello 0\n\nOn it."]
+
+
+def test_an_unstamped_quoted_reply_still_sends_verbatim(client, db, seed, sent, signals):
+    """No ticket of mine to write the audit onto, so the quote has nowhere to be
+    recorded - but the message the contact receives is unchanged."""
+    _act_as(seed["colleague_id"])
+    got = client.post(
+        f"{INBOX_BASE}/{RESPOND_IO_ID}/reply",
+        json={
+            "text": "> inbox hello 2\n\nHelping out.",
+            "reply_to_message_id": "9002",
+            "reply_to_excerpt": "inbox hello 2",
+        },
+    )
+    assert got.status_code == 200, got.text
+    assert got.json()["stamped_ticket_id"] is None
+    assert [c["text"] for c in sent] == ["> inbox hello 2\n\nHelping out."]
