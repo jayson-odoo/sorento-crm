@@ -264,6 +264,48 @@ describe('OnboardingRequestDetail', () => {
     );
   });
 
+  it('stops offering edits the server would refuse once the batch is finished', async () => {
+    // The backend's REVIEWER_WRITABLE is (submitted, in_review) and answers 409
+    // for the rest, so a completed batch used to render a grid of controls that
+    // could only ever fail - and the reviewer found that out by trying.
+    getOnboardingRequest.mockResolvedValue(
+      detail({
+        status: 'completed',
+        provisioned_at: '2026-08-15T11:00:00',
+        people: [
+          {
+            ...detail().people[0],
+            review_status: 'approved',
+            collisions: [{ kind: 'user_email', label: 'Already a user: Tan Wei Ming' }],
+            user_step: 'done',
+            user_label: 'Nurul Aisyah',
+          },
+        ],
+      }),
+    );
+    renderDetail();
+
+    const grid = within(await screen.findByTestId('people-grid'));
+    expect(grid.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(grid.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
+    expect(grid.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
+    grid.getAllByRole('checkbox').forEach((box) => expect(box).toBeDisabled());
+
+    // What a finished batch is FOR still renders: the verdict, what already
+    // existed, and where each lane got to.
+    expect(grid.getByText('Approved')).toBeInTheDocument();
+    expect(grid.getByText('Already a user: Tan Wei Ming')).toBeInTheDocument();
+    expect(grid.getAllByText('System account').length).toBeGreaterThan(0);
+  });
+
+  it('keeps the grid editable while the batch is still in review', async () => {
+    getOnboardingRequest.mockResolvedValue(detail({ status: 'in_review' }));
+    renderDetail();
+    const grid = within(await screen.findByTestId('people-grid'));
+    expect(grid.getByLabelText('Name, row 1')).toBeEnabled();
+    expect(grid.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+  });
+
   it('counts what the reviewer needs to decide', async () => {
     getOnboardingRequest.mockResolvedValue(
       detail({

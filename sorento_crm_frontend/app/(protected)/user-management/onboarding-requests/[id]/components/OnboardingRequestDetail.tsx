@@ -67,6 +67,16 @@ import { OnboardingRequestNavigation } from './OnboardingRequestNavigation';
 
 const BASE_PATH = '/user-management/onboarding-requests';
 
+/**
+ * The statuses the server still accepts reviewer writes on.
+ *
+ * Mirrors `REVIEWER_WRITABLE` in `app/services/onboarding_service.py`, which
+ * answers 409 for everything else. An editable grid on a completed batch is a
+ * screen full of dead controls: every keystroke and every verdict comes back
+ * refused, and the reviewer only finds that out after trying.
+ */
+const REVIEWER_WRITABLE_STATUSES: string[] = ['submitted', 'in_review'];
+
 /** Stored naive UTC, read as Malaysia wall-clock, never as the browser's zone. */
 function moment(value: string | null): string {
   return value ? formatDateTimeInMalaysia(value) : '-';
@@ -359,6 +369,11 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
             mode="review"
             people={people}
             templates={request.templates}
+            // Review mode with the pens taken away once the batch has left
+            // review: the collision, lane and verdict columns still render -
+            // they are what a finished batch is FOR - but nothing is offered
+            // that the server would refuse.
+            locked={!REVIEWER_WRITABLE_STATUSES.includes(request.status)}
             description={
               <span className="flex flex-wrap gap-1">
                 <span>Submitted {counts.total}</span>
