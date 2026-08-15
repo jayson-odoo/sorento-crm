@@ -264,6 +264,30 @@ describe('OnboardingRequestDetail', () => {
     );
   });
 
+  it('puts the server value back when an edit is refused', async () => {
+    // A refused edit used to sit on screen looking saved: the grid buffers by
+    // cell and only tells the parent on blur, so it then believed the typed
+    // value WAS the committed one and a second blur was a no-op. Concretely -
+    // one tab approves the batch, another still shows it in review, the edit
+    // there comes back 409, and the wrong value simply stays.
+    getOnboardingRequest.mockResolvedValue(detail());
+    updateOnboardingPerson.mockRejectedValue(
+      new Error('This batch is no longer open for review.'),
+    );
+    renderDetail();
+
+    const email = within(await screen.findByTestId('people-grid')).getByLabelText(
+      'Email, row 1',
+    );
+    fireEvent.change(email, { target: { value: 'typed@mocha.com.my' } });
+    fireEvent.blur(email);
+
+    await waitFor(() => expect(updateOnboardingPerson).toHaveBeenCalled());
+    // The detail query is refetched, so the server's value comes back rather
+    // than the refused one staying put.
+    await waitFor(() => expect(getOnboardingRequest).toHaveBeenCalledTimes(2));
+  });
+
   it('stops offering edits the server would refuse once the batch is finished', async () => {
     // The backend's REVIEWER_WRITABLE is (submitted, in_review) and answers 409
     // for the rest, so a completed batch used to render a grid of controls that

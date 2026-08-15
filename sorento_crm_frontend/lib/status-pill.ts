@@ -52,7 +52,12 @@ const STATUS_PILL_CLASS: Record<string, string> = {
   // link that went out is a WAIT (nobody has filled anything in yet), while
   // outbound delivery's `sent` is a success, and the two must not share a
   // colour. The onboarding surfaces map their `sent` status onto this code.
-  link_sent: 'bg-sky-100 text-sky-800',
+  //
+  // Violet, deliberately NOT the sky that `submitted` wears. Those two carry
+  // the queue's whole reading: sky means the batch is back with us and wants a
+  // decision, violet means it is still out with the requester and there is
+  // nothing to do. Painting both sky made the queue answer neither.
+  link_sent: 'bg-violet-100 text-violet-800',
   in_review: 'bg-amber-100 text-amber-800',
   processing: 'bg-indigo-100 text-indigo-800',
   completed: 'bg-emerald-100 text-emerald-800',

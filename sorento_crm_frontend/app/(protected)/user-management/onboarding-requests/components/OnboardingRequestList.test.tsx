@@ -129,6 +129,49 @@ describe('OnboardingRequestList', () => {
     );
   });
 
+  it('returns to page one when a search narrows the set', async () => {
+    // Searching from page 3 otherwise narrows the set to two rows and then asks
+    // for the third page of it, and an empty grid reads as "nothing matched".
+    listOnboardingRequests.mockResolvedValue({
+      data: [summary()],
+      pagination: { page: 1, limit: 50, total: 120 },
+    });
+    renderWith(<OnboardingRequestList />);
+    await screen.findByText(/of 120/);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Go to next page' }));
+    await waitFor(() =>
+      expect(listOnboardingRequests).toHaveBeenCalledWith(
+        expect.objectContaining({ pageIndex: 1 }),
+      ),
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('Search requests...'), {
+      target: { value: 'mocha' },
+    });
+    await waitFor(() =>
+      expect(listOnboardingRequests).toHaveBeenCalledWith(
+        expect.objectContaining({ pageIndex: 0, searchQuery: 'mocha' }),
+      ),
+    );
+  });
+
+  it('does not tell the reviewer to create one when a filter hid them all', async () => {
+    listOnboardingRequests.mockResolvedValue({
+      data: [],
+      pagination: { page: 1, limit: 50, total: 0 },
+    });
+    renderWith(<OnboardingRequestList />);
+    await screen.findByText('No onboarding requests yet. Create one to get started.');
+
+    fireEvent.change(screen.getByPlaceholderText('Search requests...'), {
+      target: { value: 'nothing matches this' },
+    });
+    // "Create one to get started" is wrong advice when requests exist and the
+    // filter is simply hiding them.
+    expect(await screen.findByText('No requests match your filters.')).toBeInTheDocument();
+  });
+
   it('sends the search and the default sort to the server', async () => {
     listOnboardingRequests.mockResolvedValue({
       data: [],

@@ -65,6 +65,21 @@ export function OnboardingRequestList() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
+  const firstPage = () => setPagination((p) => ({ ...p, pageIndex: 0 }));
+
+  /**
+   * Anything that changes WHICH rows match sends the reader back to page one.
+   * Searching from page 3 otherwise narrows the set to two rows and then asks
+   * for the third page of it, which renders as an empty grid and reads like
+   * "nothing matched".
+   */
+  const search = (value: string) => {
+    setSearchQuery(value);
+    firstPage();
+  };
+
+  const isFiltered = searchQuery.trim().length > 0 || statusFilter !== 'all';
+
   const listParams = {
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
@@ -198,7 +213,13 @@ export function OnboardingRequestList() {
     state: { pagination, sorting, rowSelection },
     enableRowSelection: true,
     onRowSelectionChange: setRowSelection,
-    onPaginationChange: setPagination,
+    onPaginationChange: (updater) =>
+      setPagination((current) => {
+        const next = typeof updater === 'function' ? updater(current) : updater;
+        // Growing the page size keeps the OLD page index, which on the last
+        // page addresses rows that no longer exist at the new size.
+        return next.pageSize !== current.pageSize ? { ...next, pageIndex: 0 } : next;
+      }),
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
     manualPagination: true,
@@ -213,11 +234,18 @@ export function OnboardingRequestList() {
       table={table}
       recordCount={total}
       isLoading={isLoading}
-      emptyMessage="No onboarding requests yet. Create one to get started."
+      // An empty queue and a filter that matched nothing need different words:
+      // "create one to get started" is wrong advice when there are requests,
+      // just not these ones.
+      emptyMessage={
+        isFiltered
+          ? 'No requests match your filters.'
+          : 'No onboarding requests yet. Create one to get started.'
+      }
       onRowClick={(row) => {
         // Carry the active list query into the detail URL so its prev/next pager
         // walks the same filtered+sorted set.
-        const search = buildDetailSearch(
+        const qs = buildDetailSearch(
           {
             pageIndex: pagination.pageIndex,
             pageSize: pagination.pageSize,
@@ -227,7 +255,7 @@ export function OnboardingRequestList() {
           { status_key: statusFilter === 'all' ? undefined : statusFilter },
         );
         const id = (row as OnboardingRequestSummary).id;
-        router.push(`/user-management/onboarding-requests/${id}${search ? `?${search}` : ''}`);
+        router.push(`/user-management/onboarding-requests/${id}${qs ? `?${qs}` : ''}`);
       }}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
     >
@@ -241,7 +269,7 @@ export function OnboardingRequestList() {
                 <Input
                   placeholder="Search requests..."
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => search(e.target.value)}
                   className="ps-9 w-64"
                 />
                 {searchQuery ? (
@@ -249,7 +277,7 @@ export function OnboardingRequestList() {
                     mode="icon"
                     variant="dim"
                     className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                    onClick={() => setSearchQuery('')}
+                    onClick={() => search('')}
                   >
                     <X />
                   </Button>
@@ -268,7 +296,7 @@ export function OnboardingRequestList() {
                       value={statusFilter}
                       onChange={(value) => {
                         setStatusFilter(value || 'all');
-                        setPagination((p) => ({ ...p, pageIndex: 0 }));
+                        firstPage();
                       }}
                       options={STATUS_OPTIONS}
                       placeholder="All statuses"
@@ -282,7 +310,7 @@ export function OnboardingRequestList() {
                         size="sm"
                         onClick={() => {
                           setStatusFilter('all');
-                          setPagination((p) => ({ ...p, pageIndex: 0 }));
+                          firstPage();
                         }}
                       >
                         Clear filters

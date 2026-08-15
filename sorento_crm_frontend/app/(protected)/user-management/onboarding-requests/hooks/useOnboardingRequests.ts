@@ -102,6 +102,9 @@ export function useOnboardingRequestMutations(requestId: string) {
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: [ONBOARDING_DETAIL_KEY, requestId] });
     queryClient.invalidateQueries({ queryKey: [ONBOARDING_LIST_KEY] });
+    // The pager is cached for 30s, so a verdict that moves this request out of
+    // the filtered set would otherwise leave prev/next walking the old one.
+    queryClient.invalidateQueries({ queryKey: ['record-neighbours'] });
   };
 
   const fail = (error: Error) => toast.error(error.message);
@@ -110,7 +113,18 @@ export function useOnboardingRequestMutations(requestId: string) {
     mutationFn: ({ personId, patch }: { personId: string; patch: OnboardingPersonPatch }) =>
       updateOnboardingPerson(requestId, personId, patch),
     onSuccess: invalidate,
-    onError: fail,
+    onError: (error: Error) => {
+      toast.error(error.message);
+      // A refused edit must not stay on screen looking saved. The grid buffers
+      // by cell and only tells the parent on blur, so it now believes the new
+      // value IS the committed one and a second blur is a no-op - the row would
+      // read as edited until a reload. Refetching puts the server's value back
+      // under the toast, and only into cells nobody is typing into. Concretely:
+      // one tab approves the batch, another still shows it in review, an edit
+      // there comes back 409, and without this the wrong value simply sits
+      // there.
+      queryClient.invalidateQueries({ queryKey: [ONBOARDING_DETAIL_KEY, requestId] });
+    },
   });
 
   const approvePerson = useMutation({
