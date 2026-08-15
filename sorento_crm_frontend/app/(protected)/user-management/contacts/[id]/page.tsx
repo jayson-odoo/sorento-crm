@@ -1,112 +1,47 @@
 'use client';
 
-import { use, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
-import { MoveLeft } from 'lucide-react';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
-import { Button } from '@/components/ui/button';
-import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Info, Pencil, RefreshCw, Trash2 } from 'lucide-react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '@/lib/api';
-import { formatDate } from '@/lib/helpers';
 import { useState } from 'react';
+import { Info, Pencil, RefreshCw } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import ContactAccessAgentsTable from './components/ContactAccessAgentsTable';
-import ContactCsRoutingRules from './components/routing/ContactCsRoutingRules';
+import { apiFetch } from '@/lib/api';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardHeading,
+  CardTitle,
+  CardToolbar,
+} from '@/components/ui/card';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Skeleton } from '@/components/ui/skeleton';
+import { useContact } from './components/contact-context';
 import ContactMarketSegmentSection from './components/ContactMarketSegmentSection';
 import ContactAttachmentTypesSection from './components/ContactAttachmentTypesSection';
-import ContactMediaAccessSection from './components/ContactMediaAccessSection';
-import ContactChatHistorySection from './components/ContactChatHistorySection';
 import ContactEditDialog from './components/ContactEditDialog';
-import ContactDeleteDialog from '../components/ContactDeleteDialog';
-import PortalLinkButton from '@/components/contacts/PortalLinkButton';
-import type { RespondContact } from '../types/contact.types';
-import RecordNavigation from '@/components/common/RecordNavigation';
 
-export default function ContactDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
-  const router = useRouter();
+export default function ContactProfilePage() {
+  const { contact, isLoading, contactId } = useContact();
   const queryClient = useQueryClient();
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const navigationParams = useMemo(
-    () => ({
-      pageIndex: 0,
-      pageSize: 100,
-      sorting: [{ id: 'created_at', desc: true }],
-      searchQuery: '',
-    }),
-    [],
-  );
-
-  const { data: contact, isLoading } = useQuery({
-    queryKey: ['respond-contact', id],
-    queryFn: async () => {
-      const response = await apiFetch(`/api/user-management/contacts/${id}`);
-      if (!response.ok) throw new Error('Failed to fetch contact');
-      const data = await response.json();
-      return data as RespondContact;
-    },
-    enabled: !!id,
-  });
 
   // Superadmin-only endpoint; a 403 for anyone else resolves to an empty list
   // rather than an error toast, so the section simply reads "None" for them.
   const { data: companies = [], isLoading: companiesLoading } = useQuery({
-    queryKey: ['contact-companies', id],
+    queryKey: ['contact-companies', contactId],
     queryFn: async () => {
-      const response = await apiFetch(`/api/user-management/contacts/${id}/companies`);
+      const response = await apiFetch(`/api/user-management/contacts/${contactId}/companies`);
       if (!response.ok) return [] as { id: string; name: string }[];
       return (await response.json()) as { id: string; name: string }[];
     },
-    enabled: !!id,
+    enabled: !!contactId,
   });
-
-  const { data: navigationData } = useQuery({
-    queryKey: ['respond-contacts-nav', navigationParams],
-    queryFn: async () => {
-      const sortField = navigationParams.sorting?.[0]?.id || 'created_at';
-      const sortDirection = navigationParams.sorting?.[0]?.desc ? 'desc' : 'asc';
-      const params = new URLSearchParams({
-        page: String(navigationParams.pageIndex + 1),
-        limit: String(navigationParams.pageSize),
-        sort: sortField,
-        dir: sortDirection,
-        ...(navigationParams.searchQuery ? { query: navigationParams.searchQuery } : {}),
-      });
-      const response = await apiFetch(`/api/user-management/contacts?${params.toString()}`);
-      if (!response.ok) throw new Error('Failed to fetch contacts');
-      return response.json();
-    },
-    staleTime: Infinity,
-    gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    retry: 1,
-  });
-  const navigationItems = navigationData?.data ?? [];
 
   const syncContactMutation = useMutation({
-    mutationFn: async (contactId: string) => {
-      const response = await apiFetch(`/api/user-management/contacts/${contactId}/sync`, {
+    mutationFn: async (id: string) => {
+      const response = await apiFetch(`/api/user-management/contacts/${id}/sync`, {
         method: 'POST',
       });
       if (!response.ok) {
@@ -116,7 +51,7 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['respond-contact', id] });
+      queryClient.invalidateQueries({ queryKey: ['respond-contact', contactId] });
       queryClient.invalidateQueries({ queryKey: ['respond-contacts'] });
       toast.success('Contact synced successfully');
     },
@@ -131,258 +66,152 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <Skeleton className="h-10 w-64" />
-        <Skeleton className="h-96 w-full" />
-      </div>
-    );
-  }
-
-  if (!contact) {
-    return (
-      <div className="text-center py-12">
-        <p className="text-muted-foreground">Contact not found</p>
-        <Button variant="outline" onClick={() => router.push('/user-management/contacts')} className="mt-4">
-          Back to Contacts
-        </Button>
-      </div>
-    );
+  if (isLoading || !contact) {
+    return <Skeleton className="h-96 w-full" />;
   }
 
   return (
     <>
-      <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Contact Details</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/user-management/contacts">User Management</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Internal Users</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
-            <RecordNavigation
-              currentId={id}
-              items={navigationItems}
-              basePath="/user-management/contacts"
-            />
-            <PortalLinkButton
-              contactId={id}
-              contactLabel={contact?.name ?? contact?.phone_number ?? id}
-              canSendViaRespondIo={!!contact?.respond_io_id}
-            />
-            <Button
-              variant="outline"
-              onClick={() => setDeleteDialogOpen(true)}
-              className="text-destructive border-destructive/50 hover:bg-destructive/10"
-            >
-              <Trash2 className="size-4 mr-2" />
-              Delete contact
-            </Button>
-            <Button asChild variant="outline">
-              <button onClick={() => router.push('/user-management/contacts')}>
-                <MoveLeft /> Back to contacts
-              </button>
-            </Button>
-          </ToolbarActions>
-        </Toolbar>
-      </Container>
-
-      <Container>
-        <Card>
-          <CardHeader>
+      <Card>
+        <CardHeader>
+          <CardHeading>
             <CardTitle>Contact Information</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <p className="text-sm text-muted-foreground">Phone Number</p>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setEditDialogOpen(true)}
-                    className="h-6 w-6 p-0"
-                  >
-                    <Pencil className="h-3 w-3" />
-                  </Button>
-                </div>
-                <p className="font-medium font-mono">{contact.phone_number}</p>
-              </div>
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <p className="text-sm text-muted-foreground">Name</p>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleSync}
-                    disabled={syncContactMutation.isPending}
-                    className="h-6 w-6 p-0"
-                    title="Sync from Respond.io"
-                  >
-                    <RefreshCw className={`h-3 w-3 ${syncContactMutation.isPending ? 'animate-spin' : ''}`} />
-                  </Button>
-                </div>
-                <p className="font-medium">{contact.name || <span className="text-muted-foreground">Not set</span>}</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">First name</p>
-                <p className="font-medium">
-                  {contact.first_name || <span className="text-muted-foreground">—</span>}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Last name</p>
-                <p className="font-medium">
-                  {contact.last_name || <span className="text-muted-foreground">—</span>}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Access types</p>
-                {contact.access_types && contact.access_types.length > 0 ? (
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {contact.access_types.map((t) => (
-                      <Badge key={t.code} variant="secondary" className="font-normal">
-                        {t.name}
-                      </Badge>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="font-medium text-muted-foreground">None assigned</p>
-                )}
-              </div>
-              {/* Companies decide WHICH ROWS this contact can be told about, before
-                  any field-level access applies. A contact with none is answered
-                  with nothing at all - so when an agent replies "no incoming
-                  stock" for a container that plainly exists, this is the first
-                  field to look at. Worth showing beside the access types rather
-                  than only inside the edit dialog. */}
-              <div>
-                <p className="text-sm text-muted-foreground">Companies</p>
-                {companiesLoading ? (
-                  <Skeleton className="h-5 w-24 mt-1" />
-                ) : companies.length > 0 ? (
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {companies.map((c) => (
-                      <Badge key={c.id} variant="secondary" className="font-normal">
-                        {c.name}
-                      </Badge>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="font-medium text-destructive">
-                    None - this contact receives no records
-                  </p>
-                )}
-              </div>
-              <ContactMarketSegmentSection contactId={id} />
-              <ContactAttachmentTypesSection contactId={id} />
-              <div>
-                <p className="text-sm text-muted-foreground">Respond.io ID</p>
-                <p className="font-medium font-mono text-sm">{contact.respond_io_id ?? <span className="text-muted-foreground">—</span>}</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Respond.io Workspace</p>
-                {contact.workspace_id ? (
-                  <div className="flex items-center gap-1">
-                    <p className="font-medium">
-                      {contact.workspace_name?.trim()
-                        ? contact.workspace_name
-                        : `Workspace ${contact.workspace_space_id ?? ''}`.trim() || '—'}
-                    </p>
-                    {contact.workspace_space_id ? (
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0"
-                            aria-label="Show space ID"
-                          >
-                            <Info className="h-3.5 w-3.5 text-muted-foreground" />
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent align="start" className="w-auto px-3 py-2 text-xs">
-                          <span className="text-muted-foreground">Space ID: </span>
-                          <span className="font-mono">{contact.workspace_space_id}</span>
-                        </PopoverContent>
-                      </Popover>
-                    ) : null}
-                  </div>
-                ) : (
-                  <p className="font-medium text-muted-foreground">Not set</p>
-                )}
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Created At</p>
-                <p className="font-medium">{formatDate(new Date(contact.created_at))}</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Updated At</p>
-                <p className="font-medium">{formatDate(new Date(contact.updated_at))}</p>
-              </div>
+          </CardHeading>
+          <CardToolbar>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setEditDialogOpen(true)}
+              className="h-6 w-6 p-0"
+              aria-label="Edit contact"
+              title="Edit contact"
+            >
+              <Pencil className="h-3 w-3" />
+            </Button>
+          </CardToolbar>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Phone Number and Respond.io Workspace are editable, so they belong on
+                the card the pencil opens - the hero only echoes the phone as the
+                record's identity line. */}
+            <div>
+              <p className="text-sm text-muted-foreground">Phone Number</p>
+              <p className="font-medium font-mono">{contact.phone_number}</p>
             </div>
-          </CardContent>
-        </Card>
-      </Container>
-
-      <Container>
-        <Card>
-          <CardHeader>
-            <CardTitle>Media Access</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ContactMediaAccessSection contactId={id} />
-          </CardContent>
-        </Card>
-      </Container>
-
-      <Container>
-        <Card>
-          <CardHeader>
-            <CardTitle>Access Agents</CardTitle>
-          </CardHeader>
-          <ContactAccessAgentsTable contactId={id} />
-        </Card>
-      </Container>
-
-      <Container>
-        <Card>
-          <CardHeader>
-            <CardTitle>Customer Service Assignment</CardTitle>
-          </CardHeader>
-          <ContactCsRoutingRules contactId={id} />
-        </Card>
-      </Container>
-
-      <Container>
-        <ContactChatHistorySection respondIoId={contact.respond_io_id ?? null} />
-      </Container>
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-sm text-muted-foreground">Name</p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleSync}
+                  disabled={syncContactMutation.isPending}
+                  className="h-6 w-6 p-0"
+                  aria-label="Sync from Respond.io"
+                  title="Sync from Respond.io"
+                >
+                  <RefreshCw
+                    className={`h-3 w-3 ${syncContactMutation.isPending ? 'animate-spin' : ''}`}
+                  />
+                </Button>
+              </div>
+              <p className="font-medium">
+                {contact.name || <span className="text-muted-foreground">Not set</span>}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">First name</p>
+              <p className="font-medium">
+                {contact.first_name || <span className="text-muted-foreground">-</span>}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Last name</p>
+              <p className="font-medium">
+                {contact.last_name || <span className="text-muted-foreground">-</span>}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Access types</p>
+              {contact.access_types && contact.access_types.length > 0 ? (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {contact.access_types.map((t) => (
+                    <Badge key={t.code} variant="secondary" className="font-normal">
+                      {t.name}
+                    </Badge>
+                  ))}
+                </div>
+              ) : (
+                <p className="font-medium text-muted-foreground">None assigned</p>
+              )}
+            </div>
+            {/* Companies decide WHICH ROWS this contact can be told about, before
+                any field-level access applies. A contact with none is answered
+                with nothing at all - so when an agent replies "no incoming
+                stock" for a container that plainly exists, this is the first
+                field to look at. Worth showing beside the access types rather
+                than only inside the edit dialog. */}
+            <div>
+              <p className="text-sm text-muted-foreground">Companies</p>
+              {companiesLoading ? (
+                <Skeleton className="h-5 w-24 mt-1" />
+              ) : companies.length > 0 ? (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {companies.map((c) => (
+                    <Badge key={c.id} variant="secondary" className="font-normal">
+                      {c.name}
+                    </Badge>
+                  ))}
+                </div>
+              ) : (
+                <p className="font-medium text-destructive">
+                  None - this contact receives no records
+                </p>
+              )}
+            </div>
+            <ContactMarketSegmentSection contactId={contactId} />
+            <ContactAttachmentTypesSection contactId={contactId} />
+            <div>
+              <p className="text-sm text-muted-foreground">Respond.io Workspace</p>
+              {contact.workspace_id ? (
+                <div className="flex items-center gap-1">
+                  <p className="font-medium">
+                    {contact.workspace_name?.trim()
+                      ? contact.workspace_name
+                      : `Workspace ${contact.workspace_space_id ?? ''}`.trim() || '-'}
+                  </p>
+                  {contact.workspace_space_id ? (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0"
+                          aria-label="Show space ID"
+                        >
+                          <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent align="start" className="w-auto px-3 py-2 text-xs">
+                        <span className="text-muted-foreground">Space ID: </span>
+                        <span className="font-mono">{contact.workspace_space_id}</span>
+                      </PopoverContent>
+                    </Popover>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="font-medium text-muted-foreground">Not set</p>
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <ContactEditDialog
         open={editDialogOpen}
         closeDialog={() => setEditDialogOpen(false)}
         contact={contact}
-      />
-
-      <ContactDeleteDialog
-        open={deleteDialogOpen}
-        onOpenChange={setDeleteDialogOpen}
-        contact={contact}
-        onSuccess={() => router.push('/user-management/contacts')}
       />
     </>
   );
