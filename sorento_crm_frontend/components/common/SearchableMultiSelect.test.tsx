@@ -98,3 +98,75 @@ describe('SearchableMultiSelect — select all', () => {
     expect(selectAllButton()).toBeNull();
   });
 });
+
+/**
+ * A controlled parent, which is how every caller uses this: the value it hands
+ * back is the value the next click is computed against.
+ */
+function Controlled({
+  initial = [],
+  onChange,
+}: {
+  initial?: string[];
+  onChange: (value: string[]) => void;
+}) {
+  const [value, setValue] = React.useState<string[]>(initial);
+  return (
+    <SearchableMultiSelect
+      value={value}
+      options={OPTIONS}
+      onChange={(next) => {
+        onChange(next);
+        setValue(next);
+      }}
+    />
+  );
+}
+
+const option = (name: string) => screen.getByRole('option', { name });
+
+describe('SearchableMultiSelect — what the menu says is chosen', () => {
+  it('reports every chosen option as chosen, not only the last one clicked', async () => {
+    // The bug this pins: the ONLY sign that an option was chosen was a bare tick
+    // icon with no text. Nothing reading the page rather than looking at it - a
+    // screen reader, or a browser agent working off the accessibility tree -
+    // could tell a chosen row from an unchosen one. What it could see was cmdk's
+    // own `aria-selected`, which marks the KEYBOARD-HIGHLIGHTED row and follows
+    // the pointer, so each click appeared to move "selected" off the previous
+    // option: a working multi-select read as a single select.
+    const onChange = vi.fn();
+    render(<Controlled initial={['a']} onChange={onChange} />);
+    openMenu();
+
+    await waitFor(() => expect(option('Alpha')).toBeTruthy());
+    expect(option('Alpha')).toHaveAttribute('aria-checked', 'true');
+    expect(option('Beta')).toHaveAttribute('aria-checked', 'false');
+    expect(option('Gamma')).toHaveAttribute('aria-checked', 'false');
+
+    fireEvent.click(option('Beta'));
+    expect(onChange).toHaveBeenLastCalledWith(['a', 'b']);
+    // Alpha is still chosen even though the highlight has moved to Beta.
+    expect(option('Alpha')).toHaveAttribute('aria-checked', 'true');
+    expect(option('Beta')).toHaveAttribute('aria-checked', 'true');
+
+    fireEvent.click(option('Gamma'));
+    expect(onChange).toHaveBeenLastCalledWith(['a', 'b', 'c']);
+    expect(option('Alpha')).toHaveAttribute('aria-checked', 'true');
+    expect(option('Beta')).toHaveAttribute('aria-checked', 'true');
+    expect(option('Gamma')).toHaveAttribute('aria-checked', 'true');
+
+    // And clicking a chosen option unchooses that one alone.
+    fireEvent.click(option('Alpha'));
+    expect(onChange).toHaveBeenLastCalledWith(['b', 'c']);
+    expect(option('Alpha')).toHaveAttribute('aria-checked', 'false');
+    expect(option('Beta')).toHaveAttribute('aria-checked', 'true');
+    expect(option('Gamma')).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('says the list takes more than one answer', async () => {
+    renderMulti({ value: ['a'] });
+    openMenu();
+    await waitFor(() => expect(screen.getByRole('listbox')).toBeTruthy());
+    expect(screen.getByRole('listbox')).toHaveAttribute('aria-multiselectable', 'true');
+  });
+});

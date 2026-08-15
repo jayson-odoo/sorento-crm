@@ -418,6 +418,61 @@ describe('PeopleGrid', () => {
     },
   );
 
+  it.each(['intake', 'review'] as const)(
+    'reports every chosen need as chosen in %s mode, not only the last one clicked',
+    async (mode) => {
+      // How the working toggle above still got reported as a single select. The
+      // only sign that a need was chosen was a bare tick icon with no text, so
+      // nothing reading the page rather than looking at it could tell a chosen
+      // row from an unchosen one. What it COULD read was cmdk's `aria-selected`,
+      // which marks the keyboard-highlighted row and follows the pointer - so
+      // every click looked like it had moved the selection off the previous
+      // need. The menu has to say which needs are chosen, in the row itself.
+      const onPatch = vi.fn();
+      let current = person({
+        needs_system_account: true,
+        needs_respond_contact: false,
+        needs_agent_seat: false,
+      });
+      const { rerender } = render(
+        <PeopleGrid mode={mode} people={[current]} templates={TEMPLATES} onPatchPerson={onPatch} />,
+      );
+      const draw = () =>
+        rerender(
+          <PeopleGrid
+            mode={mode}
+            people={[current]}
+            templates={TEMPLATES}
+            onPatchPerson={onPatch}
+          />,
+        );
+      const need = (name: string) => screen.getByRole('option', { name });
+
+      fireEvent.click(within(grid()).getByLabelText('Needs'));
+      await screen.findByRole('option', { name: 'System account' });
+      expect(need('System account')).toHaveAttribute('aria-checked', 'true');
+      expect(need('Access to chatbot AI')).toHaveAttribute('aria-checked', 'false');
+
+      fireEvent.click(need('Access to chatbot AI'));
+      current = { ...current, needs_respond_contact: true };
+      draw();
+      // Both, even though the highlight has moved to the one just clicked.
+      expect(need('System account')).toHaveAttribute('aria-checked', 'true');
+      expect(need('Access to chatbot AI')).toHaveAttribute('aria-checked', 'true');
+
+      fireEvent.click(need('Respond.io account'));
+      current = { ...current, needs_agent_seat: true };
+      draw();
+      expect(need('System account')).toHaveAttribute('aria-checked', 'true');
+      expect(need('Access to chatbot AI')).toHaveAttribute('aria-checked', 'true');
+      expect(need('Respond.io account')).toHaveAttribute('aria-checked', 'true');
+      // And the trigger says the same thing the menu does.
+      expect(within(grid()).getByLabelText('Needs')).toHaveTextContent(
+        'System account, Access to chatbot AI, Respond.io account',
+      );
+    },
+  );
+
   it('says what each person needs in words when the row cannot be edited', () => {
     render(<PeopleGrid mode="readonly" people={[person()]} templates={TEMPLATES} />);
     const cells = within(grid());

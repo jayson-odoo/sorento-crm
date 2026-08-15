@@ -25,8 +25,12 @@
 import type {
   OnboardingIntakeContext,
   OnboardingPerson,
-  OnboardingPersonPatch,
 } from '@/components/common/onboarding/types';
+
+// Applying a patch is the same operation on both screens, so it now lives with
+// the shared onboarding vocabulary. Re-exported here because this module is what
+// the intake screen imports.
+export { applyPersonPatch } from '@/components/common/onboarding/types';
 
 const BASE_PATH = '/api/v1/public/onboarding';
 
@@ -59,14 +63,6 @@ export function toDraftRow(person: OnboardingPerson): OnboardingDraftRow {
     needs_respond_contact: person.needs_respond_contact,
     needs_agent_seat: person.needs_agent_seat,
   };
-}
-
-/** Apply a patch to a person row. Shared by both screens so an edit means one thing. */
-export function applyPersonPatch(
-  person: OnboardingPerson,
-  patch: OnboardingPersonPatch,
-): OnboardingPerson {
-  return { ...person, ...patch };
 }
 
 /**

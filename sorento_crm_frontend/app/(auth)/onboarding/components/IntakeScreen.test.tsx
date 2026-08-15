@@ -120,6 +120,45 @@ describe('IntakeScreen', () => {
     expect(screen.getByText('Every person needs a name.')).toBeInTheDocument();
   });
 
+  it('lets one person need more than one thing', async () => {
+    // The whole path the requester walks, with the screen owning the rows: add a
+    // person, open Needs, pick a second and a third. Each click is a toggle, and
+    // the menu has to SAY which needs are chosen - the tick alone is a bare icon
+    // no reader can see, and cmdk marks the highlighted row rather than the
+    // chosen ones, so a working multi-select was reported as a single select.
+    fetchIntakeContext.mockResolvedValue(CONTEXT);
+    renderScreen();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Add a person/ }));
+    const needs = await screen.findByLabelText('Needs');
+    // A new row starts with a system account and nothing else.
+    expect(needs).toHaveTextContent('System account');
+
+    fireEvent.click(needs);
+    fireEvent.click(await screen.findByRole('option', { name: 'Access to chatbot AI' }));
+    expect(screen.getByLabelText('Needs')).toHaveTextContent(
+      'System account, Access to chatbot AI',
+    );
+
+    fireEvent.click(screen.getByRole('option', { name: 'Respond.io account' }));
+    expect(screen.getByLabelText('Needs')).toHaveTextContent(
+      'System account, Access to chatbot AI, Respond.io account',
+    );
+    for (const label of ['System account', 'Access to chatbot AI', 'Respond.io account']) {
+      expect(screen.getByRole('option', { name: label })).toHaveAttribute('aria-checked', 'true');
+    }
+
+    // And clicking a chosen need drops that one alone.
+    fireEvent.click(screen.getByRole('option', { name: 'System account' }));
+    expect(screen.getByLabelText('Needs')).toHaveTextContent(
+      'Access to chatbot AI, Respond.io account',
+    );
+    expect(screen.getByRole('option', { name: 'System account' })).toHaveAttribute(
+      'aria-checked',
+      'false',
+    );
+  });
+
   it('groups the journey into named cards rather than numbered steps', async () => {
     fetchIntakeContext.mockResolvedValue(CONTEXT);
     renderScreen();

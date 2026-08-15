@@ -289,6 +289,62 @@ describe('OnboardingRequestDetail', () => {
     await waitFor(() => expect(getOnboardingRequest).toHaveBeenCalledTimes(2));
   });
 
+  it('lets a second need be ticked while the first is still saving', async () => {
+    // The reviewer's grid showed the row as it was BEFORE the click until the
+    // save answered, so the next click was computed against the stale row: on
+    // the needs multi-select that made a second tick send the first one back as
+    // false, which is a single select. The edit now lands on the cached row at
+    // click time, so the second click toggles against the first.
+    getOnboardingRequest.mockResolvedValue(
+      detail({
+        people: [
+          {
+            ...detail().people[0],
+            needs_system_account: true,
+            needs_respond_contact: false,
+            needs_agent_seat: false,
+          },
+        ],
+      }),
+    );
+    // Still in flight: nothing has come back to correct the row.
+    updateOnboardingPerson.mockReturnValue(new Promise(() => {}));
+    renderDetail();
+
+    const needs = within(await screen.findByTestId('people-grid')).getByLabelText('Needs');
+    fireEvent.click(needs);
+    fireEvent.click(await screen.findByRole('option', { name: 'Access to chatbot AI' }));
+    await waitFor(() =>
+      expect(updateOnboardingPerson).toHaveBeenLastCalledWith('req-1', 'p1', {
+        needs_system_account: true,
+        needs_respond_contact: true,
+        needs_agent_seat: false,
+      }),
+    );
+
+    fireEvent.click(screen.getByRole('option', { name: 'Respond.io account' }));
+    await waitFor(() =>
+      expect(updateOnboardingPerson).toHaveBeenLastCalledWith('req-1', 'p1', {
+        needs_system_account: true,
+        needs_respond_contact: true,
+        needs_agent_seat: true,
+      }),
+    );
+    // And the menu says so, rather than only the row just clicked reading as chosen.
+    expect(screen.getByRole('option', { name: 'System account' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(screen.getByRole('option', { name: 'Access to chatbot AI' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(screen.getByRole('option', { name: 'Respond.io account' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+  });
+
   it('stops offering edits the server would refuse once the batch is finished', async () => {
     // The backend's REVIEWER_WRITABLE is (submitted, in_review) and answers 409
     // for the rest, so a completed batch used to render a grid of controls that

@@ -18,7 +18,11 @@ import {
   useRecordNeighbours,
   type RecordNeighboursResult,
 } from '@/hooks/useRecordNeighbours';
-import type { OnboardingPersonPatch } from '@/components/common/onboarding/types';
+import {
+  applyPersonPatch,
+  type OnboardingPersonPatch,
+  type OnboardingRequestDetail,
+} from '@/components/common/onboarding/types';
 import {
   ONBOARDING_NEIGHBOURS_PATH,
   approveOnboardingPerson,
@@ -109,12 +113,40 @@ export function useOnboardingRequestMutations(requestId: string) {
 
   const fail = (error: Error) => toast.error(error.message);
 
+  const detailKey = [ONBOARDING_DETAIL_KEY, requestId];
+
   const patchPerson = useMutation({
     mutationFn: ({ personId, patch }: { personId: string; patch: OnboardingPersonPatch }) =>
       updateOnboardingPerson(requestId, personId, patch),
+    // The edit lands on the cached row straight away, and not only once the
+    // save has answered.
+    //
+    // Without this the grid kept showing the row as it was BEFORE the click for
+    // as long as the round trip took, and the next click was computed against
+    // that stale row. On the needs multi-select that is the difference between a
+    // multi-select and a single one: ticking a second need read the first as
+    // still unticked and sent it back as false. The same window let a second
+    // edit to any other cell overwrite the first.
+    onMutate: async ({ personId, patch }) => {
+      await queryClient.cancelQueries({ queryKey: detailKey });
+      const previous = queryClient.getQueryData<OnboardingRequestDetail>(detailKey);
+      if (previous) {
+        queryClient.setQueryData<OnboardingRequestDetail>(detailKey, {
+          ...previous,
+          people: previous.people.map((person) =>
+            person.id === personId ? applyPersonPatch(person, patch) : person,
+          ),
+        });
+      }
+      return { previous };
+    },
     onSuccess: invalidate,
-    onError: (error: Error) => {
+    onError: (error: Error, _variables, context) => {
       toast.error(error.message);
+      // Put the row back the way it was before the optimistic edit, so a refused
+      // change does not sit on screen looking saved even for the moment before
+      // the refetch answers.
+      if (context?.previous) queryClient.setQueryData(detailKey, context.previous);
       // A refused edit must not stay on screen looking saved. The grid buffers
       // by cell and only tells the parent on blur, so it now believes the new
       // value IS the committed one and a second blur is a no-op - the row would

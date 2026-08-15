@@ -320,7 +320,10 @@ export function SearchableMultiSelect({
               </button>
             </div>
           ) : null}
-          <CommandList className="min-h-0 flex-1 overflow-y-auto">
+          {/* The list is a listbox where more than one row can be chosen at
+              once. Saying so is what tells a reader that a tick on one row does
+              not cancel the tick on another. */}
+          <CommandList aria-multiselectable className="min-h-0 flex-1 overflow-y-auto">
             {loading ? (
               <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" /> Searching...
@@ -339,10 +342,29 @@ export function SearchableMultiSelect({
                       // sharing a label would otherwise collide in cmdk's keyboard nav.
                       value={opt.value}
                       disabled={opt.disabled}
+                      // Whether this option is CHOSEN. It has to be an attribute
+                      // and not only the tick below, because the tick is a bare
+                      // icon with no text: to anything reading the page rather
+                      // than looking at it - a screen reader, or a browser agent
+                      // reading the accessibility tree - the chosen rows were
+                      // indistinguishable from the unchosen ones.
+                      //
+                      // It cannot be `aria-selected`, which is the ARIA state for
+                      // exactly this, because cmdk owns that attribute on its
+                      // rows and puts it on the KEYBOARD-HIGHLIGHTED row instead.
+                      // The highlight follows the last row you touched, so a
+                      // reader saw "selected" jump from option to option on every
+                      // click and reported a working multi-select as a single
+                      // select. `aria-checked` is a supported state on
+                      // `role="option"` and is the one this component controls.
+                      aria-checked={isSelected}
                       onSelect={() => toggle(opt.value)}
                       className="flex items-start gap-2"
                     >
-                      <div className="mt-0.5 flex size-4 items-center justify-center rounded-sm border border-input">
+                      <div
+                        aria-hidden
+                        className="mt-0.5 flex size-4 items-center justify-center rounded-sm border border-input"
+                      >
                         {isSelected ? <Check className="size-3" /> : null}
                       </div>
                       {renderOption ? (

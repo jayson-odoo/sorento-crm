@@ -184,3 +184,18 @@ export type OnboardingPersonPatch = Partial<
     | 'reviewer_note'
   >
 >;
+
+/**
+ * Apply a patch to a person row.
+ *
+ * Both screens do this, and both have to: an edit is only a toggle against the
+ * row as it stands NOW if the row the next click reads has the previous edit on
+ * it already. The public page applies it to its own state; the review page
+ * applies it to the cached request while the save is in flight.
+ */
+export function applyPersonPatch(
+  person: OnboardingPerson,
+  patch: OnboardingPersonPatch,
+): OnboardingPerson {
+  return { ...person, ...patch };
+}
