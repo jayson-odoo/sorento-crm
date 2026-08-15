@@ -21,6 +21,7 @@ import {
   type LevelImportOutcome,
 } from '../services/reorderLevelImportService';
 import { CountTile } from './UploadCountTile';
+import { UploadReadingIndicator } from './UploadReadingIndicator';
 
 /**
  * The AutoCount reorder level + reorder quantity listing (S13c).
@@ -142,12 +143,7 @@ export function ReorderLevelUploadDialog({
             </Alert>
           ) : null}
 
-          {up.previewing ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <LoaderCircle className="size-4 animate-spin" aria-hidden />
-              Reading the file...
-            </div>
-          ) : null}
+          <UploadReadingIndicator reading={up.previewing} />
 
           {up.result ? (
             <OutcomePanel outcome={up.result} applied />
