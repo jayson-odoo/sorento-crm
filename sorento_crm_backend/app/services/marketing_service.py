@@ -659,7 +659,7 @@ class PromotionService:
                 .all()
             ]
             verdict = promotion_serving.evaluate_candidates(self.db, candidate_ids, today)
-            q = _ordered_query(None).filter(Promotion.id.in_(list(verdict.served_ids) or [""]))
+            q = _ordered_query(None).filter(Promotion.id.in_(list(verdict.served_ids)))
             total = q.count()
         else:
             q = _ordered_query(primary_active_mode)
@@ -1491,7 +1491,7 @@ class PromotionProductService:
             ]
             serving_verdict = promotion_serving.evaluate_candidates(self.db, parent_ids, today)
             q_final = q.filter(
-                PromotionProduct.promotion_id.in_(list(serving_verdict.served_ids) or [""])
+                PromotionProduct.promotion_id.in_(list(serving_verdict.served_ids))
             )
             total = q_final.count()
         elif active is None:
@@ -1811,8 +1811,11 @@ class PromotionTypeService:
         if not promo_type:
             raise handle_not_found("Promotion Type", type_id)
         update_data = type_data.model_dump(exclude_unset=True)
-        if update_data.get("type_code"):
-            self._assert_code_free(update_data["type_code"], exclude_id=type_id)
+        if "type_code" in update_data:
+            if update_data["type_code"] is None:
+                update_data.pop("type_code")
+            else:
+                self._assert_code_free(update_data["type_code"], exclude_id=type_id)
         if update_data.get("is_default"):
             self._clear_other_defaults(type_id)
         if update_data.get("is_default") is False and promo_type.is_default:
@@ -2198,7 +2201,7 @@ class PromotionAttachmentService:
             ]
             serving_verdict = promotion_serving.evaluate_candidates(self.db, parent_ids, today)
             q_final = q.filter(
-                PromotionAttachment.promotion_id.in_(list(serving_verdict.served_ids) or [""])
+                PromotionAttachment.promotion_id.in_(list(serving_verdict.served_ids))
             )
             total = q_final.count()
         elif active is None:

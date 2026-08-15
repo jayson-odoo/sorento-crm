@@ -28,7 +28,7 @@ def _normalize_promotion_markers(v) -> list[str]:
 
 
 class PromotionTypeBase(BaseModel):
-    type_code: str
+    type_code: str = Field(min_length=1)
     type_name: str
     description: Optional[str] = None
     show_expired: bool = False
@@ -55,7 +55,7 @@ class PromotionTypeCreate(PromotionTypeBase):
 
 
 class PromotionTypeUpdate(BaseModel):
-    type_code: Optional[str] = None
+    type_code: Optional[str] = Field(default=None, min_length=1)
     type_name: Optional[str] = None
     description: Optional[str] = None
     show_expired: Optional[bool] = None

@@ -169,8 +169,8 @@ def test_unclassified_promotion_follows_the_default_type():  # S6
         assert not _evaluate(db, [untyped]).is_served(untyped.id)
 
 
-def test_is_active_flag_off_counts_as_expired():
-    """The flag beats the window (promotion_window), so a flag-off row is expired."""
+def test_is_active_flag_off_inside_the_window_is_a_kill_switch():
+    """Switching a promotion off mid-window pulls it from answers entirely."""
     with blank_session() as db:
         standard = _standard(db)
         switched_off = _promo(
@@ -182,8 +182,38 @@ def test_is_active_flag_off_counts_as_expired():
             is_active=False,
         )
         verdict = _evaluate(db, [switched_off])
-        # No end_date bound violated, so it comes back flagged rather than hidden.
-        assert verdict.is_expired_but_usable(switched_off.id)
+        assert verdict.served_ids == set()
+
+
+def test_is_active_flag_off_after_the_end_date_is_still_an_expired_candidate():
+    with blank_session() as db:
+        standard = _standard(db)
+        ended = _promo(
+            db,
+            "ended and off",
+            start=TODAY - timedelta(days=60),
+            end=TODAY - timedelta(days=10),
+            promo_type=standard,
+            is_active=False,
+        )
+        verdict = _evaluate(db, [ended])
+        assert verdict.is_served(ended.id)
+        assert verdict.is_expired_but_usable(ended.id)
+
+
+def test_not_yet_started_promotion_is_neither_live_nor_expired():
+    """September promo uploaded in August must not be served as expired-but-usable."""
+    with blank_session() as db:
+        standard = _standard(db)
+        september = _promo(
+            db,
+            "september pp",
+            start=TODAY + timedelta(days=17),
+            end=TODAY + timedelta(days=47),
+            promo_type=standard,
+        )
+        verdict = _evaluate(db, [september])
+        assert verdict.served_ids == set()
 
 
 # --- the endpoint (UAC E1, N1) ---------------------------------------------
@@ -272,6 +302,30 @@ def test_list_promotions_without_policy_is_the_old_behaviour(served_fixture):  #
     assert {str(row.id) for row in result["data"]} == {str(live_flyer.id)}
     assert result.get("serving_policy_applied") is None
     assert result["fallback_used"] is False
+
+
+def test_policy_with_only_expired_specials_returns_an_empty_page():  # S3 at the route
+    with blank_session() as db:
+        _standard(db)
+        special = _type(db, "special", show_expired=False, match_priority=10)
+        product = _product(db)
+        today = datetime.utcnow().date()
+        expired_special = _promo(
+            db,
+            "ZZT lone special",
+            start=today - timedelta(days=90),
+            end=today - timedelta(days=7),
+            promo_type=special,
+        )
+        _link(db, expired_special, product)
+
+        result = PromotionService(db).list_promotions(
+            product_ids=[product.id], serving_policy=True, limit=50
+        )
+
+        assert result["data"] == []
+        assert result["pagination"]["total"] == 0
+        assert result["serving_policy_applied"] is True
 
 
 def test_policy_result_is_paginated(served_fixture):

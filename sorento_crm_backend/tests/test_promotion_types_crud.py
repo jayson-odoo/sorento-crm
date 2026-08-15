@@ -155,6 +155,15 @@ def test_create_normalizes_code_and_markers():
         assert created.match_markers == ["clearance", "end of line"]
 
 
+def test_blank_type_code_is_rejected_on_create_and_update():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        PromotionTypeCreate(type_code="   ", type_name="Blank")
+    with pytest.raises(ValidationError):
+        PromotionTypeUpdate(type_code="")
+
+
 def test_duplicate_code_is_a_conflict_not_a_500():  # T6
     with blank_session() as db:
         _create(db)

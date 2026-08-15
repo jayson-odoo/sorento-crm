@@ -183,8 +183,8 @@ export default function PromotionTypeFormModal({
                   control={form.control}
                   name="show_expired"
                   render={({ field }) => (
-                    <FormItem className="flex items-center justify-between gap-4 rounded-md border p-3">
-                      <div>
+                    <FormItem className="flex flex-row items-center justify-between gap-4 rounded-md border p-3">
+                      <div className="space-y-0.5">
                         <FormLabel>Show when expired</FormLabel>
                         <FormDescription>
                           Off: never served after its end date.
@@ -203,8 +203,8 @@ export default function PromotionTypeFormModal({
                       control={form.control}
                       name="expired_valid_until_year_end"
                       render={({ field }) => (
-                        <FormItem className="flex items-center justify-between gap-4 rounded-md border p-3">
-                          <div>
+                        <FormItem className="flex flex-row items-center justify-between gap-4 rounded-md border p-3">
+                          <div className="space-y-0.5">
                             <FormLabel>Until end of year</FormLabel>
                             <FormDescription>Only within the year it ended.</FormDescription>
                           </div>
@@ -312,8 +312,8 @@ export default function PromotionTypeFormModal({
                   control={form.control}
                   name="is_default"
                   render={({ field }) => (
-                    <FormItem className="flex items-center justify-between gap-4 rounded-md border p-3">
-                      <div>
+                    <FormItem className="flex flex-row items-center justify-between gap-4 rounded-md border p-3">
+                      <div className="space-y-0.5">
                         <FormLabel>Default type</FormLabel>
                         <FormDescription>
                           Used for a promotion whose name carries no marker.

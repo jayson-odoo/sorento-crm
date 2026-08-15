@@ -187,6 +187,7 @@ def test_expired_type_still_answers_when_nothing_is_live(srtwc286):
     matches = _build_promotions_for_products(db, {product.id}, None)
     by_id = {m["uuid"]: m["display"] for m in matches}
 
-    # The flyer's own type still honours it (180-day bound), and so does standard.
-    assert by_id[str(flyer.id)]["expired_but_usable"] is True
+    # A flyer switched off inside its window is pulled entirely (kill switch);
+    # the expired standard offer still answers.
+    assert str(flyer.id) not in by_id
     assert by_id[str(july.id)]["expired_but_usable"] is True

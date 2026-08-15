@@ -14,7 +14,9 @@ The rule this module holds:
 2. **Expired rows fall back per TYPE, not globally.** A type with no live row in
    the candidate set may contribute its latest expired row when the type's config
    allows it. A live A3 flyer therefore does not suppress an expired standard
-   promo -- that suppression IS the bug.
+   promo -- that suppression IS the bug. Expired means the end date has passed;
+   a row that is not live for any other reason (not yet started, or switched off
+   inside its window) is neither live nor expired and is never served.
 3. **The type decides.** `show_expired` off (special) means nothing of that kind
    is ever served after its end date. The two bounds
    (`expired_valid_until_year_end`, `expired_max_age_days`) both apply when both
@@ -111,7 +113,7 @@ def evaluate(
         verdict.type_by_promotion[str(promo.id)] = promo_type
         if promotion_window.is_live(promo.is_active, promo.start_date, promo.end_date, today):
             live.append(promo)
-        else:
+        elif promo.end_date is not None and promo.end_date < today:
             expired.append(promo)
 
     for promo in live:

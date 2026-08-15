@@ -238,13 +238,17 @@ def create_promotion(
     # the upload path strips `@ ( ) , &` out of stored names.
     classifier_filename = None
     if _attachment_ids:
-        _first_attachment = (
-            db.query(Attachment.original_filename)
+        _filename_by_id = {
+            str(row[0]): row[1]
+            for row in db.query(Attachment.id, Attachment.original_filename)
             .filter(Attachment.id.in_(_attachment_ids))
-            .first()
-        )
-        if _first_attachment:
-            classifier_filename = _first_attachment[0]
+            .all()
+        }
+        for _att_id in _attachment_ids:
+            _name = _filename_by_id.get(str(_att_id))
+            if _name:
+                classifier_filename = _name
+                break
     classified_type = classify_promotion_type(
         db,
         description=payload.promotions.description,
