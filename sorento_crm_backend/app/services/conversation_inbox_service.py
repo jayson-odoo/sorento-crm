@@ -38,7 +38,19 @@ import binascii
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import Text, and_, cast, func, or_, select, true, tuple_
+from sqlalchemy import (
+    DateTime,
+    Text,
+    and_,
+    cast,
+    func,
+    literal,
+    null,
+    or_,
+    select,
+    true,
+    tuple_,
+)
 from sqlalchemy.orm import Session
 
 from app.models.access import RespondContact
@@ -200,7 +212,8 @@ def list_conversations(
             mentions, mentions.c.contact_pk == RespondContact.id
         ).outerjoin(last_msg, last_msg.c.contact_key == RespondContact.respond_io_id)
     else:
-        mentioned_at = func.cast(None, ConversationTicketComment.created_at.type)
+        # Same column list on every tab, so the caller reads one row shape.
+        mentioned_at = cast(null(), DateTime)
         # "All" is defined by AC-N1 as every contact with ANY message, so the
         # message join is the filter. On the ticket tabs a contact with an open
         # ticket but no stored message still has to be reachable, so the join
@@ -252,7 +265,8 @@ def list_conversations(
 
     if after is not None:
         conditions.append(
-            tuple_(sort_at, RespondContact.id) < tuple_(after[0], after[1])
+            tuple_(sort_at, RespondContact.id)
+            < tuple_(literal(after[0], DateTime), literal(after[1], Text))
         )
 
     page = (
