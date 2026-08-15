@@ -47,6 +47,17 @@ class _DeadRespondClient:
     def get_message(self, *a, **k):
         raise RuntimeError("respond down")
 
+    # The thread read resolves the CONTACT's workspace rather than building a
+    # default-workspace client, so the stub has to answer the same constructors
+    # the real class does.
+    @classmethod
+    def for_identifier(cls, *_a, **_k):
+        return cls()
+
+    @classmethod
+    def for_contact_id(cls, *_a, **_k):
+        return cls()
+
 
 class _ChatResult:
     def __init__(self, content):
@@ -79,8 +90,7 @@ def db(monkeypatch):
 
     monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **k: None)
     monkeypatch.setattr(
-        "app.services.integration_service.RespondClient",
-        lambda *a, **k: _DeadRespondClient(),
+        "app.services.integration_service.RespondClient", _DeadRespondClient
     )
     with blank_session() as session:
         schema = session.get_bind()._execution_options["schema_translate_map"][None]

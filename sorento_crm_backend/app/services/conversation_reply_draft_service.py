@@ -177,8 +177,12 @@ def draft_reply(
 
     tail = max(1, min(int(tail or DEFAULT_TAIL), MAX_TAIL))
 
+    # Same viewer scope as the drawer's own read. The route has already checked
+    # it, so this is belt and braces - but the read is scoped BY the caller, and
+    # a grounding read the person asking for the draft could not repeat for
+    # themselves would be exactly the leak the scope exists to stop.
     page = ConversationSLATrackingService(db).fetch_conversation_thread_page(
-        str(tracking.id), limit=tail
+        str(tracking.id), viewer_user_id=str(user_id or ""), limit=tail
     )
     items = list(page.get("items") or [])[-tail:]
     transcript = [line for line in (_line_for(i) for i in items) if line]
