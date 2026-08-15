@@ -142,7 +142,11 @@ describe('PeopleGrid', () => {
       <PeopleGrid
         mode="intake"
         people={[person({ full_name: '' })]}
-        templates={TEMPLATES}
+        // A FRESH array every render, which is what a query response actually
+        // hands over: same options, new identity. Passing the module-level
+        // constant let a `templates` memo dependency look stable when in real
+        // use it never is.
+        templates={[...TEMPLATES]}
         // Inline, like both real callers: the grid has to survive it.
         onPatchPerson={(id, patch) => onPatch(id, patch)}
       />,
@@ -162,7 +166,7 @@ describe('PeopleGrid', () => {
         <PeopleGrid
           mode="intake"
           people={[person({ full_name: '' })]}
-          templates={TEMPLATES}
+          templates={[...TEMPLATES]}
           onPatchPerson={(id, patch) => onPatch(id, patch)}
         />,
       );
@@ -176,6 +180,40 @@ describe('PeopleGrid', () => {
     fireEvent.blur(name);
     expect(onPatch).toHaveBeenCalledTimes(1);
     expect(onPatch).toHaveBeenCalledWith('p1', { full_name: 'Aisyah' });
+  });
+
+  it('lets a half-typed name survive an update arriving from outside', () => {
+    // The other direction of the same guard: a refetch lands while she is mid
+    // word. Her typing has to win, or the field she is looking at changes under
+    // the caret and what she had entered is gone.
+    const onPatch = vi.fn();
+    const { rerender } = render(
+      <PeopleGrid
+        mode="review"
+        people={[person({ full_name: 'Nurul Aisyah' })]}
+        templates={[...TEMPLATES]}
+        onPatchPerson={onPatch}
+      />,
+    );
+
+    const name = within(grid()).getByLabelText('Name, row 1') as HTMLInputElement;
+    name.focus();
+    fireEvent.change(name, { target: { value: 'Nurul Ais' } });
+
+    rerender(
+      <PeopleGrid
+        mode="review"
+        people={[person({ full_name: 'Somebody Else Entirely' })]}
+        templates={[...TEMPLATES]}
+        onPatchPerson={onPatch}
+      />,
+    );
+
+    expect(document.activeElement).toBe(name);
+    expect(name).toHaveValue('Nurul Ais');
+    // And her draft is what commits, not the value that tried to overwrite it.
+    fireEvent.blur(name);
+    expect(onPatch).toHaveBeenCalledWith('p1', { full_name: 'Nurul Ais' });
   });
 
   it('takes an update from outside into a field nobody is typing into', () => {

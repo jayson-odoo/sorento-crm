@@ -283,6 +283,17 @@ export function PeopleGrid({
   const handlersRef = useRef({ onPatchPerson, onRemovePerson, onApprovePerson, onRejectPerson });
   handlersRef.current = { onPatchPerson, onRemovePerson, onApprovePerson, onRejectPerson };
 
+  // `templates` is read through a ref for the same reason, and it is the more
+  // dangerous of the two: it arrives on a query response, so a refetch hands
+  // over a NEW array holding the same options. As a memo dependency that alone
+  // rebuilt every column, and a rebuilt column is a new cell renderer, which
+  // React unmounts and remounts - taking the half-typed name in that cell with
+  // it. The options themselves change only when an admin edits a template, so
+  // the memo is keyed on their identities rather than the array's.
+  const templatesRef = useRef(templates);
+  templatesRef.current = templates;
+  const templateKey = templates.map((t) => t.id).join('|');
+
   const patch = useCallback((personId: string, next: OnboardingPersonPatch) => {
     handlersRef.current.onPatchPerson?.(personId, next);
   }, []);
@@ -397,10 +408,10 @@ export function PeopleGrid({
           <TemplateSelect
             personId={row.original.id}
             value={row.original.template_id}
-            templates={templates}
+            templates={templatesRef.current}
             disabled={!editable}
             onChange={(templateId) => {
-              const template = templates.find((t) => t.id === templateId);
+              const template = templatesRef.current.find((t) => t.id === templateId);
               // Picking a template pre-fills the three flags; it does not lock
               // them - the requester confirms, which is the one decision the
               // journey asks of her at this step.
@@ -565,13 +576,18 @@ export function PeopleGrid({
     }
 
     return base;
-    // Deliberately no handler identities in here: they come from the ref above,
-    // so the columns only change when the SHAPE of the grid does. Recomputing
-    // them per keystroke gave every cell a new renderer identity, which React
-    // treats as a different component - the cell remounted and the caret was
-    // lost after the first character. `canRemove` is a boolean rather than the
-    // handler for the same reason.
-  }, [editable, isReview, mode, note, templates, canRemove, patch]);
+    // Deliberately no handler or template-array identities in here: they come
+    // from the refs above, so the columns only change when the SHAPE of the
+    // grid does. Recomputing them per keystroke gave every cell a new renderer
+    // identity, which React treats as a different component - the cell
+    // remounted and the caret was lost after the first character. `canRemove`
+    // is a boolean and `templateKey` a string of ids for the same reason.
+    //
+    // The rule cannot see that `templateKey` stands in for `templatesRef`, so
+    // it reads as unnecessary. Removing it is the bug: the picker would then
+    // keep rendering options that no longer exist.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editable, isReview, mode, note, templateKey, canRemove, patch]);
 
   const table = useReactTable({
     columns,
