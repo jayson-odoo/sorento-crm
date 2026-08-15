@@ -476,6 +476,31 @@ channel - quote-prefix emulation stays), sticker sends.
 - **AC-L6 [FE][T]** Given inbound messages that quote an earlier message (webhook
   `replyTo`), When rendered, Then the quoted context shows above the message body
   (read-side parity even though outbound quoting stays emulation).
+
+  **As built (slice S4.6, 2026-08-15).** The block renders in the SHARED
+  `RespondChatList`, so the complaint / stock-inquiry / PR / portal threads get it too.
+  Thread items carry `replyTo: { messageId, traffic?, message: { type?, text? } }`;
+  `describeQuotedContext` (`lib/respondIoChatRender.ts`) turns it into
+  `{ messageId, excerpt, sender }`. Tapping the block scrolls to the quoted message and
+  flashes it, reusing the S4.8 bubble ref map - but only when that message is already
+  loaded; otherwise it renders as plain text rather than as a button that cannot act.
+  Outbound quoting is untouched.
+
+  Deviations from the wording above, and why:
+  1. **No new column, no migration.** `chat_histories.reply_to_message_id` and
+     `reply_to_message` already existed (added for the chatbot's numbered-option
+     resolution) and the external ingest already accepted and upserted both. A new JSON
+     column would have been a second home for the same two values. The `sender` part of
+     the quoted context is DERIVED from the quoted message's direction rather than
+     stored - storing it would be a third copy of something the thread already knows.
+  2. **A gap was closed on the S4.8 backfill, not on the ingest.** `persist_messages`
+     kept the quoted id and dropped the quoted TEXT, so a page served by the fallback
+     lane would have shown an empty "replying to" block. It now stores the excerpt via
+     the same typed-placeholder helper the body uses, so a quoted photo reads
+     "[image] sink.jpg".
+  3. **A quote block never fetches the page containing its target.** That is the search
+     jump's job (which replaces the window); doing it from a passive quote would move
+     the thread under a reader who only glanced at it.
 - **AC-L7 [BE][FE][T]** (added 2026-08-15, captain dogfooding: "i scoll up already then
   can't find any older") Given a thread longer than one page, When the assignee scrolls
   to the top, Then older messages load automatically (cursor pagination) until the true

@@ -429,6 +429,10 @@ def persist_messages(db: Session, contact: ThreadContact, items: Iterable[dict])
         if traffic not in ("incoming", "outgoing"):
             continue
         reply_to = item.get("replyTo") if isinstance(item.get("replyTo"), dict) else None
+        # AC-L6: the quoted EXCERPT is persisted alongside the quoted id. Without
+        # it the fallback (local) lane renders a "replying to" block with nothing
+        # in it - the id alone cannot be shown to a reader.
+        reply_to_text = _respond_item_text(reply_to) if reply_to else None
         rows.append(
             {
                 "channel": contact.channel,
@@ -443,6 +447,7 @@ def persist_messages(db: Session, contact: ThreadContact, items: Iterable[dict])
                 "reply_to_message_id": (
                     str(reply_to.get("messageId")) if reply_to and reply_to.get("messageId") else None
                 ),
+                "reply_to_message": reply_to_text,
                 "respond_ts": sent_at,
                 "ingest_at": datetime.now(tz=timezone.utc).replace(tzinfo=None),
             }
@@ -467,10 +472,10 @@ def persist_messages(db: Session, contact: ThreadContact, items: Iterable[dict])
         f"""
         INSERT INTO chat_histories (
             channel, contact_id, phone_number, message, sent_at, first_name, last_name,
-            type, message_id, reply_to_message_id, respond_ts, ingest_at
+            type, message_id, reply_to_message_id, reply_to_message, respond_ts, ingest_at
         ) VALUES (
             :channel, :contact_id, :phone_number, :message, :sent_at, :first_name, :last_name,
-            :type, :message_id, :reply_to_message_id, :respond_ts, :ingest_at
+            :type, :message_id, :reply_to_message_id, :reply_to_message, :respond_ts, :ingest_at
         )
         ON CONFLICT (contact_id, message_id) WHERE {CHAT_HISTORY_DEDUPE_PREDICATE}
         DO NOTHING

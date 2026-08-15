@@ -25,6 +25,18 @@ export type RespondMessageRenderable = {
   } & Record<string, unknown>;
   status?: RespondStatusEntry[];
   sender?: { source?: string };
+  /**
+   * Inbound quote context (UAC AC-L6). Respond's `message.received` webhook and
+   * its message objects carry `replyTo` when the contact quoted an earlier
+   * message; the local `chat_histories` lane reconstructs the same shape from
+   * `reply_to_message_id` / `reply_to_message`. Outbound quoting has no API
+   * support and stays the ">"-prefix emulation, so this is a READ-side field.
+   */
+  replyTo?: {
+    messageId?: number | string | null;
+    traffic?: string;
+    message?: { type?: string; text?: string } & Record<string, unknown>;
+  } & Record<string, unknown> | null;
 };
 
 /** WhatsApp-like read receipt tiers derived from Respond.io status[] entries. */
@@ -269,6 +281,62 @@ export function splitMessageQuote(
   const raw = item.message?.text ?? '';
   if (item.traffic !== 'outgoing') return { quoted: null, body: raw };
   return splitQuotedPrefix(raw);
+}
+
+/** The "replying to" block above a bubble, when the message quotes an earlier one. */
+export type QuotedContext = {
+  /** Respond message id of the quoted message, as a string. Null when absent. */
+  messageId: string | null;
+  /** What to show in the block. Never empty - falls back to a typed placeholder. */
+  excerpt: string;
+  /** 'contact' | 'agent' when the quoted direction is known, else null. */
+  sender: 'contact' | 'agent' | null;
+};
+
+/** Longest quoted excerpt rendered in an inbound "replying to" block. */
+export const QUOTED_CONTEXT_MAX_CHARS = 180;
+
+/**
+ * The quoted context carried BY the message itself (UAC AC-L6).
+ *
+ * Distinct from `splitMessageQuote`, which reads OUR own ">"-prefix emulation
+ * off outgoing text. This one reads Respond's structured `replyTo`, which is how
+ * a contact's quote-reply arrives - there is no ">" in it to parse, and parsing
+ * one would be wrong anyway (the contact's own words are never ours to rewrite).
+ *
+ * A quoted media message has no text, so the excerpt falls back to a typed
+ * placeholder ("[image]") rather than rendering an empty block; a quote we hold
+ * no excerpt for at all reads "Quoted message", because "this replies to
+ * something" is still true and useful.
+ */
+export function describeQuotedContext(item: RespondMessageRenderable): QuotedContext | null {
+  const reply = item.replyTo;
+  if (!reply || typeof reply !== 'object') return null;
+
+  const rawId = reply.messageId;
+  const messageId =
+    rawId === null || rawId === undefined || String(rawId).trim() === ''
+      ? null
+      : String(rawId).trim();
+
+  const quotedMessage = (reply.message ?? {}) as { type?: string; text?: string };
+  const text = (quotedMessage.text ?? '').replace(/\s+/g, ' ').trim();
+  const kind = (quotedMessage.type ?? '').trim();
+  let excerpt = text;
+  if (!excerpt) excerpt = kind && kind !== 'text' ? `[${kind}]` : '';
+  if (!excerpt) excerpt = 'Quoted message';
+  if (excerpt.length > QUOTED_CONTEXT_MAX_CHARS) {
+    excerpt = `${excerpt.slice(0, QUOTED_CONTEXT_MAX_CHARS).trimEnd()}…`;
+  }
+
+  const traffic = (reply.traffic ?? '').toString().trim().toLowerCase();
+  const sender =
+    traffic === 'incoming' ? 'contact' : traffic === 'outgoing' ? 'agent' : null;
+
+  // Nothing identifiable at all (no id, no text, no type) is not a quote.
+  if (!messageId && !text && !kind) return null;
+
+  return { messageId, excerpt, sender };
 }
 
 /** Group messages by local date stamp (YYYY-MM-DD in browser tz) for date dividers. */

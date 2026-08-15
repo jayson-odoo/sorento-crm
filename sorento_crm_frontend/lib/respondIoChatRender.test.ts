@@ -2,11 +2,13 @@ import { describe, it, expect } from 'vitest';
 
 import {
   describeMessageAttachments,
+  describeQuotedContext,
   buildQuotedReplyText,
   fileNameFromAttachmentUrl,
   splitMessageQuote,
   splitQuotedPrefix,
   QUOTE_EXCERPT_MAX_CHARS,
+  QUOTED_CONTEXT_MAX_CHARS,
   type RespondMessageRenderable,
 } from './respondIoChatRender';
 
@@ -235,5 +237,68 @@ describe('splitMessageQuote (direction aware)', () => {
       quoted: null,
       body: '',
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// describeQuotedContext - UAC AC-L6: the STRUCTURED inbound quote, read from
+// Respond's `replyTo`, never parsed out of the body.
+// ---------------------------------------------------------------------------
+
+describe('describeQuotedContext', () => {
+  it('reads the quoted id, excerpt and direction', () => {
+    expect(
+      describeQuotedContext({
+        messageId: 2,
+        traffic: 'incoming',
+        message: { type: 'text', text: 'which one?' },
+        replyTo: {
+          messageId: 1,
+          traffic: 'outgoing',
+          message: { type: 'text', text: 'Your order ships Tuesday.' },
+        },
+      }),
+    ).toEqual({ messageId: '1', excerpt: 'Your order ships Tuesday.', sender: 'agent' });
+  });
+
+  it('normalizes whitespace so a multi-line quote stays one readable line', () => {
+    expect(
+      describeQuotedContext({
+        replyTo: { messageId: '9', message: { text: ' line one \n\n line two  ' } },
+      })?.excerpt,
+    ).toBe('line one line two');
+  });
+
+  it('falls back to a typed placeholder for a quoted media message', () => {
+    expect(
+      describeQuotedContext({ replyTo: { messageId: 5, message: { type: 'image' } } }),
+    ).toEqual({ messageId: '5', excerpt: '[image]', sender: null });
+  });
+
+  it('still says something when only the quoted id is known', () => {
+    expect(describeQuotedContext({ replyTo: { messageId: 5 } })?.excerpt).toBe('Quoted message');
+  });
+
+  it('clips a very long excerpt', () => {
+    const long = 'x'.repeat(QUOTED_CONTEXT_MAX_CHARS + 40);
+    const out = describeQuotedContext({ replyTo: { messageId: 5, message: { text: long } } });
+    expect(out?.excerpt.length).toBeLessThanOrEqual(QUOTED_CONTEXT_MAX_CHARS + 1);
+    expect(out?.excerpt.endsWith('…')).toBe(true);
+  });
+
+  it('is null for a message with no quote, and for an empty / malformed one', () => {
+    expect(describeQuotedContext(msg({ type: 'text', text: 'hi' }))).toBeNull();
+    expect(describeQuotedContext({ replyTo: null })).toBeNull();
+    expect(describeQuotedContext({ replyTo: {} })).toBeNull();
+    expect(describeQuotedContext({ replyTo: { messageId: '  ' } })).toBeNull();
+  });
+
+  it('is independent of the outgoing ">" emulation, which stays with splitMessageQuote', () => {
+    const item: RespondMessageRenderable = {
+      traffic: 'outgoing',
+      message: { type: 'text', text: '> quoted line\nreply body' },
+    };
+    expect(describeQuotedContext(item)).toBeNull();
+    expect(splitMessageQuote(item)).toEqual({ quoted: 'quoted line', body: 'reply body' });
   });
 });

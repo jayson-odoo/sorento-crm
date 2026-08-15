@@ -372,6 +372,35 @@ Deviations from the bullets above, and why:
   renders "replying to" block above the message body. Outbound quoting stays the
   existing prefix emulation (no API support - verified).
 
+Built 2026-08-15 (code + tests; awaiting tester/review). **No migration: the columns
+already existed.** `chat_histories.reply_to_message_id` + `reply_to_message` predate
+this feature (they were added for the chatbot's numbered-option resolution), and the
+external ingest already accepted and upserted both. A new JSON column would have been a
+second home for the same two values.
+
+- **Wire shape (all three lanes agree)**: a thread item carries
+  `replyTo: { messageId, traffic?, message: { type?, text? } }` or nothing. The Respond
+  lane passes Respond's own object through verbatim; the local lane rebuilds it from the
+  two columns; the FE reads it with `describeQuotedContext`.
+- **Gap closed on the S4.8 backfill**: `persist_messages` stored the quoted ID and DROPPED
+  the quoted text, so a page served by the fallback lane would have rendered an empty
+  "replying to" block. It now stores the excerpt too, via the same `_respond_item_text`
+  the message body uses - which means a quoted PHOTO backfills as `[image] sink.jpg`
+  rather than as nothing.
+- **FE (SHARED `RespondChatList`, so complaint / SI / PR / portal threads inherit it)**:
+  `describeQuotedContext` in `lib/respondIoChatRender.ts` + a `QuotedContextBlock` above
+  the bubble body. It is a BUTTON that scrolls to the quoted message (reusing the S4.8
+  bubble ref map) and flashes it for ~1.8s, but ONLY when that message is in the loaded
+  window; out of window it renders as plain text, because a control that cannot do what
+  it offers is worse than a label. A quote block deliberately does NOT fetch the page
+  containing its target - that is the search jump's job (which replaces the window), and
+  doing it from a passive quote would move the thread under a reader who only glanced.
+- **Precedence**: when a message somehow carries BOTH a structured `replyTo` and our own
+  ">" prefix, the structured one wins and the prefix is not rendered a second time.
+  Outbound quoting is untouched (`buildQuotedReplyText` / `splitMessageQuote`).
+- **S4.3 comments are unaffected**: Respond's comment webhook has no `replyTo`, and
+  comments live in their own table, so nothing there could drop it.
+
 ### S4.7 Attachment filename fidelity + in-thread preview (UAC D5-D6) [BE+FE coder]
 (added 2026-08-15 from captain hands-on testing)
 

@@ -24,9 +24,11 @@ import {
   extractSelectionOptions,
   formatBubbleTime,
   formatDatePillLabel,
+  describeQuotedContext,
   getReceiptTier,
   splitMessageQuote,
   type MessageAttachmentDescriptor,
+  type QuotedContext,
   type RespondMessageRenderable,
 } from '@/lib/respondIoChatRender';
 import { getRespondMessageDisplayTimeMs, getRespondMessageSortTimeMs } from '@/lib/respondIoMessage';
@@ -195,6 +197,52 @@ function ReceiptTicks({ tier }: { tier: ReturnType<typeof getReceiptTier> }) {
   return <CheckCheck className="size-3.5 text-sky-500" aria-label="Read" />;
 }
 
+/**
+ * The "replying to" block above a bubble whose message quotes an earlier one
+ * (UAC AC-L6). Clickable ONLY when the quoted message is in the loaded window:
+ * a control that cannot do the thing it offers is worse than a plain label.
+ */
+function QuotedContextBlock({
+  context,
+  onJump,
+}: {
+  context: QuotedContext;
+  onJump?: () => void;
+}) {
+  const senderLabel =
+    context.sender === 'contact' ? 'Contact' : context.sender === 'agent' ? 'You' : null;
+  const inner = (
+    <>
+      <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide opacity-70">
+        <CornerUpLeft className="size-3" />
+        {senderLabel ? `Replying to ${senderLabel}` : 'Replying to'}
+      </span>
+      <span className="line-clamp-3 whitespace-pre-wrap break-words">{context.excerpt}</span>
+    </>
+  );
+  const className =
+    'mb-1 flex w-full flex-col gap-0.5 rounded border-s-2 border-emerald-500 bg-black/5 px-2 py-1 text-start text-xs italic opacity-80 dark:bg-white/5';
+
+  if (!onJump) {
+    return (
+      <div data-testid="quoted-context" className={className}>
+        {inner}
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      data-testid="quoted-context"
+      onClick={onJump}
+      aria-label="Go to the quoted message"
+      className={`${className} transition-colors hover:bg-black/10 dark:hover:bg-white/10`}
+    >
+      {inner}
+    </button>
+  );
+}
+
 export default function RespondChatList({
   items,
   contactName,
@@ -232,6 +280,9 @@ export default function RespondChatList({
   // what keeps this working on the token-authenticated portal thread.
   const [previewItems, setPreviewItems] = useState<AttachmentPreviewItem[]>([]);
   const [previewIndex, setPreviewIndex] = useState(0);
+  // Briefly ringed after a quote-block jump, so the reader sees WHICH bubble the
+  // thread moved to (AC-L6).
+  const [flashMessageId, setFlashMessageId] = useState<string | null>(null);
 
   const openPreview = useCallback(
     (attachments: MessageAttachmentDescriptor[], clicked: number, idPrefix: string) => {
@@ -342,6 +393,33 @@ export default function RespondChatList({
     [],
   );
 
+  // AC-L6: tapping a "replying to" block jumps to the quoted message when it is
+  // in the loaded window. It deliberately does NOT fetch the page containing it:
+  // that is the search jump's job (which replaces the window), and doing it from
+  // a passive quote block would move the thread under a reader who only glanced
+  // at the quote. Out of window = the block renders as plain text, not a
+  // button, so nothing offers an action it cannot perform.
+  const loadedMessageIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const item of sortedItems) {
+      if (item.messageId != null) ids.add(String(item.messageId));
+    }
+    return ids;
+  }, [sortedItems]);
+
+  const jumpToMessage = useCallback((id: string) => {
+    bubbleRefs.current.get(id)?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    setFlashMessageId(id);
+  }, []);
+
+  // Clear the flash ring after it has been seen. Reset on every new target so a
+  // second jump re-flashes instead of inheriting the first one's timer.
+  useEffect(() => {
+    if (!flashMessageId) return;
+    const t = setTimeout(() => setFlashMessageId(null), 1800);
+    return () => clearTimeout(t);
+  }, [flashMessageId]);
+
   const contactInitial = (contactName?.trim()?.charAt(0) || '?').toUpperCase();
   const headerName = contactName?.trim() || 'Unknown contact';
   const headerPhone = contactPhone?.trim() || '';
@@ -444,6 +522,10 @@ export default function RespondChatList({
           // Direction aware: only OUR outgoing replies carry the ">" quote
           // convention. A contact message starting with ">" renders verbatim.
           const { quoted, body: text } = splitMessageQuote(item);
+          // AC-L6: a contact's quote-reply arrives as a STRUCTURED `replyTo`, not
+          // as ">" text. When both exist the structured one wins - it is the real
+          // reference, and two quote blocks on one bubble would just be noise.
+          const quotedContext = describeQuotedContext(item);
           const attachments = describeMessageAttachments(item);
           const displayMs = getRespondMessageDisplayTimeMs(item);
           const key = item.messageId != null ? String(item.messageId) : `msg-${idx}`;
@@ -465,6 +547,12 @@ export default function RespondChatList({
           const isHighlighted =
             normalizedHighlightId != null && String(item.messageId ?? '') === normalizedHighlightId;
           const isActiveMatch = activeMatchId != null && String(item.messageId ?? '') === activeMatchId;
+          const isFlashed =
+            flashMessageId != null && String(item.messageId ?? '') === flashMessageId;
+          const quotedTargetId =
+            quotedContext?.messageId && loadedMessageIds.has(quotedContext.messageId)
+              ? quotedContext.messageId
+              : null;
 
           return (
             <div
@@ -494,7 +582,9 @@ export default function RespondChatList({
                   data-active-match={isActiveMatch ? 'true' : undefined}
                   className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-sm shadow-sm ${bubbleClass}${
                     isHighlighted ? ' ring-2 ring-amber-400 dark:ring-amber-500' : ''
-                  }${isActiveMatch ? ' ring-2 ring-sky-500 dark:ring-sky-400' : ''}`}
+                  }${isActiveMatch ? ' ring-2 ring-sky-500 dark:ring-sky-400' : ''}${
+                    isFlashed ? ' ring-2 ring-emerald-500 dark:ring-emerald-400' : ''
+                  }`}
                 >
                   <div className="mb-0.5 flex items-center gap-2">
                     <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
@@ -512,10 +602,19 @@ export default function RespondChatList({
                       </button>
                     )}
                   </div>
-                  {quoted && (
-                    <div className="mb-1 rounded border-s-2 border-emerald-500 bg-black/5 px-2 py-1 text-xs italic opacity-80 dark:bg-white/5">
-                      <span className="line-clamp-3 whitespace-pre-wrap break-words">{quoted}</span>
-                    </div>
+                  {quotedContext ? (
+                    <QuotedContextBlock
+                      context={quotedContext}
+                      onJump={quotedTargetId ? () => jumpToMessage(quotedTargetId) : undefined}
+                    />
+                  ) : (
+                    quoted && (
+                      <div className="mb-1 rounded border-s-2 border-emerald-500 bg-black/5 px-2 py-1 text-xs italic opacity-80 dark:bg-white/5">
+                        <span className="line-clamp-3 whitespace-pre-wrap break-words">
+                          {quoted}
+                        </span>
+                      </div>
+                    )
                   )}
                   {attachments.map((att, i) => (
                     <AttachmentBlock
@@ -541,9 +640,11 @@ export default function RespondChatList({
                       ))}
                     </div>
                   )}
-                  {!text && options.length === 0 && attachments.length === 0 && !quoted && (
-                    <div className="italic opacity-70">(no text)</div>
-                  )}
+                  {!text &&
+                    options.length === 0 &&
+                    attachments.length === 0 &&
+                    !quoted &&
+                    !quotedContext && <div className="italic opacity-70">(no text)</div>}
                   <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-zinc-500 dark:text-zinc-300/80">
                     {displayMs > 0 && <span>{formatBubbleTime(displayMs)}</span>}
                     <ReceiptTicks tier={tier} />
