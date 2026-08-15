@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import AuditLogsList from './AuditLogsList';
+import AuditLogsList, { ENTITY_TYPES } from './AuditLogsList';
 import type { AuditLog } from '../types/auditLog.types';
 
 function renderWithClient(ui: React.ReactElement) {
@@ -106,6 +106,12 @@ describe('AuditLogsList', () => {
     expect(screen.getByText('Status changed to closed')).toBeInTheDocument();
     // user_id UUID must not surface as a label
     expect(screen.queryByText('u-1')).not.toBeInTheDocument();
+  });
+
+  it('offers customer as an entity-type filter, matching what the backend records', () => {
+    // The audit entity_type the backend writes for a customer is singular; a plural
+    // "customers" here would filter to zero rows and look like there is no history.
+    expect(ENTITY_TYPES).toContain('customer');
   });
 
   it('renders an error state with a retry affordance', () => {

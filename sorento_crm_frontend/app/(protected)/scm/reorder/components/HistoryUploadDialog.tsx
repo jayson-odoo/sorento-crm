@@ -1,6 +1,8 @@
 'use client';
 
 import { LoaderCircle, TestTube } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -13,6 +15,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { FileDropzone } from '@/components/common/FileDropzone';
+import { ImportFeedbackSections } from '@/components/common/ImportFeedbackSections';
+import { useImportJobDrawer } from '@/components/upload-activity/useImportJobDrawer';
+import type { ImportQueuedResult } from '@/components/upload-activity/importQueue';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { MAX_SIZE_MB, useTwoStepUpload } from '../hooks/useTwoStepUpload';
 import {
@@ -24,12 +29,8 @@ import {
   testPurchaseHistory,
   type HistoryImportKind,
   type OrderInquiryPreview,
-  type OrderInquiryResult,
-  type OrderLinkResolution,
   type PurchaseHistoryPreview,
-  type PurchaseHistoryResult,
   type SalesHistoryPreview,
-  type SalesHistoryResult,
   previewSalesHistory,
   applySalesHistory,
 } from '../services/purchaseHistoryService';
@@ -37,16 +38,22 @@ import { CountTile } from './UploadCountTile';
 import { UploadTestVerdict } from './UploadTestVerdict';
 
 /**
- * SCM - the two curation feeds: purchase history, and the Order Inquiry sheet.
+ * SCM - the three curation feeds: purchase history, sales history, and the Order Inquiry
+ * sheet.
  *
  * Separate from `OutstandingUploadDialog` because the files MEAN different things, not
  * because they look different. The outstanding extract is the open order book and drives
- * supply; this dialog's two files carry what that extract does not hold - what was bought
- * historically, where stock is meant to land, and which purchase order a sales order is
+ * supply; this dialog's files carry what that extract does not hold - what was bought and
+ * sold historically, where stock is meant to land, and which purchase order a sales order is
  * waiting on.
  *
- * The two-step flow itself is shared (`useTwoStepUpload`), so the sequence guard and the
- * server-owned accept list cannot drift between the dialogs.
+ * Test, then upload, with nothing at all running on file select. Confirm queues an import
+ * job and the upload drawer follows it: the sales book is 81,361 lines in the client's own
+ * export and writing it inside the request is what timed the gateway out. So what the upload
+ * DID is reported on the job page, not here.
+ *
+ * The flow itself is shared (`useTwoStepUpload`), so the sequence guard and the server-owned
+ * accept list cannot drift between the dialogs.
  */
 
 const COPY: Record<
@@ -131,52 +138,21 @@ function ChipList({
   );
 }
 
+/** The file could not be read at all. Rendered by the shared import feedback component, so
+    a blocking problem looks the same here as in every other import dialog. */
 function Problems({ problems }: { problems: string[] }) {
-  if (!problems.length) return null;
-  return (
-    <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
-      <p className="text-sm font-medium">This file could not be read.</p>
-      <ul className="mt-1.5 space-y-1">
-        {problems.map((problem) => (
-          <li key={problem} className="text-2xs text-muted-foreground">
-            {problem}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
+  return <ImportFeedbackSections errors={problems} />;
 }
 
-/** What the resolver did. Shown after an apply, because the pairing it completed may have
-    been claimed by a file somebody uploaded weeks ago and nothing else would say so. */
-function LinkOutcome({ links }: { links: OrderLinkResolution }) {
-  return (
-    <section aria-label="Order links" className="rounded-lg border border-border p-3">
-      <h4 className="text-xs font-semibold">Sales order to purchase order links</h4>
-      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
-        <CountTile label="Resolved now" value={links.resolved} />
-        <CountTile label="Still waiting" value={links.still_open} />
-        <CountTile label="Examined" value={links.examined} />
-      </div>
-    </section>
-  );
-}
-
-function HistorySummary({
-  data,
-  applied,
-}: {
-  data: PurchaseHistoryPreview;
-  applied?: PurchaseHistoryResult;
-}) {
+function HistorySummary({ data }: { data: PurchaseHistoryPreview }) {
   return (
     <div className="space-y-4">
       <div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
           <CountTile label="Orders" value={data.orders} />
-          <CountTile label={applied ? 'Orders written' : 'New'} value={applied ? applied.orders_created : data.orders_new} />
+          <CountTile label="New" value={data.orders_new} />
           <CountTile label="Already held" value={data.orders_existing} />
-          <CountTile label={applied ? 'Lines written' : 'Lines'} value={applied ? applied.lines_created : data.lines} />
+          <CountTile label="Lines" value={data.lines} />
           <CountTile label="Charge lines" value={data.charge_lines} />
         </div>
         <p className="mt-1.5 text-2xs text-muted-foreground">
@@ -197,22 +173,17 @@ function HistorySummary({
 }
 
 /**
- * The sales book. Two things it says that no other channel does.
+ * The sales book, and the one figure it carries that no other channel does.
  *
  * `Still owed` above zero means the file is not purely history: those lines carry real
  * outstanding quantity, they will be absorbed as finished business anyway, and the
- * outstanding channel is where they belong. `Settled with quantity owed` is the same fact
- * from the other side after a write - documents this upload closed that still owed
- * something. Both are shown even at zero, because a figure that appears only when it is bad
- * teaches nobody where to look.
+ * outstanding channel is where they belong. It is shown even at zero, because a figure that
+ * appears only when it is bad teaches nobody where to look.
+ *
+ * What the upload then DID - created, updated, unchanged, and the documents it settled that
+ * still owed something - is reported on the job, because it happens on the worker.
  */
-function SalesHistorySummary({
-  data,
-  applied,
-}: {
-  data: SalesHistoryPreview;
-  applied?: SalesHistoryResult;
-}) {
+function SalesHistorySummary({ data }: { data: SalesHistoryPreview }) {
   return (
     <div className="space-y-4">
       <div>
@@ -228,36 +199,6 @@ function SalesHistorySummary({
           {plural(data.layout_rows, 'row is', 'rows are')} a package caption or spacer.
         </p>
       </div>
-
-      {applied ? (
-        <div>
-          {/* Created / updated / unchanged, side by side. Unchanged is a real outcome and
-              shown as one: an upload of an unchanged book reporting nothing at all looks
-              like it failed. */}
-          <div className="grid grid-cols-3 gap-2">
-            <CountTile label="Orders created" value={applied.orders_created} />
-            <CountTile label="Orders updated" value={applied.orders_updated} />
-            <CountTile label="Orders unchanged" value={applied.orders_unchanged} />
-            <CountTile label="Lines created" value={applied.lines_created} />
-            <CountTile label="Lines updated" value={applied.lines_updated} />
-            <CountTile label="Lines unchanged" value={applied.lines_unchanged} />
-          </div>
-          <p className="mt-1.5 text-2xs text-muted-foreground">
-            {applied.orders_with_open_lines_closed.toLocaleString()}{' '}
-            {plural(applied.orders_with_open_lines_closed, 'order', 'orders')} settled while
-            still owing something.
-          </p>
-        </div>
-      ) : null}
-
-      {applied ? (
-        <ChipList
-          title="Left alone: another upload owns these"
-          items={applied.conflicted_orders}
-          total={applied.conflicted_order_count}
-          hint="This file says they are fully delivered and another upload says they are still open. Nothing was changed on them - decide which export is current."
-        />
-      ) : null}
 
       <ChipList
         title="Items we do not hold"
@@ -281,13 +222,7 @@ function SalesHistorySummary({
   );
 }
 
-function InquirySummary({
-  data,
-  applied,
-}: {
-  data: OrderInquiryPreview;
-  applied?: OrderInquiryResult;
-}) {
+function InquirySummary({ data }: { data: OrderInquiryPreview }) {
   return (
     <div className="space-y-4">
       <div>
@@ -298,10 +233,7 @@ function InquirySummary({
               rows lost. */}
           <CountTile label="Scheduled deliveries" value={data.instalments} />
           <CountTile label="Matched" value={data.lines_matched} />
-          <CountTile
-            label={applied ? 'Links claimed' : 'PO links'}
-            value={applied ? applied.claims_written : data.po_claims}
-          />
+          <CountTile label="PO links" value={data.po_claims} />
           <CountTile label="Not ordered yet" value={data.not_ordered} />
         </div>
         <p className="mt-1.5 text-2xs text-muted-foreground">
@@ -317,13 +249,6 @@ function InquirySummary({
             {data.rows_restating_an_instalment.toLocaleString()}{' '}
             {plural(data.rows_restating_an_instalment, 'row', 'rows')} restate a delivery
             another sheet already lists, counted once.
-          </p>
-        ) : null}
-        {applied && applied.lines_withdrawn > 0 ? (
-          <p className="mt-1 text-2xs text-muted-foreground">
-            {applied.lines_withdrawn.toLocaleString()}{' '}
-            {plural(applied.lines_withdrawn, 'delivery', 'deliveries')} this sheet no longer
-            lists {plural(applied.lines_withdrawn, 'was', 'were')} withdrawn.
           </p>
         ) : null}
       </div>
@@ -350,23 +275,25 @@ export interface HistoryUploadDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   kind: HistoryImportKind;
-  /** Fired once the write succeeds, so the page can refresh what it derives from it. */
-  onApplied?: (result: PurchaseHistoryResult | OrderInquiryResult | SalesHistoryResult) => void;
+  /** Fired once the job is queued, so a page can react to the upload having started. */
+  onQueued?: (queued: ImportQueuedResult) => void;
 }
 
 export function HistoryUploadDialog({
   open,
   onOpenChange,
   kind,
-  onApplied,
+  onQueued,
 }: HistoryUploadDialogProps) {
   const isHistory = kind === 'purchase-history';
   const isSales = kind === 'sales-history';
   const copy = COPY[kind];
+  const router = useRouter();
+  const { notifyImportQueued } = useImportJobDrawer();
 
   const upload = useTwoStepUpload<
     PurchaseHistoryPreview | OrderInquiryPreview | SalesHistoryPreview,
-    PurchaseHistoryResult | OrderInquiryResult | SalesHistoryResult
+    ImportQueuedResult
   >({
     open,
     preview: (file) =>
@@ -381,17 +308,29 @@ export function HistoryUploadDialog({
         : isHistory
           ? applyPurchaseHistory(file)
           : applyOrderInquiry(file),
-    // No Test for the sales book: the route has no `validate_only`, because apply is already
-    // a reconcile (same -> skip) rather than an append, so a preview IS the dry run. Offering
-    // a Test that ran a different code path would be the dishonest option.
+    // The sales book has no `validate_only` route: its apply is already a reconcile
+    // (same -> skip) rather than an append, so the preview IS its dry run. The other two have
+    // one, and Test runs it alongside the preview - one press, one answer.
     test: isSales
       ? undefined
       : (file) => (isHistory ? testPurchaseHistory(file) : testOrderInquiry(file)),
-    onApplied,
+    onApplied: (queued) => {
+      // The work is not tied to this tab: open the drawer, close the dialog, and let the job
+      // be followed there.
+      notifyImportQueued();
+      onOpenChange(false);
+      toast.success('Upload queued. Processing in the background.', {
+        duration: 6000,
+        action: {
+          label: 'View job',
+          onClick: () => router.push(`/system-management/import-jobs/${queued.job_id}`),
+        },
+      });
+      onQueued?.(queued);
+    },
   });
 
-  const { file, preview, result, previewing, applying, error } = upload;
-  const shown = result ?? preview;
+  const { file, preview: shown, previewing, applying, error } = upload;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -410,27 +349,21 @@ export function HistoryUploadDialog({
             </Alert>
           ) : null}
 
-          {result ? <p className="text-sm font-medium">Upload applied.</p> : null}
+          <FileDropzone
+            files={file ? [file] : []}
+            onFilesChange={(next) => upload.choose(next[0] ?? null)}
+            onReject={upload.reject}
+            accept={upload.accept}
+            maxSizeMb={MAX_SIZE_MB}
+            disabled={previewing || applying}
+            aria-label={copy.dropzoneLabel}
+          />
 
-          {!result ? (
-            <>
-              <FileDropzone
-                files={file ? [file] : []}
-                onFilesChange={(next) => void upload.choose(next[0] ?? null)}
-                onReject={upload.reject}
-                accept={upload.accept}
-                maxSizeMb={MAX_SIZE_MB}
-                disabled={previewing || applying}
-                aria-label={copy.dropzoneLabel}
-              />
-
-              {previewing ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <LoaderCircle className="size-4 animate-spin" aria-hidden />
-                  Reading the file...
-                </div>
-              ) : null}
-            </>
+          {previewing ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <LoaderCircle className="size-4 animate-spin" aria-hidden />
+              Reading the file...
+            </div>
           ) : null}
 
           {upload.testResult ? <UploadTestVerdict result={upload.testResult} /> : null}
@@ -438,59 +371,37 @@ export function HistoryUploadDialog({
           {shown && !shown.ok ? <Problems problems={shown.problems} /> : null}
 
           {shown && shown.ok ? (
-            <>
-              {isSales ? (
-                <SalesHistorySummary
-                  data={shown as SalesHistoryPreview}
-                  applied={result ? (result as SalesHistoryResult) : undefined}
-                />
-              ) : isHistory ? (
-                <HistorySummary
-                  data={shown as PurchaseHistoryPreview}
-                  applied={result ? (result as PurchaseHistoryResult) : undefined}
-                />
-              ) : (
-                <InquirySummary
-                  data={shown as OrderInquiryPreview}
-                  applied={result ? (result as OrderInquiryResult) : undefined}
-                />
-              )}
-              {result && !isSales ? (
-                <LinkOutcome links={(result as PurchaseHistoryResult).links} />
-              ) : null}
-            </>
+            isSales ? (
+              <SalesHistorySummary data={shown as SalesHistoryPreview} />
+            ) : isHistory ? (
+              <HistorySummary data={shown as PurchaseHistoryPreview} />
+            ) : (
+              <InquirySummary data={shown as OrderInquiryPreview} />
+            )
           ) : null}
         </DialogBody>
 
         <DialogFooter>
-          {result ? (
-            <Button onClick={() => onOpenChange(false)}>Done</Button>
-          ) : (
-            <>
-              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={applying}>
-                Cancel
-              </Button>
-              {upload.runTest ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => void upload.runTest?.()}
-                  disabled={!file || previewing || applying || upload.testing}
-                >
-                  {upload.testing ? (
-                    <LoaderCircle className="size-4 animate-spin" aria-hidden />
-                  ) : (
-                    <TestTube className="size-4" aria-hidden />
-                  )}
-                  Test
-                </Button>
-              ) : null}
-              <Button onClick={() => void upload.confirm()} disabled={!upload.canConfirm}>
-                {applying ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : null}
-                Confirm upload
-              </Button>
-            </>
-          )}
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={applying}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void upload.runTest()}
+            disabled={!file || previewing || applying || upload.testing}
+          >
+            {upload.testing ? (
+              <LoaderCircle className="size-4 animate-spin" aria-hidden />
+            ) : (
+              <TestTube className="size-4" aria-hidden />
+            )}
+            Test
+          </Button>
+          <Button onClick={() => void upload.confirm()} disabled={!upload.canConfirm}>
+            {applying ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : null}
+            Confirm upload
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

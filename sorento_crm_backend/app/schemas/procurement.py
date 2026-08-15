@@ -474,6 +474,12 @@ class SPOWithAllocationsGroup(BaseModel):
 
 class PickingLineBase(BaseModel):
     spo_allocation_id: Optional[str] = None
+    # What the SHEET said this line was received against, unnormalised. Present
+    # whether or not it matched an allocation, so a line the matcher could not
+    # place reads as stated rather than as a dash; NULL when no single SPO was
+    # named. On the BASE (not just the response) so a GRN edit can round-trip the
+    # value it read instead of deleting it.
+    spo_number_raw: Optional[str] = None
     product_id: str
     quantity_expected: int
     quantity_picked: int

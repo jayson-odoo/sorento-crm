@@ -54,6 +54,7 @@ __all__ = [
     "register_company_scope_listeners",
     "build_company_predicate",
     "admin_listing_company_filter",
+    "pending_company_id",
 ]
 
 
@@ -195,6 +196,51 @@ def resolve_write_company_id(
     )
 
 
+#: Returned by ``_stamp_scope`` for an object the auto-stamp will not touch.
+_NO_STAMP = object()
+
+
+def _stamp_scope(target: Any) -> Any:
+    """The scope that governs ``target``'s auto-stamp, or ``_NO_STAMP`` when the
+    ``before_insert`` hook would leave ``company_id`` alone: not an owned row, a
+    company already set, a shared (attachment) row, or enforcement switched off.
+
+    Shared by the hook itself and by ``pending_company_id`` so the two can never
+    disagree about which inserts get stamped.
+    """
+    if not _ENFORCE:
+        return _NO_STAMP
+    if not isinstance(target, CompanyScopedMixin):
+        return _NO_STAMP
+    if getattr(target, "company_id", None) is not None:
+        return _NO_STAMP
+    if _is_shared(type(target)):
+        return _NO_STAMP
+    sess = object_session(target)
+    return get_company_scope(sess) if sess is not None else UNSET
+
+
+def pending_company_id(target: Any) -> Optional[str]:
+    """The company an about-to-be-inserted row will end up in, resolved EARLY.
+
+    ``before_insert`` stamps ``company_id``, but that is a mapper-level hook and so
+    runs after ``before_flush``. A ``before_flush`` listener reading ``company_id``
+    off a brand new row therefore sees ``None`` and records the row as belonging to
+    no company. For the audit log that is not merely incomplete: the admin listing
+    deliberately shows company-less rows to everyone (legacy rows predate the
+    column), so a CREATE row snapshotting ``None`` leaks that entity's values to
+    every other company.
+
+    Returns ``None`` when nothing would be stamped, INCLUDING when the scope cannot
+    name a single company: the stamp itself raises in that case, so the insert never
+    happens. Never invent a company that the write path would not have chosen.
+    """
+    scope = _stamp_scope(target)
+    if scope is _NO_STAMP:
+        return None
+    return resolve_write_company_id(scope, ambiguous=None)
+
+
 def register_company_scope_listeners() -> None:
     """Install the scope SELECT filter + insert auto-stamp. Idempotent."""
     global _INSTALLED
@@ -245,15 +291,12 @@ def register_company_scope_listeners() -> None:
 
     @event.listens_for(Mapper, "before_insert")
     def _stamp_company_id(mapper, connection, target) -> None:  # noqa: ANN001
-        if not isinstance(target, CompanyScopedMixin):
+        # Not owned / already stamped / shared (attachments may legitimately be
+        # company-less). ``pending_company_id`` reads the same guard, so an audit
+        # snapshot taken in before_flush lands on the same company as the stamp.
+        scope = _stamp_scope(target)
+        if scope is _NO_STAMP:
             return
-        if getattr(target, "company_id", None) is not None:
-            return  # explicit company (imports, backfilled paths) — leave as-is
-        if _is_shared(type(target)):
-            return  # attachments may legitimately be company-less (shared)
-
-        sess = object_session(target)
-        scope = get_company_scope(sess) if sess is not None else UNSET
 
         # ``None`` = the deliberate system / all-companies principal (a valid
         # X-API-Key call with NO contact_id/space_id — the n8n backward-compat

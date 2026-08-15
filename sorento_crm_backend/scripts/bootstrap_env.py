@@ -48,14 +48,30 @@ def _require_db_url() -> str:
 
 
 def create_schema() -> None:
-    """Create every table declared by the ORM models, plus the `scm` schema."""
+    """Create every table declared by the ORM models, plus the named schemas."""
     import app.models  # noqa: F401  — registers every model on Base.metadata
     from sqlalchemy import text
 
     from app.database import Base, engine
 
     with engine.begin() as conn:
-        conn.execute(text("CREATE SCHEMA IF NOT EXISTS scm"))
+        # Every Postgres schema any model declares, READ OFF THE MODELS.
+        #
+        # `create_all` creates TABLES, never the schema that holds them, so a
+        # model naming one Postgres has never heard of aborts the whole
+        # bootstrap with "schema does not exist" - and bootstrap is the ONLY way
+        # this database is built from zero, in CI and anywhere else. That is how
+        # `dealer_kit` broke it: the list here said `scm` and nobody remembered
+        # to add the second one.
+        #
+        # Derived rather than listed for exactly that reason. A hand-maintained
+        # list is a step somebody has to remember at the moment they are thinking
+        # about something else, and it fails in the one environment nobody runs
+        # by hand. Base.metadata already knows the answer.
+        for schema in sorted(
+            {table.schema for table in Base.metadata.tables.values() if table.schema}
+        ):
+            conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
         # pgvector / trigram are used by the embedding + entity-resolver paths.
         for ext in ("vector", "pg_trgm"):
             try:
@@ -313,10 +329,34 @@ def seed_scm_module_data() -> None:
     module_347 = importlib.util.module_from_spec(spec_347)
     spec_347.loader.exec_module(module_347)
 
+    # 357 adds the last seven columns of the captain's real outstanding-SO export, including
+    # `Agent` - which the demand classification reads. Same create_all gap as 311/338/347:
+    # without the replay a bootstrapped database resolves neither the agent (so every order
+    # it could classify is reported unclassifiable instead) nor the six ignored columns (so
+    # every upload reports them as unrecognised).
+    spec_357 = importlib.util.spec_from_file_location(
+        "_scm_seed_357", versions / "357_scm_so_agent_aliases.py"
+    )
+    module_357 = importlib.util.module_from_spec(spec_357)
+    spec_357.loader.exec_module(module_357)
+
+    # 358 adds the `po_spo_history` doc type: the 27 headers of the captain's PO + SPO
+    # export. Same create_all gap again, and this one decides whether the file is READ at
+    # all - the purchase-history channel tells the two shapes apart by resolving `Doc No`,
+    # `Item Code` and `Qty` out of one header row, so with no aliases a structured export
+    # falls through to the banded reader and is rejected as "not a Purchase Order Listing".
+    spec_358 = importlib.util.spec_from_file_location(
+        "_scm_seed_358", versions / "358_scm_po_spo_history_aliases.py"
+    )
+    module_358 = importlib.util.module_from_spec(spec_358)
+    spec_358.loader.exec_module(module_358)
+
     with engine.begin() as conn:
         aliases = module.seed_import_field_aliases(conn)
         policies = module.seed_priority_policy(conn)
         aliases += module_338.seed(conn)
+        aliases += module_357.seed(conn)
+        aliases += module_358.seed(conn)
         for field, alias in module_347._ALIASES:
             conn.execute(_text(
                 "INSERT INTO import_field_alias (doc_type, field, alias, locale) "
@@ -325,6 +365,31 @@ def seed_scm_module_data() -> None:
             ), {"f": field, "a": alias})
             aliases += 1
     log.info("scm module data seeded -> aliases=%d priority_policy=%d", aliases, policies)
+
+
+def seed_customer_import_aliases() -> None:
+    """Replay migration 353's `customer` header aliases (same create_all gap as 311/338/347).
+
+    The customer importer resolves every column through `import_field_alias`, so on a
+    bootstrapped database with no `customer` rows the first upload reports every column
+    unmapped and reads as a broken importer rather than as missing seed data. The
+    migration's own `seed()` is called so the two paths cannot drift; it is idempotent.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    from app.database import engine
+
+    versions = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+    spec = importlib.util.spec_from_file_location(
+        "_customer_alias_seed_353", versions / "353_customer_import_aliases.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    with engine.begin() as conn:
+        inserted = module.seed(conn)
+    log.info("customer import aliases seeded -> %d", inserted)
 
 
 def _seed_default_company() -> None:
@@ -470,6 +535,7 @@ def main() -> int:
     if not args.skip_seed:
         seed_reference_data()
         seed_scm_module_data()
+        seed_customer_import_aliases()
     stamp_head()
     log.info("bootstrap complete")
     return 0

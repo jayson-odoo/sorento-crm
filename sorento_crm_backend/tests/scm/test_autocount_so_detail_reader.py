@@ -271,16 +271,37 @@ def test_the_clients_file_states_no_outstanding_demand_at_all(resolver):
     ]
 
 
-def test_the_columns_the_plan_does_not_use_are_reported_as_unmapped(resolver):
-    """Silence about a column nobody read is how a file looks understood when it is not.
+def test_every_column_of_the_clients_real_header_is_recognised(resolver):
+    """AC-1.1, against the client's own file rather than a header list somebody retyped.
 
-    The salesperson and the discount are real content neither channel makes any use of, and
-    the uploader is told rather than left to assume. `Unit Price` is deliberately NOT here:
-    the history feed carries it as the sales value of the line.
+    This test used to assert the opposite - that `Agent` and `Discount` were REPORTED as
+    unrecognised - on the reasoning that silence about a column nobody read is how a file
+    looks understood when it is not. The client's answer settled it: a warning list that is
+    never empty on a file we have already onboarded is a list nobody reads, and it sits on the
+    same screen as the columns that really are new.
+
+    So the seven that were left over are now alias rows. `Agent` resolves to a field the
+    reader carries and the classification spends (AC-3); the rest resolve to fields nothing
+    consumes, which is the same "we know what this column is and we are not interested"
+    mechanism `Unit Price` and `Note` have always used. What still appears here is a column
+    this export has never carried - which is exactly what the list is for.
     """
     res = read_workbook(
         (_FIX / "autocount_so_detail_excerpt.xlsx").read_bytes(), SO, resolver)
 
-    assert "Agent" in res.unmapped_headers
-    assert "Discount" in res.unmapped_headers
-    assert "Unit Price" not in res.unmapped_headers
+    assert res.unmapped_headers == [], (
+        f"the client's own export still reports unrecognised columns: {res.unmapped_headers}")
+
+
+def test_a_column_this_export_has_never_carried_is_still_reported(resolver):
+    """The other half: the warning list has to keep working.
+
+    Emptying it by aliasing everything in sight would trade one failure for a worse one - an
+    export that grows a column, silently dropped, producing confidently wrong numbers.
+    """
+    data = _wb(AUTOCOUNT_HEADERS + ["Rebate Scheme"],
+               [_autocount_row() + ["Q3 dealer scheme"]])
+
+    res = read_workbook(data, SO, resolver)
+
+    assert res.unmapped_headers == ["Rebate Scheme"]

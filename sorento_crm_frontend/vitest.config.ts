@@ -13,6 +13,14 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./vitest.setup.ts'],
+    /*
+      Comfortably above the 5s Testing Library gives one async assertion (see
+      vitest.setup.ts). Equal budgets mean the TEST times out first and reports
+      "timed out in 5000ms" instead of the assertion's own message, which says
+      what was actually missing from the DOM - so a real failure arrives with no
+      diagnosis at all.
+    */
+    testTimeout: 20000,
     exclude: ['node_modules/**', 'e2e/**', '.next/**'],
   },
 });

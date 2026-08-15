@@ -50,6 +50,32 @@ _STOP_MARKER = "doc count:"
 #   202001-S0001   SPO-2020/01-0001   PO-2020/01-0001
 _DOC_NUMBER = re.compile(r"^(?:[A-Z]{2,4}-)?\d{4}[-/]?\d{0,2}[-/]?[A-Z]?\d{3,4}$", re.I)
 
+#: The two document FAMILIES this channel writes history for.
+FAMILY_PO = "po"
+FAMILY_SPO = "spo"
+
+
+def doc_family(doc_number: str) -> str:
+    """Which family a document number belongs to: a shipping order, or a purchase order.
+
+    Read from the PREFIX and from nothing else. AutoCount also carries a `Shipping Order`
+    checkbox, and on the captain's 2023 book nine rows disagree with their own flag
+    (measured 2026-08-14) - so a family taken from the flag would file those nine documents
+    on the wrong side. The number is what the rest of the business quotes, and it is the
+    thing that cannot be typed wrong without being visibly wrong.
+
+    One definition, used by both file shapes: the banded report carries `SPO-2020/01-0001`
+    too, so the family is a property of the DOCUMENT rather than of the layout it arrived in.
+
+    Anchored on `SPO-`, hyphen included: every shipping order in either export is written
+    `SPO-<year>/<month>-<serial>`, and a bare `SPO` prefix would also claim `SPOT-1` or
+    `SPOOL-99` - a document series nobody has today, filed as a shipping order for ever if
+    somebody adds one.
+    """
+    return (FAMILY_SPO if (doc_number or "").strip().upper().startswith("SPO-")
+            else FAMILY_PO)
+
+
 # An SO reference written into a PO as a NOTE line. Seen in the real export as
 # `**SO:174830**`, and with a customer or project attached: `-HOMEPRO @ SO:174830`,
 # `**ECO WORLD TRADING @ SO:174863**`. The digits are what matters; the decoration is not
@@ -109,6 +135,15 @@ class PoListingLine:
     #: False for a charge line - real money on the order, no product behind it.
     is_stock_item: bool
     source_row: int
+    # --- stated by the structured 27-column export, absent from the banded report -----
+    #: Stock location code (`BRW-BB`). The banded report names none, which is why the
+    #: purchase line it writes carries no warehouse.
+    location: str = ""
+    #: The sales order this line was bought for, as `FromSODocList` states it. Per LINE
+    #: here, where the banded report could only carry an order-level note.
+    so_number: Optional[str] = None
+    #: The line's own delivery date.
+    expected_date: Optional[date] = None
 
 
 @dataclass
@@ -141,6 +176,11 @@ class PoListingOrder:
     notes: list[PoListingNote] = field(default_factory=list)
 
     @property
+    def doc_family(self) -> str:
+        """`po` or `spo`, derived from the number so the two can never disagree."""
+        return doc_family(self.po_number)
+
+    @property
     def so_numbers(self) -> tuple[str, ...]:
         """Every sales order this order's notes name, in the order they appear.
 
@@ -158,12 +198,39 @@ class PoListingOrder:
         return tuple(seen)
 
 
+#: The two file shapes this channel reads. Carried on the result so the write path can stamp
+#: which export a row came from without guessing at it afterwards.
+LAYOUT_BANDED = "banded"
+LAYOUT_STRUCTURED = "structured"
+
+
 @dataclass
 class PoListingResult:
     orders: list[PoListingOrder] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
     #: True once the `Doc Count:` marker was seen, i.e. the summary section was excluded.
     stopped_at_marker: bool = False
+    #: Every non-blank row this reader looked at, up to the stop marker. Rows below the marker
+    #: are the per-item summary repeating the file, so they are not rows of the book at all.
+    total_rows: int = 0
+    #: Which of those rows were never a LINE: the two band label rows, the report preamble,
+    #: each order's header row, the `**SO:174830**` notes and the numbered spacers. Row
+    #: numbers rather than a count, because a queued import records an outcome per source row
+    #: and `total_rows - line_count` rows with no outcome are rows the job cannot account for.
+    layout_row_numbers: list[int] = field(default_factory=list)
+    #: Rows that stated something and still could not be a line, each with the
+    #: `import_outcome_codes` code saying why (a quantity with no document number, an item
+    #: with no quantity). Row number -> code, so the write path can record one outcome per
+    #: row without re-deciding anything the reader already knows. Empty for the banded
+    #: report, whose non-line rows are all layout.
+    problem_row_codes: dict[int, str] = field(default_factory=dict)
+    #: Header cells this file carries that no alias resolves. Reported rather than dropped:
+    #: an unrecognised column is the first sign an export has changed, and it is a row in
+    #: `import_field_alias` to fix once somebody can see it. Always empty for the banded
+    #: report, which is read by band position rather than by header.
+    unmapped_headers: list[str] = field(default_factory=list)
+    #: Which of the two exports this was read from (`LAYOUT_BANDED` / `LAYOUT_STRUCTURED`).
+    layout: str = LAYOUT_BANDED
     #: Always True. Stated rather than implied: this file says what was ORDERED and cannot
     #: say what is still outstanding, and a caller must not read it as an on-order position.
     is_order_book: bool = True
@@ -269,17 +336,28 @@ def read_po_listing(file_data: bytes) -> PoListingResult:
             result.stopped_at_marker = True
             break
 
+        # A wholly empty row states nothing, so there is nothing to report about it and it is
+        # not counted. Every row that DOES state something is counted here and leaves this
+        # loop either as a line or on `layout_row_numbers` - one or the other, never neither.
+        if not any(c is not None and _text(c) for c in row):
+            continue
+        result.total_rows += 1
+
         if header_bands is None:
             found = _bands(row, _HEADER_LABELS)
             if found:
                 header_bands = found
+                result.layout_row_numbers.append(row_number)
                 continue
         if line_bands is None:
             found = _bands(row, _LINE_LABELS)
             if found:
                 line_bands = found
+                result.layout_row_numbers.append(row_number)
                 continue
         if header_bands is None or line_bands is None:
+            # The report preamble: title, company, date range. Never a line.
+            result.layout_row_numbers.append(row_number)
             continue
 
         # A header row starts with the document number; a line row starts with a line number.
@@ -296,10 +374,14 @@ def read_po_listing(file_data: bytes) -> PoListingResult:
                 source_row=row_number,
             )
             result.orders.append(current)
+            # The order it opens is written from this row, but the row itself is not a line -
+            # and lines are what this feed writes and counts.
+            result.layout_row_numbers.append(row_number)
             continue
 
         line_no = _number(row[0]) if row else None
         if line_no is None or current is None:
+            result.layout_row_numbers.append(row_number)
             continue
 
         # `Disc.` is the last label and is empty on every line in the real export, so the
@@ -325,6 +407,7 @@ def read_po_listing(file_data: bytes) -> PoListingResult:
                     )
                 )
             # A line number with nothing at all beside it is spacing in the report.
+            result.layout_row_numbers.append(row_number)
             continue
 
         amounts = [n for n in (_number(m) for m in money) if n is not None]

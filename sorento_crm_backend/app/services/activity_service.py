@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from app.models.audit import AuditLog
 from app.models.user import User
 from app.models.complaints import Complaint
-from app.models.order import Order
+from app.models.order import Customer, Order
 from app.models.procurement import Supplier, StockInquiry, PurchaseRequestHeader
 from app.models.marketing import Promotion
 from app.models.forms import Form
@@ -86,6 +86,9 @@ _REGISTRY: tuple[_EntityCfg, ...] = (
                "/procurement-management/purchase-requests/{id}"),
     _EntityCfg("product", ("product", "products"), Product,
                ("product_code", "product_name"), "Product SKU", None),
+    _EntityCfg("customer", ("customer", "customers"), Customer,
+               ("customer_name", "customer_code"), "Customer",
+               "/order-management/customers/{id}"),
 )
 
 # stored audit entity_type -> config, and fe_type -> config

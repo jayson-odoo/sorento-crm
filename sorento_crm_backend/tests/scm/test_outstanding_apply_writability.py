@@ -38,6 +38,7 @@ from tests.scm._outstanding_workbooks import (
     seed_suppliers,
     week1,
 )
+from tests.scm._queued_import import run_enqueued, stub_queue
 from tests.scm.conftest import requires_pg
 # Imported rather than copied. `as_company_user` creates the principal AND the company the
 # seeded rows are stamped with; a second copy is exactly how the two drifted apart before
@@ -96,17 +97,24 @@ def _purchase_orders_named(db, *numbers: str) -> int:
 # =========================================================================== #
 # The corruption that started this file
 # =========================================================================== #
-def test_applying_the_purchase_order_book_writes_purchase_orders(po_book):
+def test_applying_the_purchase_order_book_writes_purchase_orders(po_book, monkeypatch):
     """Both tables asserted, not just the purchase-order one: the damage was a SALES order
-    carrying the PO number, so a count of only `purchase_orders` would have stayed green."""
+    carrying the PO number, so a count of only `purchase_orders` would have stayed green.
+
+    The write happens on the queued job now, so the job is run here. That is not incidental
+    to this test: the corruption it pins would be committed by the worker, and a route test
+    that stopped at the 202 would never see either table.
+    """
     client, db, codes = po_book
     so_before = db.execute(text("SELECT count(*) FROM sales_orders")).scalar()
     sol_before = db.execute(text("SELECT count(*) FROM sales_order_lines")).scalar()
+    captured = stub_queue(monkeypatch)
 
     r = client.post(PO_APPLY, files=_upload(po_week1(codes)))
 
-    assert r.status_code == 200, r.text
-    assert r.json()["applied"]["added"] == 5
+    assert r.status_code == 202, r.text
+    run_enqueued(captured, db, monkeypatch)
+
     assert _purchase_orders_named(db, *codes.po_documents) == 2
     assert _sales_orders_named(db, *codes.po_documents) == 0, \
         "a PO number reached sales_orders - this is the cross-table corruption"
@@ -219,14 +227,16 @@ def test_the_preview_nets_off_what_has_already_been_received(po_book):
     assert sorted(quantities[(codes.main_po, codes.item_rl)]) == [72, 135]
 
 
-def test_applying_the_sales_order_book_is_unaffected(po_book, gate_closed):
+def test_applying_the_sales_order_book_is_unaffected(po_book, gate_closed, monkeypatch):
     """The control. Without it, a broken fixture would make the refusal look correct."""
     client, db, codes = po_book
+    captured = stub_queue(monkeypatch)
 
     r = client.post(SO_APPLY, files=_upload(week1(codes), "outstanding_so.xlsx"))
 
-    assert r.status_code == 200, r.text
-    assert r.json()["applied"]["added"] == 5
+    assert r.status_code == 202, r.text
+    run_enqueued(captured, db, monkeypatch)
+
     assert db.execute(
         text("SELECT count(*) FROM sales_orders WHERE so_number = :so"),
         {"so": codes.project_so},
