@@ -255,7 +255,10 @@ export function AddSpecificationDialog({
             Cancel
           </Button>
           {creating ? (
-            <Button onClick={() => void create()} disabled={!proposedLabel.trim() || saving || checking}>
+            <Button
+              onClick={() => void create().catch(() => {})}
+              disabled={!proposedLabel.trim() || saving || checking}
+            >
               {checking ? 'Checking…' : saving ? 'Creating…' : 'Create'}
             </Button>
           ) : (

@@ -822,8 +822,15 @@ async def update_spec_key(
         if "user_values" in fields and not fields.get("acknowledge_similar"):
             # Server-side, mirroring the key guard (D11). The dialog runs the same
             # comparison against data it already holds so the common case never round
-            # trips, but the dialog is a courtesy and this is the guard.
+            # trips, but the dialog is a courtesy and this is the guard. PATCH replaces
+            # `user_values`, so a client re-sends every word the key already holds
+            # alongside the new one - a word must not collide with itself.
+            present = {str(v) for v in merged_allowed_values(row)} | {
+                str(v) for v in (row.user_values or [])
+            }
             for proposed in fields["user_values"] or []:
+                if proposed in present:
+                    continue
                 match = find_similar_value(row, proposed)
                 if match:
                     return _similar_refusal(

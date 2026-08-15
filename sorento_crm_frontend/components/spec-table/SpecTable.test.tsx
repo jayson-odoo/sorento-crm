@@ -267,6 +267,45 @@ describe('editing in place', () => {
     expect(container.querySelector('[data-spec-editor="model_note"]')).toBeNull();
   });
 
+  it('reopening after cancel shows the current value, not the abandoned draft', async () => {
+    renderTable();
+    fireEvent.click(screen.getByLabelText('Edit Model note'));
+    clearInput(screen.getByLabelText('Model note'));
+    typeInto(screen.getByLabelText('Model note'), 'abandoned mid-edit');
+    fireEvent.click(screen.getByLabelText('Cancel editing Model note'));
+
+    fireEvent.click(screen.getByLabelText('Edit Model note'));
+    expect(screen.getByLabelText('Model note')).toHaveValue('Second batch, revised trap');
+  });
+
+  it('opens on the refetched value when the row changed under a mounted cell', async () => {
+    const callbacks = {
+      onSetValue: vi.fn().mockResolvedValue(undefined),
+      onTombstone: vi.fn().mockResolvedValue(undefined),
+      onRevert: vi.fn().mockResolvedValue(undefined),
+      onAddValueToKey: vi.fn().mockResolvedValue(undefined),
+      onAddSpecification: vi.fn(),
+    };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(
+      <QueryClientProvider client={client}>
+        <SpecTable rows={rows()} registry={MOCK_REGISTRY} callbacks={callbacks} />
+      </QueryClientProvider>,
+    );
+
+    const refetched = rows().map((row) =>
+      row.specKey === 'model_note' ? { ...row, value: 'Fresh from the server' } : row,
+    );
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <SpecTable rows={refetched} registry={MOCK_REGISTRY} callbacks={callbacks} />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByLabelText('Edit Model note'));
+    expect(screen.getByLabelText('Model note')).toHaveValue('Fresh from the server');
+  });
+
   it('refuses to save an empty value - a blank is a removal wearing one', async () => {
     renderTable();
     fireEvent.click(screen.getByLabelText('Edit Model note'));

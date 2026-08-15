@@ -436,6 +436,42 @@ def test_a_new_value_needs_no_acknowledgement(api):
     assert "brushed_brass" in response.json()["user_values"]
 
 
+def test_resending_the_vocabulary_with_one_new_word_goes_through(api):
+    """PATCH replaces `user_values`, so the FE re-sends the full merged list plus the
+    new word - the resent words must not refuse themselves as near-duplicates."""
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(
+        db,
+        "zzt_finish",
+        allowed_values=["chrome", "black"],
+        user_values=["gunmetal"],
+        source="user",
+    )
+
+    response = client.patch(
+        f"{_BASE}/zzt_finish",
+        json={"user_values": ["chrome", "black", "gunmetal", "brushed_brass"]},
+    )
+    assert response.status_code == 200, response.text
+    assert "brushed_brass" in response.json()["user_values"]
+    assert "gunmetal" in response.json()["user_values"]
+
+
+def test_a_resend_does_not_smuggle_a_near_duplicate_past_the_guard(api):
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=["chrome"], source="user")
+
+    response = client.patch(
+        f"{_BASE}/zzt_finish", json={"user_values": ["chrome", "Chrome"]}
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["match"]["value"] == "chrome"
+
+
 def test_a_merchandiser_may_add_a_value_without_the_registry_edit_grant(api):
     """Journey A step 3. The merchandiser holds products.edit and nothing else."""
     db, _as = api

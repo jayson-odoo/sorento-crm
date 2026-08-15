@@ -19,7 +19,6 @@ import {
   getProductSpecDetail,
   getSimilarSpecKey,
   setSpecValueByHand,
-  SpecSimilarError,
   type ApplicableSpecKey,
 } from '../../product-specifications/services/productSpecService';
 import type { ProductSpecDetail } from '../../product-specifications/types/productSpec.types';
@@ -155,15 +154,9 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
       const label = registry.find((key) => key.spec_key === specKey)?.label ?? specKey;
       toast.success(`"${value}" added to ${label}`);
     },
-    onError: (error: Error) => {
-      // The near-duplicate refusal names the existing word, and saying which one is
-      // the entire point - "could not add the value" leaves the user retyping it.
-      if (error instanceof SpecSimilarError) {
-        toast.error(error.message, { duration: 10_000 });
-        return;
-      }
-      toast.error(error.message, { duration: 10_000 });
-    },
+    // The near-duplicate refusal names the existing word, and saying which one is
+    // the entire point - "could not add the value" leaves the user retyping it.
+    onError: (error: Error) => toast.error(error.message, { duration: 10_000 }),
   });
 
   const createKeyMutation = useMutation({
