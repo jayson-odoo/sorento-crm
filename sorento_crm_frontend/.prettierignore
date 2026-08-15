@@ -11,6 +11,6 @@ playwright-report
 test-results
 coverage
 
-# Lockfile and static assets (never hand-edited)
+# Lockfile and static assets served as-is (only the top-level public/, not app/api/v1/public)
 package-lock.json
-public
+/public
