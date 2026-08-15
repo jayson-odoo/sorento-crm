@@ -115,18 +115,19 @@ plan as written disagree, recorded so they agree again).
     has exactly one judge, `assert_demand_class`, called by both paths;
     `set_demand_class` remains the code-keyed path importers use. Pinned by
     `test_the_class_lands_on_the_clicked_row_not_a_namesake`.
-16. **Three duplicate-hunk merges the merger resolves by keeping ONE line, autocount's.**
-    Both branches add a Sales Agents entry to the same two arrays in
-    `sorento_crm_frontend/config/menu.config.tsx`, the same `_crud("master_data",
-    "sales_agents", ...)` line to `app/rbac/permission_registry.py`, and the same
-    `include_router(sales_agents.router, ...)` line to
-    `app/api/v1/master_data/__init__.py`. The lines are identical in content and differ only
-    in placement (this branch puts the menu entry after Units of Measure; autocount puts it
-    after Credit Terms / Tax Codes, among the other mirror entries). Keep autocount's
-    placement, drop this branch's, in all four hunks. A duplicated menu entry renders the
-    page twice in the sidebar; a duplicated `_crud` line seeds nothing twice (the sync is
-    idempotent) but reads as a mistake; a duplicated `include_router` mounts the same routes
-    twice and the second silently shadows the first.
+16. **Duplicate-hunk merges with the AutoCount branch: menu keeps THIS branch's entry,
+    registry and router keep one line either way.** The captain ruled (2026-08-15) that
+    Sales Agents lives under **User Management** (after Market Segments), not Product
+    Management, so this branch's menu entry in both arrays of
+    `sorento_crm_frontend/config/menu.config.tsx` is the one to keep; DROP autocount's
+    Product Management placement on merge. The `_crud("master_data", "sales_agents", ...)`
+    line in `app/rbac/permission_registry.py` and the `include_router(sales_agents.router,
+    ...)` line in `app/api/v1/master_data/__init__.py` are identical in both branches: keep
+    one copy of each. A duplicated menu entry renders the page twice in the sidebar; a
+    duplicated `_crud` line seeds nothing twice (the sync is idempotent) but reads as a
+    mistake; a duplicated `include_router` mounts the same routes twice and the second
+    silently shadows the first. The URL stays `/master-data-management/sales-agents` (the
+    merged-surface contract); only the sidebar group moved.
 
 **S1 + S2 ship the agent data with NO surface on it.** `unmapped_agents` is on both the
 preview and the apply response, and nothing renders it: the FE `OutstandingPreview` type does
