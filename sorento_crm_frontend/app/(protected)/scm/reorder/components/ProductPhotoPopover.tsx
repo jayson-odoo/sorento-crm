@@ -76,6 +76,12 @@ function ProductPhotoBody({
   if (!data) {
     return <Skeleton className="h-40 w-full" data-testid="product-photo-skeleton" />;
   }
+  // Reached with a LIT icon too, and that is deliberate. The run-wide map says a live image
+  // row exists; this call says the row is servable, and the backend signs strictly, so a
+  // photo it cannot sign comes back as no photo. Signability is a property of the storage
+  // backend rather than a column, so the map cannot know it without buying a signature per
+  // row. This state therefore reads identically whichever way the buyer got here, and a lit
+  // icon opening onto it is not an error. Do NOT "fix" one side to match the other.
   return (
     <div className="space-y-1">
       <p className="text-xs">No primary photo yet</p>

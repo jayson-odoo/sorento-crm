@@ -495,6 +495,17 @@ def list_product_images(
 
     A product with nothing to show is ABSENT from the map rather than mapped to false - the
     popover has a designed empty state and the frontend reads a missing key as "no photo".
+
+    DELIBERATE ASYMMETRY with the per-product route below. This one says a live image ROW
+    EXISTS; that one says the row is SERVABLE, because it signs through
+    `primary_image_urls(..., strict=True)`, which drops a photo it cannot sign (no
+    CloudFront key on this box, a storage object that went away). So a lit icon CAN open
+    onto the popover's "No primary photo yet", and that is the designed outcome rather than
+    a defect: signability is a runtime property of the storage backend, not a column, so it
+    cannot be asked in SQL, and asking it per row would cost the plan a signature for every
+    line to decide which icons are dim. The popover renders the same empty state whichever
+    way it arrived there, so the buyer is never told anything false. Do NOT "fix" one of
+    these two answers to match the other.
     """
     svc.assert_run_visible(db, run_id)
     # ONE statement: the run's product ids are the JOIN, never a list Python carries from a
