@@ -75,10 +75,18 @@ export function PlanTrendPopover({
       categories: labels,
       labels: { rotate: -45, hideOverlappingLabels: true, style: { fontSize: '10px' } },
     },
+    // No `tickAmount`: ApexCharts derives yMax from `min + step * tickAmount`, so on a
+    // product whose best month is 1 or 2 units the step is fractional and the axis prints
+    // the same integer twice (0 | 1 | 1 | 2 | 2), with the gridline labelled 1 actually
+    // sitting at 0.5. `forceNiceScale` picks integral steps instead; the formatter blanks
+    // any fractional tick that still gets through rather than rounding it into a lie.
     yaxis: {
       min: 0,
-      tickAmount: 4,
-      labels: { formatter: (v: number) => fmtInt(v), style: { fontSize: '10px' } },
+      forceNiceScale: true,
+      labels: {
+        formatter: (v: number) => (Number.isInteger(v) ? fmtInt(v) : ''),
+        style: { fontSize: '10px' },
+      },
     },
     legend: { position: 'top', horizontalAlign: 'left', fontSize: '11px' },
     grid: { strokeDashArray: 3 },
@@ -104,14 +112,20 @@ export function PlanTrendPopover({
         </button>
       </PopoverTrigger>
       <PopoverPortal>
-        <PopoverContent className="w-[30rem] max-w-[92vw] text-xs" align="start">
+        {/* At phone width the chart plus the customer table is taller than the screen, and
+            PopoverContent has no max height of its own, so the bottom of the list simply
+            had no way to be reached. */}
+        <PopoverContent
+          className="w-[30rem] max-w-[92vw] max-h-[85vh] overflow-y-auto text-xs"
+          align="start"
+        >
           <p className="font-medium text-foreground">{describeTrajectory(trend)}</p>
           <p className="mt-1 text-muted-foreground">{describeYearAgo(trend)}</p>
 
           {/* The app-wide Metronic sheet stacks every Apex legend vertically
               (`css/components/apexcharts.css`), which here costs two lines of chart height
               for two words. Overridden for this chart only, not globally. */}
-          <div className="mt-2 -mx-1 [&_.apexcharts-legend]:flex-row [&_.apexcharts-legend]:flex-wrap [&_.apexcharts-legend]:items-center [&_.apexcharts-legend]:gap-x-4">
+          <div className="mt-2 -mx-1 [&_.apexcharts-legend]:flex-row [&_.apexcharts-legend]:flex-wrap [&_.apexcharts-legend]:gap-x-4">
             <ApexChart options={options} series={series} type="line" height={240} />
           </div>
 

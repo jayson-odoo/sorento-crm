@@ -127,7 +127,12 @@ describe('PlanTrendPopover - the chart is readable (AC-6)', () => {
       height: number;
       options: {
         legend: { position: string; horizontalAlign: string };
-        yaxis: { min: number; tickAmount: number; labels: { formatter: (v: number) => string } };
+        yaxis: {
+          min: number;
+          tickAmount?: number;
+          forceNiceScale: boolean;
+          labels: { formatter: (v: number) => string };
+        };
         xaxis: { labels: { rotate: number; hideOverlappingLabels: boolean } };
       };
     };
@@ -147,13 +152,38 @@ describe('PlanTrendPopover - the chart is readable (AC-6)', () => {
     expect(height).toBe(240);
   });
 
-  it('quotes the y axis in whole units from zero, at a handful of ticks', async () => {
+  it('quotes the y axis in whole units from zero', async () => {
     // A quantity axis labelled 0.25 / 0.5 is a formatting accident, not a measurement.
     const { options } = await chartOptions();
 
     expect(options.yaxis.min).toBe(0);
-    expect(options.yaxis.tickAmount).toBe(4);
     expect(options.yaxis.labels.formatter(1234)).toBe('1,234');
+  });
+
+  it('lets the scale pick its own whole-number ticks instead of forcing four', async () => {
+    // `tickAmount: 4` makes ApexCharts derive yMax = min + step * tickAmount, and on a
+    // product whose best month is 1 or 2 units that step is fractional: the axis then
+    // prints the SAME integer twice (0 | 1 | 1 | 2 | 2) and the gridline labelled 1
+    // actually sits at 0.5. A duplicated axis label is worse than a sparse one, because
+    // the reader trusts it and misreads the plot. `forceNiceScale` picks integral steps.
+    const { options } = await chartOptions();
+
+    expect(options.yaxis.tickAmount).toBeUndefined();
+    expect(options.yaxis.forceNiceScale).toBe(true);
+  });
+
+  it('prints nothing for a fractional tick rather than rounding it into a lie', async () => {
+    // Belt and braces for the same failure: should a fractional gridline still appear,
+    // it stays blank instead of being rounded to an integer it is not.
+    const { options } = await chartOptions();
+    const label = options.yaxis.labels.formatter;
+
+    expect(label(0.5)).toBe('');
+    expect(label(1.5)).toBe('');
+    expect(label(0)).toBe('0');
+    expect(label(1)).toBe('1');
+    expect(label(2)).toBe('2');
+    expect(label(9)).toBe('9');
   });
 
   it('angles the month labels and drops the ones that would collide', async () => {
@@ -175,13 +205,17 @@ describe('PlanTrendPopover - the chart is readable (AC-6)', () => {
     expect(wrapper.className).toContain('[&_.apexcharts-legend]:flex-row');
   });
 
-  it('renders the popover wide enough for the chart', () => {
+  it('renders the popover wide enough for the chart, and scrollable at phone height', () => {
     render(<PlanTrendPopover trend={entry()} />);
     fireEvent.click(screen.getByRole('button', { name: /order trend/i }));
 
     const panel = document.querySelector('[class*="w-\\[30rem\\]"]');
     expect(panel).not.toBeNull();
     expect(panel?.className).toContain('max-w-[92vw]');
+    // Chart + customer table is taller than a phone screen, and PopoverContent caps
+    // nothing by itself, so without this the bottom of the list is unreachable.
+    expect(panel?.className).toContain('max-h-[85vh]');
+    expect(panel?.className).toContain('overflow-y-auto');
   });
 
   it('drops the "based on our own orders only" footer', () => {
