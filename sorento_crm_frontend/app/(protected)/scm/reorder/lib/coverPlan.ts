@@ -142,22 +142,6 @@ export function proposeCover(
   return { coverQty: covered, buyQty, sources: used, isSplit: covered > 0 && buyQty > 0 };
 }
 
-/**
- * The suggestion in words.
- *
- * Deliberately a sentence rather than a code: the buyer is being asked to agree with a
- * recommendation, and "Use 6 from BRW-BB and buy 182" can be agreed with at a glance where a
- * pair of numbers in separate columns cannot.
- */
-export function describeCover(proposal: CoverProposal, fmt: (n: number) => string): string {
-  const { coverQty, buyQty, sources } = proposal;
-  if (coverQty <= 0 && buyQty <= 0) return 'Nothing to do';
-  const from = sources.map((s) => `${fmt(s.qty)} from ${s.warehouse_code}`).join(', ');
-  if (coverQty > 0 && buyQty > 0) return `Use ${from}, and buy ${fmt(buyQty)}`;
-  if (coverQty > 0) return `Use ${from}`;
-  return `Buy ${fmt(buyQty)}`;
-}
-
 /** Free stock for a product that no decision has spoken for yet. */
 export function remainingFree(
   free: CoverSource[] | undefined,

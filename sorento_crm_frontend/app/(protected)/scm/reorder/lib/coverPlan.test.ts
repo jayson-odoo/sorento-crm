@@ -11,7 +11,6 @@ import {
   applySourceEdits,
   coverForLine,
   defaultSourceEdits,
-  describeCover,
   proposeCover,
   remainingFree,
   sourceEditsForTotal,
@@ -26,7 +25,6 @@ const src = (code: string, qty: number, segment = 'project'): CoverSource => ({
   segment,
   qty,
 });
-const fmt = (n: number) => String(n);
 
 describe('proposeCover - the split', () => {
   it('covers outright when there is enough elsewhere', () => {
@@ -81,23 +79,6 @@ describe('proposeCover - segments', () => {
   it('does not treat an unknown segment as a crossing', () => {
     const p = proposeCover(2, 'wh-A', null, [{ ...src('X', 10), segment: null }]);
     expect(p.sources[0].cross_segment).toBe(false);
-  });
-});
-
-describe('describeCover - the suggestion is a sentence', () => {
-  it('names the source and the split', () => {
-    const p = proposeCover(188, 'wh-DC1-BB', 'project', [src('BRW-BB', 5), src('PJ-SR', 1)]);
-    expect(describeCover(p, fmt)).toBe('Use 5 from BRW-BB, 1 from PJ-SR, and buy 182');
-  });
-
-  it('says buy when there is nothing to use', () => {
-    expect(describeCover(proposeCover(10, 'wh-A', 'project', []), fmt)).toBe('Buy 10');
-  });
-
-  it('says use when the cover is complete', () => {
-    expect(describeCover(proposeCover(3, 'wh-A', 'project', [src('B', 9)]), fmt)).toBe(
-      'Use 3 from B',
-    );
   });
 });
 
