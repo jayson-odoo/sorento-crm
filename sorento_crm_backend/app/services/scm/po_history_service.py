@@ -49,6 +49,7 @@ from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Product
 from app.models.scm import OrderLinkClaim
 from app.services import import_outcome_codes as oc
+from app.services.company_scope import get_company_scope, resolve_write_company_id
 from app.services.import_alias_service import AliasResolver
 from app.services.import_outcome import ImportOutcome
 from app.services.scm import upload_validation as val
@@ -411,6 +412,20 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
     orders_created = 0
     lines_created = 0
     now = _now()
+    # Pairings this run has already claimed, keyed exactly as
+    # `uq_scm_order_link_claim_identity` is. The database check below cannot stand alone:
+    # `SessionLocal` runs `autoflush=False`, so a claim added for one line is still pending
+    # when the next line's check reads, and the captain's own book states the same
+    # (sales order, document, item) on two rows 2,253 times over - two containers of one
+    # product on one purchase order. That is ordinary data, not a row problem, so the second
+    # line writes its order line and adds no second claim. Without this the whole 27,192-row
+    # job dies at flush on a `UniqueViolation`, having processed nothing.
+    # (`order_inquiry_service` already carries the same guard, for the same reason.)
+    claimed: set[tuple[Optional[str], str, str, str]] = set()
+    # The company the claims below will be stamped with, resolved once. The unique index is
+    # per company (migration 335) and so is the existence check, so both halves of the guard
+    # have to agree about which company this run is writing into.
+    claim_company_id = resolve_write_company_id(get_company_scope(db), ambiguous=None)
 
     for parsed_order in parsed.orders:
         supplier = (supplier_by_code.get(parsed_order.supplier_code)
@@ -538,9 +553,11 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
                 # the item - which is the identity `order_link_service` resolves on. The
                 # banded report's `**SO:174830**` notes are order-level and stay so below.
                 _claim_so_link(db, parsed_order.po_number, parsed_line.so_number, now,
-                               item_code=parsed_line.item_code)
+                               item_code=parsed_line.item_code, seen=claimed,
+                               company_id=claim_company_id)
 
-        _claim_so_links(db, parsed_order.po_number, parsed_order.so_numbers, now)
+        _claim_so_links(db, parsed_order.po_number, parsed_order.so_numbers, now,
+                        seen=claimed, company_id=claim_company_id)
 
     db.flush()
     summary["orders_created"] = orders_created
@@ -551,39 +568,61 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
 
 
 def _claim_so_links(
-    db: Session, po_number: str, so_numbers: tuple[str, ...], now: datetime
+    db: Session, po_number: str, so_numbers: tuple[str, ...], now: datetime, *,
+    seen: set[tuple[Optional[str], str, str, str]],
+    company_id: Optional[str],
 ) -> None:
     """Record the sales orders this purchase order's notes name.
 
     A CLAIM, not a link: the sales order may not have been uploaded yet, which is exactly the
     case the user described. No item code, because a note sits between lines and nothing in
     the file says which side it describes.
+
+    Order-level claims repeat too - one document can carry the same `**SO:174830**` note more
+    than once - so this half shares the run's `seen` set rather than trusting the numbers to
+    be distinct.
     """
     for so_number in so_numbers:
-        _claim_so_link(db, po_number, so_number, now, item_code=None)
+        _claim_so_link(db, po_number, so_number, now, item_code=None, seen=seen,
+                       company_id=company_id)
 
 
 def _claim_so_link(db: Session, po_number: str, so_number: str, now: datetime, *,
-                   item_code: Optional[str]) -> None:
-    """One claim, get-or-create.
+                   item_code: Optional[str],
+                   seen: set[tuple[Optional[str], str, str, str]],
+                   company_id: Optional[str]) -> None:
+    """One claim, get-or-create against BOTH the database and this run.
 
     `item_code` is what separates the two exports: the structured extract states the sales
     order per LINE (`FromSODocList`), so its claim names the item and resolves to that line;
     the banded report's note is order-level and its claim names none, so it resolves at
-    document level. Existence is checked on the same three columns the claim is written with,
-    so a re-upload adds nothing.
+    document level.
+
+    Two guards, because one file can state a pairing twice and one database can already hold
+    it. `seen` is the run's memory, keyed as `uq_scm_order_link_claim_identity` is - the
+    company, the two numbers, and the item code coalesced to `''` - and it is what the
+    database check cannot supply: nothing is flushed until the end of `apply`, so a claim
+    added moments ago is invisible to a SELECT. The SELECT is still needed for the re-upload
+    case, where the pairing is committed and this run's set starts empty.
+
+    The SELECT is pinned to the SAME company the row will be stamped with. The scope filter
+    already narrows it for a single-company caller, but the system principal reads across
+    every company and writes into the incumbent one, so without this an unrelated company's
+    claim would suppress a claim this one is missing.
     """
-    exists = (
-        db.query(OrderLinkClaim.id)
-        .filter(
-            OrderLinkClaim.so_number == so_number,
-            OrderLinkClaim.po_number == po_number,
-            OrderLinkClaim.item_code.is_(None) if item_code is None
-            else OrderLinkClaim.item_code == item_code,
-        )
-        .first()
+    key = (company_id, so_number, po_number, item_code or "")
+    if key in seen:
+        return
+    seen.add(key)
+    query = db.query(OrderLinkClaim.id).filter(
+        OrderLinkClaim.so_number == so_number,
+        OrderLinkClaim.po_number == po_number,
+        OrderLinkClaim.item_code.is_(None) if item_code is None
+        else OrderLinkClaim.item_code == item_code,
     )
-    if exists:
+    if company_id is not None:
+        query = query.filter(OrderLinkClaim.company_id == company_id)
+    if query.first():
         return
     db.add(
         OrderLinkClaim(
