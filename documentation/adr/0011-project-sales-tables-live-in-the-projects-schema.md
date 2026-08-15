@@ -111,6 +111,16 @@ never blocks on them.
   about the two kinds of PO. The consequence is that raw SQL naming any of them without a
   schema silently resolves to the core table. The module therefore reads and writes its own
   tables through the ORM, and any raw SQL that must name one is schema-qualified.
+- **Anything that stores a table NAME as data now stores the qualified one.** A lookup
+  binding (`lookup_bindings.table_name`) is the only such column in the schema, and the bare
+  name stopped identifying a table here for exactly the reason above. So
+  `app/services/lookup_eligibility.py`, `lookup_write_listener.py` and
+  `lookup_binding_service.py` key on `Table.key`, which is the bare name for a default-schema
+  table and `schema.name` for the rest - every core binding is unaffected - and migration 354
+  rewrites any existing row that names one of the 47. The admin picker labels a qualified
+  table with its schema (`Projects / Purchase Orders`), because offering "Purchase Orders"
+  twice is not a choice an operator can make. Kept out: `import_logs.entity_table`, which
+  holds a logical entity (`orders`, `stock`) and never a table name.
 - **`audit_log.entity_type` is pinned to the old names.** It is derived from `__tablename__`
   (`app/services/audit_service.py`), so a bare rename would orphan existing audit rows and
   make the module write `entity_type='brands'` and `'purchase_orders'` on top of core's. Each

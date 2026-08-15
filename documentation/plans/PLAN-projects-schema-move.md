@@ -577,8 +577,9 @@ reproduces on a developer machine where the dev DB already has the schema from m
 
 ## Deviations from this plan, as built
 
-Five, all recorded here so the plan and the code agree. The first two supersede what S1 said
-about index and constraint names; they were found in review, after the first four.
+Six, all recorded here so the plan and the code agree. Deviations 1, 2 and 5 were found in
+review, after the first four; the first two supersede what S1 said about index and constraint
+names.
 
 1. **BOTH directions rename the DERIVED index and constraint names; S1 said rename nothing.**
    S1's "they ride with the table, renaming 200-odd live objects is risk spent on cosmetics"
@@ -622,6 +623,26 @@ about index and constraint names; they were found in review, after the first fou
    their table names updated inline. The SCM pair took the inline treatment rather than the note
    because the SCM documents use their own ADR numbering, in which "ADR-0011" already means
    something else.
+
+5. **Lookup bindings are keyed by the SCHEMA-QUALIFIED table name, and 354 rewrites the rows.**
+   Not in the plan at all, and found in review. `lookup_bindings.table_name` stores a table
+   name AS DATA, and three code paths keyed it on the bare one:
+   `lookup_write_listener.py` read `mapper.local_table.name`, `lookup_eligibility.py` emitted
+   and deduped `tbl.name`, and `_eligibility_from_metadata` did
+   `Base.metadata.tables.get(table_name)` - which misses outright for a schema-qualified
+   table, because that dict is keyed `"projects.leads"`. Consequences, none of which raise:
+   binding a set to a projects column 422s with "not registered as a lookup-eligible
+   column"; a binding on core `purchase_orders.status` also validates writes to
+   `projects.purchase_orders.status` and rejects values that are valid there; and the
+   eligibility picker drops one table of each colliding pair depending on model import
+   order. All three now use `Table.key`, which is the bare name for a default-schema table
+   (so every core binding is unchanged) and `schema.name` for the rest. The picker label
+   gains the schema (`Projects / Purchase Orders`), because "Purchase Orders" twice is not a
+   choice an operator can make. `upgrade()` rewrites any `lookup_bindings` row whose
+   `table_name` exactly matches one of the 47 pre-move names, with the inverse in
+   `downgrade()`; the dev and production databases hold zero such rows today, so the rewrite
+   is a guard rather than a repair. `import_logs.entity_table` was checked and is NOT the
+   same kind of column: it holds a logical entity (`orders`, `stock`), never a table name.
 
 Also fixed in passing, unrelated to the move: `projects.series_products` (a branch-only table
 from S18) was missing from the `EXEMPTIONS` allowlist in `tests/test_schema_uuid_id_principle.py`,

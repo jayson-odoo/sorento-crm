@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from alembic.migration import MigrationContext
@@ -428,6 +429,77 @@ def test_a_postgres_default_constraint_name_follows_the_table(db):
     names = {name.rpartition(".")[2] for name in _indexes(db) if name.startswith(f"{target}.")}
     assert "brands_pkey" in names
     assert "project_brands_pkey" not in names
+
+
+# --------------------------------------------------------------------------- #
+# the rows that name a table rather than living in one
+# --------------------------------------------------------------------------- #
+
+def _seed_binding(db, table_name: str) -> str:
+    """One lookup set with one binding on ``table_name``.status. Returns the binding id."""
+    default = _scratch_default_schema()
+    set_id = str(uuid4())
+    binding_id = str(uuid4())
+    db.execute(
+        text(
+            f'INSERT INTO "{default}"."lookup_sets" (id, set_key, name, is_active) '
+            "VALUES (:id, :key, :name, true)"
+        ),
+        {"id": set_id, "key": f"zzt_{uuid4().hex[:12]}", "name": "ZZT Schema Move"},
+    )
+    db.execute(
+        text(
+            f'INSERT INTO "{default}"."lookup_bindings" (id, set_id, table_name, column_name) '
+            "VALUES (:id, :set_id, :table_name, 'status')"
+        ),
+        {"id": binding_id, "set_id": set_id, "table_name": table_name},
+    )
+    return binding_id
+
+
+def _binding_table(db, binding_id: str) -> str:
+    default = _scratch_default_schema()
+    return db.execute(
+        text(f'SELECT table_name FROM "{default}"."lookup_bindings" WHERE id = :id'),
+        {"id": binding_id},
+    ).scalar()
+
+
+def test_a_binding_on_a_moved_table_is_repointed_at_the_qualified_name(db):
+    """`lookup_bindings.table_name` is a table name stored as data, so 354 has to move it.
+
+    A binding is keyed by the SCHEMA-QUALIFIED name (`app/services/lookup_eligibility.py`),
+    because the bare one stopped identifying a table when seven of them started existing
+    twice. Left as `project_purchase_orders` the binding matches nothing at all; left as
+    `purchase_orders` it would police core's table instead.
+    """
+    target = _scratch_projects_schema()
+    module = _module()
+    moved = _seed_binding(db, "project_purchase_orders")
+    core = _seed_binding(db, "purchase_orders")
+
+    _run(db, "upgrade")
+
+    assert _binding_table(db, moved) == f"{target}.purchase_orders"
+    # The core binding shares the post-move BARE name and must not be touched.
+    assert _binding_table(db, core) == "purchase_orders"
+
+    _run(db, "downgrade")
+
+    assert _binding_table(db, moved) == "project_purchase_orders"
+    assert _binding_table(db, core) == "purchase_orders"
+    assert len(module.TABLES) == 47  # the rewrite covers the same list as the move
+
+
+def test_a_binding_on_an_unprefixed_moved_table_gains_the_schema(db):
+    """The 13 that kept their bare name still change key: `so_amendments` is now
+    `projects.so_amendments`, and nothing else in the database is called that."""
+    target = _scratch_projects_schema()
+    binding = _seed_binding(db, "so_amendments")
+
+    _run(db, "upgrade")
+
+    assert _binding_table(db, binding) == f"{target}.so_amendments"
 
 
 def test_rows_travel_with_the_tables(db):
