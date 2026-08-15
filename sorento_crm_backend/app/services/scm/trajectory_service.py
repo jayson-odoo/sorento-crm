@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.scm.customer_label import (
+    CUSTOMER_JOIN_ON,
     CUSTOMER_KEY_SQL,
     CUSTOMER_LABEL_SQL,
     customer_key_filter,
@@ -100,7 +101,7 @@ SELECT product_id, segment, customer_name, customer_key, qty, last_order_date FR
     FROM sales_order_lines sol
     JOIN sales_orders so ON so.id = sol.sales_order_id
     LEFT JOIN warehouses w ON w.id = sol.warehouse_id
-    LEFT JOIN customers c ON c.id = so.customer_id
+    LEFT JOIN customers c ON {CUSTOMER_JOIN_ON}
     JOIN pairs pr ON pr.product_id = sol.product_id
                 AND pr.segment = COALESCE(w.segment, 'project')
     WHERE so.order_date >= :since AND so.order_date < :until
