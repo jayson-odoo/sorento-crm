@@ -1649,7 +1649,17 @@ async def update_sla_tracking(
         # from the payload - the rest (assignment, tier, resolve, ...) still
         # applies normally (FINDING 5): a caller sending is_responded alongside
         # other fields must not have the whole update silently discarded.
-        tracking = service.update_tracking(tracking_id_str, tracking_data)
+        # AC-M3 hardening: an API-key resolve here IS n8n's respond-close-convo
+        # lane reacting to a Respond-side close. Fire our close-convo webhook
+        # back at it and n8n sends the customer a second closing message, so the
+        # origin travels with the resolve and suppresses it.
+        tracking = service.update_tracking(
+            tracking_id_str,
+            tracking_data,
+            resolve_origin=(
+                "api_key" if current_user.get("auth_method") == "api_key" else "user"
+            ),
+        )
         already_resolved = bool(getattr(tracking, "_already_resolved", False))
         ambiguous = bool(getattr(tracking, "_ambiguous_responded_skipped", False))
         # AC-I3: a duplicate respond is idempotent, reported as a body field
@@ -1936,7 +1946,14 @@ async def update_sla_tracking_status_integration(
                 tracking.initiated_at, update_dict["resolved_at"]
             )
 
-        tracking = service.update_tracking(tracking_id_str, ConversationSLATrackingUpdate(**update_dict))
+        # This route has no auth dependency at all - it IS the n8n integration
+        # lane, so a resolve arriving here never fires the close-convo webhook
+        # (AC-M3 hardening; see update_tracking's `resolve_origin`).
+        tracking = service.update_tracking(
+            tracking_id_str,
+            ConversationSLATrackingUpdate(**update_dict),
+            resolve_origin="api_key",
+        )
         already_resolved = bool(getattr(tracking, "_already_resolved", False))
         # FINDING 1: update_tracking is the shared path PUT /{tracking_id} also
         # calls, so the AC-E3 ambiguity guard now applies here too - a stamp it

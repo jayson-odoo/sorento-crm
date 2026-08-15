@@ -4319,8 +4319,28 @@ class ConversationSLATrackingService:
                 exc_info=True,
             )
 
-    def update_tracking(self, tracking_id: str, tracking_data: ConversationSLATrackingUpdate):
-        """Update a tracking record."""
+    def update_tracking(
+        self,
+        tracking_id: str,
+        tracking_data: ConversationSLATrackingUpdate,
+        *,
+        resolve_origin: str = "user",
+    ):
+        """Update a tracking record.
+
+        ``resolve_origin`` says WHO decided this resolve, and exists for exactly
+        one reason: the AC-M3 close-convo webhook must never answer n8n's own
+        resolve. A Respond-side close makes n8n resolve the ticket through
+        ``PUT /{tracking_id}`` with the API-key principal; firing our
+        close-convo webhook back at n8n from there makes n8n send the customer a
+        SECOND closing message. ``"api_key"`` suppresses that webhook (n8n
+        already knows - it closed the conversation); ``"user"`` (the default, and
+        what the widget's Resolve uses) fires it.
+
+        Deliberately NOT applied to the RQ Respond-close job: that is the
+        transport tidy-up (mark the conversation closed, idempotent), not a
+        message to the contact, so it keeps running on every resolve.
+        """
         from datetime import datetime, timezone
         from decimal import Decimal, ROUND_HALF_UP
         from app.models.user import User
@@ -4639,7 +4659,13 @@ class ConversationSLATrackingService:
                 # a real resolver identity instead of inferring one from an API
                 # close. Additive to the RQ job above, which stays as the
                 # transport tidy-up.
-                self._notify_close_convo_webhook_best_effort(tracking, close_team_label)
+                #
+                # AC-M3 hardening: ONLY for a CRM-origin (user) resolve. An
+                # API-key resolve came FROM n8n's respond-close-convo lane after
+                # a Respond-side close, and answering it would have n8n send the
+                # customer a second closing message - the loop.
+                if resolve_origin != "api_key":
+                    self._notify_close_convo_webhook_best_effort(tracking, close_team_label)
 
         # FINDING 5: caller-visible marker, set only once every other field
         # this call touched (assignment, tier, resolve, ...) has been applied
